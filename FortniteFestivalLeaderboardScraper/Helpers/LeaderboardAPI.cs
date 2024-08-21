@@ -343,7 +343,10 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
                             }
                             else
                             {
-                                throw new Exception(error.errorCode);
+                                textBox.AppendText(Environment.NewLine + "An unexpected error has occurred. Please report this error to the GitHub repo so it can be fixed.");
+                                textBox.AppendText(Environment.NewLine + "Error Code: " + error.errorCode);
+                                textBox.AppendText(Environment.NewLine + "Error Message: " + error.errorMessage);
+                                return new Tuple<bool, List<LeaderboardData>>(false, new List<LeaderboardData>());
                             }
                         }
 
