@@ -325,6 +325,7 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
                                     instrumentData.minSeason = baseSeason;
                                 }
                                 hasSeenValidLeaderboard = true;
+                                instrumentData.lastSeenSeason = baseSeason;
                                 baseSeason++;
                                 continue;
                             }
