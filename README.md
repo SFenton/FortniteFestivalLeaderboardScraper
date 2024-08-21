@@ -1,6 +1,10 @@
 # Fortnite Festival Leaderboard Scraper
 
-A simple WIndows utility for retrieving your highest Fortnite Festival scores across all instruments and across all seasons!
+A simple Windows utility for retrieving your highest Fortnite Festival scores across all instruments and across all seasons!
+
+![Screenshot 2024-08-20 174459](https://github.com/user-attachments/assets/6df0d502-5841-4a5e-a660-73876728bacc)
+<img width="867" alt="image" src="https://github.com/user-attachments/assets/9cef131f-2dbc-46fb-8a20-e33d76525314">
+
 
 ## Why?
 
