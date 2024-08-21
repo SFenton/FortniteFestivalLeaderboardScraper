@@ -47,3 +47,9 @@ Please file a bug report or feature request! I'll be watching!
 # How to run the app
 
 Log in to Epic Games on your web browser of choice. Then, in the app, click "Generate Exchange Code" and that link will open in your browser. Copy the "code" value over to the app, and then click Run. You will see the console output with all the information that the app is querying. The app will run, and drop a file called "FortniteFestivalScores.xlsx" in the executing directory. These are all your scores- including scores on songs you don't own!
+
+Note that exchange tokens from the Epic site expire after about 300 seconds, and once an exchange token is authenticated, you cannot use it again. If you need to run the tool multiple times, you'll need to generate a new exchange token each time.
+
+## Can I play Fortnite while the tool runs?
+
+No. This will cause a new client to authenticate, rendering your previous token useless, and will cause the application to stop working. This is applicable to all platforms- you cannot play Fortnite on *any* platform while this utility runs, or the utility will fail.
