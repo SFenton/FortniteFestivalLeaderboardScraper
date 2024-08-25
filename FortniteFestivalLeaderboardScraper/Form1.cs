@@ -51,6 +51,8 @@ namespace FortniteFestivalLeaderboardScraper
                 return;
             }
 
+            tabControl1.TabPages.Remove(tabPage2);
+            tabControl1.TabPages.Remove(tabPage3);
             button1.Enabled = false;
             button2.Enabled = false;
             
@@ -85,6 +87,8 @@ namespace FortniteFestivalLeaderboardScraper
             textBox2.AppendText(Environment.NewLine + "FortniteFestivalScores.xlsx written out to the directory your application is in.");
             button1.Enabled = true;
             button2.Enabled = true;
+            tabControl1.TabPages.Add(tabPage2);
+            tabControl1.TabPages.Add(tabPage3);
         }
 
         private async void onSongSelectFocused(object sender, EventArgs e)
