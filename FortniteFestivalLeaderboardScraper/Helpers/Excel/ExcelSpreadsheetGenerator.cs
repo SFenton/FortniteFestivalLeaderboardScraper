@@ -9,7 +9,7 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
 {
     static class ExcelSpreadsheetGenerator
     {
-        public static void GenerateExcelSpreadsheet(List<LeaderboardData> data)
+        public static void GenerateExcelSpreadsheet(List<LeaderboardData> data, List<string> supportedInstruments, OutputSelection selection)
         {
             ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
             ExcelPackage excel = new ExcelPackage();
@@ -23,26 +23,175 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
                 {
                     case 0:
                         instrumentName = "Drums";
-                        orderedData = data.OrderBy(c => c.drums.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                        if (!supportedInstruments.Contains(instrumentName))
+                        {
+                            continue;
+                        }
+                        switch (selection)
+                        {
+                            case OutputSelection.FullCombo:
+                                orderedData = data.OrderBy(c => c.drums.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Title:
+                                orderedData = data.OrderBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Artist:
+                                orderedData = data.OrderBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Percentage:
+                                orderedData = data.OrderBy(c => c.drums.percentHit).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Score:
+                                orderedData = data.OrderBy(c => c.drums.maxScore).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Difficulty:
+                                orderedData = data.OrderBy(c => c.drums.difficulty).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                        }
                         break;
                     case 1:
-                        instrumentName = "Guitar";
+                        instrumentName = "Lead";
+                        if (!supportedInstruments.Contains(instrumentName))
+                        {
+                            continue;
+                        }
+                        switch (selection)
+                        {
+                            case OutputSelection.FullCombo:
+                                orderedData = data.OrderBy(c => c.guitar.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Title:
+                                orderedData = data.OrderBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Artist:
+                                orderedData = data.OrderBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Percentage:
+                                orderedData = data.OrderBy(c => c.guitar.percentHit).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Score:
+                                orderedData = data.OrderBy(c => c.guitar.maxScore).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Difficulty:
+                                orderedData = data.OrderBy(c => c.guitar.difficulty).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                        }
                         orderedData = data.OrderBy(c => c.guitar.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                         break;
                     case 2:
                         instrumentName = "Bass";
+                        if (!supportedInstruments.Contains(instrumentName))
+                        {
+                            continue;
+                        }
+                        switch (selection)
+                        {
+                            case OutputSelection.FullCombo:
+                                orderedData = data.OrderBy(c => c.bass.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Title:
+                                orderedData = data.OrderBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Artist:
+                                orderedData = data.OrderBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Percentage:
+                                orderedData = data.OrderBy(c => c.bass.percentHit).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Score:
+                                orderedData = data.OrderBy(c => c.bass.maxScore).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Difficulty:
+                                orderedData = data.OrderBy(c => c.bass.difficulty).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                        }
                         orderedData = data.OrderBy(c => c.bass.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                         break;
                     case 3:
                         instrumentName = "Vocals";
+                        if (!supportedInstruments.Contains(instrumentName))
+                        {
+                            continue;
+                        }
+                        switch (selection)
+                        {
+                            case OutputSelection.FullCombo:
+                                orderedData = data.OrderBy(c => c.vocals.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Title:
+                                orderedData = data.OrderBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Artist:
+                                orderedData = data.OrderBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Percentage:
+                                orderedData = data.OrderBy(c => c.vocals.percentHit).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Score:
+                                orderedData = data.OrderBy(c => c.vocals.maxScore).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Difficulty:
+                                orderedData = data.OrderBy(c => c.vocals.difficulty).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                        }
                         orderedData = data.OrderBy(c => c.vocals.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                         break;
                     case 4:
-                        instrumentName = "Pro Guitar";
+                        instrumentName = "Pro Lead";
+                        if (!supportedInstruments.Contains(instrumentName))
+                        {
+                            continue;
+                        }
+                        switch (selection)
+                        {
+                            case OutputSelection.FullCombo:
+                                orderedData = data.OrderBy(c => c.pro_guitar.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Title:
+                                orderedData = data.OrderBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Artist:
+                                orderedData = data.OrderBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Percentage:
+                                orderedData = data.OrderBy(c => c.pro_guitar.percentHit).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Score:
+                                orderedData = data.OrderBy(c => c.pro_guitar.maxScore).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Difficulty:
+                                orderedData = data.OrderBy(c => c.pro_guitar.difficulty).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                        }
                         orderedData = data.OrderBy(c => c.pro_guitar.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                         break;
                     case 5:
                         instrumentName = "Pro Bass";
+                        if (!supportedInstruments.Contains(instrumentName))
+                        {
+                            continue;
+                        }
+                        switch (selection)
+                        {
+                            case OutputSelection.FullCombo:
+                                orderedData = data.OrderBy(c => c.pro_bass.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Title:
+                                orderedData = data.OrderBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Artist:
+                                orderedData = data.OrderBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Percentage:
+                                orderedData = data.OrderBy(c => c.pro_bass.percentHit).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Score:
+                                orderedData = data.OrderBy(c => c.pro_bass.maxScore).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Difficulty:
+                                orderedData = data.OrderBy(c => c.pro_bass.difficulty).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                        }
                         orderedData = data.OrderBy(c => c.pro_bass.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                         break;
                 }
@@ -55,6 +204,7 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
                 worksheet.Cells[1, 5].RichText.Add("Score").Bold = true;
                 worksheet.Cells[1, 6].RichText.Add("Percentage Hit").Bold = true;
                 worksheet.Cells[1, 7].RichText.Add("Season Achieved").Bold = true;
+                worksheet.Cells[1, 8].RichText.Add("Difficulty").Bold = true;
 
                 int recordIndex = 2;
                 foreach (var song in orderedData)
@@ -110,6 +260,7 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
                     worksheet.Cells[recordIndex, 5].Value = scoreTracker.maxScore;
                     worksheet.Cells[recordIndex, 6].Value = (scoreTracker.percentHit / 10000) + "%";
                     worksheet.Cells[recordIndex, 7].Value = scoreTracker.season;
+                    worksheet.Cells[recordIndex, 8].Value = scoreTracker.difficulty;
                     recordIndex++;
                 }
 
@@ -120,6 +271,7 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
                 worksheet.Column(5).AutoFit();
                 worksheet.Column(6).AutoFit();
                 worksheet.Column(7).AutoFit();
+                worksheet.Column(8).AutoFit();
             }
 
             var exePath = Path.GetDirectoryName(Assembly.GetEntryAssembly().Location);

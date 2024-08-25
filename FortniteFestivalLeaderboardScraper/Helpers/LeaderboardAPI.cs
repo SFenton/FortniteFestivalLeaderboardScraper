@@ -125,6 +125,11 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
                 get;
                 set;
             }
+            public int difficulty
+            {
+                get;
+                set;
+            }
             public int numStars
             {
                 get;
@@ -171,6 +176,7 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
         const string PRO_BASS = "Solo_PeripheralBass";
         private
         const string PRO_GUITAR = "Solo_PeripheralGuitar";
+        private const int PRO_STRINGS_MINSEASON = 3;
 
         private static string PARAMS = "fromIndex=0&findTeams=false";
         private static string GetFriendlyInstrumentName(string instrumentName)
@@ -193,14 +199,32 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
 
             return "Unknown Instrument";
         }
-        public static async Task<Tuple<bool, List<LeaderboardData>>> GetLeaderboardsForInstrument(List<Song> items, string accessToken, string accountId, int maxSeason, List<LeaderboardData> prevData, System.Windows.Forms.TextBox textBox)
+        public static async Task<Tuple<bool, List<LeaderboardData>>> GetLeaderboardsForInstrument(
+            List<Song> items, 
+            string accessToken, 
+            string accountId, 
+            int maxSeason, 
+            List<LeaderboardData> prevData, 
+            System.Windows.Forms.TextBox textBox,
+            List<string> filteredSongIds,
+            List<string> supportedInstruments)
         {
+            if (items.Count == 0)
+            {
+                return new Tuple<bool, List<LeaderboardData>>(true, new List<LeaderboardData>());
+            }
+
             var leaderboardData = new List<LeaderboardData>();
             int maxValidSeason = -1;
 
             // TO_DO: Season 1 doesn't exist yet
             foreach (Song song in items)
             {
+                if (filteredSongIds.Count > 0 && !filteredSongIds.Contains(song.track.su))
+                {
+                    continue;
+                }
+                
                 var songBoard = new LeaderboardData();
                 songBoard.title = song.track.tt;
                 songBoard.artist = song.track.an;
@@ -219,32 +243,62 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
                     {
                         case 0:
                             instrumentName = DRUMS;
+                            if (!supportedInstruments.Contains("Drums"))
+                            {
+                                continue;
+                            }
                             prevInstrumentTracker = prevSongData.drums ?? new ScoreTracker();
+                            prevInstrumentTracker.difficulty = song.track.@in.ds;
                             break;
                         case 1:
                             instrumentName = GUITAR;
+                            if (!supportedInstruments.Contains("Lead"))
+                            {
+                                continue;
+                            }
                             prevInstrumentTracker = prevSongData.guitar ?? new ScoreTracker();
+                            prevInstrumentTracker.difficulty = song.track.@in.gr;
                             break;
                         case 2:
                             instrumentName = PRO_BASS;
+                            if (!supportedInstruments.Contains("Pro Bass"))
+                            {
+                                continue;
+                            }
                             prevInstrumentTracker = prevSongData.pro_bass ?? new ScoreTracker();
+                            prevInstrumentTracker.difficulty = song.track.@in.pb;
                             break;
                         case 3:
                             instrumentName = PRO_GUITAR;
+                            if (!supportedInstruments.Contains("Pro Lead"))
+                            {
+                                continue;
+                            }
                             prevInstrumentTracker = prevSongData.pro_guitar ?? new ScoreTracker();
+                            prevInstrumentTracker.difficulty = song.track.@in.pg;
                             break;
                         case 4:
                             instrumentName = BASS;
+                            if (!supportedInstruments.Contains("Bass"))
+                            {
+                                continue;
+                            }
                             prevInstrumentTracker = prevSongData.bass ?? new ScoreTracker();
+                            prevInstrumentTracker.difficulty = song.track.@in.ba;
                             break;
                         case 5:
                             instrumentName = VOCALS;
+                            if (!supportedInstruments.Contains("Vocals"))
+                            {
+                                continue;
+                            }
                             prevInstrumentTracker = prevSongData.vocals ?? new ScoreTracker();
+                            prevInstrumentTracker.difficulty = song.track.@in.vl;
                             break;
                     }
 
                     var isSeasonActive = true;
-                    var baseSeason = prevInstrumentTracker.lastSeenSeason == -1 ? 2 : prevInstrumentTracker.lastSeenSeason;
+                    var baseSeason = prevInstrumentTracker.lastSeenSeason == -1 ? ((instrumentName == PRO_BASS || instrumentName == PRO_GUITAR) ? Math.Max(2, PRO_STRINGS_MINSEASON) : 2) : prevInstrumentTracker.lastSeenSeason;
                     var instrumentData = new ScoreTracker();
                     instrumentData.minSeason = prevInstrumentTracker.minSeason == -1 ? -1 : prevInstrumentTracker.minSeason;
 
@@ -254,6 +308,7 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
                     instrumentData.numStars = prevInstrumentTracker.numStars;
                     instrumentData.initialized = prevInstrumentTracker.initialized;
                     instrumentData.season = prevInstrumentTracker.season;
+                    instrumentData.difficulty = prevInstrumentTracker.difficulty;
 
                     var hasSeenValidLeaderboard = false;
 
