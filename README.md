@@ -2,8 +2,9 @@
 
 A simple Windows utility for retrieving your highest Fortnite Festival scores across all instruments and across all seasons!
 
-![Screenshot 2024-08-20 174459](https://github.com/user-attachments/assets/6df0d502-5841-4a5e-a660-73876728bacc)
-<img width="867" alt="image" src="https://github.com/user-attachments/assets/9cef131f-2dbc-46fb-8a20-e33d76525314">
+<img width="835" alt="image" src="https://github.com/user-attachments/assets/9c9f8213-8f5e-401f-a925-d26d1824f47b">
+<img width="833" alt="image" src="https://github.com/user-attachments/assets/ca5dbd34-a7be-41c5-932c-57b9e9bc527b">
+
 
 
 ## Why?
@@ -53,3 +54,15 @@ Note that exchange tokens from the Epic site expire after about 300 seconds, and
 ## Can I play Fortnite while the tool runs?
 
 No. This will cause a new client to authenticate, rendering your previous token useless, and will cause the application to stop working. This is applicable to all platforms- you cannot play Fortnite on *any* platform while this utility runs, or the utility will fail.
+
+## Can I grab only certain songs?
+
+Yes! Head over to the "Select Songs" tab, and select the songs you want to retrieve scores for. If no songs are selected, we will grab all scores for all songs by default.
+
+## Can I grab only certain instruments?
+
+Yes! Head over to the "Options" tab, and toggle on/off the instruments you want to retrieve/write out to the output workbook. Note that you need to have at least one instrument selected to run the tool.
+
+## Can I change the output sort of data?
+
+Yes! Head over to the "Options" tab, where you can change how your output workbook is sorted.
