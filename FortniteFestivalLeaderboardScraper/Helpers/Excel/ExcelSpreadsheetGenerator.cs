@@ -9,7 +9,7 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
 {
     static class ExcelSpreadsheetGenerator
     {
-        public static void GenerateExcelSpreadsheet(List<LeaderboardData> data, List<string> supportedInstruments, OutputSelection selection)
+        public static void GenerateExcelSpreadsheet(List<LeaderboardData> data, List<string> supportedInstruments, OutputSelection selection, bool invertOutput)
         {
             ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
             ExcelPackage excel = new ExcelPackage();
@@ -212,6 +212,11 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
                         }
                         orderedData = data.OrderBy(c => c.pro_bass.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                         break;
+                }
+
+                if (invertOutput)
+                {
+                    orderedData.Reverse();
                 }
 
                 var worksheet = excel.Workbook.Worksheets.Add(instrumentName);

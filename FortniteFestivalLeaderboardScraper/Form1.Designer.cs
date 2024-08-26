@@ -56,6 +56,9 @@
             this.label4 = new System.Windows.Forms.Label();
             this.label3 = new System.Windows.Forms.Label();
             this.tabPage3 = new System.Windows.Forms.TabPage();
+            this.invertOutput = new System.Windows.Forms.CheckBox();
+            this.label7 = new System.Windows.Forms.Label();
+            this.stars = new System.Windows.Forms.RadioButton();
             this.difficulty = new System.Windows.Forms.RadioButton();
             this.percentage = new System.Windows.Forms.RadioButton();
             this.score = new System.Windows.Forms.RadioButton();
@@ -70,7 +73,7 @@
             this.drumsCheck = new System.Windows.Forms.CheckBox();
             this.vocalsCheck = new System.Windows.Forms.CheckBox();
             this.leadCheck = new System.Windows.Forms.CheckBox();
-            this.stars = new System.Windows.Forms.RadioButton();
+            this.button5 = new System.Windows.Forms.Button();
             this.tabControl1.SuspendLayout();
             this.tabPage1.SuspendLayout();
             this.tabPage2.SuspendLayout();
@@ -158,6 +161,7 @@
             // 
             // tabPage1
             // 
+            this.tabPage1.Controls.Add(this.button5);
             this.tabPage1.Controls.Add(this.label2);
             this.tabPage1.Controls.Add(this.textBox2);
             this.tabPage1.Controls.Add(this.button2);
@@ -343,6 +347,8 @@
             // 
             // tabPage3
             // 
+            this.tabPage3.Controls.Add(this.invertOutput);
+            this.tabPage3.Controls.Add(this.label7);
             this.tabPage3.Controls.Add(this.stars);
             this.tabPage3.Controls.Add(this.difficulty);
             this.tabPage3.Controls.Add(this.percentage);
@@ -365,6 +371,38 @@
             this.tabPage3.TabIndex = 2;
             this.tabPage3.Text = "Options";
             this.tabPage3.UseVisualStyleBackColor = true;
+            // 
+            // invertOutput
+            // 
+            this.invertOutput.AutoSize = true;
+            this.invertOutput.Location = new System.Drawing.Point(378, 27);
+            this.invertOutput.Name = "invertOutput";
+            this.invertOutput.Size = new System.Drawing.Size(172, 24);
+            this.invertOutput.TabIndex = 16;
+            this.invertOutput.Text = "Invert Output Order";
+            this.invertOutput.UseVisualStyleBackColor = true;
+            this.invertOutput.CheckedChanged += new System.EventHandler(this.onInvertOutputSelected);
+            // 
+            // label7
+            // 
+            this.label7.AutoSize = true;
+            this.label7.Location = new System.Drawing.Point(374, 0);
+            this.label7.Name = "label7";
+            this.label7.Size = new System.Drawing.Size(138, 20);
+            this.label7.TabIndex = 15;
+            this.label7.Text = "Additional Options";
+            // 
+            // stars
+            // 
+            this.stars.AutoSize = true;
+            this.stars.Location = new System.Drawing.Point(184, 209);
+            this.stars.Name = "stars";
+            this.stars.Size = new System.Drawing.Size(72, 24);
+            this.stars.TabIndex = 14;
+            this.stars.TabStop = true;
+            this.stars.Text = "Stars";
+            this.stars.UseVisualStyleBackColor = true;
+            this.stars.CheckedChanged += new System.EventHandler(this.onOutputFormatSelection);
             // 
             // difficulty
             // 
@@ -535,17 +573,16 @@
             this.leadCheck.UseVisualStyleBackColor = true;
             this.leadCheck.CheckedChanged += new System.EventHandler(this.onInstrumentOutputSelected);
             // 
-            // stars
+            // button5
             // 
-            this.stars.AutoSize = true;
-            this.stars.Location = new System.Drawing.Point(184, 209);
-            this.stars.Name = "stars";
-            this.stars.Size = new System.Drawing.Size(72, 24);
-            this.stars.TabIndex = 14;
-            this.stars.TabStop = true;
-            this.stars.Text = "Stars";
-            this.stars.UseVisualStyleBackColor = true;
-            this.stars.CheckedChanged += new System.EventHandler(this.onOutputFormatSelection);
+            this.button5.Enabled = true;
+            this.button5.Location = new System.Drawing.Point(1429, 25);
+            this.button5.Name = "button5";
+            this.button5.Size = new System.Drawing.Size(223, 33);
+            this.button5.TabIndex = 8;
+            this.button5.Text = "Regenerate Output";
+            this.button5.UseVisualStyleBackColor = true;
+            this.button5.Click += new System.EventHandler(this.button5_Click);
             // 
             // Form1
             // 
@@ -618,6 +655,9 @@
         private System.Windows.Forms.Label label6;
         private System.Windows.Forms.Label label5;
         private System.Windows.Forms.RadioButton stars;
+        private System.Windows.Forms.Label label7;
+        private System.Windows.Forms.CheckBox invertOutput;
+        private System.Windows.Forms.Button button5;
     }
 }
 

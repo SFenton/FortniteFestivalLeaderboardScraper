@@ -1,6 +1,7 @@
 ﻿using FortniteFestivalLeaderboardScraper.Helpers;
 using FortniteFestivalLeaderboardScraper.Helpers.Excel;
 using FortniteFestivalLeaderboardScraper.Helpers.FileIO;
+using OfficeOpenXml.FormulaParsing.LexicalAnalysis;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -32,6 +33,7 @@ namespace FortniteFestivalLeaderboardScraper
         private List<string> supportedInstruments = new List<string>() { "Lead", "Vocals", "Bass", "Drums", "Pro Lead", "Pro Bass" };
         private int selectedColumn = -1;
         private OutputSelection selection = OutputSelection.FullCombo;
+        private bool _invertOutput = false;
 
         public Form1()
         {
@@ -56,7 +58,8 @@ namespace FortniteFestivalLeaderboardScraper
             tabControl1.TabPages.Remove(tabPage3);
             button1.Enabled = false;
             button2.Enabled = false;
-            
+            button5.Enabled = false;
+
             textBox2.Clear();
             textBox2.AppendText("Generating Fortnite bearer token...");
             var token = await EpicGamesExchangeTokenGenerator.GetTokenWithPermissions(textBox1.Text);
@@ -65,6 +68,7 @@ namespace FortniteFestivalLeaderboardScraper
                 textBox2.AppendText(Environment.NewLine + "An error occurred during authentication. Please try a new exchange code.");
                 button1.Enabled = true;
                 button2.Enabled = true;
+                button5.Enabled = true;
                 return;
             }
             if (_sparkTracks.Count != 0)
@@ -80,14 +84,16 @@ namespace FortniteFestivalLeaderboardScraper
             {
                 button1.Enabled = true;
                 button2.Enabled = true;
+                button5.Enabled = true;
                 return;
             }
             JSONReadWrite.WriteLeaderboardJSON(scores.Item2);
 
-            ExcelSpreadsheetGenerator.GenerateExcelSpreadsheet(scores.Item2, supportedInstruments, selection);
+            ExcelSpreadsheetGenerator.GenerateExcelSpreadsheet(scores.Item2, supportedInstruments, selection, _invertOutput);
             textBox2.AppendText(Environment.NewLine + "FortniteFestivalScores.xlsx written out to the directory your application is in.");
             button1.Enabled = true;
             button2.Enabled = true;
+            button5.Enabled = true;
             tabControl1.TabPages.Add(tabPage2);
             tabControl1.TabPages.Add(tabPage3);
         }
@@ -248,6 +254,45 @@ namespace FortniteFestivalLeaderboardScraper
                         break;
                 }
             }
+        }
+
+        private void onInvertOutputSelected(object sender, EventArgs eventArgs)
+        {
+            CheckBox element = (CheckBox)sender;
+            _invertOutput = element.Checked;
+        }
+
+        private void button5_Click(object sender, EventArgs e)
+        {
+            tabControl1.TabPages.Remove(tabPage2);
+            tabControl1.TabPages.Remove(tabPage3);
+            button1.Enabled = false;
+            button2.Enabled = false;
+            button5.Enabled = false;
+
+            textBox2.Clear();
+            textBox2.AppendText("Regenerating your output from existing cached data");
+            var previousData = JSONReadWrite.ReadLeaderboardJSON();
+
+            if (previousData.Count == 0)
+            {
+                textBox2.AppendText(Environment.NewLine + "Cached data does not exist, contains no content, or encountered an error while loading. Please regenerate your output by querying your scores again.");
+
+                tabControl1.TabPages.Add(tabPage2);
+                tabControl1.TabPages.Add(tabPage3);
+                button1.Enabled = true;
+                button2.Enabled = true;
+                button5.Enabled = true;
+                return;
+            }
+
+            ExcelSpreadsheetGenerator.GenerateExcelSpreadsheet(previousData, supportedInstruments, selection, _invertOutput);
+            tabControl1.TabPages.Add(tabPage2);
+            tabControl1.TabPages.Add(tabPage3);
+            button1.Enabled = true;
+            button2.Enabled = true;
+            button5.Enabled = true;
+            textBox2.AppendText(Environment.NewLine + "FortniteFestivalScores.xlsx written out to the directory your application is in.");
         }
     }
 }
