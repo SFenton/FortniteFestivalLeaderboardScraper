@@ -21,7 +21,8 @@ namespace FortniteFestivalLeaderboardScraper
         Artist,
         Percentage,
         Score,
-        Difficulty
+        Difficulty,
+        Stars
     }
 
     public partial class Form1 : Form
@@ -238,6 +239,9 @@ namespace FortniteFestivalLeaderboardScraper
                         break;
                     case "Difficulty":
                         selection = OutputSelection.Difficulty;
+                        break;
+                    case "Stars":
+                        selection = OutputSelection.Stars;
                         break;
                     default:
                         selection = OutputSelection.FullCombo;

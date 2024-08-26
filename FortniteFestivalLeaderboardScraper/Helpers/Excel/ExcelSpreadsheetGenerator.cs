@@ -47,6 +47,9 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
                             case OutputSelection.Difficulty:
                                 orderedData = data.OrderBy(c => c.drums.difficulty).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                                 break;
+                            case OutputSelection.Stars:
+                                orderedData = data.OrderBy(c => c.drums.numStars).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
                         }
                         break;
                     case 1:
@@ -74,6 +77,9 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
                                 break;
                             case OutputSelection.Difficulty:
                                 orderedData = data.OrderBy(c => c.guitar.difficulty).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Stars:
+                                orderedData = data.OrderBy(c => c.guitar.numStars).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                                 break;
                         }
                         orderedData = data.OrderBy(c => c.guitar.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
@@ -104,6 +110,9 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
                             case OutputSelection.Difficulty:
                                 orderedData = data.OrderBy(c => c.bass.difficulty).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                                 break;
+                            case OutputSelection.Stars:
+                                orderedData = data.OrderBy(c => c.bass.numStars).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
                         }
                         orderedData = data.OrderBy(c => c.bass.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                         break;
@@ -132,6 +141,9 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
                                 break;
                             case OutputSelection.Difficulty:
                                 orderedData = data.OrderBy(c => c.vocals.difficulty).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Stars:
+                                orderedData = data.OrderBy(c => c.vocals.numStars).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                                 break;
                         }
                         orderedData = data.OrderBy(c => c.vocals.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
@@ -162,6 +174,9 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
                             case OutputSelection.Difficulty:
                                 orderedData = data.OrderBy(c => c.pro_guitar.difficulty).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                                 break;
+                            case OutputSelection.Stars:
+                                orderedData = data.OrderBy(c => c.pro_guitar.numStars).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
                         }
                         orderedData = data.OrderBy(c => c.pro_guitar.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                         break;
@@ -190,6 +205,9 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
                                 break;
                             case OutputSelection.Difficulty:
                                 orderedData = data.OrderBy(c => c.pro_bass.difficulty).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
+                                break;
+                            case OutputSelection.Stars:
+                                orderedData = data.OrderBy(c => c.pro_bass.numStars).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                                 break;
                         }
                         orderedData = data.OrderBy(c => c.pro_bass.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();

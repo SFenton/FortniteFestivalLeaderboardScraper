@@ -70,6 +70,7 @@
             this.drumsCheck = new System.Windows.Forms.CheckBox();
             this.vocalsCheck = new System.Windows.Forms.CheckBox();
             this.leadCheck = new System.Windows.Forms.CheckBox();
+            this.stars = new System.Windows.Forms.RadioButton();
             this.tabControl1.SuspendLayout();
             this.tabPage1.SuspendLayout();
             this.tabPage2.SuspendLayout();
@@ -342,6 +343,7 @@
             // 
             // tabPage3
             // 
+            this.tabPage3.Controls.Add(this.stars);
             this.tabPage3.Controls.Add(this.difficulty);
             this.tabPage3.Controls.Add(this.percentage);
             this.tabPage3.Controls.Add(this.score);
@@ -533,6 +535,18 @@
             this.leadCheck.UseVisualStyleBackColor = true;
             this.leadCheck.CheckedChanged += new System.EventHandler(this.onInstrumentOutputSelected);
             // 
+            // stars
+            // 
+            this.stars.AutoSize = true;
+            this.stars.Location = new System.Drawing.Point(184, 209);
+            this.stars.Name = "stars";
+            this.stars.Size = new System.Drawing.Size(72, 24);
+            this.stars.TabIndex = 14;
+            this.stars.TabStop = true;
+            this.stars.Text = "Stars";
+            this.stars.UseVisualStyleBackColor = true;
+            this.stars.CheckedChanged += new System.EventHandler(this.onOutputFormatSelection);
+            // 
             // Form1
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(9F, 20F);
@@ -603,6 +617,7 @@
         private System.Windows.Forms.RadioButton fullCombo;
         private System.Windows.Forms.Label label6;
         private System.Windows.Forms.Label label5;
+        private System.Windows.Forms.RadioButton stars;
     }
 }
 
