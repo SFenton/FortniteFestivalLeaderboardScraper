@@ -82,7 +82,6 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
                                 orderedData = data.OrderBy(c => c.guitar.numStars).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                                 break;
                         }
-                        orderedData = data.OrderBy(c => c.guitar.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                         break;
                     case 2:
                         instrumentName = "Bass";
@@ -114,7 +113,6 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
                                 orderedData = data.OrderBy(c => c.bass.numStars).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                                 break;
                         }
-                        orderedData = data.OrderBy(c => c.bass.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                         break;
                     case 3:
                         instrumentName = "Vocals";
@@ -146,7 +144,6 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
                                 orderedData = data.OrderBy(c => c.vocals.numStars).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                                 break;
                         }
-                        orderedData = data.OrderBy(c => c.vocals.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                         break;
                     case 4:
                         instrumentName = "Pro Lead";
@@ -178,7 +175,6 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
                                 orderedData = data.OrderBy(c => c.pro_guitar.numStars).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                                 break;
                         }
-                        orderedData = data.OrderBy(c => c.pro_guitar.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                         break;
                     case 5:
                         instrumentName = "Pro Bass";
@@ -210,7 +206,6 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
                                 orderedData = data.OrderBy(c => c.pro_bass.numStars).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                                 break;
                         }
-                        orderedData = data.OrderBy(c => c.pro_bass.isFullCombo).ThenBy(c => c.artist).ThenBy(c => c.title).ToList();
                         break;
                 }
 
