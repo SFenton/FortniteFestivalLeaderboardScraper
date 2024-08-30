@@ -222,6 +222,10 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
             {
                 if (filteredSongIds.Count > 0 && !filteredSongIds.Contains(song.track.su))
                 {
+                    if (prevData.Find(x => x.songId == song.track.su) != null)
+                    {
+                        leaderboardData.Add(prevData.Find(x => x.songId == song.track.su));
+                    }
                     continue;
                 }
                 
@@ -229,6 +233,7 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
                 songBoard.title = song.track.tt;
                 songBoard.artist = song.track.an;
                 songBoard.songId = song.track.su;
+                int minSongSeason = 2;
 
                 var prevSongData = prevData.Find(x => x.songId == song.track.su);
                 if (prevSongData == null)
@@ -298,7 +303,7 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
                     }
 
                     var isSeasonActive = true;
-                    var baseSeason = prevInstrumentTracker.lastSeenSeason == -1 ? ((instrumentName == PRO_BASS || instrumentName == PRO_GUITAR) ? Math.Max(2, PRO_STRINGS_MINSEASON) : 2) : prevInstrumentTracker.lastSeenSeason;
+                    var baseSeason = prevInstrumentTracker.lastSeenSeason == -1 ? ((instrumentName == PRO_BASS || instrumentName == PRO_GUITAR) ? Math.Max(minSongSeason, PRO_STRINGS_MINSEASON) : minSongSeason) : prevInstrumentTracker.lastSeenSeason;
                     var instrumentData = new ScoreTracker();
                     instrumentData.minSeason = prevInstrumentTracker.minSeason == -1 ? -1 : prevInstrumentTracker.minSeason;
 
@@ -394,6 +399,10 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
                                     {
                                         maxValidSeason = baseSeason;
                                     }
+                                }
+                                else
+                                {
+                                    minSongSeason++;
                                 }
                             }
                             else
