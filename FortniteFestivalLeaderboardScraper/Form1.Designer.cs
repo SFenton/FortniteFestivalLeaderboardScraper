@@ -38,6 +38,7 @@
             this.label2 = new System.Windows.Forms.Label();
             this.tabControl1 = new System.Windows.Forms.TabControl();
             this.tabPage1 = new System.Windows.Forms.TabPage();
+            this.button5 = new System.Windows.Forms.Button();
             this.tabPage2 = new System.Windows.Forms.TabPage();
             this.button4 = new System.Windows.Forms.Button();
             this.button3 = new System.Windows.Forms.Button();
@@ -73,7 +74,8 @@
             this.drumsCheck = new System.Windows.Forms.CheckBox();
             this.vocalsCheck = new System.Windows.Forms.CheckBox();
             this.leadCheck = new System.Windows.Forms.CheckBox();
-            this.button5 = new System.Windows.Forms.Button();
+            this.textBox3 = new System.Windows.Forms.TextBox();
+            this.label8 = new System.Windows.Forms.Label();
             this.tabControl1.SuspendLayout();
             this.tabPage1.SuspendLayout();
             this.tabPage2.SuspendLayout();
@@ -176,8 +178,20 @@
             this.tabPage1.Text = "Process Scores";
             this.tabPage1.UseVisualStyleBackColor = true;
             // 
+            // button5
+            // 
+            this.button5.Location = new System.Drawing.Point(1429, 25);
+            this.button5.Name = "button5";
+            this.button5.Size = new System.Drawing.Size(223, 33);
+            this.button5.TabIndex = 8;
+            this.button5.Text = "Regenerate Output";
+            this.button5.UseVisualStyleBackColor = true;
+            this.button5.Click += new System.EventHandler(this.button5_Click);
+            // 
             // tabPage2
             // 
+            this.tabPage2.Controls.Add(this.label8);
+            this.tabPage2.Controls.Add(this.textBox3);
             this.tabPage2.Controls.Add(this.button4);
             this.tabPage2.Controls.Add(this.button3);
             this.tabPage2.Controls.Add(this.dataGridView1);
@@ -232,14 +246,15 @@
             this.PGD,
             this.PBD,
             this.su});
-            this.dataGridView1.Location = new System.Drawing.Point(8, 8);
+            this.dataGridView1.Location = new System.Drawing.Point(8, 64);
             this.dataGridView1.Name = "dataGridView1";
             this.dataGridView1.RowHeadersVisible = false;
             this.dataGridView1.RowHeadersWidth = 62;
             this.dataGridView1.RowTemplate.Height = 28;
-            this.dataGridView1.Size = new System.Drawing.Size(1656, 827);
+            this.dataGridView1.Size = new System.Drawing.Size(1656, 771);
             this.dataGridView1.TabIndex = 2;
             this.dataGridView1.CellContentClick += DataGridView1_CellContentClick;
+            this.dataGridView1.ColumnHeaderMouseClick += onColumnHeaderMouseClick;
             this.dataGridView1.Visible = false;
             // 
             // isSelected
@@ -573,16 +588,22 @@
             this.leadCheck.UseVisualStyleBackColor = true;
             this.leadCheck.CheckedChanged += new System.EventHandler(this.onInstrumentOutputSelected);
             // 
-            // button5
+            // textBox3
             // 
-            this.button5.Enabled = true;
-            this.button5.Location = new System.Drawing.Point(1429, 25);
-            this.button5.Name = "button5";
-            this.button5.Size = new System.Drawing.Size(223, 33);
-            this.button5.TabIndex = 8;
-            this.button5.Text = "Regenerate Output";
-            this.button5.UseVisualStyleBackColor = true;
-            this.button5.Click += new System.EventHandler(this.button5_Click);
+            this.textBox3.Location = new System.Drawing.Point(8, 16);
+            this.textBox3.Name = "textBox3";
+            this.textBox3.Size = new System.Drawing.Size(304, 26);
+            this.textBox3.TabIndex = 5;
+            this.textBox3.TextChanged += TextBox3_TextChanged;
+            // 
+            // label8
+            // 
+            this.label8.AutoSize = true;
+            this.label8.Location = new System.Drawing.Point(338, 21);
+            this.label8.Name = "label8";
+            this.label8.Size = new System.Drawing.Size(154, 20);
+            this.label8.TabIndex = 6;
+            this.label8.Text = "Search by Title/Artist";
             // 
             // Form1
             // 
@@ -658,6 +679,8 @@
         private System.Windows.Forms.Label label7;
         private System.Windows.Forms.CheckBox invertOutput;
         private System.Windows.Forms.Button button5;
+        private System.Windows.Forms.Label label8;
+        private System.Windows.Forms.TextBox textBox3;
     }
 }
 

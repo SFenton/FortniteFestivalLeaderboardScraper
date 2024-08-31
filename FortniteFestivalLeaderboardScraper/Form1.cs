@@ -26,6 +26,20 @@ namespace FortniteFestivalLeaderboardScraper
         Stars
     }
 
+    public enum SortOrder
+    {
+        None,
+        Title,
+        Artist,
+        Availability,
+        LeadDiff,
+        BassDiff,
+        VocalsDiff,
+        DrumsDiff,
+        ProLeadDiff,
+        ProBassDiff
+    }
+
     public partial class Form1 : Form
     {
         private List<Song> _sparkTracks = new List<Song>();
@@ -33,7 +47,9 @@ namespace FortniteFestivalLeaderboardScraper
         private List<string> supportedInstruments = new List<string>() { "Lead", "Vocals", "Bass", "Drums", "Pro Lead", "Pro Bass" };
         private int selectedColumn = -1;
         private OutputSelection selection = OutputSelection.FullCombo;
+        private SortOrder sortOrder = SortOrder.None;
         private bool _invertOutput = false;
+        private bool isSparkTracksReversed = false;
 
         public Form1()
         {
@@ -110,7 +126,7 @@ namespace FortniteFestivalLeaderboardScraper
 
             foreach (Song song in _sparkTracks)
             {
-                this.dataGridView1.Rows.Add(false, song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
+                this.dataGridView1.Rows.Add(song.isSelected, song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
             }
 
             this.label4.Visible = false;
@@ -119,57 +135,129 @@ namespace FortniteFestivalLeaderboardScraper
 
         private void onColumnHeaderMouseClick(object sender, DataGridViewCellMouseEventArgs e)
         {
+            var filteredTracks = _sparkTracks;
+            if (textBox3.Text.Length != 0)
+            {
+                filteredTracks = _sparkTracks.Where(x => (x.track.tt.ToLowerInvariant().Contains(textBox3.Text.ToLowerInvariant()) || x.track.an.ToLowerInvariant().Contains(textBox3.Text.ToLowerInvariant()))).ToList();
+            }
+
             if (e.ColumnIndex == selectedColumn)
             {
-                _sparkTracks.Reverse();
+                filteredTracks.Reverse();
+                isSparkTracksReversed = !isSparkTracksReversed;
             }
-            else
-            {
                 switch (e.ColumnIndex)
                 {
                     case 1:
-                        _sparkTracks = _sparkTracks.OrderBy(x => x.track.tt).ToList();
+                        filteredTracks = filteredTracks.OrderBy(x => x.track.tt).ToList();
+                        sortOrder = SortOrder.Title;
                         break;
                     case 2:
-                        _sparkTracks = _sparkTracks.OrderBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                        filteredTracks = filteredTracks.OrderBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                        sortOrder = SortOrder.Artist;
                         break;
                     case 3:
-                        _sparkTracks = _sparkTracks.OrderBy(x => x._activeDate).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                        filteredTracks = filteredTracks.OrderBy(x => x._activeDate).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                        sortOrder = SortOrder.Availability;
                         break;
                     case 4:
-                        _sparkTracks = _sparkTracks.OrderBy(x => x.track.@in.gr).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                        filteredTracks = filteredTracks.OrderBy(x => x.track.@in.gr).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                        sortOrder = SortOrder.LeadDiff;
                         break;
                     case 5:
-                        _sparkTracks = _sparkTracks.OrderBy(x => x.track.@in.ba).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                        filteredTracks = filteredTracks.OrderBy(x => x.track.@in.ba).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                        sortOrder = SortOrder.BassDiff;
                         break;
                     case 6:
-                        _sparkTracks = _sparkTracks.OrderBy(x => x.track.@in.vl).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                        filteredTracks = filteredTracks.OrderBy(x => x.track.@in.vl).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                        sortOrder = SortOrder.VocalsDiff;
                         break;
                     case 7:
-                        _sparkTracks = _sparkTracks.OrderBy(x => x.track.@in.ds).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                        filteredTracks = filteredTracks.OrderBy(x => x.track.@in.ds).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                        sortOrder = SortOrder.DrumsDiff;
                         break;
                     case 8:
-                        _sparkTracks = _sparkTracks.OrderBy(x => x.track.@in.pg).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                        filteredTracks = filteredTracks.OrderBy(x => x.track.@in.pg).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                        sortOrder = SortOrder.ProLeadDiff;
                         break;
                     case 9:
-                        _sparkTracks = _sparkTracks.OrderBy(x => x.track.@in.pb).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                        filteredTracks = filteredTracks.OrderBy(x => x.track.@in.pb).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                        sortOrder = SortOrder.ProBassDiff;
                         break;
                     default:
                         break;
-                }
             }
+
+            if (isSparkTracksReversed)
+            {
+                filteredTracks.Reverse();
+            }
+                
 
             selectedColumn = e.ColumnIndex;
             this.dataGridView1.Rows.Clear();
-            foreach (Song song in _sparkTracks)
+            foreach (Song song in filteredTracks)
             {
-                this.dataGridView1.Rows.Add(song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
+                this.dataGridView1.Rows.Add(song.isSelected, song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
+            }
+        }
+
+        private void TextBox3_TextChanged(object sender, System.EventArgs e)
+        {
+            this.dataGridView1.Rows.Clear();
+            var filteredTracks = _sparkTracks;
+            if (textBox3.Text.Length != 0)
+            {
+                filteredTracks = _sparkTracks.Where(x => (x.track.tt.ToLowerInvariant().Contains(textBox3.Text.ToLowerInvariant()) || x.track.an.ToLowerInvariant().Contains(textBox3.Text.ToLowerInvariant()))).ToList();
+            }
+
+            switch (sortOrder)
+            {
+                case SortOrder.Title:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.tt).ToList();
+                    break;
+                case SortOrder.Artist:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    break;
+                case SortOrder.Availability:
+                    filteredTracks = filteredTracks.OrderBy(x => x._activeDate).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    break;
+                case SortOrder.LeadDiff:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.@in.gr).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    break;
+                case SortOrder.BassDiff:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.@in.ba).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    break;
+                case SortOrder.VocalsDiff:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.@in.vl).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    break;
+                case SortOrder.DrumsDiff:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.@in.ds).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    break;
+                case SortOrder.ProLeadDiff:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.@in.pg).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    break;
+                case SortOrder.ProBassDiff:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.@in.pb).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    break;
+                default:
+                    break;
+            }
+
+            if (isSparkTracksReversed)
+            {
+                filteredTracks.Reverse();
+            }
+
+            foreach (Song song in filteredTracks)
+            {
+                this.dataGridView1.Rows.Add(song.isSelected, song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
             }
         }
 
         private void DataGridView1_CellContentClick(object sender, System.Windows.Forms.DataGridViewCellEventArgs e)
         {
-            if (e.ColumnIndex != 0 || e.RowIndex == 0) return;
+            if (e.ColumnIndex != 0 || e.RowIndex == -1) return;
 
             string id = this.dataGridView1.Rows[e.RowIndex].Cells[10].Value.ToString();
             if (songIds.Contains(id))
@@ -180,6 +268,9 @@ namespace FortniteFestivalLeaderboardScraper
             {
                 songIds.Add(id);
             }
+
+            int indexOfSong = _sparkTracks.FindIndex(x => x.track.su == id);
+            _sparkTracks[indexOfSong].isSelected = !_sparkTracks[indexOfSong].isSelected;
         }
 
         private void button3_Click(object sender, EventArgs e)
@@ -193,6 +284,11 @@ namespace FortniteFestivalLeaderboardScraper
                     songIds.Add(id);
                 }
             }
+
+            for (int i = 0; i < _sparkTracks.Count; i++)
+            {
+                _sparkTracks[i].isSelected = true;
+            }
         }
 
         private void button4_Click(object sender, EventArgs e)
@@ -205,6 +301,11 @@ namespace FortniteFestivalLeaderboardScraper
                 {
                     songIds.Remove(id);
                 }
+            }
+
+            for (int i = 0; i < _sparkTracks.Count; i++)
+            {
+                _sparkTracks[i].isSelected = false;
             }
         }
 

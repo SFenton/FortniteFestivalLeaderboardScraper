@@ -30,6 +30,7 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
         public DateTime lastModified { get; set; }
         public string _locale { get; set; }
         public string _templateName { get; set; }
+        public Boolean isSelected { get; set; } = false;
     }
 
     public class Track
