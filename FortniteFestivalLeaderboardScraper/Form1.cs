@@ -50,6 +50,7 @@ namespace FortniteFestivalLeaderboardScraper
         private SortOrder sortOrder = SortOrder.None;
         private bool _invertOutput = false;
         private bool isSparkTracksReversed = false;
+        private Settings _settings = new Settings();
 
         public Form1()
         {
@@ -394,6 +395,62 @@ namespace FortniteFestivalLeaderboardScraper
             button2.Enabled = true;
             button5.Enabled = true;
             textBox2.AppendText(Environment.NewLine + "FortniteFestivalScores.xlsx written out to the directory your application is in.");
+        }
+
+        protected void OnMainWindowClosing(object sender, EventArgs e)
+        {
+            _settings.writeLead = this.leadCheck.Checked;
+            _settings.writeBass = this.bassCheck.Checked;
+            _settings.writeVocals = this.vocalsCheck.Checked;
+            _settings.writeDrums = this.drumsCheck.Checked;
+            _settings.writeProLead = this.proLeadCheck.Checked;
+            _settings.writeProBass = this.proBassCheck.Checked;
+            _settings.invertOutput = this.invertOutput.Checked;
+            _settings.outputSelection = this.selection;
+
+            JSONReadWrite.WriteSettings(_settings);
+        }
+
+        protected void OnMainWindowLoad(object sender, EventArgs e)
+        {
+            _settings = JSONReadWrite.ReadSettings();
+
+            this.leadCheck.Checked = _settings.writeLead;
+            this.bassCheck.Checked = _settings.writeBass;
+            this.vocalsCheck.Checked = _settings.writeVocals;
+            this.drumsCheck.Checked = _settings.writeDrums;
+            this.proBassCheck.Checked = _settings.writeProBass;
+            this.proLeadCheck.Checked = _settings.writeProLead;
+            this.invertOutput.Checked = _settings.invertOutput;
+            this.selection = _settings.outputSelection;
+
+            switch (this.selection)
+            {
+                case OutputSelection.FullCombo:
+                    this.fullCombo.Checked = true;
+                    break;
+                case OutputSelection.Score:
+                    this.score.Checked = true;
+                    break;
+                case OutputSelection.Percentage:
+                    this.percentage.Checked = true;
+                    break;
+                case OutputSelection.Artist:
+                    this.artist.Checked = true;
+                    break;
+                case OutputSelection.Title:
+                    this.title.Checked = true;
+                    break;
+                case OutputSelection.Stars:
+                    this.stars.Checked = true;
+                    break;
+                case OutputSelection.Difficulty:
+                    this.difficulty.Checked = true;
+                    break;
+                default:
+                    this.fullCombo.Checked = true;
+                    break;
+            }
         }
     }
 }

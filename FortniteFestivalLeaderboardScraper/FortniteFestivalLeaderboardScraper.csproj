@@ -113,6 +113,7 @@
     <Compile Include="Helpers\LeaderBoardClasses.cs" />
     <Compile Include="Helpers\Leaderboard\ScoreClasses.cs" />
     <Compile Include="Helpers\MaxSeasonIdentifier.cs" />
+    <Compile Include="Helpers\Settings.cs" />
     <Compile Include="Helpers\SparkTrackRetriever.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

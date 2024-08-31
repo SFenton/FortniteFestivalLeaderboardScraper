@@ -82,6 +82,8 @@
             ((System.ComponentModel.ISupportInitialize)(this.dataGridView1)).BeginInit();
             this.tabPage3.SuspendLayout();
             this.SuspendLayout();
+            this.FormClosed += OnMainWindowClosing;
+            this.Load += OnMainWindowLoad;
             // 
             // textBox1
             // 

@@ -44,5 +44,39 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.FileIO
                 return new List<LeaderboardData>();
             }
         }
+
+        public static bool WriteSettings(Settings settings)
+        {
+            try
+            {
+                var exePath = Path.GetDirectoryName(Assembly.GetEntryAssembly().Location);
+                var json = JsonConvert.SerializeObject(settings, Formatting.Indented);
+                Console.WriteLine(exePath);
+
+                File.WriteAllText(exePath + "\\FNFLS_settings.json", json);
+            }
+            catch (Exception e)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        public static Settings ReadSettings()
+        {
+            try
+            {
+                var exePath = Path.GetDirectoryName(Assembly.GetEntryAssembly().Location);
+                var str = File.ReadAllText(exePath + "\\FNFLS_settings.json");
+                var settings = JsonConvert.DeserializeObject<Settings>(str);
+
+                return settings;
+            }
+            catch (Exception e)
+            {
+                return new Settings();
+            }
+        }
     }
 }
