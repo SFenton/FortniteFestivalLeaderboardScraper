@@ -252,7 +252,15 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
                     }
 
 
-                    worksheet.Cells[recordIndex, 3].Value = scoreTracker.isFullCombo;
+                    worksheet.Cells[recordIndex, 3].Value = scoreTracker.isFullCombo ? "✔" : "❌";
+                    if (scoreTracker.isFullCombo)
+                    {
+                        worksheet.Cells[recordIndex, 3].Style.Font.Color.SetColor(0, 0, 128, 0);
+                    }
+                    else
+                    {
+                        worksheet.Cells[recordIndex, 3].Style.Font.Color.SetColor(0, 128, 0, 0);
+                    }
 
                     if (scoreTracker.numStars == 6)
                     {
@@ -282,14 +290,10 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Excel
                     recordIndex++;
                 }
 
-                worksheet.Column(1).AutoFit();
-                worksheet.Column(2).AutoFit();
-                worksheet.Column(3).AutoFit();
-                worksheet.Column(4).AutoFit();
-                worksheet.Column(5).AutoFit();
-                worksheet.Column(6).AutoFit();
-                worksheet.Column(7).AutoFit();
-                worksheet.Column(8).AutoFit();
+                worksheet.Cells.AutoFitColumns();
+                worksheet.Columns[4].Width = 15;
+                worksheet.Columns[5].Width = 15;
+                worksheet.Cells.Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Left;
             }
 
             var exePath = Path.GetDirectoryName(Assembly.GetEntryAssembly().Location);
