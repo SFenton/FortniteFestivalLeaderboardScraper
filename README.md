@@ -1,4 +1,4 @@
-# Fortnite Festival Leaderboard Scraper
+# Fortnite Festival Score Tracker
 
 A simple Windows utility for retrieving your highest Fortnite Festival scores across all instruments and across all seasons!
 
