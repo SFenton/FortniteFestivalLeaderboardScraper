@@ -248,55 +248,31 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
                     {
                         case 0:
                             instrumentName = DRUMS;
-                            if (!supportedInstruments.Contains("Drums"))
-                            {
-                                continue;
-                            }
                             prevInstrumentTracker = prevSongData.drums ?? new ScoreTracker();
                             prevInstrumentTracker.difficulty = song.track.@in.ds;
                             break;
                         case 1:
                             instrumentName = GUITAR;
-                            if (!supportedInstruments.Contains("Lead"))
-                            {
-                                continue;
-                            }
                             prevInstrumentTracker = prevSongData.guitar ?? new ScoreTracker();
                             prevInstrumentTracker.difficulty = song.track.@in.gr;
                             break;
                         case 2:
                             instrumentName = PRO_BASS;
-                            if (!supportedInstruments.Contains("Pro Bass"))
-                            {
-                                continue;
-                            }
                             prevInstrumentTracker = prevSongData.pro_bass ?? new ScoreTracker();
                             prevInstrumentTracker.difficulty = song.track.@in.pb;
                             break;
                         case 3:
                             instrumentName = PRO_GUITAR;
-                            if (!supportedInstruments.Contains("Pro Lead"))
-                            {
-                                continue;
-                            }
                             prevInstrumentTracker = prevSongData.pro_guitar ?? new ScoreTracker();
                             prevInstrumentTracker.difficulty = song.track.@in.pg;
                             break;
                         case 4:
                             instrumentName = BASS;
-                            if (!supportedInstruments.Contains("Bass"))
-                            {
-                                continue;
-                            }
                             prevInstrumentTracker = prevSongData.bass ?? new ScoreTracker();
                             prevInstrumentTracker.difficulty = song.track.@in.ba;
                             break;
                         case 5:
                             instrumentName = VOCALS;
-                            if (!supportedInstruments.Contains("Vocals"))
-                            {
-                                continue;
-                            }
                             prevInstrumentTracker = prevSongData.vocals ?? new ScoreTracker();
                             prevInstrumentTracker.difficulty = song.track.@in.vl;
                             break;
