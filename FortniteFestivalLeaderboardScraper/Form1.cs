@@ -42,6 +42,7 @@ namespace FortniteFestivalLeaderboardScraper
         Title,
         Artist,
         Availability,
+        AvailableLocally,
         Difficulty,
         LeadDiff,
         BassDiff,
@@ -105,6 +106,9 @@ namespace FortniteFestivalLeaderboardScraper
             if (token.Item1 == false || token.Item2.access_token == null)
             {
                 textBox2.AppendText(Environment.NewLine + "An error occurred during authentication. Please try a new exchange code.");
+                tabControl1.TabPages.Add(tabPage2);
+                tabControl1.TabPages.Add(tabPage4);
+                tabControl1.TabPages.Add(tabPage3);
                 button1.Enabled = true;
                 button2.Enabled = true;
                 button5.Enabled = true;
@@ -149,15 +153,18 @@ namespace FortniteFestivalLeaderboardScraper
                 {
                     onScoreViewFocused(sender, e);
                 }
-                return;
             }
 
             _sparkTracks = await SparkTrackRetriever.GetSparkTracks();
+            _previousData = JSONReadWrite.ReadLeaderboardJSON();
             this.dataGridView1.Rows.Clear();
 
-            foreach (Song song in _sparkTracks)
+            for (int i = 0; i < _sparkTracks.Count; i++)
             {
-                this.dataGridView1.Rows.Add(song.isSelected, song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
+                Song song = _sparkTracks[i];
+                this.dataGridView1.Rows.Add(song.isSelected, _previousData.FindIndex(x => x.songId == song.track.su) >= 0 ? "✔" : "❌", song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
+                this.dataGridView1.Rows[i].Cells[1].Style.ForeColor = _previousData.FindIndex(x => x.songId == song.track.su) >= 0 ? Color.Green : Color.Red;
+                this.dataGridView1.Rows[i].Cells[1].Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
             }
 
             this.label4.Visible = false;
@@ -435,38 +442,42 @@ namespace FortniteFestivalLeaderboardScraper
                 switch (e.ColumnIndex)
                 {
                     case 1:
+                        filteredTracks = filteredTracks.OrderBy(x => _previousData.FindIndex(y => y.songId == x.track.su) >= 0).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                        sortOrder = SortOrder.AvailableLocally;
+                        break;
+                    case 2:
                         filteredTracks = filteredTracks.OrderBy(x => x.track.tt).ToList();
                         sortOrder = SortOrder.Title;
                         break;
-                    case 2:
+                    case 3:
                         filteredTracks = filteredTracks.OrderBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
                         sortOrder = SortOrder.Artist;
                         break;
-                    case 3:
+                    case 4:
                         filteredTracks = filteredTracks.OrderBy(x => x._activeDate).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
                         sortOrder = SortOrder.Availability;
                         break;
-                    case 4:
+                    case 5:
                         filteredTracks = filteredTracks.OrderBy(x => x.track.@in.gr).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
                         sortOrder = SortOrder.LeadDiff;
                         break;
-                    case 5:
+                    case 6:
                         filteredTracks = filteredTracks.OrderBy(x => x.track.@in.ba).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
                         sortOrder = SortOrder.BassDiff;
                         break;
-                    case 6:
+                    case 7:
                         filteredTracks = filteredTracks.OrderBy(x => x.track.@in.vl).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
                         sortOrder = SortOrder.VocalsDiff;
                         break;
-                    case 7:
+                    case 8:
                         filteredTracks = filteredTracks.OrderBy(x => x.track.@in.ds).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
                         sortOrder = SortOrder.DrumsDiff;
                         break;
-                    case 8:
+                    case 9:
                         filteredTracks = filteredTracks.OrderBy(x => x.track.@in.pg).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
                         sortOrder = SortOrder.ProLeadDiff;
                         break;
-                    case 9:
+                    case 10:
                         filteredTracks = filteredTracks.OrderBy(x => x.track.@in.pb).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
                         sortOrder = SortOrder.ProBassDiff;
                         break;
@@ -482,9 +493,12 @@ namespace FortniteFestivalLeaderboardScraper
 
             selectedColumn = e.ColumnIndex;
             this.dataGridView1.Rows.Clear();
-            foreach (Song song in filteredTracks)
+            for (int i = 0; i < filteredTracks.Count; i++)
             {
-                this.dataGridView1.Rows.Add(song.isSelected, song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
+                Song song = filteredTracks[i];
+                this.dataGridView1.Rows.Add(song.isSelected, _previousData.FindIndex(x => x.songId == song.track.su) >= 0 ? "✔" : "❌", song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
+                this.dataGridView1.Rows[i].Cells[1].Style.ForeColor = _previousData.FindIndex(x => x.songId == song.track.su) >= 0 ? Color.Green : Color.Red;
+                this.dataGridView1.Rows[i].Cells[1].Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
             }
 
             this.dataGridView1.AutoResizeColumns(DataGridViewAutoSizeColumnsMode.AllCells);
@@ -549,6 +563,9 @@ namespace FortniteFestivalLeaderboardScraper
 
             switch (sortOrder)
             {
+                case SortOrder.AvailableLocally:
+                    filteredTracks = filteredTracks.OrderBy(x => _previousData.FindIndex(y => y.songId == x.track.su) >= 0).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    break;
                 case SortOrder.Title:
                     filteredTracks = filteredTracks.OrderBy(x => x.track.tt).ToList();
                     break;
@@ -585,9 +602,12 @@ namespace FortniteFestivalLeaderboardScraper
                 filteredTracks.Reverse();
             }
 
-            foreach (Song song in filteredTracks)
+            for (int i = 0; i < filteredTracks.Count; i++)
             {
-                this.dataGridView1.Rows.Add(song.isSelected, song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
+                Song song = filteredTracks[i];
+                this.dataGridView1.Rows.Add(song.isSelected, _previousData.FindIndex(x => x.songId == song.track.su) >= 0 ? "✔" : "❌", song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
+                this.dataGridView1.Rows[i].Cells[1].Style.ForeColor = _previousData.FindIndex(x => x.songId == song.track.su) >= 0 ? Color.Green : Color.Red;
+                this.dataGridView1.Rows[i].Cells[1].Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
             }
 
             this.dataGridView1.AutoResizeColumns(DataGridViewAutoSizeColumnsMode.AllCells);
@@ -605,7 +625,7 @@ namespace FortniteFestivalLeaderboardScraper
         {
             if (e.ColumnIndex != 0 || e.RowIndex == -1) return;
 
-            string id = this.dataGridView1.Rows[e.RowIndex].Cells[10].Value.ToString();
+            string id = this.dataGridView1.Rows[e.RowIndex].Cells[11].Value.ToString();
             if (songIds.Contains(id))
             {
                 songIds.Remove(id);
@@ -624,7 +644,7 @@ namespace FortniteFestivalLeaderboardScraper
             for (int i = 0; i < this.dataGridView1.Rows.Count; i++)
             {
                 dataGridView1.Rows[i].Cells[0].Value = true;
-                var id = dataGridView1.Rows[i].Cells[10].Value.ToString();
+                var id = dataGridView1.Rows[i].Cells[11].Value.ToString();
                 if (!songIds.Contains(id))
                 {
                     songIds.Add(id);
@@ -642,7 +662,7 @@ namespace FortniteFestivalLeaderboardScraper
             for (int i = 0; i < this.dataGridView1.Rows.Count; i++)
             {
                 dataGridView1.Rows[i].Cells[0].Value = false;
-                var id = dataGridView1.Rows[i].Cells[10].Value.ToString();
+                var id = dataGridView1.Rows[i].Cells[11].Value.ToString();
                 if (songIds.Contains(id))
                 {
                     songIds.Remove(id);
