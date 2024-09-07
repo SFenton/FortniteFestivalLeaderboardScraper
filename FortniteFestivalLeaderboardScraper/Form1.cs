@@ -15,6 +15,16 @@ using System.Windows.Forms;
 
 namespace FortniteFestivalLeaderboardScraper
 {
+    public enum Instruments
+    {
+        Lead,
+        Drums,
+        Vocals,
+        Bass,
+        ProLead,
+        ProBass
+    }
+
     public enum OutputSelection
     {
         FullCombo,
@@ -32,24 +42,35 @@ namespace FortniteFestivalLeaderboardScraper
         Title,
         Artist,
         Availability,
+        Difficulty,
         LeadDiff,
         BassDiff,
         VocalsDiff,
         DrumsDiff,
         ProLeadDiff,
-        ProBassDiff
+        ProBassDiff,
+        Score,
+        PercentageHit,
+        SeasonAchieved,
+        FullCombo,
+        Stars
     }
 
     public partial class Form1 : Form
     {
         private List<Song> _sparkTracks = new List<Song>();
+        private List<LeaderboardAPI.LeaderboardData> _previousData = new List<LeaderboardAPI.LeaderboardData>();
         private List<string> songIds = new List<string>();
         private List<string> supportedInstruments = new List<string>() { "Lead", "Vocals", "Bass", "Drums", "Pro Lead", "Pro Bass" };
         private int selectedColumn = -1;
+        private int selectedSortColumn = -1;
         private OutputSelection selection = OutputSelection.FullCombo;
         private SortOrder sortOrder = SortOrder.None;
+        private SortOrder scoreSortOrder = SortOrder.None;
+        private Instruments scoreViewerInstrument = Instruments.Lead;
         private bool _invertOutput = false;
         private bool isSparkTracksReversed = false;
+        private bool isPreviousDataReversed = false;
         private Settings _settings = new Settings();
 
         public Form1()
@@ -72,6 +93,7 @@ namespace FortniteFestivalLeaderboardScraper
             }
 
             tabControl1.TabPages.Remove(tabPage2);
+            tabControl1.TabPages.Remove(tabPage4);
             tabControl1.TabPages.Remove(tabPage3);
             button1.Enabled = false;
             button2.Enabled = false;
@@ -95,13 +117,16 @@ namespace FortniteFestivalLeaderboardScraper
             var sparkTracks = _sparkTracks.Count != 0 ? _sparkTracks : (await SparkTrackRetriever.GetSparkTracks());
             textBox2.AppendText(Environment.NewLine + "Attempting to find max season value...");
             var maxSeason = await MaxSeasonIdentifier.GetMaxSeason(token.Item2.access_token);
-            var previousData = JSONReadWrite.ReadLeaderboardJSON();
-            var scores = await LeaderboardAPI.GetLeaderboardsForInstrument(sparkTracks, token.Item2.access_token, token.Item2.account_id, maxSeason, previousData, textBox2, songIds, supportedInstruments);
+            _previousData = JSONReadWrite.ReadLeaderboardJSON();
+            var scores = await LeaderboardAPI.GetLeaderboardsForInstrument(sparkTracks, token.Item2.access_token, token.Item2.account_id, maxSeason, _previousData, textBox2, songIds, supportedInstruments);
             if (scores.Item1 == false)
             {
                 button1.Enabled = true;
                 button2.Enabled = true;
                 button5.Enabled = true;
+                tabControl1.TabPages.Add(tabPage2);
+                tabControl1.TabPages.Add(tabPage4);
+                tabControl1.TabPages.Add(tabPage3);
                 return;
             }
             JSONReadWrite.WriteLeaderboardJSON(scores.Item2);
@@ -112,6 +137,7 @@ namespace FortniteFestivalLeaderboardScraper
             button2.Enabled = true;
             button5.Enabled = true;
             tabControl1.TabPages.Add(tabPage2);
+            tabControl1.TabPages.Add(tabPage4);
             tabControl1.TabPages.Add(tabPage3);
         }
 
@@ -119,6 +145,10 @@ namespace FortniteFestivalLeaderboardScraper
         {
             if (((TabControl)sender).SelectedTab.Name != "tabPage2" || _sparkTracks.Count > 0)
             {
+                if (((TabControl)sender).SelectedTab.Name != "tabPage2")
+                {
+                    onScoreViewFocused(sender, e);
+                }
                 return;
             }
 
@@ -132,6 +162,261 @@ namespace FortniteFestivalLeaderboardScraper
 
             this.label4.Visible = false;
             this.dataGridView1.Visible = true;
+            this.dataGridView1.AutoResizeColumns(DataGridViewAutoSizeColumnsMode.AllCells);
+            this.dataGridView1.Columns[0].MinimumWidth = 100;
+        }
+
+        private void onScoreViewFocused(object sender, EventArgs e)
+        {
+            if (((TabControl)sender).SelectedTab.Name != "tabPage4")
+            {
+                return;
+            }
+
+            _previousData = JSONReadWrite.ReadLeaderboardJSON();
+
+            sortScoreViewData(_previousData);
+        }
+
+        private void sortScoreViewData(List<LeaderboardAPI.LeaderboardData> dataList)
+        {
+            this.dataGridView2.Rows.Clear();
+
+            if (textBox4.Text.Length != 0)
+            {
+                dataList = dataList.Where(x => (x.title.ToLowerInvariant().Contains(textBox4.Text.ToLowerInvariant()) || x.artist.ToLowerInvariant().Contains(textBox4.Text.ToLowerInvariant()))).ToList();
+            }
+
+            switch (scoreSortOrder)
+            {
+                case SortOrder.Title:
+                    dataList = dataList.OrderBy(x => x.title).ToList();
+                    break;
+                case SortOrder.Artist:
+                    dataList = dataList.OrderBy(x => x.artist).ThenBy(x => x.title).ToList();
+                    break;
+                case SortOrder.Difficulty:
+                    switch (scoreViewerInstrument)
+                    {
+                        case Instruments.Lead:
+                            dataList = dataList.OrderBy(x => x.guitar.difficulty).ToList();
+                            break;
+                        case Instruments.Vocals:
+                            dataList = dataList.OrderBy(x => x.vocals.difficulty).ToList();
+                            break;
+                        case Instruments.Bass:
+                            dataList = dataList.OrderBy(x => x.bass.difficulty).ToList();
+                            break;
+                        case Instruments.Drums:
+                            dataList = dataList.OrderBy(x => x.drums.difficulty).ToList();
+                            break;
+                        case Instruments.ProLead:
+                            dataList = dataList.OrderBy(x => x.pro_guitar.difficulty).ToList();
+                            break;
+                        case Instruments.ProBass:
+                            dataList = dataList.OrderBy(x => x.pro_bass.difficulty).ToList();
+                            break;
+                        default:
+                            break;
+                    }
+                    break;
+                case SortOrder.FullCombo:
+                    switch (scoreViewerInstrument)
+                    {
+                        case Instruments.Lead:
+                            dataList = dataList.OrderBy(x => x.guitar.isFullCombo).ToList();
+                            break;
+                        case Instruments.Vocals:
+                            dataList = dataList.OrderBy(x => x.vocals.isFullCombo).ToList();
+                            break;
+                        case Instruments.Bass:
+                            dataList = dataList.OrderBy(x => x.bass.isFullCombo).ToList();
+                            break;
+                        case Instruments.Drums:
+                            dataList = dataList.OrderBy(x => x.drums.isFullCombo).ToList();
+                            break;
+                        case Instruments.ProLead:
+                            dataList = dataList.OrderBy(x => x.pro_guitar.isFullCombo).ToList();
+                            break;
+                        case Instruments.ProBass:
+                            dataList = dataList.OrderBy(x => x.pro_bass.isFullCombo).ToList();
+                            break;
+                        default:
+                            break;
+                    }
+                    break;
+                case SortOrder.Stars:
+                    switch (scoreViewerInstrument)
+                    {
+                        case Instruments.Lead:
+                            dataList = dataList.OrderBy(x => x.guitar.numStars).ToList();
+                            break;
+                        case Instruments.Vocals:
+                            dataList = dataList.OrderBy(x => x.vocals.numStars).ToList();
+                            break;
+                        case Instruments.Bass:
+                            dataList = dataList.OrderBy(x => x.bass.numStars).ToList();
+                            break;
+                        case Instruments.Drums:
+                            dataList = dataList.OrderBy(x => x.drums.numStars).ToList();
+                            break;
+                        case Instruments.ProLead:
+                            dataList = dataList.OrderBy(x => x.pro_guitar.numStars).ToList();
+                            break;
+                        case Instruments.ProBass:
+                            dataList = dataList.OrderBy(x => x.pro_bass.numStars).ToList();
+                            break;
+                        default:
+                            break;
+                    }
+                    break;
+                case SortOrder.Score:
+                    switch (scoreViewerInstrument)
+                    {
+                        case Instruments.Lead:
+                            dataList = dataList.OrderBy(x => x.guitar.maxScore).ToList();
+                            break;
+                        case Instruments.Vocals:
+                            dataList = dataList.OrderBy(x => x.vocals.maxScore).ToList();
+                            break;
+                        case Instruments.Bass:
+                            dataList = dataList.OrderBy(x => x.bass.maxScore).ToList();
+                            break;
+                        case Instruments.Drums:
+                            dataList = dataList.OrderBy(x => x.drums.maxScore).ToList();
+                            break;
+                        case Instruments.ProLead:
+                            dataList = dataList.OrderBy(x => x.pro_guitar.maxScore).ToList();
+                            break;
+                        case Instruments.ProBass:
+                            dataList = dataList.OrderBy(x => x.pro_bass.maxScore).ToList();
+                            break;
+                        default:
+                            break;
+                    }
+                    break;
+                case SortOrder.PercentageHit:
+                    switch (scoreViewerInstrument)
+                    {
+                        case Instruments.Lead:
+                            dataList = dataList.OrderBy(x => x.guitar.percentHit).ToList();
+                            break;
+                        case Instruments.Vocals:
+                            dataList = dataList.OrderBy(x => x.vocals.percentHit).ToList();
+                            break;
+                        case Instruments.Bass:
+                            dataList = dataList.OrderBy(x => x.bass.percentHit).ToList();
+                            break;
+                        case Instruments.Drums:
+                            dataList = dataList.OrderBy(x => x.drums.percentHit).ToList();
+                            break;
+                        case Instruments.ProLead:
+                            dataList = dataList.OrderBy(x => x.pro_guitar.percentHit).ToList();
+                            break;
+                        case Instruments.ProBass:
+                            dataList = dataList.OrderBy(x => x.pro_bass.percentHit).ToList();
+                            break;
+                        default:
+                            break;
+                    }
+                    break;
+                case SortOrder.SeasonAchieved:
+                    switch (scoreViewerInstrument)
+                    {
+                        case Instruments.Lead:
+                            dataList = dataList.OrderBy(x => x.guitar.season).ToList();
+                            break;
+                        case Instruments.Vocals:
+                            dataList = dataList.OrderBy(x => x.vocals.season).ToList();
+                            break;
+                        case Instruments.Bass:
+                            dataList = dataList.OrderBy(x => x.bass.season).ToList();
+                            break;
+                        case Instruments.Drums:
+                            dataList = dataList.OrderBy(x => x.drums.season).ToList();
+                            break;
+                        case Instruments.ProLead:
+                            dataList = dataList.OrderBy(x => x.pro_guitar.season).ToList();
+                            break;
+                        case Instruments.ProBass:
+                            dataList = dataList.OrderBy(x => x.pro_bass.season).ToList();
+                            break;
+                        default:
+                            break;
+                    }
+                    break;
+                default:
+                    break;
+            }
+
+            if (isPreviousDataReversed)
+            {
+                dataList.Reverse();
+            }
+
+            for (int k = 0; k < dataList.Count; k++)
+            {
+                var song = dataList[k];
+                var data = song.guitar;
+                switch (scoreViewerInstrument)
+                {
+                    case Instruments.Lead:
+                        data = song.guitar;
+                        break;
+                    case Instruments.Vocals:
+                        data = song.vocals;
+                        break;
+                    case Instruments.Bass:
+                        data = song.bass;
+                        break;
+                    case Instruments.Drums:
+                        data = song.drums;
+                        break;
+                    case Instruments.ProLead:
+                        data = song.pro_guitar;
+                        break;
+                    case Instruments.ProBass:
+                        data = song.pro_bass;
+                        break;
+                    default:
+                        break;
+                }
+
+                var starsString = "";
+                if (data.numStars == 6)
+                {
+                    starsString = "⍟⍟⍟⍟⍟";
+                }
+                else
+                {
+                    for (int i = 0; i < data.numStars; i++)
+                    {
+                        starsString += "⍟";
+                    }
+                }
+
+                if (starsString == "")
+                {
+                    starsString = "N/A";
+                }
+
+                this.dataGridView2.Rows.Add(song.title, song.artist, data.isFullCombo ? "✔" : "❌", starsString, data.maxScore, (data.percentHit / 10000) + "%", data.season, data.difficulty);
+
+                if (data.numStars == 6)
+                {
+                    this.dataGridView2.Rows[k].Cells[3].Style.ForeColor = Color.Gold;
+                }
+                if (data.numStars != 0)
+                {
+                    this.dataGridView2.Rows[k].Cells[3].Style.Font = new Font("Verdana", 16, FontStyle.Bold);
+                }
+
+                this.dataGridView2.Rows[k].Cells[2].Style.ForeColor = data.isFullCombo ? Color.Green : Color.Red;
+                this.dataGridView2.Rows[k].Cells[2].Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            }
+
+            this.dataGridView2.Visible = true;
+            this.dataGridView2.AutoResizeColumns(DataGridViewAutoSizeColumnsMode.AllCells);
         }
 
         private void onColumnHeaderMouseClick(object sender, DataGridViewCellMouseEventArgs e)
@@ -201,6 +486,56 @@ namespace FortniteFestivalLeaderboardScraper
             {
                 this.dataGridView1.Rows.Add(song.isSelected, song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
             }
+
+            this.dataGridView1.AutoResizeColumns(DataGridViewAutoSizeColumnsMode.AllCells);
+            this.dataGridView1.Columns[0].MinimumWidth = 100;
+        }
+
+        private void onScoreViewerColumnHeaderMouseClick(object sender, DataGridViewCellMouseEventArgs e)
+        {
+            if (e.ColumnIndex == selectedSortColumn)
+            {
+                isPreviousDataReversed = !isPreviousDataReversed;
+            }
+            else
+            {
+                isPreviousDataReversed = false;
+            }
+            switch (e.ColumnIndex)
+            {
+                case 0:
+                    scoreSortOrder = SortOrder.Title;
+                    break;
+                case 1:
+                    scoreSortOrder = SortOrder.Artist;
+                    break;
+                case 2:
+                    scoreSortOrder = SortOrder.FullCombo;
+                    break;
+                case 3:
+                    scoreSortOrder = SortOrder.Stars;
+                    break;
+                case 4:
+                    scoreSortOrder = SortOrder.Score;
+                    break;
+                case 5:
+                    scoreSortOrder = SortOrder.PercentageHit;
+                    break;
+                case 6:
+                    scoreSortOrder = SortOrder.SeasonAchieved;
+                    break;
+                case 7:
+                    scoreSortOrder = SortOrder.Difficulty;
+                    break;
+                default:
+                    break;
+            }
+
+
+            selectedSortColumn = e.ColumnIndex;
+            this.dataGridView2.Rows.Clear();
+
+            sortScoreViewData(_previousData);
         }
 
         private void TextBox3_TextChanged(object sender, System.EventArgs e)
@@ -254,6 +589,16 @@ namespace FortniteFestivalLeaderboardScraper
             {
                 this.dataGridView1.Rows.Add(song.isSelected, song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
             }
+
+            this.dataGridView1.AutoResizeColumns(DataGridViewAutoSizeColumnsMode.AllCells);
+            this.dataGridView1.Columns[0].MinimumWidth = 100;
+        }
+
+        private void TextBox4_TextChanged(object sender, System.EventArgs e)
+        {
+            this.dataGridView2.Rows.Clear();
+
+            sortScoreViewData(_previousData);
         }
 
         private void DataGridView1_CellContentClick(object sender, System.Windows.Forms.DataGridViewCellEventArgs e)
@@ -367,6 +712,7 @@ namespace FortniteFestivalLeaderboardScraper
         private void button5_Click(object sender, EventArgs e)
         {
             tabControl1.TabPages.Remove(tabPage2);
+            tabControl1.TabPages.Remove(tabPage4);
             tabControl1.TabPages.Remove(tabPage3);
             button1.Enabled = false;
             button2.Enabled = false;
@@ -381,6 +727,7 @@ namespace FortniteFestivalLeaderboardScraper
                 textBox2.AppendText(Environment.NewLine + "Cached data does not exist, contains no content, or encountered an error while loading. Please regenerate your output by querying your scores again.");
 
                 tabControl1.TabPages.Add(tabPage2);
+                tabControl1.TabPages.Add(tabPage4);
                 tabControl1.TabPages.Add(tabPage3);
                 button1.Enabled = true;
                 button2.Enabled = true;
@@ -390,6 +737,7 @@ namespace FortniteFestivalLeaderboardScraper
 
             ExcelSpreadsheetGenerator.GenerateExcelSpreadsheet(previousData, supportedInstruments, selection, _invertOutput);
             tabControl1.TabPages.Add(tabPage2);
+            tabControl1.TabPages.Add(tabPage4);
             tabControl1.TabPages.Add(tabPage3);
             button1.Enabled = true;
             button2.Enabled = true;
@@ -451,6 +799,41 @@ namespace FortniteFestivalLeaderboardScraper
                     this.fullCombo.Checked = true;
                     break;
             }
+        }
+
+        private void onInstrumentScoreChanged(object sender, EventArgs e)
+        {
+            RadioButton element = sender as RadioButton;
+            if (!element.Checked)
+            {
+                return;
+            }
+
+            switch (element.Name) 
+            {
+                case "radioButton1":
+                    scoreViewerInstrument = Instruments.Lead;
+                    break;
+                case "radioButton2":
+                    scoreViewerInstrument = Instruments.Drums;
+                    break;
+                case "radioButton3":
+                    scoreViewerInstrument = Instruments.Vocals;
+                    break;
+                case "radioButton4":
+                    scoreViewerInstrument = Instruments.Bass;
+                    break;
+                case "radioButton5":
+                    scoreViewerInstrument = Instruments.ProLead;
+                    break;
+                case "radioButton6":
+                    scoreViewerInstrument = Instruments.ProBass;
+                    break;
+                default:
+                    break;
+            }
+
+            sortScoreViewData(_previousData);
         }
     }
 }

@@ -1,4 +1,7 @@
-﻿namespace FortniteFestivalLeaderboardScraper
+﻿using System.Windows.Forms;
+using System;
+
+namespace FortniteFestivalLeaderboardScraper
 {
     partial class Form1
     {
@@ -40,6 +43,8 @@
             this.tabPage1 = new System.Windows.Forms.TabPage();
             this.button5 = new System.Windows.Forms.Button();
             this.tabPage2 = new System.Windows.Forms.TabPage();
+            this.label8 = new System.Windows.Forms.Label();
+            this.textBox3 = new System.Windows.Forms.TextBox();
             this.button4 = new System.Windows.Forms.Button();
             this.button3 = new System.Windows.Forms.Button();
             this.dataGridView1 = new System.Windows.Forms.DataGridView();
@@ -56,6 +61,24 @@
             this.su = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.label4 = new System.Windows.Forms.Label();
             this.label3 = new System.Windows.Forms.Label();
+            this.tabPage4 = new System.Windows.Forms.TabPage();
+            this.radioButton6 = new System.Windows.Forms.RadioButton();
+            this.radioButton5 = new System.Windows.Forms.RadioButton();
+            this.radioButton4 = new System.Windows.Forms.RadioButton();
+            this.radioButton3 = new System.Windows.Forms.RadioButton();
+            this.radioButton2 = new System.Windows.Forms.RadioButton();
+            this.radioButton1 = new System.Windows.Forms.RadioButton();
+            this.label9 = new System.Windows.Forms.Label();
+            this.textBox4 = new System.Windows.Forms.TextBox();
+            this.dataGridView2 = new System.Windows.Forms.DataGridView();
+            this.dataGridViewTextBoxColumn1 = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.dataGridViewTextBoxColumn2 = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.FullComboColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.StarsColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.ScoreColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.PercentageHitColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.SeasonAchievedColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.DifficultyColumn = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.tabPage3 = new System.Windows.Forms.TabPage();
             this.invertOutput = new System.Windows.Forms.CheckBox();
             this.label7 = new System.Windows.Forms.Label();
@@ -74,12 +97,14 @@
             this.drumsCheck = new System.Windows.Forms.CheckBox();
             this.vocalsCheck = new System.Windows.Forms.CheckBox();
             this.leadCheck = new System.Windows.Forms.CheckBox();
-            this.textBox3 = new System.Windows.Forms.TextBox();
-            this.label8 = new System.Windows.Forms.Label();
+            this.dataGridViewCheckBoxColumn1 = new System.Windows.Forms.DataGridViewCheckBoxColumn();
+            this.dataGridViewTextBoxColumn3 = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.tabControl1.SuspendLayout();
             this.tabPage1.SuspendLayout();
             this.tabPage2.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.dataGridView1)).BeginInit();
+            this.tabPage4.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)(this.dataGridView2)).BeginInit();
             this.tabPage3.SuspendLayout();
             this.SuspendLayout();
             this.FormClosed += OnMainWindowClosing;
@@ -154,6 +179,7 @@
             // 
             this.tabControl1.Controls.Add(this.tabPage1);
             this.tabControl1.Controls.Add(this.tabPage2);
+            this.tabControl1.Controls.Add(this.tabPage4);
             this.tabControl1.Controls.Add(this.tabPage3);
             this.tabControl1.Dock = System.Windows.Forms.DockStyle.Fill;
             this.tabControl1.Location = new System.Drawing.Point(0, 0);
@@ -182,6 +208,7 @@
             // 
             // button5
             // 
+            this.button5.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
             this.button5.Location = new System.Drawing.Point(1429, 25);
             this.button5.Name = "button5";
             this.button5.Size = new System.Drawing.Size(223, 33);
@@ -207,9 +234,26 @@
             this.tabPage2.Text = "Select Songs";
             this.tabPage2.UseVisualStyleBackColor = true;
             // 
+            // label8
+            // 
+            this.label8.AutoSize = true;
+            this.label8.Location = new System.Drawing.Point(338, 21);
+            this.label8.Name = "label8";
+            this.label8.Size = new System.Drawing.Size(154, 20);
+            this.label8.TabIndex = 6;
+            this.label8.Text = "Search by Title/Artist";
+            // 
+            // textBox3
+            // 
+            this.textBox3.Location = new System.Drawing.Point(8, 16);
+            this.textBox3.Name = "textBox3";
+            this.textBox3.Size = new System.Drawing.Size(304, 26);
+            this.textBox3.TabIndex = 5;
+            this.textBox3.TextChanged += TextBox3_TextChanged;
+            // 
             // button4
             // 
-            this.button4.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)));
+            this.button4.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
             this.button4.Location = new System.Drawing.Point(1463, 849);
             this.button4.Name = "button4";
             this.button4.Size = new System.Drawing.Size(189, 42);
@@ -361,6 +405,204 @@
             this.label3.Name = "label3";
             this.label3.Size = new System.Drawing.Size(0, 20);
             this.label3.TabIndex = 0;
+            // 
+            // tabPage4
+            // 
+            this.tabPage4.Controls.Add(this.radioButton6);
+            this.tabPage4.Controls.Add(this.radioButton5);
+            this.tabPage4.Controls.Add(this.radioButton4);
+            this.tabPage4.Controls.Add(this.radioButton3);
+            this.tabPage4.Controls.Add(this.radioButton2);
+            this.tabPage4.Controls.Add(this.radioButton1);
+            this.tabPage4.Controls.Add(this.label9);
+            this.tabPage4.Controls.Add(this.textBox4);
+            this.tabPage4.Controls.Add(this.dataGridView2);
+            this.tabPage4.Location = new System.Drawing.Point(4, 29);
+            this.tabPage4.Name = "tabPage4";
+            this.tabPage4.Padding = new System.Windows.Forms.Padding(3);
+            this.tabPage4.Size = new System.Drawing.Size(1660, 899);
+            this.tabPage4.TabIndex = 3;
+            this.tabPage4.Text = "Score Viewer";
+            this.tabPage4.UseVisualStyleBackColor = true;
+            // 
+            // radioButton6
+            // 
+            this.radioButton6.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)));
+            this.radioButton6.AutoSize = true;
+            this.radioButton6.Location = new System.Drawing.Point(443, 856);
+            this.radioButton6.Name = "radioButton6";
+            this.radioButton6.Size = new System.Drawing.Size(98, 24);
+            this.radioButton6.TabIndex = 15;
+            this.radioButton6.TabStop = true;
+            this.radioButton6.Text = "Pro Bass";
+            this.radioButton6.UseVisualStyleBackColor = true;
+            this.radioButton6.CheckedChanged += onInstrumentScoreChanged;
+            // 
+            // radioButton5
+            // 
+            this.radioButton5.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)));
+            this.radioButton5.AutoSize = true;
+            this.radioButton5.Location = new System.Drawing.Point(338, 856);
+            this.radioButton5.Name = "radioButton5";
+            this.radioButton5.Size = new System.Drawing.Size(98, 24);
+            this.radioButton5.TabIndex = 14;
+            this.radioButton5.TabStop = true;
+            this.radioButton5.Text = "Pro Lead";
+            this.radioButton5.UseVisualStyleBackColor = true;
+            this.radioButton5.CheckedChanged += onInstrumentScoreChanged;
+            // 
+            // radioButton4
+            // 
+            this.radioButton4.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)));
+            this.radioButton4.AutoSize = true;
+            this.radioButton4.Location = new System.Drawing.Point(261, 855);
+            this.radioButton4.Name = "radioButton4";
+            this.radioButton4.Size = new System.Drawing.Size(70, 24);
+            this.radioButton4.TabIndex = 13;
+            this.radioButton4.TabStop = true;
+            this.radioButton4.Text = "Bass";
+            this.radioButton4.UseVisualStyleBackColor = true;
+            this.radioButton4.CheckedChanged += onInstrumentScoreChanged;
+            // 
+            // radioButton3
+            // 
+            this.radioButton3.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)));
+            this.radioButton3.AutoSize = true;
+            this.radioButton3.Location = new System.Drawing.Point(172, 855);
+            this.radioButton3.Name = "radioButton3";
+            this.radioButton3.Size = new System.Drawing.Size(82, 24);
+            this.radioButton3.TabIndex = 12;
+            this.radioButton3.TabStop = true;
+            this.radioButton3.Text = "Vocals";
+            this.radioButton3.UseVisualStyleBackColor = true;
+            this.radioButton3.CheckedChanged += onInstrumentScoreChanged;
+            // 
+            // radioButton2
+            // 
+            this.radioButton2.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)));
+            this.radioButton2.AutoSize = true;
+            this.radioButton2.Location = new System.Drawing.Point(84, 856);
+            this.radioButton2.Name = "radioButton2";
+            this.radioButton2.Size = new System.Drawing.Size(81, 24);
+            this.radioButton2.TabIndex = 11;
+            this.radioButton2.TabStop = true;
+            this.radioButton2.Text = "Drums";
+            this.radioButton2.UseVisualStyleBackColor = true;
+            this.radioButton2.CheckedChanged += onInstrumentScoreChanged;
+            // 
+            // radioButton1
+            // 
+            this.radioButton1.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)));
+            this.radioButton1.AutoSize = true;
+            this.radioButton1.Checked = true;
+            this.radioButton1.Location = new System.Drawing.Point(8, 856);
+            this.radioButton1.Name = "radioButton1";
+            this.radioButton1.Size = new System.Drawing.Size(70, 24);
+            this.radioButton1.TabIndex = 10;
+            this.radioButton1.TabStop = true;
+            this.radioButton1.Text = "Lead";
+            this.radioButton1.UseVisualStyleBackColor = true;
+            this.radioButton1.CheckedChanged += onInstrumentScoreChanged;
+            // 
+            // label9
+            // 
+            this.label9.AutoSize = true;
+            this.label9.Location = new System.Drawing.Point(338, 21);
+            this.label9.Name = "label9";
+            this.label9.Size = new System.Drawing.Size(154, 20);
+            this.label9.TabIndex = 9;
+            this.label9.Text = "Search by Title/Artist";
+            // 
+            // textBox4
+            // 
+            this.textBox4.Location = new System.Drawing.Point(8, 16);
+            this.textBox4.Name = "textBox4";
+            this.textBox4.Size = new System.Drawing.Size(304, 26);
+            this.textBox4.TabIndex = 8;
+            this.textBox4.TextChanged += TextBox4_TextChanged;
+            // 
+            // dataGridView2
+            // 
+            this.dataGridView2.AllowUserToAddRows = false;
+            this.dataGridView2.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
+            | System.Windows.Forms.AnchorStyles.Left) 
+            | System.Windows.Forms.AnchorStyles.Right)));
+            this.dataGridView2.ColumnHeadersHeightSizeMode = System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode.AutoSize;
+            this.dataGridView2.Columns.AddRange(new System.Windows.Forms.DataGridViewColumn[] {
+            this.dataGridViewTextBoxColumn1,
+            this.dataGridViewTextBoxColumn2,
+            this.FullComboColumn,
+            this.StarsColumn,
+            this.ScoreColumn,
+            this.PercentageHitColumn,
+            this.SeasonAchievedColumn,
+            this.DifficultyColumn});
+            this.dataGridView2.Location = new System.Drawing.Point(8, 64);
+            this.dataGridView2.Name = "dataGridView2";
+            this.dataGridView2.RowHeadersVisible = false;
+            this.dataGridView2.RowHeadersWidth = 62;
+            this.dataGridView2.RowTemplate.Height = 28;
+            this.dataGridView2.Size = new System.Drawing.Size(1656, 771);
+            this.dataGridView2.TabIndex = 7;
+            this.dataGridView2.Visible = false;
+            this.dataGridView2.ColumnHeaderMouseClick += onScoreViewerColumnHeaderMouseClick;
+            // 
+            // dataGridViewTextBoxColumn1
+            // 
+            this.dataGridViewTextBoxColumn1.DataPropertyName = "track.tt";
+            this.dataGridViewTextBoxColumn1.HeaderText = "Title";
+            this.dataGridViewTextBoxColumn1.MinimumWidth = 8;
+            this.dataGridViewTextBoxColumn1.Name = "dataGridViewTextBoxColumn1";
+            this.dataGridViewTextBoxColumn1.Width = 150;
+            // 
+            // dataGridViewTextBoxColumn2
+            // 
+            this.dataGridViewTextBoxColumn2.HeaderText = "Artist";
+            this.dataGridViewTextBoxColumn2.MinimumWidth = 8;
+            this.dataGridViewTextBoxColumn2.Name = "dataGridViewTextBoxColumn2";
+            this.dataGridViewTextBoxColumn2.Width = 150;
+            // 
+            // FullComboColumn
+            // 
+            this.FullComboColumn.HeaderText = "Full Combo";
+            this.FullComboColumn.MinimumWidth = 8;
+            this.FullComboColumn.Name = "FullComboColumn";
+            this.FullComboColumn.Width = 150;
+            // 
+            // StarsColumn
+            // 
+            this.StarsColumn.HeaderText = "Stars";
+            this.StarsColumn.MinimumWidth = 8;
+            this.StarsColumn.Name = "StarsColumn";
+            this.StarsColumn.Width = 150;
+            // 
+            // ScoreColumn
+            // 
+            this.ScoreColumn.HeaderText = "Score";
+            this.ScoreColumn.MinimumWidth = 8;
+            this.ScoreColumn.Name = "ScoreColumn";
+            this.ScoreColumn.Width = 150;
+            // 
+            // PercentageHitColumn
+            // 
+            this.PercentageHitColumn.HeaderText = "Percentage Hit";
+            this.PercentageHitColumn.MinimumWidth = 8;
+            this.PercentageHitColumn.Name = "PercentageHitColumn";
+            this.PercentageHitColumn.Width = 150;
+            // 
+            // SeasonAchievedColumn
+            // 
+            this.SeasonAchievedColumn.HeaderText = "Season Achieved";
+            this.SeasonAchievedColumn.MinimumWidth = 8;
+            this.SeasonAchievedColumn.Name = "SeasonAchievedColumn";
+            this.SeasonAchievedColumn.Width = 150;
+            // 
+            // DifficultyColumn
+            // 
+            this.DifficultyColumn.HeaderText = "Difficulty";
+            this.DifficultyColumn.MinimumWidth = 8;
+            this.DifficultyColumn.Name = "DifficultyColumn";
+            this.DifficultyColumn.Width = 150;
             // 
             // tabPage3
             // 
@@ -590,22 +832,20 @@
             this.leadCheck.UseVisualStyleBackColor = true;
             this.leadCheck.CheckedChanged += new System.EventHandler(this.onInstrumentOutputSelected);
             // 
-            // textBox3
+            // dataGridViewCheckBoxColumn1
             // 
-            this.textBox3.Location = new System.Drawing.Point(8, 16);
-            this.textBox3.Name = "textBox3";
-            this.textBox3.Size = new System.Drawing.Size(304, 26);
-            this.textBox3.TabIndex = 5;
-            this.textBox3.TextChanged += TextBox3_TextChanged;
+            this.dataGridViewCheckBoxColumn1.DataPropertyName = "isSelected";
+            this.dataGridViewCheckBoxColumn1.HeaderText = "Query Scores";
+            this.dataGridViewCheckBoxColumn1.MinimumWidth = 8;
+            this.dataGridViewCheckBoxColumn1.Name = "dataGridViewCheckBoxColumn1";
+            this.dataGridViewCheckBoxColumn1.Width = 150;
             // 
-            // label8
+            // dataGridViewTextBoxColumn3
             // 
-            this.label8.AutoSize = true;
-            this.label8.Location = new System.Drawing.Point(338, 21);
-            this.label8.Name = "label8";
-            this.label8.Size = new System.Drawing.Size(154, 20);
-            this.label8.TabIndex = 6;
-            this.label8.Text = "Search by Title/Artist";
+            this.dataGridViewTextBoxColumn3.HeaderText = "Date Active";
+            this.dataGridViewTextBoxColumn3.MinimumWidth = 8;
+            this.dataGridViewTextBoxColumn3.Name = "dataGridViewTextBoxColumn3";
+            this.dataGridViewTextBoxColumn3.Width = 150;
             // 
             // Form1
             // 
@@ -622,6 +862,9 @@
             this.tabPage2.ResumeLayout(false);
             this.tabPage2.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)(this.dataGridView1)).EndInit();
+            this.tabPage4.ResumeLayout(false);
+            this.tabPage4.PerformLayout();
+            ((System.ComponentModel.ISupportInitialize)(this.dataGridView2)).EndInit();
             this.tabPage3.ResumeLayout(false);
             this.tabPage3.PerformLayout();
             this.ResumeLayout(false);
@@ -683,6 +926,26 @@
         private System.Windows.Forms.Button button5;
         private System.Windows.Forms.Label label8;
         private System.Windows.Forms.TextBox textBox3;
+        private System.Windows.Forms.TabPage tabPage4;
+        private System.Windows.Forms.Label label9;
+        private System.Windows.Forms.TextBox textBox4;
+        private System.Windows.Forms.DataGridView dataGridView2;
+        private System.Windows.Forms.DataGridViewCheckBoxColumn dataGridViewCheckBoxColumn1;
+        private System.Windows.Forms.DataGridViewTextBoxColumn dataGridViewTextBoxColumn3;
+        private System.Windows.Forms.RadioButton radioButton2;
+        private System.Windows.Forms.RadioButton radioButton1;
+        private System.Windows.Forms.DataGridViewTextBoxColumn dataGridViewTextBoxColumn1;
+        private System.Windows.Forms.DataGridViewTextBoxColumn dataGridViewTextBoxColumn2;
+        private System.Windows.Forms.DataGridViewTextBoxColumn FullComboColumn;
+        private System.Windows.Forms.DataGridViewTextBoxColumn StarsColumn;
+        private System.Windows.Forms.DataGridViewTextBoxColumn ScoreColumn;
+        private System.Windows.Forms.DataGridViewTextBoxColumn PercentageHitColumn;
+        private System.Windows.Forms.DataGridViewTextBoxColumn SeasonAchievedColumn;
+        private System.Windows.Forms.DataGridViewTextBoxColumn DifficultyColumn;
+        private System.Windows.Forms.RadioButton radioButton6;
+        private System.Windows.Forms.RadioButton radioButton5;
+        private System.Windows.Forms.RadioButton radioButton4;
+        private System.Windows.Forms.RadioButton radioButton3;
     }
 }
 
