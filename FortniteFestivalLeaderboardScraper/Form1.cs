@@ -165,12 +165,57 @@ namespace FortniteFestivalLeaderboardScraper
             _previousData = JSONReadWrite.ReadLeaderboardJSON();
             var stRetriever = new SparkTrackRetriever();
             _sparkTracks = await stRetriever.GetSparkTracks(_previousData);
+            var filteredTracks = _sparkTracks;
+
+            if (textBox3.Text.Length != 0)
+            {
+                filteredTracks = _sparkTracks.Where(x => (x.track.tt.ToLowerInvariant().Contains(textBox3.Text.ToLowerInvariant()) || x.track.an.ToLowerInvariant().Contains(textBox3.Text.ToLowerInvariant()))).ToList();
+            }
+            switch (sortOrder)
+            {
+                case SortOrder.AvailableLocally:
+                    filteredTracks = filteredTracks.OrderBy(x => _previousData.FindIndex(y => y.songId == x.track.su) >= 0).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    break;
+                case SortOrder.Title:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.tt).ToList();
+                    break;
+                case SortOrder.Artist:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    break;
+                case SortOrder.Availability:
+                    filteredTracks = filteredTracks.OrderBy(x => x._activeDate).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    break;
+                case SortOrder.LeadDiff:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.@in.gr).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    break;
+                case SortOrder.BassDiff:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.@in.ba).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    break;
+                case SortOrder.VocalsDiff:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.@in.vl).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    break;
+                case SortOrder.DrumsDiff:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.@in.ds).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    break;
+                case SortOrder.ProLeadDiff:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.@in.pg).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    break;
+                case SortOrder.ProBassDiff:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.@in.pb).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    break;
+                default:
+                    break;
+            }
+            if (isSparkTracksReversed)
+            {
+                filteredTracks.Reverse();
+            }
 
             this.dataGridView1.Rows.Clear();
 
-            for (int i = 0; i < _sparkTracks.Count; i++)
+            for (int i = 0; i < filteredTracks.Count; i++)
             {
-                Song song = _sparkTracks[i];
+                Song song = filteredTracks[i];
                 this.dataGridView1.Rows.Add(song.isSelected, song.isInLocalData, song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
                 this.dataGridView1.Rows[i].Cells[1].Style.ForeColor = _previousData.FindIndex(x => x.songId == song.track.su) >= 0 ? Color.Green : Color.Red;
                 this.dataGridView1.Rows[i].Cells[1].Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
