@@ -72,7 +72,7 @@ namespace FortniteFestivalLeaderboardScraper
         private bool _invertOutput = false;
         private bool isSparkTracksReversed = false;
         private bool isPreviousDataReversed = false;
-        private Settings _settings = new Settings();
+        private bool outputExcel = false;
 
         public Form1()
         {
@@ -809,18 +809,23 @@ namespace FortniteFestivalLeaderboardScraper
                 return;
             }
 
-            ExcelSpreadsheetGenerator.GenerateExcelSpreadsheet(previousData, supportedInstruments, selection, _invertOutput);
+            if (this.outputExcel)
+            {
+                ExcelSpreadsheetGenerator.GenerateExcelSpreadsheet(previousData, supportedInstruments, selection, _invertOutput);
+                textBox2.AppendText(Environment.NewLine + "FortniteFestivalScores.xlsx written out to the directory your application is in.");
+            }
+
             tabControl1.TabPages.Add(tabPage2);
             tabControl1.TabPages.Add(tabPage4);
             tabControl1.TabPages.Add(tabPage3);
             button1.Enabled = true;
             button2.Enabled = true;
             button5.Enabled = true;
-            textBox2.AppendText(Environment.NewLine + "FortniteFestivalScores.xlsx written out to the directory your application is in.");
         }
 
         protected void OnMainWindowClosing(object sender, EventArgs e)
         {
+            Settings _settings = new Settings();
             _settings.writeLead = this.leadCheck.Checked;
             _settings.writeBass = this.bassCheck.Checked;
             _settings.writeVocals = this.vocalsCheck.Checked;
@@ -829,13 +834,14 @@ namespace FortniteFestivalLeaderboardScraper
             _settings.writeProBass = this.proBassCheck.Checked;
             _settings.invertOutput = this.invertOutput.Checked;
             _settings.outputSelection = this.selection;
+            _settings.outputExcel = this.outputExcel;
 
             JSONReadWrite.WriteSettings(_settings);
         }
 
         protected void OnMainWindowLoad(object sender, EventArgs e)
         {
-            _settings = JSONReadWrite.ReadSettings();
+            Settings _settings = JSONReadWrite.ReadSettings();
 
             this.leadCheck.Checked = _settings.writeLead;
             this.bassCheck.Checked = _settings.writeBass;
@@ -845,6 +851,8 @@ namespace FortniteFestivalLeaderboardScraper
             this.proLeadCheck.Checked = _settings.writeProLead;
             this.invertOutput.Checked = _settings.invertOutput;
             this.selection = _settings.outputSelection;
+            this.outputExcel = _settings.outputExcel;
+            this.button5.Visible = _settings.outputExcel;
 
             switch (this.selection)
             {
@@ -908,6 +916,11 @@ namespace FortniteFestivalLeaderboardScraper
             }
 
             sortScoreViewData(_previousData);
+        }
+
+        private void OutputExcelCheckbox_CheckedChanged(object sender, EventArgs e)
+        {
+            this.button5.Visible = ((CheckBox)sender).Checked;
         }
     }
 }

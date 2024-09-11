@@ -48,6 +48,18 @@ namespace FortniteFestivalLeaderboardScraper
             this.button4 = new System.Windows.Forms.Button();
             this.button3 = new System.Windows.Forms.Button();
             this.dataGridView1 = new System.Windows.Forms.DataGridView();
+            this.isSelected = new System.Windows.Forms.DataGridViewCheckBoxColumn();
+            this.inLocalData = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.tt = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.Column2 = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.DateActive = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.LD = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.BD = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.VD = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.DD = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.PGD = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.PBD = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.su = new System.Windows.Forms.DataGridViewTextBoxColumn();
             this.label4 = new System.Windows.Forms.Label();
             this.label3 = new System.Windows.Forms.Label();
             this.tabPage4 = new System.Windows.Forms.TabPage();
@@ -88,18 +100,7 @@ namespace FortniteFestivalLeaderboardScraper
             this.leadCheck = new System.Windows.Forms.CheckBox();
             this.dataGridViewCheckBoxColumn1 = new System.Windows.Forms.DataGridViewCheckBoxColumn();
             this.dataGridViewTextBoxColumn3 = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.isSelected = new System.Windows.Forms.DataGridViewCheckBoxColumn();
-            this.inLocalData = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.tt = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.Column2 = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.DateActive = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.LD = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.BD = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.VD = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.DD = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.PGD = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.PBD = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.su = new System.Windows.Forms.DataGridViewTextBoxColumn();
+            this.outputExcelCheckbox = new System.Windows.Forms.CheckBox();
             this.tabControl1.SuspendLayout();
             this.tabPage1.SuspendLayout();
             this.tabPage2.SuspendLayout();
@@ -304,6 +305,92 @@ namespace FortniteFestivalLeaderboardScraper
             this.dataGridView1.CellContentClick += DataGridView1_CellContentClick;
             this.dataGridView1.ColumnHeaderMouseClick += onColumnHeaderMouseClick;
             this.dataGridView1.Visible = false;
+            // 
+            // isSelected
+            // 
+            this.isSelected.DataPropertyName = "isSelected";
+            this.isSelected.HeaderText = "Query Scores";
+            this.isSelected.MinimumWidth = 8;
+            this.isSelected.Name = "isSelected";
+            this.isSelected.Width = 150;
+            // 
+            // inLocalData
+            // 
+            this.inLocalData.HeaderText = "Available Locally";
+            this.inLocalData.MinimumWidth = 8;
+            this.inLocalData.Name = "inLocalData";
+            this.inLocalData.Width = 150;
+            // 
+            // tt
+            // 
+            this.tt.DataPropertyName = "track.tt";
+            this.tt.HeaderText = "Title";
+            this.tt.MinimumWidth = 8;
+            this.tt.Name = "tt";
+            this.tt.Width = 150;
+            // 
+            // Column2
+            // 
+            this.Column2.HeaderText = "Artist";
+            this.Column2.MinimumWidth = 8;
+            this.Column2.Name = "Column2";
+            this.Column2.Width = 150;
+            // 
+            // DateActive
+            // 
+            this.DateActive.HeaderText = "Date Active";
+            this.DateActive.MinimumWidth = 8;
+            this.DateActive.Name = "DateActive";
+            this.DateActive.Width = 150;
+            // 
+            // LD
+            // 
+            this.LD.HeaderText = "Lead Difficulty";
+            this.LD.MinimumWidth = 8;
+            this.LD.Name = "LD";
+            this.LD.Width = 150;
+            // 
+            // BD
+            // 
+            this.BD.HeaderText = "Bass Difficulty";
+            this.BD.MinimumWidth = 8;
+            this.BD.Name = "BD";
+            this.BD.Width = 150;
+            // 
+            // VD
+            // 
+            this.VD.HeaderText = "Vocals Difficulty";
+            this.VD.MinimumWidth = 8;
+            this.VD.Name = "VD";
+            this.VD.Width = 150;
+            // 
+            // DD
+            // 
+            this.DD.HeaderText = "Drums Difficulty";
+            this.DD.MinimumWidth = 8;
+            this.DD.Name = "DD";
+            this.DD.Width = 150;
+            // 
+            // PGD
+            // 
+            this.PGD.HeaderText = "Pro Lead Difficulty";
+            this.PGD.MinimumWidth = 8;
+            this.PGD.Name = "PGD";
+            this.PGD.Width = 150;
+            // 
+            // PBD
+            // 
+            this.PBD.HeaderText = "Pro Bass Difficulty";
+            this.PBD.MinimumWidth = 8;
+            this.PBD.Name = "PBD";
+            this.PBD.Width = 150;
+            // 
+            // su
+            // 
+            this.su.HeaderText = "Song ID";
+            this.su.MinimumWidth = 8;
+            this.su.Name = "su";
+            this.su.Width = 150;
             // 
             // label4
             // 
@@ -529,6 +616,7 @@ namespace FortniteFestivalLeaderboardScraper
             // 
             // tabPage3
             // 
+            this.tabPage3.Controls.Add(this.outputExcelCheckbox);
             this.tabPage3.Controls.Add(this.invertOutput);
             this.tabPage3.Controls.Add(this.label7);
             this.tabPage3.Controls.Add(this.stars);
@@ -770,91 +858,16 @@ namespace FortniteFestivalLeaderboardScraper
             this.dataGridViewTextBoxColumn3.Name = "dataGridViewTextBoxColumn3";
             this.dataGridViewTextBoxColumn3.Width = 150;
             // 
-            // isSelected
+            // outputExcelCheckbox
             // 
-            this.isSelected.DataPropertyName = "isSelected";
-            this.isSelected.HeaderText = "Query Scores";
-            this.isSelected.MinimumWidth = 8;
-            this.isSelected.Name = "isSelected";
-            this.isSelected.Width = 150;
-            // 
-            // inLocalData
-            // 
-            this.inLocalData.HeaderText = "Available Locally";
-            this.inLocalData.MinimumWidth = 8;
-            this.inLocalData.Name = "inLocalData";
-            this.inLocalData.Width = 150;
-            // 
-            // tt
-            // 
-            this.tt.DataPropertyName = "track.tt";
-            this.tt.HeaderText = "Title";
-            this.tt.MinimumWidth = 8;
-            this.tt.Name = "tt";
-            this.tt.Width = 150;
-            // 
-            // Column2
-            // 
-            this.Column2.HeaderText = "Artist";
-            this.Column2.MinimumWidth = 8;
-            this.Column2.Name = "Column2";
-            this.Column2.Width = 150;
-            // 
-            // DateActive
-            // 
-            this.DateActive.HeaderText = "Date Active";
-            this.DateActive.MinimumWidth = 8;
-            this.DateActive.Name = "DateActive";
-            this.DateActive.Width = 150;
-            // 
-            // LD
-            // 
-            this.LD.HeaderText = "Lead Difficulty";
-            this.LD.MinimumWidth = 8;
-            this.LD.Name = "LD";
-            this.LD.Width = 150;
-            // 
-            // BD
-            // 
-            this.BD.HeaderText = "Bass Difficulty";
-            this.BD.MinimumWidth = 8;
-            this.BD.Name = "BD";
-            this.BD.Width = 150;
-            // 
-            // VD
-            // 
-            this.VD.HeaderText = "Vocals Difficulty";
-            this.VD.MinimumWidth = 8;
-            this.VD.Name = "VD";
-            this.VD.Width = 150;
-            // 
-            // DD
-            // 
-            this.DD.HeaderText = "Drums Difficulty";
-            this.DD.MinimumWidth = 8;
-            this.DD.Name = "DD";
-            this.DD.Width = 150;
-            // 
-            // PGD
-            // 
-            this.PGD.HeaderText = "Pro Lead Difficulty";
-            this.PGD.MinimumWidth = 8;
-            this.PGD.Name = "PGD";
-            this.PGD.Width = 150;
-            // 
-            // PBD
-            // 
-            this.PBD.HeaderText = "Pro Bass Difficulty";
-            this.PBD.MinimumWidth = 8;
-            this.PBD.Name = "PBD";
-            this.PBD.Width = 150;
-            // 
-            // su
-            // 
-            this.su.HeaderText = "Song ID";
-            this.su.MinimumWidth = 8;
-            this.su.Name = "su";
-            this.su.Width = 150;
+            this.outputExcelCheckbox.AutoSize = true;
+            this.outputExcelCheckbox.Location = new System.Drawing.Point(378, 57);
+            this.outputExcelCheckbox.Name = "outputExcelCheckbox";
+            this.outputExcelCheckbox.Size = new System.Drawing.Size(155, 24);
+            this.outputExcelCheckbox.TabIndex = 17;
+            this.outputExcelCheckbox.Text = "Output Excel File";
+            this.outputExcelCheckbox.UseVisualStyleBackColor = true;
+            this.outputExcelCheckbox.CheckedChanged += OutputExcelCheckbox_CheckedChanged;
             // 
             // Form1
             // 
@@ -956,6 +969,7 @@ namespace FortniteFestivalLeaderboardScraper
         private DataGridViewTextBoxColumn PGD;
         private DataGridViewTextBoxColumn PBD;
         private DataGridViewTextBoxColumn su;
+        private CheckBox outputExcelCheckbox;
     }
 }
 
