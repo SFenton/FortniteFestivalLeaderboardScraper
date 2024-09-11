@@ -3,183 +3,24 @@ using Newtonsoft.Json;
 using RestSharp;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Reflection.Emit;
-using System.Runtime.Remoting.Messaging;
-using System.Security.Cryptography.X509Certificates;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace FortniteFestivalLeaderboardScraper.Helpers
 {
-    public static class LeaderboardAPI
+    public class LeaderboardAPI
     {
-        public class InvalidSeason
-        {
-            public string errorCode
-            {
-                get;
-                set;
-            }
-            public string errorMessage
-            {
-                get;
-                set;
-            }
-        }
+        private const string API_BASE_ADDRESS = "https://events-public-service-live.ol.epicgames.com/api/v2/games/FNFestival/leaderboards/";
 
-        public class LeaderboardData
-        {
-            public string title
-            {
-                get;
-                set;
-            }
-            public string artist
-            {
-                get;
-                set;
-            }
-            public string songId
-            {
-                get;
-                set;
-            }
-            //public Season[] seasons { get; set; }
-
-            public ScoreTracker drums
-            {
-                get;
-                set;
-            }
-            public ScoreTracker guitar
-            {
-                get;
-                set;
-            }
-            public ScoreTracker bass
-            {
-                get;
-                set;
-            }
-            public ScoreTracker vocals
-            {
-                get;
-                set;
-            }
-            public ScoreTracker pro_guitar
-            {
-                get;
-                set;
-            }
-            public ScoreTracker pro_bass
-            {
-                get;
-                set;
-            }
-        }
-
-        public class Season
-        {
-            public ScoreTracker drums
-            {
-                get;
-                set;
-            }
-            public ScoreTracker guitar
-            {
-                get;
-                set;
-            }
-            public ScoreTracker bass
-            {
-                get;
-                set;
-            }
-            public ScoreTracker vocals
-            {
-                get;
-                set;
-            }
-            public ScoreTracker pro_guitar
-            {
-                get;
-                set;
-            }
-            public ScoreTracker pro_bass
-            {
-                get;
-                set;
-            }
-        }
-
-        public class ScoreTracker
-        {
-            public bool initialized
-            {
-                get;
-                set;
-            }
-            public int maxScore
-            {
-                get;
-                set;
-            }
-            public int difficulty
-            {
-                get;
-                set;
-            }
-            public int numStars
-            {
-                get;
-                set;
-            }
-            public bool isFullCombo
-            {
-                get;
-                set;
-            }
-            public int percentHit
-            {
-                get;
-                set;
-            }
-            public int season
-            {
-                get;
-                set;
-            }
-            public int minSeason
-            {
-                get;
-                set;
-            } = -1;
-            public int lastSeenSeason
-            {
-                get;
-                set;
-            } = -1;
-        }
-
-        private static string API_BASE_ADDRESS = "https://events-public-service-live.ol.epicgames.com/api/v2/games/FNFestival/leaderboards/";
-
-        private
-        const string DRUMS = "Solo_Drums";
-        private
-        const string VOCALS = "Solo_Vocals";
-        private
-        const string BASS = "Solo_Bass";
-        private
-        const string GUITAR = "Solo_Guitar";
-        private
-        const string PRO_BASS = "Solo_PeripheralBass";
-        private
-        const string PRO_GUITAR = "Solo_PeripheralGuitar";
+        private const string DRUMS = "Solo_Drums";
+        private const string VOCALS = "Solo_Vocals";
+        private const string BASS = "Solo_Bass";
+        private const string GUITAR = "Solo_Guitar";
+        private const string PRO_BASS = "Solo_PeripheralBass";
+        private const string PRO_GUITAR = "Solo_PeripheralGuitar";
         private const int PRO_STRINGS_MINSEASON = 3;
 
-        private static string PARAMS = "fromIndex=0&findTeams=false";
-        private static string GetFriendlyInstrumentName(string instrumentName)
+        private string PARAMS = "fromIndex=0&findTeams=false";
+        private string GetFriendlyInstrumentName(string instrumentName)
         {
             switch (instrumentName)
             {
@@ -199,15 +40,15 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
 
             return "Unknown Instrument";
         }
-        public static async Task<Tuple<bool, List<LeaderboardData>>> GetLeaderboardsForInstrument(
+
+        public async Task<Tuple<bool, List<LeaderboardData>>> GetLeaderboardsForInstrument(
             List<Song> items, 
             string accessToken, 
             string accountId, 
             int maxSeason, 
             List<LeaderboardData> prevData, 
             System.Windows.Forms.TextBox textBox,
-            List<string> filteredSongIds,
-            List<string> supportedInstruments)
+            List<string> filteredSongIds)
         {
             if (items.Count == 0)
             {

@@ -60,7 +60,7 @@ namespace FortniteFestivalLeaderboardScraper
     public partial class Form1 : Form
     {
         private List<Song> _sparkTracks = new List<Song>();
-        private List<LeaderboardAPI.LeaderboardData> _previousData = new List<LeaderboardAPI.LeaderboardData>();
+        private List<LeaderboardData> _previousData = new List<LeaderboardData>();
         private List<string> songIds = new List<string>();
         private List<string> supportedInstruments = new List<string>() { "Lead", "Vocals", "Bass", "Drums", "Pro Lead", "Pro Bass" };
         private int selectedColumn = -1;
@@ -102,7 +102,8 @@ namespace FortniteFestivalLeaderboardScraper
 
             textBox2.Clear();
             textBox2.AppendText("Generating Fortnite bearer token...");
-            var token = await EpicGamesExchangeTokenGenerator.GetTokenWithPermissions(textBox1.Text);
+            var tokenGenerator = new EpicGamesExchangeTokenGenerator();
+            var token = await tokenGenerator.GetTokenWithPermissions(textBox1.Text);
             if (token.Item1 == false || token.Item2.access_token == null)
             {
                 textBox2.AppendText(Environment.NewLine + "An error occurred during authentication. Please try a new exchange code.");
@@ -118,11 +119,17 @@ namespace FortniteFestivalLeaderboardScraper
             {
                 textBox2.AppendText(Environment.NewLine + "Retrieving list of songs...");
             }
-            var sparkTracks = _sparkTracks.Count != 0 ? _sparkTracks : (await SparkTrackRetriever.GetSparkTracks());
-            textBox2.AppendText(Environment.NewLine + "Attempting to find max season value...");
-            var maxSeason = await MaxSeasonIdentifier.GetMaxSeason(token.Item2.access_token);
+
             _previousData = JSONReadWrite.ReadLeaderboardJSON();
-            var scores = await LeaderboardAPI.GetLeaderboardsForInstrument(sparkTracks, token.Item2.access_token, token.Item2.account_id, maxSeason, _previousData, textBox2, songIds, supportedInstruments);
+            var stRetriever = new SparkTrackRetriever();
+            var seasonIdentifier = new MaxSeasonIdentifier();
+            var sparkTracks = _sparkTracks.Count != 0 ? _sparkTracks : (await stRetriever.GetSparkTracks(_previousData));
+            textBox2.AppendText(Environment.NewLine + "Attempting to find max season value...");
+            var maxSeason = await seasonIdentifier.GetMaxSeason(token.Item2.access_token);
+            _previousData = JSONReadWrite.ReadLeaderboardJSON();
+
+            var scoreRetriever = new LeaderboardAPI();
+            var scores = await scoreRetriever.GetLeaderboardsForInstrument(sparkTracks, token.Item2.access_token, token.Item2.account_id, maxSeason, _previousData, textBox2, songIds);
             if (scores.Item1 == false)
             {
                 button1.Enabled = true;
@@ -155,14 +162,16 @@ namespace FortniteFestivalLeaderboardScraper
                 }
             }
 
-            _sparkTracks = await SparkTrackRetriever.GetSparkTracks();
             _previousData = JSONReadWrite.ReadLeaderboardJSON();
+            var stRetriever = new SparkTrackRetriever();
+            _sparkTracks = await stRetriever.GetSparkTracks(_previousData);
+
             this.dataGridView1.Rows.Clear();
 
             for (int i = 0; i < _sparkTracks.Count; i++)
             {
                 Song song = _sparkTracks[i];
-                this.dataGridView1.Rows.Add(song.isSelected, _previousData.FindIndex(x => x.songId == song.track.su) >= 0 ? "✔" : "❌", song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
+                this.dataGridView1.Rows.Add(song.isSelected, song.isInLocalData, song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
                 this.dataGridView1.Rows[i].Cells[1].Style.ForeColor = _previousData.FindIndex(x => x.songId == song.track.su) >= 0 ? Color.Green : Color.Red;
                 this.dataGridView1.Rows[i].Cells[1].Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
             }
@@ -185,7 +194,7 @@ namespace FortniteFestivalLeaderboardScraper
             sortScoreViewData(_previousData);
         }
 
-        private void sortScoreViewData(List<LeaderboardAPI.LeaderboardData> dataList)
+        private void sortScoreViewData(List<LeaderboardData> dataList)
         {
             this.dataGridView2.Rows.Clear();
 
@@ -496,7 +505,7 @@ namespace FortniteFestivalLeaderboardScraper
             for (int i = 0; i < filteredTracks.Count; i++)
             {
                 Song song = filteredTracks[i];
-                this.dataGridView1.Rows.Add(song.isSelected, _previousData.FindIndex(x => x.songId == song.track.su) >= 0 ? "✔" : "❌", song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
+                this.dataGridView1.Rows.Add(song.isSelected, song.isInLocalData, song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
                 this.dataGridView1.Rows[i].Cells[1].Style.ForeColor = _previousData.FindIndex(x => x.songId == song.track.su) >= 0 ? Color.Green : Color.Red;
                 this.dataGridView1.Rows[i].Cells[1].Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
             }
@@ -605,7 +614,7 @@ namespace FortniteFestivalLeaderboardScraper
             for (int i = 0; i < filteredTracks.Count; i++)
             {
                 Song song = filteredTracks[i];
-                this.dataGridView1.Rows.Add(song.isSelected, _previousData.FindIndex(x => x.songId == song.track.su) >= 0 ? "✔" : "❌", song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
+                this.dataGridView1.Rows.Add(song.isSelected, song.isInLocalData, song.track.tt, song.track.an, song._activeDate, song.track.@in.gr, song.track.@in.ba, song.track.@in.vl, song.track.@in.ds, song.track.@in.pg, song.track.@in.pb, song.track.su);
                 this.dataGridView1.Rows[i].Cells[1].Style.ForeColor = _previousData.FindIndex(x => x.songId == song.track.su) >= 0 ? Color.Green : Color.Red;
                 this.dataGridView1.Rows[i].Cells[1].Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
             }

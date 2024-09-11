@@ -106,14 +106,18 @@
     <Compile Include="Form1.Designer.cs">
       <DependentUpon>Form1.cs</DependentUpon>
     </Compile>
+    <Compile Include="Helpers\Classes\FortniteClasses.cs" />
+    <Compile Include="Helpers\Classes\Leaderboard\LocalScoreTrackerClasses.cs" />
     <Compile Include="Helpers\EpicGamesExchangeTokenGenerator.cs" />
     <Compile Include="Helpers\Excel\ExcelSpreadsheetGenerator.cs" />
+    <Compile Include="Helpers\ExchangeCodeClasses.cs" />
     <Compile Include="Helpers\FileIO\JSONReadWrite.cs" />
     <Compile Include="Helpers\LeaderboardAPI.cs" />
-    <Compile Include="Helpers\LeaderBoardClasses.cs" />
+    <Compile Include="Helpers\Classes\Leaderboard\LeaderBoardClasses.cs" />
     <Compile Include="Helpers\Leaderboard\ScoreClasses.cs" />
     <Compile Include="Helpers\MaxSeasonIdentifier.cs" />
-    <Compile Include="Helpers\Settings.cs" />
+    <Compile Include="Helpers\Classes\Settings.cs" />
+    <Compile Include="Helpers\Classes\SongData\SongData.cs" />
     <Compile Include="Helpers\SparkTrackRetriever.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
