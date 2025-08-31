@@ -1,9 +1,9 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
-namespace FortniteFestivalLeaderboardScraper
+namespace FortniteFestival.Core.Auth
 {
-    public class ExchangeCodeObject
+    public class ExchangeCodeToken
     {
         public string access_token { get; set; }
         public int expires_in { get; set; }
@@ -26,7 +26,6 @@ namespace FortniteFestivalLeaderboardScraper
         public string acr { get; set; }
         public DateTime auth_time { get; set; }
     }
-
     internal class ExchangeCodeResponse
     {
         public int expiresInSeconds { get; set; }

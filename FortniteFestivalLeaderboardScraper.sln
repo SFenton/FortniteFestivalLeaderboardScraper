@@ -5,6 +5,8 @@ VisualStudioVersion = 17.8.34525.116
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FortniteFestivalLeaderboardScraper", "FortniteFestivalLeaderboardScraper\FortniteFestivalLeaderboardScraper.csproj", "{5FBE5A46-4C49-45D0-AB79-9F1086509B94}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FortniteFestival.Core", "FortniteFestival.Core\FortniteFestival.Core.csproj", "{289A4809-9A95-D430-3C88-E275A5628D83}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,14 @@ Global
 		{5FBE5A46-4C49-45D0-AB79-9F1086509B94}.Release|Any CPU.Build.0 = Release|Any CPU
 		{5FBE5A46-4C49-45D0-AB79-9F1086509B94}.Release|x64.ActiveCfg = Release|x64
 		{5FBE5A46-4C49-45D0-AB79-9F1086509B94}.Release|x64.Build.0 = Release|x64
+		{289A4809-9A95-D430-3C88-E275A5628D83}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{289A4809-9A95-D430-3C88-E275A5628D83}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{289A4809-9A95-D430-3C88-E275A5628D83}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{289A4809-9A95-D430-3C88-E275A5628D83}.Debug|x64.Build.0 = Debug|Any CPU
+		{289A4809-9A95-D430-3C88-E275A5628D83}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{289A4809-9A95-D430-3C88-E275A5628D83}.Release|Any CPU.Build.0 = Release|Any CPU
+		{289A4809-9A95-D430-3C88-E275A5628D83}.Release|x64.ActiveCfg = Release|Any CPU
+		{289A4809-9A95-D430-3C88-E275A5628D83}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

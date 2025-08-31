@@ -1,7 +1,7 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
-namespace FortniteFestivalLeaderboardScraper.Helpers
+namespace FortniteFestival.Core
 {
     public class In
     {
@@ -13,19 +13,6 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
         public int gr { get; set; }
         public int ds { get; set; }
         public int ba { get; set; }
-    }
-
-    public class Song
-    {
-        public string _title { get; set; }
-        public Track track { get; set; }
-        public bool _noIndex { get; set; }
-        public DateTime _activeDate { get; set; }
-        public DateTime lastModified { get; set; }
-        public string _locale { get; set; }
-        public string _templateName { get; set; }
-        public Boolean isSelected { get; set; } = false;
-        public string isInLocalData { get; set; } = "❌";
     }
 
     public class Track
@@ -55,5 +42,18 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
         public string ti { get; set; }
         public string ld { get; set; }
         public string jc { get; set; }
+    }
+
+    public class Song
+    {
+        public string _title { get; set; }
+        public Track track { get; set; }
+        public bool _noIndex { get; set; }
+        public DateTime _activeDate { get; set; }
+        public DateTime lastModified { get; set; }
+        public string _locale { get; set; }
+        public string _templateName { get; set; }
+        public bool isSelected { get; set; }
+        public string isInLocalData { get; set; } = "?";
     }
 }
