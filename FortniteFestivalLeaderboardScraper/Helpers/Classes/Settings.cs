@@ -16,6 +16,5 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
         public bool writeProLead { get; set; } = true;
         public bool writeProBass { get; set; } = true;
         public bool invertOutput { get; set; } = false;
-        public bool outputExcel { get; set; } = false;
     }
 }

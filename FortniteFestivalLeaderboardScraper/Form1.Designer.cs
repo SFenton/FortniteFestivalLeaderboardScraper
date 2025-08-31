@@ -41,7 +41,6 @@ namespace FortniteFestivalLeaderboardScraper
             this.label2 = new System.Windows.Forms.Label();
             this.tabControl1 = new System.Windows.Forms.TabControl();
             this.tabPage1 = new System.Windows.Forms.TabPage();
-            this.button5 = new System.Windows.Forms.Button();
             this.tabPage2 = new System.Windows.Forms.TabPage();
             this.label8 = new System.Windows.Forms.Label();
             this.textBox3 = new System.Windows.Forms.TextBox();
@@ -100,7 +99,6 @@ namespace FortniteFestivalLeaderboardScraper
             this.leadCheck = new System.Windows.Forms.CheckBox();
             this.dataGridViewCheckBoxColumn1 = new System.Windows.Forms.DataGridViewCheckBoxColumn();
             this.dataGridViewTextBoxColumn3 = new System.Windows.Forms.DataGridViewTextBoxColumn();
-            this.outputExcelCheckbox = new System.Windows.Forms.CheckBox();
             this.tabControl1.SuspendLayout();
             this.tabPage1.SuspendLayout();
             this.tabPage2.SuspendLayout();
@@ -193,7 +191,6 @@ namespace FortniteFestivalLeaderboardScraper
             // 
             // tabPage1
             // 
-            this.tabPage1.Controls.Add(this.button5);
             this.tabPage1.Controls.Add(this.label2);
             this.tabPage1.Controls.Add(this.textBox2);
             this.tabPage1.Controls.Add(this.button2);
@@ -207,17 +204,6 @@ namespace FortniteFestivalLeaderboardScraper
             this.tabPage1.TabIndex = 0;
             this.tabPage1.Text = "Process Scores";
             this.tabPage1.UseVisualStyleBackColor = true;
-            // 
-            // button5
-            // 
-            this.button5.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
-            this.button5.Location = new System.Drawing.Point(1429, 25);
-            this.button5.Name = "button5";
-            this.button5.Size = new System.Drawing.Size(223, 33);
-            this.button5.TabIndex = 8;
-            this.button5.Text = "Regenerate Output";
-            this.button5.UseVisualStyleBackColor = true;
-            this.button5.Click += new System.EventHandler(this.button5_Click);
             // 
             // tabPage2
             // 
@@ -616,7 +602,6 @@ namespace FortniteFestivalLeaderboardScraper
             // 
             // tabPage3
             // 
-            this.tabPage3.Controls.Add(this.outputExcelCheckbox);
             this.tabPage3.Controls.Add(this.invertOutput);
             this.tabPage3.Controls.Add(this.label7);
             this.tabPage3.Controls.Add(this.stars);
@@ -858,17 +843,6 @@ namespace FortniteFestivalLeaderboardScraper
             this.dataGridViewTextBoxColumn3.Name = "dataGridViewTextBoxColumn3";
             this.dataGridViewTextBoxColumn3.Width = 150;
             // 
-            // outputExcelCheckbox
-            // 
-            this.outputExcelCheckbox.AutoSize = true;
-            this.outputExcelCheckbox.Location = new System.Drawing.Point(378, 57);
-            this.outputExcelCheckbox.Name = "outputExcelCheckbox";
-            this.outputExcelCheckbox.Size = new System.Drawing.Size(155, 24);
-            this.outputExcelCheckbox.TabIndex = 17;
-            this.outputExcelCheckbox.Text = "Output Excel File";
-            this.outputExcelCheckbox.UseVisualStyleBackColor = true;
-            this.outputExcelCheckbox.CheckedChanged += OutputExcelCheckbox_CheckedChanged;
-            // 
             // Form1
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(9F, 20F);
@@ -934,7 +908,6 @@ namespace FortniteFestivalLeaderboardScraper
         private System.Windows.Forms.RadioButton stars;
         private System.Windows.Forms.Label label7;
         private System.Windows.Forms.CheckBox invertOutput;
-        private System.Windows.Forms.Button button5;
         private System.Windows.Forms.Label label8;
         private System.Windows.Forms.TextBox textBox3;
         private System.Windows.Forms.TabPage tabPage4;
@@ -969,7 +942,6 @@ namespace FortniteFestivalLeaderboardScraper
         private DataGridViewTextBoxColumn PGD;
         private DataGridViewTextBoxColumn PBD;
         private DataGridViewTextBoxColumn su;
-        private CheckBox outputExcelCheckbox;
     }
 }
 
