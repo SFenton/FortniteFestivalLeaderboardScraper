@@ -13,12 +13,31 @@ namespace FortniteFestival.Core.Services
         event Action<string> Log; // log line
         event Action<string> SongAvailabilityChanged; // songId
         event Action<LeaderboardData> ScoreUpdated; // per song
-        event Action<int,int,string,bool> SongProgress; // current, total, title, started(true)/completed(false)
+        event Action<int, int, string, bool> SongProgress; // current, total, title, started(true)/completed(false)
+
         // Returns instrumentation counters: improved scores, empty leaderboards, errors, total requests, total bytes, elapsed seconds
-        (long improved,long empty,long errors,long requests,long bytes,double elapsedSec) GetInstrumentation();
+        (
+            long improved,
+            long empty,
+            long errors,
+            long requests,
+            long bytes,
+            double elapsedSec
+        ) GetInstrumentation();
         Task InitializeAsync(); // load DB, initial song sync
         Task SyncSongsAsync();
-        Task<bool> FetchScoresAsync(string exchangeCode, int degreeOfParallelism, IList<string> filteredSongIds, Settings settings);
-        Task<bool> FetchScoresAsync(string exchangeCode, int degreeOfParallelism, IList<string> filteredSongIds, IEnumerable<InstrumentType> instruments, Settings settings);
+        Task<bool> FetchScoresAsync(
+            string exchangeCode,
+            int degreeOfParallelism,
+            IList<string> filteredSongIds,
+            Settings settings
+        );
+        Task<bool> FetchScoresAsync(
+            string exchangeCode,
+            int degreeOfParallelism,
+            IList<string> filteredSongIds,
+            IEnumerable<InstrumentType> instruments,
+            Settings settings
+        );
     }
 }

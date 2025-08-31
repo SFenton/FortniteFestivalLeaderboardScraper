@@ -29,14 +29,14 @@ namespace FortniteFestivalLeaderboardScraper.UI.Views
             {
                 Left = 8,
                 Top = 16,
-                Width = 304
+                Width = 304,
             };
 
             var searchLbl = new Label
             {
                 Left = 338,
                 Top = 21,
-                Text = "Search by Title/Artist"
+                Text = "Search by Title/Artist",
             };
 
             SelectAllButton = new Button
@@ -45,7 +45,7 @@ namespace FortniteFestivalLeaderboardScraper.UI.Views
                 Width = 189,
                 Height = 42,
                 Anchor = AnchorStyles.Left | AnchorStyles.Bottom,
-                Text = "Select All"
+                Text = "Select All",
             };
 
             DeselectAllButton = new Button
@@ -53,7 +53,7 @@ namespace FortniteFestivalLeaderboardScraper.UI.Views
                 Width = 189,
                 Height = 42,
                 Anchor = AnchorStyles.Right | AnchorStyles.Bottom,
-                Text = "Deselect All"
+                Text = "Deselect All",
             };
 
             SongsGrid = new DataGridView
@@ -62,20 +62,23 @@ namespace FortniteFestivalLeaderboardScraper.UI.Views
                 Top = 64,
                 Width = 1600,
                 Height = 740,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
+                Anchor =
+                    AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
                 AllowUserToAddRows = false,
                 RowHeadersVisible = false,
-                Visible = false
+                Visible = false,
             };
 
-            Controls.AddRange(new Control[]
-            {
-                SearchTextBox,
-                searchLbl,
-                SelectAllButton,
-                DeselectAllButton,
-                SongsGrid
-            });
+            Controls.AddRange(
+                new Control[]
+                {
+                    SearchTextBox,
+                    searchLbl,
+                    SelectAllButton,
+                    DeselectAllButton,
+                    SongsGrid,
+                }
+            );
 
             // Initial layout for bottom buttons
             DeselectAllButton.Left = Width - DeselectAllButton.Width - 16;

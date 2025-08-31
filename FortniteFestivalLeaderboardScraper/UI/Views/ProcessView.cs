@@ -25,19 +25,88 @@ namespace FortniteFestivalLeaderboardScraper.UI.Views
         {
             Dock = DockStyle.Fill;
 
-            ExchangeCodeTextBox = new TextBox { Left = 16, Top = 32, Width = 200 };
-            GenerateCodeButton = new Button { Left = 246, Top = 25, Width = 223, Height = 33, Text = "Generate Exchange Code" };
-            FetchScoresButton = new Button { Left = 505, Top = 25, Width = 223, Height = 33, Text = "Retrieve Scores", Enabled = false };
-            ProgressBar = new ProgressBar { Left = 16, Top = 80, Width = 600, Height = 16, Minimum = 0, Maximum = 100, Value = 0, Visible = true };
-            ProgressLabel = new Label { Left = ProgressBar.Right + 12, Top = 78, AutoSize = true, Text = "0%" };
-            var lbl = new Label { Left = 12, Top = 9, Text = "Enter Exchange Code Here" };
-            var logLbl = new Label { Left = 16, Top = 100, Text = "Console Output" };
-            LogTextBox = new TextBox { Left = 16, Top = 120, Multiline = true, ScrollBars = ScrollBars.Vertical };
+            ExchangeCodeTextBox = new TextBox
+            {
+                Left = 16,
+                Top = 32,
+                Width = 200,
+            };
+            GenerateCodeButton = new Button
+            {
+                Left = 246,
+                Top = 25,
+                Width = 223,
+                Height = 33,
+                Text = "Generate Exchange Code",
+            };
+            FetchScoresButton = new Button
+            {
+                Left = 505,
+                Top = 25,
+                Width = 223,
+                Height = 33,
+                Text = "Retrieve Scores",
+                Enabled = false,
+            };
+            ProgressBar = new ProgressBar
+            {
+                Left = 16,
+                Top = 80,
+                Width = 600,
+                Height = 16,
+                Minimum = 0,
+                Maximum = 100,
+                Value = 0,
+                Visible = true,
+            };
+            ProgressLabel = new Label
+            {
+                Left = ProgressBar.Right + 12,
+                Top = 78,
+                AutoSize = true,
+                Text = "0%",
+            };
+            var lbl = new Label
+            {
+                Left = 12,
+                Top = 9,
+                Text = "Enter Exchange Code Here",
+            };
+            var logLbl = new Label
+            {
+                Left = 16,
+                Top = 100,
+                Text = "Console Output",
+            };
+            LogTextBox = new TextBox
+            {
+                Left = 16,
+                Top = 120,
+                Multiline = true,
+                ScrollBars = ScrollBars.Vertical,
+            };
 
-            Controls.AddRange(new Control[] { ExchangeCodeTextBox, GenerateCodeButton, FetchScoresButton, ProgressBar, ProgressLabel, LogTextBox, lbl, logLbl });
+            Controls.AddRange(
+                new Control[]
+                {
+                    ExchangeCodeTextBox,
+                    GenerateCodeButton,
+                    FetchScoresButton,
+                    ProgressBar,
+                    ProgressLabel,
+                    LogTextBox,
+                    lbl,
+                    logLbl,
+                }
+            );
 
-            ExchangeCodeTextBox.TextChanged += (s, e) => { FetchScoresButton.Enabled = ExchangeCodeTextBox.TextLength > 0; ExchangeCodeChanged?.Invoke(this, EventArgs.Empty); };
-            GenerateCodeButton.Click += (s, e) => GenerateCodeClicked?.Invoke(this, EventArgs.Empty);
+            ExchangeCodeTextBox.TextChanged += (s, e) =>
+            {
+                FetchScoresButton.Enabled = ExchangeCodeTextBox.TextLength > 0;
+                ExchangeCodeChanged?.Invoke(this, EventArgs.Empty);
+            };
+            GenerateCodeButton.Click += (s, e) =>
+                GenerateCodeClicked?.Invoke(this, EventArgs.Empty);
             FetchScoresButton.Click += (s, e) => FetchScoresClicked?.Invoke(this, EventArgs.Empty);
 
             Resize += (s, e) => AdjustLayout();
@@ -54,6 +123,10 @@ namespace FortniteFestivalLeaderboardScraper.UI.Views
         }
 
         public void ClearLog() => LogTextBox.Clear();
-        public void AppendLog(string text) { LogTextBox.AppendText(text); }
+
+        public void AppendLog(string text)
+        {
+            LogTextBox.AppendText(text);
+        }
     }
 }

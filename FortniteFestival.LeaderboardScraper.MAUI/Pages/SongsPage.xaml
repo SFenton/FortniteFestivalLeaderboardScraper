@@ -1,28 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
-             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
-             x:Class="FortniteFestival.LeaderboardScraper.MAUI.Pages.SongsPage"
-             Title="Songs">
-    <ContentPage.Content>
-        <VerticalStackLayout Padding="16" Spacing="8">
-            <SearchBar Placeholder="Search title/artist" Text="{Binding Filter}" />
-            <HorizontalStackLayout Spacing="12">
-                <Button Text="Select All" Command="{Binding SelectAllCommand}" />
-                <Button Text="Clear All" Command="{Binding ClearAllCommand}" />
-            </HorizontalStackLayout>
-            <CollectionView ItemsSource="{Binding VisibleSongs}" SelectionMode="None" HeightRequest="500">
-                <CollectionView.ItemTemplate>
-                    <DataTemplate>
-                        <Grid Padding="4" ColumnDefinitions="40,*" RowDefinitions="Auto">
-                            <CheckBox IsChecked="{Binding isSelected}" CheckedChanged="OnCheckChanged" />
-                            <VerticalStackLayout Grid.Column="1" Spacing="2">
-                                <Label Text="{Binding track.tt}" FontAttributes="Bold" />
-                                <Label Text="{Binding track.an}" FontSize="12" TextColor="Gray" />
-                            </VerticalStackLayout>
-                        </Grid>
-                    </DataTemplate>
-                </CollectionView.ItemTemplate>
-            </CollectionView>
-        </VerticalStackLayout>
-    </ContentPage.Content>
+<ContentPage
+  xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+  x:Class="FortniteFestival.LeaderboardScraper.MAUI.Pages.SongsPage"
+  Title="Songs"
+>
+  <ContentPage.Content>
+    <VerticalStackLayout Padding="16" Spacing="8">
+      <SearchBar Placeholder="Search title/artist" Text="{Binding Filter}" />
+      <HorizontalStackLayout Spacing="12">
+        <Button Text="Select All" Command="{Binding SelectAllCommand}" />
+        <Button Text="Clear All" Command="{Binding ClearAllCommand}" />
+      </HorizontalStackLayout>
+      <CollectionView ItemsSource="{Binding VisibleSongs}" SelectionMode="None" HeightRequest="500">
+        <CollectionView.ItemTemplate>
+          <DataTemplate>
+            <Grid Padding="4" ColumnDefinitions="40,*" RowDefinitions="Auto">
+              <CheckBox IsChecked="{Binding isSelected}" CheckedChanged="OnCheckChanged" />
+              <VerticalStackLayout Grid.Column="1" Spacing="2">
+                <Label Text="{Binding track.tt}" FontAttributes="Bold" />
+                <Label Text="{Binding track.an}" FontSize="12" TextColor="Gray" />
+              </VerticalStackLayout>
+            </Grid>
+          </DataTemplate>
+        </CollectionView.ItemTemplate>
+      </CollectionView>
+    </VerticalStackLayout>
+  </ContentPage.Content>
 </ContentPage>

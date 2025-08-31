@@ -7,6 +7,6 @@ namespace FortniteFestival.Core.Config
         Vocals,
         Bass,
         ProLead,
-        ProBass
+        ProBass,
     }
 }

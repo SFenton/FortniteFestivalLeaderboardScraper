@@ -29,8 +29,18 @@ namespace FortniteFestivalLeaderboardScraper.UI.Views
         {
             Dock = DockStyle.Fill;
 
-            SearchTextBox = new TextBox { Left = 8, Top = 12, Width = 304 };
-            var searchLbl = new Label { Left = 338, Top = 16, Text = "Search by Title/Artist" };
+            SearchTextBox = new TextBox
+            {
+                Left = 8,
+                Top = 12,
+                Width = 304,
+            };
+            var searchLbl = new Label
+            {
+                Left = 338,
+                Top = 16,
+                Text = "Search by Title/Artist",
+            };
 
             // Flow panel for instrument radios to ensure spacing & clickability
             _instrumentPanel = new FlowLayoutPanel
@@ -44,7 +54,7 @@ namespace FortniteFestivalLeaderboardScraper.UI.Views
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
                 Margin = new Padding(0),
-                Padding = new Padding(0)
+                Padding = new Padding(0),
             };
 
             LeadRadio = CreateRadio("Lead", true);
@@ -54,10 +64,17 @@ namespace FortniteFestivalLeaderboardScraper.UI.Views
             ProLeadRadio = CreateRadio("Pro Lead");
             ProBassRadio = CreateRadio("Pro Bass");
 
-            _instrumentPanel.Controls.AddRange(new Control[]
-            {
-                LeadRadio, VocalsRadio, DrumsRadio, BassRadio, ProLeadRadio, ProBassRadio
-            });
+            _instrumentPanel.Controls.AddRange(
+                new Control[]
+                {
+                    LeadRadio,
+                    VocalsRadio,
+                    DrumsRadio,
+                    BassRadio,
+                    ProLeadRadio,
+                    ProBassRadio,
+                }
+            );
 
             ScoresGrid = new DataGridView
             {
@@ -65,16 +82,16 @@ namespace FortniteFestivalLeaderboardScraper.UI.Views
                 Top = _instrumentPanel.Bottom + 8,
                 Width = 1600,
                 Height = 700,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
+                Anchor =
+                    AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
                 AllowUserToAddRows = false,
                 RowHeadersVisible = false,
-                Visible = false
+                Visible = false,
             };
 
-            Controls.AddRange(new Control[]
-            {
-                SearchTextBox, searchLbl, _instrumentPanel, ScoresGrid
-            });
+            Controls.AddRange(
+                new Control[] { SearchTextBox, searchLbl, _instrumentPanel, ScoresGrid }
+            );
 
             Resize += (s, e) =>
             {
@@ -101,7 +118,7 @@ namespace FortniteFestivalLeaderboardScraper.UI.Views
                 Text = text,
                 AutoSize = true,
                 Checked = isChecked,
-                Margin = new Padding(8, 3, 8, 3)
+                Margin = new Padding(8, 3, 8, 3),
             };
         }
     }

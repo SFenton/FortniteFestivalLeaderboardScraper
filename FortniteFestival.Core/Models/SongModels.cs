@@ -55,5 +55,8 @@ namespace FortniteFestival.Core
         public string _templateName { get; set; }
         public bool isSelected { get; set; }
         public string isInLocalData { get; set; } = "?";
+
+        // Local path to downloaded artwork image (saved as <_title>.jpg)
+        public string imagePath { get; set; }
     }
 }

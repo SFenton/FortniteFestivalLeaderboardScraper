@@ -5,6 +5,7 @@ namespace FortniteFestival.LeaderboardScraper.MAUI.Pages;
 public partial class ScoresPage : ContentPage
 {
     private readonly ScoresViewModel _vm;
+
     public ScoresPage(ScoresViewModel vm)
     {
         InitializeComponent();
@@ -19,8 +20,9 @@ public partial class ScoresPage : ContentPage
 
     void OnInstrumentChanged(object sender, CheckedChangedEventArgs e)
     {
-        if(!e.Value) return;
-        if(sender is RadioButton rb && rb.Content is string name)
+        if (!e.Value)
+            return;
+        if (sender is RadioButton rb && rb.Content is string name)
         {
             _vm.Instrument = name;
         }

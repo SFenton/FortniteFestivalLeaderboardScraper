@@ -26,6 +26,7 @@ namespace FortniteFestival.Core.Auth
         public string acr { get; set; }
         public DateTime auth_time { get; set; }
     }
+
     internal class ExchangeCodeResponse
     {
         public int expiresInSeconds { get; set; }

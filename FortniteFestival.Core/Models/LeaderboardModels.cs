@@ -11,13 +11,18 @@ namespace FortniteFestival.Core
         public bool isFullCombo { get; set; }
         public int percentHit { get; set; }
         public int seasonAchieved { get; set; }
+
         // Cached formatted strings (avoids repeated formatting on UI threads)
         public string percentHitFormatted { get; set; }
         public string starsFormatted { get; set; }
+
         public void RefreshDerived()
         {
             percentHitFormatted = (percentHit / 10000.0).ToString("0.00") + "%";
-            if (numStars <= 0) starsFormatted = "N/A"; else starsFormatted = new string('?', Math.Min(numStars, 6));
+            if (numStars <= 0)
+                starsFormatted = "N/A";
+            else
+                starsFormatted = new string('?', Math.Min(numStars, 6));
         }
     }
 
@@ -32,6 +37,7 @@ namespace FortniteFestival.Core
         public ScoreTracker vocals { get; set; }
         public ScoreTracker pro_guitar { get; set; }
         public ScoreTracker pro_bass { get; set; }
+
         // Mark when any tracker updated to avoid unnecessary DB writes
         public bool dirty { get; set; }
     }

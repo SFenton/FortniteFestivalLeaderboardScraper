@@ -5,6 +5,7 @@ namespace FortniteFestival.LeaderboardScraper.MAUI.Pages;
 public partial class ProcessPage : ContentPage
 {
     private readonly ProcessViewModel _vm;
+
     public ProcessPage(ProcessViewModel vm)
     {
         InitializeComponent();
@@ -19,6 +20,10 @@ public partial class ProcessPage : ContentPage
 
     private async void OnCopyLog(object sender, EventArgs e)
     {
-        try { await Clipboard.SetTextAsync(_vm.LogJoined); } catch { }
+        try
+        {
+            await Clipboard.SetTextAsync(_vm.LogJoined);
+        }
+        catch { }
     }
 }

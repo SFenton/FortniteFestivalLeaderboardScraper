@@ -6,6 +6,7 @@ namespace FortniteFestival.LeaderboardScraper.MAUI.Pages;
 public partial class SongsPage : ContentPage
 {
     private readonly SongsViewModel _vm;
+
     public SongsPage(SongsViewModel vm)
     {
         InitializeComponent();
@@ -20,7 +21,7 @@ public partial class SongsPage : ContentPage
 
     private void OnCheckChanged(object sender, CheckedChangedEventArgs e)
     {
-        if(sender is CheckBox cb && cb.BindingContext is Song s)
+        if (sender is CheckBox cb && cb.BindingContext is Song s)
         {
             _vm.ToggleSelection(s);
         }
