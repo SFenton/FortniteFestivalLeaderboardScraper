@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="FortniteFestival.LeaderboardScraper.MAUI.Pages.ScoresPage"
+             Title="Scores">
+    <Grid RowDefinitions="Auto,Auto,Auto,*" ColumnDefinitions="*" Padding="16" RowSpacing="12">
+        <SearchBar Grid.Row="0" Placeholder="Search title/artist" Text="{Binding Filter}" />
+
+        <!-- Instrument radios -->
+        <HorizontalStackLayout Grid.Row="1" Spacing="16">
+            <RadioButton Content="Lead" IsChecked="True" GroupName="inst" CheckedChanged="OnInstrumentChanged" />
+            <RadioButton Content="Drums" GroupName="inst" CheckedChanged="OnInstrumentChanged" />
+            <RadioButton Content="Vocals" GroupName="inst" CheckedChanged="OnInstrumentChanged" />
+            <RadioButton Content="Bass" GroupName="inst" CheckedChanged="OnInstrumentChanged" />
+            <RadioButton Content="ProLead" GroupName="inst" CheckedChanged="OnInstrumentChanged" />
+            <RadioButton Content="ProBass" GroupName="inst" CheckedChanged="OnInstrumentChanged" />
+        </HorizontalStackLayout>
+
+        <!-- Header -->
+        <Grid Grid.Row="2" ColumnDefinitions="2.5*,1.4*,0.9*,0.9*,0.8*,0.6*,0.7*" ColumnSpacing="12" Padding="12,0,26,0">
+            <Label Grid.Column="0" Text="Title" FontAttributes="Bold" />
+            <Label Grid.Column="1" Text="Artist" FontAttributes="Bold" />
+            <Label Grid.Column="2" Text="Score" FontAttributes="Bold" />
+            <Label Grid.Column="3" Text="% Hit" FontAttributes="Bold" />
+            <Label Grid.Column="4" Text="Stars" FontAttributes="Bold" />
+            <Label Grid.Column="5" Text="FC" FontAttributes="Bold" />
+            <Label Grid.Column="6" Text="Season" FontAttributes="Bold" />
+        </Grid>
+
+        <!-- Data -->
+        <CollectionView Grid.Row="3" ItemsSource="{Binding VisibleRows}" SelectionMode="None" Margin="8,0,16,8">
+            <CollectionView.ItemsLayout>
+                <LinearItemsLayout Orientation="Vertical" />
+            </CollectionView.ItemsLayout>
+            <CollectionView.ItemTemplate>
+                <DataTemplate>
+                    <Grid ColumnDefinitions="2.5*,1.4*,0.9*,0.9*,0.8*,0.6*,0.7*" ColumnSpacing="12" Padding="12,2,12,2">
+                        <Label Grid.Column="0" Text="{Binding Title}" LineBreakMode="TailTruncation" />
+                        <Label Grid.Column="1" Text="{Binding Artist}" FontSize="12" TextColor="Gray" LineBreakMode="TailTruncation" />
+                        <Label Grid.Column="2" Text="{Binding Score}" FontSize="12" />
+                        <Label Grid.Column="3" Text="{Binding PercentHit, Converter={StaticResource PercentHitConverter}}" FontSize="12" />
+                        <Label Grid.Column="4" Text="{Binding Stars}" FontSize="12" />
+                        <Label Grid.Column="5" Text="{Binding FullCombo}" FontSize="12" />
+                        <Label Grid.Column="6" Text="{Binding Season}" FontSize="12" />
+                    </Grid>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+    </Grid>
+</ContentPage>

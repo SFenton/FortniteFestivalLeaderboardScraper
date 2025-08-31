@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<Shell
+    x:Class="FortniteFestival.LeaderboardScraper.MAUI.AppShell"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:pages="clr-namespace:FortniteFestival.LeaderboardScraper.MAUI.Pages"
+    Title="Fortnite Festival">
+
+    <TabBar>
+        <ShellContent Title="Process" ContentTemplate="{DataTemplate pages:ProcessPage}" />
+        <ShellContent Title="Songs" ContentTemplate="{DataTemplate pages:SongsPage}" />
+        <ShellContent Title="Scores" ContentTemplate="{DataTemplate pages:ScoresPage}" />
+        <ShellContent Title="Options" ContentTemplate="{DataTemplate pages:OptionsPage}" />
+        <ShellContent Title="Log" ContentTemplate="{DataTemplate pages:LogPage}" />
+    </TabBar>
+</Shell>

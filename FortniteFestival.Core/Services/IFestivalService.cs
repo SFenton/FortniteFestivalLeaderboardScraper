@@ -16,6 +16,9 @@ namespace FortniteFestival.Core.Services
         event Action<int,int,string,bool> SongProgress; // current, total, title, started(true)/completed(false)
         Task InitializeAsync(); // load DB, initial song sync
         Task SyncSongsAsync();
+        // Existing method (backward compatibility)
         Task<bool> FetchScoresAsync(string exchangeCode, int degreeOfParallelism, IList<string> filteredSongIds, Settings settings);
+        // New overload that allows explicit instrument selection overriding settings
+        Task<bool> FetchScoresAsync(string exchangeCode, int degreeOfParallelism, IList<string> filteredSongIds, IEnumerable<InstrumentType> instruments, Settings settings);
     }
 }

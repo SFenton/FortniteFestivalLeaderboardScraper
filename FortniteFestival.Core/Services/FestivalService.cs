@@ -2,6 +2,7 @@ using FortniteFestival.Core.Services;
 using FortniteFestival.Core.Net;
 using FortniteFestival.Core.Auth;
 using FortniteFestival.Core.Persistence;
+using FortniteFestival.Core.Config;
 using Newtonsoft.Json;
 using RestSharp;
 using System;
@@ -76,7 +77,40 @@ namespace FortniteFestival.Core.Services
             }
             finally { _songSyncComplete = true; }
         }
-        public async Task<bool> FetchScoresAsync(string exchangeCode, int degreeOfParallelism, IList<string> filteredSongIds, FortniteFestival.Core.Config.Settings settings){ if(IsFetching) return false; if(!_songSyncComplete){ LogLine("Songs not yet synced."); return false; } _authFailed=false; IsFetching = true; LogLine("Authenticating..."); var token = await GetToken(exchangeCode); if(token==null){ LogLine("Auth failed."); IsFetching=false; return false; }
+
+        // Overload supporting explicit instrument selection
+        public Task<bool> FetchScoresAsync(string exchangeCode, int degreeOfParallelism, IList<string> filteredSongIds, IEnumerable<InstrumentType> instruments, Settings settings)
+        {
+            if (instruments != null)
+            {
+                var clone = new Settings
+                {
+                    DegreeOfParallelism = settings?.DegreeOfParallelism ?? degreeOfParallelism,
+                    QueryLead = false,
+                    QueryDrums = false,
+                    QueryVocals = false,
+                    QueryBass = false,
+                    QueryProLead = false,
+                    QueryProBass = false
+                };
+                foreach (var inst in instruments)
+                {
+                    switch (inst)
+                    {
+                        case InstrumentType.Lead: clone.QueryLead = true; break;
+                        case InstrumentType.Drums: clone.QueryDrums = true; break;
+                        case InstrumentType.Vocals: clone.QueryVocals = true; break;
+                        case InstrumentType.Bass: clone.QueryBass = true; break;
+                        case InstrumentType.ProLead: clone.QueryProLead = true; break;
+                        case InstrumentType.ProBass: clone.QueryProBass = true; break;
+                    }
+                }
+                return FetchScoresAsync(exchangeCode, degreeOfParallelism, filteredSongIds, clone);
+            }
+            return FetchScoresAsync(exchangeCode, degreeOfParallelism, filteredSongIds, settings);
+        }
+
+        public async Task<bool> FetchScoresAsync(string exchangeCode, int degreeOfParallelism, IList<string> filteredSongIds, Settings settings){ if(IsFetching) return false; if(!_songSyncComplete){ LogLine("Songs not yet synced."); return false; } _authFailed=false; IsFetching = true; LogLine("Authenticating..."); var token = await GetToken(exchangeCode); if(token==null){ LogLine("Auth failed."); IsFetching=false; return false; }
             var prioritized = Songs.Select((s,i)=>new{ s,i}).OrderBy(x=> _scores.ContainsKey(x.s.track.su)?1:0).ThenBy(x=>x.i).Select(x=>x.s).ToList();
             if(filteredSongIds!=null && filteredSongIds.Count>0) prioritized = prioritized.Where(s=> filteredSongIds.Contains(s.track.su)).ToList();
             int total = prioritized.Count; if(total==0){ LogLine("No songs selected."); IsFetching=false; return true; }
@@ -89,7 +123,6 @@ namespace FortniteFestival.Core.Services
             var globalSw = Stopwatch.StartNew();
             while((queue.Count>0 || active.Count>0) && !_authFailed)
             {
-                // launch up to dynamicDop
                 while(active.Count < dynamicDop && queue.Count>0 && !_authFailed)
                 {
                     var song = queue.Dequeue(); int songIndex = ++indexCounter; SongProgress?.Invoke(songIndex,total,song.track.tt,true); LogLine($"Starting {songIndex}/{total}: {song.track.tt}"); var swSong = Stopwatch.StartNew();
@@ -100,11 +133,9 @@ namespace FortniteFestival.Core.Services
                 var finished = await Task.WhenAny(active); active.Remove(finished);
                 long elapsed = 0; try { elapsed = finished.Result; } catch { }
                 if(elapsed>0){ swPerSong.Enqueue(elapsed); while(swPerSong.Count>Window) swPerSong.Dequeue(); }
-                // Adapt only if we have a full window or end of queue
                 if(swPerSong.Count==Window || (queue.Count==0 && active.Count==0))
                 {
                     double avgMs = swPerSong.Average();
-                    // Heuristic: target per-song latency sweet spot around 1500-3000ms; if faster, we can add more concurrency; if much slower, reduce.
                     int old = dynamicDop;
                     if(avgMs < 1500 && dynamicDop < maxDop) dynamicDop = Math.Min(maxDop, dynamicDop + Math.Max(1, dynamicDop/8));
                     else if(avgMs > 4500 && dynamicDop > minDop) dynamicDop = Math.Max(minDop, dynamicDop - Math.Max(1, dynamicDop/10));
@@ -116,7 +147,7 @@ namespace FortniteFestival.Core.Services
             if(settings!=null){ settings.DegreeOfParallelism = dynamicDop; }
             if(!_authFailed && _persistence!=null){ try { await _persistence.SaveScoresAsync(_scores.Values); LogLine("Scores persisted."); } catch { } }
             IsFetching=false; return !_authFailed; }
-        private async Task FetchSongAsync(Song song, ExchangeCodeToken token, FortniteFestival.Core.Config.Settings settings, int songIndex, int total)
+        private async Task FetchSongAsync(Song song, ExchangeCodeToken token, Settings settings, int songIndex, int total)
         {
             var instruments = new List<(string api, Func<LeaderboardData, ScoreTracker> getter, Action<LeaderboardData, ScoreTracker> assign, int diff)>();
             if(settings==null || settings.QueryDrums) instruments.Add(("Solo_Drums", l=>l.drums, (l,s)=> l.drums=s, song.track.@in.ds));

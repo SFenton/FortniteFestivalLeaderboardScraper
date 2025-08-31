@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net472</TargetFramework>
+    <TargetFrameworks>net472;net9.0</TargetFrameworks>
     <AssemblyName>FortniteFestival.Core</AssemblyName>
     <RootNamespace>FortniteFestival.Core</RootNamespace>
     <LangVersion>7.3</LangVersion>
