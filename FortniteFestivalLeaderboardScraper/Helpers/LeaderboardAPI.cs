@@ -10,6 +10,8 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
     public class LeaderboardAPI
     {
         private const string API_BASE_ADDRESS = "https://events-public-service-live.ol.epicgames.com/api/v2/games/FNFestival/leaderboards/";
+        // New base for v1 all-time endpoints (page based) – still available for diagnostics
+        private const string API_V1_ALLTIME_BASE = "https://events-public-service-live.ol.epicgames.com/api/v1/leaderboards/FNFestival/";
 
         private const string DRUMS = "Solo_Drums";
         private const string VOCALS = "Solo_Vocals";
@@ -17,243 +19,174 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
         private const string GUITAR = "Solo_Guitar";
         private const string PRO_BASS = "Solo_PeripheralBass";
         private const string PRO_GUITAR = "Solo_PeripheralGuitar";
-        private const int PRO_STRINGS_MINSEASON = 3;
 
         private string PARAMS = "fromIndex=0&findTeams=false";
         private string GetFriendlyInstrumentName(string instrumentName)
         {
             switch (instrumentName)
             {
-                case DRUMS:
-                    return "Drums";
-                case VOCALS:
-                    return "Vocals";
-                case BASS:
-                    return "Bass";
-                case GUITAR:
-                    return "Guitar";
-                case PRO_BASS:
-                    return "Pro Bass";
-                case PRO_GUITAR:
-                    return "Pro Guitar";
+                case DRUMS: return "Drums";
+                case VOCALS: return "Vocals";
+                case BASS: return "Bass";
+                case GUITAR: return "Guitar";
+                case PRO_BASS: return "Pro Bass";
+                case PRO_GUITAR: return "Pro Guitar";
             }
-
             return "Unknown Instrument";
         }
 
+        // v1 GET (paged) still here if needed for debug
+        public async Task<AllTimeLeaderboardPage> GetAllTimeLeaderboardPageAsync(string eventId, string allTimeWindowId, string instrumentPath, string accessToken, string accountId, int page = 0, int rank = 0)
+        {
+            var url = $"{API_V1_ALLTIME_BASE}{eventId}/{allTimeWindowId}/{accountId}?page={page}&rank={rank}&teamAccountIds={accountId}&appId=Fortnite&showLiveSessions=false";
+            var client = new RestClient(url);
+            var request = new RestRequest();
+            request.Method = Method.Get;
+            request.AddHeader("Authorization", "Bearer " + accessToken);
+            request.AddHeader("Accept-Encoding", "deflate, gzip");
+            request.AddHeader("Accept", "application/json");
+            var response = await client.ExecuteAsync(request);
+            try { return JsonConvert.DeserializeObject<AllTimeLeaderboardPage>(response.Content); } catch { return null; }
+        }
+
+        public async Task<List<AllTimeLeaderboardPage>> GetAllTimeLeaderboardSampleAsync(string eventId, string allTimeWindowId, string instrumentPath, string accessToken, string accountId, int pagesToFetch = 1)
+        {
+            var results = new List<AllTimeLeaderboardPage>();
+            for (int p = 0; p < pagesToFetch; p++)
+            {
+                var page = await GetAllTimeLeaderboardPageAsync(eventId, allTimeWindowId, instrumentPath, accessToken, accountId, p, 0);
+                if (page == null) break;
+                results.Add(page);
+                if (page.page >= page.totalPages - 1) break;
+            }
+            return results;
+        }
+
+        // New refactored method: all-time v2 only (replaces season-by-season)
         public async Task<Tuple<bool, List<LeaderboardData>>> GetLeaderboardsForInstrument(
-            List<Song> items, 
-            string accessToken, 
-            string accountId, 
-            int maxSeason, 
-            List<LeaderboardData> prevData, 
+            List<Song> items,
+            string accessToken,
+            string accountId,
+            int unusedMaxSeason, // kept parameter for signature compatibility
+            List<LeaderboardData> prevData,
             System.Windows.Forms.TextBox textBox,
             List<string> filteredSongIds)
         {
             if (items.Count == 0)
-            {
                 return new Tuple<bool, List<LeaderboardData>>(true, new List<LeaderboardData>());
-            }
 
             var leaderboardData = new List<LeaderboardData>();
-            int maxValidSeason = -1;
 
-            // TO_DO: Season 1 doesn't exist yet
             foreach (Song song in items)
             {
                 if (filteredSongIds.Count > 0 && !filteredSongIds.Contains(song.track.su))
                 {
-                    if (prevData.Find(x => x.songId == song.track.su) != null)
-                    {
-                        leaderboardData.Add(prevData.Find(x => x.songId == song.track.su));
-                    }
+                    var existing = prevData.Find(x => x.songId == song.track.su);
+                    if (existing != null) leaderboardData.Add(existing);
                     continue;
                 }
-                
-                var songBoard = new LeaderboardData();
-                songBoard.title = song.track.tt;
-                songBoard.artist = song.track.an;
-                songBoard.songId = song.track.su;
-                int minSongSeason = 2;
 
-                var prevSongData = prevData.Find(x => x.songId == song.track.su);
-                if (prevSongData == null)
+                var songBoard = new LeaderboardData
                 {
-                    prevSongData = new LeaderboardData();
-                }
+                    title = song.track.tt,
+                    artist = song.track.an,
+                    songId = song.track.su
+                };
+
+                // Loop instruments (fixed order for mapping)
                 for (int i = 0; i < 6; i++)
                 {
-                    var prevInstrumentTracker = new ScoreTracker();
-                    var instrumentName = "";
+                    string instrumentName;
+                    int difficulty = 0;
                     switch (i)
                     {
-                        case 0:
-                            instrumentName = DRUMS;
-                            prevInstrumentTracker = prevSongData.drums ?? new ScoreTracker();
-                            prevInstrumentTracker.difficulty = song.track.@in.ds;
-                            break;
-                        case 1:
-                            instrumentName = GUITAR;
-                            prevInstrumentTracker = prevSongData.guitar ?? new ScoreTracker();
-                            prevInstrumentTracker.difficulty = song.track.@in.gr;
-                            break;
-                        case 2:
-                            instrumentName = PRO_BASS;
-                            prevInstrumentTracker = prevSongData.pro_bass ?? new ScoreTracker();
-                            prevInstrumentTracker.difficulty = song.track.@in.pb;
-                            break;
-                        case 3:
-                            instrumentName = PRO_GUITAR;
-                            prevInstrumentTracker = prevSongData.pro_guitar ?? new ScoreTracker();
-                            prevInstrumentTracker.difficulty = song.track.@in.pg;
-                            break;
-                        case 4:
-                            instrumentName = BASS;
-                            prevInstrumentTracker = prevSongData.bass ?? new ScoreTracker();
-                            prevInstrumentTracker.difficulty = song.track.@in.ba;
-                            break;
-                        case 5:
-                            instrumentName = VOCALS;
-                            prevInstrumentTracker = prevSongData.vocals ?? new ScoreTracker();
-                            prevInstrumentTracker.difficulty = song.track.@in.vl;
-                            break;
+                        case 0: instrumentName = DRUMS; difficulty = song.track.@in.ds; break;
+                        case 1: instrumentName = GUITAR; difficulty = song.track.@in.gr; break;
+                        case 2: instrumentName = PRO_BASS; difficulty = song.track.@in.pb; break;
+                        case 3: instrumentName = PRO_GUITAR; difficulty = song.track.@in.pg; break;
+                        case 4: instrumentName = BASS; difficulty = song.track.@in.ba; break;
+                        case 5: instrumentName = VOCALS; difficulty = song.track.@in.vl; break;
+                        default: instrumentName = DRUMS; break;
                     }
 
-                    var isSeasonActive = true;
-                    var baseSeason = prevInstrumentTracker.lastSeenSeason == -1 ? ((instrumentName == PRO_BASS || instrumentName == PRO_GUITAR) ? Math.Max(minSongSeason, PRO_STRINGS_MINSEASON) : minSongSeason) : prevInstrumentTracker.lastSeenSeason;
                     var instrumentData = new ScoreTracker();
-                    instrumentData.minSeason = prevInstrumentTracker.minSeason == -1 ? -1 : prevInstrumentTracker.minSeason;
-
-                    instrumentData.maxScore = prevInstrumentTracker.maxScore;
-                    instrumentData.percentHit = prevInstrumentTracker.percentHit;
-                    instrumentData.isFullCombo = prevInstrumentTracker.isFullCombo;
-                    instrumentData.numStars = prevInstrumentTracker.numStars;
-                    instrumentData.initialized = prevInstrumentTracker.initialized;
-                    instrumentData.season = prevInstrumentTracker.season;
-                    instrumentData.difficulty = prevInstrumentTracker.difficulty;
-
-                    var hasSeenValidLeaderboard = false;
-
-                    while (isSeasonActive && baseSeason <= maxSeason && (maxValidSeason == -1 || baseSeason < maxValidSeason))
+                    var prevSongData = prevData.Find(x => x.songId == song.track.su);
+                    if (prevSongData != null)
                     {
-                        var seasonToString = baseSeason.ToString();
-                        while (seasonToString.Length < 3)
+                        switch (i)
                         {
-                            seasonToString = "0" + seasonToString;
+                            case 0: instrumentData = prevSongData.drums ?? new ScoreTracker(); break;
+                            case 1: instrumentData = prevSongData.guitar ?? new ScoreTracker(); break;
+                            case 2: instrumentData = prevSongData.pro_bass ?? new ScoreTracker(); break;
+                            case 3: instrumentData = prevSongData.pro_guitar ?? new ScoreTracker(); break;
+                            case 4: instrumentData = prevSongData.bass ?? new ScoreTracker(); break;
+                            case 5: instrumentData = prevSongData.vocals ?? new ScoreTracker(); break;
                         }
+                    }
 
-                        var client = new RestClient(API_BASE_ADDRESS + "season" + seasonToString + "_" + song.track.su + "/" + song.track.su + "_" + instrumentName + "/scores?accountId=" + accountId + "&" + PARAMS);
-                        var request = new RestRequest();
-                        request.Method = Method.Post;
-                        request.AddHeader("Authorization", "bearer " + accessToken);
-                        request.AddHeader("Accept-Encoding", "gzip, deflate, br");
-                        request.AddHeader("Content-Type", "application/json");
-                        request.AddHeader("Accept", "application/json");
-                        request.AddParameter("", "{\"teams\":[[\"" + accountId + "\"]]}", ParameterType.RequestBody);
+                    // Ensure difficulty is kept up to date from manifest
+                    instrumentData.difficulty = difficulty;
 
-                        textBox.AppendText(Environment.NewLine + "Getting leaderboard for " + song.track.tt + " for " + GetFriendlyInstrumentName(instrumentName) + ", Season " + baseSeason);
+                    // Build all-time v2 URL
+                    // Pattern: alltime_{songId}_{Instrument}/alltime/scores
+                    var url = API_BASE_ADDRESS + $"alltime_{song.track.su}_{instrumentName}/alltime/scores?accountId={accountId}&{PARAMS}";
+                    var client = new RestClient(url);
+                    var request = new RestRequest();
+                    request.Method = Method.Post;
+                    request.AddHeader("Authorization", "bearer " + accessToken);
+                    request.AddHeader("Accept-Encoding", "gzip, deflate, br");
+                    request.AddHeader("Content-Type", "application/json");
+                    request.AddHeader("Accept", "application/json");
+                    request.AddParameter("", "{\"teams\":[[\"" + accountId + "\"]]}", ParameterType.RequestBody);
 
-                        var res = await client.ExecuteAsync(request);
+                    textBox.AppendText(Environment.NewLine + "Getting ALL-TIME leaderboard for " + song.track.tt + " (" + GetFriendlyInstrumentName(instrumentName) + ")");
 
-                        try
+                    var res = await client.ExecuteAsync(request);
+
+                    try
+                    {
+                        var leaderboard = JsonConvert.DeserializeObject<ScoreList[]>(res.Content);
+                        if (leaderboard != null)
                         {
-                            var leaderboard = JsonConvert.DeserializeObject<ScoreList[]>(res.Content);
-                            hasSeenValidLeaderboard = true;
-                            if (instrumentData.minSeason == -1)
+                            foreach (var score in leaderboard)
                             {
-                                instrumentData.minSeason = baseSeason;
-                            }
-                            instrumentData.lastSeenSeason = baseSeason;
-
-                            if (leaderboard != null)
-                            {
-                                foreach (ScoreList score in leaderboard)
+                                if (score.score > instrumentData.maxScore)
                                 {
-                                    if (score.score > instrumentData.maxScore)
+                                    instrumentData.maxScore = score.score;
+                                    instrumentData.initialized = true;
+                                    foreach (var session in score.sessionHistory)
                                     {
-                                        instrumentData.maxScore = score.score;
-                                        instrumentData.season = baseSeason;
-                                        instrumentData.initialized = true;
-                                        foreach (var item in score.sessionHistory)
+                                        if (session.trackedStats.SCORE == score.score)
                                         {
-                                            if (item.trackedStats.SCORE == score.score)
-                                            {
-                                                instrumentData.percentHit = item.trackedStats.ACCURACY;
-                                                instrumentData.isFullCombo = item.trackedStats.FULL_COMBO == 1;
-                                                instrumentData.numStars = item.trackedStats.STARS_EARNED;
-                                            }
+                                            instrumentData.percentHit = session.trackedStats.ACCURACY;
+                                            instrumentData.isFullCombo = session.trackedStats.FULL_COMBO == 1;
+                                            instrumentData.numStars = session.trackedStats.STARS_EARNED;
+                                            instrumentData.seasonAchieved = session.trackedStats.SEASON;
                                         }
                                     }
                                 }
                             }
                         }
-                        catch (Exception e)
+                    }
+                    catch (Exception)
+                    {
+                        var error = JsonConvert.DeserializeObject<InvalidSeason>(res.Content);
+                        if (error != null && error.errorCode == "com.epicgames.events.unauthorized")
                         {
-                            var error = JsonConvert.DeserializeObject<InvalidSeason>(res.Content);
-                            if (error.errorCode == "com.epicgames.events.unauthorized")
-                            {
-                                textBox.AppendText(Environment.NewLine + "The access token being used has become or always was unauthorized. Make sure you have not logged into Fortnite since beginning and try again.");
-                                return new Tuple<bool, List<LeaderboardData>>(false, new List<LeaderboardData>());
-                            }
-                            if (error.errorCode == "com.epicgames.events.no_score_found")
-                            {
-                                if (instrumentData.minSeason == -1)
-                                {
-                                    instrumentData.minSeason = baseSeason;
-                                }
-                                hasSeenValidLeaderboard = true;
-                                instrumentData.lastSeenSeason = baseSeason;
-                                baseSeason++;
-                                continue;
-                            }
-                            if (error.errorCode == "com.epicgames.events.invalid_leaderboard")
-                            {
-                                if (hasSeenValidLeaderboard)
-                                {
-                                    instrumentData.lastSeenSeason = baseSeason - 1;
-                                    isSeasonActive = false;
-                                    if (baseSeason > maxValidSeason)
-                                    {
-                                        maxValidSeason = baseSeason;
-                                    }
-                                }
-                                else
-                                {
-                                    minSongSeason++;
-                                }
-                            }
-                            else
-                            {
-                                textBox.AppendText(Environment.NewLine + "An unexpected error has occurred. Please report this error to the GitHub repo so it can be fixed.");
-                                textBox.AppendText(Environment.NewLine + "Error Code: " + error.errorCode);
-                                textBox.AppendText(Environment.NewLine + "Error Message: " + error.errorMessage);
-                                return new Tuple<bool, List<LeaderboardData>>(false, new List<LeaderboardData>());
-                            }
+                            textBox.AppendText(Environment.NewLine + "Access token unauthorized during all-time fetch.");
+                            return new Tuple<bool, List<LeaderboardData>>(false, new List<LeaderboardData>());
                         }
-
-                        baseSeason++;
+                        // For all-time, treat missing/no score as simply no update.
                     }
 
                     switch (i)
                     {
-                        case 0:
-                            songBoard.drums = instrumentData;
-                            break;
-                        case 1:
-                            songBoard.guitar = instrumentData;
-                            break;
-                        case 2:
-                            songBoard.pro_bass = instrumentData;
-                            break;
-                        case 3:
-                            songBoard.pro_guitar = instrumentData;
-                            break;
-                        case 4:
-                            songBoard.bass = instrumentData;
-                            break;
-                        case 5:
-                            songBoard.vocals = instrumentData;
-                            break;
+                        case 0: songBoard.drums = instrumentData; break;
+                        case 1: songBoard.guitar = instrumentData; break;
+                        case 2: songBoard.pro_bass = instrumentData; break;
+                        case 3: songBoard.pro_guitar = instrumentData; break;
+                        case 4: songBoard.bass = instrumentData; break;
+                        case 5: songBoard.vocals = instrumentData; break;
                     }
                 }
 

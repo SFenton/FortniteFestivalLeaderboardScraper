@@ -52,7 +52,7 @@ namespace FortniteFestivalLeaderboardScraper
         ProBassDiff,
         Score,
         PercentageHit,
-        SeasonAchieved,
+        SeasonAchieved, // retained for UI compatibility but no longer used
         FullCombo,
         Stars
     }
@@ -382,29 +382,7 @@ namespace FortniteFestivalLeaderboardScraper
                     }
                     break;
                 case SortOrder.SeasonAchieved:
-                    switch (scoreViewerInstrument)
-                    {
-                        case Instruments.Lead:
-                            dataList = dataList.OrderBy(x => x.guitar.season).ToList();
-                            break;
-                        case Instruments.Vocals:
-                            dataList = dataList.OrderBy(x => x.vocals.season).ToList();
-                            break;
-                        case Instruments.Bass:
-                            dataList = dataList.OrderBy(x => x.bass.season).ToList();
-                            break;
-                        case Instruments.Drums:
-                            dataList = dataList.OrderBy(x => x.drums.season).ToList();
-                            break;
-                        case Instruments.ProLead:
-                            dataList = dataList.OrderBy(x => x.pro_guitar.season).ToList();
-                            break;
-                        case Instruments.ProBass:
-                            dataList = dataList.OrderBy(x => x.pro_bass.season).ToList();
-                            break;
-                        default:
-                            break;
-                    }
+                    // Season no longer tracked – do nothing (keep order)
                     break;
                 default:
                     break;
@@ -461,7 +439,8 @@ namespace FortniteFestivalLeaderboardScraper
                     starsString = "N/A";
                 }
 
-                this.dataGridView2.Rows.Add(song.title, song.artist, data.isFullCombo ? "✔" : "❌", starsString, data.maxScore, (data.percentHit / 10000) + "%", data.season, data.difficulty);
+                // Replace season with All-Time placeholder
+                this.dataGridView2.Rows.Add(song.title, song.artist, data.isFullCombo ? "✔" : "❌", starsString, data.maxScore, (data.percentHit / 10000) + "%", (data.seasonAchieved > 0 ? data.seasonAchieved.ToString() : "All-Time"), data.difficulty);
 
                 if (data.numStars == 6)
                 {

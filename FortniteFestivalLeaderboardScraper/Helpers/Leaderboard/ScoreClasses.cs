@@ -86,6 +86,7 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.Leaderboard
         public int M_1_ID_195e93ef108143b2975ee46662d4d0e1 { get; set; }
         public int M_1_DIFFICULTY { get; set; }
         public int? M_0_ID_195e93ef108143b2975ee46662d4d0e1 { get; set; }
+        public int SEASON { get; set; }
     }
 
 
