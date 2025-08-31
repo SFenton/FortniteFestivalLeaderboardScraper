@@ -1,9 +1,10 @@
-﻿using Newtonsoft.Json.Linq;
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using RestSharp;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using FortniteFestivalLeaderboardScraper.Helpers.Net;
 
 namespace FortniteFestivalLeaderboardScraper.Helpers
 {
@@ -11,12 +12,8 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
     {
         public async Task<List<Song>> GetSparkTracks(List<LeaderboardData> previousData)
         {
-            var client = new RestClient("https://fortnitecontent-website-prod07.ol.epicgames.com/content/api/pages/fortnite-game/spark-tracks");
-            var request = new RestRequest();
-            request.Method = Method.Get;
-
-            var res = await client.ExecuteAsync(request);
-
+            var request = new RestRequest("/content/api/pages/fortnite-game/spark-tracks", Method.Get);
+            var res = await RestClients.ContentClient.ExecuteAsync(request);
             var result = JsonConvert.DeserializeObject<JToken>(res.Content);
             var items = new List<Song>();
 
@@ -28,7 +25,8 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
                     var parsedItem = JsonConvert.DeserializeObject<Song>(a);
                     parsedItem.isInLocalData = previousData.FindIndex(x => x.songId == parsedItem.track.su) >= 0 ? "✔" : "❌";
                     items.Add(parsedItem);
-                } catch (Exception ex)
+                }
+                catch (Exception ex)
                 {
 
                 }

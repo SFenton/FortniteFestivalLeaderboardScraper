@@ -1,19 +1,19 @@
 ﻿using FortniteFestivalLeaderboardScraper.Helpers.Leaderboard;
+using FortniteFestivalLeaderboardScraper.Helpers.Net;
 using Newtonsoft.Json;
 using RestSharp;
 using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace FortniteFestivalLeaderboardScraper.Helpers
 {
     public class LeaderboardAPI
     {
-        private const string API_BASE_ADDRESS = "https://events-public-service-live.ol.epicgames.com/api/v2/games/FNFestival/leaderboards/";
-        // New base for v1 all-time endpoints (page based) – still available for diagnostics
-        private const string API_V1_ALLTIME_BASE = "https://events-public-service-live.ol.epicgames.com/api/v1/leaderboards/FNFestival/";
+        private const string API_BASE_PATH = "/api/v2/games/FNFestival/leaderboards/";
+        private const string API_V1_ALLTIME_BASE = "/api/v1/leaderboards/FNFestival/";
 
         private const string DRUMS = "Solo_Drums";
         private const string VOCALS = "Solo_Vocals";
@@ -33,8 +33,8 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
                 case GUITAR: return "Guitar";
                 case PRO_BASS: return "Pro Bass";
                 case PRO_GUITAR: return "Pro Guitar";
+                default: return "Unknown Instrument";
             }
-            return "Unknown Instrument";
         }
 
         private struct InstrumentInfo
@@ -63,13 +63,11 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
         public async Task<AllTimeLeaderboardPage> GetAllTimeLeaderboardPageAsync(string eventId, string allTimeWindowId, string instrumentPath, string accessToken, string accountId, int page = 0, int rank = 0)
         {
             var url = $"{API_V1_ALLTIME_BASE}{eventId}/{allTimeWindowId}/{accountId}?page={page}&rank={rank}&teamAccountIds={accountId}&appId=Fortnite&showLiveSessions=false";
-            var client = new RestClient(url);
-            var request = new RestRequest();
-            request.Method = Method.Get;
+            var request = new RestRequest(url, Method.Get);
             request.AddHeader("Authorization", "Bearer " + accessToken);
             request.AddHeader("Accept-Encoding", "deflate, gzip");
             request.AddHeader("Accept", "application/json");
-            var response = await client.ExecuteAsync(request);
+            var response = await RestClients.EventsClient.ExecuteAsync(request);
             try { return JsonConvert.DeserializeObject<AllTimeLeaderboardPage>(response.Content); } catch { return null; }
         }
 
@@ -152,10 +150,8 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
                     instrumentData.difficulty = difficulty;
 
                     // Build all-time v2 URL
-                    var url = API_BASE_ADDRESS + $"alltime_{song.track.su}_{instrumentName}/alltime/scores?accountId={accountId}&{PARAMS}";
-                    var client = new RestClient(url);
-                    var request = new RestRequest();
-                    request.Method = Method.Post;
+                    var url = API_BASE_PATH + $"alltime_{song.track.su}_{instrumentName}/alltime/scores?accountId={accountId}&{PARAMS}";
+                    var request = new RestRequest(url, Method.Post);
                     request.AddHeader("Authorization", "bearer " + accessToken);
                     request.AddHeader("Accept-Encoding", "gzip, deflate, br");
                     request.AddHeader("Content-Type", "application/json");
@@ -164,7 +160,7 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
 
                     textBox.AppendText(Environment.NewLine + "Getting ALL-TIME leaderboard for " + song.track.tt + " (" + GetFriendlyInstrumentName(instrumentName) + ")");
 
-                    var res = await client.ExecuteAsync(request);
+                    var res = await RestClients.EventsClient.ExecuteAsync(request);
 
                     try
                     {
@@ -312,17 +308,15 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
 
                             log($"Getting ALL-TIME leaderboard for {localSong.track.tt} ({localInfo.Friendly})");
 
-                            var url = API_BASE_ADDRESS + $"alltime_{localSong.track.su}_{localInfo.ApiName}/alltime/scores?accountId={accountId}&{PARAMS}";
-                            var client = new RestClient(url);
-                            var request = new RestRequest();
-                            request.Method = Method.Post;
+                            var url = API_BASE_PATH + $"alltime_{localSong.track.su}_{localInfo.ApiName}/alltime/scores?accountId={accountId}&{PARAMS}";
+                            var request = new RestRequest(url, Method.Post);
                             request.AddHeader("Authorization", "bearer " + accessToken);
                             request.AddHeader("Accept-Encoding", "gzip, deflate, br");
                             request.AddHeader("Content-Type", "application/json");
                             request.AddHeader("Accept", "application/json");
                             request.AddParameter("", "{\"teams\":[[\"" + accountId + "\"]]}", ParameterType.RequestBody);
 
-                            var res = await client.ExecuteAsync(request);
+                            var res = await RestClients.EventsClient.ExecuteAsync(request);
 
                             ScoreTracker updatedTracker = null;
                             try

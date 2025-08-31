@@ -1,9 +1,10 @@
+using Microsoft.Data.Sqlite;
 using System;
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
 using System.Reflection;
-using Microsoft.Data.Sqlite;
+using System.Linq;
 
 namespace FortniteFestivalLeaderboardScraper.Helpers.Data
 {
@@ -39,6 +40,20 @@ songId TEXT PRIMARY KEY,
  pro_bass_initialized INTEGER, pro_bass_maxScore INTEGER, pro_bass_difficulty INTEGER, pro_bass_numStars INTEGER, pro_bass_isFullCombo INTEGER, pro_bass_percentHit INTEGER, pro_bass_seasonAchieved INTEGER
 );";
                         cmd.ExecuteNonQuery();
+                        cmd.CommandText = @"CREATE TABLE IF NOT EXISTS songs (
+ songId TEXT PRIMARY KEY,
+ title TEXT,
+ artist TEXT,
+ activeDate TEXT,
+ leadDifficulty INTEGER,
+ bassDifficulty INTEGER,
+ vocalsDifficulty INTEGER,
+ drumsDifficulty INTEGER,
+ proLeadDifficulty INTEGER,
+ proBassDifficulty INTEGER,
+ lastModified TEXT
+);";
+                        cmd.ExecuteNonQuery();
                     }
                 }
                 _initialized = true;
@@ -61,6 +76,7 @@ songId TEXT PRIMARY KEY,
             if (d.pro_bass == null) d.pro_bass = new ScoreTracker();
         }
 
+        #region Leaderboard Upsert
         public static void Upsert(LeaderboardData data)
         {
             if (data == null || string.IsNullOrEmpty(data.songId)) return;
@@ -120,6 +136,63 @@ songId TEXT PRIMARY KEY,
                 }
             }
         }
+        #endregion
+
+        #region Songs Sync
+        public static void UpsertSongs(IEnumerable<Song> songs)
+        {
+            if (songs == null) return;
+            using (var c = Conn())
+            {
+                c.Open();
+                using (var tx = c.BeginTransaction())
+                using (var cmd = c.CreateCommand())
+                {
+                    cmd.CommandText = @"INSERT INTO songs (songId,title,artist,activeDate,leadDifficulty,bassDifficulty,vocalsDifficulty,drumsDifficulty,proLeadDifficulty,proBassDifficulty,lastModified) VALUES (@id,@title,@artist,@active,@ld,@bd,@vd,@dd,@pld,@pbd,@lm) ON CONFLICT(songId) DO UPDATE SET title=excluded.title, artist=excluded.artist, activeDate=excluded.activeDate, leadDifficulty=excluded.leadDifficulty, bassDifficulty=excluded.bassDifficulty, vocalsDifficulty=excluded.vocalsDifficulty, drumsDifficulty=excluded.drumsDifficulty, proLeadDifficulty=excluded.proLeadDifficulty, proBassDifficulty=excluded.proBassDifficulty, lastModified=excluded.lastModified;";
+                    foreach (var s in songs)
+                    {
+                        cmd.Parameters.Clear();
+                        Add(cmd, "@id", s.track.su);
+                        Add(cmd, "@title", s.track.tt);
+                        Add(cmd, "@artist", s.track.an);
+                        Add(cmd, "@active", s._activeDate.ToString("o"));
+                        Add(cmd, "@ld", s.track.@in.gr);
+                        Add(cmd, "@bd", s.track.@in.ba);
+                        Add(cmd, "@vd", s.track.@in.vl);
+                        Add(cmd, "@dd", s.track.@in.ds);
+                        Add(cmd, "@pld", s.track.@in.pg);
+                        Add(cmd, "@pbd", s.track.@in.pb);
+                        Add(cmd, "@lm", s.lastModified.ToString("o"));
+                        cmd.ExecuteNonQuery();
+                    }
+                    tx.Commit();
+                }
+            }
+        }
+
+        public static void DeleteSongsNotIn(IEnumerable<string> keepIds)
+        {
+            var ids = keepIds?.Distinct().ToList() ?? new List<string>();
+            using (var c = Conn())
+            {
+                c.Open();
+                using (var cmd = c.CreateCommand())
+                {
+                    if (ids.Count == 0)
+                    {
+                        cmd.CommandText = "DELETE FROM songs"; // nothing to keep; clear all
+                        cmd.ExecuteNonQuery();
+                        return;
+                    }
+                    var paramNames = ids.Select((x, i) => "@p" + i).ToList();
+                    cmd.CommandText = "DELETE FROM songs WHERE songId NOT IN (" + string.Join(",", paramNames) + ")";
+                    cmd.Parameters.Clear();
+                    for (int i = 0; i < ids.Count; i++) Add(cmd, paramNames[i], ids[i]);
+                    cmd.ExecuteNonQuery();
+                }
+            }
+        }
+        #endregion
 
         private static void AddTracker(SqliteCommand cmd, ScoreTracker t, string prefix)
         {
