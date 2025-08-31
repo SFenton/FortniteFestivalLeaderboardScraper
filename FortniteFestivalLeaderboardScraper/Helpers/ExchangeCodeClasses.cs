@@ -1,8 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace FortniteFestivalLeaderboardScraper
 {
@@ -30,7 +27,7 @@ namespace FortniteFestivalLeaderboardScraper
         public DateTime auth_time { get; set; }
     }
 
-    class ExchangeCodeResponse
+    internal class ExchangeCodeResponse
     {
         public int expiresInSeconds { get; set; }
         public string code { get; set; }

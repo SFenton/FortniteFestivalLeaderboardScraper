@@ -1,9 +1,6 @@
 ﻿using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace FortniteFestivalLeaderboardScraper.Helpers
 {
@@ -94,7 +91,19 @@ namespace FortniteFestivalLeaderboardScraper.Helpers
         public int? M_2_DIFFICULTY { get; set; }
         public int? M_3_ID_25ce50c0838940029ce958d4c388cb52 { get; set; }
         public int? M_2_STARS_EARNED { get; set; }
+        public int? SEASON { get; set; }
     }
 
-
+    // New root type for the all-time leaderboard endpoint (v1 api) so we can instrument calls
+    public class AllTimeLeaderboardPage
+    {
+        public string gameId { get; set; }
+        public string eventId { get; set; }
+        public string eventWindowId { get; set; }
+        public int page { get; set; }
+        public int totalPages { get; set; }
+        public DateTime updatedTime { get; set; }
+        public List<LeaderboardEntry> entries { get; set; }
+        public Dictionary<string, object> liveSessions { get; set; }
+    }
 }

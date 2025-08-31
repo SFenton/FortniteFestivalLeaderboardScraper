@@ -1,82 +1,35 @@
-﻿using Newtonsoft.Json;
-using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
-using static FortniteFestivalLeaderboardScraper.Helpers.LeaderboardAPI;
+using Newtonsoft.Json;
 
 namespace FortniteFestivalLeaderboardScraper.Helpers.FileIO
 {
+    // Basic JSON serialization helper (placeholder for future expansion)
     public static class JSONReadWrite
     {
-        public static bool WriteLeaderboardJSON(List<LeaderboardData> leaderboardEntries)
+        public static T Load<T>(string path) where T : new()
         {
+            if (!File.Exists(path)) return new T();
             try
             {
-                var exePath = Path.GetDirectoryName(Assembly.GetEntryAssembly().Location);
-                var json = JsonConvert.SerializeObject(leaderboardEntries, Formatting.Indented);
-                Console.WriteLine(exePath);
-
-                File.WriteAllText(exePath + "\\FNFLS_data.json", json);
-            } catch (Exception e)
-            {
-                return false;
+                var json = File.ReadAllText(path);
+                var obj = JsonConvert.DeserializeObject<T>(json);
+                if (obj == null) return new T();
+                return obj;
             }
-
-            return true;
-        }
-
-        public static List<LeaderboardData> ReadLeaderboardJSON()
-        {
-            try
+            catch
             {
-                var exePath = Path.GetDirectoryName(Assembly.GetEntryAssembly().Location);
-                var str = File.ReadAllText(exePath + "\\FNFLS_data.json");
-                var scores = JsonConvert.DeserializeObject<List<LeaderboardData>>(str);
-                
-                return scores;
-            }
-            catch (Exception e)
-            {
-                return new List<LeaderboardData>();
+                return new T();
             }
         }
 
-        public static bool WriteSettings(Settings settings)
+        public static void Save<T>(string path, T obj)
         {
             try
             {
-                var exePath = Path.GetDirectoryName(Assembly.GetEntryAssembly().Location);
-                var json = JsonConvert.SerializeObject(settings, Formatting.Indented);
-                Console.WriteLine(exePath);
-
-                File.WriteAllText(exePath + "\\FNFLS_settings.json", json);
+                var json = JsonConvert.SerializeObject(obj, Formatting.Indented);
+                File.WriteAllText(path, json);
             }
-            catch (Exception e)
-            {
-                return false;
-            }
-
-            return true;
-        }
-
-        public static Settings ReadSettings()
-        {
-            try
-            {
-                var exePath = Path.GetDirectoryName(Assembly.GetEntryAssembly().Location);
-                var str = File.ReadAllText(exePath + "\\FNFLS_settings.json");
-                var settings = JsonConvert.DeserializeObject<Settings>(str);
-
-                return settings;
-            }
-            catch (Exception e)
-            {
-                return new Settings();
-            }
+            catch { }
         }
     }
 }

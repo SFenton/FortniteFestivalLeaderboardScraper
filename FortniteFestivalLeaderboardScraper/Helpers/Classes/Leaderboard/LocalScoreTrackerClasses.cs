@@ -131,20 +131,10 @@
             get;
             set;
         }
-        public int season
+        // New: season number when the current maxScore was achieved (0 = unknown / not recorded)
+        public int seasonAchieved
         {
-            get;
-            set;
+            get; set;
         }
-        public int minSeason
-        {
-            get;
-            set;
-        } = -1;
-        public int lastSeenSeason
-        {
-            get;
-            set;
-        } = -1;
     }
 }
