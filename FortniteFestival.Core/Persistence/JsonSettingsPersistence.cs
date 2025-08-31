@@ -2,6 +2,7 @@ using System.IO;
 using System.Threading.Tasks;
 using FortniteFestival.Core.Config;
 using Newtonsoft.Json;
+using System.Text;
 
 namespace FortniteFestival.Core.Persistence
 {
@@ -9,21 +10,33 @@ namespace FortniteFestival.Core.Persistence
     {
         private readonly string _path;
         public JsonSettingsPersistence(string path){ _path = path; }
-        public Task<Settings> LoadSettingsAsync()
+        public async Task<Settings> LoadSettingsAsync()
         {
             try
             {
-                if(!File.Exists(_path)) return Task.FromResult(new Settings());
-                var json = File.ReadAllText(_path);
-                var obj = JsonConvert.DeserializeObject<Settings>(json) ?? new Settings();
-                return Task.FromResult(obj);
+                if(!File.Exists(_path)) return new Settings();
+                using(var fs = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true))
+                using(var sr = new StreamReader(fs, Encoding.UTF8, true))
+                {
+                    var json = await sr.ReadToEndAsync().ConfigureAwait(false);
+                    var obj = JsonConvert.DeserializeObject<Settings>(json) ?? new Settings();
+                    return obj;
+                }
             }
-            catch { return Task.FromResult(new Settings()); }
+            catch { return new Settings(); }
         }
-        public Task SaveSettingsAsync(Settings settings)
+        public async Task SaveSettingsAsync(Settings settings)
         {
-            try { File.WriteAllText(_path, JsonConvert.SerializeObject(settings, Formatting.Indented)); } catch { }
-            return Task.CompletedTask;
+            try
+            {
+                var json = JsonConvert.SerializeObject(settings, Formatting.Indented);
+                using(var fs = new FileStream(_path, FileMode.Create, FileAccess.Write, FileShare.None, 4096, true))
+                using(var sw = new StreamWriter(fs, Encoding.UTF8))
+                {
+                    await sw.WriteAsync(json).ConfigureAwait(false);
+                }
+            }
+            catch { }
         }
     }
 }

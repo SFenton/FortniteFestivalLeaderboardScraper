@@ -5,7 +5,6 @@ namespace FortniteFestival.LeaderboardScraper.MAUI.Pages;
 public partial class ProcessPage : ContentPage
 {
     private readonly ProcessViewModel _vm;
-    private bool _logSubscribed;
     public ProcessPage(ProcessViewModel vm)
     {
         InitializeComponent();
@@ -16,14 +15,10 @@ public partial class ProcessPage : ContentPage
     {
         base.OnAppearing();
         await _vm.EnsureInitializedAsync();
-        if(!_logSubscribed)
-        {
-            _vm.LogLines.CollectionChanged += (s,e)=> MainThread.BeginInvokeOnMainThread(()=>
-            {
-                if(_vm.LogLines.Count>0)
-                    LogCollectionView.ScrollTo(_vm.LogLines[^1], position: ScrollToPosition.End, animate: true);
-            });
-            _logSubscribed = true;
-        }
+    }
+
+    private async void OnCopyLog(object sender, EventArgs e)
+    {
+        try { await Clipboard.SetTextAsync(_vm.LogJoined); } catch { }
     }
 }

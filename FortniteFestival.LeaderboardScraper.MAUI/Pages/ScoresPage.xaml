@@ -16,15 +16,15 @@
             <RadioButton Content="ProBass" GroupName="inst" CheckedChanged="OnInstrumentChanged" />
         </HorizontalStackLayout>
 
-        <!-- Header -->
+        <!-- Sortable Header -->
         <Grid Grid.Row="2" ColumnDefinitions="2.5*,1.4*,0.9*,0.9*,0.8*,0.6*,0.7*" ColumnSpacing="12" Padding="12,0,26,0">
-            <Label Grid.Column="0" Text="Title" FontAttributes="Bold" />
-            <Label Grid.Column="1" Text="Artist" FontAttributes="Bold" />
-            <Label Grid.Column="2" Text="Score" FontAttributes="Bold" />
-            <Label Grid.Column="3" Text="% Hit" FontAttributes="Bold" />
-            <Label Grid.Column="4" Text="Stars" FontAttributes="Bold" />
-            <Label Grid.Column="5" Text="FC" FontAttributes="Bold" />
-            <Label Grid.Column="6" Text="Season" FontAttributes="Bold" />
+            <Button Grid.Column="0" Text="Title" Command="{Binding SortCommand}" CommandParameter="Title" Style="{StaticResource HeaderButtonStyle}" />
+            <Button Grid.Column="1" Text="Artist" Command="{Binding SortCommand}" CommandParameter="Artist" Style="{StaticResource HeaderButtonStyle}" />
+            <Button Grid.Column="2" Text="Score" Command="{Binding SortCommand}" CommandParameter="Score" Style="{StaticResource HeaderButtonStyle}" />
+            <Button Grid.Column="3" Text="% Hit" Command="{Binding SortCommand}" CommandParameter="Percent" Style="{StaticResource HeaderButtonStyle}" />
+            <Button Grid.Column="4" Text="Stars" Command="{Binding SortCommand}" CommandParameter="Stars" Style="{StaticResource HeaderButtonStyle}" />
+            <Button Grid.Column="5" Text="FC" Command="{Binding SortCommand}" CommandParameter="FC" Style="{StaticResource HeaderButtonStyle}" />
+            <Button Grid.Column="6" Text="Season" Command="{Binding SortCommand}" CommandParameter="Season" Style="{StaticResource HeaderButtonStyle}" />
         </Grid>
 
         <!-- Data -->
@@ -37,11 +37,45 @@
                     <Grid ColumnDefinitions="2.5*,1.4*,0.9*,0.9*,0.8*,0.6*,0.7*" ColumnSpacing="12" Padding="12,2,12,2">
                         <Label Grid.Column="0" Text="{Binding Title}" LineBreakMode="TailTruncation" />
                         <Label Grid.Column="1" Text="{Binding Artist}" FontSize="12" TextColor="Gray" LineBreakMode="TailTruncation" />
-                        <Label Grid.Column="2" Text="{Binding Score}" FontSize="12" />
-                        <Label Grid.Column="3" Text="{Binding PercentHit, Converter={StaticResource PercentHitConverter}}" FontSize="12" />
-                        <Label Grid.Column="4" Text="{Binding Stars}" FontSize="12" />
-                        <Label Grid.Column="5" Text="{Binding FullCombo}" FontSize="12" />
-                        <Label Grid.Column="6" Text="{Binding Season}" FontSize="12" />
+                        <Label Grid.Column="2" Text="{Binding Score}" FontSize="12" HorizontalTextAlignment="Center" />
+                        <Label Grid.Column="3" Text="{Binding Percent}" FontSize="12" HorizontalTextAlignment="Center" />
+                        <!-- Stars: use platform symbol-capable font to avoid missing glyph (fallback to system) -->
+                        <Label Grid.Column="4" Text="{Binding StarText}" FontSize="12" HorizontalTextAlignment="Center">
+                            <Label.FontFamily>
+                                <OnPlatform x:TypeArguments="x:String">
+                                    <On Platform="WinUI" Value="Segoe UI Symbol" />
+                                    <On Platform="Android" Value="sans-serif" />
+                                    <On Platform="iOS" Value="Helvetica Neue" />
+                                    <On Platform="MacCatalyst" Value="Helvetica Neue" />
+                                </OnPlatform>
+                            </Label.FontFamily>
+                            <Label.Triggers>
+                                <DataTrigger TargetType="Label" Binding="{Binding MaxStars}" Value="True">
+                                    <Setter Property="TextColor" Value="Gold" />
+                                    <Setter Property="FontAttributes" Value="Bold" />
+                                </DataTrigger>
+                            </Label.Triggers>
+                        </Label>
+                        <!-- FC symbol -->
+                        <Label Grid.Column="5" Text="{Binding FullComboSymbol}" FontSize="12" HorizontalTextAlignment="Center">
+                            <Label.FontFamily>
+                                <OnPlatform x:TypeArguments="x:String">
+                                    <On Platform="WinUI" Value="Segoe UI Symbol" />
+                                    <On Platform="Android" Value="sans-serif" />
+                                    <On Platform="iOS" Value="Helvetica Neue" />
+                                    <On Platform="MacCatalyst" Value="Helvetica Neue" />
+                                </OnPlatform>
+                            </Label.FontFamily>
+                            <Label.Triggers>
+                                <DataTrigger TargetType="Label" Binding="{Binding IsFullCombo}" Value="True">
+                                    <Setter Property="TextColor" Value="Green" />
+                                </DataTrigger>
+                                <DataTrigger TargetType="Label" Binding="{Binding IsFullCombo}" Value="False">
+                                    <Setter Property="TextColor" Value="Red" />
+                                </DataTrigger>
+                            </Label.Triggers>
+                        </Label>
+                        <Label Grid.Column="6" Text="{Binding Season}" FontSize="12" HorizontalTextAlignment="Center" />
                     </Grid>
                 </DataTemplate>
             </CollectionView.ItemTemplate>

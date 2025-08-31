@@ -3,7 +3,11 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              x:Class="FortniteFestival.LeaderboardScraper.MAUI.Pages.LogPage"
              Title="Log">
-    <ContentPage.Content>
-        <CollectionView ItemsSource="{Binding LogLines}" />
-    </ContentPage.Content>
+    <VerticalStackLayout Padding="12" Spacing="8">
+        <HorizontalStackLayout>
+            <Button Text="Copy All" Clicked="OnCopyAll" />
+            <Label Text="Tap inside, select &amp; copy (Ctrl+C)" FontSize="12" TextColor="Gray" />
+        </HorizontalStackLayout>
+        <Editor x:Name="LogEditor" Text="{Binding LogJoined}" AutoSize="TextChanges" IsReadOnly="True" FontFamily="Consolas" HeightRequest="600" />
+    </VerticalStackLayout>
 </ContentPage>

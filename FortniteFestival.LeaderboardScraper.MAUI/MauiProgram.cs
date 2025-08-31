@@ -20,9 +20,17 @@ public static class MauiProgram
 				fonts.AddFont("OpenSans-Semibold.ttf", "OpenSansSemibold");
 			});
 
+        // Global exception logging
+	AppDomain.CurrentDomain.UnhandledException += (s,e)=> LogUnhandled("AppDomain", e.ExceptionObject as Exception ?? new Exception("<null exception object>"));
+	TaskScheduler.UnobservedTaskException += (s,e)=> { LogUnhandled("TaskScheduler", e.Exception ?? new Exception("<null task exception>")); e.SetObserved(); };
+
+        // Initialize SQLite batteries (avoid native issues on some platforms)
+        try { SQLitePCL.Batteries_V2.Init(); } catch { }
+
 		builder.Services.AddSingleton<IFestivalService>(sp =>
 		{
 			var dataDir = FileSystem.AppDataDirectory; var dbPath = Path.Combine(dataDir, "scores.db");
+            WriteStartupLog($"DataDir={dataDir}\nDB={dbPath}");
 			return new FestivalService(new SqlitePersistence(dbPath));
 		});
 		builder.Services.AddSingleton<ISettingsPersistence>(sp =>
@@ -50,4 +58,24 @@ public static class MauiProgram
 
 		return builder.Build();
 	}
+
+	private static void LogUnhandled(string src, Exception ex)
+	{
+		try
+		{
+			var path = Path.Combine(FileSystem.AppDataDirectory, "fatal.log");
+			string cid = FortniteFestival.Core.Services.HttpErrorHelper.ComputeCorrelationId(ex);
+			File.AppendAllText(path, $"[{DateTime.Now:o}] cid={cid} {src} UNHANDLED: {ex}\n");
+		}
+		catch { }
+	}
+    private static void WriteStartupLog(string msg)
+    {
+        try
+        {
+            var path = Path.Combine(FileSystem.AppDataDirectory, "startup.log");
+            File.AppendAllText(path, $"[{DateTime.Now:o}] {msg}\n");
+        }
+        catch { }
+    }
 }

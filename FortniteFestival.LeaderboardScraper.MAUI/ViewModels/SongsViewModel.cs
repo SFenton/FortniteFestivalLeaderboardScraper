@@ -17,7 +17,12 @@ public class SongsViewModel : BaseViewModel
     public SongsViewModel(IFestivalService service, AppState state)
     { _service = service; _state = state; SelectAllCommand = new Command(()=> { foreach(var s in Songs){ s.isSelected = true; if(!_state.SelectedSongIds.Contains(s.track.su)) _state.SelectedSongIds.Add(s.track.su);} ApplyFilter(); }); ClearAllCommand = new Command(()=> { foreach(var s in Songs) s.isSelected=false; _state.SelectedSongIds.Clear(); ApplyFilter(); }); }
 
-    private void ApplyFilter(){ VisibleSongs.Clear(); IEnumerable<Song> q = Songs; if(!string.IsNullOrWhiteSpace(Filter)){var low = Filter.ToLowerInvariant(); q = q.Where(x=> (x.track.tt??"").ToLowerInvariant().Contains(low) || (x.track.an??"").ToLowerInvariant().Contains(low)); } foreach(var s in q) VisibleSongs.Add(s); }
+    private void ApplyFilter(){ IEnumerable<Song> q = Songs; if(!string.IsNullOrWhiteSpace(Filter)){var low = Filter.ToLowerInvariant(); q = q.Where(x=> (x.track.tt??"").ToLowerInvariant().Contains(low) || (x.track.an??"").ToLowerInvariant().Contains(low)); } var target = q.ToList(); // diff
+        // remove items not in target
+        for(int i=VisibleSongs.Count-1;i>=0;i--){ var item = VisibleSongs[i]; if(!target.Contains(item)) VisibleSongs.RemoveAt(i); }
+        // ensure order & insertion
+        for(int i=0;i<target.Count;i++){ var item = target[i]; if(i < VisibleSongs.Count){ if(!ReferenceEquals(VisibleSongs[i], item)){ if(VisibleSongs.Contains(item)) VisibleSongs.Remove(item); VisibleSongs.Insert(i,item); } } else VisibleSongs.Add(item); }
+    }
 
     public void ToggleSelection(Song s){ if(s==null) return; s.isSelected = !s.isSelected; if(s.isSelected){ if(!_state.SelectedSongIds.Contains(s.track.su)) _state.SelectedSongIds.Add(s.track.su);} else _state.SelectedSongIds.Remove(s.track.su); }
 

@@ -8,17 +8,13 @@
         <HorizontalStackLayout Spacing="12">
             <Button Text="Generate Exchange Code" Command="{Binding GenerateCodeCommand}" />
             <Button Text="Retrieve Scores" Command="{Binding FetchCommand}" IsEnabled="{Binding FetchEnabled}" />
+            <Button Text="Copy Log" Clicked="OnCopyLog" />
         </HorizontalStackLayout>
         <Grid ColumnDefinitions="*,auto" RowDefinitions="auto">
             <ProgressBar Progress="{Binding ProgressPct, Converter={StaticResource PctToProgressConverter}}" />
             <Label Grid.Column="1" Text="{Binding ProgressLabel}" VerticalOptions="Center" />
         </Grid>
-        <CollectionView x:Name="LogCollectionView" ItemsSource="{Binding LogLines}" HeightRequest="300">
-            <CollectionView.ItemTemplate>
-                <DataTemplate>
-                    <Label Text="{Binding .}" FontSize="12" />
-                </DataTemplate>
-            </CollectionView.ItemTemplate>
-        </CollectionView>
+        <Label Text="{Binding Metrics}" FontSize="12" TextColor="Gray" />
+        <Editor x:Name="InlineLogEditor" Text="{Binding LogJoined}" AutoSize="TextChanges" IsReadOnly="True" FontFamily="Consolas" HeightRequest="300" />
     </VerticalStackLayout>
 </ContentPage>
