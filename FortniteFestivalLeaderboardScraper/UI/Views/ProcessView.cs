@@ -9,6 +9,8 @@ namespace FortniteFestivalLeaderboardScraper.UI.Views
         public Button GenerateCodeButton { get; private set; }
         public Button FetchScoresButton { get; private set; }
         public TextBox LogTextBox { get; private set; }
+        public ProgressBar ProgressBar { get; private set; }
+        public Label ProgressLabel { get; private set; }
 
         public event EventHandler ExchangeCodeChanged;
         public event EventHandler GenerateCodeClicked;
@@ -26,11 +28,13 @@ namespace FortniteFestivalLeaderboardScraper.UI.Views
             ExchangeCodeTextBox = new TextBox { Left = 16, Top = 32, Width = 200 };
             GenerateCodeButton = new Button { Left = 246, Top = 25, Width = 223, Height = 33, Text = "Generate Exchange Code" };
             FetchScoresButton = new Button { Left = 505, Top = 25, Width = 223, Height = 33, Text = "Retrieve Scores", Enabled = false };
-            LogTextBox = new TextBox { Left = 16, Top = 116, Multiline = true, ScrollBars = ScrollBars.Vertical }; // size set in AdjustLayout
+            ProgressBar = new ProgressBar { Left = 16, Top = 80, Width = 600, Height = 16, Minimum = 0, Maximum = 100, Value = 0, Visible = true };
+            ProgressLabel = new Label { Left = ProgressBar.Right + 12, Top = 78, AutoSize = true, Text = "0%" };
             var lbl = new Label { Left = 12, Top = 9, Text = "Enter Exchange Code Here" };
-            var logLbl = new Label { Left = 16, Top = 90, Text = "Console Output" };
+            var logLbl = new Label { Left = 16, Top = 100, Text = "Console Output" };
+            LogTextBox = new TextBox { Left = 16, Top = 120, Multiline = true, ScrollBars = ScrollBars.Vertical };
 
-            Controls.AddRange(new Control[] { ExchangeCodeTextBox, GenerateCodeButton, FetchScoresButton, LogTextBox, lbl, logLbl });
+            Controls.AddRange(new Control[] { ExchangeCodeTextBox, GenerateCodeButton, FetchScoresButton, ProgressBar, ProgressLabel, LogTextBox, lbl, logLbl });
 
             ExchangeCodeTextBox.TextChanged += (s, e) => { FetchScoresButton.Enabled = ExchangeCodeTextBox.TextLength > 0; ExchangeCodeChanged?.Invoke(this, EventArgs.Empty); };
             GenerateCodeButton.Click += (s, e) => GenerateCodeClicked?.Invoke(this, EventArgs.Empty);

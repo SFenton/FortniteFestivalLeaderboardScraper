@@ -1,10 +1,9 @@
 using System.IO;
 using Newtonsoft.Json;
 
-namespace FortniteFestivalLeaderboardScraper.Helpers.FileIO
+namespace FortniteFestival.Core.IO
 {
-    // Basic JSON serialization helper (placeholder for future expansion)
-    public static class JSONReadWrite
+    public static class JsonSerializer
     {
         public static T Load<T>(string path) where T : new()
         {
@@ -16,20 +15,11 @@ namespace FortniteFestivalLeaderboardScraper.Helpers.FileIO
                 if (obj == null) return new T();
                 return obj;
             }
-            catch
-            {
-                return new T();
-            }
+            catch { return new T(); }
         }
-
         public static void Save<T>(string path, T obj)
         {
-            try
-            {
-                var json = JsonConvert.SerializeObject(obj, Formatting.Indented);
-                File.WriteAllText(path, json);
-            }
-            catch { }
+            try { File.WriteAllText(path, JsonConvert.SerializeObject(obj, Formatting.Indented)); } catch { }
         }
     }
 }

@@ -153,19 +153,6 @@
     <Compile Include="Form1.Designer.cs">
       <DependentUpon>Form1.cs</DependentUpon>
     </Compile>
-    <Compile Include="Helpers\Classes\FortniteClasses.cs" />
-    <Compile Include="Helpers\Classes\Leaderboard\LocalScoreTrackerClasses.cs" />
-    <Compile Include="Helpers\Data\SqlRepository.cs" />
-    <Compile Include="Helpers\EpicGamesExchangeTokenGenerator.cs" />
-    <Compile Include="Helpers\ExchangeCodeClasses.cs" />
-    <Compile Include="Helpers\FileIO\JSONReadWrite.cs" />
-    <Compile Include="Helpers\LeaderboardAPI.cs" />
-    <Compile Include="Helpers\Classes\Leaderboard\LeaderBoardClasses.cs" />
-    <Compile Include="Helpers\Leaderboard\ScoreClasses.cs" />
-    <Compile Include="Helpers\Classes\Settings.cs" />
-    <Compile Include="Helpers\Classes\SongData\SongData.cs" />
-    <Compile Include="Helpers\Net\RestClients.cs" />
-    <Compile Include="Helpers\SparkTrackRetriever.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="UI\Views\ProcessView.cs">
@@ -206,6 +193,12 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="1_Full.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\FortniteFestival.Core\FortniteFestival.Core.csproj">
+      <Project>{289a4809-9a95-d430-3c88-e275a5628d83}</Project>
+      <Name>FortniteFestival.Core</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
