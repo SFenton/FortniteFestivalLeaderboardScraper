@@ -129,9 +129,13 @@ namespace FortniteFestivalLeaderboardScraper
             _previousData = JSONReadWrite.ReadLeaderboardJSON();
 
             var scoreRetriever = new LeaderboardAPI();
-            var scores = await scoreRetriever.GetLeaderboardsForInstrument(sparkTracks, token.Item2.access_token, token.Item2.account_id, maxSeason, _previousData, textBox2, songIds);
-            if (scores.Item1 == false)
+
+            // Use new parallel method
+            textBox2.AppendText(Environment.NewLine + "Fetching all-time leaderboards in parallel...");
+            var parallelScores = await scoreRetriever.GetLeaderboardsParallel(sparkTracks, token.Item2.access_token, token.Item2.account_id, maxSeason, _previousData, textBox2, songIds, degreeOfParallelism: 16);
+            if (parallelScores.Item1 == false)
             {
+                textBox2.AppendText(Environment.NewLine + "Parallel fetch failed (likely unauthorized). Aborting.");
                 button1.Enabled = true;
                 button2.Enabled = true;
                 button5.Enabled = true;
@@ -140,9 +144,9 @@ namespace FortniteFestivalLeaderboardScraper
                 tabControl1.TabPages.Add(tabPage3);
                 return;
             }
-            JSONReadWrite.WriteLeaderboardJSON(scores.Item2);
+            JSONReadWrite.WriteLeaderboardJSON(parallelScores.Item2);
 
-            ExcelSpreadsheetGenerator.GenerateExcelSpreadsheet(scores.Item2, supportedInstruments, selection, _invertOutput);
+            ExcelSpreadsheetGenerator.GenerateExcelSpreadsheet(parallelScores.Item2, supportedInstruments, selection, _invertOutput);
             textBox2.AppendText(Environment.NewLine + "FortniteFestivalScores.xlsx written out to the directory your application is in.");
             button1.Enabled = true;
             button2.Enabled = true;
@@ -472,57 +476,56 @@ namespace FortniteFestivalLeaderboardScraper
                 filteredTracks.Reverse();
                 isSparkTracksReversed = !isSparkTracksReversed;
             }
-                switch (e.ColumnIndex)
-                {
-                    case 1:
-                        filteredTracks = filteredTracks.OrderBy(x => _previousData.FindIndex(y => y.songId == x.track.su) >= 0).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
-                        sortOrder = SortOrder.AvailableLocally;
-                        break;
-                    case 2:
-                        filteredTracks = filteredTracks.OrderBy(x => x.track.tt).ToList();
-                        sortOrder = SortOrder.Title;
-                        break;
-                    case 3:
-                        filteredTracks = filteredTracks.OrderBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
-                        sortOrder = SortOrder.Artist;
-                        break;
-                    case 4:
-                        filteredTracks = filteredTracks.OrderBy(x => x._activeDate).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
-                        sortOrder = SortOrder.Availability;
-                        break;
-                    case 5:
-                        filteredTracks = filteredTracks.OrderBy(x => x.track.@in.gr).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
-                        sortOrder = SortOrder.LeadDiff;
-                        break;
-                    case 6:
-                        filteredTracks = filteredTracks.OrderBy(x => x.track.@in.ba).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
-                        sortOrder = SortOrder.BassDiff;
-                        break;
-                    case 7:
-                        filteredTracks = filteredTracks.OrderBy(x => x.track.@in.vl).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
-                        sortOrder = SortOrder.VocalsDiff;
-                        break;
-                    case 8:
-                        filteredTracks = filteredTracks.OrderBy(x => x.track.@in.ds).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
-                        sortOrder = SortOrder.DrumsDiff;
-                        break;
-                    case 9:
-                        filteredTracks = filteredTracks.OrderBy(x => x.track.@in.pg).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
-                        sortOrder = SortOrder.ProLeadDiff;
-                        break;
-                    case 10:
-                        filteredTracks = filteredTracks.OrderBy(x => x.track.@in.pb).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
-                        sortOrder = SortOrder.ProBassDiff;
-                        break;
-                    default:
-                        break;
+            switch (e.ColumnIndex)
+            {
+                case 1:
+                    filteredTracks = filteredTracks.OrderBy(x => _previousData.FindIndex(y => y.songId == x.track.su) >= 0).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    sortOrder = SortOrder.AvailableLocally;
+                    break;
+                case 2:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.tt).ToList();
+                    sortOrder = SortOrder.Title;
+                    break;
+                case 3:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    sortOrder = SortOrder.Artist;
+                    break;
+                case 4:
+                    filteredTracks = filteredTracks.OrderBy(x => x._activeDate).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    sortOrder = SortOrder.Availability;
+                    break;
+                case 5:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.@in.gr).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    sortOrder = SortOrder.LeadDiff;
+                    break;
+                case 6:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.@in.ba).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    sortOrder = SortOrder.BassDiff;
+                    break;
+                case 7:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.@in.vl).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    sortOrder = SortOrder.VocalsDiff;
+                    break;
+                case 8:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.@in.ds).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    sortOrder = SortOrder.DrumsDiff;
+                    break;
+                case 9:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.@in.pg).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    sortOrder = SortOrder.ProLeadDiff;
+                    break;
+                case 10:
+                    filteredTracks = filteredTracks.OrderBy(x => x.track.@in.pb).ThenBy(x => x.track.an).ThenBy(x => x.track.tt).ToList();
+                    sortOrder = SortOrder.ProBassDiff;
+                    break;
+                default:
+                    break;
             }
 
             if (isSparkTracksReversed)
             {
                 filteredTracks.Reverse();
             }
-                
 
             selectedColumn = e.ColumnIndex;
             this.dataGridView1.Rows.Clear();
@@ -870,7 +873,7 @@ namespace FortniteFestivalLeaderboardScraper
                 return;
             }
 
-            switch (element.Name) 
+            switch (element.Name)
             {
                 case "radioButton1":
                     scoreViewerInstrument = Instruments.Lead;
