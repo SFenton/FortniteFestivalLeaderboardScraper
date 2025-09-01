@@ -1,0 +1,351 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentPage
+  xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+  xmlns:controls="clr-namespace:FortniteFestival.LeaderboardScraper.MAUI.Controls"
+  xmlns:conv="clr-namespace:FortniteFestival.LeaderboardScraper.MAUI.Converters"
+  xmlns:vm="clr-namespace:FortniteFestival.LeaderboardScraper.MAUI.ViewModels"
+  xmlns:syncfusion="clr-namespace:Syncfusion.Maui.ListView;assembly=Syncfusion.Maui.ListView"
+  x:Class="FortniteFestival.LeaderboardScraper.MAUI.Pages.HomePage"
+  Title="Songs"
+  BackgroundColor="#9d4dbb">
+  <ContentPage.Resources>
+    <conv:BoolToThicknessConverter x:Key="BoolToThicknessConverter" TrueThickness="4" FalseThickness="0" />
+  <conv:InverseBoolConverter x:Key="InverseBoolConverter" />
+    <Style x:Key="SortModeRadioStyle" TargetType="RadioButton">
+      <Setter Property="TextColor" Value="White" />
+    </Style>
+  </ContentPage.Resources>
+  <Grid>
+    <!-- Songs content (initially hidden until sync completes) -->
+    <Grid x:Name="SongsContent" IsVisible="False" Padding="12" RowDefinitions="Auto,Auto,*" RowSpacing="10">
+      <!-- Search bar sits outside the rounded song list container -->
+      <Border BackgroundColor="#EEEEEE" StrokeShape="RoundRectangle 22" Padding="0" HeightRequest="44">
+        <SearchBar Placeholder="Search title/artist"
+                   Text="{Binding SongsViewModel.Filter}"
+                   FontFamily="NotoSansRegular"
+                   BackgroundColor="Transparent"
+                   TextColor="Black"
+                   PlaceholderColor="#666666" />
+      </Border>
+    <!-- Filter row with Sort Direction anchored right -->
+  <Grid Grid.Row="1" HeightRequest="44" ColumnDefinitions="Auto,Auto,*" ColumnSpacing="12" VerticalOptions="Center">
+  <Border x:Name="FilterButton" Grid.Column="0" StrokeShape="RoundRectangle 28" BackgroundColor="#4B0F63" Padding="20,14" HorizontalOptions="Start" VerticalOptions="Center">
+          <Border.Shadow>
+            <Shadow Brush="#000000" Opacity="0.35" Offset="0,4" Radius="14" />
+          </Border.Shadow>
+          <Border.GestureRecognizers>
+            <TapGestureRecognizer Tapped="OnFilterTapped" NumberOfTapsRequired="1" />
+          </Border.GestureRecognizers>
+          <Label Text="Filter" FontFamily="NotoSansBold" TextColor="White" />
+        </Border>
+        <Border x:Name="SortButton" Grid.Column="1" StrokeShape="RoundRectangle 28" BackgroundColor="#4B0F63" Padding="20,14" HorizontalOptions="Start" VerticalOptions="Center">
+          <Border.Shadow>
+            <Shadow Brush="#000000" Opacity="0.35" Offset="0,4" Radius="14" />
+          </Border.Shadow>
+          <Border.GestureRecognizers>
+            <TapGestureRecognizer Tapped="OnSortTapped" NumberOfTapsRequired="1" />
+          </Border.GestureRecognizers>
+          <Label Text="Sort" FontFamily="NotoSansBold" TextColor="White" />
+        </Border>
+  <Border x:Name="SortDirectionButton" Grid.Column="2" StrokeShape="RoundRectangle 28" BackgroundColor="#4B0F63" Padding="20,14" HorizontalOptions="End" VerticalOptions="Center" MinimumWidthRequest="150">
+          <Border.Shadow>
+            <Shadow Brush="#000000" Opacity="0.35" Offset="0,4" Radius="14" />
+          </Border.Shadow>
+          <Border.GestureRecognizers>
+            <TapGestureRecognizer Tapped="OnSortDirectionTapped" />
+          </Border.GestureRecognizers>
+          <HorizontalStackLayout Spacing="6" VerticalOptions="Center">
+            <Label Text="Sort Direction" FontFamily="NotoSansBold" TextColor="White" />
+            <Label x:Name="SortDirectionCaret" Text="{Binding SongsViewModel.SortDirectionCaret}" FontFamily="NotoSansBold" TextColor="White" />
+          </HorizontalStackLayout>
+        </Border>
+      </Grid>
+  <Border Grid.Row="2" BackgroundColor="#b35cd6" StrokeShape="RoundRectangle 26" Padding="8" HorizontalOptions="Fill" VerticalOptions="Fill">
+  <CollectionView ItemsSource="{Binding SongsViewModel.VisibleRows}" SelectionMode="None">
+            <CollectionView.ItemTemplate>
+        <DataTemplate x:DataType="vm:SongDisplayRow">
+                <Grid Padding="6" ColumnDefinitions="60,*,Auto" ColumnSpacing="8" RowDefinitions="Auto">
+                  <Grid.GestureRecognizers>
+                    <TapGestureRecognizer Tapped="OnSongRowTapped" CommandParameter="{Binding .}" />
+                  </Grid.GestureRecognizers>
+                  <!-- Album Art -->
+                  <Border Grid.Column="0" StrokeShape="RoundRectangle 4" WidthRequest="56" HeightRequest="56" BackgroundColor="#444444" HorizontalOptions="Start" VerticalOptions="Center">
+                    <Image Source="{Binding AlbumArtPath}" Aspect="AspectFill" />
+                  </Border>
+                  <!-- Title / Artist -->
+                  <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
+                    <Label Text="{Binding Title}" FontAttributes="Bold" FontFamily="NotoSansBold" LineBreakMode="TailTruncation" />
+                    <Label Text="{Binding Artist}" FontSize="12" FontFamily="NotoSansRegular" LineBreakMode="TailTruncation" />
+                  </VerticalStackLayout>
+                  <!-- Instrument Icons Row -->
+                  <HorizontalStackLayout Grid.Column="2" Spacing="8" BindableLayout.ItemsSource="{Binding InstrumentStatuses}" VerticalOptions="Center">
+                    <BindableLayout.ItemTemplate>
+                      <DataTemplate x:DataType="vm:InstrumentStatus">
+                        <Grid WidthRequest="48" HeightRequest="48">
+                          <Border
+                            IsVisible="{Binding ShowCircle}"
+                            BackgroundColor="{Binding CircleFillColor}"
+                            Stroke="{Binding CircleStrokeColor}"
+                            StrokeShape="Ellipse"
+                            StrokeThickness="3"
+                            WidthRequest="48" HeightRequest="48" />
+                          <Image Source="{Binding Icon}" WidthRequest="40" HeightRequest="40" HorizontalOptions="Center" VerticalOptions="Center" />
+                        </Grid>
+                      </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                  </HorizontalStackLayout>
+                </Grid>
+              </DataTemplate>
+            </CollectionView.ItemTemplate>
+      </CollectionView>
+    </Border>
+    </Grid>
+    <!-- Centered loading overlay -->
+    <VerticalStackLayout x:Name="LoadingOverlay" Spacing="12" HorizontalOptions="Center" VerticalOptions="Center">
+      <ActivityIndicator x:Name="InitSpinner" IsRunning="True" WidthRequest="48" HeightRequest="48" Color="White" />
+      <Label x:Name="LoadingLabel" Text="Updating songs..." HorizontalTextAlignment="Center" TextColor="White" />
+    </VerticalStackLayout>
+
+    <!-- Floating Update Scores Button (opaque) -->
+    <Grid Padding="16" HorizontalOptions="End" VerticalOptions="End">
+  <Border x:Name="UpdateScoresButton" StrokeShape="RoundRectangle 26" BackgroundColor="#4B0F63" Padding="20,14" TranslationX="3" TranslationY="4">
+        <Border.Shadow>
+          <Shadow Brush="#000000" Opacity="0.35" Offset="0,4" Radius="14" />
+        </Border.Shadow>
+        <Border.GestureRecognizers>
+          <TapGestureRecognizer Tapped="OnUpdateScoresTapped" NumberOfTapsRequired="1" />
+        </Border.GestureRecognizers>
+        <Grid>
+          <Label x:Name="UpdateScoresLabel" Text="Update Scores" FontFamily="NotoSansBold" TextColor="White" />
+          <ActivityIndicator x:Name="UpdateScoresSpinner" IsRunning="False" IsVisible="False" Color="White" />
+        </Grid>
+      </Border>
+    </Grid>
+
+    <!-- Authentication Modal Overlay -->
+    <Grid x:Name="AuthModal" BackgroundColor="#00000088" IsVisible="False">
+      <Grid HorizontalOptions="Center" VerticalOptions="Center" Padding="24" WidthRequest="420">
+        <!-- Deep purple modal card -->
+        <Border StrokeShape="RoundRectangle 18" BackgroundColor="#4B0F63" Padding="28">
+          <Border.Shadow>
+            <Shadow Brush="#000000" Opacity="0.4" Offset="0,6" Radius="22" />
+          </Border.Shadow>
+          <Grid RowDefinitions="Auto,Auto,Auto,Auto" ColumnDefinitions="*" RowSpacing="18">
+            <!-- Header Row with Title & Close (styled like Update Scores button) -->
+            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto" ColumnSpacing="12">
+              <Label Text="Authenticate" FontFamily="NotoSansBold" FontSize="20" VerticalOptions="Center" />
+              <!-- Circular close button -->
+              <Border x:Name="CloseAuthButton" Grid.Column="1" WidthRequest="40" HeightRequest="40" StrokeShape="Ellipse" BackgroundColor="#444444" HorizontalOptions="End" VerticalOptions="Center">
+                <Border.Shadow>
+                  <Shadow Brush="#000000" Opacity="0.35" Offset="0,4" Radius="14" />
+                </Border.Shadow>
+                <Border.GestureRecognizers>
+                  <TapGestureRecognizer Tapped="OnCloseAuth" />
+                </Border.GestureRecognizers>
+                <Grid>
+                  <Label Text="✕" FontSize="18" FontFamily="NotoSansBold" TextColor="White" HorizontalOptions="Center" VerticalOptions="Center" />
+                </Grid>
+              </Border>
+            </Grid>
+            <!-- Entry -->
+            <Border Grid.Row="1" BackgroundColor="#EEEEEE" StrokeShape="RoundRectangle 22" Padding="14,0" HeightRequest="44">
+              <Entry x:Name="AuthCodeEntry" Placeholder="Paste exchange code" TextChanged="OnAuthCodeChanged" BackgroundColor="Transparent" TextColor="Black" PlaceholderColor="#666666" FontFamily="NotoSansRegular" />
+            </Border>
+            <!-- Action Button -->
+            <Button Grid.Row="2" x:Name="AuthActionButton" Text="Get Code" Clicked="OnAuthActionButtonClicked" BackgroundColor="#2D82E6" TextColor="White" FontFamily="NotoSansBold" />
+            <!-- Info Text -->
+            <Label Grid.Row="3" FontSize="12" Text="Put your Epic Games authorization code here to allow Festival Scraper to pull your scores." LineBreakMode="WordWrap" />
+          </Grid>
+        </Border>
+      </Grid>
+    </Grid>
+
+    <!-- Filter Modal Overlay -->
+    <Grid x:Name="FilterModal" BackgroundColor="#00000088" IsVisible="False">
+      <Grid HorizontalOptions="Center" VerticalOptions="Center" Padding="24" WidthRequest="520">
+        <Border StrokeShape="RoundRectangle 18" BackgroundColor="#4B0F63" Padding="28">
+          <Border.Shadow>
+            <Shadow Brush="#000000" Opacity="0.4" Offset="0,6" Radius="22" />
+          </Border.Shadow>
+          <VerticalStackLayout Spacing="18">
+            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto" ColumnSpacing="12">
+              <Label Text="Filter Songs" FontFamily="NotoSansBold" FontSize="20" VerticalOptions="Center" />
+              <Border x:Name="CloseFilterButton" Grid.Column="1" Padding="18,8" StrokeShape="RoundRectangle 26" BackgroundColor="#444444" VerticalOptions="Center">
+                <Border.Shadow>
+                  <Shadow Brush="#000000" Opacity="0.35" Offset="0,4" Radius="14" />
+                </Border.Shadow>
+                <Border.GestureRecognizers>
+                  <TapGestureRecognizer Tapped="OnCloseFilter" />
+                </Border.GestureRecognizers>
+                <Label Text="Cancel" FontSize="14" FontFamily="NotoSansBold" TextColor="White" HorizontalOptions="Center" VerticalOptions="Center" />
+              </Border>
+            </Grid>
+            <!-- Missing Criteria -->
+            <VerticalStackLayout Spacing="8">
+              <Label Text="Missing" FontFamily="NotoSansBold" />
+              <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="32" RowSpacing="8">
+                <!-- Row 0: Pad -->
+                <HorizontalStackLayout Grid.Row="0" Grid.Column="0" Spacing="6" VerticalOptions="Center">
+                  <CheckBox IsChecked="{Binding SongsViewModel.MissingPadFCs}" />
+                  <Label Text="Missing Pad FCs" FontSize="12" VerticalOptions="Center" />
+                </HorizontalStackLayout>
+                <HorizontalStackLayout Grid.Row="0" Grid.Column="1" Spacing="6" VerticalOptions="Center">
+                  <CheckBox IsChecked="{Binding SongsViewModel.MissingPadScores}" />
+                  <Label Text="Missing Pad Scores" FontSize="12" VerticalOptions="Center" />
+                </HorizontalStackLayout>
+                <!-- Row 1: Pro -->
+                <HorizontalStackLayout Grid.Row="1" Grid.Column="0" Spacing="6" VerticalOptions="Center">
+                  <CheckBox IsChecked="{Binding SongsViewModel.MissingProFCs}" />
+                  <Label Text="Missing Pro FCs" FontSize="12" VerticalOptions="Center" />
+                </HorizontalStackLayout>
+                <HorizontalStackLayout Grid.Row="1" Grid.Column="1" Spacing="6" VerticalOptions="Center">
+                  <CheckBox IsChecked="{Binding SongsViewModel.MissingProScores}" />
+                  <Label Text="Missing Pro Scores" FontSize="12" VerticalOptions="Center" />
+                </HorizontalStackLayout>
+              </Grid>
+            </VerticalStackLayout>
+            <!-- Instruments -->
+            <VerticalStackLayout Spacing="8">
+              <Label Text="Instruments" FontFamily="NotoSansBold" />
+              <Grid ColumnDefinitions="*,*" ColumnSpacing="36">
+                <!-- Left: pad instruments -->
+                <VerticalStackLayout Spacing="6">
+                  <HorizontalStackLayout Spacing="6"><CheckBox IsChecked="{Binding SongsViewModel.IncludeLead}" /><Label Text="Lead" FontSize="12" VerticalOptions="Center" /></HorizontalStackLayout>
+                  <HorizontalStackLayout Spacing="6"><CheckBox IsChecked="{Binding SongsViewModel.IncludeBass}" /><Label Text="Bass" FontSize="12" VerticalOptions="Center" /></HorizontalStackLayout>
+                  <HorizontalStackLayout Spacing="6"><CheckBox IsChecked="{Binding SongsViewModel.IncludeDrums}" /><Label Text="Drums" FontSize="12" VerticalOptions="Center" /></HorizontalStackLayout>
+                  <HorizontalStackLayout Spacing="6"><CheckBox IsChecked="{Binding SongsViewModel.IncludeVocals}" /><Label Text="Vocals" FontSize="12" VerticalOptions="Center" /></HorizontalStackLayout>
+                </VerticalStackLayout>
+                <!-- Right: pro instruments -->
+                <VerticalStackLayout Grid.Column="1" Spacing="6">
+                  <HorizontalStackLayout Spacing="6"><CheckBox IsChecked="{Binding SongsViewModel.IncludeProGuitar}" /><Label Text="Pro Guitar" FontSize="12" VerticalOptions="Center" /></HorizontalStackLayout>
+                  <HorizontalStackLayout Spacing="6"><CheckBox IsChecked="{Binding SongsViewModel.IncludeProBass}" /><Label Text="Pro Bass" FontSize="12" VerticalOptions="Center" /></HorizontalStackLayout>
+                </VerticalStackLayout>
+              </Grid>
+            </VerticalStackLayout>
+            <!-- Action buttons -->
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+              <Button Text="Reset" Clicked="OnResetFilter" BackgroundColor="#C62828" TextColor="White" FontFamily="NotoSansBold" />
+              <Button Grid.Column="1" Text="Apply" Clicked="OnApplyFilter" BackgroundColor="#2D82E6" TextColor="White" FontFamily="NotoSansBold" />
+            </Grid>
+          </VerticalStackLayout>
+        </Border>
+      </Grid>
+    </Grid>
+    <!-- Sort Modal Overlay -->
+    <Grid x:Name="SortModal" BackgroundColor="#00000088" IsVisible="False">
+      <Grid HorizontalOptions="Center" VerticalOptions="Center" Padding="24" WidthRequest="520">
+        <Border StrokeShape="RoundRectangle 18" BackgroundColor="#4B0F63" Padding="28">
+          <Border.Shadow>
+            <Shadow Brush="#000000" Opacity="0.4" Offset="0,6" Radius="22" />
+          </Border.Shadow>
+          <VerticalStackLayout Spacing="18">
+            <!-- Header -->
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+              <Label Text="Sort Songs" FontFamily="NotoSansBold" FontSize="20" VerticalOptions="Center" />
+              <Border x:Name="CloseSortButton" Grid.Column="1" Padding="18,8" StrokeShape="RoundRectangle 26" BackgroundColor="#444444" VerticalOptions="Center">
+                <Border.Shadow>
+                  <Shadow Brush="#000000" Opacity="0.35" Offset="0,4" Radius="14" />
+                </Border.Shadow>
+                <Border.GestureRecognizers>
+                  <TapGestureRecognizer Tapped="OnCloseSort" />
+                </Border.GestureRecognizers>
+                <Label Text="Cancel" FontSize="14" FontFamily="NotoSansBold" TextColor="White" HorizontalOptions="Center" VerticalOptions="Center" />
+              </Border>
+            </Grid>
+            <!-- Sort Mode Radio Buttons -->
+            <VerticalStackLayout Spacing="8">
+              <Label Text="Mode" FontFamily="NotoSansBold" />
+              <Grid ColumnDefinitions="*,*" ColumnSpacing="36">
+                <!-- Left column: Title, Artist -->
+                <VerticalStackLayout Spacing="10">
+                  <Grid>
+                    <Grid.GestureRecognizers>
+                      <TapGestureRecognizer Tapped="OnSortOptionTapped" CommandParameter="title" />
+                    </Grid.GestureRecognizers>
+                    <HorizontalStackLayout Spacing="8" VerticalOptions="Center">
+                      <Grid WidthRequest="20" HeightRequest="20">
+                        <Ellipse Stroke="#2D82E6" StrokeThickness="2" />
+                        <Ellipse Fill="#2D82E6" WidthRequest="16" HeightRequest="16" HorizontalOptions="Center" VerticalOptions="Center" IsVisible="{Binding SongsViewModel.IsSortByTitle}" />
+                        <Ellipse Fill="White" WidthRequest="8" HeightRequest="8" HorizontalOptions="Center" VerticalOptions="Center" IsVisible="{Binding SongsViewModel.IsSortByTitle}" />
+                      </Grid>
+                      <Label Text="Title" FontSize="14" VerticalOptions="Center" />
+                    </HorizontalStackLayout>
+                  </Grid>
+                  <Grid>
+                    <Grid.GestureRecognizers>
+                      <TapGestureRecognizer Tapped="OnSortOptionTapped" CommandParameter="artist" />
+                    </Grid.GestureRecognizers>
+                    <HorizontalStackLayout Spacing="8" VerticalOptions="Center">
+                      <Grid WidthRequest="20" HeightRequest="20">
+                        <Ellipse Stroke="#2D82E6" StrokeThickness="2" />
+                        <Ellipse Fill="#2D82E6" WidthRequest="16" HeightRequest="16" HorizontalOptions="Center" VerticalOptions="Center" IsVisible="{Binding SongsViewModel.IsSortByArtist}" />
+                        <Ellipse Fill="White" WidthRequest="8" HeightRequest="8" HorizontalOptions="Center" VerticalOptions="Center" IsVisible="{Binding SongsViewModel.IsSortByArtist}" />
+                      </Grid>
+                      <Label Text="Artist" FontSize="14" VerticalOptions="Center" />
+                    </HorizontalStackLayout>
+                  </Grid>
+                </VerticalStackLayout>
+                <!-- Right column: Has FC -->
+                <VerticalStackLayout Grid.Column="1" Spacing="10">
+                  <Grid>
+                    <Grid.GestureRecognizers>
+                      <TapGestureRecognizer Tapped="OnSortOptionTapped" CommandParameter="hasfc" />
+                    </Grid.GestureRecognizers>
+                    <HorizontalStackLayout Spacing="8" VerticalOptions="Center">
+                      <Grid WidthRequest="20" HeightRequest="20">
+                        <Ellipse Stroke="#2D82E6" StrokeThickness="2" />
+                        <Ellipse Fill="#2D82E6" WidthRequest="16" HeightRequest="16" HorizontalOptions="Center" VerticalOptions="Center" IsVisible="{Binding SongsViewModel.IsSortByHasFC}" />
+                        <Ellipse Fill="White" WidthRequest="8" HeightRequest="8" HorizontalOptions="Center" VerticalOptions="Center" IsVisible="{Binding SongsViewModel.IsSortByHasFC}" />
+                      </Grid>
+                      <Label Text="Has FC" FontSize="14" VerticalOptions="Center" />
+                    </HorizontalStackLayout>
+                  </Grid>
+                </VerticalStackLayout>
+              </Grid>
+            </VerticalStackLayout>
+            <!-- Primary Instrument Order -->
+            <VerticalStackLayout Spacing="8">
+              <Label Text="Primary Instrument Order" FontFamily="NotoSansBold" />
+              <Border StrokeShape="RoundRectangle 18" BackgroundColor="#5D1A75" Padding="8">
+                <syncfusion:SfListView x:Name="InstrumentListView"
+                                         ItemsSource="{Binding SongsViewModel.PrimaryInstrumentOrder}"
+                                         DragStartMode="OnDragIndicator"
+                                         SelectionMode="None">
+                  <syncfusion:SfListView.DragDropController>
+                    <syncfusion:DragDropController UpdateSource="True" />
+                  </syncfusion:SfListView.DragDropController>
+                  <syncfusion:SfListView.ItemTemplate>
+                    <DataTemplate x:DataType="vm:InstrumentOrderItem">
+                      <Grid Padding="6" ColumnDefinitions="Auto,*">
+                        <syncfusion:DragIndicatorView Grid.Column="0"
+                                                       ListView="{x:Reference InstrumentListView}"
+                                                       VerticalOptions="Center"
+                                                       HorizontalOptions="Center">
+                          <Grid WidthRequest="20" HeightRequest="20" Margin="0,0,8,0" VerticalOptions="Center">
+                            <VerticalStackLayout Spacing="2" VerticalOptions="Center" HorizontalOptions="Center">
+                              <BoxView WidthRequest="14" HeightRequest="2" Color="#BBBBBB" />
+                              <BoxView WidthRequest="14" HeightRequest="2" Color="#BBBBBB" />
+                              <BoxView WidthRequest="14" HeightRequest="2" Color="#BBBBBB" />
+                            </VerticalStackLayout>
+                          </Grid>
+                        </syncfusion:DragIndicatorView>
+                        <Label Grid.Column="1" Text="{Binding DisplayName}" FontSize="14" VerticalOptions="Center" />
+                      </Grid>
+                    </DataTemplate>
+                  </syncfusion:SfListView.ItemTemplate>
+                </syncfusion:SfListView>
+              </Border>
+              <Label FontSize="10" Text="Drag to reorder priority. Sorting by Has FC uses contiguous FCs from the top of this list." />
+            </VerticalStackLayout>
+            <!-- Actions -->
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="16">
+              <Button Text="Reset" Clicked="OnResetSort" BackgroundColor="#C62828" TextColor="White" FontFamily="NotoSansBold" />
+              <Button Grid.Column="1" Text="Apply" Clicked="OnApplySort" BackgroundColor="#2D82E6" TextColor="White" FontFamily="NotoSansBold" />
+            </Grid>
+          </VerticalStackLayout>
+        </Border>
+      </Grid>
+    </Grid>
+  </Grid>
+</ContentPage>

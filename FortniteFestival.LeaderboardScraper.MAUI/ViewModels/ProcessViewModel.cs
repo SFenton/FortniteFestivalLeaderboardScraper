@@ -17,7 +17,7 @@ public class ProcessViewModel : BaseViewModel
     public ObservableCollection<string> LogLines { get; } = new ObservableCollection<string>();
 
     // Exposed only for pages that still bind; avoid recomputing giant string every append; update on throttled timer
-    private string _logJoined;
+    private string _logJoined = string.Empty;
     public string LogJoined
     {
         get => _logJoined;
@@ -59,7 +59,7 @@ public class ProcessViewModel : BaseViewModel
         private set => Set(ref _progressLabel, value);
     }
 
-    private string _metrics;
+    private string _metrics = string.Empty;
     public string Metrics
     {
         get => _metrics;
@@ -113,7 +113,7 @@ public class ProcessViewModel : BaseViewModel
 
     private void FlushPendingLogs()
     {
-        string[] batch = null;
+    string[] batch = Array.Empty<string>();
         lock (_logLock)
         {
             if (_pendingLogs.Count == 0)
@@ -139,8 +139,8 @@ public class ProcessViewModel : BaseViewModel
     {
         if (_initialized)
             return;
-        _initialized = true;
         await InitializeAsync();
+        _initialized = true; // only mark after success
     }
 
     private void WireServiceEvents()
@@ -161,23 +161,29 @@ public class ProcessViewModel : BaseViewModel
         _state.IsInitializing = true;
         UpdateFetchEnabled();
         EnqueueLog("Initializing service (syncing songs)...");
-        // Load settings
         try
         {
-            var loaded = await _settingsPersistence.LoadSettingsAsync();
-            CopyInstrumentSettings(loaded, _settings);
+            // Load settings
+            try
+            {
+                var loaded = await _settingsPersistence.LoadSettingsAsync();
+                CopyInstrumentSettings(loaded, _settings);
+            }
+            catch { }
+            await _service.InitializeAsync();
+            _state.Songs.Clear();
+            foreach (var s in _service.Songs)
+                _state.Songs.Add(s);
+            EnqueueLog(
+                $"Song sync complete. {_service.ScoresIndex.Count} cached scores; {_service.Songs.Count} songs loaded."
+            );
+            UpdateMetrics();
         }
-        catch { }
-        await _service.InitializeAsync();
-        _state.Songs.Clear();
-        foreach (var s in _service.Songs)
-            _state.Songs.Add(s);
-        EnqueueLog(
-            $"Song sync complete. {_service.ScoresIndex.Count} cached scores; {_service.Songs.Count} songs loaded."
-        );
-        _state.IsInitializing = false;
-        UpdateFetchEnabled();
-        UpdateMetrics();
+        finally
+        {
+            _state.IsInitializing = false;
+            UpdateFetchEnabled();
+        }
     }
 
     private void CopyInstrumentSettings(Settings src, Settings dest)
@@ -197,7 +203,8 @@ public class ProcessViewModel : BaseViewModel
     {
         if (_service.IsFetching || string.IsNullOrWhiteSpace(ExchangeCode))
             return;
-        _state.IsFetching = true;
+    _state.IsFetching = true;
+    Raise(nameof(IsFetching));
         UpdateFetchEnabled();
         ProgressPct = 0;
         ProgressLabel = "0%";
@@ -211,7 +218,8 @@ public class ProcessViewModel : BaseViewModel
         );
         EnqueueLog(ok ? "Score fetch complete." : "Score fetch failed.");
         UpdateMetrics();
-        _state.IsFetching = false;
+    _state.IsFetching = false;
+    Raise(nameof(IsFetching));
         UpdateFetchEnabled();
     }
 
@@ -238,6 +246,10 @@ public class ProcessViewModel : BaseViewModel
             !string.IsNullOrWhiteSpace(ExchangeCode)
             && !_state.IsInitializing
             && !_state.IsFetching;
+
+    public bool IsFetching => _state.IsFetching;
+
+    public Task StartFetchAsync() => FetchAsync();
 
     private void UpdateMetrics()
     {

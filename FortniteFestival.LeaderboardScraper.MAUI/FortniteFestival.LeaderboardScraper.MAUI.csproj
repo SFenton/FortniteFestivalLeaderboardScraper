@@ -49,17 +49,26 @@
     />
     <!-- Splash Screen -->
     <MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#512BD4" BaseSize="128,128" />
-    <!-- Images -->
-    <MauiImage Include="Resources\Images\*" />
-    <MauiImage Update="Resources\Images\dotnet_bot.png" Resize="True" BaseSize="300,185" />
-    <!-- Custom Fonts -->
-    <MauiFont Include="Resources\Fonts\*" />
+  <!-- Images (recurse into subfolders so Instruments/ icons are included) -->
+  <MauiImage Include="Resources\Images\**\*.*" LogicalName="%(Filename)%(Extension)" />
+  <MauiImage Update="Resources\Images\dotnet_bot.png" Resize="True" BaseSize="300,185" />
+  <!-- Exclude variable font TTFs with commas from being treated as images/assets -->
+  <None Remove="Resources\Fonts\NotoSans-Italic-VariableFont_wdth,wght.ttf" />
+  <None Remove="Resources\Fonts\NotoSans-VariableFont_wdth,wght.ttf" />
+  <MauiFont Remove="Resources\Fonts\NotoSans-Italic-VariableFont_wdth,wght.ttf" />
+  <MauiFont Remove="Resources\Fonts\NotoSans-VariableFont_wdth,wght.ttf" />
+  <!-- Custom Fonts (explicit) -->
+  <MauiFont Include="Resources\Fonts\static\NotoSans-Regular.ttf" Alias="NotoSansRegular" />
+  <MauiFont Include="Resources\Fonts\static\NotoSans-Bold.ttf" Alias="NotoSansBold" />
     <!-- Raw Assets (also remove the "Resources\Raw" prefix) -->
     <MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Maui.Controls" Version="9.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="9.0.0" />
+  <!-- Syncfusion packages for SfListView drag & drop ordering -->
+  <PackageReference Include="Syncfusion.Maui.Core" Version="*" />
+  <PackageReference Include="Syncfusion.Maui.ListView" Version="*" />
   </ItemGroup>
   <ItemGroup>
     <MauiXaml Update="Pages\LogPage.xaml">

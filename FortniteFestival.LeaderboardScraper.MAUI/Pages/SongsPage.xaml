@@ -18,8 +18,8 @@
             <Grid Padding="4" ColumnDefinitions="40,*" RowDefinitions="Auto">
               <CheckBox IsChecked="{Binding isSelected}" CheckedChanged="OnCheckChanged" />
               <VerticalStackLayout Grid.Column="1" Spacing="2">
-                <Label Text="{Binding track.tt}" FontAttributes="Bold" />
-                <Label Text="{Binding track.an}" FontSize="12" TextColor="Gray" />
+                <Label Text="{Binding track.tt}" FontAttributes="Bold" FontFamily="NotoSansBold" />
+                <Label Text="{Binding track.an}" FontSize="12" TextColor="Gray" FontFamily="NotoSansRegular" />
               </VerticalStackLayout>
             </Grid>
           </DataTemplate>
