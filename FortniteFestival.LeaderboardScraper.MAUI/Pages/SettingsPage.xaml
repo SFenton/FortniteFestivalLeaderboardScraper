@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="FortniteFestival.LeaderboardScraper.MAUI.Pages.SettingsPage"
+             
+             BackgroundColor="#9d4dbb">
+  <Grid>
+    <Grid RowDefinitions="Auto,*">
+      <!-- Header -->
+      <Grid Grid.Row="0" HeightRequest="52" Padding="12,8" ColumnDefinitions="Auto,*">
+        <Label x:Name="HamburgerButton" Text="☰" FontSize="24" FontFamily="NotoSansBold" TextColor="White" VerticalOptions="Center">
+          <Label.GestureRecognizers>
+            <TapGestureRecognizer Tapped="OnHamburgerTapped" />
+          </Label.GestureRecognizers>
+        </Label>
+        <Label Grid.Column="1" />
+      </Grid>
+      <!-- Content -->
+      <ScrollView Grid.Row="1">
+        <VerticalStackLayout Spacing="16" Padding="16">
+          <Label Text="Settings (coming soon)" FontSize="18" FontFamily="NotoSansBold" />
+        </VerticalStackLayout>
+      </ScrollView>
+    </Grid>
+    <!-- Drawer overlay (copied minimal) -->
+    <Grid x:Name="NavDrawerOverlay" IsVisible="False" BackgroundColor="#00000055">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="260" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+      <Border BackgroundColor="#4B0F63" StrokeShape="RoundRectangle 0" Padding="16,20,16,28" WidthRequest="260">
+        <VerticalStackLayout Spacing="18">
+          <Grid ColumnDefinitions="*,Auto" HeightRequest="24">
+            <Label />
+            <Label Text="✕" TextColor="White" FontSize="18" VerticalOptions="Center">
+              <Label.GestureRecognizers><TapGestureRecognizer Tapped="OnCloseDrawerTapped" /></Label.GestureRecognizers>
+            </Label>
+          </Grid>
+          <Grid x:Name="SuggestionsNavItem" ColumnDefinitions="Auto,*" HeightRequest="40">
+            <Grid.GestureRecognizers><TapGestureRecognizer Tapped="OnNavSuggestionsTapped" /></Grid.GestureRecognizers>
+            <Label Text="💡" FontSize="20" VerticalOptions="Center" />
+            <Label Grid.Column="1" Text="Suggestions" FontFamily="NotoSansBold" TextColor="White" VerticalOptions="Center" />
+          </Grid>
+          <Grid ColumnDefinitions="Auto,*" HeightRequest="40">
+            <Grid.GestureRecognizers><TapGestureRecognizer Tapped="OnNavSongsTapped" /></Grid.GestureRecognizers>
+            <Label Text="🎵" FontSize="20" VerticalOptions="Center" />
+            <Label Grid.Column="1" Text="Songs" FontFamily="NotoSansBold" TextColor="White" VerticalOptions="Center" />
+          </Grid>
+          <Grid ColumnDefinitions="Auto,*" HeightRequest="40">
+            <Grid.GestureRecognizers><TapGestureRecognizer Tapped="OnNavStatisticsTapped" /></Grid.GestureRecognizers>
+            <Label Text="📊" FontSize="20" VerticalOptions="Center" />
+            <Label Grid.Column="1" Text="Statistics" FontFamily="NotoSansBold" TextColor="White" VerticalOptions="Center" />
+          </Grid>
+          <Grid ColumnDefinitions="Auto,*" HeightRequest="40">
+            <Grid.GestureRecognizers><TapGestureRecognizer Tapped="OnNavSettingsTapped" /></Grid.GestureRecognizers>
+            <Label Text="⚙️" FontSize="20" VerticalOptions="Center" />
+            <Label Grid.Column="1" Text="Settings" FontFamily="NotoSansBold" TextColor="White" VerticalOptions="Center" />
+          </Grid>
+        </VerticalStackLayout>
+      </Border>
+      <Grid Grid.Column="1">
+        <Grid.GestureRecognizers><TapGestureRecognizer Tapped="OnCloseDrawerTapped" /></Grid.GestureRecognizers>
+      </Grid>
+    </Grid>
+  </Grid>
+</ContentPage>

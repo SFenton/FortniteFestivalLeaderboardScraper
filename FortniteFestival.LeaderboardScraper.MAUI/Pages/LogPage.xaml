@@ -5,7 +5,7 @@
   xmlns:vm="clr-namespace:FortniteFestival.LeaderboardScraper.MAUI.ViewModels"
   x:Class="FortniteFestival.LeaderboardScraper.MAUI.Pages.LogPage"
   x:DataType="vm:ProcessViewModel"
-  Title="Log"
+  
 >
   <VerticalStackLayout Padding="12" Spacing="8">
     <HorizontalStackLayout>

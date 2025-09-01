@@ -1,4 +1,3 @@
-<?xml version="1.0" encoding="utf-8"?>
 <ContentPage
   xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
   xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
@@ -9,7 +8,7 @@
   x:Class="FortniteFestival.LeaderboardScraper.MAUI.Pages.SongInfoPage"
   x:Name="SongInfoPageRoot"
   x:DataType="vm:SongInfoViewModel"
-  Title="Song Info">
+  Shell.NavBarIsVisible="false">
   <ContentPage.Resources>
     <conv:InverseBoolConverter x:Key="InverseBoolConverter" />
   </ContentPage.Resources>
@@ -20,7 +19,8 @@
     <!-- Foreground content wrapped in ScrollView for vertical overflow (excluding floating Back button) -->
     <ScrollView>
       <!-- Content grid; top padding adjusted at runtime to just clear floating Back button -->
-      <Grid x:Name="ContentGrid" Padding="16" RowSpacing="20" RowDefinitions="Auto,Auto">
+  <!-- Top padding set dynamically in code-behind based on BackButton height to keep spacing visually balanced -->
+  <Grid x:Name="ContentGrid" Padding="16,48,16,16" RowSpacing="20" RowDefinitions="Auto,Auto">
         <!-- Wide header layout (side-by-side) -->
         <Grid Grid.Row="0" ColumnDefinitions="Auto,*" ColumnSpacing="32" HeightRequest="260" IsVisible="{Binding UseCompactLayout, Converter={StaticResource InverseBoolConverter}}">
           <Border Grid.Column="0" StrokeShape="RoundRectangle 18" BackgroundColor="#7A2B95" WidthRequest="220" HeightRequest="220" HorizontalOptions="Center" VerticalOptions="Center">
@@ -32,7 +32,7 @@
           </VerticalStackLayout>
         </Grid>
         <!-- Compact header layout (stacked) -->
-        <VerticalStackLayout Grid.Row="0" Spacing="16" HorizontalOptions="Center" VerticalOptions="Start" IsVisible="{Binding UseCompactLayout}">
+        <VerticalStackLayout Grid.Row="0" Spacing="16" HorizontalOptions="Center" VerticalOptions="Start" IsVisible="{Binding UseCompactLayout}" Padding="0,16">
           <Border StrokeShape="RoundRectangle 18" BackgroundColor="#7A2B95" WidthRequest="220" HeightRequest="220" HorizontalOptions="Center" VerticalOptions="Center">
             <Image Source="{Binding AlbumArtPath}" Aspect="AspectFit" />
           </Border>
@@ -171,7 +171,7 @@
       </Grid>
     </ScrollView>
     <!-- Floating Back button (stays fixed while scrolling) -->
-    <Border StrokeShape="RoundRectangle 24" BackgroundColor="#4B0F63" Padding="16,10" x:Name="BackButton" HorizontalOptions="Start" VerticalOptions="Start" Margin="16,16,0,0" ZIndex="10">
+  <Border StrokeShape="RoundRectangle 24" BackgroundColor="#4B0F63" Padding="16,10" x:Name="BackButton" HorizontalOptions="Start" VerticalOptions="Start" Margin="16,16,0,0" ZIndex="10">
       <Border.GestureRecognizers>
         <TapGestureRecognizer Tapped="OnBackTapped" />
       </Border.GestureRecognizers>

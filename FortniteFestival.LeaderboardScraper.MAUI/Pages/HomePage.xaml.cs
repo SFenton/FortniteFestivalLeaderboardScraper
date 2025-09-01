@@ -1,5 +1,7 @@
 using FortniteFestival.Core;
 using FortniteFestival.LeaderboardScraper.MAUI.ViewModels;
+using Microsoft.Maui.Controls.Shapes;
+using FortniteFestival.Core.Services;
 // NOTE: Legacy manual drag/drop code was removed when switching to Syncfusion SfListView. Any remaining
 // references to platform drag types have been eliminated.
 
@@ -13,6 +15,14 @@ public partial class HomePage : ContentPage
     private string _pendingExchangeCode = string.Empty;
     private bool _updateButtonWidthLocked;
     private double _updateButtonWidth;
+    // In-place navigation additions
+    private enum Section { Songs, Suggestions, Statistics, Settings }
+    private Section _currentSection = Section.Songs;
+    private FortniteFestival.Core.Suggestions.SuggestionGenerator? _suggestionGenerator;
+    private bool _suggestionsLoading;
+    private bool _suggestionsEnd;
+    private const int SuggestionsInitialBatch = 10;
+    private const int SuggestionsSubsequentBatch = 4;
     // Snapshot of filters when opening modal (for Cancel)
     private bool _snapMissingPadFCs, _snapMissingProFCs, _snapMissingPadScores, _snapMissingProScores;
     private bool _snapIncludeLead, _snapIncludeBass, _snapIncludeDrums, _snapIncludeVocals, _snapIncludeProGuitar, _snapIncludeProBass;
@@ -30,7 +40,13 @@ public partial class HomePage : ContentPage
         _processVm.PropertyChanged += ProcessVmOnPropertyChanged;
     // Capture initial width of Update Scores button once laid out
     UpdateScoresButton.SizeChanged += OnUpdateScoresButtonSizeChanged;
-    SizeChanged += (_, _) => SongsViewModel.AdaptForWidth(Width);
+    SizeChanged += (_, _) =>
+        {
+            SongsViewModel.AdaptForWidth(Width);
+            AdaptSuggestionsForWidth();
+        };
+    UpdateSuggestionsVisibility();
+    try { SongsViewModel.Service.ScoreUpdated += OnAnyScoreUpdated; } catch { }
     }
 
     protected override async void OnAppearing()
@@ -47,7 +63,7 @@ public partial class HomePage : ContentPage
         {
             InitSpinner.IsRunning = true;
             LoadingOverlay.IsVisible = true;
-            SongsContent.IsVisible = false;
+            SongListCollection.IsVisible = false;
             try
             {
                 await _processVm.EnsureInitializedAsync();
@@ -73,7 +89,7 @@ public partial class HomePage : ContentPage
         // success
         InitSpinner.IsRunning = false;
         LoadingOverlay.IsVisible = false;
-    SongsContent.IsVisible = true;
+    SongListCollection.IsVisible = true;
         SongsViewModel.Refresh();
     }
 
@@ -351,6 +367,64 @@ public partial class HomePage : ContentPage
         await Navigation.PushAsync(page);
     }
 
+    private void UpdateSuggestionsVisibility()
+    {
+        try
+        {
+            // Suggestions only if at least one score present
+            var hasScore = false;
+            try { hasScore = SongsViewModel.Service.ScoresIndex != null && SongsViewModel.Service.ScoresIndex.Count > 0; } catch { }
+            if (SuggestionsNavItem != null)
+                SuggestionsNavItem.IsVisible = hasScore;
+        }
+        catch { }
+    }
+
+    private void OnAnyScoreUpdated(LeaderboardData _)
+    {
+        MainThread.BeginInvokeOnMainThread(UpdateSuggestionsVisibility);
+    }
+
+    private async void OnHamburgerTapped(object sender, TappedEventArgs e)
+    {
+        await AnimatePressAsync(HamburgerButton);
+        NavDrawerOverlay.IsVisible = true;
+        UpdateSuggestionsVisibility();
+    }
+
+    private void OnCloseDrawerTapped(object sender, TappedEventArgs e)
+    {
+        NavDrawerOverlay.IsVisible = false;
+    }
+
+    private async void OnNavSongsTapped(object sender, TappedEventArgs e)
+    {
+        await AnimatePressAsync((VisualElement)sender);
+        NavDrawerOverlay.IsVisible = false;
+        SwitchSection(Section.Songs);
+    }
+
+    private async void OnNavSettingsTapped(object sender, TappedEventArgs e)
+    {
+        await AnimatePressAsync((VisualElement)sender);
+        NavDrawerOverlay.IsVisible = false;
+        SwitchSection(Section.Settings);
+    }
+
+    private async void OnNavStatisticsTapped(object sender, TappedEventArgs e)
+    {
+        await AnimatePressAsync((VisualElement)sender);
+        NavDrawerOverlay.IsVisible = false;
+        SwitchSection(Section.Statistics);
+    }
+
+    private async void OnNavSuggestionsTapped(object sender, TappedEventArgs e)
+    {
+        await AnimatePressAsync((VisualElement)sender);
+        NavDrawerOverlay.IsVisible = false;
+        SwitchSection(Section.Suggestions);
+    }
+
     private static async Task PulseAsync(VisualElement element)
     {
         try
@@ -385,7 +459,7 @@ public partial class HomePage : ContentPage
                 LoadingLabel.Text = message;
                 LoadingOverlay.IsVisible = true;
                 InitSpinner.IsRunning = true;
-                SongsContent.IsVisible = false;
+                SongListCollection.IsVisible = false;
             }
             await action();
         }
@@ -400,8 +474,254 @@ public partial class HomePage : ContentPage
             {
                 InitSpinner.IsRunning = false;
                 LoadingOverlay.IsVisible = false;
-                SongsContent.IsVisible = true;
+                SongListCollection.IsVisible = true;
             }
         }
+    }
+
+    private void SwitchSection(Section target)
+    {
+        if (_currentSection == target) return;
+        _currentSection = target;
+    if (SongsSection != null) SongsSection.IsVisible = target == Section.Songs;
+        SuggestionsSection.IsVisible = target == Section.Suggestions;
+        StatisticsSection.IsVisible = target == Section.Statistics;
+        SettingsSection.IsVisible = target == Section.Settings;
+        if (target == Section.Suggestions)
+        {
+            EnsureSuggestionGenerator();
+            // Always show overlay while we check / (re)load
+            if (SuggestionsInitialOverlay != null)
+            {
+                SuggestionsInitialOverlay.IsVisible = true;
+                if (SuggestionsInitialSpinner != null) SuggestionsInitialSpinner.IsRunning = true;
+            }
+            if (SuggestionsContentStack.Children.Count == 0)
+            {
+                // Fire and forget async load so UI switches immediately
+                MainThread.BeginInvokeOnMainThread(async () => await LoadInitialSuggestionsAsync());
+            }
+            else
+            {
+                HideSuggestionsInitialOverlay();
+            }
+        }
+    }
+
+    private void EnsureSuggestionGenerator()
+    {
+        if (_suggestionGenerator == null && SongsViewModel.Service != null)
+            _suggestionGenerator = new FortniteFestival.Core.Suggestions.SuggestionGenerator(SongsViewModel.Service);
+    }
+
+    private async Task LoadInitialSuggestionsAsync()
+    {
+        if (_suggestionsLoading || _suggestionGenerator == null) { HideSuggestionsInitialOverlay(); return; }
+        _suggestionsLoading = true;
+        try
+        {
+            await Task.Delay(50); // brief pause so spinner is visible before heavy work
+            int remaining = SuggestionsInitialBatch;
+            while (remaining > 0)
+            {
+                // Run generation off UI thread
+                var batch = await Task.Run(() => _suggestionGenerator.GetNext(remaining).ToList());
+                if (batch.Count == 0) { _suggestionsEnd = true; break; }
+                foreach (var cat in batch) SuggestionsContentStack.Children.Add(BuildSuggestionCategoryView(cat));
+                remaining -= batch.Count;
+                if (batch.Count == 0) break;
+                await Task.Yield(); // yield to UI
+            }
+        }
+        finally
+        {
+            _suggestionsLoading = false;
+            SuggestionsEmptyState.IsVisible = SuggestionsContentStack.Children.Count == 0;
+            HideSuggestionsInitialOverlay();
+        }
+    }
+
+    private void HideSuggestionsInitialOverlay()
+    {
+        if (SuggestionsInitialOverlay != null)
+        {
+            SuggestionsInitialOverlay.IsVisible = false;
+            if (SuggestionsInitialSpinner != null) SuggestionsInitialSpinner.IsRunning = false;
+        }
+    }
+
+    private void LoadMoreSuggestions()
+    {
+        if (_suggestionsLoading || _suggestionsEnd || _suggestionGenerator == null) return;
+        _suggestionsLoading = true;
+        SuggestionsLoadingIndicator.IsVisible = true;
+        SuggestionsLoadingIndicator.IsRunning = true;
+        try
+        {
+            int remaining = SuggestionsSubsequentBatch;
+            while (remaining > 0)
+            {
+                var batch = _suggestionGenerator.GetNext(remaining).ToList();
+                if (batch.Count == 0) { _suggestionsEnd = true; break; }
+                foreach (var cat in batch) SuggestionsContentStack.Children.Add(BuildSuggestionCategoryView(cat));
+                remaining -= batch.Count;
+                if (batch.Count == 0) break;
+            }
+            if (_suggestionsEnd)
+            {
+                _suggestionGenerator.ResetForEndless();
+                _suggestionsEnd = false;
+            }
+        }
+        finally
+        {
+            SuggestionsLoadingIndicator.IsRunning = false;
+            SuggestionsLoadingIndicator.IsVisible = false;
+            _suggestionsLoading = false;
+            SuggestionsEmptyState.IsVisible = SuggestionsContentStack.Children.Count == 0;
+        }
+    }
+
+    private View BuildSuggestionCategoryView(FortniteFestival.Core.Suggestions.SuggestionCategory cat)
+    {
+        var svc = SongsViewModel.Service;
+        var rows = new System.Collections.ObjectModel.ObservableCollection<SongDisplayRow>();
+        foreach (var s in cat.Songs)
+        {
+            var song = svc.Songs.FirstOrDefault(x => x.track.su == s.SongId);
+            if (song != null)
+            {
+                var row = CreateSuggestionRow(song, svc);
+                row.RefreshScore(svc);
+                rows.Add(row);
+            }
+        }
+        var header = new VerticalStackLayout
+        {
+            Spacing = 2,
+            Children =
+            {
+                new Label { Text = cat.Title, FontFamily = "NotoSansBold", FontSize = 20 },
+                new Label { Text = cat.Description, FontSize = 13, Opacity = 0.85 }
+            }
+        };
+        var rowTemplate = new DataTemplate(() =>
+        {
+            var root = new Grid();
+            var tap = new TapGestureRecognizer();
+            tap.Tapped += OnSuggestionSongTappedInline;
+            root.GestureRecognizers.Add(tap);
+            var wide = new Grid { ColumnDefinitions = new ColumnDefinitionCollection { new ColumnDefinition{ Width = new GridLength(60) }, new ColumnDefinition{ Width = GridLength.Star }, new ColumnDefinition{ Width = GridLength.Auto } }, ColumnSpacing = 8, Padding = 6 };
+            var artBorder = new Border { StrokeShape = new RoundRectangle { CornerRadius = 4 }, WidthRequest = 56, HeightRequest = 56, BackgroundColor = Color.FromArgb("#444444"), HorizontalOptions = LayoutOptions.Start, VerticalOptions = LayoutOptions.Center };
+            artBorder.Content = new Image { Aspect = Aspect.AspectFill }; artBorder.Content.SetBinding(Image.SourceProperty, "AlbumArtPath");
+            wide.Add(artBorder);
+            var vsl = new VerticalStackLayout { Spacing = 2, VerticalOptions = LayoutOptions.Center };
+            var titleLbl = new Label { FontAttributes = FontAttributes.Bold, FontFamily = "NotoSansBold", LineBreakMode = LineBreakMode.TailTruncation }; titleLbl.SetBinding(Label.TextProperty, "Title");
+            var artistLbl = new Label { FontSize = 12, FontFamily = "NotoSansRegular", LineBreakMode = LineBreakMode.TailTruncation }; artistLbl.SetBinding(Label.TextProperty, "ArtistYearDisplay");
+            vsl.Children.Add(titleLbl); vsl.Children.Add(artistLbl); wide.Add(vsl); Grid.SetColumn(vsl,1);
+            var instStack = new HorizontalStackLayout { Spacing = 8, VerticalOptions = LayoutOptions.Center }; instStack.SetBinding(BindableLayout.ItemsSourceProperty, "InstrumentStatuses");
+            BindableLayout.SetItemTemplate(instStack, new DataTemplate(() =>
+            {
+                var g = new Grid { WidthRequest = 48, HeightRequest = 48 };
+                var circle = new Border { StrokeShape = new Ellipse(), WidthRequest = 48, HeightRequest = 48, StrokeThickness = 3 };
+                circle.SetBinding(VisualElement.IsVisibleProperty, "ShowCircle");
+                circle.SetBinding(Border.BackgroundColorProperty, "CircleFillColor");
+                circle.SetBinding(Border.StrokeProperty, "CircleStrokeColor");
+                g.Add(circle);
+                var icon = new Image { WidthRequest = 40, HeightRequest = 40, HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center };
+                icon.SetBinding(Image.SourceProperty, "Icon");
+                g.Add(icon);
+                return g;
+            }));
+            wide.Add(instStack); Grid.SetColumn(instStack,2);
+            var compact = new Grid { ColumnDefinitions = new ColumnDefinitionCollection { new ColumnDefinition{ Width = new GridLength(60) }, new ColumnDefinition{ Width = GridLength.Star } }, ColumnSpacing = 8, Padding = 6 };
+            var cArt = new Border { StrokeShape = new RoundRectangle { CornerRadius = 4 }, WidthRequest = 56, HeightRequest = 56, BackgroundColor = Color.FromArgb("#444444"), HorizontalOptions = LayoutOptions.Start, VerticalOptions = LayoutOptions.Center };
+            cArt.Content = new Image { Aspect = Aspect.AspectFill }; cArt.Content.SetBinding(Image.SourceProperty, "AlbumArtPath");
+            compact.Add(cArt);
+            var cVsl = new VerticalStackLayout { Spacing = 2, VerticalOptions = LayoutOptions.Center };
+            var cTitle = new Label { FontAttributes = FontAttributes.Bold, FontFamily = "NotoSansBold", LineBreakMode = LineBreakMode.TailTruncation }; cTitle.SetBinding(Label.TextProperty, "Title");
+            var cArtist = new Label { FontSize = 12, FontFamily = "NotoSansRegular", LineBreakMode = LineBreakMode.TailTruncation }; cArtist.SetBinding(Label.TextProperty, "ArtistYearDisplay");
+            cVsl.Children.Add(cTitle); cVsl.Children.Add(cArtist); compact.Add(cVsl); Grid.SetColumn(cVsl,1);
+            wide.SetBinding(VisualElement.IsVisibleProperty, new Binding("UseCompactLayout", converter: new InlineInvertConverter()));
+            compact.SetBinding(VisualElement.IsVisibleProperty, "UseCompactLayout");
+            root.Add(wide); root.Add(compact);
+            return root;
+        });
+        var collection = new CollectionView
+        {
+            SelectionMode = SelectionMode.None,
+            ItemsSource = rows,
+            ItemTemplate = rowTemplate,
+            BackgroundColor = Colors.Transparent
+        };
+        var container = new Border
+        {
+            StrokeShape = new RoundRectangle { CornerRadius = 18 },
+            BackgroundColor = Color.FromArgb("#b35cd6"),
+            Padding = new Thickness(14,12),
+            Content = new VerticalStackLayout { Spacing = 10, Children = { header, collection } }
+        };
+        return container;
+    }
+
+    private SongDisplayRow CreateSuggestionRow(Song song, IFestivalService svc)
+    {
+        return new SongDisplayRow(song, svc) { UseCompactLayout = Width < 900 };
+    }
+
+    private void AdaptSuggestionsForWidth()
+    {
+        try
+        {
+            bool compact = Width < 900;
+            // Iterate category containers
+            foreach (var child in SuggestionsContentStack.Children)
+            {
+                if (child is Border b && b.Content is VerticalStackLayout vsl)
+                {
+                    // Last child is the collection view (header stack + collection)
+                    if (vsl.Children.OfType<CollectionView>().FirstOrDefault() is CollectionView cv && cv.ItemsSource is System.Collections.IEnumerable en)
+                    {
+                        foreach (var item in en)
+                        {
+                            if (item is SongDisplayRow row)
+                                row.UseCompactLayout = compact;
+                        }
+                    }
+                }
+            }
+        }
+        catch { }
+    }
+
+    private void OnSuggestionSongTappedInline(object? sender, TappedEventArgs e)
+    {
+        if (e.Parameter is SongDisplayRow row) NavigateToSongInfo(row);
+        else if (sender is VisualElement ve && ve.BindingContext is SongDisplayRow r2) NavigateToSongInfo(r2);
+    }
+
+    private void NavigateToSongInfo(SongDisplayRow row)
+    {
+        try
+        {
+            var order = SongsViewModel.PrimaryInstrumentOrder.Select(i => i.Key).ToList();
+            var vm = new SongInfoViewModel(row, order, SongsViewModel.Service);
+            var page = new SongInfoPage(vm);
+            MainThread.BeginInvokeOnMainThread(async () => { try { await Navigation.PushAsync(page); } catch { } });
+        }
+        catch { }
+    }
+
+    private void OnSuggestionsScrolled(object sender, ScrolledEventArgs e)
+    {
+        if (_currentSection != Section.Suggestions) return;
+        double remaining = SuggestionsScroll.ContentSize.Height - (e.ScrollY + SuggestionsScroll.Height);
+        if (remaining < 300) LoadMoreSuggestions();
+    }
+
+    private class InlineInvertConverter : IValueConverter
+    {
+        public object? Convert(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture) => value is bool b ? !b : true;
+        public object? ConvertBack(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture) => value is bool b ? !b : false;
     }
 }

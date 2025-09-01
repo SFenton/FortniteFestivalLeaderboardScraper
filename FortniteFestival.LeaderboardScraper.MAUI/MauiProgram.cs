@@ -35,6 +35,8 @@ public static class MauiProgram
                         var resources = Microsoft.UI.Xaml.Application.Current.Resources;
                         resources["ScrollBarForeground"] = new WinBrush(WinColors.White);
                         resources["ScrollBarBackground"] = new WinBrush(WinColors.Transparent);
+                        // Extend content into title bar (hide default chrome)
+                        try { win.ExtendsContentIntoTitleBar = true; } catch { }
                     }
                     catch { }
                 }));

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:controls="clr-namespace:FortniteFestival.LeaderboardScraper.MAUI.Controls"
+             x:Class="FortniteFestival.LeaderboardScraper.MAUI.Pages.SuggestionsPage"
+             BackgroundColor="#9d4dbb">
+  <controls:DrawerLayout x:Name="DrawerRoot">
+    <controls:DrawerLayout.PageContent>
+      <Grid>
+        <ScrollView x:Name="MainScroll" Scrolled="OnScrolled">
+          <VerticalStackLayout x:Name="ContentStack" Spacing="18" Padding="16,8,16,32" />
+        </ScrollView>
+        <VerticalStackLayout x:Name="EmptyState" Spacing="8" HorizontalOptions="Center" VerticalOptions="Center">
+          <Label Text="No Suggestions Available" FontFamily="NotoSansBold" FontSize="20" HorizontalTextAlignment="Center" />
+          <Label Text="Sync your scores to generate suggestions on what to play next." FontSize="13" Opacity="0.85" HorizontalTextAlignment="Center" />
+        </VerticalStackLayout>
+        <ActivityIndicator x:Name="LoadingIndicator" IsRunning="False" IsVisible="False" HorizontalOptions="Center" VerticalOptions="End" Margin="0,0,0,8" />
+      </Grid>
+    </controls:DrawerLayout.PageContent>
+  </controls:DrawerLayout>
+</ContentPage>

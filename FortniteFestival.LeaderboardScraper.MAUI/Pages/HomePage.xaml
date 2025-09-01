@@ -18,107 +18,220 @@
     </Style>
   </ContentPage.Resources>
   <Grid>
-    <!-- Songs content (initially hidden until sync completes); outer ScrollView handles whole page scrolling -->
-    <ScrollView x:Name="SongsContent" IsVisible="False">
-      <VerticalStackLayout Spacing="12" Padding="12" >
-        <!-- Spacer equal to floating controls stack height so first song starts below them -->
-  <Grid HeightRequest="122" />
-        <Border BackgroundColor="#b35cd6" StrokeShape="RoundRectangle 26" Padding="8" HorizontalOptions="Fill" >
-          <Grid>
-    <!-- Empty state overlay -->
-  <VerticalStackLayout Spacing="6" HorizontalOptions="Center" VerticalOptions="Center" IsVisible="{Binding Songs.IsEmpty}">
-      <Label Text="No Songs Found" FontFamily="NotoSansBold" FontSize="20" HorizontalTextAlignment="Center" />
-      <Label Text="Try adjusting your filters or search to see songs." FontSize="13" Opacity="0.85" HorizontalTextAlignment="Center" />
-    </VerticalStackLayout>
-  <CollectionView x:Name="SongListCollection" IsVisible="{Binding Songs.IsNotEmpty}" ItemsSource="{Binding Songs.VisibleRows}" SelectionMode="None" VerticalOptions="Start" HorizontalOptions="Fill">
-            <CollectionView.ItemTemplate>
-        <DataTemplate x:DataType="vm:SongDisplayRow">
-          <Grid>
-            <!-- Wide/regular layout -->
-            <Grid x:Name="WideSongRow" Padding="6" ColumnDefinitions="60,*,Auto" ColumnSpacing="8" IsVisible="{Binding UseCompactLayout, Converter={StaticResource InverseBoolConverter}}">
-              <Grid.GestureRecognizers>
-                <TapGestureRecognizer Tapped="OnSongRowTapped" CommandParameter="{Binding .}" />
-              </Grid.GestureRecognizers>
-              <Border Grid.Column="0" StrokeShape="RoundRectangle 4" WidthRequest="56" HeightRequest="56" BackgroundColor="#444444" HorizontalOptions="Start" VerticalOptions="Center">
-                <Image Source="{Binding AlbumArtPath}" Aspect="AspectFill" />
+    <!-- Main vertical stack: header + dynamic sections (songs / suggestions / stats / settings) -->
+    <Grid x:Name="SongsStack" RowDefinitions="Auto,*,*,*">
+      <!-- Shared header with hamburger (always visible) -->
+      <Grid Grid.Row="0" HeightRequest="52" Padding="12,8" ColumnDefinitions="Auto,*,Auto">
+        <Label x:Name="HamburgerButton" Text="☰" FontSize="24" FontFamily="NotoSansBold" TextColor="White" VerticalOptions="Center">
+          <Label.GestureRecognizers>
+            <TapGestureRecognizer Tapped="OnHamburgerTapped" />
+          </Label.GestureRecognizers>
+        </Label>
+        <!-- Optional Title could go in column 1 -->
+      </Grid>
+      <!-- Songs Section (replaces individually toggled rows) -->
+      <Grid x:Name="SongsSection" Grid.Row="1" Grid.RowSpan="3" Margin="12,0,12,8">
+        <Grid RowDefinitions="Auto,*,Auto">
+          <!-- Controls -->
+          <VerticalStackLayout x:Name="SongsControlsRow" Grid.Row="0" Spacing="10">
+            <Border BackgroundColor="#EEEEEE" StrokeShape="RoundRectangle 22" Padding="0" HeightRequest="44">
+              <SearchBar Placeholder="Search title/artist"
+                         Text="{Binding Songs.Filter}"
+                         FontFamily="NotoSansRegular"
+                         BackgroundColor="Transparent"
+                         TextColor="Black"
+                         PlaceholderColor="#666666" />
+            </Border>
+            <Grid HeightRequest="44" ColumnDefinitions="Auto,Auto,*" ColumnSpacing="6" VerticalOptions="Center" Margin="0,0,0,8">
+              <Border x:Name="FilterButton" Grid.Column="0" StrokeShape="RoundRectangle 26" BackgroundColor="#4B0F63" Padding="20,14" HorizontalOptions="Start" VerticalOptions="Center" ZIndex="10" Margin="0,0,2,0">
+                <Border.GestureRecognizers><TapGestureRecognizer Tapped="OnFilterTapped" NumberOfTapsRequired="1" /></Border.GestureRecognizers>
+                <Label Text="Filter" FontFamily="NotoSansBold" TextColor="White" />
               </Border>
-              <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
-                <Label Text="{Binding Title}" FontAttributes="Bold" FontFamily="NotoSansBold" LineBreakMode="TailTruncation" />
-                <Label Text="{Binding ArtistYearDisplay}" FontSize="12" FontFamily="NotoSansRegular" LineBreakMode="TailTruncation" />
+              <Border x:Name="SortButton" Grid.Column="1" StrokeShape="RoundRectangle 26" BackgroundColor="#4B0F63" Padding="20,14" HorizontalOptions="Start" VerticalOptions="Center" ZIndex="10" Margin="0,0,2,0">
+                <Border.GestureRecognizers><TapGestureRecognizer Tapped="OnSortTapped" NumberOfTapsRequired="1" /></Border.GestureRecognizers>
+                <Label Text="Sort" FontFamily="NotoSansBold" TextColor="White" />
+              </Border>
+              <Border x:Name="SortDirectionButton" Grid.Column="2" StrokeShape="RoundRectangle 26" BackgroundColor="#4B0F63" Padding="20,14" HorizontalOptions="End" VerticalOptions="Center" ZIndex="10" Margin="0,0,0,0">
+                <Border.GestureRecognizers><TapGestureRecognizer Tapped="OnSortDirectionTapped" /></Border.GestureRecognizers>
+                <Grid>
+                  <HorizontalStackLayout x:Name="SortDirectionFull" Spacing="6" VerticalOptions="Center" IsVisible="{Binding Songs.UseCompactLayout, Converter={StaticResource InverseBoolConverter}}">
+                    <Label Text="Sort Direction" FontFamily="NotoSansBold" TextColor="White" />
+                    <Label x:Name="SortDirectionCaret" Text="{Binding Songs.SortDirectionCaret}" FontFamily="NotoSansBold" TextColor="White" />
+                  </HorizontalStackLayout>
+                  <Label x:Name="SortDirectionCaretCompact" Text="{Binding Songs.SortDirectionCaret}" FontFamily="NotoSansBold" TextColor="White" HorizontalOptions="Center" VerticalOptions="Center" IsVisible="{Binding Songs.UseCompactLayout}" />
+                </Grid>
+              </Border>
+            </Grid>
+          </VerticalStackLayout>
+          <!-- Songs list container -->
+          <Border x:Name="SongsContainerBorder" Grid.Row="1" BackgroundColor="#b35cd6" StrokeShape="RoundRectangle 26" Padding="8,8,8,8" HorizontalOptions="Fill" VerticalOptions="Fill">
+            <Grid>
+              <VerticalStackLayout Spacing="6" HorizontalOptions="Center" VerticalOptions="Center" IsVisible="{Binding Songs.IsEmpty}">
+                <Label Text="No Songs Found" FontFamily="NotoSansBold" FontSize="20" HorizontalTextAlignment="Center" />
+                <Label Text="Try adjusting your filters or search to see songs." FontSize="13" Opacity="0.85" HorizontalTextAlignment="Center" />
               </VerticalStackLayout>
-              <HorizontalStackLayout Grid.Column="2" Spacing="8" BindableLayout.ItemsSource="{Binding InstrumentStatuses}" VerticalOptions="Center">
-                <BindableLayout.ItemTemplate>
-                  <DataTemplate x:DataType="vm:InstrumentStatus">
-                    <Grid WidthRequest="48" HeightRequest="48">
-                      <Border IsVisible="{Binding ShowCircle}" BackgroundColor="{Binding CircleFillColor}" Stroke="{Binding CircleStrokeColor}" StrokeShape="Ellipse" StrokeThickness="3" WidthRequest="48" HeightRequest="48" />
-                      <Image Source="{Binding Icon}" WidthRequest="40" HeightRequest="40" HorizontalOptions="Center" VerticalOptions="Center" />
+              <CollectionView x:Name="SongListCollection"
+                              IsVisible="{Binding Songs.IsNotEmpty}"
+                              ItemsSource="{Binding Songs.VisibleRows}"
+                              SelectionMode="None"
+                              ItemSizingStrategy="MeasureFirstItem"
+                              BackgroundColor="Transparent">
+                <CollectionView.ItemTemplate>
+                  <DataTemplate x:DataType="vm:SongDisplayRow">
+                    <Grid>
+                      <Grid.GestureRecognizers>
+                        <TapGestureRecognizer Tapped="OnSongRowTapped" CommandParameter="{Binding .}" />
+                      </Grid.GestureRecognizers>
+                      <Grid x:Name="WideSongRow" Padding="6" ColumnDefinitions="60,*,Auto" ColumnSpacing="8" IsVisible="{Binding UseCompactLayout, Converter={StaticResource InverseBoolConverter}}">
+                        <Border Grid.Column="0" StrokeShape="RoundRectangle 4" WidthRequest="56" HeightRequest="56" BackgroundColor="#444444" HorizontalOptions="Start" VerticalOptions="Center">
+                          <Image Source="{Binding AlbumArtPath}" Aspect="AspectFill" />
+                        </Border>
+                        <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
+                          <Label Text="{Binding Title}" FontAttributes="Bold" FontFamily="NotoSansBold" LineBreakMode="TailTruncation" />
+                          <Label Text="{Binding ArtistYearDisplay}" FontSize="12" FontFamily="NotoSansRegular" LineBreakMode="TailTruncation" />
+                        </VerticalStackLayout>
+                        <HorizontalStackLayout Grid.Column="2" Spacing="8" BindableLayout.ItemsSource="{Binding InstrumentStatuses}" VerticalOptions="Center">
+                          <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="vm:InstrumentStatus">
+                              <Grid WidthRequest="48" HeightRequest="48">
+                                <Border IsVisible="{Binding ShowCircle}" BackgroundColor="{Binding CircleFillColor}" Stroke="{Binding CircleStrokeColor}" StrokeShape="Ellipse" StrokeThickness="3" WidthRequest="48" HeightRequest="48" />
+                                <Image Source="{Binding Icon}" WidthRequest="40" HeightRequest="40" HorizontalOptions="Center" VerticalOptions="Center" />
+                              </Grid>
+                            </DataTemplate>
+                          </BindableLayout.ItemTemplate>
+                        </HorizontalStackLayout>
+                      </Grid>
+                      <Grid x:Name="CompactSongRow" Padding="6" ColumnDefinitions="60,*" ColumnSpacing="8" IsVisible="{Binding UseCompactLayout}">
+                        <Border Grid.Column="0" StrokeShape="RoundRectangle 4" WidthRequest="56" HeightRequest="56" BackgroundColor="#444444" HorizontalOptions="Start" VerticalOptions="Center">
+                          <Image Source="{Binding AlbumArtPath}" Aspect="AspectFill" />
+                        </Border>
+                        <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
+                          <Label Text="{Binding Title}" FontAttributes="Bold" FontFamily="NotoSansBold" LineBreakMode="TailTruncation" />
+                          <Label Text="{Binding ArtistYearDisplay}" FontSize="12" FontFamily="NotoSansRegular" LineBreakMode="TailTruncation" />
+                        </VerticalStackLayout>
+                      </Grid>
                     </Grid>
                   </DataTemplate>
-                </BindableLayout.ItemTemplate>
-              </HorizontalStackLayout>
+                </CollectionView.ItemTemplate>
+              </CollectionView>
+              <Grid x:Name="SongListLoadingOverlay" BackgroundColor="#c86fe8" Opacity="0.92" IsVisible="False">
+                <VerticalStackLayout Spacing="10" HorizontalOptions="Center" VerticalOptions="Center">
+                  <ActivityIndicator x:Name="SongListLoadingSpinner" IsRunning="True" WidthRequest="42" HeightRequest="42" Color="White" />
+                  <Label x:Name="SongListLoadingLabel" Text="Updating songs..." FontFamily="NotoSansBold" TextColor="White" HorizontalTextAlignment="Center" />
+                </VerticalStackLayout>
+              </Grid>
             </Grid>
-            <!-- Compact layout (no instrument icons) -->
-            <Grid x:Name="CompactSongRow" Padding="6" ColumnDefinitions="60,*" ColumnSpacing="8" IsVisible="{Binding UseCompactLayout}">
-              <Grid.GestureRecognizers>
-                <TapGestureRecognizer Tapped="OnSongRowTapped" CommandParameter="{Binding .}" />
-              </Grid.GestureRecognizers>
-              <Border Grid.Column="0" StrokeShape="RoundRectangle 4" WidthRequest="56" HeightRequest="56" BackgroundColor="#444444" HorizontalOptions="Start" VerticalOptions="Center">
-                <Image Source="{Binding AlbumArtPath}" Aspect="AspectFill" />
-              </Border>
-              <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
-                <Label Text="{Binding Title}" FontAttributes="Bold" FontFamily="NotoSansBold" LineBreakMode="TailTruncation" />
-                <Label Text="{Binding ArtistYearDisplay}" FontSize="12" FontFamily="NotoSansRegular" LineBreakMode="TailTruncation" />
-              </VerticalStackLayout>
-            </Grid>
+          </Border>
+          <!-- Update Scores Button -->
+          <Grid x:Name="UpdateScoresRow" Grid.Row="2" Padding="0" HorizontalOptions="Fill" VerticalOptions="End" Margin="0,6,0,0">
+            <Border x:Name="UpdateScoresButton" StrokeShape="RoundRectangle 26" BackgroundColor="#4B0F63" Padding="24,16" HorizontalOptions="End" HeightRequest="48">
+              <Border.Shadow>
+                <Shadow Brush="#000000" Opacity="0.35" Offset="0,4" Radius="14" />
+              </Border.Shadow>
+              <Border.GestureRecognizers>
+                <TapGestureRecognizer Tapped="OnUpdateScoresTapped" NumberOfTapsRequired="1" />
+              </Border.GestureRecognizers>
+              <Grid>
+                <Label x:Name="UpdateScoresLabel" Text="Update Scores" FontFamily="NotoSansBold" TextColor="White" />
+                <ActivityIndicator x:Name="UpdateScoresSpinner" IsRunning="False" IsVisible="False" Color="White" />
+              </Grid>
+            </Border>
           </Grid>
-        </DataTemplate>
-            </CollectionView.ItemTemplate>
-  </CollectionView>
-      <!-- Inner list loading overlay (used for filter/sort refresh) -->
-  <Grid x:Name="SongListLoadingOverlay" BackgroundColor="#c86fe8" Opacity="0.92" IsVisible="False">
-        <VerticalStackLayout Spacing="10" HorizontalOptions="Center" VerticalOptions="Center">
-          <ActivityIndicator x:Name="SongListLoadingSpinner" IsRunning="True" WidthRequest="42" HeightRequest="42" Color="White" />
-          <Label x:Name="SongListLoadingLabel" Text="Updating songs..." FontFamily="NotoSansBold" TextColor="White" HorizontalTextAlignment="Center" />
-        </VerticalStackLayout>
-      </Grid>
-          </Grid>
-        </Border>
-        <!-- Bottom padding so last row not obscured by floating update button -->
-        <Grid HeightRequest="40" />
-      </VerticalStackLayout>
-    </ScrollView>
-    <!-- Floating controls overlay (search + filter/sort) -->
-    <Grid x:Name="FloatingControls" Padding="12" HorizontalOptions="Fill" VerticalOptions="Start" ZIndex="30" InputTransparent="False">
-      <VerticalStackLayout Spacing="10">
-        <Border BackgroundColor="#EEEEEE" StrokeShape="RoundRectangle 22" Padding="0" HeightRequest="44">
-          <SearchBar Placeholder="Search title/artist"
-                     Text="{Binding Songs.Filter}"
-                     FontFamily="NotoSansRegular"
-                     BackgroundColor="Transparent"
-                     TextColor="Black"
-                     PlaceholderColor="#666666" />
-        </Border>
-        <Grid HeightRequest="44" ColumnDefinitions="Auto,Auto,*" ColumnSpacing="18" VerticalOptions="Center" Margin="0,0,0,6">
-          <Border x:Name="FilterButton" Grid.Column="0" StrokeShape="RoundRectangle 28" BackgroundColor="#4B0F63" Padding="20,14" HorizontalOptions="Start" VerticalOptions="Center" ZIndex="10" Margin="0,0,2,0">
-            <Border.Shadow><Shadow Opacity="0" /></Border.Shadow>
-            <Border.GestureRecognizers><TapGestureRecognizer Tapped="OnFilterTapped" NumberOfTapsRequired="1" /></Border.GestureRecognizers>
-            <Label Text="Filter" FontFamily="NotoSansBold" TextColor="White" />
-          </Border>
-          <Border x:Name="SortButton" Grid.Column="1" StrokeShape="RoundRectangle 28" BackgroundColor="#4B0F63" Padding="20,14" HorizontalOptions="Start" VerticalOptions="Center" ZIndex="10" Margin="0,0,2,0">
-            <Border.Shadow><Shadow Opacity="0" /></Border.Shadow>
-            <Border.GestureRecognizers><TapGestureRecognizer Tapped="OnSortTapped" NumberOfTapsRequired="1" /></Border.GestureRecognizers>
-            <Label Text="Sort" FontFamily="NotoSansBold" TextColor="White" />
-          </Border>
-          <Border x:Name="SortDirectionButton" Grid.Column="2" StrokeShape="RoundRectangle 28" BackgroundColor="#4B0F63" Padding="20,14" HorizontalOptions="End" VerticalOptions="Center" MinimumWidthRequest="150" ZIndex="10">
-            <Border.Shadow><Shadow Opacity="0" /></Border.Shadow>
-            <Border.GestureRecognizers><TapGestureRecognizer Tapped="OnSortDirectionTapped" /></Border.GestureRecognizers>
-            <HorizontalStackLayout Spacing="6" VerticalOptions="Center">
-              <Label Text="Sort Direction" FontFamily="NotoSansBold" TextColor="White" />
-              <Label x:Name="SortDirectionCaret" Text="{Binding Songs.SortDirectionCaret}" FontFamily="NotoSansBold" TextColor="White" />
-            </HorizontalStackLayout>
-          </Border>
         </Grid>
-      </VerticalStackLayout>
+      </Grid>
+
+      <!-- Suggestions Section (overlays rows 1-3 when active) -->
+      <Grid x:Name="SuggestionsSection" Grid.Row="1" Grid.RowSpan="3" IsVisible="False" Margin="12,0,12,8">
+  <Grid Padding="0">
+          <Grid RowDefinitions="*,Auto">
+            <ScrollView x:Name="SuggestionsScroll" Grid.Row="0" Scrolled="OnSuggestionsScrolled">
+              <VerticalStackLayout x:Name="SuggestionsContentStack" Spacing="18" Padding="0,0,0,0" />
+            </ScrollView>
+            <ActivityIndicator x:Name="SuggestionsLoadingIndicator" Grid.Row="1" IsRunning="False" IsVisible="False" HorizontalOptions="Center" Margin="0,0,0,8" />
+          </Grid>
+          <VerticalStackLayout x:Name="SuggestionsEmptyState" Spacing="8" HorizontalOptions="Center" VerticalOptions="Center" IsVisible="False">
+            <Label Text="No Suggestions Available" FontFamily="NotoSansBold" FontSize="20" HorizontalTextAlignment="Center" />
+            <Label Text="Sync your scores to generate suggestions on what to play next." FontSize="13" Opacity="0.85" HorizontalTextAlignment="Center" />
+          </VerticalStackLayout>
+          <!-- Center overlay spinner for initial suggestions load -->
+          <Grid x:Name="SuggestionsInitialOverlay" BackgroundColor="#00000066" IsVisible="False">
+            <VerticalStackLayout Spacing="14" HorizontalOptions="Center" VerticalOptions="Center">
+              <ActivityIndicator x:Name="SuggestionsInitialSpinner" IsRunning="True" WidthRequest="56" HeightRequest="56" Color="White" />
+            </VerticalStackLayout>
+          </Grid>
+        </Grid>
+      </Grid>
+
+      <!-- Statistics Section placeholder -->
+  <Grid x:Name="StatisticsSection" Grid.Row="1" Grid.RowSpan="3" IsVisible="False" Margin="12,0,12,8">
+        <Border BackgroundColor="#b35cd6" StrokeShape="RoundRectangle 26" Padding="24">
+          <VerticalStackLayout Spacing="12" HorizontalOptions="Center" VerticalOptions="Center">
+            <Label Text="Statistics" FontFamily="NotoSansBold" FontSize="24" />
+            <Label Text="(Placeholder)" />
+          </VerticalStackLayout>
+        </Border>
+      </Grid>
+
+      <!-- Settings Section placeholder -->
+  <Grid x:Name="SettingsSection" Grid.Row="1" Grid.RowSpan="3" IsVisible="False" Margin="12,0,12,8">
+        <Border BackgroundColor="#b35cd6" StrokeShape="RoundRectangle 26" Padding="24">
+          <VerticalStackLayout Spacing="12" HorizontalOptions="Center" VerticalOptions="Center">
+            <Label Text="Settings" FontFamily="NotoSansBold" FontSize="24" />
+            <Label Text="(Placeholder)" />
+          </VerticalStackLayout>
+        </Border>
+      </Grid>
+    </Grid>
+    <!-- Navigation Drawer Overlay -->
+    <Grid x:Name="NavDrawerOverlay" IsVisible="False" BackgroundColor="#00000055">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="260" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+      <!-- Drawer panel -->
+      <Border BackgroundColor="#4B0F63" StrokeShape="RoundRectangle 0" Padding="16,20,16,28" WidthRequest="260">
+        <VerticalStackLayout Spacing="18">
+          <!-- Header row with close button -->
+          <Grid ColumnDefinitions="*,Auto" HeightRequest="24">
+            <Label Text="" />
+            <Label Text="✕" TextColor="White" FontSize="18" VerticalOptions="Center">
+              <Label.GestureRecognizers>
+                <TapGestureRecognizer Tapped="OnCloseDrawerTapped" />
+              </Label.GestureRecognizers>
+            </Label>
+          </Grid>
+          <!-- Suggestions (conditional) -->
+          <Grid x:Name="SuggestionsNavItem" ColumnDefinitions="Auto,*" HeightRequest="40">
+            <Grid.GestureRecognizers><TapGestureRecognizer Tapped="OnNavSuggestionsTapped" /></Grid.GestureRecognizers>
+            <Label Text="💡" FontSize="20" VerticalOptions="Center" />
+            <Label Grid.Column="1" Text="Suggestions" FontFamily="NotoSansBold" TextColor="White" VerticalOptions="Center" />
+          </Grid>
+          <!-- Songs -->
+          <Grid ColumnDefinitions="Auto,*" HeightRequest="40">
+            <Grid.GestureRecognizers><TapGestureRecognizer Tapped="OnNavSongsTapped" /></Grid.GestureRecognizers>
+            <Label Text="🎵" FontSize="20" VerticalOptions="Center" />
+            <Label Grid.Column="1" Text="Songs" FontFamily="NotoSansBold" TextColor="White" VerticalOptions="Center" />
+          </Grid>
+          <!-- Statistics -->
+            <Grid ColumnDefinitions="Auto,*" HeightRequest="40">
+            <Grid.GestureRecognizers><TapGestureRecognizer Tapped="OnNavStatisticsTapped" /></Grid.GestureRecognizers>
+            <Label Text="📊" FontSize="20" VerticalOptions="Center" />
+            <Label Grid.Column="1" Text="Statistics" FontFamily="NotoSansBold" TextColor="White" VerticalOptions="Center" />
+          </Grid>
+          <!-- Settings -->
+          <Grid ColumnDefinitions="Auto,*" HeightRequest="40">
+            <Grid.GestureRecognizers><TapGestureRecognizer Tapped="OnNavSettingsTapped" /></Grid.GestureRecognizers>
+            <Label Text="⚙️" FontSize="20" VerticalOptions="Center" />
+            <Label Grid.Column="1" Text="Settings" FontFamily="NotoSansBold" TextColor="White" VerticalOptions="Center" />
+          </Grid>
+        </VerticalStackLayout>
+      </Border>
+      <!-- Click catcher to close -->
+      <Grid Grid.Column="1">
+        <Grid.GestureRecognizers>
+          <TapGestureRecognizer Tapped="OnCloseDrawerTapped" />
+        </Grid.GestureRecognizers>
+      </Grid>
     </Grid>
     <!-- Centered loading overlay -->
     <VerticalStackLayout x:Name="LoadingOverlay" Spacing="12" HorizontalOptions="Center" VerticalOptions="Center">
@@ -126,21 +239,6 @@
       <Label x:Name="LoadingLabel" Text="Updating songs..." HorizontalTextAlignment="Center" TextColor="White" />
     </VerticalStackLayout>
 
-    <!-- Floating Update Scores Button (opaque) -->
-    <Grid Padding="16" HorizontalOptions="End" VerticalOptions="End">
-  <Border x:Name="UpdateScoresButton" StrokeShape="RoundRectangle 26" BackgroundColor="#4B0F63" Padding="20,14" TranslationX="3" TranslationY="4">
-        <Border.Shadow>
-          <Shadow Brush="#000000" Opacity="0.35" Offset="0,4" Radius="14" />
-        </Border.Shadow>
-        <Border.GestureRecognizers>
-          <TapGestureRecognizer Tapped="OnUpdateScoresTapped" NumberOfTapsRequired="1" />
-        </Border.GestureRecognizers>
-        <Grid>
-          <Label x:Name="UpdateScoresLabel" Text="Update Scores" FontFamily="NotoSansBold" TextColor="White" />
-          <ActivityIndicator x:Name="UpdateScoresSpinner" IsRunning="False" IsVisible="False" Color="White" />
-        </Grid>
-      </Border>
-    </Grid>
 
     <!-- Authentication Modal Overlay (refactored to fixed header/footer & scrollable content) -->
   <Grid x:Name="AuthModal" BackgroundColor="#00000088" IsVisible="False" Padding="24">

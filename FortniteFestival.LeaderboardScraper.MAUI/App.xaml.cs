@@ -14,12 +14,20 @@ public partial class App : Application
         var home = sp?.GetService(typeof(FortniteFestival.LeaderboardScraper.MAUI.Pages.HomePage)) as Page;
         if (home != null)
         {
-            NavigationPage.SetHasNavigationBar(home, false); // we use custom headers
-            home = new NavigationPage(home)
+            // Hide navigation bar (we provide our own in-page headers / buttons)
+            NavigationPage.SetHasNavigationBar(home, false);
+            var nav = new NavigationPage(home)
             {
-                BarBackgroundColor = Color.FromArgb("#4B0F63"),
-                BarTextColor = Colors.White
+                // Make bar fully transparent & effectively invisible
+                BarBackgroundColor = Colors.Transparent,
+                BarTextColor = Colors.Transparent
             };
+            // Ensure every subsequently pushed page also hides the built-in nav bar
+            nav.Pushed += (_, e) =>
+            {
+                try { NavigationPage.SetHasNavigationBar(e.Page, false); } catch { }
+            };
+            home = nav;
         }
         var window = new Window(home ?? new ContentPage { Content = new Label { Text = "HomePage not resolved" } });
 

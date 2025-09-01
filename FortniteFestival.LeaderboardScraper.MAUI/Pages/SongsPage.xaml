@@ -5,10 +5,10 @@
   xmlns:vm="clr-namespace:FortniteFestival.LeaderboardScraper.MAUI.ViewModels"
   x:Class="FortniteFestival.LeaderboardScraper.MAUI.Pages.SongsPage"
   x:DataType="vm:SongsViewModel"
-  Title="Songs"
+  
 >
   <ContentPage.Content>
-    <VerticalStackLayout Padding="16" Spacing="8">
+  <VerticalStackLayout Padding="16,20,16,16" Spacing="10">
       <SearchBar Placeholder="Search title/artist" Text="{Binding Filter}" />
       <HorizontalStackLayout Spacing="12">
         <Button Text="Select All" Command="{Binding SelectAllCommand}" />
@@ -18,7 +18,8 @@
       <CollectionView ItemsSource="{Binding VisibleRows}" SelectionMode="None" HeightRequest="500">
         <CollectionView.ItemTemplate>
           <DataTemplate x:DataType="vm:SongDisplayRow">
-            <Grid Padding="4" ColumnDefinitions="40,*" RowDefinitions="Auto">
+            <!-- Increased horizontal padding inside each row for breathing room -->
+            <Grid Padding="8,4" ColumnDefinitions="40,*" RowDefinitions="Auto">
               <CheckBox IsChecked="{Binding IsSelected}" CheckedChanged="OnCheckChanged" />
               <VerticalStackLayout Grid.Column="1" Spacing="2">
                 <Label Text="{Binding Title}" FontAttributes="Bold" FontFamily="NotoSansBold" />
