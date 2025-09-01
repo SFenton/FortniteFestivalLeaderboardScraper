@@ -7,6 +7,7 @@
     <SingleProject>true</SingleProject>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+  <MauiEnableXamlCBindingWithSourceCompilation>true</MauiEnableXamlCBindingWithSourceCompilation>
     <!-- Display name -->
     <ApplicationTitle>Fortnite Festival</ApplicationTitle>
     <!-- App Identifier -->

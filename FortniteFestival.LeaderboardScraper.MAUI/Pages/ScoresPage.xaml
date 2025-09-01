@@ -2,7 +2,9 @@
 <ContentPage
   xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
   xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+  xmlns:vm="clr-namespace:FortniteFestival.LeaderboardScraper.MAUI.ViewModels"
   x:Class="FortniteFestival.LeaderboardScraper.MAUI.Pages.ScoresPage"
+  x:DataType="vm:ScoresViewModel"
   Title="Scores"
 >
   <Grid RowDefinitions="Auto,Auto,Auto,*" ColumnDefinitions="*" Padding="16" RowSpacing="12">
@@ -89,7 +91,7 @@
         <LinearItemsLayout Orientation="Vertical" />
       </CollectionView.ItemsLayout>
       <CollectionView.ItemTemplate>
-        <DataTemplate>
+        <DataTemplate x:DataType="vm:ScoreRowModel">
           <Grid
             ColumnDefinitions="2.5*,1.4*,0.9*,0.9*,0.8*,0.6*,0.7*"
             ColumnSpacing="12"
@@ -168,7 +170,7 @@
               HorizontalTextAlignment="Center"
             />
           </Grid>
-        </DataTemplate>
+  </DataTemplate>
       </CollectionView.ItemTemplate>
     </CollectionView>
   </Grid>

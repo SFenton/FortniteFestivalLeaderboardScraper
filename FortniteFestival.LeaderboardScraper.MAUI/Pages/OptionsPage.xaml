@@ -2,7 +2,9 @@
 <ContentPage
   xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
   xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+  xmlns:vm="clr-namespace:FortniteFestival.LeaderboardScraper.MAUI.ViewModels"
   x:Class="FortniteFestival.LeaderboardScraper.MAUI.Pages.OptionsPage"
+  x:DataType="vm:OptionsViewModel"
   Title="Options"
 >
   <ScrollView>
@@ -21,7 +23,8 @@
         BindableLayout.ItemsSource="{Binding InstrumentOptions}"
       >
         <BindableLayout.ItemTemplate>
-          <DataTemplate>
+          <!-- Item template represents an InstrumentOptionModel, not the root OptionsViewModel -->
+          <DataTemplate x:DataType="vm:InstrumentOptionModel">
             <Grid ColumnDefinitions="Auto,Auto" Margin="0,4,32,4">
               <CheckBox IsChecked="{Binding IsSelected}" />
               <Label Grid.Column="1" Text="{Binding Name}" VerticalOptions="Center" />

@@ -11,6 +11,7 @@
   </ItemGroup>
   <ItemGroup Condition=" '$(TargetFramework)' == 'net472' ">
     <Reference Include="System.Net.Http" />
-    <PackageReference Include="System.Text.Json" Version="8.0.4" />
+  <!-- Updated to patched version to address NU1903 advisory -->
+  <PackageReference Include="System.Text.Json" Version="8.0.5" />
   </ItemGroup>
 </Project>

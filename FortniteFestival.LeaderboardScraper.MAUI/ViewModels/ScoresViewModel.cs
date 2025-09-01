@@ -10,7 +10,7 @@ public class ScoresViewModel : BaseViewModel
     private readonly IFestivalService _service;
     private readonly AppState _state;
     public ObservableCollection<LeaderboardData> Scores => _state.Scores;
-    private string _filter;
+    private string _filter = string.Empty;
     public string Filter
     {
         get => _filter;
@@ -38,8 +38,8 @@ public class ScoresViewModel : BaseViewModel
     // Sorting state
     private string _sortColumn = "Title";
     private bool _sortDesc;
-    public ICommand SortCommand => _sortCommand ?? (_sortCommand = new Command<string>(DoSort));
-    private ICommand _sortCommand;
+    public ICommand SortCommand => _sortCommand ??= new Command<string>(DoSort);
+    private ICommand? _sortCommand;
 
     private void DoSort(string col)
     {
@@ -55,21 +55,7 @@ public class ScoresViewModel : BaseViewModel
         RebuildRows();
     }
 
-    public class ScoreRow
-    {
-        public string Title { get; set; }
-        public string Artist { get; set; }
-        public int Score { get; set; }
-        public string Percent { get; set; }
-        public string StarText { get; set; }
-        public bool MaxStars { get; set; }
-        public string FullComboSymbol { get; set; }
-        public bool IsFullCombo { get; set; }
-        public string Season { get; set; }
-        public string SongId { get; set; }
-    }
-
-    public ObservableCollection<ScoreRow> VisibleRows { get; } = new();
+    public ObservableCollection<ScoreRowModel> VisibleRows { get; } = new();
 
     public ScoresViewModel(IFestivalService service, AppState state)
     {
@@ -111,21 +97,19 @@ public class ScoresViewModel : BaseViewModel
             var starText = starsCount > 0 ? new string('?', System.Math.Min(starsCount, 6)) : "";
             var fullCombo = t.isFullCombo ? "?" : "?";
             var season = t.seasonAchieved > 0 ? t.seasonAchieved.ToString() : "All-Time";
-            VisibleRows.Add(
-                new ScoreRow
-                {
-                    Title = ld.title,
-                    Artist = ld.artist,
-                    Score = t.maxScore,
-                    Percent = pct,
-                    StarText = starText,
-                    MaxStars = starsCount >= 6,
-                    FullComboSymbol = fullCombo,
-                    IsFullCombo = t.isFullCombo,
-                    Season = season,
-                    SongId = ld.songId,
-                }
-            );
+            VisibleRows.Add(new ScoreRowModel
+            {
+                Title = ld.title ?? string.Empty,
+                Artist = ld.artist ?? string.Empty,
+                Score = t.maxScore,
+                Percent = pct,
+                StarText = starText,
+                MaxStars = starsCount >= 6,
+                FullComboSymbol = fullCombo,
+                IsFullCombo = t.isFullCombo,
+                Season = season,
+                SongId = ld.songId ?? string.Empty,
+            });
         }
     }
 

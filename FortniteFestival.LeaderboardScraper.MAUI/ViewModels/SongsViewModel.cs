@@ -2,8 +2,12 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
+using System.Diagnostics;
+using System.Threading;
+using System.Threading.Tasks;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
+using Microsoft.Maui.ApplicationModel; // MainThread
 
 namespace FortniteFestival.LeaderboardScraper.MAUI.ViewModels;
 
@@ -15,6 +19,20 @@ public class SongsViewModel : BaseViewModel
 
     // UI projection rows
     public ObservableCollection<SongDisplayRow> VisibleRows { get; } = new();
+    private bool _useCompactLayout;
+    public bool UseCompactLayout
+    {
+        get => _useCompactLayout;
+        set
+        {
+            if (_useCompactLayout != value)
+            {
+                _useCompactLayout = value;
+                foreach (var r in VisibleRows) r.UseCompactLayout = value;
+                Raise(nameof(UseCompactLayout));
+            }
+        }
+    }
     // Sorting
     public bool IsSortByTitle { get => _isSortByTitle; set { Set(ref _isSortByTitle, value); if (value) SetSortMode("title"); } }
     public bool IsSortByArtist { get => _isSortByArtist; set { Set(ref _isSortByArtist, value); if (value) SetSortMode("artist"); } }
@@ -24,6 +42,10 @@ public class SongsViewModel : BaseViewModel
     private bool _isSortByHasFC;
     private string _sortMode = "title"; // title|artist|hasfc
     private bool _sortAscending = true;
+    // Cancellation for incremental rebuilds
+    private CancellationTokenSource? _incrementalCts;
+    private bool _incrementalInProgress;
+    private bool _pendingRerun;
     public bool SortAscending { get => _sortAscending; set { Set(ref _sortAscending, value); } }
     public string SortDirectionCaret => _sortAscending ? "▲" : "▼";
     public ObservableCollection<InstrumentOrderItem> PrimaryInstrumentOrder { get; } = new(new [] {
@@ -42,7 +64,7 @@ public class SongsViewModel : BaseViewModel
         set
         {
             Set(ref _filter, value);
-            ApplyFilter();
+            _ = ApplyFilterIncrementalAsync();
         }
     }
 
@@ -78,6 +100,12 @@ public class SongsViewModel : BaseViewModel
         _service = service;
         _state = state;
     Service = service; // expose for detail pages
+        // Track changes to visible rows to update empty state bindings
+        VisibleRows.CollectionChanged += (_, __) =>
+        {
+            Raise(nameof(IsEmpty));
+            Raise(nameof(IsNotEmpty));
+        };
 
         SelectAllCommand = new Command(() =>
         {
@@ -87,91 +115,62 @@ public class SongsViewModel : BaseViewModel
                 if (!_state.SelectedSongIds.Contains(s.track.su))
                     _state.SelectedSongIds.Add(s.track.su);
             }
-            ApplyFilter();
+            _ = ApplyFilterIncrementalAsync();
         });
         ClearAllCommand = new Command(() =>
         {
             foreach (var s in Songs)
                 s.isSelected = false;
             _state.SelectedSongIds.Clear();
-            ApplyFilter();
+            _ = ApplyFilterIncrementalAsync();
         });
 
-        // Update rows when scores update
+        // Update rows when scores update (real-time)
         _service.ScoreUpdated += ld =>
         {
             // find row by song id
             var row = VisibleRows.FirstOrDefault(r => r.Song.track.su == ld.songId);
-            row?.RefreshScore(_service);
+            if (row != null)
+            {
+                MainThread.BeginInvokeOnMainThread(() => row.RefreshScore(_service));
+            }
+            // If current view depends on FC / missing state for ordering / filtering, debounce a full re-apply
+            bool needsReorder = _sortMode == "hasfc" || MissingPadFCs || MissingProFCs || MissingPadScores || MissingProScores;
+            if (needsReorder)
+                ScheduleReapplyFilter();
         };
+
+    // Initial empty state notification
+    Raise(nameof(IsEmpty));
+    Raise(nameof(IsNotEmpty));
     }
 
     // Expose service (read-only) for other viewmodels needing raw score data.
     public IFestivalService Service { get; }
 
-    private void ApplyFilter()
+    // Empty state convenience properties for UI binding
+    public bool IsEmpty => VisibleRows.Count == 0;
+    public bool IsNotEmpty => !IsEmpty;
+
+    // Debounce state for re-applying expensive filter/sort during score bursts
+    private CancellationTokenSource? _reapplyCts;
+    private void ScheduleReapplyFilter()
     {
-        IEnumerable<Song> q = Songs;
-        if (!string.IsNullOrWhiteSpace(Filter))
+        try { _reapplyCts?.Cancel(); } catch { }
+        var cts = new CancellationTokenSource();
+        _reapplyCts = cts;
+        Task.Run(async () =>
         {
-            var low = Filter.ToLowerInvariant();
-            q = q.Where(x =>
-                (x.track.tt ?? "").ToLowerInvariant().Contains(low)
-                || (x.track.an ?? "").ToLowerInvariant().Contains(low)
-            );
-        }
-
-        // Advanced missing filters
-        bool anyMissing = MissingPadFCs || MissingProFCs || MissingPadScores || MissingProScores;
-        if (anyMissing)
-        {
-            q = q.Where(SongMatchesAdvancedMissing);
-        }
-        // Apply sorting
-        q = _sortMode switch
-        {
-            "artist" => q.OrderBy(s => s.track.an).ThenBy(s => s.track.tt),
-            "hasfc" => q.OrderByDescending(SongHasAllFCsPriority).ThenByDescending(SongHasSequentialTopFCsScore).ThenBy(s => s.track.tt),
-            _ => q.OrderBy(s => s.track.tt).ThenBy(s => s.track.an)
-        };
-        if (!_sortAscending)
-            q = q.Reverse();
-        var target = q.ToList();
-
-        // Remove rows not needed
-        for (int i = VisibleRows.Count - 1; i >= 0; i--)
-        {
-            if (!target.Contains(VisibleRows[i].Song))
-                VisibleRows.RemoveAt(i);
-        }
-
-        // Insert / ensure order
-        for (int i = 0; i < target.Count; i++)
-        {
-            var song = target[i];
-            if (i < VisibleRows.Count)
+            try
             {
-                if (!ReferenceEquals(VisibleRows[i].Song, song))
-                {
-                    // Existing row someplace else?
-                    var existing = VisibleRows.FirstOrDefault(r => ReferenceEquals(r.Song, song));
-                    if (existing != null)
-                        VisibleRows.Remove(existing);
-                    var newRow = existing ?? new SongDisplayRow(song, _service);
-                    VisibleRows.Insert(i, newRow);
-                }
-                else
-                {
-                    // refresh score just in case
-                    VisibleRows[i].RefreshScore(_service);
-                }
+                await Task.Delay(160, cts.Token); // wait for burst of updates
+                if (cts.IsCancellationRequested) return;
+                MainThread.BeginInvokeOnMainThread(() => _ = ApplyFilterIncrementalAsync());
             }
-            else
-            {
-                VisibleRows.Add(new SongDisplayRow(song, _service));
-            }
-        }
+            catch (TaskCanceledException) { }
+        });
     }
+
 
     private bool SongMatchesAdvancedMissing(Song song)
     {
@@ -226,7 +225,7 @@ public class SongsViewModel : BaseViewModel
         return match;
     }
 
-    public void ApplyAdvancedFilters() => ApplyFilter();
+    public void ApplyAdvancedFilters() => _ = ApplyFilterIncrementalAsync();
 
     public void ToggleSelection(Song s)
     {
@@ -244,7 +243,7 @@ public class SongsViewModel : BaseViewModel
 
     public void Refresh()
     {
-        ApplyFilter();
+    _ = ApplyFilterIncrementalAsync();
     }
 
     public void ResetFiltersToDefaults()
@@ -278,6 +277,147 @@ public class SongsViewModel : BaseViewModel
     {
         SortAscending = !SortAscending;
         Raise(nameof(SortDirectionCaret));
+    }
+
+    // Adapt list row layout for width
+    public void AdaptForWidth(double width)
+    {
+        // threshold similar to SongInfo page; adjust if needed
+        bool compact = width < 900; // can tweak later
+        UseCompactLayout = compact;
+    }
+
+    // Incremental / non-blocking rebuild of VisibleRows to avoid UI jank on large updates
+    private async Task ApplyFilterIncrementalAsync()
+    {
+        // If an incremental run is already active, mark a rerun and cancel current token to fast-forward
+        if (_incrementalInProgress)
+        {
+            _pendingRerun = true;
+            try { _incrementalCts?.Cancel(); } catch { }
+            return;
+        }
+
+        _incrementalInProgress = true;
+        _pendingRerun = false;
+        try
+        {
+            // Cancel any prior run
+            try { _incrementalCts?.Cancel(); } catch { }
+            var cts = new CancellationTokenSource();
+            _incrementalCts = cts;
+            var token = cts.Token;
+
+            // Snapshot state needed for background work (avoid touching mutable viewmodel fields inside Task.Run more than necessary)
+            var snapshotSongs = Songs.ToList();
+            var filterText = Filter?.Trim() ?? string.Empty;
+            var sortMode = _sortMode;
+            var sortAsc = _sortAscending;
+            var missingPadFCs = MissingPadFCs;
+            var missingProFCs = MissingProFCs;
+            var missingPadScores = MissingPadScores;
+            var missingProScores = MissingProScores;
+
+            // Build target list off the UI thread
+            var target = await Task.Run(() =>
+            {
+                IEnumerable<Song> q = snapshotSongs;
+                if (!string.IsNullOrWhiteSpace(filterText))
+                {
+                    var low = filterText.ToLowerInvariant();
+                    q = q.Where(x => (x.track.tt ?? string.Empty).ToLowerInvariant().Contains(low)
+                                   || (x.track.an ?? string.Empty).ToLowerInvariant().Contains(low));
+                }
+                bool anyMissing = missingPadFCs || missingProFCs || missingPadScores || missingProScores;
+                if (anyMissing)
+                {
+                    q = q.Where(SongMatchesAdvancedMissing);
+                }
+                q = sortMode switch
+                {
+                    "artist" => q.OrderBy(s => s.track.an).ThenBy(s => s.track.tt),
+                    "hasfc" => q.OrderByDescending(SongHasAllFCsPriority).ThenByDescending(SongHasSequentialTopFCsScore).ThenBy(s => s.track.tt),
+                    _ => q.OrderBy(s => s.track.tt).ThenBy(s => s.track.an)
+                };
+                if (!sortAsc) q = q.Reverse();
+                return q.ToList();
+            }, token);
+            if (token.IsCancellationRequested) return;
+
+            var targetSet = new HashSet<Song>(target);
+
+            const int batchSize = 40; // tune if needed
+            int ops = 0;
+
+            // Remove rows no longer present
+            for (int i = VisibleRows.Count - 1; i >= 0; i--)
+            {
+                if (token.IsCancellationRequested) return;
+                if (!targetSet.Contains(VisibleRows[i].Song))
+                {
+                    VisibleRows.RemoveAt(i);
+                    ops++;
+                }
+                if (ops >= batchSize)
+                {
+                    ops = 0;
+                    await Task.Delay(1); // yield to UI thread
+                }
+            }
+
+            // Reuse existing rows where possible; quick lookup
+            var existingMap = VisibleRows.ToDictionary(r => r.Song, r => r);
+
+            for (int i = 0; i < target.Count; i++)
+            {
+                if (token.IsCancellationRequested) return;
+                var song = target[i];
+                if (i < VisibleRows.Count && ReferenceEquals(VisibleRows[i].Song, song))
+                {
+                    VisibleRows[i].RefreshScore(_service); // refresh existing row
+                }
+                else
+                {
+                    if (existingMap.TryGetValue(song, out var existing))
+                    {
+                        // Move existing to correct position
+                        if (!ReferenceEquals(VisibleRows[i], existing))
+                        {
+                            VisibleRows.Remove(existing);
+                            VisibleRows.Insert(i, existing);
+                        }
+                        existing.RefreshScore(_service);
+                    }
+                    else
+                    {
+                        VisibleRows.Insert(i, new SongDisplayRow(song, _service) { UseCompactLayout = UseCompactLayout });
+                    }
+                    ops++;
+                }
+                if (ops >= batchSize)
+                {
+                    ops = 0;
+                    await Task.Delay(1);
+                }
+            }
+
+            // Empty state notifications
+            Raise(nameof(IsEmpty));
+            Raise(nameof(IsNotEmpty));
+        }
+        catch (TaskCanceledException)
+        {
+            // Swallow; rerun may be queued
+        }
+        finally
+        {
+            _incrementalInProgress = false;
+            if (_pendingRerun)
+            {
+                _pendingRerun = false;
+                _ = ApplyFilterIncrementalAsync(); // fire & forget rerun with latest state
+            }
+        }
     }
 
     private int SongHasAllFCsPriority(Song s)
@@ -365,9 +505,16 @@ public class SongDisplayRow : INotifyPropertyChanged
 
     public string Title => Song.track.tt;
     public string Artist => Song.track.an;
+    // Release year (ry) surfaced via Track.ReleaseYear convenience property. 0 or >3000 treated as unknown.
+    public int ReleaseYear => Song.track.ReleaseYear;
+    public string YearDisplay => (ReleaseYear > 0 && ReleaseYear <= 3000) ? ReleaseYear.ToString() : string.Empty;
+    // Artist · Year (if year valid) else just Artist for list rows (parity with SongInfo page)
+    public string ArtistYearDisplay => string.IsNullOrEmpty(YearDisplay) ? Artist : $"{Artist} · {YearDisplay}";
     public string AlbumArtPath => Song.imagePath;
     public bool IsSelected { get => Song.isSelected; set { if (Song.isSelected != value) { Song.isSelected = value; OnPropertyChanged(); } } }
     public string FullComboSymbol => IsFullCombo ? "FC" : string.Empty;
+    private bool _useCompactLayout;
+    public bool UseCompactLayout { get => _useCompactLayout; set { if (_useCompactLayout != value) { _useCompactLayout = value; OnPropertyChanged(); } } }
 
     public SongDisplayRow(Song song, IFestivalService service)
     {

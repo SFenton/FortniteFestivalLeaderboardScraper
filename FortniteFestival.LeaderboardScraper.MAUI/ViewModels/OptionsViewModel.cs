@@ -10,25 +10,7 @@ public class OptionsViewModel : BaseViewModel
     private readonly Settings _settings;
     private readonly ISettingsPersistence _persist;
 
-    public class InstrumentOption : BaseViewModel
-    {
-        private bool _isSelected;
-        public string Name { get; set; }
-        public Func<bool> Getter { get; set; }
-        public Action<bool> Setter { get; set; }
-        public bool IsSelected
-        {
-            get => Getter();
-            set
-            {
-                Setter(value);
-                Set(ref _isSelected, value);
-                Raise();
-            }
-        }
-    }
-
-    public ObservableCollection<InstrumentOption> InstrumentOptions { get; } = new();
+    public ObservableCollection<InstrumentOptionModel> InstrumentOptions { get; } = new();
 
     public int DegreeOfParallelism
     {
@@ -56,7 +38,7 @@ public class OptionsViewModel : BaseViewModel
     {
         InstrumentOptions.Clear();
         InstrumentOptions.Add(
-            new InstrumentOption
+            new InstrumentOptionModel
             {
                 Name = "Lead",
                 Getter = () => _settings.QueryLead,
@@ -64,7 +46,7 @@ public class OptionsViewModel : BaseViewModel
             }
         );
         InstrumentOptions.Add(
-            new InstrumentOption
+            new InstrumentOptionModel
             {
                 Name = "Drums",
                 Getter = () => _settings.QueryDrums,
@@ -72,7 +54,7 @@ public class OptionsViewModel : BaseViewModel
             }
         );
         InstrumentOptions.Add(
-            new InstrumentOption
+            new InstrumentOptionModel
             {
                 Name = "Vocals",
                 Getter = () => _settings.QueryVocals,
@@ -80,7 +62,7 @@ public class OptionsViewModel : BaseViewModel
             }
         );
         InstrumentOptions.Add(
-            new InstrumentOption
+            new InstrumentOptionModel
             {
                 Name = "Bass",
                 Getter = () => _settings.QueryBass,
@@ -88,7 +70,7 @@ public class OptionsViewModel : BaseViewModel
             }
         );
         InstrumentOptions.Add(
-            new InstrumentOption
+            new InstrumentOptionModel
             {
                 Name = "Pro Lead",
                 Getter = () => _settings.QueryProLead,
@@ -96,12 +78,30 @@ public class OptionsViewModel : BaseViewModel
             }
         );
         InstrumentOptions.Add(
-            new InstrumentOption
+            new InstrumentOptionModel
             {
                 Name = "Pro Bass",
                 Getter = () => _settings.QueryProBass,
                 Setter = v => _settings.QueryProBass = v,
             }
         );
+    }
+}
+
+public class InstrumentOptionModel : BaseViewModel
+{
+    private bool _isSelected;
+    public string Name { get; set; } = string.Empty;
+    public Func<bool> Getter { get; set; } = () => false;
+    public Action<bool> Setter { get; set; } = _ => { };
+    public bool IsSelected
+    {
+        get => Getter();
+        set
+        {
+            Setter(value);
+            Set(ref _isSelected, value);
+            Raise();
+        }
     }
 }

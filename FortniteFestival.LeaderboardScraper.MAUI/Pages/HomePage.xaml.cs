@@ -9,6 +9,7 @@ public partial class HomePage : ContentPage
 {
     private readonly ProcessViewModel _processVm;
     public SongsViewModel SongsViewModel { get; }
+    private readonly HomePageViewModel _vm;
     private string _pendingExchangeCode = string.Empty;
     private bool _updateButtonWidthLocked;
     private double _updateButtonWidth;
@@ -22,12 +23,14 @@ public partial class HomePage : ContentPage
     public HomePage(ProcessViewModel processVm, SongsViewModel songsVm)
     {
         InitializeComponent();
-    _processVm = processVm;
+        _processVm = processVm;
         SongsViewModel = songsVm;
-        BindingContext = this; // expose SongsViewModel via this
-    _processVm.PropertyChanged += ProcessVmOnPropertyChanged;
+        _vm = new HomePageViewModel(processVm, songsVm);
+        BindingContext = _vm;
+        _processVm.PropertyChanged += ProcessVmOnPropertyChanged;
     // Capture initial width of Update Scores button once laid out
     UpdateScoresButton.SizeChanged += OnUpdateScoresButtonSizeChanged;
+    SizeChanged += (_, _) => SongsViewModel.AdaptForWidth(Width);
     }
 
     protected override async void OnAppearing()
@@ -35,6 +38,7 @@ public partial class HomePage : ContentPage
         base.OnAppearing();
         SongsViewModel.Refresh();
         await EnsureInitializedWithRetryAsync();
+    SongsViewModel.AdaptForWidth(Width);
     }
 
     private async Task EnsureInitializedWithRetryAsync()
@@ -98,91 +102,107 @@ public partial class HomePage : ContentPage
             UpdateScoresButton.WidthRequest = _updateButtonWidth;
     }
 
-    private void OnUpdateScoresTapped(object sender, TappedEventArgs e)
+    private async void OnUpdateScoresTapped(object sender, TappedEventArgs e)
     {
         if (_processVm.IsFetching)
             return;
-    _ = AnimatePressAsync(UpdateScoresButton);
+        await AnimatePressAsync(UpdateScoresButton);
         AuthCodeEntry.Text = string.Empty;
         _pendingExchangeCode = string.Empty;
         AuthActionButton.Text = "Get Code";
         AuthModal.IsVisible = true;
     }
 
-    private void OnFilterTapped(object sender, TappedEventArgs e)
+    private async void OnFilterTapped(object sender, TappedEventArgs e)
     {
-        // Placeholder for future filter options modal / logic
-        _ = AnimatePressAsync(FilterButton);
+        await AnimatePressAsync(FilterButton);
         SnapshotFilters();
         FilterModal.IsVisible = true;
     }
 
-    private void OnSortTapped(object sender, TappedEventArgs e)
+    private async void OnSortTapped(object sender, TappedEventArgs e)
     {
-        _ = AnimatePressAsync(SortButton);
+        await AnimatePressAsync(SortButton);
         SnapshotSort();
         SortModal.IsVisible = true;
     }
 
-    private void OnCloseFilter(object sender, EventArgs e)
+    private async void OnCloseFilter(object sender, EventArgs e)
     {
-        _ = AnimatePressAsync(CloseFilterButton);
-        // Revert any changes
+        await AnimatePressAsync(CloseFilterButton);
         RestoreSnapshot();
         FilterModal.IsVisible = false;
     }
-    private void OnResetFilter(object sender, EventArgs e)
+    private async void OnResetFilter(object sender, EventArgs e)
     {
-    _ = AnimatePressAsync((VisualElement)sender);
-        // Reset to launch defaults (all include true, all missing false)
+        var element = sender as VisualElement;
+        if (element != null) await AnimatePressAsync(element);
         SongsViewModel.ResetFiltersToDefaults();
         SongsViewModel.ApplyAdvancedFilters();
-    // Establish this reset state as new baseline for Cancel
-    SnapshotFilters();
+        SnapshotFilters();
     }
 
-    private void OnApplyFilter(object sender, EventArgs e)
+    private async void OnApplyFilter(object sender, EventArgs e)
     {
-    _ = AnimatePressAsync((VisualElement)sender);
-        SongsViewModel.ApplyAdvancedFilters();
+        var element = sender as VisualElement;
+        if (element != null) await AnimatePressAsync(element);
         FilterModal.IsVisible = false;
+    _ = RunListOperationAsync(async () =>
+        {
+            await Task.Yield();
+            SongsViewModel.ApplyAdvancedFilters();
+    }, "Updating songs...", innerOnly:true);
     }
 
-    private void OnCloseSort(object sender, EventArgs e)
+    private async void OnCloseSort(object sender, EventArgs e)
     {
-        _ = AnimatePressAsync(CloseSortButton);
+        await AnimatePressAsync(CloseSortButton);
         RestoreSortSnapshot();
-    SongsViewModel.Refresh();
-    SortModal.IsVisible = false;
+        SortModal.IsVisible = false;
+    _ = RunListOperationAsync(async () =>
+        {
+            await Task.Yield();
+            SongsViewModel.Refresh();
+    }, "Updating songs...", innerOnly:true);
     }
 
-    private void OnResetSort(object sender, EventArgs e)
+    private async void OnResetSort(object sender, EventArgs e)
     {
-    _ = AnimatePressAsync((VisualElement)sender);
+        var element = sender as VisualElement;
+        if (element != null) await AnimatePressAsync(element);
         SongsViewModel.IsSortByTitle = true;
         SongsViewModel.IsSortByArtist = false;
         SongsViewModel.IsSortByHasFC = false;
-        // default instrument order
         ResetInstrumentOrder();
-        SnapshotSort(); // new baseline
+        SnapshotSort();
     }
 
-    private void OnApplySort(object sender, EventArgs e)
+    private async void OnApplySort(object sender, EventArgs e)
     {
-    _ = AnimatePressAsync((VisualElement)sender);
-        SongsViewModel.Refresh();
+        var element = sender as VisualElement;
+        if (element != null) await AnimatePressAsync(element);
         SortModal.IsVisible = false;
+    _ = RunListOperationAsync(async () =>
+        {
+            await Task.Yield();
+            SongsViewModel.Refresh();
+    }, "Updating songs...", innerOnly:true);
     }
 
     // Manual drag-and-drop handlers removed; Syncfusion SfListView now manages reordering.
 
-    private void OnSortDirectionTapped(object sender, TappedEventArgs e)
+    private async void OnSortDirectionTapped(object sender, TappedEventArgs e)
     {
-        _ = AnimatePressAsync(SortDirectionButton);
+        await AnimatePressAsync(SortDirectionButton);
         SongsViewModel.ToggleSortDirection();
-        // If sort modal not visible, apply immediately; otherwise defer until Apply
         if (!SortModal.IsVisible)
-            SongsViewModel.Refresh();
+        {
+        _ = RunListOperationAsync(async () =>
+            {
+                await Task.Yield();
+                SongsViewModel.Refresh();
+        }, "Updating songs...", innerOnly:true);
+        }
     }
 
     private void OnAuthCodeChanged(object sender, TextChangedEventArgs e)
@@ -205,9 +225,9 @@ public partial class HomePage : ContentPage
         UpdateFloatingButtonState();
     }
 
-    private void OnCloseAuth(object sender, EventArgs e)
+    private async void OnCloseAuth(object sender, EventArgs e)
     {
-        _ = AnimatePressAsync(CloseAuthButton);
+        await AnimatePressAsync(CloseAuthButton);
         AuthModal.IsVisible = false;
     }
 
@@ -216,8 +236,8 @@ public partial class HomePage : ContentPage
         if (element == null) return;
         try
         {
-            uint duration = 70;
-            await element.ScaleTo(0.92, duration, Easing.CubicIn);
+            uint duration = 60;
+            await element.ScaleTo(0.975, duration, Easing.CubicIn);
             await element.ScaleTo(1.0, duration, Easing.CubicOut);
         }
         catch { }
@@ -300,10 +320,11 @@ public partial class HomePage : ContentPage
     // Defer applying until Apply clicked
     }
 
-    private void OnSortOptionTapped(object sender, TappedEventArgs e)
+    private async void OnSortOptionTapped(object sender, TappedEventArgs e)
     {
-    _ = AnimatePressAsync((VisualElement)sender);
-    string? mode = e.Parameter as string;
+        var element = sender as VisualElement;
+        if (element != null) await AnimatePressAsync(element);
+        string? mode = e.Parameter as string;
         if (string.IsNullOrEmpty(mode)) return;
         switch (mode)
         {
@@ -316,10 +337,71 @@ public partial class HomePage : ContentPage
     private async void OnSongRowTapped(object? sender, TappedEventArgs e)
     {
         if (e.Parameter is not SongDisplayRow row) return;
+        if (sender is VisualElement ve)
+        {
+            // Press scale
+            await AnimatePressAsync(ve);
+            // Pulse background overlay
+            await PulseAsync(ve);
+        }
         // Capture current instrument order
         var order = SongsViewModel.PrimaryInstrumentOrder.Select(i => i.Key).ToList();
     var vm = new SongInfoViewModel(row, order, SongsViewModel.Service);
         var page = new SongInfoPage(vm);
         await Navigation.PushAsync(page);
+    }
+
+    private static async Task PulseAsync(VisualElement element)
+    {
+        try
+        {
+            const uint dur = 260;
+            var original = element.BackgroundColor;
+            var pulse = Color.FromRgba(255,255,255,40); // subtle white overlay
+            // If original is default (null), treat as transparent
+            element.BackgroundColor = pulse;
+            await Task.Delay((int)(dur * 0.55));
+            // Fade back
+            if (original != null)
+                element.BackgroundColor = original;
+            else
+                element.BackgroundColor = Colors.Transparent;
+        }
+        catch { }
+    }
+
+    private async Task RunListOperationAsync(Func<Task> action, string message, bool innerOnly = false)
+    {
+        try
+        {
+            if (innerOnly)
+            {
+                if (SongListLoadingLabel != null) SongListLoadingLabel.Text = message;
+                if (SongListLoadingOverlay != null) SongListLoadingOverlay.IsVisible = true;
+                if (SongListLoadingSpinner != null) SongListLoadingSpinner.IsRunning = true;
+            }
+            else
+            {
+                LoadingLabel.Text = message;
+                LoadingOverlay.IsVisible = true;
+                InitSpinner.IsRunning = true;
+                SongsContent.IsVisible = false;
+            }
+            await action();
+        }
+        finally
+        {
+            if (innerOnly)
+            {
+                if (SongListLoadingSpinner != null) SongListLoadingSpinner.IsRunning = false;
+                if (SongListLoadingOverlay != null) SongListLoadingOverlay.IsVisible = false;
+            }
+            else
+            {
+                InitSpinner.IsRunning = false;
+                LoadingOverlay.IsVisible = false;
+                SongsContent.IsVisible = true;
+            }
+        }
     }
 }

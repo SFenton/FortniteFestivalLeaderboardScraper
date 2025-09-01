@@ -6,7 +6,6 @@ public class SeasonBadge : ContentView
         nameof(Text), typeof(string), typeof(SeasonBadge), string.Empty, propertyChanged: OnTextChanged);
 
     private readonly Grid _root;
-    private readonly Frame _skewFrame; // using Frame for easier clipping
     private readonly Label _label;
 
     public string Text
@@ -28,7 +27,7 @@ public class SeasonBadge : ContentView
             Padding = new Thickness(0),
         };
 
-        // Simulate a parallelogram by skewing the background path via a GraphicsView overlay
+    // Parallelogram background via a GraphicsView (no obsolete Frame usage)
         var background = new GraphicsView
         {
             HeightRequest = 22,

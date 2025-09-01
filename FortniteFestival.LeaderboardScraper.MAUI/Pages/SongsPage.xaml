@@ -2,7 +2,9 @@
 <ContentPage
   xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
   xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+  xmlns:vm="clr-namespace:FortniteFestival.LeaderboardScraper.MAUI.ViewModels"
   x:Class="FortniteFestival.LeaderboardScraper.MAUI.Pages.SongsPage"
+  x:DataType="vm:SongsViewModel"
   Title="Songs"
 >
   <ContentPage.Content>
@@ -12,14 +14,15 @@
         <Button Text="Select All" Command="{Binding SelectAllCommand}" />
         <Button Text="Clear All" Command="{Binding ClearAllCommand}" />
       </HorizontalStackLayout>
-      <CollectionView ItemsSource="{Binding VisibleSongs}" SelectionMode="None" HeightRequest="500">
+      <!-- Updated to use VisibleRows (SongDisplayRow projection) instead of legacy VisibleSongs; compiled bindings enabled -->
+      <CollectionView ItemsSource="{Binding VisibleRows}" SelectionMode="None" HeightRequest="500">
         <CollectionView.ItemTemplate>
-          <DataTemplate>
+          <DataTemplate x:DataType="vm:SongDisplayRow">
             <Grid Padding="4" ColumnDefinitions="40,*" RowDefinitions="Auto">
-              <CheckBox IsChecked="{Binding isSelected}" CheckedChanged="OnCheckChanged" />
+              <CheckBox IsChecked="{Binding IsSelected}" CheckedChanged="OnCheckChanged" />
               <VerticalStackLayout Grid.Column="1" Spacing="2">
-                <Label Text="{Binding track.tt}" FontAttributes="Bold" FontFamily="NotoSansBold" />
-                <Label Text="{Binding track.an}" FontSize="12" TextColor="Gray" FontFamily="NotoSansRegular" />
+                <Label Text="{Binding Title}" FontAttributes="Bold" FontFamily="NotoSansBold" />
+                <Label Text="{Binding Artist}" FontSize="12" TextColor="Gray" FontFamily="NotoSansRegular" />
               </VerticalStackLayout>
             </Grid>
           </DataTemplate>

@@ -13,6 +13,7 @@ namespace FortniteFestival.Core
         public int gr { get; set; }
         public int ds { get; set; }
         public int ba { get; set; }
+    public int bd { get; set; } // pro vocals difficulty (may be absent; treat 0 as missing until normalized)
     }
 
     public class Track
@@ -42,6 +43,55 @@ namespace FortniteFestival.Core
         public string ti { get; set; }
         public string ld { get; set; }
         public string jc { get; set; }
+
+        // Friendly aliases (not serialized automatically) for clearer internal usage
+        public int ReleaseYear
+        {
+            get => ry;
+            set => ry = value;
+        }
+        public int Tempo
+        {
+            get => mt;
+            set => mt = value;
+        }
+        // Plastic instrument difficulty aliases (mapped from intensity object 'in')
+        public int PlasticGuitarDifficulty
+        {
+            get => @in?.pg ?? 0;
+            set
+            {
+                if (@in == null) @in = new In();
+                @in.pg = value;
+            }
+        }
+        public int PlasticBassDifficulty
+        {
+            get => @in?.pb ?? 0;
+            set
+            {
+                if (@in == null) @in = new In();
+                @in.pb = value;
+            }
+        }
+        public int PlasticDrumsDifficulty
+        {
+            get => @in?.pd ?? 0;
+            set
+            {
+                if (@in == null) @in = new In();
+                @in.pd = value;
+            }
+        }
+        public int ProVocalsDifficulty
+        {
+            get => @in == null ? -1 : (@in.bd == 0 ? -1 : @in.bd);
+            set
+            {
+                if (@in == null) @in = new In();
+                @in.bd = value;
+            }
+        }
     }
 
     public class Song

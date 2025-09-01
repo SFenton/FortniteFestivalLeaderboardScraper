@@ -31,8 +31,8 @@ public partial class App : Application
         double density = displayInfo.Density <= 0 ? 1 : displayInfo.Density;
         double deviceWidthDip = displayInfo.Width / density;
         double deviceHeightDip = displayInfo.Height / density;
-            double minWidth = Math.Min(deviceWidthDip, 720);
-            double minHeight = Math.Min(deviceHeightDip, 1080);
+            double minWidth = Math.Min(deviceWidthDip, 360);
+            double minHeight = Math.Min(deviceHeightDip, 540);
             window.MinimumWidth = minWidth;
             window.MinimumHeight = minHeight;
     }

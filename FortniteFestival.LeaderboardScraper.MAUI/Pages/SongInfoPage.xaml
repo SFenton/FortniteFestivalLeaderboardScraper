@@ -3,95 +3,182 @@
   xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
   xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
   xmlns:controls="clr-namespace:FortniteFestival.LeaderboardScraper.MAUI.Controls"
+  xmlns:vm="clr-namespace:FortniteFestival.LeaderboardScraper.MAUI.ViewModels"
+  xmlns:conv="clr-namespace:FortniteFestival.LeaderboardScraper.MAUI.Converters"
+  xmlns:shapes="clr-namespace:Microsoft.Maui.Controls.Shapes;assembly=Microsoft.Maui.Controls"
   x:Class="FortniteFestival.LeaderboardScraper.MAUI.Pages.SongInfoPage"
   x:Name="SongInfoPageRoot"
+  x:DataType="vm:SongInfoViewModel"
   Title="Song Info">
+  <ContentPage.Resources>
+    <conv:InverseBoolConverter x:Key="InverseBoolConverter" />
+  </ContentPage.Resources>
   <!-- Layered background: album art dimmed -->
   <Grid>
     <Image Source="{Binding AlbumArtPath}" Aspect="AspectFill" />
     <BoxView Color="#88000000" />
-    <!-- Foreground content -->
-    <Grid Padding="16" RowSpacing="20" RowDefinitions="Auto,Auto,Auto,*">
-      <!-- Back button (auto width) -->
-      <Border StrokeShape="RoundRectangle 24" BackgroundColor="#4B0F63" Padding="16,10" x:Name="BackButton" HorizontalOptions="Start">
-        <Border.GestureRecognizers>
-          <TapGestureRecognizer Tapped="OnBackTapped" />
-        </Border.GestureRecognizers>
-        <HorizontalStackLayout Spacing="6" VerticalOptions="Center">
-          <Label Text="←" FontFamily="NotoSansBold" FontAttributes="Bold" TextColor="White" />
-          <Label Text="Back" FontFamily="NotoSansBold" FontAttributes="Bold" TextColor="White" />
-        </HorizontalStackLayout>
-      </Border>
-
-      <!-- Split area (no container background/border) -->
-      <Grid Grid.Row="1" ColumnDefinitions="*,*" ColumnSpacing="32" HeightRequest="260">
-        <!-- Left half: square album art -->
-        <Grid Grid.Column="0" HorizontalOptions="Center" VerticalOptions="Center">
-          <Border StrokeShape="RoundRectangle 18" BackgroundColor="#7A2B95" WidthRequest="220" HeightRequest="220">
-            <Image Source="{Binding AlbumArtPath}" Aspect="AspectFill" />
+    <!-- Foreground content wrapped in ScrollView for vertical overflow (excluding floating Back button) -->
+    <ScrollView>
+      <!-- Content grid; top padding adjusted at runtime to just clear floating Back button -->
+      <Grid x:Name="ContentGrid" Padding="16" RowSpacing="20" RowDefinitions="Auto,Auto">
+        <!-- Wide header layout (side-by-side) -->
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,*" ColumnSpacing="32" HeightRequest="260" IsVisible="{Binding UseCompactLayout, Converter={StaticResource InverseBoolConverter}}">
+          <Border Grid.Column="0" StrokeShape="RoundRectangle 18" BackgroundColor="#7A2B95" WidthRequest="220" HeightRequest="220" HorizontalOptions="Center" VerticalOptions="Center">
+            <Image Source="{Binding AlbumArtPath}" Aspect="AspectFit" />
           </Border>
+          <VerticalStackLayout Grid.Column="1" Spacing="12" HorizontalOptions="Center" VerticalOptions="Center" WidthRequest="320">
+            <Label Text="{Binding Title}" FontFamily="NotoSansBold" FontAttributes="Bold" FontSize="28" HorizontalTextAlignment="Center" LineBreakMode="WordWrap" />
+            <Label Text="{Binding ArtistYearDisplay}" FontFamily="NotoSansBold" FontAttributes="Bold" FontSize="18" HorizontalTextAlignment="Center" LineBreakMode="WordWrap" />
+          </VerticalStackLayout>
         </Grid>
-
-        <!-- Right half: centered title & artist (bold) -->
-        <VerticalStackLayout Grid.Column="1" Spacing="12" HorizontalOptions="Center" VerticalOptions="Center" WidthRequest="320">
-          <Label Text="{Binding Title}" FontFamily="NotoSansBold" FontAttributes="Bold" FontSize="28" HorizontalTextAlignment="Center" LineBreakMode="WordWrap" />
-          <Label Text="{Binding Artist}" FontFamily="NotoSansBold" FontAttributes="Bold" FontSize="18" HorizontalTextAlignment="Center" LineBreakMode="WordWrap" />
+        <!-- Compact header layout (stacked) -->
+        <VerticalStackLayout Grid.Row="0" Spacing="16" HorizontalOptions="Center" VerticalOptions="Start" IsVisible="{Binding UseCompactLayout}">
+          <Border StrokeShape="RoundRectangle 18" BackgroundColor="#7A2B95" WidthRequest="220" HeightRequest="220" HorizontalOptions="Center" VerticalOptions="Center">
+            <Image Source="{Binding AlbumArtPath}" Aspect="AspectFit" />
+          </Border>
+          <VerticalStackLayout Spacing="8" HorizontalOptions="Center" WidthRequest="320">
+            <Label Text="{Binding Title}" FontFamily="NotoSansBold" FontAttributes="Bold" FontSize="28" HorizontalTextAlignment="Center" LineBreakMode="WordWrap" />
+            <Label Text="{Binding ArtistYearDisplay}" FontFamily="NotoSansBold" FontAttributes="Bold" FontSize="18" HorizontalTextAlignment="Center" LineBreakMode="WordWrap" />
+          </VerticalStackLayout>
         </VerticalStackLayout>
-      </Grid>
-
-      <!-- Instruments container sized to content with 90% opacity -->
-      <Border Grid.Row="2" StrokeShape="RoundRectangle 26" BackgroundColor="#E6B35CD6" Padding="12" HorizontalOptions="Fill" VerticalOptions="Start" Opacity="0.9">
-        <CollectionView ItemsSource="{Binding InstrumentRows}" SelectionMode="None">
+        <!-- Instruments container sized to content with 90% opacity -->
+        <Border Grid.Row="1" StrokeShape="RoundRectangle 26" BackgroundColor="#E6B35CD6" Padding="12" HorizontalOptions="Fill" VerticalOptions="Start" Opacity="0.9">
+          <CollectionView ItemsSource="{Binding InstrumentRows}" SelectionMode="None">
           <CollectionView.ItemTemplate>
-            <DataTemplate>
-              <Grid Padding="10,12" ColumnDefinitions="50,*,260,Auto,Auto,Auto" ColumnSpacing="12">
-                <Border Grid.Column="0" StrokeShape="Ellipse" BackgroundColor="#4B0F63" WidthRequest="48" HeightRequest="48" HorizontalOptions="Center" VerticalOptions="Center">
-                  <Image Source="{Binding Icon}" WidthRequest="40" HeightRequest="40" HorizontalOptions="Center" VerticalOptions="Center" />
-                </Border>
-                <Label Grid.Column="1" Text="{Binding Name}" FontFamily="NotoSansBold" FontAttributes="Bold" VerticalOptions="Center" MinimumWidthRequest="92" LineBreakMode="TailTruncation" MaxLines="1" />
-                <!-- Stars panel using BindableLayout -->
-                <Grid Grid.Column="2" WidthRequest="260" HorizontalOptions="Center" VerticalOptions="Center">
-                  <HorizontalStackLayout Spacing="4" HorizontalOptions="Center" VerticalOptions="Center" BindableLayout.ItemsSource="{Binding Stars}" IsVisible="{Binding HasScore}">
+            <DataTemplate x:DataType="vm:SongInfoInstrumentRow">
+              <Grid>
+                <!-- Wide layout -->
+                <Grid x:Name="WideLayout" IsVisible="{Binding UseCompactLayout, Converter={StaticResource InverseBoolConverter}}" Padding="10,12" ColumnDefinitions="50,*,140,260,Auto,Auto,Auto" ColumnSpacing="14">
+                  <Border Grid.Column="0" StrokeShape="Ellipse" BackgroundColor="#4B0F63" WidthRequest="48" HeightRequest="48" HorizontalOptions="Center" VerticalOptions="Center">
+                    <Image Source="{Binding Icon}" WidthRequest="40" HeightRequest="40" HorizontalOptions="Center" VerticalOptions="Center" />
+                  </Border>
+                  <Label Grid.Column="1" Text="{Binding Name}" FontFamily="NotoSansBold" FontAttributes="Bold" VerticalOptions="Center" LineBreakMode="TailTruncation" MaxLines="1" />
+      <!-- Difficulty Bars (parallelogram custom control) -->
+                  <HorizontalStackLayout Grid.Column="2" Spacing="1" HorizontalOptions="Center" VerticalOptions="Center" BindableLayout.ItemsSource="{Binding DifficultyBars}">
                     <BindableLayout.ItemTemplate>
-                      <DataTemplate>
-                        <Border StrokeShape="Ellipse" WidthRequest="48" HeightRequest="48" StrokeThickness="2" Stroke="{Binding OutlineColor}" BackgroundColor="Transparent" Padding="4" VerticalOptions="Center" HorizontalOptions="Center">
-                          <Image Source="{Binding Image}" WidthRequest="40" HeightRequest="40" HorizontalOptions="Center" VerticalOptions="Center" />
-                        </Border>
+                      <DataTemplate x:DataType="vm:DifficultyBarVisual">
+                        <controls:DifficultyBar WidthRequest="16" HeightRequest="34" FillColor="{Binding FillColor}" />
                       </DataTemplate>
                     </BindableLayout.ItemTemplate>
                   </HorizontalStackLayout>
-                  <Label Text="N/A" FontFamily="NotoSansBold" FontAttributes="Bold" HorizontalOptions="Center" VerticalOptions="Center" IsVisible="{Binding ShowNA}" />
-                </Grid>
-                <Label Grid.Column="3" Text="{Binding ScoreDisplay}" WidthRequest="110" IsVisible="{Binding BindingContext.ShowScore, Source={x:Reference SongInfoPageRoot}}" FontFamily="NotoSansBold" FontAttributes="Bold" VerticalOptions="Center" HorizontalTextAlignment="Center" HorizontalOptions="Center" />
-                <Border Grid.Column="4" StrokeThickness="2" Padding="4,2" WidthRequest="70" IsVisible="{Binding BindingContext.ShowPercent, Source={x:Reference SongInfoPageRoot}}" HorizontalOptions="Center" VerticalOptions="Center">
-                  <Border.StrokeShape>
-                    <RoundRectangle CornerRadius="10" />
-                  </Border.StrokeShape>
-                  <Label Text="{Binding PercentDisplay}" FontFamily="NotoSansBold" FontAttributes="Bold" VerticalOptions="Center" HorizontalTextAlignment="Center" HorizontalOptions="Center" >
-                    <Label.Triggers>
-                      <DataTrigger TargetType="Label" Binding="{Binding IsFullCombo}" Value="True">
-                        <Setter Property="TextColor" Value="#FFD700" />
-                        <Setter Property="FontAttributes" Value="Bold,Italic" />
+                  <Grid Grid.Column="3" WidthRequest="260" HorizontalOptions="Center" VerticalOptions="Center">
+                    <HorizontalStackLayout Spacing="4" HorizontalOptions="Center" VerticalOptions="Center" BindableLayout.ItemsSource="{Binding Stars}" IsVisible="{Binding HasScore}">
+                      <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="vm:StarVisual">
+                          <Border StrokeShape="Ellipse" WidthRequest="48" HeightRequest="48" StrokeThickness="2" Stroke="{Binding OutlineColor}" BackgroundColor="Transparent" Padding="4" VerticalOptions="Center" HorizontalOptions="Center">
+                            <Image Source="{Binding Image}" WidthRequest="40" HeightRequest="40" HorizontalOptions="Center" VerticalOptions="Center" />
+                          </Border>
+                        </DataTemplate>
+                      </BindableLayout.ItemTemplate>
+                    </HorizontalStackLayout>
+                    <Label Text="N/A" FontFamily="NotoSansBold" FontAttributes="Bold" HorizontalOptions="Center" VerticalOptions="Center" IsVisible="{Binding ShowNA}" />
+                  </Grid>
+                  <Label Grid.Column="4" Text="{Binding ScoreDisplay}" WidthRequest="110" IsVisible="{Binding ShowScore, Source={x:Reference SongInfoPageRoot}}" FontFamily="NotoSansBold" FontAttributes="Bold" VerticalOptions="Center" HorizontalTextAlignment="Center" HorizontalOptions="Center" />
+                  <Border Grid.Column="5" StrokeThickness="2" Padding="4,2" WidthRequest="70" IsVisible="{Binding ShowPercent, Source={x:Reference SongInfoPageRoot}}" HorizontalOptions="Center" VerticalOptions="Center">
+                    <Border.StrokeShape>
+                      <RoundRectangle CornerRadius="10" />
+                    </Border.StrokeShape>
+                    <Label Text="{Binding PercentDisplay}" FontFamily="NotoSansBold" FontAttributes="Bold" VerticalOptions="Center" HorizontalTextAlignment="Center" HorizontalOptions="Center">
+                      <Label.Triggers>
+                        <DataTrigger TargetType="Label" Binding="{Binding IsFullCombo}" Value="True">
+                          <Setter Property="TextColor" Value="#FFD700" />
+                          <Setter Property="FontAttributes" Value="Bold,Italic" />
+                        </DataTrigger>
+                      </Label.Triggers>
+                    </Label>
+                    <Border.Triggers>
+                      <DataTrigger TargetType="Border" Binding="{Binding IsFullCombo}" Value="True">
+                        <Setter Property="Stroke" Value="#FFD700" />
+                        <Setter Property="Background" Value="#332915" />
                       </DataTrigger>
-                    </Label.Triggers>
-                  </Label>
-                  <Border.Triggers>
-                    <DataTrigger TargetType="Border" Binding="{Binding IsFullCombo}" Value="True">
-                      <Setter Property="Stroke" Value="#FFD700" />
-                      <Setter Property="Background" Value="#332915" />
-                    </DataTrigger>
-                    <DataTrigger TargetType="Border" Binding="{Binding IsFullCombo}" Value="False">
-                      <Setter Property="Stroke" Value="Transparent" />
-                      <Setter Property="Background" Value="Transparent" />
-                    </DataTrigger>
-                  </Border.Triggers>
-                </Border>
-                <controls:SeasonBadge Grid.Column="5" Text="{Binding SeasonDisplay}" IsVisible="{Binding BindingContext.ShowSeason, Source={x:Reference SongInfoPageRoot}}" WidthRequest="70" VerticalOptions="Center" HorizontalOptions="Center" />
+                      <DataTrigger TargetType="Border" Binding="{Binding IsFullCombo}" Value="False">
+                        <Setter Property="Stroke" Value="Transparent" />
+                        <Setter Property="Background" Value="Transparent" />
+                      </DataTrigger>
+                    </Border.Triggers>
+                  </Border>
+                  <controls:SeasonBadge Grid.Column="6" Text="{Binding SeasonDisplay}" IsVisible="{Binding ShowSeason, Source={x:Reference SongInfoPageRoot}}" WidthRequest="70" VerticalOptions="Center" HorizontalOptions="Center" />
+                </Grid>
+                <!-- Compact layout (fully centered rows) -->
+                <Grid x:Name="CompactLayout" IsVisible="{Binding UseCompactLayout}" Padding="10,12">
+                  <VerticalStackLayout Spacing="8" HorizontalOptions="Center" VerticalOptions="Center">
+                    <!-- Icon + Name -->
+                    <HorizontalStackLayout Spacing="12" HorizontalOptions="Center" VerticalOptions="Center">
+                      <Border StrokeShape="Ellipse" BackgroundColor="#4B0F63" WidthRequest="48" HeightRequest="48" HorizontalOptions="Center" VerticalOptions="Center">
+                        <Image Source="{Binding Icon}" WidthRequest="40" HeightRequest="40" HorizontalOptions="Center" VerticalOptions="Center" />
+                      </Border>
+                      <Label Text="{Binding Name}" FontFamily="NotoSansBold" FontAttributes="Bold" VerticalOptions="Center" LineBreakMode="TailTruncation" MaxLines="1" />
+                    </HorizontalStackLayout>
+        <!-- Difficulty Bars (parallelogram custom control) -->
+                    <HorizontalStackLayout Spacing="2" HorizontalOptions="Center" VerticalOptions="Center" BindableLayout.ItemsSource="{Binding DifficultyBars}">
+                      <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="vm:DifficultyBarVisual">
+                          <controls:DifficultyBar WidthRequest="20" HeightRequest="40" FillColor="{Binding FillColor}" />
+                        </DataTemplate>
+                      </BindableLayout.ItemTemplate>
+                    </HorizontalStackLayout>
+                    <!-- Stars or N/A -->
+                    <Grid HorizontalOptions="Center" VerticalOptions="Center">
+                      <HorizontalStackLayout Spacing="4" HorizontalOptions="Center" VerticalOptions="Center" BindableLayout.ItemsSource="{Binding Stars}" IsVisible="{Binding HasScore}">
+                        <BindableLayout.ItemTemplate>
+                          <DataTemplate x:DataType="vm:StarVisual">
+                            <Border StrokeShape="Ellipse" WidthRequest="40" HeightRequest="40" StrokeThickness="2" Stroke="{Binding OutlineColor}" BackgroundColor="Transparent" Padding="3" VerticalOptions="Center" HorizontalOptions="Center">
+                              <Image Source="{Binding Image}" WidthRequest="32" HeightRequest="32" HorizontalOptions="Center" VerticalOptions="Center" />
+                            </Border>
+                          </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                      </HorizontalStackLayout>
+                      <Label Text="N/A" FontFamily="NotoSansBold" FontAttributes="Bold" HorizontalOptions="Center" VerticalOptions="Center" IsVisible="{Binding ShowNA}" />
+                    </Grid>
+                    <!-- Metrics -->
+                    <Grid ColumnDefinitions="70,70,70" HorizontalOptions="Center" MinimumWidthRequest="210" VerticalOptions="Center">
+                      <!-- Score -->
+                      <Label Grid.Column="0" Text="{Binding ScoreDisplay}" IsVisible="{Binding ShowScore, Source={x:Reference SongInfoPageRoot}}" FontFamily="NotoSansBold" FontAttributes="Bold" WidthRequest="70" VerticalOptions="Center" HorizontalOptions="Center" HorizontalTextAlignment="Center" />
+                      <!-- Percent -->
+                      <Border Grid.Column="1" StrokeThickness="2" Padding="4,2" WidthRequest="70" IsVisible="{Binding ShowPercent, Source={x:Reference SongInfoPageRoot}}" HorizontalOptions="Center" VerticalOptions="Center">
+                        <Border.StrokeShape>
+                          <RoundRectangle CornerRadius="10" />
+                        </Border.StrokeShape>
+                        <Label Text="{Binding PercentDisplay}" FontFamily="NotoSansBold" FontAttributes="Bold" VerticalOptions="Center" HorizontalTextAlignment="Center" HorizontalOptions="Center">
+                          <Label.Triggers>
+                            <DataTrigger TargetType="Label" Binding="{Binding IsFullCombo}" Value="True">
+                              <Setter Property="TextColor" Value="#FFD700" />
+                              <Setter Property="FontAttributes" Value="Bold,Italic" />
+                            </DataTrigger>
+                          </Label.Triggers>
+                        </Label>
+                        <Border.Triggers>
+                          <DataTrigger TargetType="Border" Binding="{Binding IsFullCombo}" Value="True">
+                            <Setter Property="Stroke" Value="#FFD700" />
+                            <Setter Property="Background" Value="#332915" />
+                          </DataTrigger>
+                          <DataTrigger TargetType="Border" Binding="{Binding IsFullCombo}" Value="False">
+                            <Setter Property="Stroke" Value="Transparent" />
+                            <Setter Property="Background" Value="Transparent" />
+                          </DataTrigger>
+                        </Border.Triggers>
+                      </Border>
+                      <!-- Season -->
+                      <controls:SeasonBadge Grid.Column="2" Text="{Binding SeasonDisplay}" IsVisible="{Binding ShowSeason, Source={x:Reference SongInfoPageRoot}}" WidthRequest="70" VerticalOptions="Center" HorizontalOptions="Center" />
+                    </Grid>
+                  </VerticalStackLayout>
+                </Grid>
               </Grid>
             </DataTemplate>
           </CollectionView.ItemTemplate>
-        </CollectionView>
-      </Border>
-    </Grid>
+          </CollectionView>
+        </Border>
+      </Grid>
+    </ScrollView>
+    <!-- Floating Back button (stays fixed while scrolling) -->
+    <Border StrokeShape="RoundRectangle 24" BackgroundColor="#4B0F63" Padding="16,10" x:Name="BackButton" HorizontalOptions="Start" VerticalOptions="Start" Margin="16,16,0,0" ZIndex="10">
+      <Border.GestureRecognizers>
+        <TapGestureRecognizer Tapped="OnBackTapped" />
+      </Border.GestureRecognizers>
+      <HorizontalStackLayout Spacing="6" VerticalOptions="Center">
+        <Label Text="←" FontFamily="NotoSansBold" FontAttributes="Bold" TextColor="White" />
+        <Label Text="Back" FontFamily="NotoSansBold" FontAttributes="Bold" TextColor="White" />
+      </HorizontalStackLayout>
+    </Border>
   </Grid>
 </ContentPage>

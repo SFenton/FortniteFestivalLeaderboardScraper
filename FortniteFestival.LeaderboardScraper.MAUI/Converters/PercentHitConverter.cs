@@ -5,21 +5,17 @@ namespace FortniteFestival.LeaderboardScraper.MAUI.Converters;
 
 public class PercentHitConverter : IValueConverter
 {
-    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         if (value is int i)
         {
-            // Core stores percentHit scaled by 10000 (100% == 1000000)
-            var pct = i / 10000.0;
+            var pct = i / 10000.0; // raw scaled by 10000
             return pct.ToString("0.00") + "%";
         }
-        return "";
+        if (value is double d)
+            return d.ToString("0.00") + "%";
+        return string.Empty;
     }
 
-    public object ConvertBack(
-        object value,
-        Type targetType,
-        object parameter,
-        CultureInfo culture
-    ) => throw new NotImplementedException();
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => throw new NotImplementedException();
 }

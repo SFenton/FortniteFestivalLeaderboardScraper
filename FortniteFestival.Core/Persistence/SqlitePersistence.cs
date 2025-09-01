@@ -99,7 +99,13 @@ namespace FortniteFestival.Core.Persistence
     VocalsDiff INTEGER,
     DrumsDiff INTEGER,
     ProLeadDiff INTEGER,
-    ProBassDiff INTEGER
+    ProBassDiff INTEGER,
+    ReleaseYear INTEGER,
+    Tempo INTEGER,
+    PlasticGuitarDiff INTEGER,
+    PlasticBassDiff INTEGER,
+    PlasticDrumsDiff INTEGER,
+    ProVocalsDiff INTEGER
 );
 CREATE TABLE IF NOT EXISTS Scores (
     SongId TEXT PRIMARY KEY,
@@ -114,45 +120,50 @@ CREATE TABLE IF NOT EXISTS Scores (
                         cmd.ExecuteNonQuery();
                     }
                 }
-                // Lightweight migration: add ImagePath if missing
+                // Lightweight migrations: add columns if missing
                 try
                 {
                     using (var conn2 = new SqliteConnection(ConnectionString))
                     {
                         conn2.Open();
+                        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                         using (var check = conn2.CreateCommand())
                         {
                             check.CommandText = "PRAGMA table_info(Songs)";
-                            bool hasImage = false;
                             using (var r = check.ExecuteReader())
                             {
                                 while (r.Read())
                                 {
-                                    if (
-                                        !r.IsDBNull(1)
-                                        && string.Equals(
-                                            r.GetString(1),
-                                            "ImagePath",
-                                            StringComparison.OrdinalIgnoreCase
-                                        )
-                                    )
-                                    {
-                                        hasImage = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (!hasImage)
-                            {
-                                using (var alter = conn2.CreateCommand())
-                                {
-                                    alter.CommandText =
-                                        "ALTER TABLE Songs ADD COLUMN ImagePath TEXT";
-                                    alter.ExecuteNonQuery();
-                                    PersistenceLog.Write("Migrated DB: added Songs.ImagePath");
+                                    if (!r.IsDBNull(1)) existing.Add(r.GetString(1));
                                 }
                             }
                         }
+
+                        void AddColumn(string name, string type)
+                        {
+                            if (existing.Contains(name)) return;
+                            try
+                            {
+                                using (var alter = conn2.CreateCommand())
+                                {
+                                    alter.CommandText = $"ALTER TABLE Songs ADD COLUMN {name} {type}";
+                                    alter.ExecuteNonQuery();
+                                    PersistenceLog.Write($"Migrated DB: added Songs.{name}");
+                                }
+                            }
+                            catch (Exception aex)
+                            {
+                                PersistenceLog.Write($"Migration add column {name} failed: {aex.Message}");
+                            }
+                        }
+
+                        AddColumn("ImagePath", "TEXT");
+                        AddColumn("ReleaseYear", "INTEGER");
+                        AddColumn("Tempo", "INTEGER");
+                        AddColumn("PlasticGuitarDiff", "INTEGER");
+                        AddColumn("PlasticBassDiff", "INTEGER");
+                        AddColumn("PlasticDrumsDiff", "INTEGER");
+                        AddColumn("ProVocalsDiff", "INTEGER");
                     }
                 }
                 catch (Exception mex)
@@ -406,7 +417,7 @@ ProBassScore=$pbScore,ProBassDiff=$pbDiff,ProBassStars=$pbStars,ProBassFC=$pbFC,
                     using (var cmd = conn.CreateCommand())
                     {
                         cmd.CommandText =
-                            "SELECT SongId, Title, Artist, ActiveDate, LastModified, ImagePath, LeadDiff, BassDiff, VocalsDiff, DrumsDiff, ProLeadDiff, ProBassDiff FROM Songs";
+                            "SELECT SongId, Title, Artist, ActiveDate, LastModified, ImagePath, LeadDiff, BassDiff, VocalsDiff, DrumsDiff, ProLeadDiff, ProBassDiff, ReleaseYear, Tempo, PlasticGuitarDiff, PlasticBassDiff, PlasticDrumsDiff, ProVocalsDiff FROM Songs";
                         using (var r = await cmd.ExecuteReaderAsync())
                         {
                             while (await r.ReadAsync())
@@ -427,11 +438,25 @@ ProBassScore=$pbScore,ProBassDiff=$pbDiff,ProBassStars=$pbStars,ProBassFC=$pbFC,
                                             pg = r.IsDBNull(10) ? 0 : r.GetInt32(10), // ProLeadDiff
                                             pb = r.IsDBNull(11) ? 0 : r.GetInt32(11), // ProBassDiff
                                         },
+                                        ry = r.IsDBNull(12) ? 0 : r.GetInt32(12), // ReleaseYear
+                                        mt = r.IsDBNull(13) ? 0 : r.GetInt32(13), // Tempo
                                     },
                                     _activeDate = ParseDate(r, 3),
                                     lastModified = ParseDate(r, 4),
                                     imagePath = r.IsDBNull(5) ? null : r.GetString(5),
                                 };
+                                // Map plastic difficulties & pro vocals
+                                if (song.track?.@in != null)
+                                {
+                                    if (!r.IsDBNull(14)) song.track.@in.pg = r.GetInt32(14); // PlasticGuitarDiff
+                                    if (!r.IsDBNull(15)) song.track.@in.pb = r.GetInt32(15); // PlasticBassDiff
+                                    if (!r.IsDBNull(16)) song.track.@in.pd = r.GetInt32(16); // PlasticDrumsDiff
+                                    if (!r.IsDBNull(17))
+                                    {
+                                        var pv = r.GetInt32(17);
+                                        song.track.@in.bd = pv <= 0 ? 0 : pv; // store 0 internally when missing
+                                    }
+                                }
                                 list.Add(song);
                             }
                         }
@@ -472,9 +497,9 @@ ProBassScore=$pbScore,ProBassDiff=$pbDiff,ProBassStars=$pbStars,ProBassFC=$pbFC,
                     {
                         var cmd = conn.CreateCommand();
                         cmd.CommandText =
-                            @"INSERT INTO Songs (SongId, Title, Artist, ActiveDate, LastModified, ImagePath, LeadDiff, BassDiff, VocalsDiff, DrumsDiff, ProLeadDiff, ProBassDiff)
-VALUES ($id,$title,$artist,$active,$modified,$image,$lead,$bass,$vocals,$drums,$plead,$pbass)
-ON CONFLICT(SongId) DO UPDATE SET Title=$title, Artist=$artist, ActiveDate=$active, LastModified=$modified, ImagePath=$image, LeadDiff=$lead, BassDiff=$bass, VocalsDiff=$vocals, DrumsDiff=$drums, ProLeadDiff=$plead, ProBassDiff=$pbass";
+                            @"INSERT INTO Songs (SongId, Title, Artist, ActiveDate, LastModified, ImagePath, LeadDiff, BassDiff, VocalsDiff, DrumsDiff, ProLeadDiff, ProBassDiff, ReleaseYear, Tempo, PlasticGuitarDiff, PlasticBassDiff, PlasticDrumsDiff, ProVocalsDiff)
+VALUES ($id,$title,$artist,$active,$modified,$image,$lead,$bass,$vocals,$drums,$plead,$pbass,$ry,$tempo,$plGtr,$plBass,$plDrums,$proVocals)
+ON CONFLICT(SongId) DO UPDATE SET Title=$title, Artist=$artist, ActiveDate=$active, LastModified=$modified, ImagePath=$image, LeadDiff=$lead, BassDiff=$bass, VocalsDiff=$vocals, DrumsDiff=$drums, ProLeadDiff=$plead, ProBassDiff=$pbass, ReleaseYear=$ry, Tempo=$tempo, PlasticGuitarDiff=$plGtr, PlasticBassDiff=$plBass, PlasticDrumsDiff=$plDrums, ProVocalsDiff=$proVocals";
                         var parms = new[]
                         {
                             "$id",
@@ -489,6 +514,12 @@ ON CONFLICT(SongId) DO UPDATE SET Title=$title, Artist=$artist, ActiveDate=$acti
                             "$drums",
                             "$plead",
                             "$pbass",
+                            "$ry",
+                            "$tempo",
+                            "$plGtr",
+                            "$plBass",
+                            "$plDrums",
+                            "$proVocals",
                         };
                         foreach (var p in parms)
                             cmd.Parameters.Add(new SqliteParameter(p, 0));
@@ -513,6 +544,15 @@ ON CONFLICT(SongId) DO UPDATE SET Title=$title, Artist=$artist, ActiveDate=$acti
                             cmd.Parameters[9].Value = s.track?.@in?.ds ?? 0;
                             cmd.Parameters[10].Value = s.track?.@in?.pg ?? 0;
                             cmd.Parameters[11].Value = s.track?.@in?.pb ?? 0;
+                            cmd.Parameters[12].Value = s.track?.ry ?? 0; // ReleaseYear
+                            cmd.Parameters[13].Value = s.track?.mt ?? 0; // Tempo
+                            // Plastic instrument difficulties: treat original intensity codes as provided by server.
+                            cmd.Parameters[14].Value = s.track?.@in?.pg ?? 0; // PlasticGuitarDiff
+                            cmd.Parameters[15].Value = s.track?.@in?.pb ?? 0; // PlasticBassDiff (re-using pb until clarified)
+                            cmd.Parameters[16].Value = s.track?.@in?.pd ?? 0; // PlasticDrumsDiff
+                            var proVocals = s.track?.@in?.bd ?? 0;
+                            if (proVocals == 0) proVocals = -1; // sentinel when unavailable
+                            cmd.Parameters[17].Value = proVocals; // ProVocalsDiff from bd
                             await cmd.ExecuteNonQueryAsync();
                             count++;
                         }
