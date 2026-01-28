@@ -5,12 +5,48 @@
   xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
   xmlns:pages="clr-namespace:FortniteFestival.LeaderboardScraper.MAUI.Pages"
   Title="Fortnite Festival"
+  x:Name="ThisShell"
+  FlyoutBehavior="Flyout"
+  FlyoutBackgroundColor="#4B0F63"
+  Shell.BackgroundColor="#9d4dbb"
+  Shell.ForegroundColor="White"
+  Shell.TitleColor="White"
+  Shell.UnselectedColor="#CCCCCC"
+  Shell.NavBarIsVisible="False"
+  SizeChanged="OnShellSizeChanged"
 >
-  <TabBar>
-    <ShellContent Title="Process" ContentTemplate="{DataTemplate pages:ProcessPage}" />
-    <ShellContent Title="Songs" ContentTemplate="{DataTemplate pages:SongsPage}" />
-    <ShellContent Title="Scores" ContentTemplate="{DataTemplate pages:ScoresPage}" />
-    <ShellContent Title="Options" ContentTemplate="{DataTemplate pages:OptionsPage}" />
-    <ShellContent Title="Log" ContentTemplate="{DataTemplate pages:LogPage}" />
-  </TabBar>
+  <Shell.FlyoutHeader>
+    <Grid BackgroundColor="#4B0F63" HeightRequest="120" Padding="16">
+      <VerticalStackLayout VerticalOptions="Center">
+        <Label Text="🎸 Fortnite Festival" 
+               FontSize="20" 
+               FontAttributes="Bold" 
+               TextColor="White" />
+        <Label Text="Leaderboard Scraper" 
+               FontSize="14" 
+               TextColor="#CCCCCC" 
+               Margin="0,4,0,0" />
+      </VerticalStackLayout>
+    </Grid>
+  </Shell.FlyoutHeader>
+
+  <Shell.FlyoutFooter>
+    <Grid HeightRequest="1" />
+  </Shell.FlyoutFooter>
+
+  <FlyoutItem Title="Songs" Icon="music.png" Route="songs">
+    <ShellContent ContentTemplate="{DataTemplate pages:SongsPage}" />
+  </FlyoutItem>
+
+  <FlyoutItem Title="Suggestions" Icon="lightbulb.png" Route="suggestions">
+    <ShellContent ContentTemplate="{DataTemplate pages:SuggestionsPage}" />
+  </FlyoutItem>
+
+  <FlyoutItem Title="Statistics" Icon="chart.png" Route="statistics">
+    <ShellContent ContentTemplate="{DataTemplate pages:StatisticsPage}" />
+  </FlyoutItem>
+
+  <FlyoutItem Title="Settings" Icon="settings.png" Route="settings">
+    <ShellContent ContentTemplate="{DataTemplate pages:SettingsPage}" />
+  </FlyoutItem>
 </Shell>

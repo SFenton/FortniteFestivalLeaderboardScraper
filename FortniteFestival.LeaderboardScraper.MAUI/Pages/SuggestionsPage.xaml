@@ -1,21 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
-             xmlns:controls="clr-namespace:FortniteFestival.LeaderboardScraper.MAUI.Controls"
              x:Class="FortniteFestival.LeaderboardScraper.MAUI.Pages.SuggestionsPage"
-             BackgroundColor="#9d4dbb">
-  <controls:DrawerLayout x:Name="DrawerRoot">
-    <controls:DrawerLayout.PageContent>
-      <Grid>
-        <ScrollView x:Name="MainScroll" Scrolled="OnScrolled">
-          <VerticalStackLayout x:Name="ContentStack" Spacing="18" Padding="16,8,16,32" />
-        </ScrollView>
-        <VerticalStackLayout x:Name="EmptyState" Spacing="8" HorizontalOptions="Center" VerticalOptions="Center">
-          <Label Text="No Suggestions Available" FontFamily="NotoSansBold" FontSize="20" HorizontalTextAlignment="Center" />
-          <Label Text="Sync your scores to generate suggestions on what to play next." FontSize="13" Opacity="0.85" HorizontalTextAlignment="Center" />
-        </VerticalStackLayout>
-        <ActivityIndicator x:Name="LoadingIndicator" IsRunning="False" IsVisible="False" HorizontalOptions="Center" VerticalOptions="End" Margin="0,0,0,8" />
-      </Grid>
-    </controls:DrawerLayout.PageContent>
-  </controls:DrawerLayout>
+             Title="Suggestions"
+             BackgroundColor="{StaticResource PageBackground}">
+  <Shell.BackButtonBehavior>
+    <BackButtonBehavior IsVisible="False" IsEnabled="False" />
+  </Shell.BackButtonBehavior>
+  <Shell.NavBarIsVisible>False</Shell.NavBarIsVisible>
+  <Grid Padding="{StaticResource PagePadding}">
+    <Label x:Name="PageTitle" Text="Suggestions" FontFamily="NotoSansBold" FontAttributes="Bold" FontSize="28" TextColor="White" VerticalOptions="Start" Margin="0,0,0,12" />
+    <ScrollView x:Name="MainScroll" Scrolled="OnScrolled" Margin="0,44,0,0" IsVisible="False">
+      <VerticalStackLayout x:Name="ContentStack" Spacing="18" Padding="0,0,0,32" />
+    </ScrollView>
+    <VerticalStackLayout x:Name="EmptyState" Spacing="8" HorizontalOptions="Center" VerticalOptions="Center" IsVisible="False">
+      <Label Text="No Suggestions Available" FontFamily="NotoSansBold" FontSize="20" HorizontalTextAlignment="Center" TextColor="White" />
+      <Label Text="Sync your scores to generate suggestions on what to play next." FontSize="13" Opacity="0.85" HorizontalTextAlignment="Center" TextColor="White" />
+    </VerticalStackLayout>
+    <ActivityIndicator x:Name="LoadingSpinner" IsRunning="True" IsVisible="True" WidthRequest="56" HeightRequest="56" Color="White" HorizontalOptions="Center" VerticalOptions="Center" />
+    <!-- Loading indicator for infinite scroll -->
+    <ActivityIndicator x:Name="LoadingIndicator" IsRunning="False" IsVisible="False" WidthRequest="32" HeightRequest="32" Color="White" HorizontalOptions="Center" VerticalOptions="End" Margin="0,0,0,48" />
+  </Grid>
 </ContentPage>

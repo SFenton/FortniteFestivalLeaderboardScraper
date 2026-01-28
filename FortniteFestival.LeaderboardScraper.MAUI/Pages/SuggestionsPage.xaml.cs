@@ -1,8 +1,13 @@
 using FortniteFestival.Core.Services;
 using FortniteFestival.Core;
+using FortniteFestival.Core.Config;
+using FortniteFestival.Core.Persistence;
 using FortniteFestival.Core.Suggestions;
 using System.Linq;
+using System.Diagnostics;
 using FortniteFestival.LeaderboardScraper.MAUI.ViewModels;
+using FortniteFestival.LeaderboardScraper.MAUI.Converters;
+using FortniteFestival.LeaderboardScraper.MAUI.Helpers;
 using System.Collections.ObjectModel;
 using Microsoft.Maui.Controls.Shapes;
 
@@ -11,28 +16,91 @@ namespace FortniteFestival.LeaderboardScraper.MAUI.Pages;
 public partial class SuggestionsPage : ContentPage
 {
     private readonly IFestivalService _service;
+    private readonly ISettingsPersistence _settingsPersistence;
+    private Settings? _settings;
     private SuggestionGenerator _generator;
+    private readonly object _generatorLock = new object();
     private bool _isLoading;
-    private bool _endReached; // when generator exhausted
+    private bool _endReached;
     private const int InitialBatchSize = 10;
     private const int SubsequentBatchSize = 4;
 
-    public SuggestionsPage(IFestivalService service)
+    public SuggestionsPage(IFestivalService service, ISettingsPersistence settingsPersistence)
     {
         InitializeComponent();
         _service = service;
-        DrawerRoot.Service = service; // supply service to drawer for suggestions visibility + navigation
+        _settingsPersistence = settingsPersistence;
         _generator = new SuggestionGenerator(service);
         ApplyState();
-        try { _service.ScoreUpdated += OnScoreUpdated; } catch { }
-    SizeChanged += OnSizeChanged;
+        _service.ScoreUpdated += OnScoreUpdated;
+        SizeChanged += OnSizeChanged;
+    }
+
+    protected override void OnDisappearing()
+    {
+        base.OnDisappearing();
+        try
+        {
+            _service.ScoreUpdated -= OnScoreUpdated;
+            SizeChanged -= OnSizeChanged;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[SuggestionsPage] Error unsubscribing events: {ex.Message}");
+        }
+    }
+
+    protected override void OnAppearing()
+    {
+        base.OnAppearing();
+        _service.ScoreUpdated += OnScoreUpdated;
+        SizeChanged += OnSizeChanged;
+        
+        // Show spinner and hide content while loading
+        LoadingSpinner.IsVisible = true;
+        LoadingSpinner.IsRunning = true;
+        MainScroll.IsVisible = false;
+        EmptyState.IsVisible = false;
+        
+        // Run heavy work on background thread
+        _ = Task.Run(async () => await RefreshSuggestionsAsync());
+    }
+
+    private async Task RefreshSuggestionsAsync()
+    {
+        // Load settings to filter by enabled instruments
+        _settings = await _settingsPersistence.LoadSettingsAsync() ?? new Settings();
+        
+        lock (_generatorLock)
+        {
+            _generator = new SuggestionGenerator(_service);
+        }
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            ContentStack.Children.Clear();
+            _endReached = false;
+            ApplyState();
+        });
+    }
+
+    private void RefreshSuggestions()
+    {
+        lock (_generatorLock)
+        {
+            _generator = new SuggestionGenerator(_service);
+        }
+        ContentStack.Children.Clear();
+        _endReached = false;
+        ApplyState();
     }
 
     private void ApplyState()
     {
         bool hasAny = _service.ScoresIndex != null && _service.ScoresIndex.Count > 0;
         EmptyState.IsVisible = !hasAny;
-        ContentStack.IsVisible = hasAny;
+        MainScroll.IsVisible = hasAny;
+        LoadingSpinner.IsVisible = false;
+        LoadingSpinner.IsRunning = false;
         if (!hasAny) return; // keep empty state
         if (ContentStack.Children.Count == 0)
         {
@@ -55,32 +123,54 @@ public partial class SuggestionsPage : ContentPage
     {
         if (_isLoading) return;
         _isLoading = true;
-        LoadingIndicator.IsVisible = true;
-        LoadingIndicator.IsRunning = true;
-        try
+        
+        // Run on background thread
+        Task.Run(() =>
         {
-            int remaining = InitialBatchSize;
-            while (remaining > 0)
+            try
             {
-                var next = _generator.GetNext(remaining).ToList();
-                if (next.Count == 0)
+                var categoriesToAdd = new List<View>();
+                int remaining = InitialBatchSize;
+                while (remaining > 0)
                 {
-                    _endReached = true;
-                    break;
+                    List<SuggestionCategory> next;
+                    lock (_generatorLock)
+                    {
+                        next = _generator.GetNext(remaining).ToList();
+                    }
+                    if (next.Count == 0)
+                    {
+                        _endReached = true;
+                        break;
+                    }
+                    foreach (var cat in next)
+                    {
+                        // Skip categories for disabled instruments
+                        if (!ShouldShowCategory(cat))
+                            continue;
+                        
+                        // Build view on main thread
+                        View view = null;
+                        MainThread.InvokeOnMainThreadAsync(() => view = BuildCategoryView(cat)).Wait();
+                        categoriesToAdd.Add(view);
+                    }
+                    remaining -= next.Count;
                 }
-                foreach (var cat in next) ContentStack.Children.Add(BuildCategoryView(cat));
-                remaining -= next.Count;
-                // Safety break to avoid infinite loop if generator misbehaves
-                if (next.Count == 0) break;
+                
+                // Update UI on main thread
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    foreach (var v in categoriesToAdd)
+                        ContentStack.Children.Add(v);
+                    _isLoading = false;
+                });
             }
-        }
-        finally
-        {
-            LoadingIndicator.IsRunning = false;
-            LoadingIndicator.IsVisible = false;
-            _isLoading = false;
-            ContentStack.IsVisible = ContentStack.Children.Count > 0;
-        }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[SuggestionsPage] Error loading initial suggestions: {ex.Message}");
+                MainThread.BeginInvokeOnMainThread(() => _isLoading = false);
+            }
+        });
     }
 
     private void LoadMore()
@@ -89,31 +179,65 @@ public partial class SuggestionsPage : ContentPage
         _isLoading = true;
         LoadingIndicator.IsVisible = true;
         LoadingIndicator.IsRunning = true;
-        try
+        
+        // Run on background thread
+        Task.Run(() =>
         {
-            int remaining = SubsequentBatchSize;
-            while (remaining > 0)
+            try
             {
-                var next = _generator.GetNext(remaining).ToList();
-                if (next.Count == 0) { _endReached = true; break; }
-                foreach (var cat in next) ContentStack.Children.Add(BuildCategoryView(cat));
-                remaining -= next.Count;
-                if (next.Count == 0) break;
+                var categoriesToAdd = new List<View>();
+                int remaining = SubsequentBatchSize;
+                while (remaining > 0)
+                {
+                    List<SuggestionCategory> next;
+                    lock (_generatorLock)
+                    {
+                        next = _generator.GetNext(remaining).ToList();
+                    }
+                    if (next.Count == 0) { _endReached = true; break; }
+                    foreach (var cat in next)
+                    {
+                        // Skip categories for disabled instruments
+                        if (!ShouldShowCategory(cat))
+                            continue;
+                        
+                        View view = null;
+                        MainThread.InvokeOnMainThreadAsync(() => view = BuildCategoryView(cat)).Wait();
+                        categoriesToAdd.Add(view);
+                    }
+                    remaining -= next.Count;
+                }
+                // If pipeline exhausted, reset for endless feed
+                if (_endReached)
+                {
+                    lock (_generatorLock)
+                    {
+                        _generator.ResetForEndless();
+                    }
+                    _endReached = false;
+                }
+                
+                // Update UI on main thread
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    foreach (var v in categoriesToAdd)
+                        ContentStack.Children.Add(v);
+                    LoadingIndicator.IsRunning = false;
+                    LoadingIndicator.IsVisible = false;
+                    _isLoading = false;
+                });
             }
-            // If we have fewer than 6 categories remaining unseen (i.e., pipeline near exhaustion), reset for endless feed.
-            if (_endReached)
+            catch (Exception ex)
             {
-                _generator.ResetForEndless();
-                _endReached = false;
+                Debug.WriteLine($"[SuggestionsPage] Error loading more suggestions: {ex.Message}");
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    LoadingIndicator.IsRunning = false;
+                    LoadingIndicator.IsVisible = false;
+                    _isLoading = false;
+                });
             }
-        }
-        finally
-        {
-            LoadingIndicator.IsRunning = false;
-            LoadingIndicator.IsVisible = false;
-            _isLoading = false;
-            ContentStack.IsVisible = ContentStack.Children.Count > 0;
-        }
+        });
     }
 
     private View BuildCategoryView(SuggestionCategory cat)
@@ -127,6 +251,8 @@ public partial class SuggestionsPage : ContentPage
             {
                 var row = new SongDisplayRow(song, _service) { UseCompactLayout = Width < 900 };
                 row.RefreshScore(_service); // ensure instrument statuses populate
+                if (_settings != null)
+                    row.ApplySettingsFilter(_settings);
                 rows.Add(row);
             }
         }
@@ -168,7 +294,7 @@ public partial class SuggestionsPage : ContentPage
                 var circle = new Border { StrokeShape = new Ellipse(), WidthRequest = 48, HeightRequest = 48, StrokeThickness = 3 };
                 circle.SetBinding(VisualElement.IsVisibleProperty, "ShowCircle");
                 circle.SetBinding(Border.BackgroundColorProperty, "CircleFillColor");
-                circle.SetBinding(Border.StrokeProperty, "CircleStrokeColor");
+                circle.SetBinding(Border.StrokeProperty, "CircleStrokeBrush");
                 g.Add(circle);
                 var icon = new Image { WidthRequest = 40, HeightRequest = 40, HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center };
                 icon.SetBinding(Image.SourceProperty, "Icon");
@@ -192,7 +318,7 @@ public partial class SuggestionsPage : ContentPage
 
             // Visibility bindings (match HomePage logic using UseCompactLayout)
             // Manual inversion since we can't easily access the XAML converter resource from here
-            wide.SetBinding(VisualElement.IsVisibleProperty, new Binding("UseCompactLayout", converter: new BoolInvertConverter()));
+            wide.SetBinding(VisualElement.IsVisibleProperty, new Binding("UseCompactLayout", converter: new InverseBoolConverter()));
             compact.SetBinding(VisualElement.IsVisibleProperty, "UseCompactLayout");
 
             root.Add(wide);
@@ -209,25 +335,14 @@ public partial class SuggestionsPage : ContentPage
         };
 
         // Container padding tuned so left edge of song text aligns with list rows on Songs page (hamburger uses 12px + header grid padding)
-        var container = new Border
-        {
-            StrokeShape = new RoundRectangle { CornerRadius = 18 },
-            BackgroundColor = Color.FromArgb("#b35cd6"),
-            Padding = new Thickness(16, 14, 16, 14),
-            Content = new VerticalStackLayout { Spacing = 12, Children = { header, collection } }
-        };
+        var container = LayoutConstants.CreateCard(
+            new VerticalStackLayout { Spacing = 12, Children = { header, collection } });
         return container;
     }
 
     private void OnSizeChanged(object? sender, EventArgs e)
     {
         bool compact = Width < 900;
-        // Adjust outer padding to align with hamburger (which uses 12 horizontal padding)
-        if (ContentStack != null)
-        {
-            // Horizontal 16 here pairs with container internal 16 to visually align with 12px hamburger + its label width; compact reduces slightly
-            ContentStack.Padding = compact ? new Thickness(12,6,12,24) : new Thickness(16,8,16,32);
-        }
         // Update existing rows' compact flag
         if (ContentStack == null) return;
         foreach (var border in ContentStack.Children.OfType<Border>())
@@ -273,9 +388,22 @@ public partial class SuggestionsPage : ContentPage
             var order = new List<string> { "guitar","drums","vocals","bass","pro_guitar","pro_bass" };
             var vm = new SongInfoViewModel(row, order, _service);
             var page = new SongInfoPage(vm);
-            MainThread.BeginInvokeOnMainThread(async () => { try { await Navigation.PushAsync(page); } catch { } });
+            MainThread.BeginInvokeOnMainThread(async () =>
+            {
+                try
+                {
+                    await Shell.Current.Navigation.PushAsync(page);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[SuggestionsPage] Navigation error: {ex.Message}");
+                }
+            });
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[SuggestionsPage] Error creating song info page: {ex.Message}");
+        }
     }
 
     private void NavigateToSong(string songId)
@@ -284,16 +412,32 @@ public partial class SuggestionsPage : ContentPage
         if (song == null) return;
         NavigateToRow(new SongDisplayRow(song, _service) { UseCompactLayout = Width < 900 });
     }
-}
 
-internal class BoolInvertConverter : IValueConverter
-{
-    public object? Convert(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture)
+    /// <summary>
+    /// Checks if a suggestion category should be shown based on sync settings.
+    /// Categories targeting a specific instrument (via Key) are filtered out if that instrument is disabled.
+    /// </summary>
+    private bool ShouldShowCategory(SuggestionCategory cat)
     {
-        if (value is bool b) return !b; return true;
-    }
-    public object? ConvertBack(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture)
-    {
-        if (value is bool b) return !b; return false;
+        if (_settings == null) return true;
+        
+        var key = cat.Key ?? string.Empty;
+        
+        // Check for instrument-specific categories based on key patterns
+        if (key.Contains("_guitar") && !key.Contains("pro_guitar"))
+            return _settings.QueryLead;
+        if (key.Contains("_bass") && !key.Contains("pro_bass"))
+            return _settings.QueryBass;
+        if (key.Contains("_drums"))
+            return _settings.QueryDrums;
+        if (key.Contains("_vocals"))
+            return _settings.QueryVocals;
+        if (key.Contains("_pro_guitar") || key.Contains("pro_guitar"))
+            return _settings.QueryProLead;
+        if (key.Contains("_pro_bass") || key.Contains("pro_bass"))
+            return _settings.QueryProBass;
+        
+        // General categories are always shown
+        return true;
     }
 }

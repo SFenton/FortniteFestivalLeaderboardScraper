@@ -13,10 +13,11 @@ public partial class HomePage : ContentPage
     public SongsViewModel SongsViewModel { get; }
     private readonly HomePageViewModel _vm;
     private string _pendingExchangeCode = string.Empty;
+    // Width-lock fields for Update Scores button so width stays stable when swapping label/spinner.
     private bool _updateButtonWidthLocked;
     private double _updateButtonWidth;
     // In-place navigation additions
-    private enum Section { Songs, Suggestions, Statistics, Settings }
+    private enum Section { Songs, Suggestions, Statistics }
     private Section _currentSection = Section.Songs;
     private FortniteFestival.Core.Suggestions.SuggestionGenerator? _suggestionGenerator;
     private bool _suggestionsLoading;
@@ -29,6 +30,9 @@ public partial class HomePage : ContentPage
     // Sort snapshot
     private bool _snapSortTitle, _snapSortArtist, _snapSortHasFC;
     private List<string> _snapInstrumentOrder = new();
+    // Statistics ViewModel and staleness tracking
+    private StatisticsViewModel? _statsVm;
+    private bool _statsStale = true;
 
     public HomePage(ProcessViewModel processVm, SongsViewModel songsVm)
     {
@@ -38,7 +42,7 @@ public partial class HomePage : ContentPage
         _vm = new HomePageViewModel(processVm, songsVm);
         BindingContext = _vm;
         _processVm.PropertyChanged += ProcessVmOnPropertyChanged;
-    // Capture initial width of Update Scores button once laid out
+    // Capture initial width of Update Scores button once laid out.
     UpdateScoresButton.SizeChanged += OnUpdateScoresButtonSizeChanged;
     SizeChanged += (_, _) =>
         {
@@ -46,15 +50,21 @@ public partial class HomePage : ContentPage
             AdaptSuggestionsForWidth();
         };
     UpdateSuggestionsVisibility();
-    try { SongsViewModel.Service.ScoreUpdated += OnAnyScoreUpdated; } catch { }
     }
 
     protected override async void OnAppearing()
     {
         base.OnAppearing();
+        try { SongsViewModel.Service.ScoreUpdated += OnAnyScoreUpdated; } catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[HomePage] Error subscribing to ScoreUpdated: {ex.Message}"); }
         SongsViewModel.Refresh();
         await EnsureInitializedWithRetryAsync();
-    SongsViewModel.AdaptForWidth(Width);
+        SongsViewModel.AdaptForWidth(Width);
+    }
+
+    protected override void OnDisappearing()
+    {
+        base.OnDisappearing();
+        try { SongsViewModel.Service.ScoreUpdated -= OnAnyScoreUpdated; } catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[HomePage] Error unsubscribing from ScoreUpdated: {ex.Message}"); }
     }
 
     private async Task EnsureInitializedWithRetryAsync()
@@ -107,12 +117,19 @@ public partial class HomePage : ContentPage
         UpdateScoresButton.Opacity = fetching ? 0.7 : 1.0;
         UpdateScoresButton.InputTransparent = fetching; // disable interaction
         if (UpdateScoresLabel != null)
-            UpdateScoresLabel.IsVisible = !fetching;
+            UpdateScoresLabel.IsVisible = !fetching; // hide text while spinner shows
         if (UpdateScoresSpinner != null)
         {
             UpdateScoresSpinner.IsVisible = fetching;
             UpdateScoresSpinner.IsRunning = fetching;
+            if (fetching)
+            {
+                UpdateScoresSpinner.HorizontalOptions = LayoutOptions.Center;
+                UpdateScoresSpinner.VerticalOptions = LayoutOptions.Center;
+            }
         }
+        // Songs section stays visible during fetch - users can navigate, sort, filter
+        // Individual rows show spinners via IsUpdating binding
         // Reapply locked width so layout changes don't affect it
         if (_updateButtonWidthLocked)
             UpdateScoresButton.WidthRequest = _updateButtonWidth;
@@ -263,8 +280,8 @@ public partial class HomePage : ContentPage
     {
         if (_updateButtonWidthLocked)
             return;
-        if (UpdateScoresButton.Width <= 0 || UpdateScoresLabel == null || !UpdateScoresLabel.IsVisible)
-            return; // wait until label is visible and width measured
+    if (UpdateScoresButton.Width <= 0 || UpdateScoresLabel == null || !UpdateScoresLabel.IsVisible)
+            return; // wait until label is visible (opacity 1) and width measured
         _updateButtonWidth = UpdateScoresButton.Width;
         UpdateScoresButton.WidthRequest = _updateButtonWidth;
         _updateButtonWidthLocked = true;
@@ -382,6 +399,7 @@ public partial class HomePage : ContentPage
 
     private void OnAnyScoreUpdated(LeaderboardData _)
     {
+        _statsStale = true; // Mark statistics as needing refresh
         MainThread.BeginInvokeOnMainThread(UpdateSuggestionsVisibility);
     }
 
@@ -408,7 +426,21 @@ public partial class HomePage : ContentPage
     {
         await AnimatePressAsync((VisualElement)sender);
         NavDrawerOverlay.IsVisible = false;
-        SwitchSection(Section.Settings);
+        // Navigate to the real SettingsPage instead of in-place section
+        try
+        {
+            var service = SongsViewModel.Service;
+            if (service == null)
+            {
+                System.Diagnostics.Debug.WriteLine("[HomePage] Cannot navigate to Settings: Service is null");
+                return;
+            }
+            await Navigation.PushAsync(new SettingsPage(service));
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[HomePage] Error navigating to Settings: {ex}");
+        }
     }
 
     private async void OnNavStatisticsTapped(object sender, TappedEventArgs e)
@@ -486,7 +518,6 @@ public partial class HomePage : ContentPage
     if (SongsSection != null) SongsSection.IsVisible = target == Section.Songs;
         SuggestionsSection.IsVisible = target == Section.Suggestions;
         StatisticsSection.IsVisible = target == Section.Statistics;
-        SettingsSection.IsVisible = target == Section.Settings;
         if (target == Section.Suggestions)
         {
             EnsureSuggestionGenerator();
@@ -504,6 +535,13 @@ public partial class HomePage : ContentPage
             else
             {
                 HideSuggestionsInitialOverlay();
+            }
+        }
+        else if (target == Section.Statistics)
+        {
+            if (_statsStale || StatisticsContentStack.Children.Count == 0)
+            {
+                RebuildStatisticsFromViewModel();
             }
         }
     }
@@ -626,7 +664,7 @@ public partial class HomePage : ContentPage
                 var circle = new Border { StrokeShape = new Ellipse(), WidthRequest = 48, HeightRequest = 48, StrokeThickness = 3 };
                 circle.SetBinding(VisualElement.IsVisibleProperty, "ShowCircle");
                 circle.SetBinding(Border.BackgroundColorProperty, "CircleFillColor");
-                circle.SetBinding(Border.StrokeProperty, "CircleStrokeColor");
+                circle.SetBinding(Border.StrokeProperty, "CircleStrokeBrush");
                 g.Add(circle);
                 var icon = new Image { WidthRequest = 40, HeightRequest = 40, HorizontalOptions = LayoutOptions.Center, VerticalOptions = LayoutOptions.Center };
                 icon.SetBinding(Image.SourceProperty, "Icon");
@@ -724,4 +762,335 @@ public partial class HomePage : ContentPage
         public object? Convert(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture) => value is bool b ? !b : true;
         public object? ConvertBack(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture) => value is bool b ? !b : false;
     }
+
+    // ===================== Statistics =====================
+    private void RebuildStatisticsFromViewModel()
+    {
+        try
+        {
+            // Ensure ViewModel exists
+            if (_statsVm == null && SongsViewModel.Service != null)
+                _statsVm = new StatisticsViewModel(SongsViewModel.Service);
+
+            if (_statsVm == null) return;
+
+            // Clear existing UI
+            StatisticsContentStack.Children.Clear();
+
+            // Refresh data
+            _statsVm.Refresh();
+            _statsStale = false;
+
+            if (!_statsVm.HasData)
+            {
+                StatisticsContentStack.Children.Add(new Label
+                {
+                    Text = "No statistics available. Sync your scores first.",
+                    FontSize = 16,
+                    FontAttributes = FontAttributes.Italic,
+                    TextColor = Colors.White,
+                    HorizontalOptions = LayoutOptions.Center,
+                    VerticalOptions = LayoutOptions.Center
+                });
+                return;
+            }
+
+            // Build per-instrument detailed cards
+            foreach (var instStats in _statsVm.InstrumentStats)
+            {
+                StatisticsContentStack.Children.Add(BuildInstrumentDetailedCard(instStats));
+            }
+
+            // Build Top Songs categories
+            foreach (var cat in _statsVm.TopSongCategories)
+                StatisticsContentStack.Children.Add(BuildSuggestionCategoryView(cat));
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[HomePage] Error building statistics: {ex.Message}");
+        }
+    }
+
+    private View BuildInstrumentDetailedCard(InstrumentDetailedStats stats)
+    {
+        var container = new VerticalStackLayout { Spacing = 10 };
+
+        // Header with icon and instrument name
+        var headerGrid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitionCollection
+            {
+                new ColumnDefinition { Width = GridLength.Auto },
+                new ColumnDefinition { Width = GridLength.Star }
+            },
+            ColumnSpacing = 12
+        };
+
+        var icon = new Image
+        {
+            Source = stats.Icon,
+            WidthRequest = 48,
+            HeightRequest = 48,
+            Aspect = Aspect.AspectFit
+        };
+        headerGrid.Children.Add(icon);
+
+        var headerText = new VerticalStackLayout { Spacing = 2, VerticalOptions = LayoutOptions.Center };
+        headerText.Children.Add(new Label
+        {
+            Text = stats.InstrumentLabel,
+            FontFamily = "NotoSansBold",
+            FontSize = 22,
+            TextColor = Colors.White
+        });
+        headerText.Children.Add(new Label
+        {
+            Text = $"{stats.SongsPlayed} of {stats.TotalSongsInLibrary} songs played ({stats.CompletionPercent:F1}%)",
+            FontSize = 13,
+            Opacity = 0.85,
+            TextColor = Colors.White
+        });
+        headerGrid.Children.Add(headerText);
+        Grid.SetColumn(headerText, 1);
+        container.Children.Add(headerGrid);
+
+        // Two-column stats layout
+        var statsGrid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitionCollection
+            {
+                new ColumnDefinition { Width = GridLength.Star },
+                new ColumnDefinition { Width = GridLength.Star }
+            },
+            ColumnSpacing = 16,
+            RowSpacing = 6
+        };
+
+        int row = 0;
+
+        // Row 0: FCs & Gold Stars
+        AddStatCell(statsGrid, "FCs", $"{stats.FcCount} ({stats.FcPercent:F1}%)", 0, row);
+        AddStatCell(statsGrid, "Gold Stars", $"{stats.GoldStarCount}", 1, row);
+        row++;
+
+        // Row 1: 5-Star & 4-Star
+        AddStatCell(statsGrid, "5 Stars", $"{stats.FiveStarCount}", 0, row);
+        AddStatCell(statsGrid, "4 Stars", $"{stats.FourStarCount}", 1, row);
+        row++;
+
+        // Row 2: Accuracy
+        AddStatCell(statsGrid, "Avg Accuracy", $"{stats.AverageAccuracy:F2}%", 0, row);
+        AddStatCell(statsGrid, "Best Accuracy", $"{stats.BestAccuracy:F2}%", 1, row);
+        row++;
+
+        // Row 3: Perfect scores
+        AddStatCell(statsGrid, "Perfect Scores", $"{stats.PerfectScoreCount}", 0, row);
+        AddStatCell(statsGrid, "Avg Stars", $"{stats.AverageStars:F2}", 1, row);
+        row++;
+
+        // Row 4: Scores
+        AddStatCell(statsGrid, "Total Score", FormatScore(stats.TotalScore), 0, row);
+        AddStatCell(statsGrid, "Highest Score", FormatScore(stats.HighestScore), 1, row);
+        row++;
+
+        // Row 5: Leaderboard rank
+        if (stats.BestRank > 0)
+            AddStatCell(statsGrid, "Best Rank", $"#{stats.BestRank:N0}", 0, row);
+        else
+            AddStatCell(statsGrid, "Best Rank", "—", 0, row);
+
+        if (!double.IsNaN(stats.WeightedPercentile))
+            AddStatCell(statsGrid, "Weighted Percentile", FormatPercentile(stats.WeightedPercentile), 1, row);
+        else
+            AddStatCell(statsGrid, "Weighted Percentile", "—", 1, row);
+        row++;
+
+        container.Children.Add(statsGrid);
+
+        // Percentile distribution bar
+        if (stats.SongsPlayed > 0)
+        {
+            container.Children.Add(new Label
+            {
+                Text = "Percentile Distribution",
+                FontFamily = "NotoSansBold",
+                FontSize = 14,
+                TextColor = Colors.White,
+                Margin = new Thickness(0, 8, 0, 4)
+            });
+
+            container.Children.Add(BuildPercentileDistributionBar(stats));
+            container.Children.Add(BuildPercentileDistributionLegend(stats));
+        }
+
+        var border = new Border
+        {
+            StrokeShape = new RoundRectangle { CornerRadius = 18 },
+            BackgroundColor = GetInstrumentColor(stats.InstrumentKey),
+            Padding = new Thickness(16, 14),
+            Content = container
+        };
+
+        return border;
+    }
+
+    private static void AddStatCell(Grid grid, string label, string value, int col, int row)
+    {
+        // Ensure grid has enough rows
+        while (grid.RowDefinitions.Count <= row)
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var stack = new VerticalStackLayout { Spacing = 0 };
+        stack.Children.Add(new Label
+        {
+            Text = value,
+            FontFamily = "NotoSansBold",
+            FontSize = 17,
+            TextColor = Colors.White
+        });
+        stack.Children.Add(new Label
+        {
+            Text = label,
+            FontSize = 11,
+            Opacity = 0.75,
+            TextColor = Colors.White
+        });
+
+        grid.Children.Add(stack);
+        Grid.SetColumn(stack, col);
+        Grid.SetRow(stack, row);
+    }
+
+    private static string FormatScore(double score)
+    {
+        if (score >= 1_000_000_000) return $"{score / 1_000_000_000:F2}B";
+        if (score >= 1_000_000) return $"{score / 1_000_000:F2}M";
+        if (score >= 1_000) return $"{score / 1_000:F1}K";
+        return $"{score:N0}";
+    }
+
+    private static string FormatPercentile(double rawPercentile)
+    {
+        double topPct = Math.Max(0.01, Math.Min(100.0, rawPercentile * 100.0));
+        if (topPct < 1) return $"Top {topPct:F2}%";
+        return $"Top {topPct:F0}%";
+    }
+
+    private static View BuildPercentileDistributionBar(InstrumentDetailedStats stats)
+    {
+        var total = stats.Top1PercentCount + stats.Top5PercentCount + stats.Top10PercentCount +
+                    stats.Top25PercentCount + stats.Top50PercentCount + stats.Below50PercentCount;
+
+        if (total == 0)
+            return new BoxView { HeightRequest = 20, BackgroundColor = Colors.Gray, CornerRadius = 4 };
+
+        var barGrid = new Grid
+        {
+            ColumnSpacing = 1,
+            HeightRequest = 24,
+            HorizontalOptions = LayoutOptions.Fill
+        };
+
+        var segments = new (int count, Color color)[]
+        {
+            (stats.Top1PercentCount, Color.FromArgb("#FFD700")),   // Gold
+            (stats.Top5PercentCount, Color.FromArgb("#C0C0C0")),   // Silver
+            (stats.Top10PercentCount, Color.FromArgb("#CD7F32")),  // Bronze
+            (stats.Top25PercentCount, Color.FromArgb("#4CAF50")),  // Green
+            (stats.Top50PercentCount, Color.FromArgb("#2196F3")),  // Blue
+            (stats.Below50PercentCount, Color.FromArgb("#9E9E9E")) // Gray
+        };
+
+        int colIndex = 0;
+        foreach (var (count, color) in segments)
+        {
+            if (count <= 0) continue;
+
+            double width = (count / (double)total);
+            barGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(width, GridUnitType.Star) });
+
+            var box = new BoxView
+            {
+                BackgroundColor = color,
+                CornerRadius = colIndex == 0 ? new CornerRadius(4, 0, 0, 4) :
+                               (colIndex == segments.Count(s => s.count > 0) - 1 ? new CornerRadius(0, 4, 4, 0) : 0)
+            };
+            barGrid.Children.Add(box);
+            Grid.SetColumn(box, colIndex);
+            colIndex++;
+        }
+
+        var border = new Border
+        {
+            StrokeShape = new RoundRectangle { CornerRadius = 4 },
+            Stroke = Colors.Transparent,
+            BackgroundColor = Colors.Transparent,
+            Content = barGrid
+        };
+
+        return border;
+    }
+
+    private static View BuildPercentileDistributionLegend(InstrumentDetailedStats stats)
+    {
+        var legend = new FlexLayout
+        {
+            Wrap = Microsoft.Maui.Layouts.FlexWrap.Wrap,
+            JustifyContent = Microsoft.Maui.Layouts.FlexJustify.Start,
+            AlignItems = Microsoft.Maui.Layouts.FlexAlignItems.Center
+        };
+
+        var items = new (string label, int count, Color color)[]
+        {
+            ("Top 1%", stats.Top1PercentCount, Color.FromArgb("#FFD700")),
+            ("Top 5%", stats.Top5PercentCount, Color.FromArgb("#C0C0C0")),
+            ("Top 10%", stats.Top10PercentCount, Color.FromArgb("#CD7F32")),
+            ("Top 25%", stats.Top25PercentCount, Color.FromArgb("#4CAF50")),
+            ("Top 50%", stats.Top50PercentCount, Color.FromArgb("#2196F3")),
+            ("50%+", stats.Below50PercentCount, Color.FromArgb("#9E9E9E"))
+        };
+
+        foreach (var (label, count, color) in items)
+        {
+            if (count <= 0) continue;
+
+            var item = new HorizontalStackLayout { Spacing = 4, Margin = new Thickness(0, 0, 12, 4) };
+            item.Children.Add(new BoxView { BackgroundColor = color, WidthRequest = 12, HeightRequest = 12, CornerRadius = 2 });
+            item.Children.Add(new Label
+            {
+                Text = $"{label}: {count}",
+                FontSize = 11,
+                TextColor = Colors.White,
+                Opacity = 0.9
+            });
+            legend.Children.Add(item);
+        }
+
+        return legend;
+    }
+
+    private static Color GetInstrumentColor(string key)
+    {
+        return key switch
+        {
+            "guitar" => Color.FromArgb("#b35cd6"),      // Purple (Lead)
+            "bass" => Color.FromArgb("#3498db"),        // Blue
+            "drums" => Color.FromArgb("#e74c3c"),       // Red
+            "vocals" => Color.FromArgb("#27ae60"),      // Green
+            "pro_guitar" => Color.FromArgb("#9b59b6"),  // Deep Purple
+            "pro_bass" => Color.FromArgb("#2980b9"),    // Deep Blue
+            _ => Color.FromArgb("#7f8c8d")              // Gray fallback
+        };
+    }
+
+    private static string KeyToLabel(string key) => key switch
+    {
+        "guitar" => "Lead",
+        "bass" => "Bass",
+        "drums" => "Drums",
+        "vocals" => "Vocals",
+        "pro_guitar" => "Pro Guitar",
+        "pro_bass" => "Pro Bass",
+        _ => key
+    };
 }

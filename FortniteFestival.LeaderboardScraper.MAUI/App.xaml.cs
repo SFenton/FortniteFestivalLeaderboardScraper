@@ -9,33 +9,12 @@ public partial class App : Application
 
     protected override Window CreateWindow(IActivationState? activationState)
     {
-        // Resolve HomePage from DI for single-page experience wrapped in a NavigationPage so PushAsync works
-        var sp = ServiceProviderHelper.ServiceProvider;
-        var home = sp?.GetService(typeof(FortniteFestival.LeaderboardScraper.MAUI.Pages.HomePage)) as Page;
-        if (home != null)
-        {
-            // Hide navigation bar (we provide our own in-page headers / buttons)
-            NavigationPage.SetHasNavigationBar(home, false);
-            var nav = new NavigationPage(home)
-            {
-                // Make bar fully transparent & effectively invisible
-                BarBackgroundColor = Colors.Transparent,
-                BarTextColor = Colors.Transparent
-            };
-            // Ensure every subsequently pushed page also hides the built-in nav bar
-            nav.Pushed += (_, e) =>
-            {
-                try { NavigationPage.SetHasNavigationBar(e.Page, false); } catch { }
-            };
-            home = nav;
-        }
-        var window = new Window(home ?? new ContentPage { Content = new Label { Text = "HomePage not resolved" } });
+        var window = new Window(new AppShell());
 
 #if WINDOWS
     try
     {
-        var displayInfo = DeviceDisplay.Current.MainDisplayInfo; // requires using Microsoft.Maui.Devices; (implicit global usings)
-        // MAUI sizes are in device independent units (DIPs). Convert pixel width/height to DIPs.
+        var displayInfo = DeviceDisplay.Current.MainDisplayInfo;
         double density = displayInfo.Density <= 0 ? 1 : displayInfo.Density;
         double deviceWidthDip = displayInfo.Width / density;
         double deviceHeightDip = displayInfo.Height / density;

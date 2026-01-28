@@ -10,10 +10,16 @@ public class SuggestionGenerator
 {
     private readonly IFestivalService _service;
     private readonly HashSet<string> _emitted = new HashSet<string>();
-    private readonly HashSet<string> _songsUsed = new HashSet<string>();
     private readonly Queue<Func<IEnumerable<SuggestionCategory>>> _pipelines = new Queue<Func<IEnumerable<SuggestionCategory>>>();
     private bool _initialized;
     private readonly Random _rand = new Random();
+    
+    // Standard instrument list used throughout the generator
+    private static readonly string[] Instruments = { "guitar", "bass", "drums", "vocals", "pro_guitar", "pro_bass" };
+    
+    // Session-level exclusion: songs shown in ANY category this session are deprioritized
+    private readonly HashSet<string> _sessionShownSongs = new HashSet<string>();
+    
     // Reuse / rotation state
     private readonly Queue<string> _recentSongIds = new Queue<string>();
     private readonly Queue<string> _recentArtists = new Queue<string>(); // stored as normalized (lower invariant)
@@ -141,34 +147,80 @@ public class SuggestionGenerator
             used = new HashSet<string>();
             _categorySongHistory[categoryKey] = used;
         }
-        // If all candidates already used, reset for a fresh cycle
+        // If all candidates already used in this category, reset for a fresh cycle
         if (list.All(x => used.Contains(x.song.track.su)))
             used.Clear();
-        var newOnes = list.Where(x => !used.Contains(x.song.track.su)).ToList();
-        Shuffle(newOnes);
+        
+        // Priority 1: Songs not shown anywhere this session AND not used in this category
+        var freshNew = list.Where(x => !_sessionShownSongs.Contains(x.song.track.su) && !used.Contains(x.song.track.su)).ToList();
+        Shuffle(freshNew);
+        
+        // Priority 2: Songs not used in this category (but may have appeared elsewhere)
+        var categoryNew = list.Where(x => !used.Contains(x.song.track.su) && !freshNew.Any(f => f.song.track.su == x.song.track.su)).ToList();
+        Shuffle(categoryNew);
+        
+        // Priority 3: Previously used songs as fallback
+        var oldOnes = list.Where(x => used.Contains(x.song.track.su)).ToList();
+        Shuffle(oldOnes);
+        
         var result = new List<(Song, ScoreTracker)>();
-        foreach (var n in newOnes)
+        
+        // Take from fresh first
+        foreach (var n in freshNew)
         {
             result.Add(n);
             if (result.Count == take) break;
         }
+        
+        // Then from category-new
         if (result.Count < take)
         {
-            var oldOnes = list.Where(x => used.Contains(x.song.track.su)).ToList();
-            Shuffle(oldOnes);
+            foreach (var n in categoryNew)
+            {
+                result.Add(n);
+                if (result.Count == take) break;
+            }
+        }
+        
+        // Finally from old as last resort
+        if (result.Count < take)
+        {
             foreach (var o in oldOnes)
             {
                 result.Add(o);
                 if (result.Count == take) break;
             }
         }
-        // tuple element names not preserved across some targets; use Item1
-        foreach (var r in result) used.Add(r.Item1.track.su);
+        
+        // Mark songs as used in category history and session
+        foreach (var r in result)
+        {
+            used.Add(r.Item1.track.su);
+            _sessionShownSongs.Add(r.Item1.track.su);
+        }
         return result;
     }
 
     // Random display count (2-5) for UX variety
     private int GetDisplayCount() => _rand.Next(2, 6); // upper bound exclusive so 6 => 5 max
+
+    // Filter pool to exclude songs already shown in this session (for counting fresh candidates)
+    private List<(Song song, ScoreTracker tracker)> FilterFreshCandidates(IEnumerable<(Song song, ScoreTracker tracker)> pool)
+    {
+        return pool.Where(x => !_sessionShownSongs.Contains(x.song.track.su)).ToList();
+    }
+    
+    // Get count of fresh (not yet shown this session) candidates for diversity assessment
+    private int GetFreshCount(IEnumerable<(Song song, ScoreTracker tracker)> pool)
+    {
+        return pool.Count(x => !_sessionShownSongs.Contains(x.song.track.su));
+    }
+    
+    // Overload for Song-only lists (used by Unplayed methods)
+    private int GetFreshSongCount(IEnumerable<Song> songs)
+    {
+        return songs.Count(s => !_sessionShownSongs.Contains(s.track.su));
+    }
 
     // Decide whether to emit a category this cycle based on potential candidate diversity.
     // Small candidate pools get probabilistically skipped but never starved (forced after 2 skips).
@@ -287,7 +339,7 @@ public class SuggestionGenerator
         _initialized = false;
         _pipelines.Clear();
         _emitted.Clear();
-        _songsUsed.Clear();
+        _sessionShownSongs.Clear(); // Allow songs to reappear in new cycle
         EnsurePipelines();
     }
 
@@ -302,7 +354,8 @@ public class SuggestionGenerator
             .SelectMany(tuple => EachTracker(tuple.song, tuple.board, (t,instr) => t != null && t.numStars == 6 && !t.isFullCombo && t.percentHit >= 950000))
             .OrderBy(_ => _rand.Next())
             .ToList();
-    if (!ShouldEmit("near_fc_any", list.Count)) yield break;
+        var freshCount = GetFreshCount(list);
+        if (!ShouldEmit("near_fc_any", freshCount)) yield break;
         var take = GetDisplayCount();
         var final = SelectNewFirst("near_fc_any", list, take);
         yield return new SuggestionCategory
@@ -319,7 +372,8 @@ public class SuggestionGenerator
             .Select(s => (song:s, board:TryGetBoard(s.track.su)))
             .SelectMany(tuple => EachTracker(tuple.song, tuple.board, (t,instr) => t != null && t.numStars == 6 && !t.isFullCombo && t.percentHit >= 950000))
             .ToList();
-    if (!ShouldEmit("near_fc_any_decade_wrap", list.Count)) yield break;
+        var freshCount = GetFreshCount(list);
+        if (!ShouldEmit("near_fc_any_decade_wrap", freshCount)) yield break;
         foreach (var dec in BuildDecadeVariant("near_fc_any", "FC These Next!", "High accuracy Gold Star runs that just need the full combo.", list))
             yield return dec;
     }
@@ -331,7 +385,8 @@ public class SuggestionGenerator
             .Select(s => (song:s, board:TryGetBoard(s.track.su)))
             .SelectMany(t => EachTracker(t.song, t.board, (sc,i) => sc != null && sc.numStars >=5 && sc.percentHit >= 920000 && !sc.isFullCombo))
             .OrderBy(_ => _rand.Next()).ToList();
-    if (!ShouldEmit("near_fc_relaxed", pool.Count)) yield break;
+        var freshCount = GetFreshCount(pool);
+        if (!ShouldEmit("near_fc_relaxed", freshCount)) yield break;
         var take = GetDisplayCount();
         var final = SelectNewFirst("near_fc_relaxed", pool, take);
         yield return new SuggestionCategory
@@ -348,7 +403,8 @@ public class SuggestionGenerator
             .Select(s => (song:s, board:TryGetBoard(s.track.su)))
             .SelectMany(t => EachTracker(t.song, t.board, (sc,i) => sc != null && sc.numStars >=5 && sc.percentHit >= 920000 && !sc.isFullCombo))
             .ToList();
-    if (!ShouldEmit("near_fc_relaxed_decade_wrap", pool.Count)) yield break;
+        var freshCount = GetFreshCount(pool);
+        if (!ShouldEmit("near_fc_relaxed_decade_wrap", freshCount)) yield break;
         foreach (var dec in BuildDecadeVariant("near_fc_relaxed", "Close to FC (92%+)", "High accuracy 5★/Gold Star runs to polish.", pool))
             yield return dec;
     }
@@ -360,7 +416,8 @@ public class SuggestionGenerator
             .Select(s => (song:s, board:TryGetBoard(s.track.su)))
             .SelectMany(t => EachTracker(t.song, t.board, (sc,i) => sc != null && sc.numStars == 5 && sc.percentHit >= 900000))
             .OrderBy(_ => _rand.Next()).ToList();
-    if (!ShouldEmit("almost_six_star", list.Count)) yield break;
+        var freshCount = GetFreshCount(list);
+        if (!ShouldEmit("almost_six_star", freshCount)) yield break;
         var take = GetDisplayCount();
         var final = SelectNewFirst("almost_six_star", list, take);
         yield return new SuggestionCategory
@@ -377,7 +434,8 @@ public class SuggestionGenerator
             .Select(s => (song:s, board:TryGetBoard(s.track.su)))
             .SelectMany(t => EachTracker(t.song, t.board, (sc,i) => sc != null && sc.numStars == 5 && sc.percentHit >= 900000))
             .ToList();
-    if (!ShouldEmit("almost_six_star_decade_wrap", list.Count)) yield break;
+        var freshCount = GetFreshCount(list);
+        if (!ShouldEmit("almost_six_star_decade_wrap", freshCount)) yield break;
         foreach (var dec in BuildDecadeVariant("almost_six_star", "Push to Gold Stars", "High 5★ runs close to Gold Stars.", list))
             yield return dec;
     }
@@ -389,9 +447,10 @@ public class SuggestionGenerator
             .Select(s => (song:s, board:TryGetBoard(s.track.su)))
             .SelectMany(t => EachTracker(t.song, t.board, (sc,i) => sc != null && sc.numStars >=3 && sc.numStars < 6))
             .OrderBy(_ => _rand.Next()).ToList();
-    if (!ShouldEmit("star_gains", list.Count)) yield break;
-    var take = GetDisplayCount();
-    var final = SelectNewFirst("star_gains", list, take);
+        var freshCount = GetFreshCount(list);
+        if (!ShouldEmit("star_gains", freshCount)) yield break;
+        var take = GetDisplayCount();
+        var final = SelectNewFirst("star_gains", list, take);
         yield return new SuggestionCategory
         {
             Key = "star_gains",
@@ -406,7 +465,8 @@ public class SuggestionGenerator
             .Select(s => (song:s, board:TryGetBoard(s.track.su)))
             .SelectMany(t => EachTracker(t.song, t.board, (sc,i) => sc != null && sc.numStars >=3 && sc.numStars < 6))
             .ToList();
-    if (!ShouldEmit("star_gains_decade_wrap", list.Count)) yield break;
+        var freshCount = GetFreshCount(list);
+        if (!ShouldEmit("star_gains_decade_wrap", freshCount)) yield break;
         foreach (var dec in BuildDecadeVariant("star_gains", "Easy Star Gains", "Mid-star songs ripe for improvement.", list))
             yield return dec;
     }
@@ -425,7 +485,8 @@ public class SuggestionGenerator
             .Where(x => x.tracker != null && x.tracker.numStars == 6 && !x.tracker.isFullCombo)
             .OrderBy(_ => _rand.Next())
             .ToList();
-    if (!ShouldEmit($"unfc_{instrument}", list.Count)) yield break;
+        var freshCount = GetFreshCount(list);
+        if (!ShouldEmit($"unfc_{instrument}", freshCount)) yield break;
         var take = GetDisplayCount();
         var final = SelectNewFirst($"unfc_{instrument}", list, take);
         yield return new SuggestionCategory
@@ -449,7 +510,8 @@ public class SuggestionGenerator
             .Select(tuple => (tuple.song, tracker: GetTracker(tuple.board, instrument)))
             .Where(x => x.tracker != null && x.tracker.numStars == 6 && !x.tracker.isFullCombo)
             .ToList();
-    if (!ShouldEmit($"unfc_{instrument}_decade_wrap", list.Count)) yield break;
+        var freshCount = GetFreshCount(list);
+        if (!ShouldEmit($"unfc_{instrument}_decade_wrap", freshCount)) yield break;
         foreach (var dec in BuildDecadeVariant($"unfc_{instrument}", $"Finish the {InstrumentLabel(instrument)} FCs", $"Clean up these almost full combos on {InstrumentLabel(instrument)}.", list))
             yield return dec;
     }
@@ -461,7 +523,8 @@ public class SuggestionGenerator
             .SelectMany(ld => EachTracker(null, ld, (t,i) => t != null && t.numStars >=1 && t.numStars < 6))
             .OrderBy(_ => _rand.Next())
             .ToList();
-    if (!ShouldEmit("more_stars", list.Count)) yield break;
+        var freshCount = GetFreshCount(list);
+        if (!ShouldEmit("more_stars", freshCount)) yield break;
         var take = GetDisplayCount();
         var final = SelectNewFirst("more_stars", list, take);
         yield return new SuggestionCategory
@@ -477,19 +540,21 @@ public class SuggestionGenerator
         var list = _service.ScoresIndex.Values
             .SelectMany(ld => EachTracker(null, ld, (t,i) => t != null && t.numStars >=1 && t.numStars < 6))
             .ToList();
-    if (!ShouldEmit("more_stars_decade_wrap", list.Count)) yield break;
+        var freshCount = GetFreshCount(list);
+        if (!ShouldEmit("more_stars_decade_wrap", freshCount)) yield break;
         foreach (var dec in BuildDecadeVariant("more_stars", "Push These to Gold Stars", "Improve star ratings toward Gold Stars across any instrument.", list))
             yield return dec;
     }
 
     private IEnumerable<SuggestionCategory> UnplayedAll()
     {
-    var list = _service.Songs.Where(s => TryGetBoard(s.track.su) == null)
+        var list = _service.Songs.Where(s => TryGetBoard(s.track.su) == null)
             .OrderBy(_ => _rand.Next()).ToList();
-    if (!ShouldEmit("unplayed_any", list.Count)) yield break;
-    var take = GetDisplayCount();
-    var final = SelectNewFirst("unplayed_any", list.Select(s => (s,(ScoreTracker)null)), take);
-        if (list.Count > 0)
+        var freshCount = GetFreshSongCount(list);
+        if (!ShouldEmit("unplayed_any", freshCount)) yield break;
+        var take = GetDisplayCount();
+        var final = SelectNewFirst("unplayed_any", list.Select(s => (s,(ScoreTracker)null)), take);
+        if (final.Count > 0)
         {
             yield return new SuggestionCategory
             {
@@ -503,7 +568,8 @@ public class SuggestionGenerator
     private IEnumerable<SuggestionCategory> UnplayedAllDecade()
     {
         var list = _service.Songs.Where(s => TryGetBoard(s.track.su) == null).ToList();
-    if (!ShouldEmit("unplayed_any_decade_wrap", list.Count)) yield break;
+        var freshCount = GetFreshSongCount(list);
+        if (!ShouldEmit("unplayed_any_decade_wrap", freshCount)) yield break;
         foreach (var dec in BuildDecadeVariant("unplayed_any", "Try Something New", "Songs you haven't played on any instrument yet.", list.Select(s => (s,(ScoreTracker)null))))
             yield return dec;
     }
@@ -520,10 +586,11 @@ public class SuggestionGenerator
             .Where(s => { var b = TryGetBoard(s.track.su); return b == null || GetTracker(b, instrument) == null || GetTracker(b,instrument).numStars==0; })
             .OrderBy(_ => _rand.Next())
             .ToList();
-    if (!ShouldEmit($"unplayed_{instrument}", list.Count)) yield break;
+        var freshCount = GetFreshSongCount(list);
+        if (!ShouldEmit($"unplayed_{instrument}", freshCount)) yield break;
         var take = GetDisplayCount();
         var final = SelectNewFirst($"unplayed_{instrument}", list.Select(s => (s,(ScoreTracker)null)), take);
-        if (list.Count > 0)
+        if (final.Count > 0)
         {
             yield return new SuggestionCategory
             {
@@ -545,7 +612,8 @@ public class SuggestionGenerator
         var list = _service.Songs
             .Where(s => { var b = TryGetBoard(s.track.su); return b == null || GetTracker(b, instrument) == null || GetTracker(b,instrument).numStars==0; })
             .ToList();
-    if (!ShouldEmit($"unplayed_{instrument}_decade_wrap", list.Count)) yield break;
+        var freshCount = GetFreshSongCount(list);
+        if (!ShouldEmit($"unplayed_{instrument}_decade_wrap", freshCount)) yield break;
         foreach (var dec in BuildDecadeVariant($"unplayed_{instrument}", $"New on {InstrumentLabel(instrument)}", $"Never attempted on {InstrumentLabel(instrument)} yet.", list.Select(s => (s,(ScoreTracker)null))))
             yield return dec;
     }
@@ -553,21 +621,21 @@ public class SuggestionGenerator
     private IEnumerable<SuggestionCategory> ArtistSamplerRotating()
     {
         // Rotating prolific artist not used recently
-    var artistGroups = _service.Songs.GroupBy(s => Canon(s.track.an))
+        var artistGroups = _service.Songs.GroupBy(s => Canon(s.track.an))
             .Where(g => g.Count() >= 3)
             .OrderBy(_ => _rand.Next())
             .ToList();
-    var chosen = artistGroups.FirstOrDefault();
-    if (chosen != null) EnqueueRecentArtist(chosen.Key);
-    var picked = chosen == null ? new List<Song>() : chosen.OrderBy(s => s.track.su).Take(10).ToList();
-    if (picked.Count > 0) Shuffle(picked);
-    if (picked.Count > 5) picked = picked.Take(GetDisplayCount()).ToList();
-    // Recover a display name using first song's original artist casing if available
-    var artistName = (picked.FirstOrDefault()?.track.ar ?? chosen?.Key) ?? string.Empty;
-    if (string.IsNullOrWhiteSpace(artistName) || artistName.Trim().Length <= 1) artistName = "Featured Artist";
+        var chosen = artistGroups.FirstOrDefault();
+        if (chosen != null) EnqueueRecentArtist(chosen.Key);
+        var picked = chosen == null ? new List<Song>() : chosen.OrderBy(s => s.track.su).Take(10).ToList();
+        if (picked.Count > 0) Shuffle(picked);
+        if (picked.Count > 5) picked = picked.Take(GetDisplayCount()).ToList();
+        // Recover a display name using first song's original artist casing if available
+        var artistName = (picked.FirstOrDefault()?.track.ar ?? chosen?.Key) ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(artistName) || artistName.Trim().Length <= 1) artistName = "Featured Artist";
         // Guard against extremely short/placeholder artist strings (e.g. single letter)
         if (artistName.Length <= 1) artistName = "Featured Artist";
-    if (picked.Count > 0 && artistName != "Featured Artist") // suppress placeholder artist
+        if (picked.Count > 0 && artistName != "Featured Artist") // suppress placeholder artist
         {
             yield return new SuggestionCategory
             {
@@ -580,16 +648,16 @@ public class SuggestionGenerator
     }
     private IEnumerable<SuggestionCategory> FirstPlaysMixedDecade()
     {
-        string[] inst = new[] { "guitar","drums","bass","vocals","pro_guitar","pro_bass" };
         var result = new List<Song>();
-        foreach (var ins in inst)
+        foreach (var ins in Instruments)
         {
             var subset = _service.Songs.Where(s => { var b = TryGetBoard(s.track.su); var tr = b==null?null:GetTracker(b,ins); return tr==null || tr.numStars==0; })
                 .Where(s => !result.Any(r=>r.track.su==s.track.su))
                 .Take(2).ToList();
             result.AddRange(subset);
         }
-    if (!ShouldEmit("first_plays_mixed_decade_wrap", result.Count)) yield break;
+        var freshCount = GetFreshSongCount(result);
+        if (!ShouldEmit("first_plays_mixed_decade_wrap", freshCount)) yield break;
         foreach (var dec in BuildDecadeVariant("first_plays_mixed", "First Plays (Mixed)", "Unplayed picks across instruments.", result.Select(s => (s,(ScoreTracker)null))))
             yield return dec;
     }
@@ -700,23 +768,26 @@ public class SuggestionGenerator
     private IEnumerable<SuggestionCategory> VarietyPack()
     {
         // 5 songs from 5 different artists; prefer songs with some score data if available
-    var shuffled = _service.Songs.OrderBy(s => Canon(s.track.an)).ThenBy(s => s.track.su).OrderBy(_ => _rand.Next());
+        var shuffled = _service.Songs.OrderBy(s => Canon(s.track.an)).ThenBy(s => s.track.su).OrderBy(_ => _rand.Next());
         var usedArtists = new HashSet<string>();
         var picks = new List<Song>();
-    foreach (var s in shuffled)
+        foreach (var s in shuffled)
         {
             var aKey = Canon(s.track.an);
             if (usedArtists.Contains(aKey)) continue;
             if (IsSongRecentlyUsed(s.track.su)) continue;
+            // Also skip songs already shown this session for variety
+            if (_sessionShownSongs.Contains(s.track.su)) continue;
             usedArtists.Add(aKey);
             picks.Add(s);
             if (picks.Count == 5) break;
         }
-    Shuffle(picks);
+        var freshCount = GetFreshSongCount(picks);
+        if (!ShouldEmit("variety_pack", freshCount)) yield break;
+        Shuffle(picks);
         // Select final display set (2-5 random) from unique-artist picks
         var selectedPairs = SelectNewFirst("variety_pack", picks.Select(s => (s, TryGetBoard(s.track.su)?.guitar ?? TryGetBoard(s.track.su)?.drums)), GetDisplayCount());
         var display = selectedPairs.Select(MapUniqueSong).ToList();
-    if (!ShouldEmit("variety_pack", picks.Count)) yield break; // use original unique-artist pool size
         string varietyDesc;
         if (display.Count >= 2)
         {
@@ -741,10 +812,9 @@ public class SuggestionGenerator
 
     private IEnumerable<SuggestionCategory> FirstPlaysMixed()
     {
-        // Collect up to 2 unplayed per key instrument (guitar,bass,drums,vocals) without duplicates
-    string[] inst = new[] { "guitar","drums","bass","vocals","pro_guitar","pro_bass" };
-    var result = new List<Song>();
-        foreach (var ins in inst)
+        // Collect up to 2 unplayed per key instrument without duplicates
+        var result = new List<Song>();
+        foreach (var ins in Instruments)
         {
             var subset = _service.Songs.Where(s =>
             {
@@ -757,9 +827,9 @@ public class SuggestionGenerator
             result.AddRange(subset);
         }
         // Need at least 4 to feel meaningful
-    Shuffle(result);
-    var finalPairs = SelectNewFirst("first_plays_mixed", result.Select(s => (s,(ScoreTracker)null)), GetDisplayCount());
-    var final = finalPairs.Select(p => p.song).ToList();
+        Shuffle(result);
+        var finalPairs = SelectNewFirst("first_plays_mixed", result.Select(s => (s,(ScoreTracker)null)), GetDisplayCount());
+        var final = finalPairs.Select(p => p.song).ToList();
         if (final.Count > 0)
         {
             yield return new SuggestionCategory
@@ -775,35 +845,45 @@ public class SuggestionGenerator
     private IEnumerable<(Song song, ScoreTracker tracker)> EachTracker(Song song, LeaderboardData board, Func<ScoreTracker,string,bool> predicate)
     {
         if (board == null) yield break;
-    if (board.guitar != null && predicate(board.guitar, "guitar")) yield return (song ?? FindSong(board.songId), board.guitar);
-    if (board.bass != null && predicate(board.bass, "bass")) yield return (song ?? FindSong(board.songId), board.bass);
-    if (board.drums != null && predicate(board.drums, "drums")) yield return (song ?? FindSong(board.songId), board.drums);
-    if (board.vocals != null && predicate(board.vocals, "vocals")) yield return (song ?? FindSong(board.songId), board.vocals);
-    if (board.pro_guitar != null && predicate(board.pro_guitar, "pro_guitar")) yield return (song ?? FindSong(board.songId), board.pro_guitar);
-    if (board.pro_bass != null && predicate(board.pro_bass, "pro_bass")) yield return (song ?? FindSong(board.songId), board.pro_bass);
+        var resolvedSong = song ?? FindSong(board.songId);
+        if (resolvedSong == null) yield break; // Guard against null song
+        
+        if (board.guitar != null && predicate(board.guitar, "guitar")) yield return (resolvedSong, board.guitar);
+        if (board.bass != null && predicate(board.bass, "bass")) yield return (resolvedSong, board.bass);
+        if (board.drums != null && predicate(board.drums, "drums")) yield return (resolvedSong, board.drums);
+        if (board.vocals != null && predicate(board.vocals, "vocals")) yield return (resolvedSong, board.vocals);
+        if (board.pro_guitar != null && predicate(board.pro_guitar, "pro_guitar")) yield return (resolvedSong, board.pro_guitar);
+        if (board.pro_bass != null && predicate(board.pro_bass, "pro_bass")) yield return (resolvedSong, board.pro_bass);
     }
 
     private Song FindSong(string id) => _service.Songs.FirstOrDefault(s => s.track.su == id);
 
     private static ScoreTracker GetTracker(LeaderboardData board, string instrument)
     {
-    if (instrument == "guitar") return board == null ? null : board.guitar;
-    if (instrument == "bass") return board == null ? null : board.bass;
-    if (instrument == "drums") return board == null ? null : board.drums;
-    if (instrument == "vocals") return board == null ? null : board.vocals;
-    if (instrument == "pro_guitar") return board == null ? null : board.pro_guitar;
-    if (instrument == "pro_bass") return board == null ? null : board.pro_bass;
-        return null;
+        if (board == null) return null;
+        switch (instrument)
+        {
+            case "guitar": return board.guitar;
+            case "bass": return board.bass;
+            case "drums": return board.drums;
+            case "vocals": return board.vocals;
+            case "pro_guitar": return board.pro_guitar;
+            case "pro_bass": return board.pro_bass;
+            default: return null;
+        }
     }
     private static string InstrumentLabel(string instrument)
     {
-    if (instrument == "guitar") return "Guitar";
-    if (instrument == "bass") return "Bass";
-    if (instrument == "drums") return "Drums";
-    if (instrument == "vocals") return "Vocals";
-    if (instrument == "pro_guitar") return "Pro Guitar";
-    if (instrument == "pro_bass") return "Pro Bass";
-        return instrument;
+        switch (instrument)
+        {
+            case "guitar": return "Guitar";
+            case "bass": return "Bass";
+            case "drums": return "Drums";
+            case "vocals": return "Vocals";
+            case "pro_guitar": return "Pro Guitar";
+            case "pro_bass": return "Pro Bass";
+            default: return instrument;
+        }
     }
 
     private SuggestionSongItem MapSong((Song song, ScoreTracker tracker) x) => new SuggestionSongItem
@@ -831,7 +911,7 @@ public class SuggestionGenerator
     private void EnqueueRecentArtist(string artist)
     {
         if (string.IsNullOrWhiteSpace(artist)) return;
-    _recentArtists.Enqueue(Canon(artist));
+        _recentArtists.Enqueue(Canon(artist));
         while (_recentArtists.Count > ArtistReuseCooldown) _recentArtists.Dequeue();
     }
     private bool IsSongRecentlyUsed(string songId) => _recentSongIds.Contains(songId);

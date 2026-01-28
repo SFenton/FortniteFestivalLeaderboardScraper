@@ -2,65 +2,106 @@
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              x:Class="FortniteFestival.LeaderboardScraper.MAUI.Pages.SettingsPage"
-             
-             BackgroundColor="#9d4dbb">
-  <Grid>
-    <Grid RowDefinitions="Auto,*">
-      <!-- Header -->
-      <Grid Grid.Row="0" HeightRequest="52" Padding="12,8" ColumnDefinitions="Auto,*">
-        <Label x:Name="HamburgerButton" Text="☰" FontSize="24" FontFamily="NotoSansBold" TextColor="White" VerticalOptions="Center">
-          <Label.GestureRecognizers>
-            <TapGestureRecognizer Tapped="OnHamburgerTapped" />
-          </Label.GestureRecognizers>
-        </Label>
-        <Label Grid.Column="1" />
-      </Grid>
-      <!-- Content -->
-      <ScrollView Grid.Row="1">
-        <VerticalStackLayout Spacing="16" Padding="16">
-          <Label Text="Settings (coming soon)" FontSize="18" FontFamily="NotoSansBold" />
-        </VerticalStackLayout>
-      </ScrollView>
-    </Grid>
-    <!-- Drawer overlay (copied minimal) -->
-    <Grid x:Name="NavDrawerOverlay" IsVisible="False" BackgroundColor="#00000055">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="260" />
-        <ColumnDefinition Width="*" />
-      </Grid.ColumnDefinitions>
-      <Border BackgroundColor="#4B0F63" StrokeShape="RoundRectangle 0" Padding="16,20,16,28" WidthRequest="260">
-        <VerticalStackLayout Spacing="18">
-          <Grid ColumnDefinitions="*,Auto" HeightRequest="24">
-            <Label />
-            <Label Text="✕" TextColor="White" FontSize="18" VerticalOptions="Center">
-              <Label.GestureRecognizers><TapGestureRecognizer Tapped="OnCloseDrawerTapped" /></Label.GestureRecognizers>
-            </Label>
+             Title="Settings"
+             BackgroundColor="{StaticResource PageBackground}">
+  <Shell.BackButtonBehavior>
+    <BackButtonBehavior IsVisible="False" IsEnabled="False" />
+  </Shell.BackButtonBehavior>
+  <Shell.NavBarIsVisible>False</Shell.NavBarIsVisible>
+  <Grid Padding="{StaticResource PagePadding}">
+    <Label x:Name="PageTitle" Text="Settings" FontFamily="NotoSansBold" FontAttributes="Bold" FontSize="28" TextColor="White" VerticalOptions="Start" Margin="0,0,0,12" />
+    <ScrollView x:Name="MainScroll" Margin="0,44,0,0" IsVisible="False">
+    <VerticalStackLayout Spacing="24" Padding="0,0,0,24">
+      
+      <!-- Sync Settings Section -->
+      <Border BackgroundColor="{StaticResource CardBackground}" Stroke="{StaticResource CardStroke}" StrokeThickness="1" StrokeShape="RoundRectangle 18" Padding="{StaticResource CardPadding}">
+        <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="16">
+          <Label Text="Sync Settings" FontFamily="NotoSansBold" FontSize="20" TextColor="White" Grid.Row="0" />
+          <Label Text="Choose which instruments to sync. Disabling unused instruments reduces sync time and storage." 
+                 FontSize="13" TextColor="White" Opacity="0.85" Grid.Row="1" />
+          
+          <!-- Lead -->
+          <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12" HeightRequest="44" Grid.Row="2">
+            <Image Source="guitar.png" WidthRequest="28" HeightRequest="28" VerticalOptions="Center" />
+            <Label Grid.Column="1" Text="Lead" FontFamily="NotoSansRegular" FontSize="16" TextColor="White" VerticalOptions="Center" />
+            <Switch x:Name="GuitarSwitch" IsToggled="True" OnColor="#7B2D9E" ThumbColor="White" Grid.Column="2" 
+                    VerticalOptions="Center" Margin="0,0,-120,0" Toggled="OnInstrumentToggled" />
           </Grid>
-          <Grid x:Name="SuggestionsNavItem" ColumnDefinitions="Auto,*" HeightRequest="40">
-            <Grid.GestureRecognizers><TapGestureRecognizer Tapped="OnNavSuggestionsTapped" /></Grid.GestureRecognizers>
-            <Label Text="💡" FontSize="20" VerticalOptions="Center" />
-            <Label Grid.Column="1" Text="Suggestions" FontFamily="NotoSansBold" TextColor="White" VerticalOptions="Center" />
+          
+          <!-- Bass -->
+          <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12" HeightRequest="44" Grid.Row="3">
+            <Image Source="bass.png" WidthRequest="28" HeightRequest="28" VerticalOptions="Center" />
+            <Label Grid.Column="1" Text="Bass" FontFamily="NotoSansRegular" FontSize="16" TextColor="White" VerticalOptions="Center" />
+            <Switch x:Name="BassSwitch" IsToggled="True" OnColor="#7B2D9E" ThumbColor="White" Grid.Column="2"
+                    VerticalOptions="Center" Margin="0,0,-120,0" Toggled="OnInstrumentToggled" />
           </Grid>
-          <Grid ColumnDefinitions="Auto,*" HeightRequest="40">
-            <Grid.GestureRecognizers><TapGestureRecognizer Tapped="OnNavSongsTapped" /></Grid.GestureRecognizers>
-            <Label Text="🎵" FontSize="20" VerticalOptions="Center" />
-            <Label Grid.Column="1" Text="Songs" FontFamily="NotoSansBold" TextColor="White" VerticalOptions="Center" />
+          
+          <!-- Drums -->
+          <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12" HeightRequest="44" Grid.Row="4">
+            <Image Source="drums.png" WidthRequest="28" HeightRequest="28" VerticalOptions="Center" />
+            <Label Grid.Column="1" Text="Drums" FontFamily="NotoSansRegular" FontSize="16" TextColor="White" VerticalOptions="Center" />
+            <Switch x:Name="DrumsSwitch" IsToggled="True" OnColor="#7B2D9E" ThumbColor="White" Grid.Column="2"
+                    VerticalOptions="Center" Margin="0,0,-120,0" Toggled="OnInstrumentToggled" />
           </Grid>
-          <Grid ColumnDefinitions="Auto,*" HeightRequest="40">
-            <Grid.GestureRecognizers><TapGestureRecognizer Tapped="OnNavStatisticsTapped" /></Grid.GestureRecognizers>
-            <Label Text="📊" FontSize="20" VerticalOptions="Center" />
-            <Label Grid.Column="1" Text="Statistics" FontFamily="NotoSansBold" TextColor="White" VerticalOptions="Center" />
+          
+          <!-- Vocals -->
+          <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12" HeightRequest="44" Grid.Row="5">
+            <Image Source="vocals.png" WidthRequest="28" HeightRequest="28" VerticalOptions="Center" />
+            <Label Grid.Column="1" Text="Vocals" FontFamily="NotoSansRegular" FontSize="16" TextColor="White" VerticalOptions="Center" />
+            <Switch x:Name="VocalsSwitch" IsToggled="True" OnColor="#7B2D9E" ThumbColor="White" Grid.Column="2"
+                    VerticalOptions="Center" Margin="0,0,-120,0" Toggled="OnInstrumentToggled" />
           </Grid>
-          <Grid ColumnDefinitions="Auto,*" HeightRequest="40">
-            <Grid.GestureRecognizers><TapGestureRecognizer Tapped="OnNavSettingsTapped" /></Grid.GestureRecognizers>
-            <Label Text="⚙️" FontSize="20" VerticalOptions="Center" />
-            <Label Grid.Column="1" Text="Settings" FontFamily="NotoSansBold" TextColor="White" VerticalOptions="Center" />
+          
+          <!-- Pro Lead -->
+          <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12" HeightRequest="44" Grid.Row="6">
+            <Image Source="pro_guitar.png" WidthRequest="28" HeightRequest="28" VerticalOptions="Center" />
+            <Label Grid.Column="1" Text="Pro Lead" FontFamily="NotoSansRegular" FontSize="16" TextColor="White" VerticalOptions="Center" />
+            <Switch x:Name="ProGuitarSwitch" IsToggled="True" OnColor="#7B2D9E" ThumbColor="White" Grid.Column="2"
+                    VerticalOptions="Center" Margin="0,0,-120,0" Toggled="OnInstrumentToggled" />
           </Grid>
+          
+          <!-- Pro Bass -->
+          <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12" HeightRequest="44" Grid.Row="7">
+            <Image Source="pro_bass.png" WidthRequest="28" HeightRequest="28" VerticalOptions="Center" />
+            <Label Grid.Column="1" Text="Pro Bass" FontFamily="NotoSansRegular" FontSize="16" TextColor="White" VerticalOptions="Center" />
+            <Switch x:Name="ProBassSwitch" IsToggled="True" OnColor="#7B2D9E" ThumbColor="White" Grid.Column="2"
+                    VerticalOptions="Center" Margin="0,0,-120,0" Toggled="OnInstrumentToggled" />
+          </Grid>
+        </Grid>
+      </Border>
+      
+      <!-- Performance Section -->
+      <Border BackgroundColor="{StaticResource CardBackground}" Stroke="{StaticResource CardStroke}" StrokeThickness="1" StrokeShape="RoundRectangle 18" Padding="{StaticResource CardPadding}">
+        <VerticalStackLayout Spacing="12">
+          <Label Text="Performance" FontFamily="NotoSansBold" FontSize="20" TextColor="White" />
+          <Label Text="Adjust sync speed. Higher values sync faster but use more bandwidth." 
+                 FontSize="13" TextColor="White" Opacity="0.85" />
+          
+          <VerticalStackLayout Spacing="8">
+            <Grid ColumnDefinitions="*,Auto">
+              <Label Text="Parallel Requests" FontFamily="NotoSansRegular" FontSize="16" TextColor="White" VerticalOptions="Center" />
+              <Label x:Name="ParallelismValueLabel" Grid.Column="1" Text="16" FontFamily="NotoSansBold" FontSize="16" TextColor="White" />
+            </Grid>
+            <Slider x:Name="ParallelismSlider" Minimum="1" Maximum="32" Value="16" 
+                    HorizontalOptions="Fill" MinimumTrackColor="#7B2D9E" MaximumTrackColor="#ffffff44"
+                    ThumbColor="White" ValueChanged="OnParallelismChanged" />
+          </VerticalStackLayout>
         </VerticalStackLayout>
       </Border>
-      <Grid Grid.Column="1">
-        <Grid.GestureRecognizers><TapGestureRecognizer Tapped="OnCloseDrawerTapped" /></Grid.GestureRecognizers>
-      </Grid>
-    </Grid>
+      
+      <!-- About Section -->
+      <Border BackgroundColor="{StaticResource CardBackground}" Stroke="{StaticResource CardStroke}" StrokeThickness="1" StrokeShape="RoundRectangle 18" Padding="{StaticResource CardPadding}">
+        <VerticalStackLayout Spacing="12">
+          <Label Text="About" FontFamily="NotoSansBold" FontSize="20" TextColor="White" />
+          <Label Text="Fortnite Festival Leaderboard Scraper" FontFamily="NotoSansRegular" FontSize="16" TextColor="White" />
+          <Label x:Name="VersionLabel" Text="Version 1.0.0" FontSize="13" TextColor="White" Opacity="0.7" />
+          <Label Text="Track your Fortnite Festival scores and get personalized suggestions for what to play next." 
+                 FontSize="13" TextColor="White" Opacity="0.85" />
+        </VerticalStackLayout>
+      </Border>
+      
+    </VerticalStackLayout>
+    </ScrollView>
+    <ActivityIndicator x:Name="LoadingSpinner" IsRunning="True" IsVisible="True" WidthRequest="56" HeightRequest="56" Color="White" HorizontalOptions="Center" VerticalOptions="Center" />
   </Grid>
 </ContentPage>

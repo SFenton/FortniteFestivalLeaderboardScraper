@@ -109,12 +109,14 @@ namespace FortniteFestival.Core.Persistence
 );
 CREATE TABLE IF NOT EXISTS Scores (
     SongId TEXT PRIMARY KEY,
-    GuitarScore INTEGER, GuitarDiff INTEGER, GuitarStars INTEGER, GuitarFC INTEGER, GuitarPct INTEGER, GuitarSeason INTEGER,
-    DrumsScore INTEGER, DrumsDiff INTEGER, DrumsStars INTEGER, DrumsFC INTEGER, DrumsPct INTEGER, DrumsSeason INTEGER,
-    BassScore INTEGER, BassDiff INTEGER, BassStars INTEGER, BassFC INTEGER, BassPct INTEGER, BassSeason INTEGER,
-    VocalsScore INTEGER, VocalsDiff INTEGER, VocalsStars INTEGER, VocalsFC INTEGER, VocalsPct INTEGER, VocalsSeason INTEGER,
-    ProGuitarScore INTEGER, ProGuitarDiff INTEGER, ProGuitarStars INTEGER, ProGuitarFC INTEGER, ProGuitarPct INTEGER, ProGuitarSeason INTEGER,
-    ProBassScore INTEGER, ProBassDiff INTEGER, ProBassStars INTEGER, ProBassFC INTEGER, ProBassPct INTEGER, ProBassSeason INTEGER,
+    GuitarScore INTEGER, GuitarDiff INTEGER, GuitarStars INTEGER, GuitarFC INTEGER, GuitarPct INTEGER, GuitarSeason INTEGER, GuitarRank INTEGER, GuitarTotal INTEGER, GuitarPercentile INTEGER,
+    DrumsScore INTEGER, DrumsDiff INTEGER, DrumsStars INTEGER, DrumsFC INTEGER, DrumsPct INTEGER, DrumsSeason INTEGER, DrumsRank INTEGER, DrumsTotal INTEGER, DrumsPercentile INTEGER,
+    BassScore INTEGER, BassDiff INTEGER, BassStars INTEGER, BassFC INTEGER, BassPct INTEGER, BassSeason INTEGER, BassRank INTEGER, BassTotal INTEGER, BassPercentile INTEGER,
+    VocalsScore INTEGER, VocalsDiff INTEGER, VocalsStars INTEGER, VocalsFC INTEGER, VocalsPct INTEGER, VocalsSeason INTEGER, VocalsRank INTEGER, VocalsTotal INTEGER, VocalsPercentile INTEGER,
+    ProGuitarScore INTEGER, ProGuitarDiff INTEGER, ProGuitarStars INTEGER, ProGuitarFC INTEGER, ProGuitarPct INTEGER, ProGuitarSeason INTEGER, ProGuitarRank INTEGER, ProGuitarTotal INTEGER, ProGuitarPercentile INTEGER,
+    ProBassScore INTEGER, ProBassDiff INTEGER, ProBassStars INTEGER, ProBassFC INTEGER, ProBassPct INTEGER, ProBassSeason INTEGER, ProBassRank INTEGER, ProBassTotal INTEGER, ProBassPercentile INTEGER,
+    GuitarRawPct REAL, DrumsRawPct REAL, BassRawPct REAL, VocalsRawPct REAL, ProGuitarRawPct REAL, ProBassRawPct REAL,
+    GuitarCalcTotal INTEGER, DrumsCalcTotal INTEGER, BassCalcTotal INTEGER, VocalsCalcTotal INTEGER, ProGuitarCalcTotal INTEGER, ProBassCalcTotal INTEGER,
     FOREIGN KEY (SongId) REFERENCES Songs(SongId)
 );";
                         cmd.ExecuteNonQuery();
@@ -164,6 +166,73 @@ CREATE TABLE IF NOT EXISTS Scores (
                         AddColumn("PlasticBassDiff", "INTEGER");
                         AddColumn("PlasticDrumsDiff", "INTEGER");
                         AddColumn("ProVocalsDiff", "INTEGER");
+                        // Scores table rank migrations
+                        try
+                        {
+                            var scoreExisting = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            using (var sc = conn2.CreateCommand())
+                            {
+                                sc.CommandText = "PRAGMA table_info(Scores)";
+                                using (var r = sc.ExecuteReader())
+                                {
+                                    while (r.Read())
+                                    {
+                                        if (!r.IsDBNull(1)) scoreExisting.Add(r.GetString(1));
+                                    }
+                                }
+                            }
+                            void AddScoreColumn(string name)
+                            {
+                                if (scoreExisting.Contains(name)) return;
+                                try
+                                {
+                                    using (var alter = conn2.CreateCommand())
+                                    {
+                                        alter.CommandText = $"ALTER TABLE Scores ADD COLUMN {name} INTEGER";
+                                        alter.ExecuteNonQuery();
+                                        PersistenceLog.Write($"Migrated DB: added Scores.{name}");
+                                    }
+                                }
+                                catch (Exception aex)
+                                {
+                                    PersistenceLog.Write($"Migration add score column {name} failed: {aex.Message}");
+                                }
+                            }
+                            AddScoreColumn("GuitarRank");
+                            AddScoreColumn("DrumsRank");
+                            AddScoreColumn("BassRank");
+                            AddScoreColumn("VocalsRank");
+                            AddScoreColumn("ProGuitarRank");
+                            AddScoreColumn("ProBassRank");
+                            AddScoreColumn("GuitarTotal");
+                            AddScoreColumn("DrumsTotal");
+                            AddScoreColumn("BassTotal");
+                            AddScoreColumn("VocalsTotal");
+                            AddScoreColumn("ProGuitarTotal");
+                            AddScoreColumn("ProBassTotal");
+                            AddScoreColumn("GuitarPercentile");
+                            AddScoreColumn("DrumsPercentile");
+                            AddScoreColumn("BassPercentile");
+                            AddScoreColumn("VocalsPercentile");
+                            AddScoreColumn("ProGuitarPercentile");
+                            AddScoreColumn("ProBassPercentile");
+                            AddScoreColumn("GuitarRawPct");
+                            AddScoreColumn("DrumsRawPct");
+                            AddScoreColumn("BassRawPct");
+                            AddScoreColumn("VocalsRawPct");
+                            AddScoreColumn("ProGuitarRawPct");
+                            AddScoreColumn("ProBassRawPct");
+                            AddScoreColumn("GuitarCalcTotal");
+                            AddScoreColumn("DrumsCalcTotal");
+                            AddScoreColumn("BassCalcTotal");
+                            AddScoreColumn("VocalsCalcTotal");
+                            AddScoreColumn("ProGuitarCalcTotal");
+                            AddScoreColumn("ProBassCalcTotal");
+                        }
+                        catch (Exception rex)
+                        {
+                            PersistenceLog.Write("Rank column migration failed: " + rex.Message);
+                        }
                     }
                 }
                 catch (Exception mex)
@@ -192,14 +261,18 @@ CREATE TABLE IF NOT EXISTS Scores (
                         prag.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;";
                         prag.ExecuteNonQuery();
                     }
-                    var sql =
+                        var sql =
                         @"SELECT s.SongId, s.Title, s.Artist,
-    sc.GuitarScore, sc.GuitarDiff, sc.GuitarStars, sc.GuitarFC, sc.GuitarPct, sc.GuitarSeason,
-    sc.DrumsScore, sc.DrumsDiff, sc.DrumsStars, sc.DrumsFC, sc.DrumsPct, sc.DrumsSeason,
-    sc.BassScore, sc.BassDiff, sc.BassStars, sc.BassFC, sc.BassPct, sc.BassSeason,
-    sc.VocalsScore, sc.VocalsDiff, sc.VocalsStars, sc.VocalsFC, sc.VocalsPct, sc.VocalsSeason,
-    sc.ProGuitarScore, sc.ProGuitarDiff, sc.ProGuitarStars, sc.ProGuitarFC, sc.ProGuitarPct, sc.ProGuitarSeason,
-    sc.ProBassScore, sc.ProBassDiff, sc.ProBassStars, sc.ProBassFC, sc.ProBassPct, sc.ProBassSeason
+    sc.GuitarScore, sc.GuitarDiff, sc.GuitarStars, sc.GuitarFC, sc.GuitarPct, sc.GuitarSeason, sc.GuitarRank,
+    sc.DrumsScore, sc.DrumsDiff, sc.DrumsStars, sc.DrumsFC, sc.DrumsPct, sc.DrumsSeason, sc.DrumsRank,
+    sc.BassScore, sc.BassDiff, sc.BassStars, sc.BassFC, sc.BassPct, sc.BassSeason, sc.BassRank,
+    sc.VocalsScore, sc.VocalsDiff, sc.VocalsStars, sc.VocalsFC, sc.VocalsPct, sc.VocalsSeason, sc.VocalsRank,
+    sc.ProGuitarScore, sc.ProGuitarDiff, sc.ProGuitarStars, sc.ProGuitarFC, sc.ProGuitarPct, sc.ProGuitarSeason, sc.ProGuitarRank,
+    sc.ProBassScore, sc.ProBassDiff, sc.ProBassStars, sc.ProBassFC, sc.ProBassPct, sc.ProBassSeason, sc.ProBassRank,
+    sc.GuitarTotal, sc.DrumsTotal, sc.BassTotal, sc.VocalsTotal, sc.ProGuitarTotal, sc.ProBassTotal,
+    sc.GuitarPercentile, sc.DrumsPercentile, sc.BassPercentile, sc.VocalsPercentile, sc.ProGuitarPercentile, sc.ProBassPercentile,
+    sc.GuitarRawPct, sc.DrumsRawPct, sc.BassRawPct, sc.VocalsRawPct, sc.ProGuitarRawPct, sc.ProBassRawPct,
+    sc.GuitarCalcTotal, sc.DrumsCalcTotal, sc.BassCalcTotal, sc.VocalsCalcTotal, sc.ProGuitarCalcTotal, sc.ProBassCalcTotal
 FROM Songs s LEFT JOIN Scores sc ON s.SongId = sc.SongId";
                     using (var cmd = conn.CreateCommand())
                     {
@@ -219,7 +292,8 @@ FROM Songs s LEFT JOIN Scores sc ON s.SongId = sc.SongId";
                                 {
                                     if (r.IsDBNull(ord))
                                     {
-                                        ord += 6;
+                                        ord += 7; // skip base fields
+                                        // Skip total column if exists after groups later (handled separately)
                                         return null;
                                     }
                                     var t = new ScoreTracker
@@ -233,10 +307,11 @@ FROM Songs s LEFT JOIN Scores sc ON s.SongId = sc.SongId";
                                         seasonAchieved = r.IsDBNull(ord + 5)
                                             ? 0
                                             : r.GetInt32(ord + 5),
+                                        rank = r.IsDBNull(ord + 6) ? 0 : r.GetInt32(ord + 6),
                                         initialized = !r.IsDBNull(ord) && r.GetInt32(ord) > 0,
                                     };
                                     t.RefreshDerived();
-                                    ord += 6;
+                                    ord += 7;
                                     return t;
                                 };
                                 ld.guitar = readTracker();
@@ -245,6 +320,35 @@ FROM Songs s LEFT JOIN Scores sc ON s.SongId = sc.SongId";
                                 ld.vocals = readTracker();
                                 ld.pro_guitar = readTracker();
                                 ld.pro_bass = readTracker();
+                                // After reading 6 trackers (6*7 = 42 columns after initial 3), map totals then percentiles then raw percentiles
+                                // The SELECT adds 6 total columns, 6 percentile columns, 6 raw percentile columns
+                                try
+                                {
+                                    if (!r.IsDBNull(ord)) ld.guitar.totalEntries = r.GetInt32(ord); ord++;
+                                    if (!r.IsDBNull(ord)) ld.drums.totalEntries = r.GetInt32(ord); ord++;
+                                    if (!r.IsDBNull(ord)) ld.bass.totalEntries = r.GetInt32(ord); ord++;
+                                    if (!r.IsDBNull(ord)) ld.vocals.totalEntries = r.GetInt32(ord); ord++;
+                                    if (!r.IsDBNull(ord)) ld.pro_guitar.totalEntries = r.GetInt32(ord); ord++;
+                                    if (!r.IsDBNull(ord)) ld.pro_bass.totalEntries = r.GetInt32(ord); ord++;
+                                    // Skip legacy basis-point percentile columns (advance ord by 6)
+                                    ord += 6;
+                                    // Raw percentiles (REAL)
+                                    if (!r.IsDBNull(ord) && ld.guitar!=null) { ld.guitar.rawPercentile = r.GetDouble(ord); } ord++;
+                                    if (!r.IsDBNull(ord) && ld.drums!=null) { ld.drums.rawPercentile = r.GetDouble(ord); } ord++;
+                                    if (!r.IsDBNull(ord) && ld.bass!=null) { ld.bass.rawPercentile = r.GetDouble(ord); } ord++;
+                                    if (!r.IsDBNull(ord) && ld.vocals!=null) { ld.vocals.rawPercentile = r.GetDouble(ord); } ord++;
+                                    if (!r.IsDBNull(ord) && ld.pro_guitar!=null) { ld.pro_guitar.rawPercentile = r.GetDouble(ord); } ord++;
+                                    if (!r.IsDBNull(ord) && ld.pro_bass!=null) { ld.pro_bass.rawPercentile = r.GetDouble(ord); } ord++;
+                                    // Calculated totals (INTEGER)
+                                    if (!r.IsDBNull(ord) && ld.guitar!=null) { ld.guitar.calculatedNumEntries = r.GetInt32(ord); } ord++;
+                                    if (!r.IsDBNull(ord) && ld.drums!=null) { ld.drums.calculatedNumEntries = r.GetInt32(ord); } ord++;
+                                    if (!r.IsDBNull(ord) && ld.bass!=null) { ld.bass.calculatedNumEntries = r.GetInt32(ord); } ord++;
+                                    if (!r.IsDBNull(ord) && ld.vocals!=null) { ld.vocals.calculatedNumEntries = r.GetInt32(ord); } ord++;
+                                    if (!r.IsDBNull(ord) && ld.pro_guitar!=null) { ld.pro_guitar.calculatedNumEntries = r.GetInt32(ord); } ord++;
+                                    if (!r.IsDBNull(ord) && ld.pro_bass!=null) { ld.pro_bass.calculatedNumEntries = r.GetInt32(ord); } ord++;
+                                    ld.guitar?.RefreshDerived(); ld.drums?.RefreshDerived(); ld.bass?.RefreshDerived(); ld.vocals?.RefreshDerived(); ld.pro_guitar?.RefreshDerived(); ld.pro_bass?.RefreshDerived();
+                                }
+                                catch { }
                                 list.Add(ld);
                             }
                         }
@@ -281,26 +385,30 @@ ON CONFLICT(SongId) DO UPDATE SET Title=$title, Artist=$artist";
                         var scoreCmd = conn.CreateCommand();
                         scoreCmd.CommandText =
                             @"INSERT INTO Scores (SongId,
-GuitarScore,GuitarDiff,GuitarStars,GuitarFC,GuitarPct,GuitarSeason,
-DrumsScore,DrumsDiff,DrumsStars,DrumsFC,DrumsPct,DrumsSeason,
-BassScore,BassDiff,BassStars,BassFC,BassPct,BassSeason,
-VocalsScore,VocalsDiff,VocalsStars,VocalsFC,VocalsPct,VocalsSeason,
-ProGuitarScore,ProGuitarDiff,ProGuitarStars,ProGuitarFC,ProGuitarPct,ProGuitarSeason,
-ProBassScore,ProBassDiff,ProBassStars,ProBassFC,ProBassPct,ProBassSeason)
-VALUES ($id,
-$gScore,$gDiff,$gStars,$gFC,$gPct,$gSeason,
-$dScore,$dDiff,$dStars,$dFC,$dPct,$dSeason,
-$bScore,$bDiff,$bStars,$bFC,$bPct,$bSeason,
-$vScore,$vDiff,$vStars,$vFC,$vPct,$vSeason,
-$pgScore,$pgDiff,$pgStars,$pgFC,$pgPct,$pgSeason,
-$pbScore,$pbDiff,$pbStars,$pbFC,$pbPct,$pbSeason)
-ON CONFLICT(SongId) DO UPDATE SET
-GuitarScore=$gScore,GuitarDiff=$gDiff,GuitarStars=$gStars,GuitarFC=$gFC,GuitarPct=$gPct,GuitarSeason=$gSeason,
-DrumsScore=$dScore,DrumsDiff=$dDiff,DrumsStars=$dStars,DrumsFC=$dFC,DrumsPct=$dPct,DrumsSeason=$dSeason,
-BassScore=$bScore,BassDiff=$bDiff,BassStars=$bStars,BassFC=$bFC,BassPct=$bPct,BassSeason=$bSeason,
-VocalsScore=$vScore,VocalsDiff=$vDiff,VocalsStars=$vStars,VocalsFC=$vFC,VocalsPct=$vPct,VocalsSeason=$vSeason,
-ProGuitarScore=$pgScore,ProGuitarDiff=$pgDiff,ProGuitarStars=$pgStars,ProGuitarFC=$pgFC,ProGuitarPct=$pgPct,ProGuitarSeason=$pgSeason,
-ProBassScore=$pbScore,ProBassDiff=$pbDiff,ProBassStars=$pbStars,ProBassFC=$pbFC,ProBassPct=$pbPct,ProBassSeason=$pbSeason";
+                            GuitarScore,GuitarDiff,GuitarStars,GuitarFC,GuitarPct,GuitarSeason,GuitarRank,GuitarTotal,GuitarPercentile,
+                            DrumsScore,DrumsDiff,DrumsStars,DrumsFC,DrumsPct,DrumsSeason,DrumsRank,DrumsTotal,DrumsPercentile,
+                            BassScore,BassDiff,BassStars,BassFC,BassPct,BassSeason,BassRank,BassTotal,BassPercentile,
+                            VocalsScore,VocalsDiff,VocalsStars,VocalsFC,VocalsPct,VocalsSeason,VocalsRank,VocalsTotal,VocalsPercentile,
+                            ProGuitarScore,ProGuitarDiff,ProGuitarStars,ProGuitarFC,ProGuitarPct,ProGuitarSeason,ProGuitarRank,ProGuitarTotal,ProGuitarPercentile,
+                            ProBassScore,ProBassDiff,ProBassStars,ProBassFC,ProBassPct,ProBassSeason,ProBassRank,ProBassTotal,ProBassPercentile,
+                            GuitarRawPct,DrumsRawPct,BassRawPct,VocalsRawPct,ProGuitarRawPct,ProBassRawPct,
+                            GuitarCalcTotal,DrumsCalcTotal,BassCalcTotal,VocalsCalcTotal,ProGuitarCalcTotal,ProBassCalcTotal)
+                            VALUES ($id,
+                            $gScore,$gDiff,$gStars,$gFC,$gPct,$gSeason,$gRank,$gTotal,$gPctile,
+                            $dScore,$dDiff,$dStars,$dFC,$dPct,$dSeason,$dRank,$dTotal,$dPctile,
+                            $bScore,$bDiff,$bStars,$bFC,$bPct,$bSeason,$bRank,$bTotal,$bPctile,
+                            $vScore,$vDiff,$vStars,$vFC,$vPct,$vSeason,$vRank,$vTotal,$vPctile,
+                            $pgScore,$pgDiff,$pgStars,$pgFC,$pgPct,$pgSeason,$pgRank,$pgTotal,$pgPctile,
+                            $pbScore,$pbDiff,$pbStars,$pbFC,$pbPct,$pbSeason,$pbRank,$pbTotal,$pbPctile,
+                            $gRaw,$dRaw,$bRaw,$vRaw,$pgRaw,$pbRaw,
+                            $gCalc,$dCalc,$bCalc,$vCalc,$pgCalc,$pbCalc)
+                            ON CONFLICT(SongId) DO UPDATE SET
+                            GuitarScore=$gScore,GuitarDiff=$gDiff,GuitarStars=$gStars,GuitarFC=$gFC,GuitarPct=$gPct,GuitarSeason=$gSeason,GuitarRank=$gRank,GuitarTotal=$gTotal,GuitarPercentile=$gPctile,GuitarRawPct=$gRaw,GuitarCalcTotal=$gCalc,
+                            DrumsScore=$dScore,DrumsDiff=$dDiff,DrumsStars=$dStars,DrumsFC=$dFC,DrumsPct=$dPct,DrumsSeason=$dSeason,DrumsRank=$dRank,DrumsTotal=$dTotal,DrumsPercentile=$dPctile,DrumsRawPct=$dRaw,DrumsCalcTotal=$dCalc,
+                            BassScore=$bScore,BassDiff=$bDiff,BassStars=$bStars,BassFC=$bFC,BassPct=$bPct,BassSeason=$bSeason,BassRank=$bRank,BassTotal=$bTotal,BassPercentile=$bPctile,BassRawPct=$bRaw,BassCalcTotal=$bCalc,
+                            VocalsScore=$vScore,VocalsDiff=$vDiff,VocalsStars=$vStars,VocalsFC=$vFC,VocalsPct=$vPct,VocalsSeason=$vSeason,VocalsRank=$vRank,VocalsTotal=$vTotal,VocalsPercentile=$vPctile,VocalsRawPct=$vRaw,VocalsCalcTotal=$vCalc,
+                            ProGuitarScore=$pgScore,ProGuitarDiff=$pgDiff,ProGuitarStars=$pgStars,ProGuitarFC=$pgFC,ProGuitarPct=$pgPct,ProGuitarSeason=$pgSeason,ProGuitarRank=$pgRank,ProGuitarTotal=$pgTotal,ProGuitarPercentile=$pgPctile,ProGuitarRawPct=$pgRaw,ProGuitarCalcTotal=$pgCalc,
+                            ProBassScore=$pbScore,ProBassDiff=$pbDiff,ProBassStars=$pbStars,ProBassFC=$pbFC,ProBassPct=$pbPct,ProBassSeason=$pbSeason,ProBassRank=$pbRank,ProBassTotal=$pbTotal,ProBassPercentile=$pbPctile,ProBassRawPct=$pbRaw,ProBassCalcTotal=$pbCalc";
                         string[] names =
                         {
                             "$gScore",
@@ -309,36 +417,66 @@ ProBassScore=$pbScore,ProBassDiff=$pbDiff,ProBassStars=$pbStars,ProBassFC=$pbFC,
                             "$gFC",
                             "$gPct",
                             "$gSeason",
+                            "$gRank",
                             "$dScore",
                             "$dDiff",
                             "$dStars",
                             "$dFC",
                             "$dPct",
                             "$dSeason",
+                            "$dRank",
                             "$bScore",
                             "$bDiff",
                             "$bStars",
                             "$bFC",
                             "$bPct",
                             "$bSeason",
+                            "$bRank",
                             "$vScore",
                             "$vDiff",
                             "$vStars",
                             "$vFC",
                             "$vPct",
                             "$vSeason",
+                            "$vRank",
                             "$pgScore",
                             "$pgDiff",
                             "$pgStars",
                             "$pgFC",
                             "$pgPct",
                             "$pgSeason",
+                            "$pgRank",
                             "$pbScore",
                             "$pbDiff",
                             "$pbStars",
                             "$pbFC",
                             "$pbPct",
                             "$pbSeason",
+                            "$pbRank",
+                            "$gTotal",
+                            "$dTotal",
+                            "$bTotal",
+                            "$vTotal",
+                            "$pgTotal",
+                            "$pbTotal",
+                            "$gPctile",
+                            "$dPctile",
+                            "$bPctile",
+                            "$vPctile",
+                            "$pgPctile",
+                            "$pbPctile",
+                            "$gRaw",
+                            "$dRaw",
+                            "$bRaw",
+                            "$vRaw",
+                            "$pgRaw",
+                            "$pbRaw",
+                            "$gCalc",
+                            "$dCalc",
+                            "$bCalc",
+                            "$vCalc",
+                            "$pgCalc",
+                            "$pbCalc",
                         };
                         foreach (var p in new[] { "$id" }.Concat(names))
                             scoreCmd.Parameters.Add(new SqliteParameter(p, 0));
@@ -355,11 +493,40 @@ ProBassScore=$pbScore,ProBassDiff=$pbDiff,ProBassStars=$pbStars,ProBassFC=$pbFC,
 
                             scoreCmd.Parameters[0].Value = ld.songId;
                             Fill(scoreCmd, 1, ld.guitar);
-                            Fill(scoreCmd, 7, ld.drums);
-                            Fill(scoreCmd, 13, ld.bass);
-                            Fill(scoreCmd, 19, ld.vocals);
-                            Fill(scoreCmd, 25, ld.pro_guitar);
-                            Fill(scoreCmd, 31, ld.pro_bass);
+                            Fill(scoreCmd, 8, ld.drums);
+                            Fill(scoreCmd, 15, ld.bass);
+                            Fill(scoreCmd, 22, ld.vocals);
+                            Fill(scoreCmd, 29, ld.pro_guitar);
+                            Fill(scoreCmd, 36, ld.pro_bass);
+                            // Totals parameters start after 43 base params (1 id + 42 score fields) => index 43
+                            int totalsStart = 43; // after 1 id + 42 base instrument fields
+                            scoreCmd.Parameters[totalsStart + 0].Value = ld.guitar?.totalEntries ?? 0; // $gTotal
+                            scoreCmd.Parameters[totalsStart + 1].Value = ld.drums?.totalEntries ?? 0; // $dTotal
+                            scoreCmd.Parameters[totalsStart + 2].Value = ld.bass?.totalEntries ?? 0; // $bTotal
+                            scoreCmd.Parameters[totalsStart + 3].Value = ld.vocals?.totalEntries ?? 0; // $vTotal
+                            scoreCmd.Parameters[totalsStart + 4].Value = ld.pro_guitar?.totalEntries ?? 0; // $pgTotal
+                            scoreCmd.Parameters[totalsStart + 5].Value = ld.pro_bass?.totalEntries ?? 0; // $pbTotal
+                            // Percentiles follow totals then raw percentiles
+                            // Legacy basis-point percentile columns now always 0
+                            scoreCmd.Parameters[totalsStart + 6].Value = 0; // $gPctile
+                            scoreCmd.Parameters[totalsStart + 7].Value = 0; // $dPctile
+                            scoreCmd.Parameters[totalsStart + 8].Value = 0; // $bPctile
+                            scoreCmd.Parameters[totalsStart + 9].Value = 0; // $vPctile
+                            scoreCmd.Parameters[totalsStart + 10].Value = 0; // $pgPctile
+                            scoreCmd.Parameters[totalsStart + 11].Value = 0; // $pbPctile
+                            scoreCmd.Parameters[totalsStart + 12].Value = ld.guitar?.rawPercentile ?? 0; // $gRaw
+                            scoreCmd.Parameters[totalsStart + 13].Value = ld.drums?.rawPercentile ?? 0; // $dRaw
+                            scoreCmd.Parameters[totalsStart + 14].Value = ld.bass?.rawPercentile ?? 0; // $bRaw
+                            scoreCmd.Parameters[totalsStart + 15].Value = ld.vocals?.rawPercentile ?? 0; // $vRaw
+                            scoreCmd.Parameters[totalsStart + 16].Value = ld.pro_guitar?.rawPercentile ?? 0; // $pgRaw
+                            scoreCmd.Parameters[totalsStart + 17].Value = ld.pro_bass?.rawPercentile ?? 0; // $pbRaw
+                            // Calculated totals start after raw percentile params
+                            scoreCmd.Parameters[totalsStart + 18].Value = ld.guitar?.calculatedNumEntries ?? 0; // $gCalc
+                            scoreCmd.Parameters[totalsStart + 19].Value = ld.drums?.calculatedNumEntries ?? 0; // $dCalc
+                            scoreCmd.Parameters[totalsStart + 20].Value = ld.bass?.calculatedNumEntries ?? 0; // $bCalc
+                            scoreCmd.Parameters[totalsStart + 21].Value = ld.vocals?.calculatedNumEntries ?? 0; // $vCalc
+                            scoreCmd.Parameters[totalsStart + 22].Value = ld.pro_guitar?.calculatedNumEntries ?? 0; // $pgCalc
+                            scoreCmd.Parameters[totalsStart + 23].Value = ld.pro_bass?.calculatedNumEntries ?? 0; // $pbCalc
                             await scoreCmd.ExecuteNonQueryAsync();
                             persisted++;
                         }
@@ -385,11 +552,11 @@ ProBassScore=$pbScore,ProBassDiff=$pbDiff,ProBassStars=$pbStars,ProBassFC=$pbFC,
                 || (ld.pro_bass?.initialized == true);
         }
 
-        private static void Fill(SqliteCommand cmd, int startIndex, ScoreTracker t)
+    private static void Fill(SqliteCommand cmd, int startIndex, ScoreTracker t)
         {
             if (t == null)
             {
-                for (int i = 0; i < 6; i++)
+        for (int i = 0; i < 7; i++)
                     cmd.Parameters[startIndex + i].Value = 0;
                 return;
             }
@@ -399,6 +566,7 @@ ProBassScore=$pbScore,ProBassDiff=$pbDiff,ProBassStars=$pbStars,ProBassFC=$pbFC,
             cmd.Parameters[startIndex + 3].Value = t.isFullCombo ? 1 : 0;
             cmd.Parameters[startIndex + 4].Value = t.percentHit;
             cmd.Parameters[startIndex + 5].Value = t.seasonAchieved;
+        cmd.Parameters[startIndex + 6].Value = t.rank;
         }
 
         public async Task<IList<Song>> LoadSongsAsync()

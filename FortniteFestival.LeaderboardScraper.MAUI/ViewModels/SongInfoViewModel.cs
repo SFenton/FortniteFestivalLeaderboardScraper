@@ -24,6 +24,15 @@ public class SongInfoInstrumentRow : System.ComponentModel.INotifyPropertyChange
     public string ScoreDisplay { get => _scoreDisplay; set { if (_scoreDisplay != value) { _scoreDisplay = value; OnPropertyChanged(); } } }
     private string _percentDisplay = string.Empty;
     public string PercentDisplay { get => _percentDisplay; set { if (_percentDisplay != value) { _percentDisplay = value; OnPropertyChanged(); } } }
+    private string _percentileDisplay = string.Empty;
+    public string PercentileDisplay { get => _percentileDisplay; set { if (_percentileDisplay != value) { _percentileDisplay = value; OnPropertyChanged(); } } }
+    private string _rankDisplay = string.Empty; // global rank (1 = best)
+    public string RankDisplay { get => _rankDisplay; set { if (_rankDisplay != value) { _rankDisplay = value; OnPropertyChanged(); } } }
+    private string _totalEntriesDisplay = string.Empty; // calculated total entries (reverse-derived)
+    public string TotalEntriesDisplay { get => _totalEntriesDisplay; set { if (_totalEntriesDisplay != value) { _totalEntriesDisplay = value; OnPropertyChanged(); } } }
+    // Combined rank + total entries display for compact layout (e.g. "#123 / 12,345")
+    private string _rankOutOfDisplay = string.Empty;
+    public string RankOutOfDisplay { get => _rankOutOfDisplay; set { if (_rankOutOfDisplay != value) { _rankOutOfDisplay = value; OnPropertyChanged(); } } }
     private string _seasonDisplay = string.Empty;
     public string SeasonDisplay { get => _seasonDisplay; set { if (_seasonDisplay != value) { _seasonDisplay = value; OnPropertyChanged(); } } }
     public bool ShowNA => !HasScore;
@@ -31,6 +40,8 @@ public class SongInfoInstrumentRow : System.ComponentModel.INotifyPropertyChange
     private bool _showPercent = true; public bool ShowPercent { get => _showPercent; set { if (_showPercent != value) { _showPercent = value; OnPropertyChanged(); } } }
     private bool _showSeason = true; public bool ShowSeason { get => _showSeason; set { if (_showSeason != value) { _showSeason = value; OnPropertyChanged(); } } }
     private bool _useCompactLayout; public bool UseCompactLayout { get => _useCompactLayout; set { if (_useCompactLayout != value) { _useCompactLayout = value; OnPropertyChanged(); } } }
+    // Highlight trigger for percentile (Top 5% or better)
+    private bool _isTop5Percentile; public bool IsTop5Percentile { get => _isTop5Percentile; set { if (_isTop5Percentile != value) { _isTop5Percentile = value; OnPropertyChanged(); } } }
 
     // Difficulty (raw 0-6 mapped to display 1-7). If raw < 0 treat as 0.
     private int _rawDifficulty;
@@ -52,7 +63,7 @@ public class StarVisual
 public class DifficultyBarVisual
 {
     public bool IsFilled { get; set; }
-    public string FillColor => IsFilled ? "White" : "#666666";
+    public Color FillColor => IsFilled ? Colors.White : Color.FromArgb("#666666");
 }
 
 public class SongInfoViewModel : BaseViewModel // if a BaseViewModel exists; otherwise implement INotifyPropertyChanged
@@ -63,6 +74,7 @@ public class SongInfoViewModel : BaseViewModel // if a BaseViewModel exists; oth
     public string YearDisplay { get; } = string.Empty;
     public string ArtistYearDisplay { get; }
     public string AlbumArtPath { get; }
+    public string SongId { get; }
 
     public ObservableCollection<SongInfoInstrumentRow> InstrumentRows { get; } = new();
 
@@ -75,6 +87,9 @@ public class SongInfoViewModel : BaseViewModel // if a BaseViewModel exists; oth
 
     private bool _useCompactLayout; // triggers multi-line row layout in XAML
     public bool UseCompactLayout { get => _useCompactLayout; set => Set(ref _useCompactLayout, value); }
+    
+    private bool _isLoading; // true when waiting for score update to complete
+    public bool IsLoading { get => _isLoading; set => Set(ref _isLoading, value); }
 
     private readonly IFestivalService _service;
     private readonly SongDisplayRow _rowRef;
@@ -83,6 +98,7 @@ public class SongInfoViewModel : BaseViewModel // if a BaseViewModel exists; oth
     {
     Title = row.Title;
     Artist = row.Artist;
+    SongId = row.Song.track.su;
     var yr = row.Song.track.ReleaseYear;
     if (yr > 0 && yr <= 3000) YearDisplay = yr.ToString();
     ArtistYearDisplay = string.IsNullOrEmpty(YearDisplay) ? Artist : $"{Artist} · {YearDisplay}";
@@ -100,6 +116,11 @@ public class SongInfoViewModel : BaseViewModel // if a BaseViewModel exists; oth
             bool hasScore = false;
             bool isFC = status.IsFullCombo;
             int difficultyRaw = 0;
+            string percentileDisplay = "N/A";
+            string rankDisplay = "N/A";
+            string totalEntriesDisplay = "N/A";
+            bool isTop5 = false;
+            int seasonAchieved = 0; // Per-instrument season
             if (row.Song.track?.su != null && service.ScoresIndex.TryGetValue(row.Song.track.su, out var ld))
             {
                 var tr = key switch
@@ -120,6 +141,13 @@ public class SongInfoViewModel : BaseViewModel // if a BaseViewModel exists; oth
                     hasScore = true;
                     if (tr.isFullCombo) isFC = true;
                     difficultyRaw = tr.difficulty; // expected 0-6 (may be -1 for some not shown instruments)
+                    seasonAchieved = tr.seasonAchieved; // Get per-instrument season
+                    if (!string.IsNullOrEmpty(tr.leaderboardPercentileFormatted))
+                        percentileDisplay = tr.leaderboardPercentileFormatted;
+                    if (tr.rank > 0) rankDisplay = tr.rank.ToString("N0");
+                    // Show calculatedNumEntries (reverse-calculated from rank / rawPercentile)
+                    if (tr.calculatedNumEntries > 0) totalEntriesDisplay = tr.calculatedNumEntries.ToString("N0");
+                    if (tr.rawPercentile > 0 && tr.rawPercentile <= 0.05) isTop5 = true; // Top 5% (rawPercentile is fraction)
                 }
             }
             // Fallback if tracker didn't provide difficulty yet: try from song track intensities
@@ -146,7 +174,12 @@ public class SongInfoViewModel : BaseViewModel // if a BaseViewModel exists; oth
                 IsFullCombo = isFC,
                 ScoreDisplay = hasScore && score.HasValue ? score.Value.ToString("N0") : "0",
                 PercentDisplay = hasScore ? (isFC ? "100%" : FormatPercent(percentRaw)) : "0%",
-                SeasonDisplay = hasScore ? row.SeasonDisplay : "N/A",
+                SeasonDisplay = hasScore ? FormatSeason(seasonAchieved) : "N/A",
+                PercentileDisplay = percentileDisplay,
+                RankDisplay = string.IsNullOrEmpty(rankDisplay) ? "N/A" : rankDisplay,
+                TotalEntriesDisplay = string.IsNullOrEmpty(totalEntriesDisplay) ? "N/A" : totalEntriesDisplay,
+                RankOutOfDisplay = ComposeRankOutOf(rankDisplay, totalEntriesDisplay),
+                IsTop5Percentile = isTop5,
                 ShowScore = ShowScore,
                 ShowPercent = ShowPercent,
                 ShowSeason = ShowSeason,
@@ -193,6 +226,8 @@ public class SongInfoViewModel : BaseViewModel // if a BaseViewModel exists; oth
 
         // Subscribe to score updates for this song
         _service.ScoreUpdated += OnScoreUpdated;
+        // Subscribe to update completion to dismiss loading spinner
+        _service.SongUpdateCompleted += OnSongUpdateCompleted;
         // Track visibility flag changes and propagate to rows
         PropertyChanged += (_, e) =>
         {
@@ -207,6 +242,12 @@ public class SongInfoViewModel : BaseViewModel // if a BaseViewModel exists; oth
                 }
             }
         };
+    }
+    
+    private void OnSongUpdateCompleted(string songId)
+    {
+        if (songId != SongId) return;
+        MainThread.BeginInvokeOnMainThread(() => IsLoading = false);
     }
 
     private void OnScoreUpdated(LeaderboardData ld)
@@ -238,7 +279,12 @@ public class SongInfoViewModel : BaseViewModel // if a BaseViewModel exists; oth
             if (instRow.HasScore)
             {
                 instRow.PercentDisplay = instRow.IsFullCombo ? "100%" : FormatPercent(tr!.percentHit);
-                instRow.SeasonDisplay = _rowRef.SeasonDisplay;
+                instRow.SeasonDisplay = FormatSeason(tr!.seasonAchieved);
+                instRow.PercentileDisplay = string.IsNullOrEmpty(tr!.leaderboardPercentileFormatted) ? "N/A" : tr.leaderboardPercentileFormatted;
+                instRow.RankDisplay = tr.rank > 0 ? tr.rank.ToString("N0") : "N/A";
+                instRow.TotalEntriesDisplay = tr.calculatedNumEntries > 0 ? tr.calculatedNumEntries.ToString("N0") : "N/A";
+                instRow.RankOutOfDisplay = ComposeRankOutOf(instRow.RankDisplay, instRow.TotalEntriesDisplay);
+                instRow.IsTop5Percentile = tr.rawPercentile > 0 && tr.rawPercentile <= 0.05;
                 // Rebuild stars if count changed or was previously none
                 int starsCount = tr!.numStars;
                 int displayCount = starsCount >= 6 ? 5 : Math.Max(1, starsCount);
@@ -268,6 +314,11 @@ public class SongInfoViewModel : BaseViewModel // if a BaseViewModel exists; oth
                 // Lost score? Clear visuals
                 instRow.PercentDisplay = "0%";
                 instRow.SeasonDisplay = "N/A";
+                instRow.PercentileDisplay = "N/A";
+                instRow.RankDisplay = "N/A";
+                instRow.TotalEntriesDisplay = "N/A";
+                instRow.RankOutOfDisplay = "N/A";
+                instRow.IsTop5Percentile = false;
                 instRow.Stars.Clear();
             }
             // Difficulty doesn't change dynamically right now; if future tracker supplies updates add refresh here.
@@ -279,6 +330,40 @@ public class SongInfoViewModel : BaseViewModel // if a BaseViewModel exists; oth
     ~SongInfoViewModel()
     {
         try { _service.ScoreUpdated -= OnScoreUpdated; } catch { }
+        try { _service.SongUpdateCompleted -= OnSongUpdateCompleted; } catch { }
+    }
+    
+    /// <summary>
+    /// Checks if this song needs prioritization during an active fetch.
+    /// If fetching and song hasn't been updated yet, prioritizes it and sets IsLoading.
+    /// </summary>
+    public void CheckAndPrioritizeIfNeeded()
+    {
+        if (!_service.IsFetching)
+        {
+            IsLoading = false;
+            return;
+        }
+        
+        // Already completed this pass - no need to wait
+        if (_service.IsSongCompletedThisPass(SongId))
+        {
+            IsLoading = false;
+            return;
+        }
+        
+        // Currently being updated - show spinner
+        if (_service.IsSongUpdating(SongId))
+        {
+            IsLoading = true;
+            return;
+        }
+        
+        // Not yet updated - prioritize and show spinner
+        if (_service.PrioritizeSong(SongId))
+        {
+            IsLoading = true;
+        }
     }
 
     // Called by page when size changes to adapt column visibility.
@@ -301,13 +386,11 @@ public class SongInfoViewModel : BaseViewModel // if a BaseViewModel exists; oth
 
     private static string FormatPercent(int raw)
     {
-        Console.WriteLine("Raw value: " + raw);
         if (raw <= 0) return "0%";
-    // Observed raw percentHit appears to be scaled by 100 (e.g., 9975 => 99.75%).
-    // Some trackers may scale by 100 or 10000; heuristically detect large values.
-    double value = raw >= 10000 ? raw / 100.0 : raw / 100.0; // fallback single scaling
-    // Normalize to max 100
-    if (value > 100) value = 100;
+        // API ACCURACY values are scaled by 10000 (e.g., 1000000 = 100.0000%, 995000 = 99.5%)
+        double value = raw / 10000.0;
+        // Normalize to max 100
+        if (value > 100) value = 100;
         if (value % 1 == 0) return ((int)value).ToString() + "%";
         if (value * 10 % 1 == 0) return value.ToString("0.0") + "%";
         return value.ToString("0.00") + "%";
@@ -323,4 +406,36 @@ public class SongInfoViewModel : BaseViewModel // if a BaseViewModel exists; oth
         "pro_bass" => "Pro Bass",
         _ => key
     };
+
+    private static string NormalizeSeason(string seasonDisplay)
+    {
+        if (string.IsNullOrWhiteSpace(seasonDisplay) || seasonDisplay == "N/A") return "All-Time";
+        if (seasonDisplay.StartsWith("S") && seasonDisplay.Length > 1 && seasonDisplay.Substring(1).All(char.IsDigit))
+        {
+            // S-1 or negative sentinel -> All-Time
+            if (int.TryParse(seasonDisplay.Substring(1), out var n) && n < 0)
+                return "All-Time";
+        }
+        return seasonDisplay;
+    }
+
+    /// <summary>
+    /// Formats the seasonAchieved integer from the tracker to a display string.
+    /// 0 or negative means "All-Time" (score achieved before seasons were tracked).
+    /// Positive values are season numbers (e.g., 1, 2, 3).
+    /// </summary>
+    private static string FormatSeason(int seasonAchieved)
+    {
+        if (seasonAchieved <= 0) return "All-Time";
+        return $"S{seasonAchieved}";
+    }
+
+    private static string ComposeRankOutOf(string rankDisplay, string totalEntriesDisplay)
+    {
+        bool hasRank = !string.IsNullOrWhiteSpace(rankDisplay) && rankDisplay != "N/A";
+        bool hasEntries = !string.IsNullOrWhiteSpace(totalEntriesDisplay) && totalEntriesDisplay != "N/A";
+        if (!hasRank) return "N/A";
+        if (hasRank && hasEntries) return "#" + rankDisplay + " / " + totalEntriesDisplay;
+        return "#" + rankDisplay;
+    }
 }

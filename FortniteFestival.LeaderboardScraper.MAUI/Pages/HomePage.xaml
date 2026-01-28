@@ -75,41 +75,39 @@
                               ItemsSource="{Binding Songs.VisibleRows}"
                               SelectionMode="None"
                               ItemSizingStrategy="MeasureFirstItem"
+                              RemainingItemsThreshold="5"
                               BackgroundColor="Transparent">
                 <CollectionView.ItemTemplate>
                   <DataTemplate x:DataType="vm:SongDisplayRow">
-                    <Grid>
+                    <Grid Padding="6" ColumnDefinitions="60,*,Auto,Auto" ColumnSpacing="8">
                       <Grid.GestureRecognizers>
                         <TapGestureRecognizer Tapped="OnSongRowTapped" CommandParameter="{Binding .}" />
                       </Grid.GestureRecognizers>
-                      <Grid x:Name="WideSongRow" Padding="6" ColumnDefinitions="60,*,Auto" ColumnSpacing="8" IsVisible="{Binding UseCompactLayout, Converter={StaticResource InverseBoolConverter}}">
-                        <Border Grid.Column="0" StrokeShape="RoundRectangle 4" WidthRequest="56" HeightRequest="56" BackgroundColor="#444444" HorizontalOptions="Start" VerticalOptions="Center">
-                          <Image Source="{Binding AlbumArtPath}" Aspect="AspectFill" />
-                        </Border>
-                        <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
-                          <Label Text="{Binding Title}" FontAttributes="Bold" FontFamily="NotoSansBold" LineBreakMode="TailTruncation" />
-                          <Label Text="{Binding ArtistYearDisplay}" FontSize="12" FontFamily="NotoSansRegular" LineBreakMode="TailTruncation" />
-                        </VerticalStackLayout>
-                        <HorizontalStackLayout Grid.Column="2" Spacing="8" BindableLayout.ItemsSource="{Binding InstrumentStatuses}" VerticalOptions="Center">
-                          <BindableLayout.ItemTemplate>
-                            <DataTemplate x:DataType="vm:InstrumentStatus">
-                              <Grid WidthRequest="48" HeightRequest="48">
-                                <Border IsVisible="{Binding ShowCircle}" BackgroundColor="{Binding CircleFillColor}" Stroke="{Binding CircleStrokeColor}" StrokeShape="Ellipse" StrokeThickness="3" WidthRequest="48" HeightRequest="48" />
-                                <Image Source="{Binding Icon}" WidthRequest="40" HeightRequest="40" HorizontalOptions="Center" VerticalOptions="Center" />
-                              </Grid>
-                            </DataTemplate>
-                          </BindableLayout.ItemTemplate>
-                        </HorizontalStackLayout>
-                      </Grid>
-                      <Grid x:Name="CompactSongRow" Padding="6" ColumnDefinitions="60,*" ColumnSpacing="8" IsVisible="{Binding UseCompactLayout}">
-                        <Border Grid.Column="0" StrokeShape="RoundRectangle 4" WidthRequest="56" HeightRequest="56" BackgroundColor="#444444" HorizontalOptions="Start" VerticalOptions="Center">
-                          <Image Source="{Binding AlbumArtPath}" Aspect="AspectFill" />
-                        </Border>
-                        <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
-                          <Label Text="{Binding Title}" FontAttributes="Bold" FontFamily="NotoSansBold" LineBreakMode="TailTruncation" />
-                          <Label Text="{Binding ArtistYearDisplay}" FontSize="12" FontFamily="NotoSansRegular" LineBreakMode="TailTruncation" />
-                        </VerticalStackLayout>
-                      </Grid>
+                      <!-- Album Art -->
+                      <Border Grid.Column="0" StrokeShape="RoundRectangle 4" WidthRequest="56" HeightRequest="56" BackgroundColor="#444444" HorizontalOptions="Start" VerticalOptions="Center">
+                        <Image Source="{Binding AlbumArtPath}" Aspect="AspectFill" />
+                      </Border>
+                      <!-- Title/Artist -->
+                      <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center" HorizontalOptions="Start">
+                        <Label Text="{Binding Title}" FontAttributes="Bold" FontFamily="NotoSansBold" LineBreakMode="TailTruncation" />
+                        <Label Text="{Binding ArtistYearDisplay}" FontSize="12" FontFamily="NotoSansRegular" LineBreakMode="TailTruncation" />
+                      </VerticalStackLayout>
+                      <!-- Per-row updating spinner -->
+                      <ActivityIndicator Grid.Column="2" IsRunning="{Binding IsUpdating}" IsVisible="{Binding IsUpdating}" WidthRequest="28" HeightRequest="28" Color="#FFD700" VerticalOptions="Center" Margin="4,0" />
+                      <!-- Instrument Status Icons (only visible in wide layout) -->
+                      <HorizontalStackLayout Grid.Column="3" Spacing="6" VerticalOptions="Center" IsVisible="{Binding UseCompactLayout, Converter={StaticResource InverseBoolConverter}}">
+                        <BindableLayout.ItemsSource>
+                          <Binding Path="InstrumentStatuses" />
+                        </BindableLayout.ItemsSource>
+                        <BindableLayout.ItemTemplate>
+                          <DataTemplate x:DataType="vm:InstrumentStatus">
+                            <Grid WidthRequest="44" HeightRequest="44">
+                              <Border BackgroundColor="{Binding CircleFillColor}" Stroke="{Binding CircleStrokeBrush}" StrokeShape="Ellipse" StrokeThickness="2" WidthRequest="44" HeightRequest="44" />
+                              <Image Source="{Binding Icon}" WidthRequest="36" HeightRequest="36" HorizontalOptions="Center" VerticalOptions="Center" />
+                            </Grid>
+                          </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                      </HorizontalStackLayout>
                     </Grid>
                   </DataTemplate>
                 </CollectionView.ItemTemplate>
@@ -124,16 +122,17 @@
           </Border>
           <!-- Update Scores Button -->
           <Grid x:Name="UpdateScoresRow" Grid.Row="2" Padding="0" HorizontalOptions="Fill" VerticalOptions="End" Margin="0,6,0,0">
-            <Border x:Name="UpdateScoresButton" StrokeShape="RoundRectangle 26" BackgroundColor="#4B0F63" Padding="24,16" HorizontalOptions="End" HeightRequest="48">
+            <!-- Adjusted padding & spinner sizing to avoid clipping inside 48px height with large corner radius -->
+            <Border x:Name="UpdateScoresButton" StrokeShape="RoundRectangle 26" BackgroundColor="#4B0F63" Padding="22,0" HorizontalOptions="End" HeightRequest="48">
               <Border.Shadow>
                 <Shadow Brush="#000000" Opacity="0.35" Offset="0,4" Radius="14" />
               </Border.Shadow>
               <Border.GestureRecognizers>
                 <TapGestureRecognizer Tapped="OnUpdateScoresTapped" NumberOfTapsRequired="1" />
               </Border.GestureRecognizers>
-              <Grid>
-                <Label x:Name="UpdateScoresLabel" Text="Update Scores" FontFamily="NotoSansBold" TextColor="White" />
-                <ActivityIndicator x:Name="UpdateScoresSpinner" IsRunning="False" IsVisible="False" Color="White" />
+               <Grid HorizontalOptions="Center" VerticalOptions="Center">
+                 <Label x:Name="UpdateScoresLabel" Text="Update Scores" FontFamily="NotoSansBold" TextColor="White" HorizontalOptions="Center" VerticalOptions="Center" />
+                <ActivityIndicator x:Name="UpdateScoresSpinner" IsRunning="False" IsVisible="False" Color="White" WidthRequest="22" HeightRequest="22" />
               </Grid>
             </Border>
           </Grid>
@@ -162,24 +161,13 @@
         </Grid>
       </Grid>
 
-      <!-- Statistics Section placeholder -->
+      <!-- Statistics Section -->
   <Grid x:Name="StatisticsSection" Grid.Row="1" Grid.RowSpan="3" IsVisible="False" Margin="12,0,12,8">
-        <Border BackgroundColor="#b35cd6" StrokeShape="RoundRectangle 26" Padding="24">
-          <VerticalStackLayout Spacing="12" HorizontalOptions="Center" VerticalOptions="Center">
-            <Label Text="Statistics" FontFamily="NotoSansBold" FontSize="24" />
-            <Label Text="(Placeholder)" />
-          </VerticalStackLayout>
-        </Border>
-      </Grid>
-
-      <!-- Settings Section placeholder -->
-  <Grid x:Name="SettingsSection" Grid.Row="1" Grid.RowSpan="3" IsVisible="False" Margin="12,0,12,8">
-        <Border BackgroundColor="#b35cd6" StrokeShape="RoundRectangle 26" Padding="24">
-          <VerticalStackLayout Spacing="12" HorizontalOptions="Center" VerticalOptions="Center">
-            <Label Text="Settings" FontFamily="NotoSansBold" FontSize="24" />
-            <Label Text="(Placeholder)" />
-          </VerticalStackLayout>
-        </Border>
+        <Grid Padding="0" RowDefinitions="*">
+          <ScrollView x:Name="StatisticsScroll" Grid.Row="0">
+            <VerticalStackLayout x:Name="StatisticsContentStack" Spacing="18" Padding="0,0,0,12" />
+          </ScrollView>
+        </Grid>
       </Grid>
     </Grid>
     <!-- Navigation Drawer Overlay -->

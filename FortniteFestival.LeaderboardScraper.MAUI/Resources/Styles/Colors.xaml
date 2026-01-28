@@ -25,6 +25,18 @@
   <Color x:Key="Gray600">#404040</Color>
   <Color x:Key="Gray900">#212121</Color>
   <Color x:Key="Gray950">#141414</Color>
+  
+  <!-- App Theme Colors -->
+  <Color x:Key="PageBackground">#9d4dbb</Color>
+  <Color x:Key="CardBackground">#55FFFFFF</Color>
+  <Color x:Key="CardStroke">#88FFFFFF</Color>
+  <Color x:Key="NavBackground">#4B0F63</Color>
+  
+  <!-- Page Layout -->
+  <Thickness x:Key="PagePadding">12,8,12,8</Thickness>
+  <Thickness x:Key="CardPadding">16,14,16,14</Thickness>
+  <CornerRadius x:Key="CardCornerRadius">18</CornerRadius>
+  
   <SolidColorBrush x:Key="PrimaryBrush" Color="{StaticResource Primary}" />
   <SolidColorBrush x:Key="SecondaryBrush" Color="{StaticResource Secondary}" />
   <SolidColorBrush x:Key="TertiaryBrush" Color="{StaticResource Tertiary}" />

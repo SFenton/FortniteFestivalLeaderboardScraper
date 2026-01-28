@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
@@ -18,18 +19,56 @@ namespace FortniteFestival.Core.Services
 {
     public class FestivalService : IFestivalService
     {
+    // Logging now limited to error conditions only (performance optimization)
+    // Optimized HttpClient instances with increased connection pool limits
+#if NETCOREAPP3_0_OR_GREATER || NET5_0_OR_GREATER
+        private static readonly SocketsHttpHandler _sharedHandler = new SocketsHttpHandler
+        {
+            MaxConnectionsPerServer = 64,
+            PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            EnableMultipleHttp2Connections = true,
+        };
+        private static readonly HttpClient _httpContent = new HttpClient(_sharedHandler, disposeHandler: false)
+        {
+            BaseAddress = new Uri("https://fortnitecontent-website-prod07.ol.epicgames.com"),
+            Timeout = TimeSpan.FromSeconds(30),
+        };
+        private static readonly HttpClient _httpEvents = new HttpClient(_sharedHandler, disposeHandler: false)
+        {
+            BaseAddress = new Uri("https://events-public-service-live.ol.epicgames.com"),
+            Timeout = TimeSpan.FromSeconds(30),
+        };
+        private static readonly HttpClient _httpAccount = new HttpClient(_sharedHandler, disposeHandler: false)
+        {
+            BaseAddress = new Uri("https://account-public-service-prod.ol.epicgames.com"),
+            Timeout = TimeSpan.FromSeconds(30),
+        };
+#else
+        // .NET Framework fallback - use default HttpClient (no SocketsHttpHandler available)
+        static FestivalService()
+        {
+            // Increase connection limit for .NET Framework
+            ServicePointManager.DefaultConnectionLimit = 64;
+            ServicePointManager.Expect100Continue = false;
+            ServicePointManager.UseNagleAlgorithm = false;
+        }
         private static readonly HttpClient _httpContent = new HttpClient
         {
             BaseAddress = new Uri("https://fortnitecontent-website-prod07.ol.epicgames.com"),
+            Timeout = TimeSpan.FromSeconds(30),
         };
         private static readonly HttpClient _httpEvents = new HttpClient
         {
             BaseAddress = new Uri("https://events-public-service-live.ol.epicgames.com"),
+            Timeout = TimeSpan.FromSeconds(30),
         };
         private static readonly HttpClient _httpAccount = new HttpClient
         {
             BaseAddress = new Uri("https://account-public-service-prod.ol.epicgames.com"),
+            Timeout = TimeSpan.FromSeconds(30),
         };
+#endif
         private readonly object _sync = new object();
         private readonly ConcurrentDictionary<string, LeaderboardData> _scores =
             new ConcurrentDictionary<string, LeaderboardData>();
@@ -44,11 +83,31 @@ namespace FortniteFestival.Core.Services
         private volatile bool _unauthorizedLogged;
         private int _fetchCompleted;
         private int _fetchTotal; // progress counters
+        
+        // Per-song update tracking
+        private readonly ConcurrentDictionary<string, bool> _songsCompletedThisPass = new ConcurrentDictionary<string, bool>();
+        private readonly ConcurrentDictionary<string, bool> _songsCurrentlyUpdating = new ConcurrentDictionary<string, bool>();
+        private readonly ConcurrentQueue<string> _prioritizedSongIds = new ConcurrentQueue<string>();
+        
         public bool IsFetching { get; private set; }
         public event Action<string> Log;
         public event Action<string> SongAvailabilityChanged;
         public event Action<LeaderboardData> ScoreUpdated;
         public event Action<int, int, string, bool> SongProgress;
+        public event Action<string> SongUpdateStarted;
+        public event Action<string> SongUpdateCompleted;
+        
+        public bool IsSongCompletedThisPass(string songId) => _songsCompletedThisPass.ContainsKey(songId);
+        public bool IsSongUpdating(string songId) => _songsCurrentlyUpdating.ContainsKey(songId);
+        public bool PrioritizeSong(string songId)
+        {
+            if (string.IsNullOrEmpty(songId) || !IsFetching) return false;
+            // Check if already completed or currently updating
+            if (_songsCompletedThisPass.ContainsKey(songId) || _songsCurrentlyUpdating.ContainsKey(songId)) return false;
+            _prioritizedSongIds.Enqueue(songId);
+            return true;
+        }
+        
         public IReadOnlyList<Song> Songs
         {
             get
@@ -75,26 +134,11 @@ namespace FortniteFestival.Core.Services
             _persistence = persistence;
         }
 
-        private readonly ConcurrentQueue<string> _logQueue = new ConcurrentQueue<string>();
-        private long _lastFlushTicks;
+        public void SetLogging(bool enabled) { /* no-op */ }
 
         private void LogLine(string msg)
         {
-            var full = $"[{DateTime.Now:HH:mm:ss}] {msg}";
-            _logQueue.Enqueue(full);
-#if DEBUG
-            Debug.WriteLine("[FestivalService] " + full);
-#endif
-            var now = Stopwatch.GetTimestamp();
-            if ((now - Interlocked.Read(ref _lastFlushTicks)) > (Stopwatch.Frequency / 4))
-                FlushLogs();
-        }
-
-        private void FlushLogs()
-        {
-            Interlocked.Exchange(ref _lastFlushTicks, Stopwatch.GetTimestamp());
-            while (_logQueue.TryDequeue(out var line))
-                Log?.Invoke(line);
+            try { Log?.Invoke(msg); } catch { }
         }
 
         public async Task InitializeAsync()
@@ -110,7 +154,32 @@ namespace FortniteFestival.Core.Services
                     ld.dirty = false;
                     _scores[ld.songId] = ld;
                 }
-                LogLine($"Loaded {loadedScores.Count} cached scores.");
+                // removed info log (loaded scores)
+                // Dump persisted leaderboard fields for debugging (always, even with logging disabled)
+                try
+                {
+                    Console.WriteLine($"[DBInit] Cached scores loaded: {loadedScores.Count}");
+                    void Dump(string inst, ScoreTracker tr, string songId)
+                    {
+                        if (tr == null) return;
+                        Console.WriteLine($"[DBInit] {songId}:{inst} init={tr.initialized} score={tr.maxScore} rank={tr.rank} total={tr.totalEntries}");
+                    }
+                    foreach (var ld in loadedScores)
+                    {
+                        Dump("guitar", ld.guitar, ld.songId);
+                        Dump("drums", ld.drums, ld.songId);
+                        Dump("bass", ld.bass, ld.songId);
+                        Dump("vocals", ld.vocals, ld.songId);
+                        Dump("pro_guitar", ld.pro_guitar, ld.songId);
+                        Dump("pro_bass", ld.pro_bass, ld.songId);
+                    }
+                    // Proactively raise ScoreUpdated for all loaded boards so any already-open SongInfo pages get percentile immediately
+                    foreach (var ld in loadedScores)
+                    {
+                        try { ScoreUpdated?.Invoke(ld); } catch { }
+                    }
+                }
+                catch { }
                 var loadedSongs = await _persistence.LoadSongsAsync().ConfigureAwait(false);
                 if (loadedSongs != null && loadedSongs.Count > 0)
                 {
@@ -123,7 +192,7 @@ namespace FortniteFestival.Core.Services
                         }
                         _songsDirty = true;
                     }
-                    LogLine($"Loaded {loadedSongs.Count} cached songs.");
+                    // removed info log (loaded songs)
                 }
             }
             // Establish image root and /images subfolder early
@@ -150,7 +219,7 @@ namespace FortniteFestival.Core.Services
                 if (!System.IO.Directory.Exists(imagesDir))
                     System.IO.Directory.CreateDirectory(imagesDir);
                 _imageRoot = rootCandidate;
-                LogLine($"Image root set to {_imageRoot}\nImages dir={imagesDir}");
+                // removed info log (image root)
             }
             catch (Exception ex)
             {
@@ -158,12 +227,12 @@ namespace FortniteFestival.Core.Services
             }
             await SyncSongsAsync().ConfigureAwait(false);
             await SyncImagesAsync().ConfigureAwait(false);
-            FlushLogs();
+            // flush removed
         }
 
         public async Task SyncSongsAsync()
         {
-            LogLine("Syncing songs (unauthenticated)...");
+            // removed info log (sync songs start)
             try
             {
                 var res = await _httpContent
@@ -218,7 +287,7 @@ namespace FortniteFestival.Core.Services
                     }
                     _songsDirty = true;
                 }
-                LogLine($"Song sync complete. {_songs.Count} songs loaded.");
+                // removed info log (song sync complete)
                 if (_persistence != null)
                 {
                     try
@@ -235,7 +304,7 @@ namespace FortniteFestival.Core.Services
             finally
             {
                 _songSyncComplete = true;
-                FlushLogs();
+                // flush removed
             }
         }
 
@@ -245,10 +314,10 @@ namespace FortniteFestival.Core.Services
                 return;
             if (!_songSyncComplete)
             {
-                LogLine("Skipping image sync until songs complete");
+                // removed info log (skip image sync)
                 return;
             }
-            LogLine("Syncing song images...");
+                // removed info log (image sync start)
             try
             {
                 // Use configured root; fallback if null
@@ -325,7 +394,7 @@ namespace FortniteFestival.Core.Services
                     }
                     catch { }
                 }
-                LogLine("Image sync complete.");
+                // removed info log (image sync complete)
             }
             catch (Exception ex)
             {
@@ -416,25 +485,29 @@ namespace FortniteFestival.Core.Services
                 return false;
             if (!_songSyncComplete || !_imagesSyncComplete)
             {
-                LogLine("Initialization (songs/images) not yet complete.");
-                return false;
+                return false; // silent early exit
             }
             _authFailed = false;
             _unauthorizedLogged = false;
             IsFetching = true;
+            
+            // Clear per-pass tracking
+            _songsCompletedThisPass.Clear();
+            _songsCurrentlyUpdating.Clear();
+            while (_prioritizedSongIds.TryDequeue(out _)) { } // clear queue
+            
             _runSw.Restart();
             _instImproved = 0;
             _instEmpty = 0;
             _instErrors = 0;
             _instRequests = 0;
             _instBytes = 0;
-            LogLine("Authenticating...");
+            // removed info log (authenticating)
             var token = await GetToken(exchangeCode).ConfigureAwait(false);
             if (token == null)
             {
                 LogLine("Auth failed (no token). Exchange code may be invalid / already used.");
                 IsFetching = false;
-                FlushLogs();
                 return false;
             }
             // Verify token before heavy work
@@ -442,7 +515,6 @@ namespace FortniteFestival.Core.Services
             {
                 LogLine("Token verification failed. Generate a fresh exchange code and retry.");
                 IsFetching = false;
-                FlushLogs();
                 return false;
             }
             var prioritized = Songs
@@ -458,68 +530,110 @@ namespace FortniteFestival.Core.Services
             _fetchCompleted = 0;
             if (total == 0)
             {
-                LogLine("No songs selected.");
                 IsFetching = false;
-                FlushLogs();
                 return true;
             }
             int fixedDop =
                 settings?.DegreeOfParallelism > 0
                     ? settings.DegreeOfParallelism
                     : Math.Max(1, degreeOfParallelism);
-            LogLine(
-                $"Fetching leaderboards for {total} songs with fixed concurrency {fixedDop}..."
-            );
-            var semaphore = new SemaphoreSlim(fixedDop, fixedDop);
-            var tasks = new List<Task>();
-            foreach (var song in prioritized)
+                    
+            // Build prioritizable queue with remaining songs
+            var remainingSongs = new ConcurrentDictionary<string, Song>(
+                prioritized.ToDictionary(s => s.track.su, s => s));
+            var songQueue = new System.Collections.Concurrent.BlockingCollection<Song>();
+            
+            // Producer task that feeds the queue, checking for prioritized songs first
+            var producerTask = Task.Run(() =>
             {
-                await semaphore.WaitAsync().ConfigureAwait(false);
-                if (_authFailed)
+                var pending = new HashSet<string>(prioritized.Select(s => s.track.su));
+                while (pending.Count > 0 && !_authFailed)
                 {
-                    semaphore.Release();
-                    break;
+                    // Check for prioritized songs first
+                    while (_prioritizedSongIds.TryDequeue(out var prioritizedId))
+                    {
+                        if (pending.Contains(prioritizedId) && remainingSongs.TryRemove(prioritizedId, out var priSong))
+                        {
+                            pending.Remove(prioritizedId);
+                            songQueue.Add(priSong);
+                        }
+                    }
+                    
+                    // Get next song from original order
+                    var nextSong = prioritized.FirstOrDefault(s => pending.Contains(s.track.su) && remainingSongs.ContainsKey(s.track.su));
+                    if (nextSong != null && remainingSongs.TryRemove(nextSong.track.su, out _))
+                    {
+                        pending.Remove(nextSong.track.su);
+                        songQueue.Add(nextSong);
+                    }
+                    else if (pending.Count > 0)
+                    {
+                        // Small delay to avoid busy-waiting if queue is being processed
+                        Thread.Sleep(1);
+                    }
                 }
+                songQueue.CompleteAdding();
+            });
+            
+            // Track songs processed for incremental persistence
+            int songsProcessedSinceLastFlush = 0;
+            const int FlushThreshold = 50; // persist every 50 songs
+            
+            // Consumer tasks
+            var semaphore = new SemaphoreSlim(fixedDop, fixedDop);
+            var consumerTasks = new List<Task>();
+            
+            foreach (var song in songQueue.GetConsumingEnumerable())
+            {
+                if (_authFailed) break;
+                await semaphore.WaitAsync().ConfigureAwait(false);
+                var currentSong = song;
                 var t = Task.Run(async () =>
                 {
                     try
                     {
-                        await FetchSongAsync(song, token, settings).ConfigureAwait(false);
+                        // Mark song as currently updating
+                        _songsCurrentlyUpdating[currentSong.track.su] = true;
+                        try { SongUpdateStarted?.Invoke(currentSong.track.su); } catch { }
+                        
+                        await FetchSongAsync(currentSong, token, settings).ConfigureAwait(false);
+                        
+                        // Mark song as completed
+                        _songsCurrentlyUpdating.TryRemove(currentSong.track.su, out _);
+                        _songsCompletedThisPass[currentSong.track.su] = true;
+                        try { SongUpdateCompleted?.Invoke(currentSong.track.su); } catch { }
+                        
+                        // Incremental persistence: flush dirty scores periodically
+                        var processed = Interlocked.Increment(ref songsProcessedSinceLastFlush);
+                        if (processed >= FlushThreshold && _persistence != null)
+                        {
+                            if (Interlocked.CompareExchange(ref songsProcessedSinceLastFlush, 0, processed) == processed)
+                            {
+                                await FlushDirtyScoresAsync().ConfigureAwait(false);
+                            }
+                        }
                     }
                     finally
                     {
                         semaphore.Release();
                     }
                 });
-                tasks.Add(t);
+                consumerTasks.Add(t);
             }
-            await Task.WhenAll(tasks).ConfigureAwait(false);
-            if (!_authFailed)
-                LogLine(
-                    $"Score fetch complete. Improved={_instImproved} Empty={_instEmpty} Errors={_instErrors}"
-                );
-            else
+            
+            await producerTask.ConfigureAwait(false);
+            await Task.WhenAll(consumerTasks).ConfigureAwait(false);
+            if (_authFailed)
                 LogLine("Fetch aborted due to authorization failure.");
             if (settings != null)
             {
                 settings.DegreeOfParallelism = fixedDop;
             }
+            // Final flush of any remaining dirty scores
             if (!_authFailed && _persistence != null)
             {
-                try
-                {
-                    var dirty = _scores.Values.Where(s => s.dirty).ToList();
-                    if (dirty.Count > 0)
-                    {
-                        await _persistence.SaveScoresAsync(dirty).ConfigureAwait(false);
-                        foreach (var d in dirty)
-                            d.dirty = false;
-                        LogLine($"Scores persisted ({dirty.Count} changed).");
-                    }
-                }
-                catch { }
+                await FlushDirtyScoresAsync().ConfigureAwait(false);
             }
-            FlushLogs();
             IsFetching = false;
             _runSw.Stop();
             return !_authFailed;
@@ -528,7 +642,26 @@ namespace FortniteFestival.Core.Services
         private void ReportSongFinished(Song s)
         {
             var done = Interlocked.Increment(ref _fetchCompleted);
-            SongProgress?.Invoke(done, _fetchTotal, s.track.tt, false);
+            // Batch progress updates: only report every 10 songs or at milestones to reduce UI overhead
+            bool shouldReport = done == 1 || done == _fetchTotal || done % 10 == 0;
+            if (shouldReport)
+                SongProgress?.Invoke(done, _fetchTotal, s.track.tt, false);
+        }
+
+        private async Task FlushDirtyScoresAsync()
+        {
+            if (_persistence == null) return;
+            try
+            {
+                var dirty = _scores.Values.Where(s => s.dirty).ToList();
+                if (dirty.Count > 0)
+                {
+                    await _persistence.SaveScoresAsync(dirty).ConfigureAwait(false);
+                    foreach (var d in dirty)
+                        d.dirty = false;
+                }
+            }
+            catch { }
         }
 
         private async Task FetchSongAsync(Song song, ExchangeCodeToken token, Settings settings)
@@ -579,7 +712,6 @@ namespace FortniteFestival.Core.Services
                 ReportSongFinished(song);
                 return;
             }
-            bool anyImproved = false;
             int emptyCount = 0;
             int errorCount = 0;
             LeaderboardData board = null;
@@ -591,12 +723,9 @@ namespace FortniteFestival.Core.Services
             var results = await Task.WhenAll(tasks).ConfigureAwait(false);
             foreach (var r in results)
             {
-                if (r.status == InstrumentFetchStatus.Improved)
-                {
-                    anyImproved = true;
-                    board = r.board;
-                }
-                else if (r.status == InstrumentFetchStatus.Empty)
+                if (r.board != null)
+                    board = r.board; // Capture the board from any result
+                if (r.status == InstrumentFetchStatus.Empty)
                 {
                     emptyCount++;
                 }
@@ -605,14 +734,12 @@ namespace FortniteFestival.Core.Services
                     errorCount++;
                 }
             }
-            if (anyImproved && !_authFailed)
+            // Always invoke ScoreUpdated so listening UIs can refresh with latest data
+            if (board != null && !_authFailed)
                 ScoreUpdated?.Invoke(board);
             // Per song summary log
-            LogLine(
-                $"Song summary: {song.track.tt} Improved={(anyImproved ? 1 : 0)} Empty={emptyCount} Errors={errorCount}"
-            );
+            // removed song summary log
             ReportSongFinished(song);
-            FlushLogs();
         }
 
         private enum InstrumentFetchStatus
@@ -635,158 +762,216 @@ namespace FortniteFestival.Core.Services
             Action<LeaderboardData, ScoreTracker> assign
         )
         {
+            // V2 removed: Use V1 leaderboard only.
             if (_authFailed)
                 return (InstrumentFetchStatus.None, null);
-            var url =
-                $"/api/v2/games/FNFestival/leaderboards/alltime_{song.track.su}_{api}/alltime/scores?accountId={token.account_id}&fromIndex=0&findTeams=false";
-            var bodyStr = "{\"teams\":[[\"" + token.account_id + "\"]]}";
-            var body = new StringContent(bodyStr, Encoding.UTF8, "application/json");
-            var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = body };
-            req.Headers.Authorization = new AuthenticationHeaderValue("bearer", token.access_token);
             Interlocked.Increment(ref _instRequests);
-            Interlocked.Add(ref _instBytes, bodyStr.Length);
+            var board = _scores.GetOrAdd(
+                song.track.su,
+                _ => new LeaderboardData
+                {
+                    songId = song.track.su,
+                    title = song.track.tt,
+                    artist = song.track.an,
+                }
+            );
+            if (board.correlatedV1Pages == null)
+                board.correlatedV1Pages = new System.Collections.Generic.Dictionary<string, V1LeaderboardPage>(System.StringComparer.OrdinalIgnoreCase);
+            var tracker = getter(board) ?? new ScoreTracker();
+            var prevScore = tracker.maxScore;
+            var prevRank = tracker.rank;
+            var prevTotalEntries = tracker.totalEntries;
+            // Removed basis-point percentile tracking
+            tracker.difficulty = diff;
+            // Assumption: Supplying teamAccountIds causes API to return page containing player entry even if not page 0.
+            // If this assumption fails (player not on first page), we'll need a follow-up multi-page fetch.
+            var page = 0;
+            var url = "/api/v1/leaderboards/FNFestival/alltime_" + song.track.su + "_" + api + "/alltime/" + token.account_id + "?page=" + page + "&rank=0&teamAccountIds=" + token.account_id + "&appId=Fortnite&showLiveSessions=false";
+            bool debug24k = api == "Solo_Vocals" && string.Equals(song.track.tt, "24K Magic", StringComparison.OrdinalIgnoreCase);
+            if (debug24k)
+            {
+                Console.WriteLine($"[Debug24K] V1 fetch url={url} preRank={tracker.rank} preScore={tracker.maxScore}");
+            }
+            // General URL trace (without bearer) for troubleshooting
+            // removed verbose URL log
+            var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.Authorization = new AuthenticationHeaderValue("bearer", token.access_token);
             try
             {
+                // removed HTTP trace log
                 var res = await _httpEvents.SendAsync(req).ConfigureAwait(false);
-                var str = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-                Interlocked.Add(ref _instBytes, str.Length);
-                if (string.IsNullOrEmpty(str))
-                    throw new Exception("Empty response");
-                ScoreList[] arr = null;
-                bool notFound = false;
-                string extractedErrorCode = null;
-                string extractedErrorMessage = null; // capture error fields
-                if (str.TrimStart().StartsWith("{"))
+                var body = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(body))
+                    Interlocked.Add(ref _instBytes, body.Length);
+                if (!res.IsSuccessStatusCode || string.IsNullOrEmpty(body))
                 {
-                    // Attempt error field extraction
-                    var (ec, msg) = HttpErrorHelper.ExtractError(str);
-                    extractedErrorCode = ec;
-                    extractedErrorMessage = msg;
-                    if (str.IndexOf("errorCode", StringComparison.OrdinalIgnoreCase) >= 0)
-                    {
-                        var lower = str.ToLowerInvariant();
-                        if (lower.Contains("unauthorized"))
-                        {
-                            _authFailed = true;
-                            if (!_unauthorizedLogged)
-                            {
-                                LogLine(
-                                    HttpErrorHelper.FormatHttpError(
-                                        $"Leaderboard Unauthorized {song.track.tt} {api}",
-                                        res,
-                                        str,
-                                        extractedErrorCode,
-                                        extractedErrorMessage
-                                    )
-                                );
-                                _unauthorizedLogged = true;
-                            }
-                            Interlocked.Increment(ref _instErrors);
-                            LogLine(
-                                $"Auth failure counted for {song.track.tt} {api} (errorCode={extractedErrorCode ?? "<none>"})"
-                            );
-                            return (InstrumentFetchStatus.Error, null);
-                        }
-                        if (lower.Contains("not_found"))
-                        {
-                            // treat as empty leaderboard
-                            notFound = true;
-                            arr = Array.Empty<ScoreList>();
-                        }
-                        else
-                        {
-                            Interlocked.Increment(ref _instErrors);
-                            LogLine(
-                                HttpErrorHelper.FormatHttpError(
-                                    $"Leaderboard Error {song.track.tt} {api}",
-                                    res,
-                                    str,
-                                    extractedErrorCode,
-                                    extractedErrorMessage
-                                )
-                            );
-                            return (InstrumentFetchStatus.Error, null);
-                        }
-                    }
-                    else
-                    {
-                        arr = Array.Empty<ScoreList>();
-                    }
-                }
-                else
-                {
-                    arr = System.Text.Json.JsonSerializer.Deserialize<ScoreList[]>(str);
-                }
-
-                if (_authFailed)
-                    return (InstrumentFetchStatus.Error, null);
-                if (arr != null && arr.Length > 0)
-                {
-                    var board = _scores.GetOrAdd(
-                        song.track.su,
-                        _ => new LeaderboardData
-                        {
-                            songId = song.track.su,
-                            title = song.track.tt,
-                            artist = song.track.an,
-                        }
-                    );
-                    var tracker = getter(board) ?? new ScoreTracker();
-                    tracker.difficulty = diff;
-                    bool improved = false;
-                    foreach (var sc in arr)
-                    {
-                        if (sc.score > tracker.maxScore)
-                        {
-                            tracker.maxScore = sc.score;
-                            tracker.initialized = true;
-                            improved = true;
-                            if (sc.sessionHistory != null)
-                            {
-                                foreach (var session in sc.sessionHistory)
-                                {
-                                    if (
-                                        session.trackedStats != null
-                                        && session.trackedStats.SCORE == sc.score
-                                    )
-                                    {
-                                        tracker.percentHit = session.trackedStats.ACCURACY;
-                                        tracker.isFullCombo = session.trackedStats.FULL_COMBO == 1;
-                                        tracker.numStars = session.trackedStats.STARS_EARNED;
-                                        tracker.seasonAchieved = session.trackedStats.SEASON ?? 0;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (improved)
-                    {
-                        tracker.RefreshDerived();
-                        board.dirty = true;
-                        assign(board, tracker);
-                        Interlocked.Increment(ref _instImproved);
-                        LogLine($"Improved score for {song.track.tt} {api}: {tracker.maxScore}");
-                        return (InstrumentFetchStatus.Improved, board);
-                    }
-                    assign(board, tracker);
-                    // existing score unchanged counts as empty (no improvement) but not an error
+                    if (debug24k)
+                        Console.WriteLine($"[Debug24K] V1 status={(int)res.StatusCode} len={body?.Length ?? 0}");
                     Interlocked.Increment(ref _instEmpty);
-                    LogLine($"No improvement for {song.track.tt} {api}");
                     return (InstrumentFetchStatus.Empty, board);
                 }
-                // empty leaderboard (either truly empty or not_found)
+                if (debug24k)
+                {
+                    Console.WriteLine($"[Debug24K] V1 OK status={(int)res.StatusCode} len={body.Length}");
+                    Console.WriteLine($"[Debug24K] V1 RAW={body}");
+                }
+                int pageVal = 0, totalPagesVal = 0;
+                var entries = new System.Collections.Generic.List<V1LeaderboardEntry>();
+                try
+                {
+                    using (var doc = JsonDocument.Parse(body))
+                    {
+                        var root = doc.RootElement;
+                        if (root.TryGetProperty("page", out var pgEl) && pgEl.ValueKind == JsonValueKind.Number)
+                            pageVal = pgEl.GetInt32();
+                        if (root.TryGetProperty("totalPages", out var tpEl) && tpEl.ValueKind == JsonValueKind.Number)
+                            totalPagesVal = tpEl.GetInt32();
+                        if (root.TryGetProperty("entries", out var entArr) && entArr.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var e in entArr.EnumerateArray())
+                            {
+                                var entry = new V1LeaderboardEntry();
+                                // Support both legacy snake_case and current camelCase property names for team id
+                                if (e.TryGetProperty("team_id", out var tid) && tid.ValueKind == JsonValueKind.String)
+                                    entry.team_id = tid.GetString();
+                                else if (e.TryGetProperty("teamId", out var tidc) && tidc.ValueKind == JsonValueKind.String)
+                                    entry.team_id = tidc.GetString();
+                                if (e.TryGetProperty("rank", out var rk) && rk.ValueKind == JsonValueKind.Number)
+                                    entry.rank = rk.GetInt32();
+                                if (e.TryGetProperty("pointsEarned", out var pe) && pe.ValueKind == JsonValueKind.Number)
+                                    entry.pointsEarned = pe.GetInt32();
+                                if (e.TryGetProperty("percentile", out var perc) && (perc.ValueKind == JsonValueKind.Number))
+                                {
+                                    try { entry.percentile = perc.GetDouble(); } catch { }
+                                }
+                                if (e.TryGetProperty("sessionHistory", out var sh) && sh.ValueKind == JsonValueKind.Array)
+                                {
+                                    entry.sessionHistory = new System.Collections.Generic.List<V1SessionHistory>();
+                                    foreach (var s in sh.EnumerateArray())
+                                    {
+                                        var hs = new V1SessionHistory();
+                                        if (s.TryGetProperty("trackedStats", out var ts) && ts.ValueKind == JsonValueKind.Object)
+                                        {
+                                            var stats = new V1TrackedStats();
+                                            if (ts.TryGetProperty("SCORE", out var sc) && sc.ValueKind == JsonValueKind.Number) stats.SCORE = sc.GetInt32();
+                                            if (ts.TryGetProperty("ACCURACY", out var ac) && ac.ValueKind == JsonValueKind.Number) stats.ACCURACY = ac.GetInt32();
+                                            if (ts.TryGetProperty("FULL_COMBO", out var fc) && fc.ValueKind == JsonValueKind.Number) stats.FULL_COMBO = fc.GetInt32();
+                                            if (ts.TryGetProperty("STARS_EARNED", out var se) && se.ValueKind == JsonValueKind.Number) stats.STARS_EARNED = se.GetInt32();
+                                            if (ts.TryGetProperty("SEASON", out var sea) && sea.ValueKind == JsonValueKind.Number) stats.SEASON = sea.GetInt32();
+                                            hs.trackedStats = stats;
+                                            if (stats.SCORE > entry.score) entry.score = stats.SCORE; // derive best score
+                                        }
+                                        entry.sessionHistory.Add(hs);
+                                    }
+                                }
+                                entries.Add(entry);
+                            }
+                        }
+                    }
+                }
+                catch (Exception pex)
+                {
+                    LogLine("V1 parse error: " + pex.Message);
+                    Interlocked.Increment(ref _instErrors);
+                    return (InstrumentFetchStatus.Error, board);
+                }
+                var pageObj = new V1LeaderboardPage { page = pageVal, totalPages = totalPagesVal, entries = entries };
+                board.correlatedV1Pages[api] = pageObj;
+                // Determine highest score among entries with a valid percentile (not -1) for diagnostics / potential heuristics
+                int highestValidScore = 0;
+                if (entries.Count > 0)
+                {
+                    foreach (var ev in entries)
+                    {
+                        if (ev.percentile != -1 && ev.score > highestValidScore)
+                            highestValidScore = ev.score;
+                    }
+                }
+                // removed page stats log
+                // Update tracker from player's entry
+                var playerEntry = entries.FirstOrDefault(e => string.Equals(e.team_id, token.account_id, StringComparison.OrdinalIgnoreCase));
+                // removed improvement trace log
+                if (playerEntry == null && entries.Count > 0)
+                {
+                    // Emit a small sample of team ids for diagnostics (avoid spamming full list)
+                    var sampleIds = string.Join(",", entries.Take(5).Select(e => e.team_id));
+                    // removed player entry not found diagnostic
+                }
+                if (playerEntry != null)
+                {
+                    // Populate score + stats based on best session for that entry
+                    int bestScore = playerEntry.score;
+                    V1TrackedStats bestStats = null;
+                    if (playerEntry.sessionHistory != null)
+                    {
+                        foreach (var h in playerEntry.sessionHistory)
+                        {
+                            if (h?.trackedStats == null) continue;
+                            if (h.trackedStats.SCORE == bestScore)
+                                bestStats = h.trackedStats;
+                        }
+                    }
+                    tracker.rank = playerEntry.rank;
+                    bool scoreImproved = bestScore > tracker.maxScore;
+                    if (scoreImproved)
+                        tracker.maxScore = bestScore;
+                    tracker.initialized = tracker.maxScore > 0 || tracker.rank > 0;
+                    if (bestStats != null)
+                    {
+                        tracker.percentHit = bestStats.ACCURACY;
+                        tracker.isFullCombo = bestStats.FULL_COMBO == 1;
+                        tracker.numStars = bestStats.STARS_EARNED;
+                        // Always update season from API when available - the API reflects the current high score's season
+                        if (bestStats.SEASON > 0)
+                            tracker.seasonAchieved = bestStats.SEASON;
+                    }
+                    // Persist API-provided raw percentile if present (>0)
+                    if (playerEntry.percentile > 0)
+                        tracker.rawPercentile = playerEntry.percentile;
+                    // Reverse-calc total entries: assume rawPercentile ≈ rank / total.
+                    if (tracker.rank > 0 && tracker.rawPercentile > 1e-9)
+                    {
+                        var estimate = (int)Math.Round(tracker.rank / tracker.rawPercentile);
+                        if (estimate < tracker.rank) estimate = tracker.rank; // floor at rank
+                        if (estimate > 10_000_000) estimate = 10_000_000; // cap sanity
+                        tracker.calculatedNumEntries = estimate;
+                    }
+                }
+                // Removed legacy totalEntries approximation (totalPages*100). We now rely on actual data (future enhancement: fetch exact page containing player to set rank/total accurately).
+                // If we already have totalEntries (from earlier precise logic) and rank, recompute bp; otherwise leave as-is.
+                // Percentile basis points removed
+                tracker.RefreshDerived();
+                bool scoreIncrease = tracker.maxScore > prevScore;
+                bool newRankAppeared = (prevRank == 0 && tracker.rank > 0);
+                bool improved = scoreIncrease || newRankAppeared;
+                bool metaChanged = !improved && (tracker.rank != prevRank || tracker.totalEntries != prevTotalEntries);
+                // removed improvement eval log
+                assign(board, tracker);
+                if (improved)
+                {
+                    board.dirty = true;
+                    Interlocked.Increment(ref _instImproved);
+                    // removed improvement log
+                    try { ScoreUpdated?.Invoke(board); } catch { }
+                    return (InstrumentFetchStatus.Improved, board);
+                }
+                if (metaChanged)
+                {
+                    // removed improvement meta-change log
+                    board.dirty = true; // ensure new rank/percentile persisted
+                    try { ScoreUpdated?.Invoke(board); } catch { }
+                }
                 Interlocked.Increment(ref _instEmpty);
-                LogLine(
-                    $"No scores for {song.track.tt} {api} {(notFound ? "(not_found)" : "(empty)")} {(extractedErrorCode != null ? "errorCode=" + extractedErrorCode : "")}".Trim()
-                );
-                return (InstrumentFetchStatus.Empty, null);
+                // removed no-improvement log
+                return (InstrumentFetchStatus.Empty, board);
             }
             catch (Exception ex)
             {
+                if (debug24k)
+                    Console.WriteLine("[Debug24K] V1 exception: " + ex.Message);
                 Interlocked.Increment(ref _instErrors);
-                if (!_authFailed)
-                    LogLine($"Leaderboard fetch failed for {song.track.tt} {api}: {ex.Message}");
-                return (InstrumentFetchStatus.Error, null);
+                LogLine($"V1 fetch failed for {song.track.tt} {api}: {ex.Message}");
+                return (InstrumentFetchStatus.Error, board);
             }
         }
 
@@ -819,12 +1004,12 @@ namespace FortniteFestival.Core.Services
                         string display = root.TryGetProperty("displayName", out var dn)
                             ? dn.GetString()
                             : "";
-                        LogLine($"Verified token for account {acc} {display}");
+                        // removed token verified log
                     }
                 }
                 catch
                 {
-                    LogLine("Token verify parse issue");
+                    // removed token verify parse issue (non-critical)
                 }
                 return true;
             }
@@ -877,10 +1062,15 @@ namespace FortniteFestival.Core.Services
                 catch { }
                 var token = System.Text.Json.JsonSerializer.Deserialize<ExchangeCodeToken>(str);
                 if (token == null || string.IsNullOrEmpty(token.access_token))
+                {
                     LogLine("Token deserialize failed or empty access_token");
+                    return null;
+                }
                 else
-                    LogLine("Received access token (length=" + token.access_token.Length + ")");
-                return token;
+                {
+                    // removed received token length log
+                    return token;
+                }
             }
             catch (Exception ex)
             {
@@ -891,27 +1081,9 @@ namespace FortniteFestival.Core.Services
 
         private void LogErrorCodeSummaryIfAny()
         {
-            LogLine(HttpErrorHelper.BuildSummaryLine());
+            // removed summary log
         }
 
-        private class ScoreList
-        {
-            public int score { get; set; }
-            public System.Collections.Generic.List<SessionHistory> sessionHistory { get; set; }
-        }
-
-        private class SessionHistory
-        {
-            public TrackedStats trackedStats { get; set; }
-        }
-
-        private class TrackedStats
-        {
-            public int SCORE { get; set; }
-            public int ACCURACY { get; set; }
-            public int FULL_COMBO { get; set; }
-            public int STARS_EARNED { get; set; }
-            public int? SEASON { get; set; }
-        }
+    // Removed old V2 helper and separate correlation method; V1 fetching now integrated in FetchInstrumentAsync.
     }
 }

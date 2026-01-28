@@ -84,9 +84,14 @@ public static class MauiProgram
         builder.Services.AddSingleton<ViewModels.ScoresViewModel>();
     builder.Services.AddSingleton<ViewModels.OptionsViewModel>();
 
-    // Legacy pages (kept temporarily) & new single HomePage
+    // Shell navigation pages
+    builder.Services.AddTransient<Pages.SongsPage>();
+    builder.Services.AddTransient<Pages.SuggestionsPage>();
+    builder.Services.AddTransient<Pages.StatisticsPage>();
+    builder.Services.AddTransient<Pages.SettingsPage>();
+
+    // Legacy pages (kept for reference / can be removed)
     builder.Services.AddSingleton<Pages.ProcessPage>();
-    builder.Services.AddSingleton<Pages.SongsPage>();
     builder.Services.AddSingleton<Pages.ScoresPage>();
     builder.Services.AddSingleton<Pages.LogPage>();
     builder.Services.AddSingleton<Pages.OptionsPage>();

@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using FortniteFestival.Core;
+using FortniteFestival.Core.Config;
 using FortniteFestival.Core.Services;
 using Microsoft.Maui.ApplicationModel; // MainThread
 
@@ -15,6 +16,7 @@ public class SongsViewModel : BaseViewModel
 {
     private readonly IFestivalService _service;
     private readonly AppState _state;
+    private Settings? _cachedSettings;
     public ObservableCollection<Song> Songs => _state.Songs;
 
     // UI projection rows
@@ -140,6 +142,20 @@ public class SongsViewModel : BaseViewModel
                 ScheduleReapplyFilter();
         };
 
+        // Track per-song update status for spinner display
+        _service.SongUpdateStarted += songId =>
+        {
+            var row = VisibleRows.FirstOrDefault(r => r.Song.track.su == songId);
+            if (row != null)
+                MainThread.BeginInvokeOnMainThread(() => row.IsUpdating = true);
+        };
+        _service.SongUpdateCompleted += songId =>
+        {
+            var row = VisibleRows.FirstOrDefault(r => r.Song.track.su == songId);
+            if (row != null)
+                MainThread.BeginInvokeOnMainThread(() => row.IsUpdating = false);
+        };
+
     // Initial empty state notification
     Raise(nameof(IsEmpty));
     Raise(nameof(IsNotEmpty));
@@ -163,7 +179,9 @@ public class SongsViewModel : BaseViewModel
         {
             try
             {
-                await Task.Delay(160, cts.Token); // wait for burst of updates
+                // Use longer debounce during active fetch to reduce UI churn
+                int debounceMs = _service.IsFetching ? 1500 : 160;
+                await Task.Delay(debounceMs, cts.Token);
                 if (cts.IsCancellationRequested) return;
                 MainThread.BeginInvokeOnMainThread(() => _ = ApplyFilterIncrementalAsync());
             }
@@ -244,6 +262,18 @@ public class SongsViewModel : BaseViewModel
     public void Refresh()
     {
     _ = ApplyFilterIncrementalAsync();
+    }
+
+    /// <summary>
+    /// Apply sync settings to all visible rows to show/hide instrument icons based on enabled instruments.
+    /// </summary>
+    public void ApplySettingsToVisibleRows(Settings settings)
+    {
+        _cachedSettings = settings;
+        foreach (var row in VisibleRows)
+        {
+            row.ApplySettingsFilter(settings);
+        }
     }
 
     public void ResetFiltersToDefaults()
@@ -390,7 +420,10 @@ public class SongsViewModel : BaseViewModel
                     }
                     else
                     {
-                        VisibleRows.Insert(i, new SongDisplayRow(song, _service) { UseCompactLayout = UseCompactLayout });
+                        var newRow = new SongDisplayRow(song, _service) { UseCompactLayout = UseCompactLayout };
+                        if (_cachedSettings != null)
+                            newRow.ApplySettingsFilter(_cachedSettings);
+                        VisibleRows.Insert(i, newRow);
                     }
                     ops++;
                 }
@@ -484,6 +517,7 @@ public class SongDisplayRow : INotifyPropertyChanged
     private bool _isFullCombo;
     private string _season = string.Empty;
     private int _percentHit; // raw value from tracker (e.g., 999000 for 99.90%)
+    private bool _isUpdating; // true when this song is currently being fetched
     public ObservableCollection<InstrumentStatus> InstrumentStatuses { get; } = new(
         new[]
         {
@@ -502,6 +536,7 @@ public class SongDisplayRow : INotifyPropertyChanged
     public string SeasonDisplay => int.TryParse(Season, out var n) ? (n < 0 ? "N/A" : $"S{n}") : (Season == "All-Time" ? "N/A" : Season);
     public int PercentHitRaw { get => _percentHit; private set { if (_percentHit != value) { _percentHit = value; OnPropertyChanged(); OnPropertyChanged(nameof(PercentHitDisplay)); } } }
     public string PercentHitDisplay => _percentHit <= 0 ? "--" : $"{Math.Max(0, (_percentHit / 10000))}%"; // clamp down; raw stored *100 (assuming percentHit scaled by 100?)
+    public bool IsUpdating { get => _isUpdating; set { if (_isUpdating != value) { _isUpdating = value; OnPropertyChanged(); } } }
 
     public string Title => Song.track.tt;
     public string Artist => Song.track.an;
@@ -584,23 +619,53 @@ public class SongDisplayRow : INotifyPropertyChanged
         }
     }
 
+    /// <summary>
+    /// Updates the IsEnabled property on each InstrumentStatus based on Settings.
+    /// </summary>
+    public void ApplySettingsFilter(Settings settings)
+    {
+        foreach (var s in InstrumentStatuses)
+        {
+            s.IsEnabled = s.InstrumentKey switch
+            {
+                "guitar" => settings.QueryLead,
+                "bass" => settings.QueryBass,
+                "drums" => settings.QueryDrums,
+                "vocals" => settings.QueryVocals,
+                "pro_guitar" => settings.QueryProLead,
+                "pro_bass" => settings.QueryProBass,
+                _ => true
+            };
+        }
+    }
+
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name ?? string.Empty));
 }
 
 public class InstrumentStatus : INotifyPropertyChanged
 {
+    // Cached brush instances to avoid allocations during scrolling
+    private static readonly SolidColorBrush FcStrokeBrush = new(Color.FromArgb("#CFA500"));
+    private static readonly SolidColorBrush HasScoreStrokeBrush = new(Color.FromArgb("#1E7F46"));
+    private static readonly SolidColorBrush NoScoreStrokeBrush = new(Color.FromArgb("#8B0000"));
+    private static readonly Color FcFillColor = Color.FromArgb("#FFD700");
+    private static readonly Color HasScoreFillColor = Color.FromArgb("#2ECC71");
+    private static readonly Color NoScoreFillColor = Color.FromArgb("#C62828");
+
     public string InstrumentKey { get; }
     // MAUI image resolution ignores subfolders at runtime; reference by filename only.
     public string Icon => $"{InstrumentKey}.png";
     private bool _hasScore;
     private bool _isFullCombo;
-    public bool HasScore { get => _hasScore; set { if (_hasScore != value) { _hasScore = value; OnPropertyChanged(); OnPropertyChanged(nameof(ShowCircle)); OnPropertyChanged(nameof(CircleFillColor)); OnPropertyChanged(nameof(CircleStrokeColor)); } } }
-    public bool IsFullCombo { get => _isFullCombo; set { if (_isFullCombo != value) { _isFullCombo = value; OnPropertyChanged(); OnPropertyChanged(nameof(ShowCircle)); OnPropertyChanged(nameof(CircleFillColor)); OnPropertyChanged(nameof(CircleStrokeColor)); } } }
-    // Always show a status circle: gold = FC, green = has score (not FC), red = no score
-    public bool ShowCircle => true;
-    public string CircleFillColor => IsFullCombo ? "#FFD700" : (HasScore ? "#2ECC71" : "#C62828");
-    public string CircleStrokeColor => IsFullCombo ? "#CFA500" : (HasScore ? "#1E7F46" : "#8B0000");
+    private bool _isEnabled = true;
+    public bool HasScore { get => _hasScore; set { if (_hasScore != value) { _hasScore = value; OnPropertyChanged(); OnPropertyChanged(nameof(ShowCircle)); OnPropertyChanged(nameof(CircleFillColor)); OnPropertyChanged(nameof(CircleStrokeBrush)); } } }
+    public bool IsFullCombo { get => _isFullCombo; set { if (_isFullCombo != value) { _isFullCombo = value; OnPropertyChanged(); OnPropertyChanged(nameof(ShowCircle)); OnPropertyChanged(nameof(CircleFillColor)); OnPropertyChanged(nameof(CircleStrokeBrush)); } } }
+    public bool IsEnabled { get => _isEnabled; set { if (_isEnabled != value) { _isEnabled = value; OnPropertyChanged(); OnPropertyChanged(nameof(ShowCircle)); } } }
+    // Only show circle if instrument is enabled in settings
+    public bool ShowCircle => IsEnabled;
+    public Color CircleFillColor => IsFullCombo ? FcFillColor : (HasScore ? HasScoreFillColor : NoScoreFillColor);
+    public Brush CircleStrokeBrush => IsFullCombo ? FcStrokeBrush : (HasScore ? HasScoreStrokeBrush : NoScoreStrokeBrush);
     public InstrumentStatus(string key) => InstrumentKey = key;
     public event PropertyChangedEventHandler? PropertyChanged;
     private void OnPropertyChanged([CallerMemberName] string? n = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(n ?? string.Empty));

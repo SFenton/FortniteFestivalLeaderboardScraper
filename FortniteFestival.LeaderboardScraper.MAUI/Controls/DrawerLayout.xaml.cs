@@ -1,4 +1,5 @@
 using FortniteFestival.Core;
+using FortniteFestival.Core.Persistence;
 using FortniteFestival.Core.Services;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
@@ -12,6 +13,9 @@ namespace FortniteFestival.LeaderboardScraper.MAUI.Controls;
 [ContentProperty(nameof(PageContent))]
 public partial class DrawerLayout : ContentView
 {
+    private const double CompactWidthThreshold = 600; // Switch to bottom nav when width < 600
+    private bool _isCompactMode;
+
     public static readonly BindableProperty ServiceProperty = BindableProperty.Create(
         nameof(Service), typeof(IFestivalService), typeof(DrawerLayout), propertyChanged:(b,o,n)=>((DrawerLayout)b).UpdateSuggestionsVisibility());
 
@@ -63,6 +67,15 @@ public partial class DrawerLayout : ContentView
         {
             ApplyPageContentToHost(this, v);
         }
+        
+        // Check initial layout mode once loaded
+        Loaded += (_, _) => 
+        {
+            System.Diagnostics.Debug.WriteLine($"[DrawerLayout] Loaded - Width: {Width}, Height: {Height}, Threshold: {CompactWidthThreshold}");
+            _isCompactMode = Width > 0 && Width < CompactWidthThreshold;
+            System.Diagnostics.Debug.WriteLine($"[DrawerLayout] IsCompactMode: {_isCompactMode}");
+            UpdateLayoutMode();
+        };
     }
 
     protected override void OnParentSet()
@@ -80,6 +93,36 @@ public partial class DrawerLayout : ContentView
         bool has = false;
         try { has = Service?.ScoresIndex?.Count > 0; } catch { }
         if (SuggestionsNavItem != null) SuggestionsNavItem.IsVisible = has;
+        if (BottomNavSuggestions != null) BottomNavSuggestions.IsVisible = has;
+    }
+
+    private void OnSizeChanged(object? sender, EventArgs e)
+    {
+        System.Diagnostics.Debug.WriteLine($"[DrawerLayout] SizeChanged - Width: {Width}, Height: {Height}");
+        var newIsCompact = Width > 0 && Width < CompactWidthThreshold;
+        System.Diagnostics.Debug.WriteLine($"[DrawerLayout] newIsCompact: {newIsCompact}, current: {_isCompactMode}");
+        if (newIsCompact != _isCompactMode)
+        {
+            _isCompactMode = newIsCompact;
+            UpdateLayoutMode();
+        }
+    }
+
+    private void UpdateLayoutMode()
+    {
+        System.Diagnostics.Debug.WriteLine($"[DrawerLayout] UpdateLayoutMode - IsCompact: {_isCompactMode}");
+        System.Diagnostics.Debug.WriteLine($"[DrawerLayout] HeaderBar: {HeaderBar != null}, BottomNavBar: {BottomNavBar != null}");
+        // In compact mode: hide header bar with hamburger, show bottom nav
+        // In regular mode: show header bar with hamburger, hide bottom nav
+        if (HeaderBar != null) HeaderBar.IsVisible = !_isCompactMode;
+        if (BottomNavBar != null) BottomNavBar.IsVisible = _isCompactMode;
+        System.Diagnostics.Debug.WriteLine($"[DrawerLayout] HeaderBar.IsVisible: {HeaderBar?.IsVisible}, BottomNavBar.IsVisible: {BottomNavBar?.IsVisible}");
+        
+        // Close drawer if switching to compact mode
+        if (_isCompactMode && NavDrawerOverlay != null)
+        {
+            NavDrawerOverlay.IsVisible = false;
+        }
     }
 
     private async Task AnimatePressAsync(VisualElement element)
@@ -138,17 +181,24 @@ public partial class DrawerLayout : ContentView
             var current = nav?.NavigationStack.LastOrDefault();
             if (current is not Pages.SuggestionsPage)
             {
-                await parent.Navigation.PushAsync(new Pages.SuggestionsPage(Service));
+                var settingsPersistence = ServiceProviderHelper.ServiceProvider?.GetService<ISettingsPersistence>();
+                await parent.Navigation.PushAsync(new Pages.SuggestionsPage(Service, settingsPersistence!));
             }
         }
     }
     private async void OnNavStatisticsTapped(object sender, TappedEventArgs e)
     {
         await AnimatePressAsync((VisualElement)sender);
-        if (Service == null) return;
         await CloseAsync();
-        var parent = GetParentPage();
-        if (parent != null) await parent.Navigation.PushAsync(new Pages.StatisticsPage(Service));
+        var nav = GetParentPage()?.Navigation;
+        if (nav == null) return;
+        try
+        {
+            // Pop to root (HomePage) - Statistics is displayed as an in-place section there
+            await nav.PopToRootAsync();
+            // Note: HomePage defaults to Songs section; user can switch to Statistics from there
+        }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[DrawerLayout] Error navigating to Statistics: {ex.Message}"); }
     }
     private async void OnNavSettingsTapped(object sender, TappedEventArgs e)
     {

@@ -223,6 +223,9 @@ public class ProcessViewModel : BaseViewModel
         UpdateFetchEnabled();
     }
 
+    // Counter for batched logging during fetch
+    private int _progressLogCounter;
+
     private void OnSongProgress(int current, int total, string title, bool started)
     {
         if (total > 0)
@@ -234,10 +237,18 @@ public class ProcessViewModel : BaseViewModel
             ProgressPct = pct;
             ProgressLabel = $"{_state.ProgressCurrent}/{_state.ProgressTotal} ({pct:0.0}%)";
         }
-        if (started)
-            EnqueueLog($"Started: {title}");
-        else
-            EnqueueLog($"Finished: {title}");
+        // Batch logging: only log every 25 songs to reduce UI overhead during large fetches
+        if (!started)
+        {
+            var count = Interlocked.Increment(ref _progressLogCounter);
+            if (count == 1 || current == total || count % 25 == 0)
+            {
+                EnqueueLog($"Progress: {current}/{total} songs completed...");
+            }
+        }
+        // Reset counter when fetch completes
+        if (current == total)
+            Interlocked.Exchange(ref _progressLogCounter, 0);
         UpdateMetrics();
     }
 

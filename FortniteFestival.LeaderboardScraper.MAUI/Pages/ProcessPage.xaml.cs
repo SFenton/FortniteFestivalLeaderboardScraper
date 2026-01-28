@@ -24,6 +24,9 @@ public partial class ProcessPage : ContentPage
         {
             await Clipboard.SetTextAsync(_vm.LogJoined);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[ProcessPage] Error copying to clipboard: {ex.Message}");
+        }
     }
 }
