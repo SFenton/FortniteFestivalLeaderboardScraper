@@ -1,0 +1,57 @@
+const { spawnSync } = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
+
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    stdio: 'inherit',
+    shell: true,
+    ...options,
+  });
+  if (result.error) throw result.error;
+  process.exitCode = result.status ?? 1;
+  return result;
+}
+
+function pickDriveLetter() {
+  // Prefer R: then S:, T:, U:, V:, W:, X:, Y:, Z:
+  const candidates = ['R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'];
+  for (const letter of candidates) {
+    const driveRoot = `${letter}:\\`;
+    // If drive root doesn't exist, it's likely free for SUBST.
+    if (!fs.existsSync(driveRoot)) return letter;
+  }
+  return null;
+}
+
+function ensureSubst(driveLetter, targetPath) {
+  // Create/overwrite mapping for this run.
+  // Note: `subst` requires cmd; `shell: true` handles it.
+  run('cmd.exe', ['/c', 'subst', `${driveLetter}:`, '"' + targetPath + '"']);
+}
+
+const projectRoot = path.resolve(__dirname, '..');
+const argv = process.argv.slice(2);
+
+if (process.platform === 'win32') {
+  const driveLetter = pickDriveLetter();
+  if (!driveLetter) {
+    console.error('Could not find a free drive letter for SUBST (R:-Z: all in use).');
+    process.exit(1);
+  }
+
+  // Map the *parent* folder so the project isn't at the drive root (Yarn on Windows
+  // can mis-handle writes to "X:" when cwd is exactly "X:\\").
+  const parent = path.dirname(projectRoot);
+  const leaf = path.basename(projectRoot);
+
+  ensureSubst(driveLetter, parent);
+
+  const shortCwd = `${driveLetter}:\\${leaf}`;
+  console.log(`Using SUBST short path: ${driveLetter}:\\ -> ${parent}`);
+  console.log(`Running from: ${shortCwd}`);
+
+  run('yarn', ['react-native', 'run-android', ...argv], { cwd: shortCwd });
+} else {
+  run('yarn', ['react-native', 'run-android', ...argv], { cwd: projectRoot });
+}
