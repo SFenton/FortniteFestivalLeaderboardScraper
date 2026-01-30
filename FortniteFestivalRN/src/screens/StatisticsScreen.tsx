@@ -115,7 +115,7 @@ export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: st
   ), [boards.length, songs.length]);
 
   const listStyle = useMemo(() => ({flex: 1, marginBottom: -tabBarHeight}), [tabBarHeight]);
-  const listContentStyle = useMemo(() => [styles.content, {paddingBottom: tabBarHeight + 16}], [tabBarHeight]);
+  const listContentStyle = useMemo(() => ({paddingBottom: tabBarHeight + 16}), [tabBarHeight]);
   const scrollInsets = useMemo(() => ({bottom: tabBarHeight}), [tabBarHeight]);
 
   const data = useMemo<StatsListItem[]>(() => {
@@ -129,6 +129,8 @@ export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: st
     if (item.type === 'instrument') return <InstrumentCard stats={item.stats} />;
     return <TopSongsCard cat={item.cat} songById={songById} onOpenSong={onOpenSong} />;
   }, [onOpenSong, songById]);
+
+  const itemSeparator = useCallback(() => <View style={styles.listSeparator} />, []);
 
   if (!hasAnyScores) {
     return (
@@ -146,21 +148,25 @@ export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: st
 
   return (
     <Screen>
-      <FlatList
-        style={listStyle}
-        contentContainerStyle={listContentStyle}
-        scrollIndicatorInsets={scrollInsets}
-        keyboardShouldPersistTaps="handled"
-        data={data}
-        keyExtractor={i => i.key}
-        renderItem={renderItem}
-        ListHeaderComponent={header}
-        removeClippedSubviews
-        initialNumToRender={8}
-        maxToRenderPerBatch={6}
-        updateCellsBatchingPeriod={24}
-        windowSize={7}
-      />
+      <View style={styles.content}>
+        {header}
+
+        <FlatList
+          style={listStyle}
+          contentContainerStyle={listContentStyle}
+          scrollIndicatorInsets={scrollInsets}
+          keyboardShouldPersistTaps="handled"
+          data={data}
+          keyExtractor={i => i.key}
+          renderItem={renderItem}
+          ItemSeparatorComponent={itemSeparator}
+          removeClippedSubviews
+          initialNumToRender={8}
+          maxToRenderPerBatch={6}
+          updateCellsBatchingPeriod={24}
+          windowSize={7}
+        />
+      </View>
     </Screen>
   );
 }
@@ -387,9 +393,13 @@ function formatRight(item: {percent?: number; stars?: number; fullCombo?: boolea
 
 const styles = StyleSheet.create({
   content: {
+    flex: 1,
     paddingHorizontal: 20,
     paddingVertical: 16,
     gap: 10,
+  },
+  listSeparator: {
+    height: 10,
   },
   title: {
     color: '#FFFFFF',

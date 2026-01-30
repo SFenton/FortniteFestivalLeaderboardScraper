@@ -119,3 +119,12 @@ dependencies {
 }
 
 apply from: file("../../node_modules/react-native-vector-icons/fonts.gradle")
+
+// Workaround for Gradle state-tracking issues with externalNativeBuild/CMake tasks on Windows.
+// These tasks can reference transient outputs (e.g. *.so.tmp*) which may not exist when Gradle
+// tries to snapshot outputs, causing builds to fail.
+tasks.matching { task ->
+    task.name.startsWith("buildCMake") || task.name.startsWith("configureCMake")
+}.configureEach {
+    doNotTrackState("External native build tasks can produce transient outputs on Windows")
+}

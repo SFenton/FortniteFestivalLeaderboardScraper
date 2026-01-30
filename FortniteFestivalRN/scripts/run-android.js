@@ -24,6 +24,24 @@ function pickDriveLetter() {
   return null;
 }
 
+function findExistingShortCwd(projectRoot) {
+  // If the machine already has a SUBST/mapped drive pointing at the repo root,
+  // reuse it (avoids failing when R:-Z: are all already taken).
+  const leaf = path.basename(projectRoot);
+  const candidates = ['R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'];
+
+  for (const letter of candidates) {
+    const candidateRoot = `${letter}:\\`;
+    if (!fs.existsSync(candidateRoot)) continue;
+
+    const candidateCwd = path.join(candidateRoot, leaf);
+    const androidGradlew = path.join(candidateCwd, 'android', 'gradlew.bat');
+    if (fs.existsSync(androidGradlew)) return candidateCwd;
+  }
+
+  return null;
+}
+
 function ensureSubst(driveLetter, targetPath) {
   // Create/overwrite mapping for this run.
   // Note: `subst` requires cmd; `shell: true` handles it.
@@ -34,24 +52,30 @@ const projectRoot = path.resolve(__dirname, '..');
 const argv = process.argv.slice(2);
 
 if (process.platform === 'win32') {
-  const driveLetter = pickDriveLetter();
-  if (!driveLetter) {
-    console.error('Could not find a free drive letter for SUBST (R:-Z: all in use).');
-    process.exit(1);
+  const existingShortCwd = findExistingShortCwd(projectRoot);
+  if (existingShortCwd) {
+    console.log(`Using existing short path: ${existingShortCwd}`);
+    run('yarn', ['react-native', 'run-android', ...argv], { cwd: existingShortCwd });
+  } else {
+    const driveLetter = pickDriveLetter();
+    if (!driveLetter) {
+      console.error('Could not find a free drive letter for SUBST (R:-Z: all in use).');
+      process.exit(1);
+    }
+
+    // Map the *parent* folder so the project isn't at the drive root (Yarn on Windows
+    // can mis-handle writes to "X:" when cwd is exactly "X:\\").
+    const parent = path.dirname(projectRoot);
+    const leaf = path.basename(projectRoot);
+
+    ensureSubst(driveLetter, parent);
+
+    const shortCwd = `${driveLetter}:\\${leaf}`;
+    console.log(`Using SUBST short path: ${driveLetter}:\\ -> ${parent}`);
+    console.log(`Running from: ${shortCwd}`);
+
+    run('yarn', ['react-native', 'run-android', ...argv], { cwd: shortCwd });
   }
-
-  // Map the *parent* folder so the project isn't at the drive root (Yarn on Windows
-  // can mis-handle writes to "X:" when cwd is exactly "X:\\").
-  const parent = path.dirname(projectRoot);
-  const leaf = path.basename(projectRoot);
-
-  ensureSubst(driveLetter, parent);
-
-  const shortCwd = `${driveLetter}:\\${leaf}`;
-  console.log(`Using SUBST short path: ${driveLetter}:\\ -> ${parent}`);
-  console.log(`Running from: ${shortCwd}`);
-
-  run('yarn', ['react-native', 'run-android', ...argv], { cwd: shortCwd });
 } else {
   run('yarn', ['react-native', 'run-android', ...argv], { cwd: projectRoot });
 }

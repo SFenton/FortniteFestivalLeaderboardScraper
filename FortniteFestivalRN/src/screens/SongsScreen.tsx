@@ -1,5 +1,6 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {FlatList, Image, Platform, Pressable, StyleSheet, Text, TextInput, View} from 'react-native';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 import {useOptionalBottomTabBarHeight} from '../navigation/useOptionalBottomTabBarHeight';
 
 import { Screen } from '../ui/Screen';
@@ -223,6 +224,13 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
   const dirLabel = settings.songsSortAscending ? '▲' : '▼';
   const filterLabel = anyMissingEnabled ? 'Filters: On' : 'Filters: Off';
 
+  const sortIconColor = useMemo(() => {
+    const isDefault = settings.songsSortMode === 'title' && settings.songsSortAscending;
+    return isDefault ? '#FFFFFF' : '#9EE7FF';
+  }, [settings.songsSortAscending, settings.songsSortMode]);
+
+  const filterIconColor = anyMissingEnabled ? '#9EE7FF' : '#FFFFFF';
+
   return (
     <Screen>
       <View style={styles.content}>
@@ -253,11 +261,11 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
               });
               setShowSort(true);
             }}
-            style={({pressed}) => [styles.smallBtn, pressed && styles.smallBtnPressed]}
+            style={({pressed}) => [styles.iconBtnBare, pressed && styles.smallBtnPressed]}
             accessibilityRole="button"
-            accessibilityLabel="Open sort options"
+            accessibilityLabel={`Open sort options. Current: ${sortLabel} ${dirLabel}`}
           >
-            <Text style={styles.smallBtnText}>{sortLabel} {dirLabel}</Text>
+            <Ionicons name="swap-vertical-sharp" size={20} color={sortIconColor} />
           </Pressable>
 
           <Pressable
@@ -265,11 +273,11 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
               setFilterDraft(settings.songsAdvancedMissingFilters);
               setShowFilter(true);
             }}
-            style={({pressed}) => [styles.smallBtn, pressed && styles.smallBtnPressed]}
+            style={({pressed}) => [styles.iconBtnBare, pressed && styles.smallBtnPressed]}
             accessibilityRole="button"
-            accessibilityLabel="Open filter options"
+            accessibilityLabel={`Open filter options. ${filterLabel}`}
           >
-            <Text style={styles.smallBtnText}>{filterLabel}</Text>
+            <Ionicons name="funnel" size={18} color={filterIconColor} />
           </Pressable>
         </View>
 
@@ -556,6 +564,12 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
+  },
+  iconBtnBare: {
+    paddingHorizontal: 8,
+    paddingVertical: Platform.OS === 'ios' ? 10 : 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   input: {
     flex: 1,

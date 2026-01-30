@@ -1,5 +1,6 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {ActivityIndicator, FlatList, Image, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View} from 'react-native';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 import {Screen} from '../ui/Screen';
 import {FrostedSurface} from '../ui/FrostedSurface';
@@ -72,6 +73,17 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
   const [loadingMore, setLoadingMore] = useState(false);
   const [categories, setCategories] = useState<SuggestionCategoryRow[]>([]);
 
+  const listRef = useRef<FlatList<SuggestionCategoryRow> | null>(null);
+
+  const onRegenerate = useCallback(() => {
+    // Jump back to the top so the user immediately sees the new first categories.
+    listRef.current?.scrollToOffset({offset: 0, animated: false});
+
+    const next = Math.floor(Date.now() / (1000 * 60 * 60 * 24)) + Math.floor(Math.random() * 1000);
+    setSeed(next);
+    logUi(`[SUGGESTIONS] regenerate seed=${next}`);
+  }, [logUi]);
+
   const attachUiKeys = useCallback((list: SuggestionCategory[]): SuggestionCategoryRow[] => {
     return list.map(c => ({...c, uiKey: `${c.key}:${nextUiKey.current++}`}));
   }, []);
@@ -136,16 +148,12 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
       </View>
 
       <Pressable
-        onPress={() => {
-          const next = Math.floor(Date.now() / (1000 * 60 * 60 * 24)) + Math.floor(Math.random() * 1000);
-          setSeed(next);
-          logUi(`[SUGGESTIONS] regenerate seed=${next}`);
-        }}
-        style={({pressed}) => [styles.button, pressed && styles.buttonPressed]}
+        onPress={onRegenerate}
+        style={({pressed}) => [styles.regenBtn, pressed && styles.regenBtnPressed]}
         accessibilityRole="button"
         accessibilityLabel="Regenerate suggestions"
       >
-        <Text style={styles.buttonText}>Regenerate</Text>
+        <Ionicons name="refresh" size={22} color="#FFFFFF" />
       </Pressable>
     </View>
   );
@@ -155,6 +163,8 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
       <ActivityIndicator />
     </View>
   ) : null;
+
+  const categorySeparator = useCallback(() => <View style={styles.categorySeparator} />, []);
 
   if (!songs.length) {
     return (
@@ -199,32 +209,37 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
 
   return (
     <Screen>
-      <FlatList
-        style={{flex: 1, marginBottom: -tabBarHeight}}
-        contentContainerStyle={[styles.content, {paddingBottom: tabBarHeight + 16}]}
-        scrollIndicatorInsets={{bottom: tabBarHeight}}
-        data={visibleCategories}
-        keyExtractor={c => c.uiKey}
-        keyboardShouldPersistTaps="handled"
-        extraData={useCompactLayout}
-        ListHeaderComponent={header}
-        ListFooterComponent={footer}
-        onEndReachedThreshold={0.4}
-        onEndReached={loadMore}
-        renderItem={({item: cat}) => (
-          <SuggestionCard
-            cat={cat}
-            useCompactLayout={useCompactLayout}
-            songById={songById}
-            scoresIndex={scoresIndex}
-            instrumentQuerySettings={instrumentQuerySettings}
-            onOpenSong={(songId, title) => {
-              logUi(`[SUGGESTIONS] open ${songId} '${title}' (${cat.key})`);
-              props.onOpenSong?.(songId, title);
-            }}
-          />
-        )}
-      />
+      <View style={styles.content}>
+        {header}
+
+        <FlatList
+          ref={listRef}
+          style={{flex: 1, marginBottom: -tabBarHeight}}
+          contentContainerStyle={{paddingBottom: tabBarHeight + 16}}
+          scrollIndicatorInsets={{bottom: tabBarHeight}}
+          data={visibleCategories}
+          keyExtractor={c => c.uiKey}
+          keyboardShouldPersistTaps="handled"
+          extraData={useCompactLayout}
+          ItemSeparatorComponent={categorySeparator}
+          ListFooterComponent={footer}
+          onEndReachedThreshold={0.4}
+          onEndReached={loadMore}
+          renderItem={({item: cat}) => (
+            <SuggestionCard
+              cat={cat}
+              useCompactLayout={useCompactLayout}
+              songById={songById}
+              scoresIndex={scoresIndex}
+              instrumentQuerySettings={instrumentQuerySettings}
+              onOpenSong={(songId, title) => {
+                logUi(`[SUGGESTIONS] open ${songId} '${title}' (${cat.key})`);
+                props.onOpenSong?.(songId, title);
+              }}
+            />
+          )}
+        />
+      </View>
     </Screen>
   );
 }
@@ -394,9 +409,13 @@ function formatRight(item: SuggestionSongItem): string {
 
 const styles = StyleSheet.create({
   content: {
+    flex: 1,
     paddingHorizontal: 20,
     paddingVertical: 16,
     gap: 12,
+  },
+  categorySeparator: {
+    height: 12,
   },
   headerRow: {
     flexDirection: 'row',
@@ -438,20 +457,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
-  button: {
-    backgroundColor: '#223047',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 10,
+  regenBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  buttonPressed: {
+  regenBtnPressed: {
     opacity: 0.85,
-  },
-  buttonText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
   },
   loadingRow: {
     paddingVertical: 18,
