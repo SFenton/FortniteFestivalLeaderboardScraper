@@ -2,12 +2,16 @@ import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 
 import { Screen } from '../ui/Screen';
+import {FrostedSurface} from '../ui/FrostedSurface';
 import {useFestival} from '../app/festival/FestivalContext';
 import type {Settings} from '../core/settings';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
+import {useOptionalBottomTabBarHeight} from '../navigation/useOptionalBottomTabBarHeight';
 
 export function SyncScreen() {
   usePageInstrumentation('Sync');
+
+  const tabBarHeight = useOptionalBottomTabBarHeight();
 
   const {state, actions} = useFestival();
   const {ensureInitializedAsync, startFetchAsync, clearLog, setExchangeCode, setSettings} = actions;
@@ -33,11 +37,16 @@ export function SyncScreen() {
 
   return (
     <Screen>
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        style={{flex: 1, marginBottom: -tabBarHeight}}
+        contentContainerStyle={[styles.content, {paddingBottom: tabBarHeight + 16}]}
+        scrollIndicatorInsets={{bottom: tabBarHeight}}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.title}>Sync</Text>
         <Text style={styles.subtitle}>Platform: {Platform.OS}</Text>
 
-        <View style={styles.card}>
+        <FrostedSurface style={styles.card} tint="dark" intensity={18}>
           <Text style={styles.cardTitle}>Status</Text>
           <Text style={styles.body}>Songs: {state.songs.length}</Text>
           <Text style={styles.body}>Cached scores: {scoresCount}</Text>
@@ -63,9 +72,9 @@ export function SyncScreen() {
               <Text style={styles.buttonText}>Clear Log</Text>
             </Pressable>
           </View>
-        </View>
+        </FrostedSurface>
 
-        <View style={styles.card}>
+        <FrostedSurface style={styles.card} tint="dark" intensity={18}>
           <Text style={styles.cardTitle}>Exchange Code</Text>
           <TextInput
             style={styles.input}
@@ -91,9 +100,9 @@ export function SyncScreen() {
               <Text style={styles.buttonText}>Generate Code</Text>
             </Pressable>
           </View>
-        </View>
+        </FrostedSurface>
 
-        <View style={styles.card}>
+        <FrostedSurface style={styles.card} tint="dark" intensity={18}>
           <Text style={styles.cardTitle}>Options</Text>
           <View style={styles.row}>
             <Text style={styles.body}>Concurrency</Text>
@@ -111,12 +120,12 @@ export function SyncScreen() {
           <Text style={styles.smallMuted}>
             Note: until song selection is implemented, score fetch runs across all synced songs.
           </Text>
-        </View>
+        </FrostedSurface>
 
-        <View style={styles.card}>
+        <FrostedSurface style={styles.card} tint="dark" intensity={18}>
           <Text style={styles.cardTitle}>Log</Text>
           <Text style={styles.log}>{state.logJoined || '(empty)'}</Text>
-        </View>
+        </FrostedSurface>
       </ScrollView>
     </Screen>
   );
@@ -148,9 +157,6 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   card: {
-    borderWidth: 1,
-    borderColor: '#263244',
-    backgroundColor: '#121826',
     borderRadius: 12,
     padding: 12,
     gap: 8,

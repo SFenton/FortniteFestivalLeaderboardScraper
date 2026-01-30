@@ -1,5 +1,16 @@
 import type {SqliteDatabase, SqliteResultSet, SqliteRowList, SqliteTransaction} from './sqliteDb.types';
 
+type GlobalNitroDbCache = {
+  __fnfestivalNitroDbCache?: Record<string, SqliteDatabase>;
+};
+
+function getGlobalNitroDbCache(): Record<string, SqliteDatabase> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const g = globalThis as any as GlobalNitroDbCache;
+  if (!g.__fnfestivalNitroDbCache) g.__fnfestivalNitroDbCache = {};
+  return g.__fnfestivalNitroDbCache;
+}
+
 type NitroQueryResult = {
   rows?: any;
   rowsAffected?: number;
@@ -45,6 +56,10 @@ export type NitroSqliteOpenOptions = {
 };
 
 export function openNitroSqliteDatabase(opts: NitroSqliteOpenOptions): SqliteDatabase {
+  const cache = getGlobalNitroDbCache();
+  const existing = cache[opts.name];
+  if (existing) return existing;
+
   // Lazy require to avoid Jest/native module crashes.
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const {open} = require('react-native-nitro-sqlite') as typeof import('react-native-nitro-sqlite');
@@ -71,5 +86,6 @@ export function openNitroSqliteDatabase(opts: NitroSqliteOpenOptions): SqliteDat
     },
   };
 
+  cache[opts.name] = wrapped;
   return wrapped;
 }

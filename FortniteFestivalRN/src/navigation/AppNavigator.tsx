@@ -2,6 +2,7 @@ import React from 'react';
 import { Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   getFocusedRouteNameFromRoute,
+  DarkTheme,
   NavigationContainer,
   useNavigationContainerRef,
 } from '@react-navigation/native';
@@ -19,6 +20,8 @@ import { SongsNavigator } from './SongsNavigator';
 import { SuggestionsNavigator } from './SuggestionsNavigator';
 import { StatisticsNavigator } from './StatisticsNavigator';
 import {useWindowsFlyoutUi, WindowsFlyoutUiProvider} from './windowsFlyoutUi';
+import { AnimatedBackground } from '../ui/AnimatedBackground';
+import { FrostedSurface } from '../ui/FrostedSurface';
 
 export type AppNavParamList = {
   [Routes.Sync]: undefined;
@@ -52,6 +55,14 @@ function MobileTabs() {
         headerStyle: styles.header,
         headerTitleStyle: styles.headerTitle,
         tabBarStyle: styles.tabBar,
+        tabBarBackground: () => (
+          <FrostedSurface
+            tint="dark"
+            intensity={22}
+            fallbackColor="rgba(18,24,38,0.72)"
+            style={styles.tabBarFrostedBackground}
+          />
+        ),
         tabBarActiveTintColor: '#FFFFFF',
         tabBarInactiveTintColor: '#9AA6B2',
       }}
@@ -61,6 +72,7 @@ function MobileTabs() {
         component={SyncScreen}
         options={{
           headerShown: false,
+          tabBarLabel: 'Sync',
           tabBarIcon: ({color, size}) => <Icon name="refresh" size={size} color={color} />,
         }}
       />
@@ -69,11 +81,12 @@ function MobileTabs() {
         component={SongsNavigator}
         options={({route}) => {
           const nested = getFocusedRouteNameFromRoute(route);
-          const tabBarStyle = nested === 'SongDetails' ? {display: 'none'} : styles.tabBar;
+          const tabBarStyle = nested === 'SongDetails' ? ({display: 'none'} as const) : styles.tabBar;
 
           return {
             headerShown: false,
             tabBarStyle,
+            tabBarLabel: 'Songs',
             tabBarIcon: ({color, size}) => <Icon name="musical-notes" size={size} color={color} />,
           };
         }}
@@ -83,11 +96,12 @@ function MobileTabs() {
         component={SuggestionsNavigator}
         options={({route}) => {
           const nested = getFocusedRouteNameFromRoute(route);
-          const tabBarStyle = nested === 'SongDetails' ? {display: 'none'} : styles.tabBar;
+          const tabBarStyle = nested === 'SongDetails' ? ({display: 'none'} as const) : styles.tabBar;
 
           return {
             headerShown: false,
             tabBarStyle,
+            tabBarLabel: 'Suggestions',
             tabBarIcon: ({color, size}) => <Icon name="sparkles" size={size} color={color} />,
           };
         }}
@@ -97,11 +111,12 @@ function MobileTabs() {
         component={StatisticsNavigator}
         options={({route}) => {
           const nested = getFocusedRouteNameFromRoute(route);
-          const tabBarStyle = nested === 'SongDetails' ? {display: 'none'} : styles.tabBar;
+          const tabBarStyle = nested === 'SongDetails' ? ({display: 'none'} as const) : styles.tabBar;
 
           return {
             headerShown: false,
             tabBarStyle,
+            tabBarLabel: 'Statistics',
             tabBarIcon: ({color, size}) => <Icon name="stats-chart" size={size} color={color} />,
           };
         }}
@@ -111,6 +126,7 @@ function MobileTabs() {
         component={SettingsScreen}
         options={{
           headerShown: false,
+          tabBarLabel: 'Settings',
           tabBarIcon: ({color, size}) => <Icon name="settings" size={size} color={color} />,
         }}
       />
@@ -228,30 +244,50 @@ export function AppNavigator() {
   const navRef = useNavigationContainerRef<AppNavParamList>();
   const prevRouteNameRef = React.useRef<string | undefined>(undefined);
 
+  const navTheme = React.useMemo(
+    () => ({
+      ...DarkTheme,
+      colors: {
+        ...DarkTheme.colors,
+        primary: '#7C3AED',
+        background: 'transparent',
+        card: 'transparent',
+        text: '#FFFFFF',
+        border: '#1E2A3A',
+        notification: '#7C3AED',
+      },
+    }),
+    [],
+  );
+
   return (
-    <NavigationContainer
-      ref={navRef}
-      onReady={() => {
-        const current = navRef.getCurrentRoute()?.name;
-        prevRouteNameRef.current = current;
-        if (current) actions.logUi(`[NAV] start ${current}`);
-      }}
-      onStateChange={() => {
-        const prev = prevRouteNameRef.current;
-        const current = navRef.getCurrentRoute()?.name;
-        if (current && prev && current !== prev) {
-          actions.logUi(`[NAV] ${prev} -> ${current}`);
-        }
-        prevRouteNameRef.current = current;
-      }}>
-      {Platform.OS === 'windows' ? (
-        <WindowsFlyoutUiProvider>
-          <WindowsFlyout />
-        </WindowsFlyoutUiProvider>
-      ) : (
-        <MobileTabs />
-      )}
-    </NavigationContainer>
+    <View style={{flex: 1, backgroundColor: '#1A0830'}}>
+      <AnimatedBackground />
+      <NavigationContainer
+        ref={navRef}
+        theme={navTheme}
+        onReady={() => {
+          const current = navRef.getCurrentRoute()?.name;
+          prevRouteNameRef.current = current;
+          if (current) actions.logUi(`[NAV] start ${current}`);
+        }}
+        onStateChange={() => {
+          const prev = prevRouteNameRef.current;
+          const current = navRef.getCurrentRoute()?.name;
+          if (current && prev && current !== prev) {
+            actions.logUi(`[NAV] ${prev} -> ${current}`);
+          }
+          prevRouteNameRef.current = current;
+        }}>
+        {Platform.OS === 'windows' ? (
+          <WindowsFlyoutUiProvider>
+            <WindowsFlyout />
+          </WindowsFlyoutUiProvider>
+        ) : (
+          <MobileTabs />
+        )}
+      </NavigationContainer>
+    </View>
   );
 }
 
@@ -274,8 +310,18 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   tabBar: {
-    backgroundColor: '#1A0830',
-    borderTopColor: '#1E2A3A',
+    backgroundColor: 'transparent',
+    borderTopColor: 'transparent',
+    borderTopWidth: 0,
+    elevation: 0,
+  },
+  tabBarFrostedBackground: {
+    flex: 1,
+    borderRadius: 0,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#263244',
   },
   winRoot: {
     flex: 1,

@@ -225,7 +225,7 @@ export function SongDetailsView(props: {songId: string; showBack?: boolean; onBa
   }, [effectiveWidth, rootMeasuredWidth, useCompactLayout, wideMeasuredWidth, wideTable, width]);
 
   return (
-    <Screen style={styles.screen}>
+    <Screen style={styles.screen} safeAreaEdges={['top', 'left', 'right', 'bottom']}>
       <View
         style={styles.root}
         onLayout={e => {

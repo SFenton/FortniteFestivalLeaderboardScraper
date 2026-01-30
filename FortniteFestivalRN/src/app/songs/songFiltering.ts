@@ -181,6 +181,11 @@ export type SongDisplayRow = {
   instrumentStatuses: InstrumentStatus[];
 };
 
+export type InstrumentQuerySettings = Pick<
+  Settings,
+  'queryLead' | 'queryBass' | 'queryDrums' | 'queryVocals' | 'queryProLead' | 'queryProBass'
+>;
+
 const trackerToStarString = (n: number): string => {
   if (n <= 0) return '';
   // Use a portable glyph; MAUI used '\u2605'.
@@ -190,9 +195,13 @@ const trackerToStarString = (n: number): string => {
 export const buildSongDisplayRow = (params: {
   song: Song;
   scoresIndex: Readonly<Record<string, LeaderboardData | undefined>>;
-  settings?: Settings;
+  settings?: InstrumentQuerySettings;
+} | {
+  song: Song;
+  leaderboardData?: LeaderboardData;
+  settings?: InstrumentQuerySettings;
 }): SongDisplayRow => {
-  const {song, scoresIndex, settings} = params;
+  const {song, settings} = params;
   const id = song.track.su;
 
   const statuses: InstrumentStatus[] = [
@@ -204,7 +213,7 @@ export const buildSongDisplayRow = (params: {
     {instrumentKey: 'pro_bass', icon: 'pro_bass.png', hasScore: false, isFullCombo: false, isEnabled: true},
   ];
 
-  const ld = scoresIndex[id];
+  const ld = 'scoresIndex' in params ? params.scoresIndex[id] : params.leaderboardData;
 
   let preferred: ScoreTracker | undefined;
   if (ld) preferred = ld.guitar ?? ld.drums ?? ld.vocals ?? ld.bass ?? ld.pro_guitar ?? ld.pro_bass;
@@ -248,17 +257,17 @@ export const buildSongDisplayRow = (params: {
     for (const s of statuses) {
       s.isEnabled =
         s.instrumentKey === 'guitar'
-          ? settings.queryLead
+          ? (settings.queryLead ?? true)
           : s.instrumentKey === 'bass'
-            ? settings.queryBass
+            ? (settings.queryBass ?? true)
             : s.instrumentKey === 'drums'
-              ? settings.queryDrums
+              ? (settings.queryDrums ?? true)
               : s.instrumentKey === 'vocals'
-                ? settings.queryVocals
+                ? (settings.queryVocals ?? true)
                 : s.instrumentKey === 'pro_guitar'
-                  ? settings.queryProLead
+                  ? (settings.queryProLead ?? true)
                   : s.instrumentKey === 'pro_bass'
-                    ? settings.queryProBass
+                    ? (settings.queryProBass ?? true)
                     : true;
     }
   }

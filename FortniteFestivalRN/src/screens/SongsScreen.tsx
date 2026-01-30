@@ -1,24 +1,132 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {FlatList, Image, Platform, Pressable, StyleSheet, Text, TextInput, View} from 'react-native';
+import {useOptionalBottomTabBarHeight} from '../navigation/useOptionalBottomTabBarHeight';
 
 import { Screen } from '../ui/Screen';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
 import {useFestival} from '../app/festival/FestivalContext';
-import type {Song} from '../core/models';
-import {buildSongDisplayRow, defaultAdvancedMissingFilters, defaultPrimaryInstrumentOrder, filterAndSortSongs, normalizeInstrumentOrder} from '../app/songs/songFiltering';
+import type {LeaderboardData, Song} from '../core/models';
+import {buildSongDisplayRow, defaultAdvancedMissingFilters, defaultPrimaryInstrumentOrder, filterAndSortSongs, normalizeInstrumentOrder, type InstrumentQuerySettings} from '../app/songs/songFiltering';
 import {getInstrumentIconSource, getInstrumentStatusVisual} from '../ui/instruments/instrumentVisuals';
 import {PlatformModal} from '../ui/PlatformModal';
 import {FrostedSurface} from '../ui/FrostedSurface';
 import type {AdvancedMissingFilters, SongSortMode} from '../core/songListConfig';
 import type {InstrumentKey} from '../core/instruments';
 
+const SongRow = React.memo(function SongRow(props: {
+  song: Song;
+  leaderboardData?: LeaderboardData;
+  settings: InstrumentQuerySettings;
+  onOpen: (songId: string, title: string) => void;
+}) {
+  const {song, leaderboardData, settings, onOpen} = props;
+
+  const id = song.track.su;
+  const title = song.track.tt ?? song._title ?? id;
+  const artist = song.track.an ?? '';
+  const year = song.track.ry;
+  const imageUri = song.imagePath ?? song.track.au;
+
+  const row = useMemo(
+    () => buildSongDisplayRow({song, leaderboardData, settings}),
+    [leaderboardData, settings, song],
+  );
+
+  return (
+    <Pressable
+      onPress={() => onOpen(id, title)}
+      style={styles.rowPressable}
+      accessibilityRole="button"
+      accessibilityLabel={`Open ${title}`}
+    >
+      {({pressed}) => (
+        <FrostedSurface style={[styles.rowSurface, pressed && styles.rowSurfacePressed]} tint="dark" intensity={12}>
+          <View style={styles.rowInner}>
+            <View style={styles.left}>
+              <View style={styles.thumbWrap}>
+                {imageUri ? (
+                  <Image source={{uri: imageUri}} style={styles.thumb} resizeMode="cover" />
+                ) : (
+                  <View style={styles.thumbPlaceholder} />
+                )}
+              </View>
+
+              <View style={styles.rowText}>
+                <Text numberOfLines={1} style={styles.songTitle}>
+                  {title}
+                </Text>
+                <Text numberOfLines={1} style={styles.songMeta}>
+                  {artist}
+                  {artist && year ? ' • ' : ''}
+                  {year ?? ''}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.instrumentRow}>
+              {row.instrumentStatuses.map(s => {
+                const {fill, stroke} = getInstrumentStatusVisual({hasScore: s.hasScore, isFullCombo: s.isFullCombo});
+                const opacity = s.isEnabled ? 1 : 0.35;
+                return (
+                  <View
+                    key={s.instrumentKey}
+                    style={[styles.instrumentChip, {backgroundColor: fill, borderColor: stroke, opacity}]}
+                  >
+                    <Image source={getInstrumentIconSource(s.instrumentKey)} style={styles.instrumentIcon} resizeMode="contain" />
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        </FrostedSurface>
+      )}
+    </Pressable>
+  );
+}, (prev, next) => (
+  prev.song === next.song &&
+  prev.leaderboardData === next.leaderboardData &&
+  prev.settings === next.settings &&
+  prev.onOpen === next.onOpen
+));
+
 export function SongsScreen(props: {onOpenSong?: (songId: string, title: string) => void}) {
   usePageInstrumentation('Songs');
+
+  const {onOpenSong} = props;
+
+  // `Screen` intentionally does not apply bottom safe-area padding (to avoid a
+  // persistent dead band above the navbar). Lists need explicit padding so the
+  // final rows aren’t hidden behind the tab bar.
+  const tabBarHeight = useOptionalBottomTabBarHeight();
+
+  // Fixed-height rows let FlatList skip measurement work.
+  // Keep this in sync with styles: rowInner padding + thumb/chip sizes + row margin.
+  const ROW_HEIGHT = 72;
+
+  const listStyle = useMemo(() => ({flex: 1, marginBottom: -tabBarHeight}), [tabBarHeight]);
+  const listContentStyle = useMemo(() => [styles.list, {paddingBottom: tabBarHeight + 16}], [tabBarHeight]);
+  const scrollInsets = useMemo(() => ({bottom: tabBarHeight}), [tabBarHeight]);
 
   const {
     state: {songs, scoresIndex, settings},
     actions: {logUi, setSettings},
   } = useFestival();
+
+  const instrumentQuerySettings = useMemo<InstrumentQuerySettings>(() => ({
+    queryLead: settings.queryLead,
+    queryBass: settings.queryBass,
+    queryDrums: settings.queryDrums,
+    queryVocals: settings.queryVocals,
+    queryProLead: settings.queryProLead,
+    queryProBass: settings.queryProBass,
+  }), [
+    settings.queryBass,
+    settings.queryDrums,
+    settings.queryLead,
+    settings.queryProBass,
+    settings.queryProLead,
+    settings.queryVocals,
+  ]);
 
   const [query, setQuery] = useState('');
   const [showSort, setShowSort] = useState(false);
@@ -84,72 +192,22 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
     };
   }, [filtered.length, logUi, queryNorm]);
 
+  const onOpen = useCallback((songId: string, title: string) => {
+    logUi(`[SONGS] open ${songId} '${title}'`);
+    onOpenSong?.(songId, title);
+  }, [logUi, onOpenSong]);
+
   const renderItem = useCallback(({item}: {item: Song}) => {
     const id = item.track.su;
-    const title = item.track.tt ?? item._title ?? id;
-    const artist = item.track.an ?? '';
-    const year = item.track.ry;
-    const imageUri = item.imagePath ?? item.track.au;
-
-    const row = buildSongDisplayRow({song: item, scoresIndex, settings});
-
     return (
-      <Pressable
-        onPress={() => {
-          logUi(`[SONGS] open ${id} '${title}'`);
-          props.onOpenSong?.(id, title);
-        }}
-        style={styles.rowPressable}
-        accessibilityRole="button"
-        accessibilityLabel={`Open ${title}`}
-      >
-        {({pressed}) => (
-          <FrostedSurface
-            style={[styles.rowSurface, pressed && styles.rowSurfacePressed]}
-            tint="dark"
-            intensity={12}
-          >
-            <View style={styles.rowInner}>
-              <View style={styles.left}>
-                <View style={styles.thumbWrap}>
-                  {imageUri ? (
-                    <Image source={{uri: imageUri}} style={styles.thumb} resizeMode="cover" />
-                  ) : (
-                    <View style={styles.thumbPlaceholder} />
-                  )}
-                </View>
-
-                <View style={styles.rowText}>
-                  <Text numberOfLines={1} style={styles.songTitle}>
-                    {title}
-                  </Text>
-                  <Text numberOfLines={1} style={styles.songMeta}>
-                    {artist}{artist && year ? ' • ' : ''}{year ?? ''}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.instrumentRow}>
-                {row.instrumentStatuses.map(s => {
-                  const {fill, stroke} = getInstrumentStatusVisual({hasScore: s.hasScore, isFullCombo: s.isFullCombo});
-                  const opacity = s.isEnabled ? 1 : 0.35;
-                  return (
-                    <View key={s.instrumentKey} style={[styles.instrumentChip, {backgroundColor: fill, borderColor: stroke, opacity}]}>
-                      <Image
-                        source={getInstrumentIconSource(s.instrumentKey)}
-                        style={styles.instrumentIcon}
-                        resizeMode="contain"
-                      />
-                    </View>
-                  );
-                })}
-              </View>
-            </View>
-          </FrostedSurface>
-        )}
-      </Pressable>
+      <SongRow
+        song={item}
+        leaderboardData={scoresIndex[id]}
+        settings={instrumentQuerySettings}
+        onOpen={onOpen}
+      />
     );
-  }, [logUi, props.onOpenSong, scoresIndex, settings]);
+  }, [instrumentQuerySettings, onOpen, scoresIndex]);
 
   const anyMissingEnabled = useMemo(() =>
     settings.songsAdvancedMissingFilters.missingPadFCs ||
@@ -220,7 +278,15 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
           keyExtractor={s => s.track.su}
           renderItem={renderItem}
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={styles.list}
+          style={listStyle}
+          contentContainerStyle={listContentStyle}
+          scrollIndicatorInsets={scrollInsets}
+          removeClippedSubviews={Platform.OS === 'android'}
+          initialNumToRender={12}
+          maxToRenderPerBatch={8}
+          updateCellsBatchingPeriod={24}
+          windowSize={7}
+          getItemLayout={(_data, index) => ({length: ROW_HEIGHT, offset: ROW_HEIGHT * index, index})}
           ListEmptyComponent={
             <Text style={styles.body}>
               {songs.length === 0 ? 'Songs not synced yet. Go to Sync first.' : 'No songs match your search.'}

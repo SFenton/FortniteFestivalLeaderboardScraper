@@ -1,7 +1,8 @@
-import React, {useMemo} from 'react';
-import {Image, Platform, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import React, {useCallback, useMemo} from 'react';
+import {FlatList, Image, Pressable, StyleSheet, Text, View} from 'react-native';
 
 import type {InstrumentKey} from '../core/instruments';
+import type {Song} from '../core/models';
 import {useFestival} from '../app/festival/FestivalContext';
 import {formatScoreCompact} from '../app/format/formatters';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
@@ -10,6 +11,9 @@ import type {SuggestionCategory} from '../core/suggestions/types';
 import {getInstrumentIconSource} from '../ui/instruments/instrumentVisuals';
 import {Screen} from '../ui/Screen';
 import {FrostedSurface} from '../ui/FrostedSurface';
+import {useOptionalBottomTabBarHeight} from '../navigation/useOptionalBottomTabBarHeight';
+
+const TOP_SONGS_VIRTUALIZE_THRESHOLD = 12;
 
 const shouldShowCategory = (
   categoryKey: string,
@@ -47,12 +51,42 @@ const isInstrumentEnabled = (
   }
 };
 
+type StatsListItem =
+  | {type: 'instrument'; key: string; stats: InstrumentDetailedStats}
+  | {type: 'top'; key: string; cat: SuggestionCategory};
+
 export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: string) => void}) {
   usePageInstrumentation('Statistics');
+
+  const tabBarHeight = useOptionalBottomTabBarHeight();
+
+  const {onOpenSong} = props;
 
   const {
     state: {songs, scoresIndex, settings},
   } = useFestival();
+
+  const instrumentQuerySettings = useMemo(() => ({
+    queryLead: settings.queryLead,
+    queryBass: settings.queryBass,
+    queryDrums: settings.queryDrums,
+    queryVocals: settings.queryVocals,
+    queryProLead: settings.queryProLead,
+    queryProBass: settings.queryProBass,
+  }), [
+    settings.queryBass,
+    settings.queryDrums,
+    settings.queryLead,
+    settings.queryProBass,
+    settings.queryProLead,
+    settings.queryVocals,
+  ]);
+
+  const songById = useMemo(() => {
+    const m = new Map<string, Song>();
+    for (const s of songs) m.set(s.track.su, s);
+    return m;
+  }, [songs]);
 
   const boards = useMemo(() => {
     return Object.values(scoresIndex).filter(Boolean) as any[];
@@ -61,15 +95,40 @@ export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: st
   const instrumentStats = useMemo(() => {
     const totalSongsInLibrary = songs.length > 0 ? songs.length : boards.length;
     const stats = buildInstrumentStats({boards, totalSongsInLibrary});
-    return stats.filter(s => isInstrumentEnabled(s.instrumentKey, settings));
-  }, [boards, settings, songs.length]);
+    return stats.filter(s => isInstrumentEnabled(s.instrumentKey, instrumentQuerySettings));
+  }, [boards, instrumentQuerySettings, songs.length]);
 
   const topCategories = useMemo(() => {
     const cats = buildTopSongCategories({boards});
-    return cats.filter(c => shouldShowCategory(c.key, settings));
-  }, [boards, settings]);
+    return cats.filter(c => shouldShowCategory(c.key, instrumentQuerySettings));
+  }, [boards, instrumentQuerySettings]);
 
   const hasAnyScores = Object.keys(scoresIndex).length > 0;
+
+  const header = useMemo(() => (
+    <>
+      <Text style={styles.title}>Statistics</Text>
+      <Text style={styles.subtitle}>
+        {songs.length ? `${songs.length} songs • ${boards.length} score rows` : `${boards.length} score rows`}
+      </Text>
+    </>
+  ), [boards.length, songs.length]);
+
+  const listStyle = useMemo(() => ({flex: 1, marginBottom: -tabBarHeight}), [tabBarHeight]);
+  const listContentStyle = useMemo(() => [styles.content, {paddingBottom: tabBarHeight + 16}], [tabBarHeight]);
+  const scrollInsets = useMemo(() => ({bottom: tabBarHeight}), [tabBarHeight]);
+
+  const data = useMemo<StatsListItem[]>(() => {
+    const items: StatsListItem[] = [];
+    for (const s of instrumentStats) items.push({type: 'instrument', key: `inst:${s.instrumentKey}`, stats: s});
+    for (const c of topCategories) items.push({type: 'top', key: `top:${c.key}`, cat: c});
+    return items;
+  }, [instrumentStats, topCategories]);
+
+  const renderItem = useCallback(({item}: {item: StatsListItem}) => {
+    if (item.type === 'instrument') return <InstrumentCard stats={item.stats} />;
+    return <TopSongsCard cat={item.cat} songById={songById} onOpenSong={onOpenSong} />;
+  }, [onOpenSong, songById]);
 
   if (!hasAnyScores) {
     return (
@@ -87,20 +146,21 @@ export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: st
 
   return (
     <Screen>
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={styles.title}>Statistics</Text>
-        <Text style={styles.subtitle}>
-          {songs.length ? `${songs.length} songs • ${boards.length} score rows` : `${boards.length} score rows`}
-        </Text>
-
-        {instrumentStats.map(s => (
-          <InstrumentCard key={s.instrumentKey} stats={s} />
-        ))}
-
-        {topCategories.map(c => (
-          <TopSongsCard key={c.key} cat={c} onOpenSong={props.onOpenSong} />
-        ))}
-      </ScrollView>
+      <FlatList
+        style={listStyle}
+        contentContainerStyle={listContentStyle}
+        scrollIndicatorInsets={scrollInsets}
+        keyboardShouldPersistTaps="handled"
+        data={data}
+        keyExtractor={i => i.key}
+        renderItem={renderItem}
+        ListHeaderComponent={header}
+        removeClippedSubviews
+        initialNumToRender={8}
+        maxToRenderPerBatch={6}
+        updateCellsBatchingPeriod={24}
+        windowSize={7}
+      />
     </Screen>
   );
 }
@@ -199,11 +259,27 @@ const LegendItem = React.memo(function LegendItem(props: {label: string; color: 
   );
 });
 
-const TopSongsCard = React.memo(function TopSongsCard(props: {cat: SuggestionCategory; onOpenSong?: (songId: string, title: string) => void}) {
-  const {cat} = props;
-  const {
-    state: {songs},
-  } = useFestival();
+const TopSongsCard = React.memo(function TopSongsCard(props: {
+  cat: SuggestionCategory;
+  songById: ReadonlyMap<string, Song>;
+  onOpenSong?: (songId: string, title: string) => void;
+}) {
+  const {cat, songById, onOpenSong} = props;
+
+  const useVirtualList = cat.songs.length > TOP_SONGS_VIRTUALIZE_THRESHOLD;
+
+  const renderSong = useCallback(({item}: {item: any}) => {
+    const song = songById.get(item.songId);
+    const imageUri = song?.imagePath ?? song?.track?.au;
+    return (
+      <TopSongRow
+        catKey={cat.key}
+        item={item}
+        imageUri={imageUri}
+        onPress={() => onOpenSong?.(item.songId, item.title)}
+      />
+    );
+  }, [cat.key, onOpenSong, songById]);
 
   return (
     <FrostedSurface style={styles.card} tint="dark" intensity={18}>
@@ -211,15 +287,34 @@ const TopSongsCard = React.memo(function TopSongsCard(props: {cat: SuggestionCat
       <Text style={styles.cardSubtitle}>{cat.description}</Text>
 
       <View style={styles.songList}>
-        {cat.songs.map(s => (
-          <TopSongRow
-            key={`${cat.key}:${s.songId}`}
-            catKey={cat.key}
-            item={s}
-            imageUri={songs.find(x => x.track.su === s.songId)?.imagePath ?? songs.find(x => x.track.su === s.songId)?.track?.au}
-            onPress={() => props.onOpenSong?.(s.songId, s.title)}
+        {useVirtualList ? (
+          <FlatList
+            data={cat.songs as any[]}
+            keyExtractor={s => `${cat.key}:${s.songId}`}
+            renderItem={renderSong}
+            scrollEnabled={false}
+            keyboardShouldPersistTaps="handled"
+            removeClippedSubviews
+            initialNumToRender={10}
+            maxToRenderPerBatch={8}
+            updateCellsBatchingPeriod={24}
+            windowSize={5}
           />
-        ))}
+        ) : (
+          cat.songs.map(s => {
+            const song = songById.get(s.songId);
+            const imageUri = song?.imagePath ?? song?.track?.au;
+            return (
+              <TopSongRow
+                key={`${cat.key}:${s.songId}`}
+                catKey={cat.key}
+                item={s as any}
+                imageUri={imageUri}
+                onPress={() => onOpenSong?.(s.songId, s.title)}
+              />
+            );
+          })
+        )}
       </View>
     </FrostedSurface>
   );
@@ -232,7 +327,7 @@ const TopSongRow = React.memo(function TopSongRow(props: {
   onPress: () => void;
 }) {
   const {item} = props;
-  const right = formatRight(item);
+  const right = useMemo(() => formatRight(item), [item]);
 
   return (
     <Pressable

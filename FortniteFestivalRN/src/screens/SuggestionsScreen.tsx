@@ -5,11 +5,12 @@ import {Screen} from '../ui/Screen';
 import {FrostedSurface} from '../ui/FrostedSurface';
 import {useFestival} from '../app/festival/FestivalContext';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
-import type {Song} from '../core/models';
-import {buildSongDisplayRow} from '../app/songs/songFiltering';
+import type {LeaderboardData, Song} from '../core/models';
+import {buildSongDisplayRow, type InstrumentQuerySettings} from '../app/songs/songFiltering';
 import {SuggestionGenerator} from '../core/suggestions/suggestionGenerator';
 import type {SuggestionCategory, SuggestionSongItem} from '../core/suggestions/types';
 import {getInstrumentIconSource, getInstrumentStatusVisual} from '../ui/instruments/instrumentVisuals';
+import {useOptionalBottomTabBarHeight} from '../navigation/useOptionalBottomTabBarHeight';
 
 const INITIAL_BATCH = 10;
 const SUBSEQUENT_BATCH = 4;
@@ -30,6 +31,8 @@ const shouldShowCategory = (categoryKey: string, settings: {queryLead: boolean; 
 export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: string) => void}) {
   usePageInstrumentation('Suggestions');
 
+  const tabBarHeight = useOptionalBottomTabBarHeight();
+
   const {width} = useWindowDimensions();
   const useCompactLayout = width < 900;
 
@@ -37,6 +40,28 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
     state: {songs, scoresIndex, settings},
     actions: {logUi},
   } = useFestival();
+
+  const instrumentQuerySettings = useMemo<InstrumentQuerySettings>(() => ({
+    queryLead: settings.queryLead,
+    queryBass: settings.queryBass,
+    queryDrums: settings.queryDrums,
+    queryVocals: settings.queryVocals,
+    queryProLead: settings.queryProLead,
+    queryProBass: settings.queryProBass,
+  }), [
+    settings.queryBass,
+    settings.queryDrums,
+    settings.queryLead,
+    settings.queryProBass,
+    settings.queryProLead,
+    settings.queryVocals,
+  ]);
+
+  const songById = useMemo(() => {
+    const m = new Map<string, Song>();
+    for (const s of songs) m.set(s.track.su, s);
+    return m;
+  }, [songs]);
 
   // Seed changes regenerate suggestions. Use a daily seed by default to keep it stable.
   const [seed, setSeed] = useState<number>(() => Math.floor(Date.now() / (1000 * 60 * 60 * 24)));
@@ -52,8 +77,8 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
   }, []);
 
   const visibleCategories = useMemo(() => {
-    return categories.filter(c => shouldShowCategory(c.key, settings));
-  }, [categories, settings]);
+    return categories.filter(c => shouldShowCategory(c.key, instrumentQuerySettings));
+  }, [categories, instrumentQuerySettings]);
 
   const loadInitial = useCallback(() => {
     if (!songs.length) {
@@ -175,7 +200,9 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
   return (
     <Screen>
       <FlatList
-        contentContainerStyle={styles.content}
+        style={{flex: 1, marginBottom: -tabBarHeight}}
+        contentContainerStyle={[styles.content, {paddingBottom: tabBarHeight + 16}]}
+        scrollIndicatorInsets={{bottom: tabBarHeight}}
         data={visibleCategories}
         keyExtractor={c => c.uiKey}
         keyboardShouldPersistTaps="handled"
@@ -188,6 +215,9 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
           <SuggestionCard
             cat={cat}
             useCompactLayout={useCompactLayout}
+            songById={songById}
+            scoresIndex={scoresIndex}
+            instrumentQuerySettings={instrumentQuerySettings}
             onOpenSong={(songId, title) => {
               logUi(`[SUGGESTIONS] open ${songId} '${title}' (${cat.key})`);
               props.onOpenSong?.(songId, title);
@@ -199,46 +229,94 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
   );
 }
 
-function SuggestionCard(props: {cat: SuggestionCategoryRow; useCompactLayout: boolean; onOpenSong: (songId: string, title: string) => void}) {
+function SuggestionCard(props: {
+  cat: SuggestionCategoryRow;
+  useCompactLayout: boolean;
+  songById: ReadonlyMap<string, Song>;
+  scoresIndex: Readonly<Record<string, LeaderboardData | undefined>>;
+  instrumentQuerySettings: InstrumentQuerySettings;
+  onOpenSong: (songId: string, title: string) => void;
+}) {
   const {cat} = props;
+
+  // Avoid nested VirtualizedList overhead for small lists, but virtualize very large categories.
+  const useVirtualSongsList = cat.songs.length > 12;
+
+  const renderSong = useCallback(({item}: {item: SuggestionSongItem}) => {
+    return (
+      <SuggestionSongRow
+        item={item}
+        useCompactLayout={props.useCompactLayout}
+        song={props.songById.get(item.songId)}
+        leaderboardData={props.scoresIndex[item.songId]}
+        settings={props.instrumentQuerySettings}
+        onOpenSong={props.onOpenSong}
+      />
+    );
+  }, [props.instrumentQuerySettings, props.onOpenSong, props.scoresIndex, props.songById, props.useCompactLayout]);
+
+  const songSeparator = useCallback(() => <View style={styles.songSeparator} />, []);
+
   return (
     <FrostedSurface style={styles.card} tint="dark" intensity={18}>
       <Text style={styles.cardTitle}>{cat.title}</Text>
       <Text style={styles.cardSubtitle}>{cat.description}</Text>
 
       <View style={styles.songList}>
-        {cat.songs.map(s => (
-          <SuggestionSongRow
-            key={`${cat.key}:${s.songId}`}
-            item={s}
-            useCompactLayout={props.useCompactLayout}
-            onPress={() => props.onOpenSong(s.songId, s.title)}
+        {useVirtualSongsList ? (
+          <FlatList
+            data={cat.songs}
+            keyExtractor={s => `${cat.key}:${s.songId}`}
+            renderItem={renderSong}
+            ItemSeparatorComponent={songSeparator}
+            scrollEnabled={false}
+            keyboardShouldPersistTaps="handled"
+            removeClippedSubviews={Platform.OS === 'android'}
+            initialNumToRender={8}
+            maxToRenderPerBatch={6}
+            updateCellsBatchingPeriod={24}
+            windowSize={5}
           />
-        ))}
+        ) : (
+          cat.songs.map(s => (
+            <SuggestionSongRow
+              key={`${cat.key}:${s.songId}`}
+              item={s}
+              useCompactLayout={props.useCompactLayout}
+              song={props.songById.get(s.songId)}
+              leaderboardData={props.scoresIndex[s.songId]}
+              settings={props.instrumentQuerySettings}
+              onOpenSong={props.onOpenSong}
+            />
+          ))
+        )}
       </View>
     </FrostedSurface>
   );
 }
 
-function SuggestionSongRow(props: {item: SuggestionSongItem; useCompactLayout: boolean; onPress: () => void}) {
-  const {item} = props;
-  const {
-    state: {songs, scoresIndex, settings},
-  } = useFestival();
+const SuggestionSongRow = React.memo(function SuggestionSongRow(props: {
+  item: SuggestionSongItem;
+  song?: Song;
+  leaderboardData?: LeaderboardData;
+  settings: InstrumentQuerySettings;
+  useCompactLayout: boolean;
+  onOpenSong: (songId: string, title: string) => void;
+}) {
+  const {item, song, leaderboardData, settings} = props;
 
-  const song: Song | undefined = useMemo(() => songs.find(s => s.track.su === item.songId), [item.songId, songs]);
   const imageUri = song?.imagePath ?? song?.track?.au;
 
-  const right = formatRight(item);
+  const right = useMemo(() => formatRight(item), [item]);
 
   const row = useMemo(() => {
     if (!song) return null;
-    return buildSongDisplayRow({song, scoresIndex, settings});
-  }, [scoresIndex, settings, song]);
+    return buildSongDisplayRow({song, leaderboardData, settings});
+  }, [leaderboardData, settings, song]);
 
   return (
     <Pressable
-      onPress={props.onPress}
+      onPress={() => props.onOpenSong(item.songId, item.title)}
       style={styles.songRowPressable}
       accessibilityRole="button"
       accessibilityLabel={`Open ${item.title}`}
@@ -286,7 +364,14 @@ function SuggestionSongRow(props: {item: SuggestionSongItem; useCompactLayout: b
       )}
     </Pressable>
   );
-}
+}, (prev, next) => (
+  prev.item === next.item &&
+  prev.song === next.song &&
+  prev.leaderboardData === next.leaderboardData &&
+  prev.settings === next.settings &&
+  prev.useCompactLayout === next.useCompactLayout &&
+  prev.onOpenSong === next.onOpenSong
+));
 
 function formatRight(item: SuggestionSongItem): string {
   const parts: string[] = [];
@@ -376,6 +461,9 @@ const styles = StyleSheet.create({
   songList: {
     gap: 8,
     marginTop: 4,
+  },
+  songSeparator: {
+    height: 8,
   },
   songRowPressable: {},
   songRowSurface: {
