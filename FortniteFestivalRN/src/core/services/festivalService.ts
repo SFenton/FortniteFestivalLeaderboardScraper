@@ -14,6 +14,9 @@ import type {FestivalServiceEvents, FetchScoresParams, HttpClient, ImageCache, I
 const CONTENT_BASE = 'https://fortnitecontent-website-prod07.ol.epicgames.com';
 const EVENTS_BASE = 'https://events-public-service-live.ol.epicgames.com';
 const ACCOUNT_BASE = 'https://account-public-service-prod.ol.epicgames.com';
+// Epic launcher OAuth client (matches MAUI implementation)
+const LAUNCHER_BASIC =
+  'ZWM2ODRiOGM2ODdmNDc5ZmFkZWEzY2IyYWQ4M2Y1YzY6ZTFmMzFjMjExZjI4NDEzMTg2MjYyZDM3YTEzZmM4NGQ=';
 
 const nowMs = () => Date.now();
 
@@ -218,6 +221,25 @@ export class FestivalService {
     }
   }
 
+  async clearImageCache(): Promise<void> {
+    console.log('[FestivalService] Clearing image cache');
+    // Clear imagePath from all songs
+    for (const s of this.songs) {
+      s.imagePath = undefined;
+    }
+    // Reset sync flag to allow re-sync
+    this.imagesSyncComplete = false;
+    
+    // Persist the cleared state
+    if (this.persistence) {
+      try {
+        await this.persistence.saveSongs(this.songs);
+      } catch {
+        // swallow
+      }
+    }
+  }
+
   async syncImages(opts?: {signal?: AbortSignal}): Promise<void> {
     if (this.imagesSyncComplete) return;
     if (!this.songSyncComplete) return;
@@ -227,10 +249,20 @@ export class FestivalService {
     }
 
     const allSongs = this.songs;
-    const total = allSongs.length;
+    
+    // Only sync songs that don't have imagePath from persistence
+    const songsNeedingImages = allSongs.filter(s => !s.imagePath);
+    if (songsNeedingImages.length === 0) {
+      console.log('[FestivalService] All songs have imagePath, skipping image sync');
+      this.imagesSyncComplete = true;
+      return;
+    }
+
+    console.log(`[FestivalService] Syncing images for ${songsNeedingImages.length} songs`);
+    const total = songsNeedingImages.length;
     let idx = 0;
 
-    for (const s of allSongs) {
+    for (const s of songsNeedingImages) {
       idx++;
       const title = s.track.tt ?? s._title ?? '';
       safeCall(this.events.songProgress, idx, total, `Img ${title}`, true);
@@ -276,17 +308,38 @@ export class FestivalService {
     this.runStartedAtMs = nowMs();
 
     try {
-      // 1) exchange code -> token
-      const tokenRes = await this.http.postForm(
+      // 1) code -> token
+      // MAUI generates an OAuth authorization code (responseType=code). We support that flow first,
+      // and fall back to the legacy exchange_code grant for compatibility.
+      const authHeaders = {Authorization: `basic ${LAUNCHER_BASIC}`};
+
+      let token = null as ReturnType<typeof parseExchangeCodeToken>;
+
+      const tokenResAuthCode = await this.http.postForm(
         `${ACCOUNT_BASE}/account/api/oauth/token`,
-        {grant_type: 'exchange_code', exchange_code: params.exchangeCode, token_type: 'eg1'},
-        {signal},
+        {grant_type: 'authorization_code', code: params.exchangeCode},
+        {signal, headers: authHeaders},
       );
       this.instRequests++;
-      this.instBytes += tokenRes.text?.length ?? 0;
-      const token = parseExchangeCodeToken(tokenRes.text);
+      this.instBytes += tokenResAuthCode.text?.length ?? 0;
+      token = parseExchangeCodeToken(tokenResAuthCode.text);
+
       if (!token) {
-        safeCall(this.events.log, 'Auth failed (no token). Exchange code may be invalid / already used.');
+        const tokenResExchangeCode = await this.http.postForm(
+          `${ACCOUNT_BASE}/account/api/oauth/token`,
+          {grant_type: 'exchange_code', exchange_code: params.exchangeCode, token_type: 'eg1'},
+          {signal, headers: authHeaders},
+        );
+        this.instRequests++;
+        this.instBytes += tokenResExchangeCode.text?.length ?? 0;
+        token = parseExchangeCodeToken(tokenResExchangeCode.text);
+      }
+
+      if (!token) {
+        safeCall(
+          this.events.log,
+          'Auth failed (no token). Code may be invalid / already used. Generate a fresh code and retry.',
+        );
         return false;
       }
 

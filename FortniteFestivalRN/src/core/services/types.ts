@@ -46,6 +46,6 @@ export type FetchScoresParams = {
   exchangeCode: string;
   degreeOfParallelism: number;
   filteredSongIds?: string[];
-  settings?: Settings;
+  settings?: Partial<Settings>;
   signal?: AbortSignal;
 };

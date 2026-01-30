@@ -22,14 +22,23 @@ export function createFestivalPersistence(): FestivalPersistence {
   }
 
   if (Platform.OS === 'ios' || Platform.OS === 'android') {
-    // Lazy require so bundlers/tests don't pull native modules unless needed.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const {openNitroSqliteDatabase} = require('../adapters/sqlite/nitroSqliteDatabase') as typeof import('../adapters/sqlite/nitroSqliteDatabase');
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const {SqliteFestivalPersistence} = require('../adapters/sqlite/sqliteFestivalPersistence') as typeof import('../adapters/sqlite/sqliteFestivalPersistence');
+    try {
+      console.log('[festivalPersistence] Creating SQLite persistence for mobile...');
+      // Lazy require so bundlers/tests don't pull native modules unless needed.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const {openNitroSqliteDatabase} = require('../adapters/sqlite/nitroSqliteDatabase') as typeof import('../adapters/sqlite/nitroSqliteDatabase');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const {SqliteFestivalPersistence} = require('../adapters/sqlite/sqliteFestivalPersistence') as typeof import('../adapters/sqlite/sqliteFestivalPersistence');
 
-    const db = openNitroSqliteDatabase({name: 'fnfestival.sqlite'});
-    return new SqliteFestivalPersistence(db);
+      console.log('[festivalPersistence] Opening SQLite database...');
+      const db = openNitroSqliteDatabase({name: 'fnfestival.sqlite'});
+      console.log('[festivalPersistence] SQLite database opened successfully');
+      return new SqliteFestivalPersistence(db);
+    } catch (error) {
+      console.error('[festivalPersistence] Failed to create SQLite persistence:', error);
+      console.log('[festivalPersistence] Falling back to InMemoryFestivalPersistence');
+      return new InMemoryFestivalPersistence();
+    }
   }
 
   return new InMemoryFestivalPersistence();

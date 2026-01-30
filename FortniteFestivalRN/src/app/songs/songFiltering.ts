@@ -2,44 +2,11 @@ import type {InstrumentKey} from '../../core/instruments';
 import type {LeaderboardData, ScoreTracker, Song} from '../../core/models';
 import type {Settings} from '../../core/settings';
 
-export type SongSortMode = 'title' | 'artist' | 'hasfc';
+export type {AdvancedMissingFilters, InstrumentOrderItem, SongSortMode} from '../../core/songListConfig';
+export {defaultAdvancedMissingFilters, defaultPrimaryInstrumentOrder, normalizeInstrumentOrder} from '../../core/songListConfig';
 
-export type AdvancedMissingFilters = {
-  missingPadFCs: boolean;
-  missingProFCs: boolean;
-  missingPadScores: boolean;
-  missingProScores: boolean;
-  includeLead: boolean;
-  includeBass: boolean;
-  includeDrums: boolean;
-  includeVocals: boolean;
-  includeProGuitar: boolean;
-  includeProBass: boolean;
-};
-
-export const defaultAdvancedMissingFilters = (): AdvancedMissingFilters => ({
-  missingPadFCs: false,
-  missingProFCs: false,
-  missingPadScores: false,
-  missingProScores: false,
-  includeLead: true,
-  includeBass: true,
-  includeDrums: true,
-  includeVocals: true,
-  includeProGuitar: true,
-  includeProBass: true,
-});
-
-export type InstrumentOrderItem = {key: InstrumentKey; displayName: string};
-
-export const defaultPrimaryInstrumentOrder = (): InstrumentOrderItem[] => [
-  {key: 'guitar', displayName: 'Lead'},
-  {key: 'drums', displayName: 'Drums'},
-  {key: 'vocals', displayName: 'Vocals'},
-  {key: 'bass', displayName: 'Bass'},
-  {key: 'pro_guitar', displayName: 'Pro Guitar'},
-  {key: 'pro_bass', displayName: 'Pro Bass'},
-];
+import type {AdvancedMissingFilters, InstrumentOrderItem, SongSortMode} from '../../core/songListConfig';
+import {defaultAdvancedMissingFilters, defaultPrimaryInstrumentOrder} from '../../core/songListConfig';
 
 const canon = (s: string | undefined): string => (s ?? '').trim().toLowerCase();
 

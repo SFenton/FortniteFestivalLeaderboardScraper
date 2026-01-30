@@ -8,6 +8,9 @@
 
 #include "NativeModules.h"
 
+#include <winrt/Microsoft.UI.Windowing.h>
+#include <string>
+
 // A PackageProvider containing any turbo modules you define within this app project
 struct CompReactPackageProvider
     : winrt::implements<CompReactPackageProvider, winrt::Microsoft::ReactNative::IReactPackageProvider> {
@@ -71,6 +74,23 @@ _Use_decl_annotations_ int CALLBACK WinMain(HINSTANCE instance, HINSTANCE, PSTR 
   // Get the AppWindow so we can configure its initial title and size
   auto appWindow{reactNativeWin32App.AppWindow()};
   appWindow.Title(L"FortniteFestivalRN");
+
+  // Explicitly use an overlapped presenter and enable resizing.
+  // If the presenter is not resizable, the React root view will not receive size changes.
+  appWindow.SetPresenter(winrt::Microsoft::UI::Windowing::AppWindowPresenterKind::Overlapped);
+  if (auto overlapped = appWindow.Presenter().try_as<winrt::Microsoft::UI::Windowing::OverlappedPresenter>()) {
+    overlapped.IsResizable(true);
+    overlapped.IsMaximizable(true);
+    overlapped.IsMinimizable(true);
+  }
+
+  appWindow.Changed([](auto const &, winrt::Microsoft::UI::Windowing::AppWindowChangedEventArgs const &args) {
+    if (!args.DidSizeChange())
+      return;
+    // Best-effort debug signal in Visual Studio Output window.
+    OutputDebugStringW(L"[RNW] AppWindow size changed\n");
+  });
+
   appWindow.Resize({1000, 1000});
 
   // Get the ReactViewOptions so we can set the initial RN component to load

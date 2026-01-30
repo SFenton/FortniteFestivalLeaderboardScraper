@@ -1,5 +1,6 @@
 import type {FestivalPersistence} from '../../core/persistence';
 import type {LeaderboardData, Song} from '../../core/models';
+import {ScoreTracker} from '../../core/models';
 import {parseJson, savePretty} from '../../core/io/jsonSerializer';
 import type {KeyValueStore} from './keyValueStore.types';
 
@@ -10,6 +11,30 @@ export type KeyValueFestivalPersistenceKeys = {
 
 function safeArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function rehydrateTracker(value: unknown): ScoreTracker | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  if (value instanceof ScoreTracker) return value;
+
+  // JSON round-trips lose prototypes; rebuild into a real ScoreTracker.
+  const tracker = Object.assign(new ScoreTracker(), value as Partial<ScoreTracker>);
+  tracker.refreshDerived();
+  return tracker;
+}
+
+function rehydrateLeaderboardData(value: unknown): LeaderboardData {
+  if (!value || typeof value !== 'object') return value as LeaderboardData;
+  const ld = value as LeaderboardData;
+  return {
+    ...ld,
+    guitar: rehydrateTracker(ld.guitar),
+    drums: rehydrateTracker(ld.drums),
+    bass: rehydrateTracker(ld.bass),
+    vocals: rehydrateTracker(ld.vocals),
+    pro_guitar: rehydrateTracker(ld.pro_guitar),
+    pro_bass: rehydrateTracker(ld.pro_bass),
+  };
 }
 
 export class KeyValueFestivalPersistence implements FestivalPersistence {
@@ -26,7 +51,7 @@ export class KeyValueFestivalPersistence implements FestivalPersistence {
       const raw = await this.store.getItem(this.keys.scoresKey);
       if (!raw) return [];
       const parsed = parseJson(raw);
-      return safeArray<LeaderboardData>(parsed);
+      return safeArray<LeaderboardData>(parsed).map(rehydrateLeaderboardData);
     } catch {
       return [];
     }

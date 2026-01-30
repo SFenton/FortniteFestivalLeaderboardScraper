@@ -34,6 +34,7 @@ describe('app/songInfo', () => {
 
     const rows = buildSongInfoInstrumentRows({song, instrumentOrder: ['guitar'], scoresIndex});
     expect(rows[0].name).toBe('Lead');
+    expect(rows[0].starsCount).toBe(0);
     expect(rows[0].scoreDisplay).toBe('123');
     expect(rows[0].seasonDisplay).toBe(formatSeason(2));
     expect(rows[0].isTop5Percentile).toBe(true);

@@ -7,6 +7,7 @@ export type SongInfoInstrumentRow = {
   icon: string;
   hasScore: boolean;
   isFullCombo: boolean;
+  starsCount: number;
   scoreDisplay: string;
   percentDisplay: string;
   seasonDisplay: string;
@@ -99,6 +100,7 @@ export const buildSongInfoInstrumentRows = (params: {
 
     const hasScore = Boolean(tr?.initialized);
     const isFullCombo = Boolean(tr?.initialized && tr.isFullCombo);
+    const starsCount = hasScore ? tr!.numStars : 0;
     const scoreDisplay = hasScore ? String(tr!.maxScore) : '0';
     const percentDisplay = hasScore ? (isFullCombo ? '100%' : formatPercent(tr!.percentHit)) : '0%';
     const seasonDisplay = hasScore ? formatSeason(tr!.seasonAchieved) : 'N/A';
@@ -118,6 +120,7 @@ export const buildSongInfoInstrumentRows = (params: {
       icon: `${key}.png`,
       hasScore,
       isFullCombo,
+      starsCount,
       scoreDisplay,
       percentDisplay,
       seasonDisplay,
