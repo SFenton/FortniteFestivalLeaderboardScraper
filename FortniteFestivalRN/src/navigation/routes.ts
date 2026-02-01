@@ -1,5 +1,4 @@
 export const Routes = {
-  Sync: 'Sync',
   Songs: 'Songs',
   Suggestions: 'Suggestions',
   Statistics: 'Statistics',

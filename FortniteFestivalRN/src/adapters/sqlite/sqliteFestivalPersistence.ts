@@ -262,7 +262,7 @@ export class SqliteFestivalPersistence implements FestivalPersistence {
     await this.ensureSchema();
 
     const res = await this.db.executeSql<DbScoreRow>(
-      `SELECT s.SongId, s.Title, s.Artist,
+      `SELECT sc.SongId as SongId, s.Title, s.Artist,
         sc.GuitarScore, sc.GuitarDiff, sc.GuitarStars, sc.GuitarFC, sc.GuitarPct, sc.GuitarSeason, sc.GuitarRank,
         sc.DrumsScore, sc.DrumsDiff, sc.DrumsStars, sc.DrumsFC, sc.DrumsPct, sc.DrumsSeason, sc.DrumsRank,
         sc.BassScore, sc.BassDiff, sc.BassStars, sc.BassFC, sc.BassPct, sc.BassSeason, sc.BassRank,
@@ -272,7 +272,7 @@ export class SqliteFestivalPersistence implements FestivalPersistence {
         sc.GuitarTotal, sc.DrumsTotal, sc.BassTotal, sc.VocalsTotal, sc.ProGuitarTotal, sc.ProBassTotal,
         sc.GuitarRawPct, sc.DrumsRawPct, sc.BassRawPct, sc.VocalsRawPct, sc.ProGuitarRawPct, sc.ProBassRawPct,
         sc.GuitarCalcTotal, sc.DrumsCalcTotal, sc.BassCalcTotal, sc.VocalsCalcTotal, sc.ProGuitarCalcTotal, sc.ProBassCalcTotal
-      FROM Songs s LEFT JOIN Scores sc ON s.SongId = sc.SongId`,
+      FROM Scores sc LEFT JOIN Songs s ON s.SongId = sc.SongId`,
     );
 
     const list: LeaderboardData[] = [];

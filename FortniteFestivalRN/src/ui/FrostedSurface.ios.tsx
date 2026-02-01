@@ -10,10 +10,27 @@ type Props = {
   tint?: FrostedTint;
   intensity?: number;
   fallbackColor?: string;
+  blurEnabled?: boolean;
 } & Omit<ViewProps, 'style' | 'children'>;
 
 export function FrostedSurface(props: Props) {
-  const {children, style, tint = 'dark', intensity = 18, fallbackColor = 'rgba(18,24,38,0.78)', ...viewProps} = props;
+  const {
+    children,
+    style,
+    tint = 'dark',
+    intensity = 18,
+    fallbackColor = 'rgba(18,24,38,0.78)',
+    blurEnabled = true,
+    ...viewProps
+  } = props;
+
+  if (!blurEnabled) {
+    return (
+      <View {...viewProps} style={[styles.chrome, style, {backgroundColor: fallbackColor}]}> 
+        {children}
+      </View>
+    );
+  }
 
   return (
     <View {...viewProps} style={[styles.chrome, style]}>

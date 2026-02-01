@@ -48,6 +48,23 @@ function ensureSubst(driveLetter, targetPath) {
   run('cmd.exe', ['/c', 'subst', `${driveLetter}:`, '"' + targetPath + '"']);
 }
 
+function clearAutolinkingCache(projectCwd) {
+  // React Native's Gradle autolinking output embeds absolute paths. On Windows we
+  // run builds from a SUBST drive to avoid path-length issues; if the drive
+  // letter changes between runs, Gradle can reuse stale autolinking output and
+  // end up referencing the old drive (resulting in "No variants exist" for many
+  // native modules).
+  try {
+    const autolinkingDir = path.join(projectCwd, 'android', 'build', 'generated', 'autolinking');
+    if (fs.existsSync(autolinkingDir)) {
+      fs.rmSync(autolinkingDir, {recursive: true, force: true});
+      console.log(`[run-android] Cleared autolinking cache: ${autolinkingDir}`);
+    }
+  } catch (e) {
+    console.warn('[run-android] Failed to clear autolinking cache:', e?.message ?? String(e));
+  }
+}
+
 const projectRoot = path.resolve(__dirname, '..');
 const argv = process.argv.slice(2);
 
@@ -55,6 +72,7 @@ if (process.platform === 'win32') {
   const existingShortCwd = findExistingShortCwd(projectRoot);
   if (existingShortCwd) {
     console.log(`Using existing short path: ${existingShortCwd}`);
+    clearAutolinkingCache(existingShortCwd);
     run('yarn', ['react-native', 'run-android', ...argv], { cwd: existingShortCwd });
   } else {
     const driveLetter = pickDriveLetter();
@@ -74,6 +92,7 @@ if (process.platform === 'win32') {
     console.log(`Using SUBST short path: ${driveLetter}:\\ -> ${parent}`);
     console.log(`Running from: ${shortCwd}`);
 
+    clearAutolinkingCache(shortCwd);
     run('yarn', ['react-native', 'run-android', ...argv], { cwd: shortCwd });
   }
 } else {

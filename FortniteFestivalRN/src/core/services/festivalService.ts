@@ -66,6 +66,14 @@ const ensureTracker = (ld: LeaderboardData, key: InstrumentKey): ScoreTracker =>
   return created;
 };
 
+const hasAnyInitializedScore = (ld: LeaderboardData): boolean =>
+  ld.guitar?.initialized === true ||
+  ld.drums?.initialized === true ||
+  ld.bass?.initialized === true ||
+  ld.vocals?.initialized === true ||
+  ld.pro_guitar?.initialized === true ||
+  ld.pro_bass?.initialized === true;
+
 export class FestivalService {
   public isFetching = false;
 
@@ -146,6 +154,7 @@ export class FestivalService {
         const loadedScores = await this.persistence.loadScores();
         for (const ld of loadedScores) {
           if (!ld?.songId) continue;
+          if (!hasAnyInitializedScore(ld)) continue;
           ld.dirty = false;
           // Defensive: ensure derived strings exist
           for (const k of InstrumentKeys) {

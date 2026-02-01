@@ -53,9 +53,10 @@ export function StatisticsNavigator() {
         component={SongDetailsScreen as any}
         options={{
           title: '',
-          headerTransparent: true,
-          headerStyle: {backgroundColor: 'transparent'},
-          headerShadowVisible: false,
+          headerShown: false,
+          animation: 'none',
+          presentation: 'card',
+          contentStyle: {backgroundColor: '#000000'},
         }}
       />
     </Stack.Navigator>

@@ -1,14 +1,17 @@
 import React, {useEffect, useRef, useState} from 'react';
-import {Animated, Image, StyleSheet, View} from 'react-native';
+import {Animated, StyleSheet, View} from 'react-native';
 import {useFestival} from '../app/festival/FestivalContext';
 
 const FADE_DURATION = 1000; // 1 second fade
 const DISPLAY_DURATION = 10000; // 10 seconds display time
 
-export function AnimatedBackground() {
+export function AnimatedBackground(props: {animate?: boolean; dimOpacity?: number}) {
   const {
     state: {songs},
   } = useFestival();
+
+  const animate = props.animate ?? true;
+  const dimOpacity = props.dimOpacity ?? 0.7;
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [nextIndex, setNextIndex] = useState(1);
@@ -16,21 +19,22 @@ export function AnimatedBackground() {
   const currentOpacity = useRef(new Animated.Value(1)).current;
   const nextOpacity = useRef(new Animated.Value(0)).current;
 
-  // Get songs with images
-  const songsWithImages = songs.filter(s => s.imagePath);
+  // Get songs with images (as a stable list for effect dependencies).
+  const imageCandidates = React.useMemo(
+    () => songs.map(s => s.imagePath).filter(Boolean) as string[],
+    [songs],
+  );
   
   useEffect(() => {
-    if (songsWithImages.length === 0) {
+    if (imageCandidates.length === 0) {
       setImageUris([]);
       return;
     }
 
     // Create a shuffled list of image URIs
-    const shuffled = [...songsWithImages]
-      .filter(s => s.imagePath) // Double-check imagePath exists
+    const shuffled = [...imageCandidates]
       .sort(() => Math.random() - 0.5)
-      .map(s => s.imagePath!)
-      .slice(0, Math.min(100, songsWithImages.length)); // Limit to 100 to avoid memory issues
+      .slice(0, Math.min(100, imageCandidates.length)); // Limit to 100 to avoid memory issues
 
     if (shuffled.length > 0) {
       setImageUris(shuffled);
@@ -43,12 +47,17 @@ export function AnimatedBackground() {
     } else {
       setImageUris([]);
     }
-  }, [currentOpacity, nextOpacity, songsWithImages.length]);
+  }, [currentOpacity, imageCandidates, nextOpacity]);
 
   useEffect(() => {
-    if (imageUris.length < 2) {
-      return; // Need at least 2 images to animate
+    if (!animate) {
+      // Static mode: keep the first image and don't cross-fade.
+      currentOpacity.setValue(1);
+      nextOpacity.setValue(0);
+      return;
     }
+
+    if (imageUris.length < 2) return; // Need at least 2 images to animate
 
     const timer = setInterval(() => {
       // Start fade animation
@@ -78,7 +87,7 @@ export function AnimatedBackground() {
     }, DISPLAY_DURATION);
 
     return () => clearInterval(timer);
-  }, [imageUris.length, currentOpacity, nextIndex, nextOpacity]);
+  }, [animate, imageUris.length, currentOpacity, nextIndex, nextOpacity]);
 
   // Don't render if no images
   if (imageUris.length === 0) {
@@ -97,13 +106,13 @@ export function AnimatedBackground() {
       {/* Current image */}
       <Animated.Image
         source={{uri: currentUri}}
-        style={[styles.bgImage, {opacity: currentOpacity}]}
+        style={[styles.bgImage, {opacity: animate ? currentOpacity : 1}]}
         resizeMode="cover"
         blurRadius={0}
       />
       
       {/* Next image (fading in) */}
-      {nextUri && imageUris.length > 1 && (
+      {animate && nextUri && imageUris.length > 1 && (
         <Animated.Image
           source={{uri: nextUri}}
           style={[styles.bgImage, {opacity: nextOpacity}]}
@@ -113,7 +122,7 @@ export function AnimatedBackground() {
       )}
       
       {/* Dark overlay for dimming */}
-      <View style={styles.bgDim} />
+      <View style={[styles.bgDim, {opacity: dimOpacity}]} />
     </View>
   );
 }
@@ -131,6 +140,6 @@ const styles = StyleSheet.create({
   },
   bgDim: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: '#000000',
   },
 });

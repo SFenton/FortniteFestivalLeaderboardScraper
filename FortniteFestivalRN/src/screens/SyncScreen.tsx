@@ -1,10 +1,9 @@
-import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo} from 'react';
 import {Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 
 import { Screen } from '../ui/Screen';
 import {FrostedSurface} from '../ui/FrostedSurface';
 import {useFestival} from '../app/festival/FestivalContext';
-import type {Settings} from '../core/settings';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
 import {useOptionalBottomTabBarHeight} from '../navigation/useOptionalBottomTabBarHeight';
 
@@ -14,26 +13,25 @@ export function SyncScreen() {
   const tabBarHeight = useOptionalBottomTabBarHeight();
 
   const {state, actions} = useFestival();
-  const {ensureInitializedAsync, startFetchAsync, clearLog, setExchangeCode, setSettings} = actions;
+  const {ensureInitializedAsync, startFetchAsync, clearLog, setExchangeCode} = actions;
 
   const generateExchangeCodeUrl =
     'https://www.epicgames.com/id/api/redirect?clientId=ec684b8c687f479fadea3cb2ad83f5c6&responseType=code';
-
-  const [dopText, setDopText] = useState(String(state.settings.degreeOfParallelism));
 
   useEffect(() => {
     void ensureInitializedAsync();
   }, [ensureInitializedAsync]);
 
-  useEffect(() => {
-    setDopText(String(state.settings.degreeOfParallelism));
-  }, [state.settings.degreeOfParallelism]);
-
-  const scoresCount = useMemo(() => Object.keys(state.scoresIndex).length, [state.scoresIndex]);
-
-  const updateSettings = useCallback((partial: Partial<Settings>) => {
-    setSettings({...state.settings, ...partial});
-  }, [setSettings, state.settings]);
+  const scoresCount = useMemo(() => {
+    return Object.values(state.scoresIndex).filter(ld =>
+      ld?.guitar?.initialized === true ||
+      ld?.drums?.initialized === true ||
+      ld?.bass?.initialized === true ||
+      ld?.vocals?.initialized === true ||
+      ld?.pro_guitar?.initialized === true ||
+      ld?.pro_bass?.initialized === true,
+    ).length;
+  }, [state.scoresIndex]);
 
   return (
     <Screen>
@@ -104,21 +102,8 @@ export function SyncScreen() {
 
         <FrostedSurface style={styles.card} tint="dark" intensity={18}>
           <Text style={styles.cardTitle}>Options</Text>
-          <View style={styles.row}>
-            <Text style={styles.body}>Concurrency</Text>
-            <TextInput
-              style={[styles.input, styles.inputSmall]}
-              value={dopText}
-              keyboardType={Platform.OS === 'ios' ? 'number-pad' : 'numeric'}
-              onChangeText={t => {
-                setDopText(t);
-                const v = Number.parseInt(t, 10);
-                if (Number.isFinite(v) && v > 0) updateSettings({degreeOfParallelism: v});
-              }}
-            />
-          </View>
           <Text style={styles.smallMuted}>
-            Note: until song selection is implemented, score fetch runs across all synced songs.
+            Concurrency is now configured in Settings. Until song selection is implemented, score fetch runs across all synced songs.
           </Text>
         </FrostedSurface>
 
@@ -203,11 +188,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     color: '#FFFFFF',
-  },
-  inputSmall: {
-    width: 90,
-    textAlign: 'center',
-    paddingVertical: 8,
   },
   progressOuter: {
     height: 10,

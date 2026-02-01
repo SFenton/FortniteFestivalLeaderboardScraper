@@ -75,7 +75,7 @@ export type SuggestionGeneratorOptions = {
   fixedDisplayCount?: number;
 };
 
-type SongPair = {song: Song; tracker: ScoreTracker | null};
+type SongPair = {song: Song; tracker: ScoreTracker | null; instrumentKey?: InstrumentKey};
 
 export class SuggestionGenerator {
   private readonly rng: Rng;
@@ -94,6 +94,7 @@ export class SuggestionGenerator {
   private readonly recentArtists: string[] = [];
   private readonly categorySongHistory = new Map<string, Set<string>>();
   private readonly categorySkipStreak = new Map<string, number>();
+  private readonly firstPlaysMixedLastInstrument = new Map<string, InstrumentKey>();
 
   constructor(opts: SuggestionGeneratorOptions = {}) {
     this.rng = opts.rng ?? createSeededRng(opts.seed ?? 1);
@@ -171,39 +172,44 @@ export class SuggestionGenerator {
     const list = [...pool];
     if (list.length === 0 || take <= 0) return [];
 
+    const isFirstPlaysMixedCategory = categoryKey === 'first_plays_mixed' || categoryKey.startsWith('first_plays_mixed_');
+    const historyId = (p: SongPair): string =>
+      isFirstPlaysMixedCategory ? `${p.song.track.su}:${p.instrumentKey ?? 'any'}` : p.song.track.su;
+    const sessionId = historyId;
+
     let used = this.categorySongHistory.get(categoryKey);
     if (!used) {
       used = new Set<string>();
       this.categorySongHistory.set(categoryKey, used);
     }
 
-    if (list.every(x => used!.has(x.song.track.su))) used.clear();
+    if (list.every(x => used!.has(historyId(x)))) used.clear();
 
-    const freshNew = list.filter(x => !this.sessionShownSongs.has(x.song.track.su) && !used!.has(x.song.track.su));
+    const freshNew = list.filter(x => !this.sessionShownSongs.has(sessionId(x)) && !used!.has(historyId(x)));
     this.shuffleInPlace(freshNew);
 
     const freshNewIds = new Set(freshNew.map(x => x.song.track.su));
-    const categoryNew = list.filter(x => !used!.has(x.song.track.su) && !freshNewIds.has(x.song.track.su));
+    const categoryNew = list.filter(x => !used!.has(historyId(x)) && !freshNewIds.has(x.song.track.su));
     this.shuffleInPlace(categoryNew);
 
-    const oldOnes = list.filter(x => used!.has(x.song.track.su));
+    const oldOnes = list.filter(x => used!.has(historyId(x)));
     this.shuffleInPlace(oldOnes);
 
     const result: SongPair[] = [];
-    const chosen = new Set<string>();
+    const chosenSongs = new Set<string>();
 
     for (const x of freshNew) {
       const id = x.song.track.su;
-      if (chosen.has(id)) continue;
-      chosen.add(id);
+      if (chosenSongs.has(id)) continue;
+      chosenSongs.add(id);
       result.push(x);
       if (result.length === take) break;
     }
     if (result.length < take) {
       for (const x of categoryNew) {
         const id = x.song.track.su;
-        if (chosen.has(id)) continue;
-        chosen.add(id);
+        if (chosenSongs.has(id)) continue;
+        chosenSongs.add(id);
         result.push(x);
         if (result.length === take) break;
       }
@@ -211,18 +217,43 @@ export class SuggestionGenerator {
     if (result.length < take) {
       for (const x of oldOnes) {
         const id = x.song.track.su;
-        if (chosen.has(id)) continue;
-        chosen.add(id);
+        if (chosenSongs.has(id)) continue;
+        chosenSongs.add(id);
         result.push(x);
         if (result.length === take) break;
       }
     }
 
     for (const r of result) {
-      used.add(r.song.track.su);
-      this.sessionShownSongs.add(r.song.track.su);
+      used.add(historyId(r));
+      this.sessionShownSongs.add(sessionId(r));
     }
     return result;
+  }
+
+  private getUnplayedInstruments(song: Song): InstrumentKey[] {
+    const b = this.scoresIndex[song.track.su];
+    const out: InstrumentKey[] = [];
+    for (const ins of Instruments) {
+      const tr = b ? getTracker(b, ins) : undefined;
+      if (!tr || tr.numStars === 0) out.push(ins);
+    }
+    return out;
+  }
+
+  private buildFirstPlaysMixedPool(): SongPair[] {
+    const pool: SongPair[] = [];
+    for (const s of this.songs) {
+      const unplayed = this.getUnplayedInstruments(s);
+      if (unplayed.length === 0) continue;
+
+      const last = this.firstPlaysMixedLastInstrument.get(s.track.su);
+      const candidates = last && unplayed.length > 1 ? unplayed.filter(i => i !== last) : unplayed;
+      for (const ins of candidates) {
+        pool.push({song: s, tracker: null, instrumentKey: ins});
+      }
+    }
+    return pool;
   }
 
   private findSong(id: string): Song | undefined {
@@ -241,7 +272,7 @@ export class SuggestionGenerator {
     const out: SongPair[] = [];
     for (const instrument of Instruments) {
       const tr = getTracker(board, instrument);
-      if (tr && predicate(tr, instrument)) out.push({song: resolvedSong, tracker: tr});
+      if (tr && predicate(tr, instrument)) out.push({song: resolvedSong, tracker: tr, instrumentKey: instrument});
     }
     return out;
   }
@@ -256,6 +287,11 @@ export class SuggestionGenerator {
       percent: pct(pair.tracker),
       fullCombo: pair.tracker ? pair.tracker.isFullCombo : undefined,
     };
+  }
+
+  private mapSongWithInstrument(pair: SongPair): SuggestionSongItem {
+    const base = this.mapSong(pair);
+    return pair.instrumentKey ? {...base, instrumentKey: pair.instrumentKey} : base;
   }
 
   private addRecentSong(songId: string, artist: string | undefined): void {
@@ -278,6 +314,11 @@ export class SuggestionGenerator {
   private mapUniqueSong(pair: SongPair): SuggestionSongItem {
     this.addRecentSong(pair.song.track.su, pair.song.track.an);
     return this.mapSong(pair);
+  }
+
+  private mapUniqueSongWithInstrument(pair: SongPair): SuggestionSongItem {
+    this.addRecentSong(pair.song.track.su, pair.song.track.an);
+    return this.mapSongWithInstrument(pair);
   }
 
   private buildDecadeVariant(
@@ -310,6 +351,12 @@ export class SuggestionGenerator {
     const selection = this.selectNewFirst(variantKey, chosen, take);
     if (selection.length < 2) return [];
 
+    if (baseKey === 'first_plays_mixed') {
+      for (const p of selection) {
+        if (p.instrumentKey) this.firstPlaysMixedLastInstrument.set(p.song.track.su, p.instrumentKey);
+      }
+    }
+
     let title = `${baseTitle} (${label})`;
     if (baseKey === 'more_stars') title = `Push These ${label} Songs to Gold Stars`;
     else if (baseKey.startsWith('unfc_')) {
@@ -336,7 +383,16 @@ export class SuggestionGenerator {
         key: variantKey,
         title,
         description: desc,
-        songs: selection.map(p => this.mapUniqueSong(p)),
+        songs: selection.map(p => (
+          baseKey === 'near_fc_any' ||
+          baseKey === 'near_fc_relaxed' ||
+          baseKey === 'almost_six_star' ||
+          baseKey === 'more_stars' ||
+          baseKey === 'first_plays_mixed' ||
+          baseKey === 'star_gains'
+            ? this.mapUniqueSongWithInstrument(p)
+            : this.mapUniqueSong(p)
+        )),
       },
     ];
   }
@@ -450,7 +506,7 @@ export class SuggestionGenerator {
         key: 'near_fc_any',
         title: 'FC These Next!',
         description: 'High accuracy Gold Star runs that just need the full combo.',
-        songs: final.map(p => this.mapUniqueSong(p)),
+        songs: final.map(p => this.mapUniqueSongWithInstrument(p)),
       },
     ];
   }
@@ -486,7 +542,7 @@ export class SuggestionGenerator {
         key: 'near_fc_relaxed',
         title: 'Close to FC (92%+)',
         description: 'High accuracy 5★/Gold Star runs to polish.',
-        songs: final.map(p => this.mapUniqueSong(p)),
+        songs: final.map(p => this.mapUniqueSongWithInstrument(p)),
       },
     ];
   }
@@ -520,7 +576,7 @@ export class SuggestionGenerator {
         key: 'almost_six_star',
         title: 'Push to Gold Stars',
         description: 'High 5★ runs close to Gold Stars.',
-        songs: final.map(p => this.mapUniqueSong(p)),
+        songs: final.map(p => this.mapUniqueSongWithInstrument(p)),
       },
     ];
   }
@@ -552,7 +608,7 @@ export class SuggestionGenerator {
         key: 'star_gains',
         title: 'Easy Star Gains',
         description: 'Mid-star songs ripe for improvement.',
-        songs: final.map(p => this.mapUniqueSong(p)),
+        songs: final.map(p => this.mapUniqueSongWithInstrument(p)),
       },
     ];
   }
@@ -623,7 +679,7 @@ export class SuggestionGenerator {
         key: 'more_stars',
         title: 'Push These to Gold Stars',
         description: 'Improve star ratings toward Gold Stars across any instrument.',
-        songs: final.map(p => this.mapUniqueSong(p)),
+        songs: final.map(p => this.mapUniqueSongWithInstrument(p)),
       },
     ];
   }
@@ -793,59 +849,39 @@ export class SuggestionGenerator {
   }
 
   private firstPlaysMixed(): SuggestionCategory[] {
-    const result: Song[] = [];
-    for (const ins of Instruments) {
-      const subset = this.shuffleAndTake(
-        this.songs
-          .filter(s => {
-            const b = this.scoresIndex[s.track.su];
-            const tr = b ? getTracker(b, ins) : undefined;
-            return !tr || tr.numStars === 0;
-          })
-          .filter(s => !result.some(r => r.track.su === s.track.su)),
-        2,
-      );
-      result.push(...subset);
-    }
-    this.shuffleInPlace(result);
+    const pool = this.buildFirstPlaysMixedPool();
+    if (pool.length === 0) return [];
+    this.shuffleInPlace(pool);
     const finalPairs = this.selectNewFirst(
       'first_plays_mixed',
-      result.map(s => ({song: s, tracker: null})),
+      pool,
       this.getDisplayCount(),
     );
-    const finalSongs = finalPairs.map(p => p.song);
-    if (finalSongs.length === 0) return [];
+
+    for (const p of finalPairs) {
+      if (p.instrumentKey) this.firstPlaysMixedLastInstrument.set(p.song.track.su, p.instrumentKey);
+    }
+
+    if (finalPairs.length === 0) return [];
     return [
       {
         key: 'first_plays_mixed',
         title: 'First Plays (Mixed)',
         description: 'Unplayed picks across instruments.',
-        songs: finalSongs.map(s => this.mapUniqueSong({song: s, tracker: null})),
+        songs: finalPairs.map(p => this.mapUniqueSongWithInstrument(p)),
       },
     ];
   }
 
   private firstPlaysMixedDecade(): SuggestionCategory[] {
-    const result: Song[] = [];
-    for (const ins of Instruments) {
-      const subset = this.songs
-        .filter(s => {
-          const b = this.scoresIndex[s.track.su];
-          const tr = b ? getTracker(b, ins) : undefined;
-          return !tr || tr.numStars === 0;
-        })
-        .filter(s => !result.some(r => r.track.su === s.track.su))
-        .slice(0, 2);
-      result.push(...subset);
-    }
-
-    const freshCount = this.getFreshSongCount(result);
+    const pool = this.buildFirstPlaysMixedPool();
+    const freshCount = this.getFreshSongCount(pool.map(p => p.song));
     if (!this.shouldEmit('first_plays_mixed_decade_wrap', freshCount)) return [];
     return this.buildDecadeVariant(
       'first_plays_mixed',
       'First Plays (Mixed)',
       'Unplayed picks across instruments.',
-      result.map(s => ({song: s, tracker: null})),
+      pool,
     );
   }
 
@@ -937,7 +973,7 @@ export class SuggestionGenerator {
         key: `samename_nearfc_${disp}`,
         title: `Close to FC: '${disp}' Variants`,
         description: "Same-name tracks nearly full combo'd.",
-        songs: pool.map(p => this.mapUniqueSong(p)),
+        songs: pool.map(p => this.mapUniqueSongWithInstrument(p)),
       },
     ];
   }

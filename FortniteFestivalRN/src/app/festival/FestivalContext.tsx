@@ -12,6 +12,8 @@ import {createFetchHttpClient} from '../../platform/httpClient';
 import {createNativeImageCache} from '../../platform/imageCache';
 
 type FestivalState = {
+  // Boot-time gate so screens can avoid flashing empty UI before initialization.
+  isReady: boolean;
   isInitializing: boolean;
   isFetching: boolean;
   songs: Song[];
@@ -51,14 +53,23 @@ async function loadSettingsFromStorage(): Promise<Settings> {
   if (process.env.JEST_WORKER_ID) return defaultSettings();
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const AsyncStorage = require('@react-native-async-storage/async-storage').default as {
+    const AsyncStorageModule = require('@react-native-async-storage/async-storage') as {
+      default?: unknown;
+      getItem?: (k: string) => Promise<string | null>;
+    };
+    const AsyncStorage = ((AsyncStorageModule as any).default ?? AsyncStorageModule) as {
       getItem: (k: string) => Promise<string | null>;
     };
 
     const raw = await AsyncStorage.getItem(SETTINGS_STORAGE_KEY);
     if (!raw) return defaultSettings();
     const parsed = JSON.parse(raw) as Partial<Settings>;
-    return {...defaultSettings(), ...parsed};
+
+    // Drop deprecated keys so they don't get re-saved forever via object spread.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const {songsHideTrackMetadata: _deprecatedSongsHideTrackMetadata, ...rest} = parsed as any;
+
+    return {...defaultSettings(), ...rest};
   } catch {
     return defaultSettings();
   }
@@ -68,7 +79,11 @@ async function saveSettingsToStorage(settings: Settings): Promise<void> {
   if (process.env.JEST_WORKER_ID) return;
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const AsyncStorage = require('@react-native-async-storage/async-storage').default as {
+    const AsyncStorageModule = require('@react-native-async-storage/async-storage') as {
+      default?: unknown;
+      setItem?: (k: string, v: string) => Promise<void>;
+    };
+    const AsyncStorage = ((AsyncStorageModule as any).default ?? AsyncStorageModule) as {
       setItem: (k: string, v: string) => Promise<void>;
     };
     await AsyncStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
@@ -87,6 +102,9 @@ export function FestivalProvider(props: {children: React.ReactNode}) {
   const [exchangeCode, setExchangeCode] = useState('');
   const [settings, setSettings] = useState<Settings>(defaultSettings());
   const settingsLoadedRef = useRef(false);
+  const [settingsReady, setSettingsReady] = useState(false);
+
+  const [isReady, setIsReady] = useState(false);
 
   const [isInitializing, setIsInitializing] = useState(false);
   const [isFetching, setIsFetching] = useState(false);
@@ -104,6 +122,7 @@ export function FestivalProvider(props: {children: React.ReactNode}) {
     void (async () => {
       const loaded = await loadSettingsFromStorage();
       setSettings(loaded);
+      setSettingsReady(true);
     })();
   }, []);
 
@@ -178,6 +197,9 @@ export function FestivalProvider(props: {children: React.ReactNode}) {
       initializingRef.current = true;
       setIsInitializing(true);
       try {
+        // Coarse-grained progress for boot UI.
+        setProgressPct(5);
+        setProgressLabel('Starting…');
         logBufferRef.current.enqueue('Initializing service (syncing songs + images)...');
         await service.initialize();
         initializedRef.current = true;
@@ -187,13 +209,36 @@ export function FestivalProvider(props: {children: React.ReactNode}) {
         logBufferRef.current.enqueue(
           `Song sync complete. ${Object.keys(service.scoresIndex).length} cached scores; ${service.songs.length} songs loaded.`,
         );
+
+        // Mark “ever synced” flags based on reality after init.
+        setSettings(cur => {
+          const hasAnyCachedScores = Object.keys(service.scoresIndex ?? {}).length > 0;
+          const next: Settings = {
+            ...cur,
+            hasEverSyncedSongs: true,
+            hasEverSyncedScores: cur.hasEverSyncedScores || hasAnyCachedScores,
+          };
+          void saveSettingsToStorage(next);
+          return next;
+        });
+
+        setProgressPct(100);
+        setProgressLabel('Complete');
       } finally {
         setIsInitializing(false);
         initializingRef.current = false;
+        setIsReady(true);
       }
     },
     [service],
   );
+
+  // Without a dedicated Sync screen, initialize on app start so the Songs tab
+  // can show data immediately.
+  useEffect(() => {
+    if (!settingsReady) return;
+    void ensureInitializedAsync();
+  }, [ensureInitializedAsync, settingsReady]);
 
   const startFetchAsync = useCallback(
     async (opts?: {filteredSongIds?: string[]}) => {
@@ -213,6 +258,18 @@ export function FestivalProvider(props: {children: React.ReactNode}) {
           settings,
           filteredSongIds: opts?.filteredSongIds,
         });
+
+        // If we got any scores at all, treat that as “synced” even if the fetch
+        // returned ok=false due to partial failures.
+        const hasAnyScores = Object.keys(service.scoresIndex ?? {}).length > 0;
+        if (ok || hasAnyScores) {
+          setSettings(cur => {
+            if (cur.hasEverSyncedScores) return cur;
+            const next = {...cur, hasEverSyncedScores: true};
+            void saveSettingsToStorage(next);
+            return next;
+          });
+        }
 
         setSongs(service.songs);
         setScoresIndex({...service.scoresIndex});
@@ -246,6 +303,7 @@ export function FestivalProvider(props: {children: React.ReactNode}) {
 
   const state = useMemo(
     () => ({
+      isReady,
       isInitializing,
       isFetching,
       songs,
@@ -257,7 +315,7 @@ export function FestivalProvider(props: {children: React.ReactNode}) {
       exchangeCode,
       settings,
     }),
-    [isInitializing, isFetching, songs, scoresIndex, progressPct, progressLabel, metrics, logJoined, exchangeCode, settings],
+    [isReady, isInitializing, isFetching, songs, scoresIndex, progressPct, progressLabel, metrics, logJoined, exchangeCode, settings],
   );
 
   const value: FestivalContextValue = useMemo(

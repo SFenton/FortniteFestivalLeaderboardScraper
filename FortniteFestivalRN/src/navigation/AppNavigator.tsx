@@ -1,5 +1,5 @@
 import React from 'react';
-import { Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Animated, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   getFocusedRouteNameFromRoute,
   DarkTheme,
@@ -14,7 +14,6 @@ import { SettingsScreen } from '../screens/SettingsScreen';
 import { WindowsSongsHost } from '../screens/WindowsSongsHost';
 import { WindowsSuggestionsHost } from '../screens/WindowsSuggestionsHost';
 import { WindowsStatisticsHost } from '../screens/WindowsStatisticsHost';
-import { SyncScreen } from '../screens/SyncScreen';
 import { useFestival } from '../app/festival/FestivalContext';
 import { SongsNavigator } from './SongsNavigator';
 import { SuggestionsNavigator } from './SuggestionsNavigator';
@@ -24,7 +23,6 @@ import { AnimatedBackground } from '../ui/AnimatedBackground';
 import { FrostedSurface } from '../ui/FrostedSurface';
 
 export type AppNavParamList = {
-  [Routes.Sync]: undefined;
   [Routes.Songs]: undefined;
   [Routes.Suggestions]: undefined;
   [Routes.Statistics]: undefined;
@@ -51,6 +49,7 @@ function MobileTabs() {
   console.log('[MobileTabs] Rendering MobileTabs');
   return (
     <Tab.Navigator
+      initialRouteName={Routes.Songs}
       screenOptions={{
         headerStyle: styles.header,
         headerTitleStyle: styles.headerTitle,
@@ -67,15 +66,6 @@ function MobileTabs() {
         tabBarInactiveTintColor: '#9AA6B2',
       }}
     >
-      <Tab.Screen 
-        name={Routes.Sync} 
-        component={SyncScreen}
-        options={{
-          headerShown: false,
-          tabBarLabel: 'Sync',
-          tabBarIcon: ({color, size}) => <Icon name="refresh" size={size} color={color} />,
-        }}
-      />
       <Tab.Screen
         name={Routes.Songs}
         component={SongsNavigator}
@@ -137,10 +127,10 @@ function MobileTabs() {
 function WindowsFlyout() {
   const {actions} = useFestival();
   const {chromeHidden} = useWindowsFlyoutUi();
-  const [route, setRoute] = React.useState<keyof AppNavParamList>(Routes.Sync);
+  const [route, setRoute] = React.useState<keyof AppNavParamList>(Routes.Songs);
   const [open, setOpen] = React.useState(false);
   const translateX = React.useRef(new Animated.Value(-FLYOUT_WIDTH)).current;
-  const prevRouteRef = React.useRef<keyof AppNavParamList>(Routes.Sync);
+  const prevRouteRef = React.useRef<keyof AppNavParamList>(Routes.Songs);
 
   React.useEffect(() => {
     if (chromeHidden && open) {
@@ -238,9 +228,24 @@ function WindowsFlyout() {
   );
 }
 
-export function AppNavigator() {
+function AppNavigatorInner() {
   console.log('[AppNavigator] Rendering AppNavigator, Platform:', Platform.OS);
-  const {actions} = useFestival();
+  const {chromeHidden} = useWindowsFlyoutUi();
+  const {
+    state: {isReady, progressPct, settings},
+    actions,
+  } = useFestival();
+
+  const showBootOverlay = !isReady;
+
+  const bootTitle = settings.hasEverSyncedSongs ? 'Updating Songs' : 'Running First Sync';
+  const bootBody = settings.hasEverSyncedSongs
+    ? 'Checking for updates to the song catalog and refreshing cached artwork.'
+    : 'Downloading the song catalog and caching artwork. This may take a minute on first launch.';
+
+  // NOTE: Keep boot overlay simple (no opacity animations).
+  // Under the RN new-arch/Fabric, Animated opacity + callback can be flaky and can
+  // leave a semi-transparent overlay mounted that makes the whole UI look “dim”.
   const navRef = useNavigationContainerRef<AppNavParamList>();
   const prevRouteNameRef = React.useRef<string | undefined>(undefined);
 
@@ -250,6 +255,7 @@ export function AppNavigator() {
       colors: {
         ...DarkTheme.colors,
         primary: '#7C3AED',
+        // Keep transparent so the global AnimatedBackground can show through.
         background: 'transparent',
         card: 'transparent',
         text: '#FFFFFF',
@@ -262,37 +268,61 @@ export function AppNavigator() {
 
   return (
     <View style={{flex: 1, backgroundColor: '#1A0830'}}>
-      <AnimatedBackground />
-      <NavigationContainer
-        ref={navRef}
-        theme={navTheme}
-        onReady={() => {
-          const current = navRef.getCurrentRoute()?.name;
-          prevRouteNameRef.current = current;
-          if (current) actions.logUi(`[NAV] start ${current}`);
-        }}
-        onStateChange={() => {
-          const prev = prevRouteNameRef.current;
-          const current = navRef.getCurrentRoute()?.name;
-          if (current && prev && current !== prev) {
-            actions.logUi(`[NAV] ${prev} -> ${current}`);
-          }
-          prevRouteNameRef.current = current;
-        }}>
-        {Platform.OS === 'windows' ? (
-          <WindowsFlyoutUiProvider>
-            <WindowsFlyout />
-          </WindowsFlyoutUiProvider>
-        ) : (
-          <MobileTabs />
-        )}
-      </NavigationContainer>
+      {!(Platform.OS === 'windows' && chromeHidden) ? (
+        <AnimatedBackground animate dimOpacity={0.7} />
+      ) : null}
+      <View style={{flex: 1}} pointerEvents={showBootOverlay ? 'none' : 'auto'}>
+        <NavigationContainer
+          ref={navRef}
+          theme={navTheme}
+          onReady={() => {
+            const current = navRef.getCurrentRoute()?.name;
+            prevRouteNameRef.current = current;
+            if (current) actions.logUi(`[NAV] start ${current}`);
+          }}
+          onStateChange={() => {
+            const prev = prevRouteNameRef.current;
+            const current = navRef.getCurrentRoute()?.name;
+            if (current && prev && current !== prev) {
+              actions.logUi(`[NAV] ${prev} -> ${current}`);
+            }
+            prevRouteNameRef.current = current;
+          }}>
+          {Platform.OS === 'windows' ? <WindowsFlyout /> : <MobileTabs />}
+        </NavigationContainer>
+      </View>
+
+      {showBootOverlay ? (
+        <View pointerEvents="auto" style={styles.bootOverlay}>
+          <View style={styles.bootInner}>
+            <ActivityIndicator size="large" color="#FFFFFF" />
+            <Text style={styles.bootTitle}>{bootTitle}</Text>
+            <Text style={styles.bootBody}>{bootBody}</Text>
+
+            <View style={styles.bootProgressOuter}>
+              <View
+                style={[
+                  styles.bootProgressInner,
+                  {width: `${Math.max(0, Math.min(100, progressPct))}%`},
+                ]}
+              />
+            </View>
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
 
+export function AppNavigator() {
+  return (
+    <WindowsFlyoutUiProvider>
+      <AppNavigatorInner />
+    </WindowsFlyoutUiProvider>
+  );
+}
+
 const SCREEN_COMPONENTS: Record<keyof AppNavParamList, React.ComponentType> = {
-  [Routes.Sync]: SyncScreen,
   [Routes.Songs]: WindowsSongsHost,
   [Routes.Suggestions]: WindowsSuggestionsHost,
   [Routes.Statistics]: WindowsStatisticsHost,
@@ -416,5 +446,45 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 22,
     lineHeight: 22,
+  },
+  bootOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#0B0B0D',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    zIndex: 1000,
+  },
+  bootInner: {
+    width: '100%',
+    maxWidth: 520,
+    alignItems: 'center',
+  },
+  bootTitle: {
+    marginTop: 18,
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  bootBody: {
+    marginTop: 10,
+    fontSize: 14,
+    lineHeight: 20,
+    color: 'rgba(255,255,255,0.78)',
+    textAlign: 'center',
+  },
+  bootProgressOuter: {
+    marginTop: 18,
+    width: '100%',
+    height: 10,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    overflow: 'hidden',
+  },
+  bootProgressInner: {
+    height: '100%',
+    borderRadius: 6,
+    backgroundColor: '#FFFFFF',
   },
 });

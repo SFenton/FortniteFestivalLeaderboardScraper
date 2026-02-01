@@ -2,7 +2,7 @@ import React from 'react';
 
 import {useWindowsFlyoutUi} from '../navigation/windowsFlyoutUi';
 import {SongsScreen} from './SongsScreen';
-import {SongDetailsView} from './SongDetailsScreen';
+import {SongDetailsView} from './SongDetailsScreen.legacy';
 
 export function WindowsSongsHost() {
   const [songId, setSongId] = React.useState<string | null>(null);

@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {FlatList, Image, Platform, Pressable, StyleSheet, Text, TextInput, View} from 'react-native';
+import {FlatList, Image, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View} from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import {useOptionalBottomTabBarHeight} from '../navigation/useOptionalBottomTabBarHeight';
 
@@ -11,6 +11,8 @@ import {buildSongDisplayRow, defaultAdvancedMissingFilters, defaultPrimaryInstru
 import {getInstrumentIconSource, getInstrumentStatusVisual} from '../ui/instruments/instrumentVisuals';
 import {PlatformModal} from '../ui/PlatformModal';
 import {FrostedSurface} from '../ui/FrostedSurface';
+import {CenteredEmptyStateCard} from '../ui/CenteredEmptyStateCard';
+import {PageHeader} from '../ui/PageHeader';
 import type {AdvancedMissingFilters, SongSortMode} from '../core/songListConfig';
 import type {InstrumentKey} from '../core/instruments';
 
@@ -18,6 +20,8 @@ const SongRow = React.memo(function SongRow(props: {
   song: Song;
   leaderboardData?: LeaderboardData;
   settings: InstrumentQuerySettings;
+  useCompactLayout: boolean;
+  hideInstrumentIcons: boolean;
   onOpen: (songId: string, title: string) => void;
 }) {
   const {song, leaderboardData, settings, onOpen} = props;
@@ -28,10 +32,12 @@ const SongRow = React.memo(function SongRow(props: {
   const year = song.track.ry;
   const imageUri = song.imagePath ?? song.track.au;
 
-  const row = useMemo(
-    () => buildSongDisplayRow({song, leaderboardData, settings}),
-    [leaderboardData, settings, song],
-  );
+  const showInstrumentIcons = !props.hideInstrumentIcons;
+
+  const row = useMemo(() => {
+    if (!showInstrumentIcons) return null;
+    return buildSongDisplayRow({song, leaderboardData, settings});
+  }, [leaderboardData, settings, showInstrumentIcons, song]);
 
   return (
     <Pressable
@@ -42,43 +48,87 @@ const SongRow = React.memo(function SongRow(props: {
     >
       {({pressed}) => (
         <FrostedSurface style={[styles.rowSurface, pressed && styles.rowSurfacePressed]} tint="dark" intensity={12}>
-          <View style={styles.rowInner}>
-            <View style={styles.left}>
-              <View style={styles.thumbWrap}>
-                {imageUri ? (
-                  <Image source={{uri: imageUri}} style={styles.thumb} resizeMode="cover" />
-                ) : (
-                  <View style={styles.thumbPlaceholder} />
-                )}
+          {props.useCompactLayout ? (
+            <View style={styles.rowInnerCompact}>
+              <View style={styles.compactTopRow}>
+                <View style={styles.thumbWrap}>
+                  {imageUri ? (
+                    <Image source={{uri: imageUri}} style={styles.thumb} resizeMode="cover" />
+                  ) : (
+                    <View style={styles.thumbPlaceholder} />
+                  )}
+                </View>
+
+                <View style={styles.rowText}>
+                  <Text numberOfLines={1} style={styles.songTitle}>
+                    {title}
+                  </Text>
+                  <Text numberOfLines={1} style={styles.songMeta}>
+                    {artist}
+                    {artist && year ? ' • ' : ''}
+                    {year ?? ''}
+                  </Text>
+                </View>
               </View>
 
-              <View style={styles.rowText}>
-                <Text numberOfLines={1} style={styles.songTitle}>
-                  {title}
-                </Text>
-                <Text numberOfLines={1} style={styles.songMeta}>
-                  {artist}
-                  {artist && year ? ' • ' : ''}
-                  {year ?? ''}
-                </Text>
-              </View>
+              {showInstrumentIcons && row ? (
+                <View style={styles.instrumentRowCompact}>
+                  {row.instrumentStatuses.map(s => {
+                    const {fill, stroke} = getInstrumentStatusVisual({hasScore: s.hasScore, isFullCombo: s.isFullCombo});
+                    const opacity = s.isEnabled ? 1 : 0.35;
+                    return (
+                      <View
+                        key={s.instrumentKey}
+                        style={[styles.instrumentChipCompact, {backgroundColor: fill, borderColor: stroke, opacity}]}
+                      >
+                        <Image source={getInstrumentIconSource(s.instrumentKey)} style={styles.instrumentIconCompact} resizeMode="contain" />
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : null}
             </View>
+          ) : (
+            <View style={styles.rowInner}>
+              <View style={styles.left}>
+                <View style={styles.thumbWrap}>
+                  {imageUri ? (
+                    <Image source={{uri: imageUri}} style={styles.thumb} resizeMode="cover" />
+                  ) : (
+                    <View style={styles.thumbPlaceholder} />
+                  )}
+                </View>
 
-            <View style={styles.instrumentRow}>
-              {row.instrumentStatuses.map(s => {
-                const {fill, stroke} = getInstrumentStatusVisual({hasScore: s.hasScore, isFullCombo: s.isFullCombo});
-                const opacity = s.isEnabled ? 1 : 0.35;
-                return (
-                  <View
-                    key={s.instrumentKey}
-                    style={[styles.instrumentChip, {backgroundColor: fill, borderColor: stroke, opacity}]}
-                  >
-                    <Image source={getInstrumentIconSource(s.instrumentKey)} style={styles.instrumentIcon} resizeMode="contain" />
-                  </View>
-                );
-              })}
+                <View style={styles.rowText}>
+                  <Text numberOfLines={1} style={styles.songTitle}>
+                    {title}
+                  </Text>
+                  <Text numberOfLines={1} style={styles.songMeta}>
+                    {artist}
+                    {artist && year ? ' • ' : ''}
+                    {year ?? ''}
+                  </Text>
+                </View>
+              </View>
+
+              {!props.hideInstrumentIcons && row ? (
+                <View style={styles.instrumentRow}>
+                  {row.instrumentStatuses.map(s => {
+                    const {fill, stroke} = getInstrumentStatusVisual({hasScore: s.hasScore, isFullCombo: s.isFullCombo});
+                    const opacity = s.isEnabled ? 1 : 0.35;
+                    return (
+                      <View
+                        key={s.instrumentKey}
+                        style={[styles.instrumentChip, {backgroundColor: fill, borderColor: stroke, opacity}]}
+                      >
+                        <Image source={getInstrumentIconSource(s.instrumentKey)} style={styles.instrumentIcon} resizeMode="contain" />
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : null}
             </View>
-          </View>
+          )}
         </FrostedSurface>
       )}
     </Pressable>
@@ -87,11 +137,16 @@ const SongRow = React.memo(function SongRow(props: {
   prev.song === next.song &&
   prev.leaderboardData === next.leaderboardData &&
   prev.settings === next.settings &&
+  prev.useCompactLayout === next.useCompactLayout &&
+  prev.hideInstrumentIcons === next.hideInstrumentIcons &&
   prev.onOpen === next.onOpen
 ));
 
 export function SongsScreen(props: {onOpenSong?: (songId: string, title: string) => void}) {
   usePageInstrumentation('Songs');
+
+  const {width} = useWindowDimensions();
+  const useCompactLayout = width < 900;
 
   const {onOpenSong} = props;
 
@@ -200,57 +255,93 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
 
   const renderItem = useCallback(({item}: {item: Song}) => {
     const id = item.track.su;
+    const leaderboardData = scoresIndex[id];
     return (
       <SongRow
         song={item}
-        leaderboardData={scoresIndex[id]}
+        leaderboardData={leaderboardData}
         settings={instrumentQuerySettings}
+        useCompactLayout={useCompactLayout}
+        hideInstrumentIcons={settings.songsHideInstrumentIcons}
         onOpen={onOpen}
       />
     );
-  }, [instrumentQuerySettings, onOpen, scoresIndex]);
+  }, [instrumentQuerySettings, onOpen, scoresIndex, settings.songsHideInstrumentIcons, useCompactLayout]);
 
-  const anyMissingEnabled = useMemo(() =>
-    settings.songsAdvancedMissingFilters.missingPadFCs ||
-    settings.songsAdvancedMissingFilters.missingPadScores ||
-    settings.songsAdvancedMissingFilters.missingProFCs ||
-    settings.songsAdvancedMissingFilters.missingProScores,
-  [settings.songsAdvancedMissingFilters]);
+  const sortLabel = useMemo(() => {
+    switch (settings.songsSortMode) {
+      case 'title':
+        return 'Title';
+      case 'artist':
+        return 'Artist';
+      case 'hasfc':
+        return 'Has FC';
+      default:
+        return String(settings.songsSortMode);
+    }
+  }, [settings.songsSortMode]);
 
-  const sortLabel = useMemo(() =>
-    settings.songsSortMode === 'title' ? 'Title' : settings.songsSortMode === 'artist' ? 'Artist' : 'Has FC',
-  [settings.songsSortMode]);
+  const dirLabel = settings.songsSortAscending ? 'Ascending' : 'Descending';
 
-  const dirLabel = settings.songsSortAscending ? '▲' : '▼';
-  const filterLabel = anyMissingEnabled ? 'Filters: On' : 'Filters: Off';
+  const isFilterActive = useMemo(() => {
+    const f = settings.songsAdvancedMissingFilters;
+    return (
+      f.missingPadFCs ||
+      f.missingProFCs ||
+      f.missingPadScores ||
+      f.missingProScores ||
+      !f.includeLead ||
+      !f.includeBass ||
+      !f.includeDrums ||
+      !f.includeVocals ||
+      !f.includeProGuitar ||
+      !f.includeProBass
+    );
+  }, [settings.songsAdvancedMissingFilters]);
 
-  const sortIconColor = useMemo(() => {
-    const isDefault = settings.songsSortMode === 'title' && settings.songsSortAscending;
-    return isDefault ? '#FFFFFF' : '#9EE7FF';
-  }, [settings.songsSortAscending, settings.songsSortMode]);
+  const filterLabel = useMemo(() => {
+    const f = settings.songsAdvancedMissingFilters;
+    const parts: string[] = [];
+    if (f.missingPadFCs) parts.push('missing pad FCs');
+    if (f.missingProFCs) parts.push('missing pro FCs');
+    if (f.missingPadScores) parts.push('missing pad scores');
+    if (f.missingProScores) parts.push('missing pro scores');
 
-  const filterIconColor = anyMissingEnabled ? '#9EE7FF' : '#FFFFFF';
+    const instruments: string[] = [];
+    if (!f.includeLead) instruments.push('lead');
+    if (!f.includeBass) instruments.push('bass');
+    if (!f.includeDrums) instruments.push('drums');
+    if (!f.includeVocals) instruments.push('vocals');
+    if (!f.includeProGuitar) instruments.push('pro guitar');
+    if (!f.includeProBass) instruments.push('pro bass');
+
+    if (parts.length === 0 && instruments.length === 0) return 'No filters applied';
+    if (instruments.length > 0) parts.push(`excluding ${instruments.join(', ')}`);
+    return parts.join('; ');
+  }, [settings.songsAdvancedMissingFilters]);
+
+  const isSortActive = settings.songsSortMode !== 'title' || settings.songsSortAscending !== true;
+  const sortIconColor = isSortActive ? '#2D82E6' : '#D7DEE8';
+  const filterIconColor = isFilterActive ? '#2D82E6' : '#D7DEE8';
 
   return (
     <Screen>
       <View style={styles.content}>
-        <Text style={styles.title}>Songs</Text>
-
-        <Text style={styles.subtitle}>
-          {songs.length} total • {filtered.length} shown
-        </Text>
+        <PageHeader title="Songs" />
 
         <View style={styles.controls}>
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Search title / artist"
-            placeholderTextColor="#607089"
-            autoCapitalize="none"
-            autoCorrect={false}
-            style={styles.input}
-            returnKeyType="search"
-          />
+          <FrostedSurface style={styles.searchSurface} tint="dark" intensity={18}>
+            <TextInput
+              value={query}
+              onChangeText={setQuery}
+              placeholder="Search title / artist"
+              placeholderTextColor="#607089"
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.searchInput}
+              returnKeyType="search"
+            />
+          </FrostedSurface>
 
           <Pressable
             onPress={() => {
@@ -287,18 +378,19 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
           renderItem={renderItem}
           keyboardShouldPersistTaps="handled"
           style={listStyle}
-          contentContainerStyle={listContentStyle}
+          contentContainerStyle={[listContentStyle, filtered.length === 0 && styles.listEmptyGrow]}
           scrollIndicatorInsets={scrollInsets}
           removeClippedSubviews={Platform.OS === 'android'}
           initialNumToRender={12}
           maxToRenderPerBatch={8}
           updateCellsBatchingPeriod={24}
           windowSize={7}
-          getItemLayout={(_data, index) => ({length: ROW_HEIGHT, offset: ROW_HEIGHT * index, index})}
+          getItemLayout={useCompactLayout ? undefined : (_data, index) => ({length: ROW_HEIGHT, offset: ROW_HEIGHT * index, index})}
           ListEmptyComponent={
-            <Text style={styles.body}>
-              {songs.length === 0 ? 'Songs not synced yet. Go to Sync first.' : 'No songs match your search.'}
-            </Text>
+            <CenteredEmptyStateCard
+              title={songs.length === 0 ? 'No songs yet' : 'No results'}
+              body={songs.length === 0 ? 'Songs not loaded yet. Check Settings.' : 'No songs match your search.'}
+            />
           }
         />
 
@@ -530,15 +622,6 @@ const styles = StyleSheet.create({
     gap: 10,
     position: 'relative',
   },
-  title: {
-    color: '#FFFFFF',
-    fontSize: 22,
-    fontWeight: '700',
-  },
-  subtitle: {
-    color: '#B8C0CC',
-    fontSize: 13,
-  },
   body: {
     color: '#D7DEE8',
     fontSize: 14,
@@ -571,18 +654,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  input: {
+  searchSurface: {
     flex: 1,
-    borderWidth: 1,
-    borderColor: '#2B3B55',
-    backgroundColor: '#0B1220',
     borderRadius: 10,
+    borderColor: '#2B3B55',
+  },
+  searchInput: {
+    flex: 1,
     paddingHorizontal: 12,
     paddingVertical: Platform.OS === 'ios' ? 10 : 8,
     color: '#FFFFFF',
   },
   list: {
     paddingVertical: 4,
+  },
+  listEmptyGrow: {
+    flexGrow: 1,
   },
   modalCard: {
     padding: 14,
@@ -766,6 +853,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
+  rowInnerCompact: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 10,
+  },
+  compactTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minWidth: 0,
+  },
   left: {
     flex: 1,
     flexDirection: 'row',
@@ -784,6 +882,14 @@ const styles = StyleSheet.create({
     flexShrink: 0,
     marginLeft: 10,
   },
+  instrumentRowCompact: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+  },
   instrumentChip: {
     width: 40,
     height: 40,
@@ -792,9 +898,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  instrumentChipCompact: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   instrumentIcon: {
     width: 32,
     height: 32,
+  },
+  instrumentIconCompact: {
+    width: 24,
+    height: 24,
   },
   thumbWrap: {
     width: 44,

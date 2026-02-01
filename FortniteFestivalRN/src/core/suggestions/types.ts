@@ -1,3 +1,5 @@
+import type {InstrumentKey} from '../instruments';
+
 export type SuggestionSongItem = {
   songId: string;
   title: string;
@@ -5,6 +7,7 @@ export type SuggestionSongItem = {
   stars?: number;
   percent?: number;
   fullCombo?: boolean;
+  instrumentKey?: InstrumentKey;
 };
 
 export type SuggestionCategory = {

@@ -11,6 +11,8 @@ import type {SuggestionCategory} from '../core/suggestions/types';
 import {getInstrumentIconSource} from '../ui/instruments/instrumentVisuals';
 import {Screen} from '../ui/Screen';
 import {FrostedSurface} from '../ui/FrostedSurface';
+import {CenteredEmptyStateCard} from '../ui/CenteredEmptyStateCard';
+import {PageHeader} from '../ui/PageHeader';
 import {useOptionalBottomTabBarHeight} from '../navigation/useOptionalBottomTabBarHeight';
 
 const TOP_SONGS_VIRTUALIZE_THRESHOLD = 12;
@@ -103,16 +105,9 @@ export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: st
     return cats.filter(c => shouldShowCategory(c.key, instrumentQuerySettings));
   }, [boards, instrumentQuerySettings]);
 
-  const hasAnyScores = Object.keys(scoresIndex).length > 0;
+  const hasAnyScores = boards.length > 0;
 
-  const header = useMemo(() => (
-    <>
-      <Text style={styles.title}>Statistics</Text>
-      <Text style={styles.subtitle}>
-        {songs.length ? `${songs.length} songs • ${boards.length} score rows` : `${boards.length} score rows`}
-      </Text>
-    </>
-  ), [boards.length, songs.length]);
+  const header = useMemo(() => <PageHeader title="Statistics" />, []);
 
   const listStyle = useMemo(() => ({flex: 1, marginBottom: -tabBarHeight}), [tabBarHeight]);
   const listContentStyle = useMemo(() => ({paddingBottom: tabBarHeight + 16}), [tabBarHeight]);
@@ -133,14 +128,15 @@ export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: st
   const itemSeparator = useCallback(() => <View style={styles.listSeparator} />, []);
 
   if (!hasAnyScores) {
+    const emptyBody = settings.hasEverSyncedScores
+      ? 'No scores found yet. If you just synced, give it a moment or try syncing again.'
+      : 'Sync your scores to see your Fortnite Festival stats.';
+
     return (
       <Screen>
         <View style={styles.content}>
-          <Text style={styles.title}>Statistics</Text>
-          <FrostedSurface style={styles.emptyState} tint="dark" intensity={18}>
-            <Text style={styles.emptyTitle}>No Statistics Available</Text>
-            <Text style={styles.emptyBody}>Sync your scores to see your Fortnite Festival stats.</Text>
-          </FrostedSurface>
+          <PageHeader title="Statistics" />
+          <CenteredEmptyStateCard title="No Statistics Available" body={emptyBody} />
         </View>
       </Screen>
     );
@@ -400,36 +396,6 @@ const styles = StyleSheet.create({
   },
   listSeparator: {
     height: 10,
-  },
-  title: {
-    color: '#FFFFFF',
-    fontSize: 28,
-    fontWeight: '800',
-  },
-  subtitle: {
-    color: '#D7DEE8',
-    fontSize: 13,
-    opacity: 0.85,
-    marginBottom: 8,
-  },
-  emptyState: {
-    paddingVertical: 28,
-    paddingHorizontal: 16,
-    borderRadius: 14,
-    gap: 8,
-  },
-  emptyTitle: {
-    color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: '800',
-    textAlign: 'center',
-  },
-  emptyBody: {
-    color: '#D7DEE8',
-    fontSize: 13,
-    opacity: 0.85,
-    textAlign: 'center',
-    lineHeight: 18,
   },
   card: {
     borderRadius: 16,

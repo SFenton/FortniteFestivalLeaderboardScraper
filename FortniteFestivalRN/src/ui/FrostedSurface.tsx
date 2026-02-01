@@ -9,6 +9,7 @@ type Props = {
   tint?: FrostedTint;
   intensity?: number;
   fallbackColor?: string;
+  blurEnabled?: boolean;
 } & Omit<ViewProps, 'style' | 'children'>;
 
 export function FrostedSurface(props: Props) {
