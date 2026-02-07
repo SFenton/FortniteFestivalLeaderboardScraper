@@ -57,6 +57,8 @@ export function SettingsScreen() {
         style={{flex: 1, marginBottom: -tabBarHeight}}
         contentContainerStyle={[styles.content, {paddingBottom: tabBarHeight + 16}]}
         scrollIndicatorInsets={{bottom: tabBarHeight}}
+        showsVerticalScrollIndicator={false}
+        showsHorizontalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
         <PageHeader title="Settings" />

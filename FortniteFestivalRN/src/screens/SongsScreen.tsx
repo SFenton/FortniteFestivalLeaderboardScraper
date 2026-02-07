@@ -384,6 +384,8 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
           style={listStyle}
           contentContainerStyle={[listContentStyle, filtered.length === 0 && styles.listEmptyGrow]}
           scrollIndicatorInsets={scrollInsets}
+          showsVerticalScrollIndicator={false}
+          showsHorizontalScrollIndicator={false}
           removeClippedSubviews={Platform.OS === 'android'}
           initialNumToRender={12}
           maxToRenderPerBatch={8}

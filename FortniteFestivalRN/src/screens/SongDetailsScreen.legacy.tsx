@@ -310,6 +310,8 @@ export function SongDetailsView(props: {songId: string; showBack?: boolean; onBa
               styles.scrollContent,
               props.showBack && props.onBack ? styles.scrollContentBelowStickyHeader : null,
             ]}
+            showsVerticalScrollIndicator={false}
+            showsHorizontalScrollIndicator={false}
           >
           <FrostedSurface
             style={[styles.headerCard, useCompactLayout ? styles.headerCardCompact : styles.headerCardWide]}

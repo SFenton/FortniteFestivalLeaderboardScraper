@@ -151,6 +151,8 @@ export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: st
           style={listStyle}
           contentContainerStyle={listContentStyle}
           scrollIndicatorInsets={scrollInsets}
+          showsVerticalScrollIndicator={false}
+          showsHorizontalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           data={data}
           keyExtractor={i => i.key}

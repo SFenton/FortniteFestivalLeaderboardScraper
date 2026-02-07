@@ -39,6 +39,8 @@ export function SyncScreen() {
         style={{flex: 1, marginBottom: -tabBarHeight}}
         contentContainerStyle={[styles.content, {paddingBottom: tabBarHeight + 16}]}
         scrollIndicatorInsets={{bottom: tabBarHeight}}
+        showsVerticalScrollIndicator={false}
+        showsHorizontalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.title}>Sync</Text>

@@ -277,6 +277,8 @@ lead=${String(settings.queryLead)} bass=${String(settings.queryBass)} drums=${St
           style={{flex: 1, marginBottom: -tabBarHeight}}
           contentContainerStyle={{paddingBottom: tabBarHeight + 16}}
           scrollIndicatorInsets={{bottom: tabBarHeight}}
+          showsVerticalScrollIndicator={false}
+          showsHorizontalScrollIndicator={false}
           data={visibleCategories}
           keyExtractor={c => c.uiKey}
           keyboardShouldPersistTaps="handled"
