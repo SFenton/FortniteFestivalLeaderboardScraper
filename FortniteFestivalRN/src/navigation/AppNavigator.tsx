@@ -7,7 +7,7 @@ import {
   useNavigationContainerRef,
 } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { createNativeBottomTabNavigator } from '@bottom-tabs/react-navigation';
+import { createNativeBottomTabNavigator } from '@react-navigation/bottom-tabs/unstable';
 import Icon from 'react-native-vector-icons/Ionicons';
 
 import { Routes } from './routes';
@@ -33,11 +33,17 @@ export type AppNavParamList = {
 const Tab = createBottomTabNavigator<AppNavParamList>();
 const NativeTab = createNativeBottomTabNavigator<AppNavParamList>();
 
-// Pre-generate icons for native tabs using getImageSourceSync
-const songsIcon = Icon.getImageSourceSync('musical-notes', 24);
-const suggestionsIcon = Icon.getImageSourceSync('sparkles', 24);
-const statisticsIcon = Icon.getImageSourceSync('stats-chart', 24);
-const settingsIcon = Icon.getImageSourceSync('settings', 24);
+// Pre-generate icons for JS tabs (Android) using getImageSourceSync
+const songsIconImage = Icon.getImageSourceSync('musical-notes', 24);
+const suggestionsIconImage = Icon.getImageSourceSync('sparkles', 24);
+const statisticsIconImage = Icon.getImageSourceSync('stats-chart', 24);
+const settingsIconImage = Icon.getImageSourceSync('settings', 24);
+
+// SF Symbol icons for native iOS tabs (@react-navigation/bottom-tabs/unstable)
+const songsIconSf = {type: 'sfSymbol' as const, name: 'music.note.list' as const};
+const suggestionsIconSf = {type: 'sfSymbol' as const, name: 'sparkles' as const};
+const statisticsIconSf = {type: 'sfSymbol' as const, name: 'chart.bar.fill' as const};
+const settingsIconSf = {type: 'sfSymbol' as const, name: 'gearshape' as const};
 
 function HamburgerButton({ onPress }: { onPress: () => void }) {
   return (
@@ -143,19 +149,14 @@ function IOSNativeTabs() {
   return (
     <NativeTab.Navigator
       initialRouteName={Routes.Songs}
-      translucent={true}
-      hapticFeedbackEnabled={true}
-      tabBarActiveTintColor="#e428e7"
-      tabBarInactiveTintColor="#2a82da"
     >
       <NativeTab.Screen
         name={Routes.Songs}
         component={SongsNavigator}
         options={{
           title: 'Songs',
-          tabBarIcon: () => songsIcon,
+          tabBarIcon: songsIconSf,
           lazy: false,
-          freezeOnBlur: false,
         }}
       />
       <NativeTab.Screen
@@ -163,9 +164,8 @@ function IOSNativeTabs() {
         component={SuggestionsNavigator}
         options={{
           title: 'Suggestions',
-          tabBarIcon: () => suggestionsIcon,
+          tabBarIcon: suggestionsIconSf,
           lazy: false,
-          freezeOnBlur: false,
         }}
       />
       <NativeTab.Screen
@@ -173,9 +173,8 @@ function IOSNativeTabs() {
         component={StatisticsNavigator}
         options={{
           title: 'Statistics',
-          tabBarIcon: () => statisticsIcon,
+          tabBarIcon: statisticsIconSf,
           lazy: false,
-          freezeOnBlur: false,
         }}
       />
       <NativeTab.Screen
@@ -183,9 +182,8 @@ function IOSNativeTabs() {
         component={SettingsScreen}
         options={{
           title: 'Settings',
-          tabBarIcon: () => settingsIcon,
+          tabBarIcon: settingsIconSf,
           lazy: false,
-          freezeOnBlur: false,
         }}
       />
     </NativeTab.Navigator>

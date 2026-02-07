@@ -1,7 +1,7 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {FlatList, Image, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View} from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import {useOptionalBottomTabBarHeight} from '../navigation/useOptionalBottomTabBarHeight';
+import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 
 import { Screen } from '../ui/Screen';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
@@ -154,14 +154,14 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
   // `Screen` intentionally does not apply bottom safe-area padding (to avoid a
   // persistent dead band above the navbar). Lists need explicit padding so the
   // final rows aren’t hidden behind the tab bar.
-  const tabBarHeight = useOptionalBottomTabBarHeight();
+  const {height: tabBarHeight, marginBottom: tabBarMargin} = useTabBarLayout();
 
   // Fixed-height rows let FlatList skip measurement work.
   // Keep this in sync with styles: rowInner padding + thumb/chip sizes + row margin.
   const ROW_HEIGHT = 72;
 
-  const listStyle = useMemo(() => ({flex: 1, marginBottom: -tabBarHeight}), [tabBarHeight]);
-  const listContentStyle = useMemo(() => [styles.list, {paddingBottom: tabBarHeight + 16}], [tabBarHeight]);
+  const listStyle = useMemo(() => ({flex: 1, marginBottom: tabBarMargin}), [tabBarMargin]);
+  const listContentStyle = useMemo(() => [styles.list, {paddingBottom: tabBarHeight}], [tabBarHeight]);
   const scrollInsets = useMemo(() => ({bottom: tabBarHeight}), [tabBarHeight]);
 
   const {

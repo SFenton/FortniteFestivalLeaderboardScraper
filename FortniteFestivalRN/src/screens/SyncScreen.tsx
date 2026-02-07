@@ -5,12 +5,12 @@ import { Screen } from '../ui/Screen';
 import {FrostedSurface} from '../ui/FrostedSurface';
 import {useFestival} from '../app/festival/FestivalContext';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
-import {useOptionalBottomTabBarHeight} from '../navigation/useOptionalBottomTabBarHeight';
+import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 
 export function SyncScreen() {
   usePageInstrumentation('Sync');
 
-  const tabBarHeight = useOptionalBottomTabBarHeight();
+  const {height: tabBarHeight, marginBottom: tabBarMargin} = useTabBarLayout();
 
   const {state, actions} = useFestival();
   const {ensureInitializedAsync, startFetchAsync, clearLog, setExchangeCode} = actions;
@@ -36,7 +36,7 @@ export function SyncScreen() {
   return (
     <Screen>
       <ScrollView
-        style={{flex: 1, marginBottom: -tabBarHeight}}
+        style={{flex: 1, marginBottom: tabBarMargin}}
         contentContainerStyle={[styles.content, {paddingBottom: tabBarHeight + 16}]}
         scrollIndicatorInsets={{bottom: tabBarHeight}}
         showsVerticalScrollIndicator={false}

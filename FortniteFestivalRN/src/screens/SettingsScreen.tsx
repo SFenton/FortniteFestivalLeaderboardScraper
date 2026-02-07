@@ -6,12 +6,12 @@ import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentat
 import {useFestival} from '../app/festival/FestivalContext';
 import {IntSlider} from '../ui/IntSlider';
 import {FrostedSurface} from '../ui/FrostedSurface';
-import {useOptionalBottomTabBarHeight} from '../navigation/useOptionalBottomTabBarHeight';
+import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 import {PageHeader} from '../ui/PageHeader';
 
 export function SettingsScreen() {
   usePageInstrumentation('Settings');
-  const tabBarHeight = useOptionalBottomTabBarHeight();
+  const {height: tabBarHeight, marginBottom: tabBarMargin} = useTabBarLayout();
   const {state, actions} = useFestival();
 
   const generateExchangeCodeUrl =
@@ -54,7 +54,7 @@ export function SettingsScreen() {
   return (
     <Screen>
       <ScrollView
-        style={{flex: 1, marginBottom: -tabBarHeight}}
+        style={{flex: 1, marginBottom: tabBarMargin}}
         contentContainerStyle={[styles.content, {paddingBottom: tabBarHeight + 16}]}
         scrollIndicatorInsets={{bottom: tabBarHeight}}
         showsVerticalScrollIndicator={false}

@@ -14,7 +14,7 @@ import {buildSongDisplayRow, type InstrumentQuerySettings} from '../app/songs/so
 import {SuggestionGenerator} from '../core/suggestions/suggestionGenerator';
 import type {SuggestionCategory, SuggestionSongItem} from '../core/suggestions/types';
 import {getInstrumentIconSource, getInstrumentStatusVisual} from '../ui/instruments/instrumentVisuals';
-import {useOptionalBottomTabBarHeight} from '../navigation/useOptionalBottomTabBarHeight';
+import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 
 const INITIAL_BATCH = 10;
 const SUBSEQUENT_BATCH = 4;
@@ -41,7 +41,7 @@ const shouldShowCategory = (categoryKey: string, settings: {queryLead: boolean; 
 export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: string) => void}) {
   usePageInstrumentation('Suggestions');
 
-  const tabBarHeight = useOptionalBottomTabBarHeight();
+  const {height: tabBarHeight, marginBottom: tabBarMargin} = useTabBarLayout();
 
   const {width} = useWindowDimensions();
   const useCompactLayout = width < 900;
@@ -274,7 +274,7 @@ lead=${String(settings.queryLead)} bass=${String(settings.queryBass)} drums=${St
 
         <FlatList
           ref={listRef}
-          style={{flex: 1, marginBottom: -tabBarHeight}}
+          style={{flex: 1, marginBottom: tabBarMargin}}
           contentContainerStyle={{paddingBottom: tabBarHeight + 16}}
           scrollIndicatorInsets={{bottom: tabBarHeight}}
           showsVerticalScrollIndicator={false}

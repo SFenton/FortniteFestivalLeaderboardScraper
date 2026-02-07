@@ -1,7 +1,7 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Dimensions, Image, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View} from 'react-native';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
-import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import MaskedView from '@react-native-masked-view/masked-view';
 import LinearGradient from 'react-native-linear-gradient';

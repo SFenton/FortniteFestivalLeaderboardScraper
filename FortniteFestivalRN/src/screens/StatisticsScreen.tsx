@@ -13,7 +13,7 @@ import {Screen} from '../ui/Screen';
 import {FrostedSurface} from '../ui/FrostedSurface';
 import {CenteredEmptyStateCard} from '../ui/CenteredEmptyStateCard';
 import {PageHeader} from '../ui/PageHeader';
-import {useOptionalBottomTabBarHeight} from '../navigation/useOptionalBottomTabBarHeight';
+import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 
 const TOP_SONGS_VIRTUALIZE_THRESHOLD = 12;
 
@@ -60,7 +60,7 @@ type StatsListItem =
 export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: string) => void}) {
   usePageInstrumentation('Statistics');
 
-  const tabBarHeight = useOptionalBottomTabBarHeight();
+  const {height: tabBarHeight, marginBottom: tabBarMargin} = useTabBarLayout();
 
   const {onOpenSong} = props;
 
@@ -109,7 +109,7 @@ export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: st
 
   const header = useMemo(() => <PageHeader title="Statistics" />, []);
 
-  const listStyle = useMemo(() => ({flex: 1, marginBottom: -tabBarHeight}), [tabBarHeight]);
+  const listStyle = useMemo(() => ({flex: 1, marginBottom: tabBarMargin}), [tabBarMargin]);
   const listContentStyle = useMemo(() => ({paddingBottom: tabBarHeight + 16}), [tabBarHeight]);
   const scrollInsets = useMemo(() => ({bottom: tabBarHeight}), [tabBarHeight]);
 
