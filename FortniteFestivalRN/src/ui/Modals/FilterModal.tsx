@@ -1,5 +1,6 @@
 import React from 'react';
-import {Platform, Pressable, Text, View} from 'react-native';
+import {Platform, Pressable, ScrollView, Switch, Text, useWindowDimensions, View} from 'react-native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 
 import {PlatformModal} from './PlatformModal';
 import {FrostedSurface} from '../FrostedSurface';
@@ -18,11 +19,15 @@ export function FilterModal(props: {
     props.onChange({...props.draft, [k]: !props.draft[k]});
 
   const variant = Platform.OS === 'windows' ? 'center' : 'bottom';
+  const {height: screenHeight} = useWindowDimensions();
+  const {bottom: safeBottom} = useSafeAreaInsets();
+  const isMobile = Platform.OS !== 'windows';
 
   return (
-    <PlatformModal visible={props.visible} onRequestClose={props.onCancel} variant={variant}>
-      <FrostedSurface style={styles.modalCard} tint="dark" intensity={18}>
-          <View style={styles.modalHeader}>
+    <PlatformModal visible={props.visible} onRequestClose={props.onCancel} variant={variant} fullWidth={isMobile}>
+      <FrostedSurface style={[styles.modalCard, isMobile && styles.modalCardMobile, isMobile && {height: screenHeight * 0.8}]} tint="dark" intensity={18}>
+          {/* Pinned header */}
+          <View style={[styles.modalHeader, isMobile && styles.modalHeaderPinned]}>
             <Text style={styles.modalTitle}>Filter Songs</Text>
             <Pressable onPress={props.onCancel} style={({pressed}) => [pressed && styles.smallBtnPressed]}>
               <FrostedSurface style={styles.modalClose} tint="dark" intensity={12}>
@@ -31,25 +36,35 @@ export function FilterModal(props: {
             </Pressable>
           </View>
 
+          {/* Scrollable content */}
+          <ScrollView style={isMobile ? styles.modalScrollContent : undefined} contentContainerStyle={isMobile ? styles.modalScrollInner : undefined} showsVerticalScrollIndicator={false}>
           <View style={styles.modalSection}>
             <Text style={styles.modalSectionTitle}>Missing</Text>
-            <ToggleRow label="Pad Scores" checked={props.draft.missingPadScores} onPress={() => t('missingPadScores')} />
-            <ToggleRow label="Pad FCs" checked={props.draft.missingPadFCs} onPress={() => t('missingPadFCs')} />
-            <ToggleRow label="Pro Scores" checked={props.draft.missingProScores} onPress={() => t('missingProScores')} />
-            <ToggleRow label="Pro FCs" checked={props.draft.missingProFCs} onPress={() => t('missingProFCs')} />
+            <Text style={styles.modalHint}>Only show songs where you are missing scores or full combos on pad or pro instruments.</Text>
+            <FrostedSurface style={styles.orderList} tint="dark" intensity={12}>
+              <ToggleRow label="Pad Scores" checked={props.draft.missingPadScores} onToggle={() => t('missingPadScores')} first />
+              <ToggleRow label="Pad FCs" checked={props.draft.missingPadFCs} onToggle={() => t('missingPadFCs')} />
+              <ToggleRow label="Pro Scores" checked={props.draft.missingProScores} onToggle={() => t('missingProScores')} />
+              <ToggleRow label="Pro FCs" checked={props.draft.missingProFCs} onToggle={() => t('missingProFCs')} last />
+            </FrostedSurface>
           </View>
 
           <View style={styles.modalSection}>
             <Text style={styles.modalSectionTitle}>Include Instruments</Text>
-            <ToggleRow label="Lead" checked={props.draft.includeLead} onPress={() => t('includeLead')} />
-            <ToggleRow label="Bass" checked={props.draft.includeBass} onPress={() => t('includeBass')} />
-            <ToggleRow label="Drums" checked={props.draft.includeDrums} onPress={() => t('includeDrums')} />
-            <ToggleRow label="Vocals" checked={props.draft.includeVocals} onPress={() => t('includeVocals')} />
-            <ToggleRow label="Pro Guitar" checked={props.draft.includeProGuitar} onPress={() => t('includeProGuitar')} />
-            <ToggleRow label="Pro Bass" checked={props.draft.includeProBass} onPress={() => t('includeProBass')} />
+            <Text style={styles.modalHint}>Choose which instruments to show in the app. Impacts all pages.</Text>
+            <FrostedSurface style={styles.orderList} tint="dark" intensity={12}>
+              <ToggleRow label="Lead" checked={props.draft.includeLead} onToggle={() => t('includeLead')} first />
+              <ToggleRow label="Bass" checked={props.draft.includeBass} onToggle={() => t('includeBass')} />
+              <ToggleRow label="Drums" checked={props.draft.includeDrums} onToggle={() => t('includeDrums')} />
+              <ToggleRow label="Vocals" checked={props.draft.includeVocals} onToggle={() => t('includeVocals')} />
+              <ToggleRow label="Pro Guitar" checked={props.draft.includeProGuitar} onToggle={() => t('includeProGuitar')} />
+              <ToggleRow label="Pro Bass" checked={props.draft.includeProBass} onToggle={() => t('includeProBass')} last />
+            </FrostedSurface>
           </View>
+          </ScrollView>
 
-          <View style={styles.modalFooter}>
+          {/* Pinned footer */}
+          <View style={[styles.modalFooter, isMobile && styles.modalFooterPinned, isMobile && {paddingBottom: 14 + safeBottom}]}>
             <Pressable onPress={props.onReset} style={({pressed}) => [styles.modalDangerBtn, pressed && styles.smallBtnPressed]}>
               <Text style={styles.modalBtnText}>Reset</Text>
             </Pressable>
@@ -62,11 +77,26 @@ export function FilterModal(props: {
   );
 }
 
-function ToggleRow(props: {label: string; checked: boolean; onPress: () => void}) {
+function ToggleRow(props: {label: string; checked: boolean; onToggle: () => void; first?: boolean; last?: boolean}) {
   return (
-    <Pressable onPress={props.onPress} style={({pressed}) => [styles.toggleRow, pressed && styles.rowBtnPressed]} accessibilityRole="button">
-      <Text style={styles.toggleLabel}>{props.label}</Text>
-      <Text style={[styles.toggleValue, props.checked && styles.toggleValueOn]}>{props.checked ? 'On' : 'Off'}</Text>
+    <Pressable
+      onPress={props.onToggle}
+      style={({pressed}) => [
+        styles.orderRow,
+        props.first && styles.orderRowFirst,
+        props.last && styles.orderRowLast,
+        !props.first && styles.orderRowSeparator,
+        pressed && styles.rowBtnPressed,
+      ]}
+      accessibilityRole="switch"
+    >
+      <Text style={styles.orderName}>{props.label}</Text>
+      <Switch
+        value={props.checked}
+        onValueChange={props.onToggle}
+        trackColor={{false: '#263244', true: 'rgba(45,130,230,1)'}}
+        thumbColor={props.checked ? '#FFFFFF' : '#8899AA'}
+      />
     </Pressable>
   );
 }
