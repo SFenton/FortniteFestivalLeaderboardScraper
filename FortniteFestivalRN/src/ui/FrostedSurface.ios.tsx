@@ -42,7 +42,7 @@ export function FrostedSurface(props: Props) {
       <LiquidGlassView
         {...viewProps}
         style={[styles.liquidGlass, style]}
-        effect="clear"
+        effect="regular"
         colorScheme={tint === 'light' ? 'light' : tint === 'dark' ? 'dark' : 'system'}
       >
         <View style={styles.content}>{children}</View>
