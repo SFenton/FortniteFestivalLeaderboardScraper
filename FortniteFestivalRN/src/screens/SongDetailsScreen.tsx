@@ -1,8 +1,10 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Dimensions, Image, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View} from 'react-native';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
-import {SafeAreaView} from 'react-native-safe-area-context';
+import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import MaskedView from '@react-native-masked-view/masked-view';
+import LinearGradient from 'react-native-linear-gradient';
 
 import {Screen} from '../ui/Screen';
 import {FrostedSurface} from '../ui/FrostedSurface';
@@ -29,6 +31,8 @@ export type SongDetailsScreenProps = NativeStackScreenProps<SongsStackParamList,
 export function SongDetailsView(props: {songId: string; showBack?: boolean; onBack?: () => void}) {
   const songId = props.songId;
   usePageInstrumentation(`Song:${songId}`);
+
+  const insets = useSafeAreaInsets();
 
   const {width} = useWindowDimensions();
   const [rootMeasuredWidth, setRootMeasuredWidth] = useState<number | null>(null);
@@ -277,7 +281,7 @@ export function SongDetailsView(props: {songId: string; showBack?: boolean; onBa
         ) : null}
         <View pointerEvents="none" style={styles.bgDim} />
 
-        <SafeAreaView style={styles.content} edges={['top', 'left', 'right', 'bottom']}>
+        <View style={[styles.content, {paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right}]}>
 
           {props.showBack && props.onBack ? (
             <View style={styles.stickyHeader}>
@@ -303,6 +307,22 @@ export function SongDetailsView(props: {songId: string; showBack?: boolean; onBa
             </View>
           ) : null}
 
+          <MaskedView
+            style={styles.scrollContainer}
+            maskElement={
+              <View style={styles.maskContainer}>
+                <LinearGradient
+                  colors={['transparent', 'black']}
+                  style={styles.fadeGradient}
+                />
+                <View style={styles.maskOpaque} />
+                <LinearGradient
+                  colors={['black', 'transparent']}
+                  style={styles.fadeGradient}
+                />
+              </View>
+            }
+          >
           <ScrollView
             style={styles.scroll}
             contentContainerStyle={[
@@ -497,7 +517,8 @@ export function SongDetailsView(props: {songId: string; showBack?: boolean; onBa
 
           {Platform.OS === 'android' ? <Text style={styles.hint}>Android hardware back is supported.</Text> : null}
           </ScrollView>
-        </SafeAreaView>
+          </MaskedView>
+        </View>
       </View>
 
     </Screen>
@@ -602,6 +623,8 @@ function StarsVisual(props: {
   );
 }
 
+const FADE_HEIGHT = 32;
+
 const styles = StyleSheet.create({
   screen: {
     backgroundColor: 'transparent',
@@ -628,7 +651,7 @@ const styles = StyleSheet.create({
     zIndex: 10,
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 8,
+    paddingBottom: 0,
   },
   backButton: {
     alignSelf: 'flex-start',
@@ -647,6 +670,19 @@ const styles = StyleSheet.create({
   backButtonPressed: {
     opacity: 0.7,
   },
+  scrollContainer: {
+    flex: 1,
+  },
+  maskContainer: {
+    flex: 1,
+  },
+  maskOpaque: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  fadeGradient: {
+    height: FADE_HEIGHT,
+  },
   scroll: {
     flex: 1,
   },
@@ -659,12 +695,12 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 16,
-    paddingTop: 48,
-    paddingBottom: 20,
+    paddingTop: 0,
+    paddingBottom: 20 + FADE_HEIGHT,
     gap: 14,
   },
   scrollContentBelowStickyHeader: {
-    paddingTop: 10,
+    paddingTop: FADE_HEIGHT,
   },
   noticeCard: {
     alignSelf: 'center',
