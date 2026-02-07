@@ -41,7 +41,6 @@ export function SongDetailsView(props: {songId: string; showBack?: boolean; onBa
 
   const {
     state: {songs, scoresIndex, settings},
-    actions: {logUi},
   } = useFestival();
 
   const song = useMemo(() => songs.find(s => s.track.su === songId), [songId, songs]);
@@ -496,15 +495,6 @@ export function SongDetailsView(props: {songId: string; showBack?: boolean; onBa
             </FrostedSurface>
           )}
 
-          <Pressable
-            onPress={() => logUi(`[SONG] details open ${songId}`)}
-            style={({pressed}) => [styles.debugButton, pressed && styles.debugButtonPressed]}
-            accessibilityRole="button"
-            accessibilityLabel="Log song details"
-          >
-            <Text style={styles.debugButtonText}>Log</Text>
-          </Pressable>
-
           {Platform.OS === 'android' ? <Text style={styles.hint}>Android hardware back is supported.</Text> : null}
           </ScrollView>
         </SafeAreaView>
@@ -912,22 +902,7 @@ const styles = StyleSheet.create({
   starIcon: {
     // Intentionally empty; size is set inline.
   },
-  debugButton: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#2B3B55',
-    backgroundColor: '#0B1220',
-  },
-  debugButtonPressed: {
-    opacity: 0.85,
-  },
-  debugButtonText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
+
   hint: {
     color: '#D7DEE8',
     fontSize: 12,

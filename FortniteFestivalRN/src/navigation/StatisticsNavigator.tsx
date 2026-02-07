@@ -55,7 +55,7 @@ export function StatisticsNavigator() {
           title: '',
           headerShown: false,
           animation: 'none',
-          presentation: 'card',
+          presentation: Platform.OS === 'ios' ? 'fullScreenModal' : 'card',
           contentStyle: {backgroundColor: '#000000'},
         }}
       />
