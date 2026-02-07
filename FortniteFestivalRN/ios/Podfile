@@ -31,5 +31,17 @@ target 'FortniteFestivalRN' do
       :mac_catalyst_enabled => false,
       # :ccache_enabled => true
     )
+
+    # Fix NitroModules build: ThreadUtils.cpp includes UIThreadDispatcher.hpp
+    # from a sibling directory. Add all ios/ subdirectories as header search paths.
+    nitro_target = installer.pods_project.targets.find { |t| t.name == 'NitroModules' }
+    if nitro_target
+      nitro_target.build_configurations.each do |config|
+        nitro_root = File.join(installer.sandbox.pod_dir('NitroModules'), 'ios')
+        subdirs = Dir.glob(File.join(nitro_root, '**')).select { |f| File.directory?(f) }
+        existing = config.build_settings['HEADER_SEARCH_PATHS'] || '$(inherited)'
+        config.build_settings['HEADER_SEARCH_PATHS'] = [existing, *subdirs].join(' ')
+      end
+    end
   end
 end

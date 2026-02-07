@@ -59,6 +59,8 @@ function MobileTabs() {
     <Tab.Navigator
       initialRouteName={Routes.Songs}
       screenOptions={{
+        animation: 'none',
+        lazy: false,
         headerStyle: styles.header,
         headerTitleStyle: styles.headerTitle,
         tabBarStyle: styles.tabBar,
@@ -152,6 +154,8 @@ function IOSNativeTabs() {
         options={{
           title: 'Songs',
           tabBarIcon: () => songsIcon,
+          lazy: false,
+          freezeOnBlur: false,
         }}
       />
       <NativeTab.Screen
@@ -160,6 +164,8 @@ function IOSNativeTabs() {
         options={{
           title: 'Suggestions',
           tabBarIcon: () => suggestionsIcon,
+          lazy: false,
+          freezeOnBlur: false,
         }}
       />
       <NativeTab.Screen
@@ -168,6 +174,8 @@ function IOSNativeTabs() {
         options={{
           title: 'Statistics',
           tabBarIcon: () => statisticsIcon,
+          lazy: false,
+          freezeOnBlur: false,
         }}
       />
       <NativeTab.Screen
@@ -176,6 +184,8 @@ function IOSNativeTabs() {
         options={{
           title: 'Settings',
           tabBarIcon: () => settingsIcon,
+          lazy: false,
+          freezeOnBlur: false,
         }}
       />
     </NativeTab.Navigator>
