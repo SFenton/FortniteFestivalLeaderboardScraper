@@ -1,5 +1,5 @@
 import React from 'react';
-import {Platform, Pressable, ScrollView, Switch, Text, useWindowDimensions, View} from 'react-native';
+import {Alert, Platform, Pressable, ScrollView, Switch, Text, useWindowDimensions, View} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 
 import {PlatformModal} from './PlatformModal';
@@ -65,7 +65,7 @@ export function FilterModal(props: {
 
           {/* Pinned footer */}
           <View style={[styles.modalFooter, isMobile && styles.modalFooterPinned, isMobile && {paddingBottom: 14 + safeBottom}]}>
-            <Pressable onPress={props.onReset} style={({pressed}) => [styles.modalDangerBtn, pressed && styles.smallBtnPressed]}>
+            <Pressable onPress={() => Alert.alert('Reset Filters', 'Are you sure you want to reset all filters to their defaults?', [{text: 'Cancel', style: 'cancel'}, {text: 'Reset', style: 'destructive', onPress: props.onReset}])} style={({pressed}) => [styles.modalDangerBtn, pressed && styles.smallBtnPressed]}>
               <Text style={styles.modalBtnText}>Reset</Text>
             </Pressable>
             <Pressable onPress={props.onApply} style={({pressed}) => [styles.modalPrimaryBtn, pressed && styles.smallBtnPressed]}>

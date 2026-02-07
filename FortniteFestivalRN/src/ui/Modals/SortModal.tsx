@@ -1,5 +1,5 @@
 import React, {useMemo} from 'react';
-import {Platform, Pressable, ScrollView, Text, useWindowDimensions, View} from 'react-native';
+import {Alert, Platform, Pressable, ScrollView, Text, useWindowDimensions, View} from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import DraggableFlatList, {type RenderItemParams} from 'react-native-draggable-flatlist';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -156,7 +156,7 @@ export function SortModal(props: {
 
           {/* Pinned footer */}
           <View style={[styles.modalFooter, isMobile && styles.modalFooterPinned, isMobile && {paddingBottom: 14 + safeBottom}]}>
-            <Pressable onPress={props.onReset} style={({pressed}) => [styles.modalDangerBtn, pressed && styles.smallBtnPressed]}>
+            <Pressable onPress={() => Alert.alert('Reset Sort', 'Are you sure you want to reset sort settings to their defaults?', [{text: 'Cancel', style: 'cancel'}, {text: 'Reset', style: 'destructive', onPress: props.onReset}])} style={({pressed}) => [styles.modalDangerBtn, pressed && styles.smallBtnPressed]}>
               <Text style={styles.modalBtnText}>Reset</Text>
             </Pressable>
             <Pressable onPress={props.onApply} style={({pressed}) => [styles.modalPrimaryBtn, pressed && styles.smallBtnPressed]}>
