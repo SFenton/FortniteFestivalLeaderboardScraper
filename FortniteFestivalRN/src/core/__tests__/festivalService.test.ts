@@ -354,7 +354,15 @@ describe('FestivalService (portable core)', () => {
 
   test('initialize() loads persistence, syncs songs, and emits scoreUpdated for loaded scores', async () => {
     const persistence = new InMemoryFestivalPersistence();
-    await persistence.saveScores([{songId: 'a', title: 'A', artist: 'X', dirty: false}]);
+    await persistence.saveScores([
+      {
+        songId: 'a',
+        title: 'A',
+        artist: 'X',
+        dirty: false,
+        guitar: {initialized: true},
+      },
+    ]);
     await persistence.saveSongs([mkSong('a', 'Song A')]);
 
     const contentUrl = 'https://fortnitecontent-website-prod07.ol.epicgames.com/content/api/pages/fortnite-game/spark-tracks';

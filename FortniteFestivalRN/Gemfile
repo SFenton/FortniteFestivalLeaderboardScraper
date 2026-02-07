@@ -14,3 +14,6 @@ gem 'bigdecimal'
 gem 'logger'
 gem 'benchmark'
 gem 'mutex_m'
+
+# Needed for libraries that still `require "kconv"` / `require "nkf"` under Bundler on Ruby 3.4+
+gem 'nkf'

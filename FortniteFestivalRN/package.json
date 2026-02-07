@@ -12,6 +12,8 @@
     "test:windows": "jest --config jest.config.windows.js"
   },
   "dependencies": {
+    "@bottom-tabs/react-navigation": "^1.1.0",
+    "@callstack/liquid-glass": "^0.7.0",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-native-community/blur": "^4.4.1",
     "@react-native/new-app-screen": "0.81.0",
@@ -21,6 +23,7 @@
     "@react-navigation/native-stack": "^7.11.0",
     "react": "19.1.0",
     "react-native": "^0.81.5",
+    "react-native-bottom-tabs": "^1.1.0",
     "react-native-gesture-handler": "^2.30.0",
     "react-native-modal": "^14.0.0-rc.1",
     "react-native-nitro-modules": "^0.33.2",

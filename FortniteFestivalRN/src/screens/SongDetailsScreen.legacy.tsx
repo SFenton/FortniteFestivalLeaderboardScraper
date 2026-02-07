@@ -291,7 +291,12 @@ export function SongDetailsView(props: {songId: string; showBack?: boolean; onBa
                     accessibilityRole="button"
                     accessibilityLabel="Go back"
                   >
-                    <Ionicons name="chevron-back" size={26} color="#FFFFFF" style={styles.backIcon} />
+                    <Ionicons
+                      name="chevron-back"
+                      size={Platform.OS === 'ios' ? 30 : 26}
+                      color="#FFFFFF"
+                      style={styles.backIcon}
+                    />
                     <Text style={styles.backLabel}>Back</Text>
                   </Pressable>
                 }
@@ -656,8 +661,8 @@ const styles = StyleSheet.create({
   backLabel: {
     color: '#FFFFFF',
     fontWeight: '700',
-    fontSize: 22,
-    lineHeight: 28,
+    fontSize: Platform.OS === 'ios' ? 24 : 22,
+    lineHeight: Platform.OS === 'ios' ? 30 : 28,
     includeFontPadding: false,
   },
   scrollContent: {

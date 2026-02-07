@@ -34,3 +34,23 @@ jest.mock('react-native-screens', () => {
     enableScreens: jest.fn(),
   };
 });
+
+jest.mock('@react-navigation/bottom-tabs/unstable', () => {
+  const actual = jest.requireActual('@react-navigation/bottom-tabs');
+
+  return {
+    ...actual,
+    createNativeBottomTabNavigator: actual.createBottomTabNavigator,
+  };
+});
+
+jest.mock('@callstack/liquid-glass', () => {
+  const {View} = require('react-native');
+
+  return {
+    __esModule: true,
+    LiquidGlassView: View,
+    LiquidGlassContainerView: View,
+    isLiquidGlassSupported: false,
+  };
+});

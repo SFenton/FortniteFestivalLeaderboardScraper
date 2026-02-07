@@ -87,7 +87,7 @@ describe('SqliteFestivalPersistence (adapter)', () => {
 
   test('loadScores maps trackers and derived fields', async () => {
     const executeSql = jest.fn(async (sql: string) => {
-      if (sql.startsWith('SELECT s.SongId')) {
+      if (sql.startsWith('SELECT sc.SongId')) {
         return resultOf([
           {
             SongId: 'song',

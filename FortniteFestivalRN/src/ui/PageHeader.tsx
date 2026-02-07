@@ -1,5 +1,5 @@
 import React from 'react';
-import {StyleProp, StyleSheet, Text, View, ViewStyle} from 'react-native';
+import {Platform, StyleProp, StyleSheet, Text, View, ViewStyle} from 'react-native';
 
 export function PageHeader(props: {
   title?: string;
@@ -23,7 +23,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    minHeight: 44,
+    minHeight: Platform.OS === 'ios' ? 52 : 44,
   },
   left: {
     flexDirection: 'row',
@@ -33,9 +33,9 @@ const styles = StyleSheet.create({
   },
   title: {
     color: '#FFFFFF',
-    fontSize: 22,
+    fontSize: Platform.OS === 'ios' ? 34 : 22,
     fontWeight: '700',
-    lineHeight: 28,
+    lineHeight: Platform.OS === 'ios' ? 41 : 28,
     includeFontPadding: false,
   },
   right: {

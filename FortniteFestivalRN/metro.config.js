@@ -1,4 +1,4 @@
-const {getDefaultConfig, mergeConfig} = require('@react-native/metro-config');
+const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
 
 const fs = require('fs');
 const path = require('path');
@@ -18,6 +18,9 @@ const rnwPath = fs.realpathSync(
 const config = {
   //
   resolver: {
+    // Watchman is great when installed/healthy, but when its socket isn't available Metro can hang
+    // for minutes trying to `watch-project`. Disable it so `yarn start` is reliable on fresh setups.
+    useWatchman: false,
     blockList: [
       // This stops "npx @react-native-community/cli run-windows" from causing the metro server to crash if its already running
       new RegExp(

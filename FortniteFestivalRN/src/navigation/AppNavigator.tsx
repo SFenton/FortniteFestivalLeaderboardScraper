@@ -7,6 +7,7 @@ import {
   useNavigationContainerRef,
 } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createNativeBottomTabNavigator } from '@bottom-tabs/react-navigation';
 import Icon from 'react-native-vector-icons/Ionicons';
 
 import { Routes } from './routes';
@@ -30,6 +31,13 @@ export type AppNavParamList = {
 };
 
 const Tab = createBottomTabNavigator<AppNavParamList>();
+const NativeTab = createNativeBottomTabNavigator<AppNavParamList>();
+
+// Pre-generate icons for native tabs using getImageSourceSync
+const songsIcon = Icon.getImageSourceSync('musical-notes', 24);
+const suggestionsIcon = Icon.getImageSourceSync('sparkles', 24);
+const statisticsIcon = Icon.getImageSourceSync('stats-chart', 24);
+const settingsIcon = Icon.getImageSourceSync('settings', 24);
 
 function HamburgerButton({ onPress }: { onPress: () => void }) {
   return (
@@ -121,6 +129,56 @@ function MobileTabs() {
         }}
       />
     </Tab.Navigator>
+  );
+}
+
+/**
+ * Native iOS tabs using react-native-bottom-tabs for iOS 26+ liquid glass support.
+ * Falls back to standard native tab bar on older iOS versions.
+ */
+function IOSNativeTabs() {
+  console.log('[IOSNativeTabs] Rendering IOSNativeTabs');
+  return (
+    <NativeTab.Navigator
+      initialRouteName={Routes.Songs}
+      translucent={true}
+      hapticFeedbackEnabled={true}
+      tabBarActiveTintColor="#e428e7"
+      tabBarInactiveTintColor="#2a82da"
+    >
+      <NativeTab.Screen
+        name={Routes.Songs}
+        component={SongsNavigator}
+        options={{
+          title: 'Songs',
+          tabBarIcon: () => songsIcon,
+        }}
+      />
+      <NativeTab.Screen
+        name={Routes.Suggestions}
+        component={SuggestionsNavigator}
+        options={{
+          title: 'Suggestions',
+          tabBarIcon: () => suggestionsIcon,
+        }}
+      />
+      <NativeTab.Screen
+        name={Routes.Statistics}
+        component={StatisticsNavigator}
+        options={{
+          title: 'Statistics',
+          tabBarIcon: () => statisticsIcon,
+        }}
+      />
+      <NativeTab.Screen
+        name={Routes.Settings}
+        component={SettingsScreen}
+        options={{
+          title: 'Settings',
+          tabBarIcon: () => settingsIcon,
+        }}
+      />
+    </NativeTab.Navigator>
   );
 }
 
@@ -288,7 +346,13 @@ function AppNavigatorInner() {
             }
             prevRouteNameRef.current = current;
           }}>
-          {Platform.OS === 'windows' ? <WindowsFlyout /> : <MobileTabs />}
+          {Platform.OS === 'windows' ? (
+            <WindowsFlyout />
+          ) : Platform.OS === 'ios' ? (
+            <IOSNativeTabs />
+          ) : (
+            <MobileTabs />
+          )}
         </NavigationContainer>
       </View>
 

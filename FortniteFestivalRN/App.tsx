@@ -4,6 +4,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AppNavigator } from './src/navigation/AppNavigator';
 import { FestivalProvider } from './src/app/festival/FestivalContext';
+import { IntroScreen } from './src/screens/IntroScreen';
 
 if (Platform.OS !== 'windows') {
   // `react-native-screens`' Windows native project currently targets UWP/WinUI2,
@@ -21,6 +22,7 @@ const RootView =
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
+  const [showIntro, setShowIntro] = React.useState(true);
 
   console.log('[App] Rendering App component, Platform:', Platform.OS);
 
@@ -28,9 +30,13 @@ function App() {
     <SafeAreaProvider>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
       <RootView style={styles.root}>
-        <FestivalProvider>
-          <AppNavigator />
-        </FestivalProvider>
+        {showIntro ? (
+          <IntroScreen onContinue={() => setShowIntro(false)} />
+        ) : (
+          <FestivalProvider>
+            <AppNavigator />
+          </FestivalProvider>
+        )}
       </RootView>
     </SafeAreaProvider>
   );
