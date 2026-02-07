@@ -335,7 +335,7 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
               value={query}
               onChangeText={setQuery}
               placeholder="Search title / artist"
-              placeholderTextColor="#607089"
+              placeholderTextColor="#FFFFFF"
               autoCapitalize="none"
               autoCorrect={false}
               style={styles.searchInput}
