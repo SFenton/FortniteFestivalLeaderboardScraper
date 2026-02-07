@@ -321,7 +321,10 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
     return parts.join('; ');
   }, [settings.songsAdvancedMissingFilters]);
 
-  const isSortActive = settings.songsSortMode !== 'title' || settings.songsSortAscending !== true;
+  const defaultOrder = defaultPrimaryInstrumentOrder().map(i => i.key);
+  const currentOrder = normalizeInstrumentOrder(settings.songsPrimaryInstrumentOrder).map(i => i.key);
+  const isOrderChanged = defaultOrder.length !== currentOrder.length || defaultOrder.some((k, i) => k !== currentOrder[i]);
+  const isSortActive = settings.songsSortMode !== 'title' || settings.songsSortAscending !== true || isOrderChanged;
   const sortIconColor = isSortActive ? '#2D82E6' : '#D7DEE8';
   const filterIconColor = isFilterActive ? '#2D82E6' : '#D7DEE8';
 
@@ -399,12 +402,28 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
           visible={showSort}
           draft={sortDraft}
           onChange={setSortDraft}
-          onCancel={() => setShowSort(false)}
-          onReset={() => {
+          onCancel={() => {
             setSortDraft({
-              sortMode: 'title',
+              sortMode: settings.songsSortMode,
+              sortAscending: settings.songsSortAscending,
+              order: normalizeInstrumentOrder(settings.songsPrimaryInstrumentOrder).map(i => i.key),
+            });
+            setShowSort(false);
+          }}
+          onReset={() => {
+            const defaults = {
+              sortMode: 'title' as SongSortMode,
               sortAscending: true,
               order: defaultPrimaryInstrumentOrder().map(i => i.key),
+            };
+            setSortDraft(defaults);
+            setShowSort(false);
+            logUi('[SONGS] reset sort to defaults');
+            setSettings({
+              ...settings,
+              songsSortMode: defaults.sortMode,
+              songsSortAscending: defaults.sortAscending,
+              songsPrimaryInstrumentOrder: defaults.order,
             });
           }}
           onApply={() => {
@@ -425,7 +444,13 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
           draft={filterDraft}
           onChange={setFilterDraft}
           onCancel={() => setShowFilter(false)}
-          onReset={() => setFilterDraft(defaultAdvancedMissingFilters())}
+          onReset={() => {
+            const defaults = defaultAdvancedMissingFilters();
+            setFilterDraft(defaults);
+            setShowFilter(false);
+            logUi('[SONGS] reset filters to defaults');
+            setSettings({...settings, songsAdvancedMissingFilters: defaults});
+          }}
           onApply={() => {
             setShowFilter(false);
             logUi(`[SONGS] apply advanced filters`);
