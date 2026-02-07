@@ -12,6 +12,18 @@ describe('app/songs/songFiltering', () => {
     expect(songMatchesAdvancedMissing(s, {}, filters)).toBe(true);
   });
 
+  test('songMatchesAdvancedMissing treats missing entry as missing pad FC', () => {
+    const s = mkSong('a', 'A', 'X');
+    const filters = {...defaultAdvancedMissingFilters(), missingPadFCs: true, includeLead: true};
+    expect(songMatchesAdvancedMissing(s, {}, filters)).toBe(true);
+  });
+
+  test('songMatchesAdvancedMissing treats missing entry as missing pro FC', () => {
+    const s = mkSong('a', 'A', 'X');
+    const filters = {...defaultAdvancedMissingFilters(), missingProFCs: true, includeProGuitar: true};
+    expect(songMatchesAdvancedMissing(s, {}, filters)).toBe(true);
+  });
+
   test('filterAndSortSongs sorts by hasfc priority then sequential count', () => {
     const s1 = mkSong('a', 'A', 'X');
     const s2 = mkSong('b', 'B', 'Y');

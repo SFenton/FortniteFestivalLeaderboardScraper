@@ -59,9 +59,9 @@ export const songMatchesAdvancedMissing = (
   const entry = scoresIndex[songId];
 
   if (!entry) {
-    if (filters.missingPadScores && (filters.includeLead || filters.includeBass || filters.includeDrums || filters.includeVocals))
+    if ((filters.missingPadScores || filters.missingPadFCs) && (filters.includeLead || filters.includeBass || filters.includeDrums || filters.includeVocals))
       return true;
-    if (filters.missingProScores && (filters.includeProGuitar || filters.includeProBass)) return true;
+    if ((filters.missingProScores || filters.missingProFCs) && (filters.includeProGuitar || filters.includeProBass)) return true;
     return false;
   }
 
