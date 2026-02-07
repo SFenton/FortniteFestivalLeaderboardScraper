@@ -357,7 +357,7 @@ function AppNavigatorInner() {
           }}>
           {Platform.OS === 'windows' ? (
             <WindowsFlyout />
-          ) : Platform.OS === 'ios' ? (
+          ) : Platform.OS === 'ios' && parseInt(String(Platform.Version), 10) >= 26 ? (
             <IOSNativeTabs />
           ) : (
             <MobileTabs />
