@@ -1,6 +1,8 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {FlatList, Image, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View} from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import MaskedView from '@react-native-masked-view/masked-view';
+import LinearGradient from 'react-native-linear-gradient';
 import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 
 import { Screen } from '../ui/Screen';
@@ -376,29 +378,46 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
           </Pressable>
         </View>
 
-        <FlatList
-          data={filtered}
-          keyExtractor={s => s.track.su}
-          renderItem={renderItem}
-          keyboardShouldPersistTaps="handled"
-          style={listStyle}
-          contentContainerStyle={[listContentStyle, filtered.length === 0 && styles.listEmptyGrow]}
-          scrollIndicatorInsets={scrollInsets}
-          showsVerticalScrollIndicator={false}
-          showsHorizontalScrollIndicator={false}
-          removeClippedSubviews={Platform.OS === 'android'}
-          initialNumToRender={12}
-          maxToRenderPerBatch={8}
-          updateCellsBatchingPeriod={24}
-          windowSize={7}
-          getItemLayout={useCompactLayout ? undefined : (_data, index) => ({length: ROW_HEIGHT, offset: ROW_HEIGHT * index, index})}
-          ListEmptyComponent={
-            <CenteredEmptyStateCard
-              title={songs.length === 0 ? 'No songs yet' : 'No results'}
-              body={songs.length === 0 ? 'Songs not loaded yet. Check Settings.' : 'No songs match your search.'}
-            />
+        <MaskedView
+          style={styles.fadeScrollContainer}
+          maskElement={
+            <View style={styles.fadeMaskContainer}>
+              <LinearGradient
+                colors={['transparent', 'black']}
+                style={styles.fadeGradient}
+              />
+              <View style={styles.fadeMaskOpaque} />
+              <LinearGradient
+                colors={['black', 'transparent']}
+                style={styles.fadeGradient}
+              />
+            </View>
           }
-        />
+        >
+          <FlatList
+            data={filtered}
+            keyExtractor={s => s.track.su}
+            renderItem={renderItem}
+            keyboardShouldPersistTaps="handled"
+            style={listStyle}
+            contentContainerStyle={[listContentStyle, filtered.length === 0 && styles.listEmptyGrow]}
+            scrollIndicatorInsets={scrollInsets}
+            showsVerticalScrollIndicator={false}
+            showsHorizontalScrollIndicator={false}
+            removeClippedSubviews={Platform.OS === 'android'}
+            initialNumToRender={12}
+            maxToRenderPerBatch={8}
+            updateCellsBatchingPeriod={24}
+            windowSize={7}
+            getItemLayout={useCompactLayout ? undefined : (_data, index) => ({length: ROW_HEIGHT, offset: ROW_HEIGHT * index, index})}
+            ListEmptyComponent={
+              <CenteredEmptyStateCard
+                title={songs.length === 0 ? 'No songs yet' : 'No results'}
+                body={songs.length === 0 ? 'Songs not loaded yet. Check Settings.' : 'No songs match your search.'}
+              />
+            }
+          />
+        </MaskedView>
 
         <SortModal
           visible={showSort}
@@ -468,7 +487,8 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingTop: 16,
+    paddingBottom: 4,
     gap: 10,
     position: 'relative',
   },
@@ -515,8 +535,22 @@ const styles = StyleSheet.create({
     paddingVertical: Platform.OS === 'ios' ? 10 : 8,
     color: '#FFFFFF',
   },
+  fadeScrollContainer: {
+    flex: 1,
+  },
+  fadeMaskContainer: {
+    flex: 1,
+  },
+  fadeMaskOpaque: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  fadeGradient: {
+    height: 32,
+  },
   list: {
-    paddingVertical: 4,
+    paddingTop: 32,
+    paddingBottom: 4,
   },
   listEmptyGrow: {
     flexGrow: 1,

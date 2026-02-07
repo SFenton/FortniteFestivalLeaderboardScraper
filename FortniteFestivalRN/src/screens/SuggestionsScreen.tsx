@@ -1,6 +1,8 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {ActivityIndicator, FlatList, Image, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View} from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import MaskedView from '@react-native-masked-view/masked-view';
+import LinearGradient from 'react-native-linear-gradient';
 
 import {Screen} from '../ui/Screen';
 import {FrostedSurface} from '../ui/FrostedSurface';
@@ -272,35 +274,52 @@ lead=${String(settings.queryLead)} bass=${String(settings.queryBass)} drums=${St
           </FrostedSurface>
         ) : null}
 
-        <FlatList
-          ref={listRef}
-          style={{flex: 1, marginBottom: tabBarMargin}}
-          contentContainerStyle={{paddingBottom: tabBarHeight + 16}}
-          scrollIndicatorInsets={{bottom: tabBarHeight}}
-          showsVerticalScrollIndicator={false}
-          showsHorizontalScrollIndicator={false}
-          data={visibleCategories}
-          keyExtractor={c => c.uiKey}
-          keyboardShouldPersistTaps="handled"
-          extraData={useCompactLayout}
-          ItemSeparatorComponent={categorySeparator}
-          ListFooterComponent={footer}
-          onEndReachedThreshold={0.4}
-          onEndReached={loadMore}
-          renderItem={({item: cat}) => (
-            <SuggestionCard
-              cat={cat}
-              useCompactLayout={useCompactLayout}
-              songById={songById}
-              scoresIndex={scoresIndex}
-              instrumentQuerySettings={instrumentQuerySettings}
-              onOpenSong={(songId, title) => {
-                logUi(`[SUGGESTIONS] open ${songId} '${title}' (${cat.key})`);
-                props.onOpenSong?.(songId, title);
-              }}
-            />
-          )}
-        />
+        <MaskedView
+          style={styles.fadeScrollContainer}
+          maskElement={
+            <View style={styles.fadeMaskContainer}>
+              <LinearGradient
+                colors={['transparent', 'black']}
+                style={styles.fadeGradient}
+              />
+              <View style={styles.fadeMaskOpaque} />
+              <LinearGradient
+                colors={['black', 'transparent']}
+                style={styles.fadeGradient}
+              />
+            </View>
+          }
+        >
+          <FlatList
+            ref={listRef}
+            style={{flex: 1, marginBottom: tabBarMargin}}
+            contentContainerStyle={{paddingTop: 32, paddingBottom: tabBarHeight + 16}}
+            scrollIndicatorInsets={{bottom: tabBarHeight}}
+            showsVerticalScrollIndicator={false}
+            showsHorizontalScrollIndicator={false}
+            data={visibleCategories}
+            keyExtractor={c => c.uiKey}
+            keyboardShouldPersistTaps="handled"
+            extraData={useCompactLayout}
+            ItemSeparatorComponent={categorySeparator}
+            ListFooterComponent={footer}
+            onEndReachedThreshold={0.4}
+            onEndReached={loadMore}
+            renderItem={({item: cat}) => (
+              <SuggestionCard
+                cat={cat}
+                useCompactLayout={useCompactLayout}
+                songById={songById}
+                scoresIndex={scoresIndex}
+                instrumentQuerySettings={instrumentQuerySettings}
+                onOpenSong={(songId, title) => {
+                  logUi(`[SUGGESTIONS] open ${songId} '${title}' (${cat.key})`);
+                  props.onOpenSong?.(songId, title);
+                }}
+              />
+            )}
+          />
+        </MaskedView>
       </View>
     </Screen>
   );
@@ -585,8 +604,22 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingTop: 16,
+    paddingBottom: 4,
     gap: 12,
+  },
+  fadeScrollContainer: {
+    flex: 1,
+  },
+  fadeMaskContainer: {
+    flex: 1,
+  },
+  fadeMaskOpaque: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  fadeGradient: {
+    height: 32,
   },
   card: {
     borderRadius: 12,

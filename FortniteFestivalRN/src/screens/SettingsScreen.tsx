@@ -1,5 +1,7 @@
 import React, {useCallback, useMemo} from 'react';
 import {Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View} from 'react-native';
+import MaskedView from '@react-native-masked-view/masked-view';
+import LinearGradient from 'react-native-linear-gradient';
 
 import { Screen } from '../ui/Screen';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
@@ -53,15 +55,33 @@ export function SettingsScreen() {
 
   return (
     <Screen>
-      <ScrollView
-        style={{flex: 1, marginBottom: tabBarMargin}}
-        contentContainerStyle={[styles.content, {paddingBottom: tabBarHeight + 16}]}
-        scrollIndicatorInsets={{bottom: tabBarHeight}}
-        showsVerticalScrollIndicator={false}
-        showsHorizontalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
+      <View style={styles.wrapper}>
         <PageHeader title="Settings" />
+
+        <MaskedView
+          style={styles.fadeScrollContainer}
+          maskElement={
+            <View style={styles.fadeMaskContainer}>
+              <LinearGradient
+                colors={['transparent', 'black']}
+                style={styles.fadeGradient}
+              />
+              <View style={styles.fadeMaskOpaque} />
+              <LinearGradient
+                colors={['black', 'transparent']}
+                style={styles.fadeGradient}
+              />
+            </View>
+          }
+        >
+          <ScrollView
+            style={{flex: 1, marginBottom: tabBarMargin}}
+            contentContainerStyle={[styles.content, {paddingBottom: tabBarHeight + 16}]}
+            scrollIndicatorInsets={{bottom: tabBarHeight}}
+            showsVerticalScrollIndicator={false}
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
 
         <FrostedSurface style={styles.card} tint="dark" intensity={18}>
           <Text style={styles.cardTitle}>Status</Text>
@@ -159,14 +179,35 @@ export function SettingsScreen() {
           <Text style={styles.log}>{state.logJoined || '(empty)'}</Text>
         </FrostedSurface>
       </ScrollView>
+        </MaskedView>
+      </View>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  content: {
+  wrapper: {
+    flex: 1,
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingTop: 16,
+    paddingBottom: 4,
+    gap: 12,
+  },
+  fadeScrollContainer: {
+    flex: 1,
+  },
+  fadeMaskContainer: {
+    flex: 1,
+  },
+  fadeMaskOpaque: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  fadeGradient: {
+    height: 32,
+  },
+  content: {
+    paddingTop: 32,
     gap: 12,
   },
   body: {

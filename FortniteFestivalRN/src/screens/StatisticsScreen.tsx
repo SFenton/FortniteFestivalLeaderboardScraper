@@ -1,5 +1,7 @@
 import React, {useCallback, useMemo} from 'react';
 import {FlatList, Image, Pressable, StyleSheet, Text, View} from 'react-native';
+import MaskedView from '@react-native-masked-view/masked-view';
+import LinearGradient from 'react-native-linear-gradient';
 
 import type {InstrumentKey} from '../core/instruments';
 import type {Song} from '../core/models';
@@ -110,7 +112,7 @@ export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: st
   const header = useMemo(() => <PageHeader title="Statistics" />, []);
 
   const listStyle = useMemo(() => ({flex: 1, marginBottom: tabBarMargin}), [tabBarMargin]);
-  const listContentStyle = useMemo(() => ({paddingBottom: tabBarHeight + 16}), [tabBarHeight]);
+  const listContentStyle = useMemo(() => ({paddingTop: 32, paddingBottom: tabBarHeight + 16}), [tabBarHeight]);
   const scrollInsets = useMemo(() => ({bottom: tabBarHeight}), [tabBarHeight]);
 
   const data = useMemo<StatsListItem[]>(() => {
@@ -147,23 +149,40 @@ export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: st
       <View style={styles.content}>
         {header}
 
-        <FlatList
-          style={listStyle}
-          contentContainerStyle={listContentStyle}
-          scrollIndicatorInsets={scrollInsets}
-          showsVerticalScrollIndicator={false}
-          showsHorizontalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          data={data}
-          keyExtractor={i => i.key}
-          renderItem={renderItem}
-          ItemSeparatorComponent={itemSeparator}
-          removeClippedSubviews
-          initialNumToRender={8}
-          maxToRenderPerBatch={6}
-          updateCellsBatchingPeriod={24}
-          windowSize={7}
-        />
+        <MaskedView
+          style={styles.fadeScrollContainer}
+          maskElement={
+            <View style={styles.fadeMaskContainer}>
+              <LinearGradient
+                colors={['transparent', 'black']}
+                style={styles.fadeGradient}
+              />
+              <View style={styles.fadeMaskOpaque} />
+              <LinearGradient
+                colors={['black', 'transparent']}
+                style={styles.fadeGradient}
+              />
+            </View>
+          }
+        >
+          <FlatList
+            style={listStyle}
+            contentContainerStyle={listContentStyle}
+            scrollIndicatorInsets={scrollInsets}
+            showsVerticalScrollIndicator={false}
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            data={data}
+            keyExtractor={i => i.key}
+            renderItem={renderItem}
+            ItemSeparatorComponent={itemSeparator}
+            removeClippedSubviews
+            initialNumToRender={8}
+            maxToRenderPerBatch={6}
+            updateCellsBatchingPeriod={24}
+            windowSize={7}
+          />
+        </MaskedView>
       </View>
     </Screen>
   );
@@ -393,8 +412,22 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingTop: 16,
+    paddingBottom: 4,
     gap: 10,
+  },
+  fadeScrollContainer: {
+    flex: 1,
+  },
+  fadeMaskContainer: {
+    flex: 1,
+  },
+  fadeMaskOpaque: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  fadeGradient: {
+    height: 32,
   },
   listSeparator: {
     height: 10,
