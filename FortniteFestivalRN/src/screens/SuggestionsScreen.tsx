@@ -339,10 +339,17 @@ function SuggestionCard(props: {
   const catInstrumentKey = useMemo(() => {
     // First-play categories are emitted as `unplayed_{instrument}` and have
     // variants like `unplayed_{instrument}_decade_00`.
-    if (!cat.key.startsWith('unplayed_')) return undefined;
+    // Close-FC categories are emitted as `unfc_{instrument}` with decade
+    // variants like `unfc_{instrument}_decade_00`.
+    let suffix: string | undefined;
+    if (cat.key.startsWith('unplayed_')) {
+      suffix = cat.key.slice('unplayed_'.length);
+      if (suffix === 'any' || suffix.startsWith('any_')) return undefined;
+    } else if (cat.key.startsWith('unfc_')) {
+      suffix = cat.key.slice('unfc_'.length);
+    }
 
-    const suffix = cat.key.slice('unplayed_'.length);
-    if (suffix === 'any' || suffix.startsWith('any_')) return undefined;
+    if (!suffix) return undefined;
 
     const known: Array<'pro_guitar' | 'pro_bass' | 'guitar' | 'bass' | 'drums' | 'vocals'> = ['pro_guitar', 'pro_bass', 'guitar', 'bass', 'drums', 'vocals'];
     for (const k of known) {

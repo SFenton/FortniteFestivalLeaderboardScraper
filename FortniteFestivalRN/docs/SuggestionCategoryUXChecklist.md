@@ -19,8 +19,8 @@ This tracks which suggestion categories still use the default row-right UX (star
 - ✅ `more_stars` (row-right instrument icon)
 - ✅ `more_stars_decade_XX` (row-right instrument icon)
 
-- ✅ `unfc_{instrument}` (row-right percent text)
-- ✅ `unfc_{instrument}_decade_XX` (row-right percent text)
+- ✅ `unfc_{instrument}` (header icon; row-right percent text)
+- ✅ `unfc_{instrument}_decade_XX` (header icon; row-right percent text)
 
 - ✅ `variety_pack` (row-right hidden)
 
