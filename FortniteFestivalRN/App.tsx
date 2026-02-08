@@ -30,13 +30,16 @@ function App() {
     <SafeAreaProvider>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
       <RootView style={styles.root}>
-        {showIntro ? (
-          <IntroScreen onContinue={() => setShowIntro(false)} />
-        ) : (
-          <FestivalProvider>
+        {/* FestivalProvider wraps everything so song/image sync kicks off
+            immediately in the background — even while the user is on the
+            intro carousel. */}
+        <FestivalProvider>
+          {showIntro ? (
+            <IntroScreen onContinue={() => setShowIntro(false)} />
+          ) : (
             <AppNavigator />
-          </FestivalProvider>
-        )}
+          )}
+        </FestivalProvider>
       </RootView>
     </SafeAreaProvider>
   );

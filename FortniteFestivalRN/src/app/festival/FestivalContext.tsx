@@ -218,9 +218,30 @@ export function FestivalProvider(props: {children: React.ReactNode}) {
         setProgressPct(5);
         setProgressLabel('Starting…');
         logBufferRef.current.enqueue('Initializing service (syncing songs + images)...');
-        await service.initialize();
+
+        // Periodically push the service's in-memory songs to React state so
+        // the UI (e.g. SlidingRowsBackground) sees imagePaths as they arrive
+        // during the image-sync phase of initialize().
+        console.log('[FestivalProvider] Starting image refresh timer');
+        const imageRefreshTimer = setInterval(() => {
+          const snap = [...service.songs];
+          const withImages = snap.filter(s => !!s.imagePath).length;
+          console.log(`[FestivalProvider] Refresh tick: ${snap.length} songs, ${withImages} with imagePath`);
+          setSongs(snap);
+        }, 2000);
+
+        try {
+          await service.initialize();
+        } finally {
+          clearInterval(imageRefreshTimer);
+        }
+
+        // Final snapshot with all data populated.
         initializedRef.current = true;
-        setSongs(service.songs);
+        const finalSongs = [...service.songs];
+        const finalWithImages = finalSongs.filter(s => !!s.imagePath).length;
+        console.log(`[FestivalProvider] Init complete: ${finalSongs.length} songs, ${finalWithImages} with imagePath`);
+        setSongs(finalSongs);
         setScoresIndex({...service.scoresIndex});
         setMetrics(formatMetrics(service.getInstrumentation()));
         logBufferRef.current.enqueue(

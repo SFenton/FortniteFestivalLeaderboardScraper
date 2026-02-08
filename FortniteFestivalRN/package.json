@@ -32,6 +32,7 @@
     "react-native-modal": "^14.0.0-rc.1",
     "react-native-nitro-modules": "^0.33.2",
     "react-native-nitro-sqlite": "^9.2.2",
+    "react-native-pager-view": "^8.0.0",
     "react-native-reanimated": "^4.2.1",
     "react-native-safe-area-context": "^5.5.2",
     "react-native-screens": "^4.20.0",

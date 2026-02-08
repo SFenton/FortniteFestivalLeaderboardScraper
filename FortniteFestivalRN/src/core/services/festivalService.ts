@@ -283,18 +283,14 @@ export class FestivalService {
 
     const allSongs = this.songs;
     
-    // Only sync songs that don't have imagePath from persistence
-    const songsNeedingImages = allSongs.filter(s => !s.imagePath);
-    if (songsNeedingImages.length === 0) {
-      console.log('[FestivalService] All songs have imagePath, skipping image sync');
-      this.imagesSyncComplete = true;
-      return;
-    }
-
-    console.log(`[FestivalService] Syncing images for ${songsNeedingImages.length} songs (16 workers)`);
-    const total = songsNeedingImages.length;
+    // Run all songs through ensureCached — it does a fast filesystem exists
+    // check and only downloads when the file is actually missing.  We can't
+    // trust a persisted imagePath because the on-disk cache may have been
+    // purged (e.g. simulator restart, OS storage pressure).
+    console.log(`[FestivalService] Syncing images for ${allSongs.length} songs (16 workers)`);
+    const total = allSongs.length;
     let completed = 0;
-    const queue = [...songsNeedingImages];
+    const queue = [...allSongs];
     const limiter = createLimiter(16);
 
     const runOne = async (s: Song): Promise<void> => {
