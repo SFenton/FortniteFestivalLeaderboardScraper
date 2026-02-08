@@ -6,7 +6,6 @@ import LinearGradient from 'react-native-linear-gradient';
 import type {InstrumentKey} from '../core/instruments';
 import type {Song} from '../core/models';
 import {useFestival} from '../app/festival/FestivalContext';
-import {formatScoreCompact} from '../app/format/formatters';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
 import {buildInstrumentStats, buildTopSongCategories, type InstrumentDetailedStats} from '../app/statistics/statistics';
 import type {SuggestionCategory} from '../core/suggestions/types';
@@ -216,12 +215,9 @@ const InstrumentCard = React.memo(function InstrumentCard(props: {stats: Instrum
         <StatCell label="Gold Stars" value={`${s.goldStarCount}`} />
         <StatCell label="5 Stars" value={`${s.fiveStarCount}`} />
         <StatCell label="4 Stars" value={`${s.fourStarCount}`} />
-        <StatCell label="Avg Accuracy" value={`${s.averageAccuracy.toFixed(2)}%`} />
+        <StatCell label="Average Accuracy" value={`${s.averageAccuracy.toFixed(2)}%`} />
         <StatCell label="Best Accuracy" value={`${s.bestAccuracy.toFixed(2)}%`} />
-        <StatCell label="Perfect Scores" value={`${s.perfectScoreCount}`} />
-        <StatCell label="Avg Stars" value={`${s.averageStars.toFixed(2)}`} />
-        <StatCell label="Total Score" value={formatScoreCompact(s.totalScore)} />
-        <StatCell label="Highest Score" value={formatScoreCompact(s.highestScore)} />
+        <StatCell label="Average Stars" value={`${s.averageStars.toFixed(2)}`} />
         <StatCell label="Best Rank" value={s.bestRank > 0 ? s.bestRankFormatted : '—'} />
         <StatCell label="Weighted Percentile" value={s.weightedPercentileFormatted !== 'N/A' ? s.weightedPercentileFormatted : '—'} />
       </View>
@@ -291,6 +287,15 @@ const TopSongsCard = React.memo(function TopSongsCard(props: {
 
   const useVirtualList = cat.songs.length > TOP_SONGS_VIRTUALIZE_THRESHOLD;
 
+  const catInstrumentKey = useMemo(() => {
+    // Keys are `stats_top_five_weighted_{instrument}` or `stats_top_five_{instrument}`.
+    const known: InstrumentKey[] = ['pro_guitar', 'pro_bass', 'guitar', 'bass', 'drums', 'vocals'];
+    for (const k of known) {
+      if (cat.key.endsWith(`_${k}`)) return k;
+    }
+    return undefined;
+  }, [cat.key]);
+
   const renderSong = useCallback(({item}: {item: any}) => {
     const song = songById.get(item.songId);
     const imageUri = song?.imagePath ?? song?.track?.au;
@@ -305,11 +310,21 @@ const TopSongsCard = React.memo(function TopSongsCard(props: {
   }, [cat.key, onOpenSong, songById]);
 
   return (
-    <FrostedSurface style={styles.card} tint="dark" intensity={18}>
-      <Text style={styles.cardTitle}>{cat.title}</Text>
-      <Text style={styles.cardSubtitle}>{cat.description}</Text>
+    <FrostedSurface style={styles.topSongsCard} tint="dark" intensity={18}>
+      <View style={styles.topSongsHeaderRow}>
+        <View style={styles.topSongsHeaderLeft}>
+          <Text style={styles.topSongsTitle} numberOfLines={1}>{cat.title}</Text>
+          <Text style={styles.topSongsSubtitle}>{cat.description}</Text>
+        </View>
 
-      <View style={styles.songList}>
+        {catInstrumentKey ? (
+          <View style={styles.topSongsHeaderRight}>
+            <Image source={getInstrumentIconSource(catInstrumentKey)} style={styles.topSongsHeaderIcon} resizeMode="contain" />
+          </View>
+        ) : null}
+      </View>
+
+      <View style={styles.topSongsList}>
         {useVirtualList ? (
           <FlatList
             data={cat.songs as any[]}
@@ -355,36 +370,40 @@ const TopSongRow = React.memo(function TopSongRow(props: {
   return (
     <Pressable
       onPress={props.onPress}
-      style={({pressed}) => [styles.songRow, pressed && styles.songRowPressed]}
+      style={styles.topSongRowPressable}
       accessibilityRole="button"
       accessibilityLabel={`Open ${item.title}`}
     >
-      <View style={styles.songLeft}>
-        <View style={styles.thumbWrap}>
-          {props.imageUri ? (
-            <Image source={{uri: props.imageUri}} style={styles.thumb} resizeMode="cover" />
-          ) : (
-            <View style={styles.thumbPlaceholder} />
-          )}
-        </View>
+      {({pressed}) => (
+        <View style={[styles.topSongRowInner, pressed && styles.topSongRowPressed]}>
+          <View style={styles.topSongLeft}>
+            <View style={styles.topSongThumbWrap}>
+              {props.imageUri ? (
+                <Image source={{uri: props.imageUri}} style={styles.topSongThumb} resizeMode="cover" />
+              ) : (
+                <View style={styles.topSongThumbPlaceholder} />
+              )}
+            </View>
 
-        <View style={styles.songRowText}>
-          <Text numberOfLines={1} style={styles.songTitle}>
-            {item.title || '(unknown)'}
-          </Text>
-          <Text numberOfLines={1} style={styles.songMeta}>
-            {item.artist || '(unknown)'}
-          </Text>
-        </View>
-      </View>
+            <View style={styles.topSongText}>
+              <Text numberOfLines={1} style={styles.topSongTitle}>
+                {item.title || '(unknown)'}
+              </Text>
+              <Text numberOfLines={1} style={styles.topSongMeta}>
+                {item.artist || '(unknown)'}
+              </Text>
+            </View>
+          </View>
 
-      {right ? (
-        <View style={styles.songRight}>
-          <Text numberOfLines={1} style={styles.songRightText}>
-            {right}
-          </Text>
+          {right ? (
+            <View style={styles.topSongRight}>
+              <Text numberOfLines={1} style={styles.topSongRightText}>
+                {right}
+              </Text>
+            </View>
+          ) : null}
         </View>
-      ) : null}
+      )}
     </Pressable>
   );
 });
@@ -393,7 +412,7 @@ function formatRight(item: {percent?: number; stars?: number; fullCombo?: boolea
   const parts: string[] = [];
 
   if (typeof item.percent === 'number' && Number.isFinite(item.percent) && item.percent > 0) {
-    parts.push(`${item.percent.toFixed(2)}%`);
+    parts.push(`Top ${item.percent.toFixed(2)}%`);
   }
 
   if (typeof item.stars === 'number' && Number.isFinite(item.stars) && item.stars > 0) {
@@ -468,6 +487,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     columnGap: 16,
     rowGap: 10,
+    marginTop: 24,
   },
   statCell: {
     width: '47%',
@@ -485,7 +505,7 @@ const styles = StyleSheet.create({
   },
   distWrap: {
     gap: 8,
-    marginTop: 8,
+    marginTop: 24,
   },
   sectionTitle: {
     color: '#FFFFFF',
@@ -528,66 +548,106 @@ const styles = StyleSheet.create({
     fontSize: 12,
     opacity: 0.9,
   },
-  songList: {
+  topSongsCard: {
+    borderRadius: 12,
+    padding: 12,
     gap: 8,
   },
-  songRow: {
-    paddingVertical: 8,
+  topSongsHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.08)',
   },
-  songRowPressed: {
-    opacity: 0.85,
+  topSongsHeaderLeft: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
   },
-  songLeft: {
+  topSongsHeaderRight: {
+    flexShrink: 0,
+    paddingLeft: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  topSongsTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  topSongsSubtitle: {
+    color: '#D7DEE8',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  topSongsHeaderIcon: {
+    width: 28,
+    height: 28,
+    opacity: 0.92,
+  },
+  topSongsList: {
+    gap: 8,
+    marginTop: 4,
+  },
+  topSongRowPressable: {},
+  topSongRowInner: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+  },
+  topSongRowPressed: {
+    opacity: 0.85,
+  },
+  topSongLeft: {
     flexGrow: 1,
     flexShrink: 1,
     minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
-  thumbWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
+  topSongThumbWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
     overflow: 'hidden',
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: '#0F172A',
   },
-  thumb: {
-    width: 40,
-    height: 40,
+  topSongThumb: {
+    width: '100%',
+    height: '100%',
   },
-  thumbPlaceholder: {
-    width: 40,
-    height: 40,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+  topSongThumbPlaceholder: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#111827',
   },
-  songRowText: {
+  topSongText: {
     flexGrow: 1,
     flexShrink: 1,
     minWidth: 0,
     gap: 2,
   },
-  songTitle: {
+  topSongTitle: {
     color: '#FFFFFF',
-    fontSize: 14,
     fontWeight: '700',
+    fontSize: 14,
   },
-  songMeta: {
+  topSongMeta: {
+    color: '#9AA6B2',
+    fontSize: 12,
+  },
+  topSongRight: {
+    flexShrink: 0,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  topSongRightText: {
     color: '#D7DEE8',
     fontSize: 12,
-    opacity: 0.85,
-  },
-  songRight: {
-    marginLeft: 12,
-  },
-  songRightText: {
-    color: '#D7DEE8',
-    fontSize: 12,
-    opacity: 0.9,
+    fontWeight: '700',
   },
 });

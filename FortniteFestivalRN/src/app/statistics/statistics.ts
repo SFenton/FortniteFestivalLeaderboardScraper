@@ -196,16 +196,22 @@ export const buildTopSongCategories = (params: {
       .slice(0, 5);
 
     if (weightedTopFive.length > 0) {
-      const songs: SuggestionSongItem[] = weightedTopFive.map(ld => ({
-        songId: ld.songId,
-        title: ld.title ?? '',
-        artist: ld.artist ?? '',
-      }));
+      const songs: SuggestionSongItem[] = weightedTopFive.map(ld => {
+        const t = selectTracker(ld, k)!;
+        const weighted = weightScore(t, baseline);
+        const pct = Number.isFinite(weighted) && weighted > 0 ? Math.max(0.01, Math.min(100, weighted * 100)) : undefined;
+        return {
+          songId: ld.songId,
+          title: ld.title ?? '',
+          artist: ld.artist ?? '',
+          percent: pct,
+        };
+      });
 
       out.push({
         key: `stats_top_five_weighted_${k}`,
-        title: `Top five songs by weighted percentile for ${keyToLabel(k)}`,
-        description: `Your top five competitive songs (weighted by participants) for ${keyToLabel(k)}.`,
+        title: `Top Five Songs (Weighted Percentile)`,
+        description: `Your top five competitive songs (weighted by number of participants) for ${keyToLabel(k)}.`,
         songs,
       });
     }
@@ -215,15 +221,20 @@ export const buildTopSongCategories = (params: {
       .slice(0, 5);
 
     if (topFive.length > 0) {
-      const songs: SuggestionSongItem[] = topFive.map(ld => ({
-        songId: ld.songId,
-        title: ld.title ?? '',
-        artist: ld.artist ?? '',
-      }));
+      const songs: SuggestionSongItem[] = topFive.map(ld => {
+        const t = selectTracker(ld, k)!;
+        const pct = Number.isFinite(t.rawPercentile) && t.rawPercentile > 0 ? Math.max(0.01, Math.min(100, t.rawPercentile * 100)) : undefined;
+        return {
+          songId: ld.songId,
+          title: ld.title ?? '',
+          artist: ld.artist ?? '',
+          percent: pct,
+        };
+      });
 
       out.push({
         key: `stats_top_five_${k}`,
-        title: `Top five songs by percentile for ${keyToLabel(k)}`,
+        title: `Top Five Songs (Raw Percentile)`,
         description: `Your top five competitive songs for ${keyToLabel(k)}.`,
         songs,
       });
