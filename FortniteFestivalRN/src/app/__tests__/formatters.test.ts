@@ -55,7 +55,7 @@ describe('app/format/formatters', () => {
   describe('instrument presentation', () => {
     test('maps keys to labels', () => {
       expect(instrumentKeyToLabel('guitar')).toBe('Lead');
-      expect(instrumentKeyToLabel('pro_guitar')).toBe('Pro Guitar');
+      expect(instrumentKeyToLabel('pro_guitar')).toBe('Pro Lead');
     });
 
     test('maps keys to colors', () => {

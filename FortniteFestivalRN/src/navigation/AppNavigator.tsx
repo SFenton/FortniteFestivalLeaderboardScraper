@@ -149,8 +149,6 @@ function IOSNativeTabs() {
         options={{
           title: 'Songs',
           tabBarIcon: () => songsIcon,
-          tabBarBlurEffect: undefined,
-          tabBarStyle: { backgroundColor: 'transparent' },
           lazy: false,
         }}
       />
@@ -160,8 +158,6 @@ function IOSNativeTabs() {
         options={{
           title: 'Suggestions',
           tabBarIcon: () => suggestionsIcon,
-          tabBarBlurEffect: undefined,
-          tabBarStyle: { backgroundColor: 'transparent' },
           lazy: false,
         }}
       />
@@ -171,8 +167,6 @@ function IOSNativeTabs() {
         options={{
           title: 'Statistics',
           tabBarIcon: () => statisticsIcon,
-          tabBarBlurEffect: undefined,
-          tabBarStyle: { backgroundColor: 'transparent' },
           lazy: false,
         }}
       />
@@ -182,8 +176,6 @@ function IOSNativeTabs() {
         options={{
           title: 'Settings',
           tabBarIcon: () => settingsIcon,
-          tabBarBlurEffect: undefined,
-          tabBarStyle: { backgroundColor: 'transparent' },
           lazy: false,
         }}
       />

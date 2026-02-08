@@ -55,7 +55,7 @@ const instrumentLabel = (instrument: InstrumentKey | 'any'): string => {
     case 'vocals':
       return 'Vocals';
     case 'pro_guitar':
-      return 'Pro Guitar';
+      return 'Pro Lead';
     case 'pro_bass':
       return 'Pro Bass';
     default:
@@ -358,17 +358,17 @@ export class SuggestionGenerator {
     }
 
     let title = `${baseTitle} (${label})`;
-    if (baseKey === 'more_stars') title = `Push These ${label} Songs to Gold Stars`;
+    if (baseKey === 'more_stars') title = `Push ${label} to Gold`;
     else if (baseKey.startsWith('unfc_')) {
       const instr = baseKey.substring(5) as InstrumentKey;
-      title = `Close ${instrumentLabel(instr)} FCs on Songs From the ${label}`;
+      title = `Close ${instrumentLabel(instr)} FCs (${label})`;
     } else if (baseKey.startsWith('unplayed_')) {
       const instr = baseKey.substring(9);
-      title = instr === 'any' ? `First Plays from the ${label}` : `First ${instrumentLabel(instr as any)} Plays (${label})`;
+      title = instr === 'any' ? `First Plays (${label})` : `First ${instrumentLabel(instr as any)} Plays (${label})`;
     } else if (baseKey === 'first_plays_mixed') title = `First Plays (Mixed ${label})`;
     else if (baseKey === 'near_fc_relaxed') title = `Close to FC (92%+) - ${label}`;
     else if (baseKey === 'near_fc_any') title = `FC These Next! (${label})`;
-    else if (baseKey === 'almost_six_star') title = `Push ${label} Songs to Gold Stars`;
+    else if (baseKey === 'almost_six_star') title = `Push ${label} to Gold`;
     else if (baseKey === 'star_gains') title = `Easy Star Gains (${label})`;
 
     let desc = `${baseDescription} Limited to ${label} songs.`;
@@ -505,7 +505,7 @@ export class SuggestionGenerator {
       {
         key: 'near_fc_any',
         title: 'FC These Next!',
-        description: 'High accuracy Gold Star runs that just need the full combo.',
+        description: 'If you can get gold stars, you can FC it!',
         songs: final.map(p => this.mapUniqueSongWithInstrument(p)),
       },
     ];
@@ -521,7 +521,7 @@ export class SuggestionGenerator {
     }
     const freshCount = this.getFreshCount(pool);
     if (!this.shouldEmit('near_fc_any_decade_wrap', freshCount)) return [];
-    return this.buildDecadeVariant('near_fc_any', 'FC These Next!', 'High accuracy Gold Star runs that just need the full combo.', pool);
+    return this.buildDecadeVariant('near_fc_any', 'FC These Next!', 'If you can get gold stars, you can FC it!', pool);
   }
 
   private nearFcRelaxed(): SuggestionCategory[] {
@@ -541,7 +541,7 @@ export class SuggestionGenerator {
       {
         key: 'near_fc_relaxed',
         title: 'Close to FC (92%+)',
-        description: 'High accuracy 5★/Gold Star runs to polish.',
+        description: 'Great runs to try and FC next!',
         songs: final.map(p => this.mapUniqueSongWithInstrument(p)),
       },
     ];
@@ -557,7 +557,7 @@ export class SuggestionGenerator {
     }
     const freshCount = this.getFreshCount(pool);
     if (!this.shouldEmit('near_fc_relaxed_decade_wrap', freshCount)) return [];
-    return this.buildDecadeVariant('near_fc_relaxed', 'Close to FC (92%+)', 'High accuracy 5★/Gold Star runs to polish.', pool);
+    return this.buildDecadeVariant('near_fc_relaxed', 'Close to FC (92%+)', 'Great runs to try and FC next!', pool);
   }
 
   private almostSixStars(): SuggestionCategory[] {
@@ -575,7 +575,7 @@ export class SuggestionGenerator {
       {
         key: 'almost_six_star',
         title: 'Push to Gold Stars',
-        description: 'High 5★ runs close to Gold Stars.',
+        description: 'Push these five-star runs to gold stars!',
         songs: final.map(p => this.mapUniqueSongWithInstrument(p)),
       },
     ];
@@ -589,7 +589,7 @@ export class SuggestionGenerator {
     }
     const freshCount = this.getFreshCount(list);
     if (!this.shouldEmit('almost_six_star_decade_wrap', freshCount)) return [];
-    return this.buildDecadeVariant('almost_six_star', 'Push to Gold Stars', 'High 5★ runs close to Gold Stars.', list);
+    return this.buildDecadeVariant('almost_six_star', 'Push to Gold Stars', 'Push these five-star runs to gold stars!', list);
   }
 
   private starGains(): SuggestionCategory[] {
@@ -607,7 +607,7 @@ export class SuggestionGenerator {
       {
         key: 'star_gains',
         title: 'Easy Star Gains',
-        description: 'Mid-star songs ripe for improvement.',
+        description: 'Hit a new high score to get even more stars on these songs!',
         songs: final.map(p => this.mapUniqueSongWithInstrument(p)),
       },
     ];
@@ -621,7 +621,7 @@ export class SuggestionGenerator {
     }
     const freshCount = this.getFreshCount(list);
     if (!this.shouldEmit('star_gains_decade_wrap', freshCount)) return [];
-    return this.buildDecadeVariant('star_gains', 'Easy Star Gains', 'Mid-star songs ripe for improvement.', list);
+    return this.buildDecadeVariant('star_gains', 'Easy Star Gains', 'Hit a new high score to get even more stars on these songs!', list);
   }
 
   private unFcInstrument(instrument: InstrumentKey): SuggestionCategory[] {
@@ -640,7 +640,7 @@ export class SuggestionGenerator {
       {
         key,
         title: `Finish the ${instrumentLabel(instrument)} FCs`,
-        description: `Clean up these almost full combos on ${instrumentLabel(instrument)}.`,
+        description: `Play these songs again on ${instrumentLabel(instrument)} and grab an FC!`,
         songs: final.map(p => this.mapUniqueSong(p)),
       },
     ];
@@ -658,7 +658,7 @@ export class SuggestionGenerator {
     return this.buildDecadeVariant(
       `unfc_${instrument}`,
       `Finish the ${instrumentLabel(instrument)} FCs`,
-      `Clean up these almost full combos on ${instrumentLabel(instrument)}.`,
+      `Play these songs again on ${instrumentLabel(instrument)} and grab an FC!`,
       list,
     );
   }
@@ -678,7 +678,7 @@ export class SuggestionGenerator {
       {
         key: 'more_stars',
         title: 'Push These to Gold Stars',
-        description: 'Improve star ratings toward Gold Stars across any instrument.',
+        description: 'Try gold-starring this selection of tracks!',
         songs: final.map(p => this.mapUniqueSongWithInstrument(p)),
       },
     ];
@@ -692,7 +692,7 @@ export class SuggestionGenerator {
     }
     const freshCount = this.getFreshCount(list);
     if (!this.shouldEmit('more_stars_decade_wrap', freshCount)) return [];
-    return this.buildDecadeVariant('more_stars', 'Push These to Gold Stars', 'Improve star ratings toward Gold Stars across any instrument.', list);
+    return this.buildDecadeVariant('more_stars', 'Push These to Gold Stars', 'Try gold-starring this selection of tracks!', list);
   }
 
   private unplayedAll(): SuggestionCategory[] {
@@ -738,7 +738,7 @@ export class SuggestionGenerator {
       {
         key,
         title: `New on ${instrumentLabel(instrument)}`,
-        description: `Never attempted on ${instrumentLabel(instrument)} yet.`,
+        description: `Songs you haven't played on ${instrumentLabel(instrument)} yet.`,
         songs: final.map(p => this.mapUniqueSong(p)),
       },
     ];
@@ -757,7 +757,7 @@ export class SuggestionGenerator {
     return this.buildDecadeVariant(
       `unplayed_${instrument}`,
       `New on ${instrumentLabel(instrument)}`,
-      `Never attempted on ${instrumentLabel(instrument)} yet.`,
+      `Songs you haven't played on ${instrumentLabel(instrument)} yet.`,
       list.map(s => ({song: s, tracker: null})),
     );
   }
@@ -787,7 +787,7 @@ export class SuggestionGenerator {
       {
         key: `artist_sampler_${artistName}`,
         title: `${artistName} Essentials`,
-        description: `Rotating focus: songs by ${artistName} (avoids recently featured artists).`,
+        description: `A selection of songs by ${artistName}.`,
         songs: picked.map(s => {
           const b = this.scoresIndex[s.track.su];
           const tr = b?.guitar ?? b?.drums ?? null;
@@ -972,7 +972,7 @@ export class SuggestionGenerator {
       {
         key: `samename_nearfc_${disp}`,
         title: `Close to FC: '${disp}' Variants`,
-        description: "Same-name tracks nearly full combo'd.",
+        description: 'FC these same-name songs for a unique achievement!',
         songs: pool.map(p => this.mapUniqueSongWithInstrument(p)),
       },
     ];

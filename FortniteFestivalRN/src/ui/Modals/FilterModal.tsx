@@ -57,7 +57,7 @@ export function FilterModal(props: {
               <ToggleRow label="Bass" checked={props.draft.includeBass} onToggle={() => t('includeBass')} />
               <ToggleRow label="Drums" checked={props.draft.includeDrums} onToggle={() => t('includeDrums')} />
               <ToggleRow label="Vocals" checked={props.draft.includeVocals} onToggle={() => t('includeVocals')} />
-              <ToggleRow label="Pro Guitar" checked={props.draft.includeProGuitar} onToggle={() => t('includeProGuitar')} />
+              <ToggleRow label="Pro Lead" checked={props.draft.includeProGuitar} onToggle={() => t('includeProGuitar')} />
               <ToggleRow label="Pro Bass" checked={props.draft.includeProBass} onToggle={() => t('includeProBass')} last />
             </FrostedSurface>
           </View>

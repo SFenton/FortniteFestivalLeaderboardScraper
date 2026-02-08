@@ -315,7 +315,7 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
     if (!f.includeBass) instruments.push('bass');
     if (!f.includeDrums) instruments.push('drums');
     if (!f.includeVocals) instruments.push('vocals');
-    if (!f.includeProGuitar) instruments.push('pro guitar');
+    if (!f.includeProGuitar) instruments.push('pro lead');
     if (!f.includeProBass) instruments.push('pro bass');
 
     if (parts.length === 0 && instruments.length === 0) return 'No filters applied';

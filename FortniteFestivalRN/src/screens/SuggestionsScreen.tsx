@@ -13,6 +13,7 @@ import {useFestival} from '../app/festival/FestivalContext';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
 import type {LeaderboardData, Song} from '../core/models';
 import {buildSongDisplayRow, type InstrumentQuerySettings} from '../app/songs/songFiltering';
+import {formatIntegerWithCommas} from '../app/format/formatters';
 import {SuggestionGenerator} from '../core/suggestions/suggestionGenerator';
 import type {SuggestionCategory, SuggestionSongItem} from '../core/suggestions/types';
 import {getInstrumentIconSource, getInstrumentStatusVisual} from '../ui/instruments/instrumentVisuals';
@@ -490,7 +491,7 @@ const SuggestionSongRow = React.memo(function SuggestionSongRow(props: {
     const instr = rightInstrumentKeyFinal;
     const tr = instr && leaderboardData ? (leaderboardData as any)[instr] : undefined;
     const scoreValue = tr?.initialized ? tr?.maxScore : undefined;
-    const scoreDisplay = typeof scoreValue === 'number' && Number.isFinite(scoreValue) ? String(scoreValue) : '';
+    const scoreDisplay = typeof scoreValue === 'number' && Number.isFinite(scoreValue) ? formatIntegerWithCommas(scoreValue) : '';
     return {displayCount, source, scoreDisplay};
   }, [isStarGainsCategory, leaderboardData, rightInstrumentKeyFinal, starGainsStarCount]);
 

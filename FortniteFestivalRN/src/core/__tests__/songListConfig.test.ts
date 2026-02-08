@@ -38,7 +38,7 @@ describe('songListConfig', () => {
       'Lead',
       'Vocals',
       'Bass',
-      'Pro Guitar',
+      'Pro Lead',
       'Pro Bass',
     ]);
   });

@@ -35,7 +35,7 @@ export const defaultPrimaryInstrumentOrder = (): InstrumentOrderItem[] => [
   {key: 'drums', displayName: 'Drums'},
   {key: 'vocals', displayName: 'Vocals'},
   {key: 'bass', displayName: 'Bass'},
-  {key: 'pro_guitar', displayName: 'Pro Guitar'},
+  {key: 'pro_guitar', displayName: 'Pro Lead'},
   {key: 'pro_bass', displayName: 'Pro Bass'},
 ];
 

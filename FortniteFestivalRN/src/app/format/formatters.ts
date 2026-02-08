@@ -28,7 +28,7 @@ const bankersRound = (value: number, decimals: number): number => {
   return roundedScaled / factor;
 };
 
-const formatIntegerWithCommas = (value: number): string => {
+export const formatIntegerWithCommas = (value: number): string => {
   const i = Math.round(value);
   const s = String(Math.abs(i));
   const withCommas = s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -83,7 +83,7 @@ export const instrumentKeyToLabel = (key: InstrumentKey): string => {
     case 'vocals':
       return 'Vocals';
     case 'pro_guitar':
-      return 'Pro Guitar';
+      return 'Pro Lead';
     case 'pro_bass':
       return 'Pro Bass';
     default:

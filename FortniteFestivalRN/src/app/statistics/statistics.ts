@@ -49,7 +49,7 @@ const keyToLabel = (key: InstrumentKey): string => {
     case 'vocals':
       return 'Vocals';
     case 'pro_guitar':
-      return 'Pro Guitar';
+      return 'Pro Lead';
     case 'pro_bass':
       return 'Pro Bass';
     default:
