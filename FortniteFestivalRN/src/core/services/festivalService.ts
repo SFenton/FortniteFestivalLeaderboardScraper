@@ -230,6 +230,20 @@ export class FestivalService {
     }
   }
 
+  async deleteAllScores(): Promise<void> {
+    console.log('[FestivalService] Deleting all scores');
+
+    this.scoresBySongId = {};
+
+    if (this.persistence) {
+      try {
+        await this.persistence.saveScores([]);
+      } catch {
+        // swallow
+      }
+    }
+  }
+
   async clearImageCache(): Promise<void> {
     console.log('[FestivalService] Clearing image cache');
 
@@ -277,14 +291,16 @@ export class FestivalService {
       return;
     }
 
-    console.log(`[FestivalService] Syncing images for ${songsNeedingImages.length} songs`);
+    console.log(`[FestivalService] Syncing images for ${songsNeedingImages.length} songs (16 workers)`);
     const total = songsNeedingImages.length;
-    let idx = 0;
+    let completed = 0;
+    const queue = [...songsNeedingImages];
+    const limiter = createLimiter(16);
 
-    for (const s of songsNeedingImages) {
-      idx++;
+    const runOne = async (s: Song): Promise<void> => {
       const title = s.track.tt ?? s._title ?? '';
-      safeCall(this.events.songProgress, idx, total, `Img ${title}`, true);
+      const current = ++completed;
+      safeCall(this.events.songProgress, current, total, `Img ${title}`, true);
       try {
         const local = await this.imageCache.ensureCached(s, {signal: opts?.signal});
         if (local) s.imagePath = local;
@@ -292,9 +308,11 @@ export class FestivalService {
         if (canon(String(e?.message)).includes('aborted')) throw e;
         safeCall(this.events.log, `Image download failed for ${title}: ${String(e?.message ?? e)}`);
       } finally {
-        safeCall(this.events.songProgress, idx, total, `Img ${title}`, false);
+        safeCall(this.events.songProgress, current, total, `Img ${title}`, false);
       }
-    }
+    };
+
+    await Promise.all(queue.map(s => limiter.schedule(() => runOne(s))));
 
     if (this.persistence) {
       try {

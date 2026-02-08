@@ -34,6 +34,8 @@ type FestivalActions = {
   clearLog: () => void;
   logUi: (line: string) => void;
   clearImageCache: () => Promise<void>;
+  deleteAllScores: () => Promise<void>;
+  clearEverything: () => Promise<void>;
 };
 
 type FestivalContextValue = {
@@ -188,6 +190,18 @@ export function FestivalProvider(props: {children: React.ReactNode}) {
     logBufferRef.current.enqueue('Image cache cleared. Re-sync to download images again.');
   }, [service]);
 
+  const deleteAllScores = useCallback(async () => {
+    if (process.env.JEST_WORKER_ID) return;
+    await service.deleteAllScores();
+    setScoresIndex({});
+    setSettings(cur => {
+      const next = {...cur, hasEverSyncedScores: false};
+      void saveSettingsToStorage(next);
+      return next;
+    });
+    logBufferRef.current.enqueue('All local scores deleted.');
+  }, [service]);
+
   const ensureInitializedAsync = useCallback(
     async (opts?: {force?: boolean}) => {
       if (process.env.JEST_WORKER_ID) return;
@@ -235,6 +249,26 @@ export function FestivalProvider(props: {children: React.ReactNode}) {
     },
     [service],
   );
+
+  const clearEverything = useCallback(async () => {
+    if (process.env.JEST_WORKER_ID) return;
+    // 1. Delete all scores
+    await service.deleteAllScores();
+    setScoresIndex({});
+    // 2. Clear image cache
+    await service.clearImageCache();
+    setSongs([...service.songs]);
+    // 3. Reset settings to defaults
+    const freshSettings = defaultSettings();
+    setSettings(freshSettings);
+    void saveSettingsToStorage(freshSettings);
+    // 4. Clear exchange code
+    setExchangeCode('');
+    logBufferRef.current.enqueue('All app data cleared. Re-syncing...');
+    // 5. Re-kick initialization (this sets isReady=false, then back to true after sync)
+    initializedRef.current = false;
+    await ensureInitializedAsync({force: true});
+  }, [service, ensureInitializedAsync]);
 
   // Without a dedicated Sync screen, initialize on app start so the Songs tab
   // can show data immediately.
@@ -300,8 +334,10 @@ export function FestivalProvider(props: {children: React.ReactNode}) {
       clearLog,
       logUi,
       clearImageCache,
+      deleteAllScores,
+      clearEverything,
     }),
-    [setSettingsPersisted, ensureInitializedAsync, startFetchAsync, clearLog, logUi, clearImageCache],
+    [setSettingsPersisted, ensureInitializedAsync, startFetchAsync, clearLog, logUi, clearImageCache, deleteAllScores, clearEverything],
   );
 
   const state = useMemo(

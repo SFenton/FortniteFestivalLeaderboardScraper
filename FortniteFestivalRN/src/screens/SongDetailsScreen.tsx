@@ -12,7 +12,7 @@ import {PageHeader} from '../ui/PageHeader';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
 import {useFestival} from '../app/festival/FestivalContext';
 import type {InstrumentKey} from '../core/instruments';
-import {defaultPrimaryInstrumentOrder} from '../app/songs/songFiltering';
+import {normalizeInstrumentOrder} from '../app/songs/songFiltering';
 import {buildSongInfoInstrumentRows} from '../app/songInfo/songInfo';
 import {getInstrumentIconSource} from '../ui/instruments/instrumentVisuals';
 
@@ -55,7 +55,7 @@ export function SongDetailsView(props: {songId: string; showBack?: boolean; onBa
   const imageUri = song?.imagePath ?? song?.track.au;
 
   const enabledInstrumentOrder = useMemo(() => {
-    const base = defaultPrimaryInstrumentOrder().map(x => x.key);
+    const base = normalizeInstrumentOrder(settings?.songsPrimaryInstrumentOrder).map(x => x.key);
     const isEnabled = (key: InstrumentKey): boolean => {
       if (!settings) return true;
       switch (key) {

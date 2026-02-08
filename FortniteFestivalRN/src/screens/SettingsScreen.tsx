@@ -145,6 +145,40 @@ export function SettingsScreen() {
     );
   };
 
+  const handleDeleteAllScores = () => {
+    Alert.alert(
+      'Warning',
+      'This will delete all of your locally saved scores. To retrieve them again, you will have to go through the score retrieval flow above.\n\nOnly use this as a last resort.',
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'OK',
+          style: 'destructive',
+          onPress: async () => {
+            await actions.deleteAllScores();
+          },
+        },
+      ],
+    );
+  };
+
+  const handleClearEverything = () => {
+    Alert.alert(
+      'Warning',
+      'This will clear all data from the app. You will have to re-sync the song catalog and album images, and manually re-sync your scores.\n\nOnly use this as a last resort.',
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'OK',
+          style: 'destructive',
+          onPress: async () => {
+            await actions.clearEverything();
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <Screen>
       <View style={styles.wrapper}>
@@ -179,7 +213,13 @@ export function SettingsScreen() {
         <FrostedSurface style={styles.card} tint="dark" intensity={18}>
           <Text style={styles.sectionTitle}>App Settings</Text>
           <Text style={styles.sectionHint}>General Festival Score Tracker app settings.</Text>
-            <ToggleRow label="Show Instrument Icons" checked={!state.settings.songsHideInstrumentIcons} onToggle={() => toggleSetting('songsHideInstrumentIcons')} first last />
+            <DescriptorToggleRow
+              label="Show Instrument Icons"
+              description="Display instrument icons on each song row showing which parts have leaderboard scores or FCs."
+              checked={!state.settings.songsHideInstrumentIcons}
+              onToggle={() => toggleSetting('songsHideInstrumentIcons')}
+              first last
+            />
         </FrostedSurface>
 
         {/* ───── Show Instruments ───── */}
@@ -197,7 +237,7 @@ export function SettingsScreen() {
         {/* ───── Instrument Query Settings ───── */}
         <FrostedSurface style={styles.card} tint="dark" intensity={18}>
           <Text style={styles.sectionTitle}>Instrument Query Settings</Text>
-          <Text style={styles.sectionHint}>Choose which instruments to sync when fetching scores.</Text>
+          <Text style={styles.sectionHint}>Choose which instruments to sync when fetching scores. Removing instruments you don't typically play can improve sync times.</Text>
             <ToggleRow label="Lead"     checked={state.settings.queryLead}     onToggle={() => toggleSetting('queryLead')} first />
             <ToggleRow label="Bass"     checked={state.settings.queryBass}     onToggle={() => toggleSetting('queryBass')} />
             <ToggleRow label="Drums"    checked={state.settings.queryDrums}    onToggle={() => toggleSetting('queryDrums')} />
@@ -261,17 +301,20 @@ export function SettingsScreen() {
             <View style={[styles.orderRow, styles.orderRowFirst, {flexDirection: 'column', alignItems: 'stretch'}]}>
               <Text style={styles.orderName}>Exchange Code</Text>
               <Text style={styles.descriptorText}>Paste an exchange code to retrieve your scores from Epic.</Text>
-              <TextInput
-                style={[styles.input, {marginTop: 8}]}
-                value={state.exchangeCode}
-                placeholder="Paste exchange code"
-                placeholderTextColor="#607089"
-                autoCapitalize="none"
-                autoCorrect={false}
-                onChangeText={actions.setExchangeCode}
-              />
+              <FrostedSurface style={[styles.exchangeCodeSurface, {marginTop: 8}]} tint="dark" intensity={18}>
+                <TextInput
+                  style={styles.exchangeCodeInput}
+                  value={state.exchangeCode}
+                  placeholder="Paste exchange code"
+                  placeholderTextColor="#FFFFFF"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  onChangeText={actions.setExchangeCode}
+                  returnKeyType="done"
+                />
+              </FrostedSurface>
               <Pressable
-                style={[styles.buttonSecondary, {marginTop: 8}]}
+                style={({pressed}) => [styles.buttonSecondary, {marginTop: 8}, pressed && styles.buttonPressed]}
                 onPress={() => {
                   Alert.alert(
                     'Warning',
@@ -285,7 +328,7 @@ export function SettingsScreen() {
                 <Text style={styles.buttonText}>Generate Code</Text>
               </Pressable>
               <Pressable
-                style={[styles.button, {marginTop: 8}, (!state.exchangeCode.trim() || state.isInitializing || state.isFetching) && styles.buttonDisabled]}
+                style={({pressed}) => [styles.button, {marginTop: 8}, pressed && styles.buttonPressed, (!state.exchangeCode.trim() || state.isInitializing || state.isFetching) && styles.buttonDisabled]}
                 disabled={!state.exchangeCode.trim() || state.isInitializing || state.isFetching}
                 onPress={() => void actions.startFetchAsync()}>
                 <Text style={styles.buttonText}>{state.isFetching ? 'Fetching…' : 'Retrieve Scores'}</Text>
@@ -301,6 +344,32 @@ export function SettingsScreen() {
                 disabled={state.isInitializing}
                 onPress={handleClearImageCache}>
                 <Text style={styles.buttonText}>Clear Image Cache & Re-Sync</Text>
+              </Pressable>
+            </View>
+
+            {/* ── Delete All Scores ── */}
+            <View style={[styles.orderRow, styles.orderRowSeparator, {flexDirection: 'column', alignItems: 'stretch'}]}>
+              <Text style={styles.orderName}>Delete All Scores</Text>
+              <Text style={styles.descriptorText}>Delete your locally saved scores.</Text>
+              <Pressable
+                style={({pressed}) => [styles.buttonDestructive, {marginTop: 8}, pressed && styles.buttonPressed, state.isInitializing && styles.buttonDisabled]}
+                disabled={state.isInitializing}
+                onPress={handleDeleteAllScores}>
+                <Text style={styles.buttonText}>Delete All Scores</Text>
+              </Pressable>
+            </View>
+        </FrostedSurface>
+
+        {/* ───── Clear Everything ───── */}
+        <FrostedSurface style={styles.card} tint="dark" intensity={18}>
+          <Text style={styles.sectionTitle}>Clear Everything</Text>
+          <Text style={styles.sectionHint}>Resets all app settings, deletes locally saved scores, and clears the image cache.</Text>
+            <View style={[styles.orderRow, styles.orderRowFirst, {flexDirection: 'column', alignItems: 'stretch'}]}>
+              <Pressable
+                style={({pressed}) => [styles.buttonDestructive, pressed && styles.buttonPressed, (state.isInitializing || state.isFetching) && styles.buttonDisabled]}
+                disabled={state.isInitializing || state.isFetching}
+                onPress={handleClearEverything}>
+                <Text style={styles.buttonText}>Clear Everything</Text>
               </Pressable>
             </View>
         </FrostedSurface>
@@ -370,38 +439,63 @@ const styles = StyleSheet.create({
   /* ── Buttons / inputs (carried over) ── */
   row: { flexDirection: 'row', gap: 10, alignItems: 'center' },
   button: {
-    backgroundColor: '#4C7DFF',
-    paddingVertical: 10,
+    backgroundColor: 'rgba(45,130,230,0.4)',
+    paddingVertical: 12,
     paddingHorizontal: 12,
-    borderRadius: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(45,130,230,0.4)',
     alignItems: 'center',
     justifyContent: 'center',
     flexGrow: 1,
   },
   buttonSecondary: {
-    backgroundColor: '#223047',
-    paddingVertical: 10,
+    backgroundColor: 'rgba(34,48,71,0.6)',
+    paddingVertical: 12,
     paddingHorizontal: 12,
-    borderRadius: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#2B3B55',
     alignItems: 'center',
     justifyContent: 'center',
   },
   buttonPurple: {
-    backgroundColor: '#7C3AED',
-    paddingVertical: 10,
+    backgroundColor: 'rgba(124,58,237,0.4)',
+    paddingVertical: 12,
     paddingHorizontal: 12,
-    borderRadius: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(124,58,237,0.4)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  buttonPressed: { opacity: 0.7 },
+  buttonDestructive: {
+    backgroundColor: 'rgba(198,40,40,0.4)',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(198,40,40,0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buttonPressed: { opacity: 0.85 },
   buttonDisabled: { opacity: 0.5 },
-  buttonText: { color: '#FFFFFF', fontWeight: '600' },
+  buttonText: { color: '#FFFFFF', fontWeight: '800' },
   input: {
     borderWidth: 1,
     borderColor: '#2B3B55',
     backgroundColor: '#0B1220',
     borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#FFFFFF',
+  },
+  exchangeCodeSurface: {
+    borderRadius: 10,
+    borderColor: '#2B3B55',
+  },
+  exchangeCodeInput: {
     paddingHorizontal: 12,
     paddingVertical: 10,
     color: '#FFFFFF',

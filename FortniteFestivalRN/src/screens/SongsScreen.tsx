@@ -35,7 +35,8 @@ const SongRow = React.memo(function SongRow(props: {
   const year = song.track.ry;
   const imageUri = song.imagePath ?? song.track.au;
 
-  const showInstrumentIcons = !props.hideInstrumentIcons;
+  const noInstrumentsEnabled = !settings.showLead && !settings.showBass && !settings.showDrums && !settings.showVocals && !settings.showProLead && !settings.showProBass;
+  const showInstrumentIcons = !props.hideInstrumentIcons && !noInstrumentsEnabled;
 
   const row = useMemo(() => {
     if (!showInstrumentIcons) return null;
@@ -343,7 +344,7 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
               autoCapitalize="none"
               autoCorrect={false}
               style={styles.searchInput}
-              returnKeyType="search"
+              returnKeyType="done"
             />
           </FrostedSurface>
 
