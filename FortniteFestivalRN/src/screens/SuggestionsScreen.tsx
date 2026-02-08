@@ -12,10 +12,11 @@ import {MarqueeText} from '../ui/MarqueeText';
 import {useFestival} from '../app/festival/FestivalContext';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
 import type {LeaderboardData, Song} from '../core/models';
-import {buildSongDisplayRow, type InstrumentQuerySettings} from '../app/songs/songFiltering';
+import {buildSongDisplayRow, type InstrumentShowSettings} from '../app/songs/songFiltering';
 import {formatIntegerWithCommas} from '../app/format/formatters';
 import {SuggestionGenerator} from '../core/suggestions/suggestionGenerator';
 import type {SuggestionCategory, SuggestionSongItem} from '../core/suggestions/types';
+import type {InstrumentKey} from '../core/instruments';
 import {getInstrumentIconSource, getInstrumentStatusVisual} from '../ui/instruments/instrumentVisuals';
 import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 
@@ -30,15 +31,37 @@ const STAR_GOLD_ICON = require('../assets/icons/star_gold.png');
 
 type SuggestionCategoryRow = SuggestionCategory & {uiKey: string};
 
-const shouldShowCategory = (categoryKey: string, settings: {queryLead: boolean; queryDrums: boolean; queryVocals: boolean; queryBass: boolean; queryProLead: boolean; queryProBass: boolean}): boolean => {
+const shouldShowCategory = (categoryKey: string, settings: {showLead: boolean; showDrums: boolean; showVocals: boolean; showBass: boolean; showProLead: boolean; showProBass: boolean}): boolean => {
   const key = categoryKey.toLowerCase();
-  if (key.includes('pro_guitar') || key.includes('prolead') || key.includes('pro_lead')) return settings.queryProLead;
-  if (key.includes('pro_bass') || key.includes('probass')) return settings.queryProBass;
-  if (key.includes('guitar') || key.includes('lead')) return settings.queryLead;
-  if (key.includes('bass')) return settings.queryBass;
-  if (key.includes('drums')) return settings.queryDrums;
-  if (key.includes('vocals') || key.includes('vocal')) return settings.queryVocals;
+  if (key.includes('pro_guitar') || key.includes('prolead') || key.includes('pro_lead')) return settings.showProLead;
+  if (key.includes('pro_bass') || key.includes('probass')) return settings.showProBass;
+  if (key.includes('guitar') || key.includes('lead')) return settings.showLead;
+  if (key.includes('bass')) return settings.showBass;
+  if (key.includes('drums')) return settings.showDrums;
+  if (key.includes('vocals') || key.includes('vocal')) return settings.showVocals;
   return true;
+};
+
+const isInstrumentKeyVisible = (instrumentKey: InstrumentKey, settings: {showLead: boolean; showDrums: boolean; showVocals: boolean; showBass: boolean; showProLead: boolean; showProBass: boolean}): boolean => {
+  switch (instrumentKey) {
+    case 'guitar': return settings.showLead;
+    case 'bass': return settings.showBass;
+    case 'drums': return settings.showDrums;
+    case 'vocals': return settings.showVocals;
+    case 'pro_guitar': return settings.showProLead;
+    case 'pro_bass': return settings.showProBass;
+    default: return true;
+  }
+};
+
+/** Filter songs within a category to remove items for hidden instruments, then drop the category if empty. */
+const filterCategoryForInstruments = (cat: SuggestionCategory, settings: {showLead: boolean; showDrums: boolean; showVocals: boolean; showBass: boolean; showProLead: boolean; showProBass: boolean}): SuggestionCategory | null => {
+  // Single-instrument categories are filtered by shouldShowCategory via key.
+  // For multi-instrument categories, filter individual song items.
+  const filtered = cat.songs.filter(s => !s.instrumentKey || isInstrumentKeyVisible(s.instrumentKey, settings));
+  if (filtered.length === 0) return null;
+  if (filtered.length === cat.songs.length) return cat;
+  return {...cat, songs: filtered};
 };
 
 export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: string) => void}) {
@@ -54,20 +77,20 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
     actions: {logUi},
   } = useFestival();
 
-  const instrumentQuerySettings = useMemo<InstrumentQuerySettings>(() => ({
-    queryLead: settings.queryLead,
-    queryBass: settings.queryBass,
-    queryDrums: settings.queryDrums,
-    queryVocals: settings.queryVocals,
-    queryProLead: settings.queryProLead,
-    queryProBass: settings.queryProBass,
+  const instrumentQuerySettings = useMemo<InstrumentShowSettings>(() => ({
+    showLead: settings.showLead,
+    showBass: settings.showBass,
+    showDrums: settings.showDrums,
+    showVocals: settings.showVocals,
+    showProLead: settings.showProLead,
+    showProBass: settings.showProBass,
   }), [
-    settings.queryBass,
-    settings.queryDrums,
-    settings.queryLead,
-    settings.queryProBass,
-    settings.queryProLead,
-    settings.queryVocals,
+    settings.showBass,
+    settings.showDrums,
+    settings.showLead,
+    settings.showProBass,
+    settings.showProLead,
+    settings.showVocals,
   ]);
 
   const songById = useMemo(() => {
@@ -101,11 +124,17 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
   }, []);
 
   const visibleCategories = useMemo(() => {
-    return categories.filter(c => shouldShowCategory(c.key, instrumentQuerySettings));
+    return categories
+      .filter(c => shouldShowCategory(c.key, instrumentQuerySettings))
+      .map(c => filterCategoryForInstruments(c, instrumentQuerySettings))
+      .filter((c): c is SuggestionCategoryRow => c !== null);
   }, [categories, instrumentQuerySettings]);
 
   const filterForEnabledInstruments = useCallback((list: SuggestionCategory[]) => {
-    return list.filter(c => shouldShowCategory(c.key, instrumentQuerySettings));
+    return list
+      .filter(c => shouldShowCategory(c.key, instrumentQuerySettings))
+      .map(c => filterCategoryForInstruments(c, instrumentQuerySettings))
+      .filter((c): c is SuggestionCategory => c !== null);
   }, [instrumentQuerySettings]);
 
   const canRegenerate = songs.length > 0 && settings.hasEverSyncedScores && visibleCategories.length > 0;
@@ -246,18 +275,11 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
       ? 'Sync your scores to generate suggestions on what to play next.'
       : 'Sync your scores to see your Fortnite Festival stats.';
 
-    const debug = __DEV__
-      ? `songs=${songs.length} scores=${Object.keys(scoresIndex ?? {}).length} categories=${categories.length} visible=${visibleCategories.length} hasEverSyncedScores=${String(settings.hasEverSyncedScores)}
-lead=${String(settings.queryLead)} bass=${String(settings.queryBass)} drums=${String(settings.queryDrums)} vocals=${String(settings.queryVocals)} proLead=${String(settings.queryProLead)} proBass=${String(settings.queryProBass)}`
-      : '';
-
     return (
       <Screen>
         <View style={styles.content}>
           {header}
-          <CenteredEmptyStateCard title="No Suggestions Available" body={emptyBody}>
-            {__DEV__ ? <Text style={styles.debugText}>{debug}</Text> : null}
-          </CenteredEmptyStateCard>
+          <CenteredEmptyStateCard title="No Suggestions Available" body={emptyBody} />
         </View>
       </Screen>
     );
@@ -331,7 +353,7 @@ function SuggestionCard(props: {
   useCompactLayout: boolean;
   songById: ReadonlyMap<string, Song>;
   scoresIndex: Readonly<Record<string, LeaderboardData | undefined>>;
-  instrumentQuerySettings: InstrumentQuerySettings;
+  instrumentQuerySettings: InstrumentShowSettings;
   onOpenSong: (songId: string, title: string) => void;
 }) {
   const {cat} = props;
@@ -434,7 +456,7 @@ const SuggestionSongRow = React.memo(function SuggestionSongRow(props: {
   item: SuggestionSongItem;
   song?: Song;
   leaderboardData?: LeaderboardData;
-  settings: InstrumentQuerySettings;
+  settings: InstrumentShowSettings;
   useCompactLayout: boolean;
   onOpenSong: (songId: string, title: string) => void;
 }) {

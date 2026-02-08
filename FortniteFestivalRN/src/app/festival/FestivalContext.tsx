@@ -67,7 +67,7 @@ async function loadSettingsFromStorage(): Promise<Settings> {
 
     // Drop deprecated keys so they don't get re-saved forever via object spread.
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const {songsHideTrackMetadata: _deprecatedSongsHideTrackMetadata, ...rest} = parsed as any;
+    const {songsHideTrackMetadata: _deprecatedSongsHideTrackMetadata, degreeOfParallelism: _deprecatedDop, ...rest} = parsed as any;
 
     return {...defaultSettings(), ...rest};
   } catch {
@@ -196,6 +196,9 @@ export function FestivalProvider(props: {children: React.ReactNode}) {
 
       initializingRef.current = true;
       setIsInitializing(true);
+      if (opts?.force) {
+        setIsReady(false);
+      }
       try {
         // Coarse-grained progress for boot UI.
         setProgressPct(5);
@@ -254,7 +257,7 @@ export function FestivalProvider(props: {children: React.ReactNode}) {
 
         const ok = await service.fetchScores({
           exchangeCode: exchangeCode.trim(),
-          degreeOfParallelism: settings.degreeOfParallelism,
+          degreeOfParallelism: 16,
           settings,
           filteredSongIds: opts?.filteredSongIds,
         });

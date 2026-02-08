@@ -236,6 +236,7 @@ describe('FestivalService (portable core)', () => {
         if (song.track.su === 'b') throw new Error('boom');
         return `/local/${song.track.su}.jpg`;
       },
+      async clearAll() {},
     };
 
     const svc = new FestivalService({http, imageCache, events: {log: l => logs.push(l)}});
@@ -277,6 +278,7 @@ describe('FestivalService (portable core)', () => {
       async ensureCached(_song: Song) {
         return undefined;
       },
+      async clearAll() {},
     };
 
     const svc = new FestivalService({http, persistence: persistence as any, imageCache});
@@ -299,6 +301,7 @@ describe('FestivalService (portable core)', () => {
       async ensureCached() {
         throw new Error('aborted');
       },
+      async clearAll() {},
     };
 
     const svc = new FestivalService({http, imageCache});

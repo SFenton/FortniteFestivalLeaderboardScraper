@@ -22,6 +22,7 @@ export interface HttpClient {
 
 export interface ImageCache {
   ensureCached(song: Song, opts?: {signal?: AbortSignal}): Promise<string | undefined>;
+  clearAll(): Promise<void>;
 }
 
 export type FestivalServiceEvents = {

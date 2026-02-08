@@ -2,10 +2,10 @@ import type {InstrumentKey} from '../../core/instruments';
 import type {LeaderboardData, ScoreTracker, Song} from '../../core/models';
 import type {Settings} from '../../core/settings';
 
-export type {AdvancedMissingFilters, InstrumentOrderItem, SongSortMode} from '../../core/songListConfig';
-export {defaultAdvancedMissingFilters, defaultPrimaryInstrumentOrder, normalizeInstrumentOrder} from '../../core/songListConfig';
+export type {AdvancedMissingFilters, InstrumentOrderItem, InstrumentShowSettings, SongSortMode} from '../../core/songListConfig';
+export {defaultAdvancedMissingFilters, defaultPrimaryInstrumentOrder, isInstrumentVisible, normalizeInstrumentOrder, reorderPIOForVisibilityChange, showSettingKeyForInstrument} from '../../core/songListConfig';
 
-import type {AdvancedMissingFilters, InstrumentOrderItem, SongSortMode} from '../../core/songListConfig';
+import type {AdvancedMissingFilters, InstrumentOrderItem, InstrumentShowSettings, SongSortMode} from '../../core/songListConfig';
 import {defaultAdvancedMissingFilters, defaultPrimaryInstrumentOrder} from '../../core/songListConfig';
 
 const canon = (s: string | undefined): string => (s ?? '').trim().toLowerCase();
@@ -195,11 +195,11 @@ const trackerToStarString = (n: number): string => {
 export const buildSongDisplayRow = (params: {
   song: Song;
   scoresIndex: Readonly<Record<string, LeaderboardData | undefined>>;
-  settings?: InstrumentQuerySettings;
+  settings?: InstrumentShowSettings;
 } | {
   song: Song;
   leaderboardData?: LeaderboardData;
-  settings?: InstrumentQuerySettings;
+  settings?: InstrumentShowSettings;
 }): SongDisplayRow => {
   const {song, settings} = params;
   const id = song.track.su;
@@ -257,17 +257,17 @@ export const buildSongDisplayRow = (params: {
     for (const s of statuses) {
       s.isEnabled =
         s.instrumentKey === 'guitar'
-          ? (settings.queryLead ?? true)
+          ? (settings.showLead ?? true)
           : s.instrumentKey === 'bass'
-            ? (settings.queryBass ?? true)
+            ? (settings.showBass ?? true)
             : s.instrumentKey === 'drums'
-              ? (settings.queryDrums ?? true)
+              ? (settings.showDrums ?? true)
               : s.instrumentKey === 'vocals'
-                ? (settings.queryVocals ?? true)
+                ? (settings.showVocals ?? true)
                 : s.instrumentKey === 'pro_guitar'
-                  ? (settings.queryProLead ?? true)
+                  ? (settings.showProLead ?? true)
                   : s.instrumentKey === 'pro_bass'
-                    ? (settings.queryProBass ?? true)
+                    ? (settings.showProBass ?? true)
                     : true;
     }
   }

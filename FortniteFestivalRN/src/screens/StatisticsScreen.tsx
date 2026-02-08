@@ -20,35 +20,35 @@ const TOP_SONGS_VIRTUALIZE_THRESHOLD = 12;
 
 const shouldShowCategory = (
   categoryKey: string,
-  settings: {queryLead: boolean; queryDrums: boolean; queryVocals: boolean; queryBass: boolean; queryProLead: boolean; queryProBass: boolean},
+  settings: {showLead: boolean; showDrums: boolean; showVocals: boolean; showBass: boolean; showProLead: boolean; showProBass: boolean},
 ): boolean => {
   const key = categoryKey.toLowerCase();
-  if (key.includes('pro_guitar') || key.includes('prolead') || key.includes('pro_lead')) return settings.queryProLead;
-  if (key.includes('pro_bass') || key.includes('probass')) return settings.queryProBass;
-  if (key.includes('guitar') || key.includes('lead')) return settings.queryLead;
-  if (key.includes('bass')) return settings.queryBass;
-  if (key.includes('drums')) return settings.queryDrums;
-  if (key.includes('vocals') || key.includes('vocal')) return settings.queryVocals;
+  if (key.includes('pro_guitar') || key.includes('prolead') || key.includes('pro_lead')) return settings.showProLead;
+  if (key.includes('pro_bass') || key.includes('probass')) return settings.showProBass;
+  if (key.includes('guitar') || key.includes('lead')) return settings.showLead;
+  if (key.includes('bass')) return settings.showBass;
+  if (key.includes('drums')) return settings.showDrums;
+  if (key.includes('vocals') || key.includes('vocal')) return settings.showVocals;
   return true;
 };
 
 const isInstrumentEnabled = (
   instrument: InstrumentKey,
-  settings: {queryLead: boolean; queryDrums: boolean; queryVocals: boolean; queryBass: boolean; queryProLead: boolean; queryProBass: boolean},
+  settings: {showLead: boolean; showDrums: boolean; showVocals: boolean; showBass: boolean; showProLead: boolean; showProBass: boolean},
 ): boolean => {
   switch (instrument) {
     case 'guitar':
-      return settings.queryLead;
+      return settings.showLead;
     case 'bass':
-      return settings.queryBass;
+      return settings.showBass;
     case 'drums':
-      return settings.queryDrums;
+      return settings.showDrums;
     case 'vocals':
-      return settings.queryVocals;
+      return settings.showVocals;
     case 'pro_guitar':
-      return settings.queryProLead;
+      return settings.showProLead;
     case 'pro_bass':
-      return settings.queryProBass;
+      return settings.showProBass;
     default:
       return true;
   }
@@ -70,19 +70,19 @@ export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: st
   } = useFestival();
 
   const instrumentQuerySettings = useMemo(() => ({
-    queryLead: settings.queryLead,
-    queryBass: settings.queryBass,
-    queryDrums: settings.queryDrums,
-    queryVocals: settings.queryVocals,
-    queryProLead: settings.queryProLead,
-    queryProBass: settings.queryProBass,
+    showLead: settings.showLead,
+    showBass: settings.showBass,
+    showDrums: settings.showDrums,
+    showVocals: settings.showVocals,
+    showProLead: settings.showProLead,
+    showProBass: settings.showProBass,
   }), [
-    settings.queryBass,
-    settings.queryDrums,
-    settings.queryLead,
-    settings.queryProBass,
-    settings.queryProLead,
-    settings.queryVocals,
+    settings.showBass,
+    settings.showDrums,
+    settings.showLead,
+    settings.showProBass,
+    settings.showProLead,
+    settings.showVocals,
   ]);
 
   const songById = useMemo(() => {

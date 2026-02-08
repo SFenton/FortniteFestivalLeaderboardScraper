@@ -9,7 +9,7 @@ import { Screen } from '../ui/Screen';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
 import {useFestival} from '../app/festival/FestivalContext';
 import type {LeaderboardData, Song} from '../core/models';
-import {buildSongDisplayRow, defaultAdvancedMissingFilters, defaultPrimaryInstrumentOrder, filterAndSortSongs, normalizeInstrumentOrder, type InstrumentQuerySettings} from '../app/songs/songFiltering';
+import {buildSongDisplayRow, defaultAdvancedMissingFilters, defaultPrimaryInstrumentOrder, filterAndSortSongs, normalizeInstrumentOrder, type InstrumentShowSettings} from '../app/songs/songFiltering';
 import {getInstrumentIconSource, getInstrumentStatusVisual} from '../ui/instruments/instrumentVisuals';
 import {SortModal} from '../ui/Modals/SortModal';
 import {FilterModal} from '../ui/Modals/FilterModal';
@@ -22,7 +22,7 @@ import type {InstrumentKey} from '../core/instruments';
 const SongRow = React.memo(function SongRow(props: {
   song: Song;
   leaderboardData?: LeaderboardData;
-  settings: InstrumentQuerySettings;
+  settings: InstrumentShowSettings;
   useCompactLayout: boolean;
   hideInstrumentIcons: boolean;
   onOpen: (songId: string, title: string) => void;
@@ -76,13 +76,12 @@ const SongRow = React.memo(function SongRow(props: {
 
               {showInstrumentIcons && row ? (
                 <View style={styles.instrumentRowCompact}>
-                  {row.instrumentStatuses.map(s => {
+                  {row.instrumentStatuses.filter(s => s.isEnabled).map(s => {
                     const {fill, stroke} = getInstrumentStatusVisual({hasScore: s.hasScore, isFullCombo: s.isFullCombo});
-                    const opacity = s.isEnabled ? 1 : 0.35;
                     return (
                       <View
                         key={s.instrumentKey}
-                        style={[styles.instrumentChipCompact, {backgroundColor: fill, borderColor: stroke, opacity}]}
+                        style={[styles.instrumentChipCompact, {backgroundColor: fill, borderColor: stroke}]}
                       >
                         <Image source={getInstrumentIconSource(s.instrumentKey)} style={styles.instrumentIconCompact} resizeMode="contain" />
                       </View>
@@ -116,13 +115,12 @@ const SongRow = React.memo(function SongRow(props: {
 
               {!props.hideInstrumentIcons && row ? (
                 <View style={styles.instrumentRow}>
-                  {row.instrumentStatuses.map(s => {
+                  {row.instrumentStatuses.filter(s => s.isEnabled).map(s => {
                     const {fill, stroke} = getInstrumentStatusVisual({hasScore: s.hasScore, isFullCombo: s.isFullCombo});
-                    const opacity = s.isEnabled ? 1 : 0.35;
                     return (
                       <View
                         key={s.instrumentKey}
-                        style={[styles.instrumentChip, {backgroundColor: fill, borderColor: stroke, opacity}]}
+                        style={[styles.instrumentChip, {backgroundColor: fill, borderColor: stroke}]}
                       >
                         <Image source={getInstrumentIconSource(s.instrumentKey)} style={styles.instrumentIcon} resizeMode="contain" />
                       </View>
@@ -171,20 +169,20 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
     actions: {logUi, setSettings},
   } = useFestival();
 
-  const instrumentQuerySettings = useMemo<InstrumentQuerySettings>(() => ({
-    queryLead: settings.queryLead,
-    queryBass: settings.queryBass,
-    queryDrums: settings.queryDrums,
-    queryVocals: settings.queryVocals,
-    queryProLead: settings.queryProLead,
-    queryProBass: settings.queryProBass,
+  const instrumentQuerySettings = useMemo<InstrumentShowSettings>(() => ({
+    showLead: settings.showLead,
+    showBass: settings.showBass,
+    showDrums: settings.showDrums,
+    showVocals: settings.showVocals,
+    showProLead: settings.showProLead,
+    showProBass: settings.showProBass,
   }), [
-    settings.queryBass,
-    settings.queryDrums,
-    settings.queryLead,
-    settings.queryProBass,
-    settings.queryProLead,
-    settings.queryVocals,
+    settings.showBass,
+    settings.showDrums,
+    settings.showLead,
+    settings.showProBass,
+    settings.showProLead,
+    settings.showVocals,
   ]);
 
   const [query, setQuery] = useState('');
@@ -422,6 +420,7 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
         <SortModal
           visible={showSort}
           draft={sortDraft}
+          showInstruments={instrumentQuerySettings}
           onChange={setSortDraft}
           onCancel={() => {
             setSortDraft({
@@ -464,6 +463,11 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
           visible={showFilter}
           draft={filterDraft}
           onChange={setFilterDraft}
+          hideProFilters={!settings.showProLead && !settings.showProBass}
+          showInstruments={instrumentQuerySettings}
+          onShowInstrumentToggle={(key) => {
+            setSettings({...settings, [key]: !settings[key]});
+          }}
           onCancel={() => setShowFilter(false)}
           onReset={() => {
             const defaults = defaultAdvancedMissingFilters();

@@ -60,17 +60,17 @@ export function SongDetailsView(props: {songId: string; showBack?: boolean; onBa
       if (!settings) return true;
       switch (key) {
         case 'guitar':
-          return settings.queryLead;
+          return settings.showLead;
         case 'drums':
-          return settings.queryDrums;
+          return settings.showDrums;
         case 'vocals':
-          return settings.queryVocals;
+          return settings.showVocals;
         case 'bass':
-          return settings.queryBass;
+          return settings.showBass;
         case 'pro_guitar':
-          return settings.queryProLead;
+          return settings.showProLead;
         case 'pro_bass':
-          return settings.queryProBass;
+          return settings.showProBass;
         default:
           return true;
       }
@@ -273,7 +273,6 @@ export function SongDetailsView(props: {songId: string; showBack?: boolean; onBa
         <View pointerEvents="none" style={styles.bgBase} />
         {imageUri ? (
           <Image
-            pointerEvents="none"
             source={{uri: imageUri}}
             style={styles.bgImage}
             resizeMode="cover"

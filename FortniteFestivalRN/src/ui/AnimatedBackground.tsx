@@ -3,7 +3,7 @@ import {Animated, StyleSheet, View} from 'react-native';
 import {useFestival} from '../app/festival/FestivalContext';
 
 const FADE_DURATION = 1000; // 1 second fade
-const DISPLAY_DURATION = 10000; // 10 seconds display time
+const DISPLAY_DURATION = 5000; // 10 seconds display time
 
 export function AnimatedBackground(props: {animate?: boolean; dimOpacity?: number}) {
   const {

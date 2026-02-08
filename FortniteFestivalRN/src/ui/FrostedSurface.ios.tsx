@@ -2,6 +2,7 @@ import React from 'react';
 import {StyleProp, StyleSheet, View, type ViewProps, ViewStyle} from 'react-native';
 import {BlurView} from '@react-native-community/blur';
 import {LiquidGlassView, isLiquidGlassSupported} from '@callstack/liquid-glass';
+import {useFestival} from '../app/festival/FestivalContext';
 
 type FrostedTint = 'light' | 'dark' | 'default';
 
@@ -11,9 +12,6 @@ type Props = {
   tint?: FrostedTint;
   intensity?: number;
   fallbackColor?: string;
-  blurEnabled?: boolean;
-  /** Use liquid glass effect on iOS 26+ (defaults to true) */
-  liquidGlassEnabled?: boolean;
 } & Omit<ViewProps, 'style' | 'children'>;
 
 export function FrostedSurface(props: Props) {
@@ -23,30 +21,31 @@ export function FrostedSurface(props: Props) {
     tint = 'dark',
     intensity = 18,
     fallbackColor = 'rgba(18,24,38,0.78)',
-    blurEnabled = true,
-    liquidGlassEnabled = true,
     ...viewProps
   } = props;
 
-  if (!blurEnabled) {
-    return (
-      <View {...viewProps} style={[styles.chrome, style, {backgroundColor: fallbackColor}]}> 
-        {children}
-      </View>
-    );
-  }
+  const {state} = useFestival();
+  const {iosBlurEnabled, iosLiquidGlassEnabled, iosLiquidGlassStyle} = state.settings;
 
-  // Use LiquidGlassView on iOS 26+ when enabled
-  if (isLiquidGlassSupported && liquidGlassEnabled) {
+  // Use LiquidGlassView on iOS 26+ when enabled (independent of blur setting)
+  if (isLiquidGlassSupported && iosLiquidGlassEnabled) {
     return (
       <LiquidGlassView
         {...viewProps}
         style={[styles.liquidGlass, style]}
-        effect="regular"
+        effect={iosLiquidGlassStyle}
         colorScheme={tint === 'light' ? 'light' : tint === 'dark' ? 'dark' : 'system'}
       >
         <View style={styles.content}>{children}</View>
       </LiquidGlassView>
+    );
+  }
+
+  if (!iosBlurEnabled) {
+    return (
+      <View {...viewProps} style={[styles.chrome, style, {backgroundColor: fallbackColor}]}>
+        {children}
+      </View>
     );
   }
 

@@ -1,15 +1,99 @@
-import React, {useCallback, useMemo} from 'react';
-import {Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View} from 'react-native';
+import React, {useCallback} from 'react';
+import {Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View} from 'react-native';
 import MaskedView from '@react-native-masked-view/masked-view';
 import LinearGradient from 'react-native-linear-gradient';
+import {isLiquidGlassSupported} from '@callstack/liquid-glass';
 
 import { Screen } from '../ui/Screen';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
 import {useFestival} from '../app/festival/FestivalContext';
-import {IntSlider} from '../ui/IntSlider';
 import {FrostedSurface} from '../ui/FrostedSurface';
 import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 import {PageHeader} from '../ui/PageHeader';
+import {reorderPIOForVisibilityChange, showSettingKeyForInstrument} from '../core/songListConfig';
+import {InstrumentKeys} from '../core/instruments';
+
+/* ────────────────────────── Toggle row (reused) ────────────────────────── */
+
+function ToggleRow(props: {label: string; checked: boolean; onToggle: () => void; first?: boolean; last?: boolean}) {
+  return (
+    <Pressable
+      onPress={props.onToggle}
+      style={({pressed}) => [
+        styles.orderRow,
+        props.first && styles.orderRowFirst,
+        props.last && styles.orderRowLast,
+        !props.first && styles.orderRowSeparator,
+        pressed && styles.rowBtnPressed,
+      ]}
+      accessibilityRole="switch"
+    >
+      <Text style={styles.orderName}>{props.label}</Text>
+      <Switch
+        value={props.checked}
+        onValueChange={props.onToggle}
+        trackColor={{false: '#263244', true: 'rgba(45,130,230,1)'}}
+        thumbColor={props.checked ? '#FFFFFF' : '#8899AA'}
+      />
+    </Pressable>
+  );
+}
+
+/* ── Toggle row with descriptor text ── */
+
+function DescriptorToggleRow(props: {
+  label: string;
+  description: string;
+  checked: boolean;
+  onToggle: () => void;
+  disabled?: boolean;
+  first?: boolean;
+  last?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={props.disabled ? undefined : props.onToggle}
+      disabled={props.disabled}
+      style={({pressed}) => [
+        styles.orderRow,
+        {alignItems: 'flex-start'},
+        props.first && styles.orderRowFirst,
+        props.last && styles.orderRowLast,
+        !props.first && styles.orderRowSeparator,
+        pressed && !props.disabled && styles.rowBtnPressed,
+        props.disabled && styles.rowDisabled,
+      ]}
+      accessibilityRole="switch"
+    >
+      <View style={{flex: 1, marginRight: 12}}>
+        <Text style={[styles.orderName, props.disabled && styles.textDisabled]}>{props.label}</Text>
+        <Text style={[styles.descriptorText, props.disabled && styles.textDisabled]}>{props.description}</Text>
+      </View>
+      <View style={props.disabled ? styles.rowDisabled : undefined} pointerEvents={props.disabled ? 'none' : 'auto'}>
+        <Switch
+          value={props.checked}
+          onValueChange={props.onToggle}
+          trackColor={{false: '#263244', true: 'rgba(45,130,230,1)'}}
+          thumbColor={props.checked ? '#FFFFFF' : '#8899AA'}
+        />
+      </View>
+    </Pressable>
+  );
+}
+
+/* ── Choice button (mirrors SortModal pattern) ── */
+
+function Choice(props: {label: string; selected: boolean; onPress: () => void}) {
+  return (
+    <Pressable onPress={props.onPress} style={({pressed}) => [{flex: 1}, pressed && styles.rowBtnPressed]}>
+      <FrostedSurface style={[styles.choice, props.selected && styles.choiceSelected]} tint="dark" intensity={12}>
+        <Text style={[styles.choiceText, props.selected && styles.choiceTextSelected]}>{props.label}</Text>
+      </FrostedSurface>
+    </Pressable>
+  );
+}
+
+/* ─────────────────────────── Settings screen ───────────────────────────── */
 
 export function SettingsScreen() {
   usePageInstrumentation('Settings');
@@ -19,38 +103,46 @@ export function SettingsScreen() {
   const generateExchangeCodeUrl =
     'https://www.epicgames.com/id/api/redirect?clientId=ec684b8c687f479fadea3cb2ad83f5c6&responseType=code';
 
-  const scoresCount = useMemo(() => {
-    return Object.values(state.scoresIndex).filter(ld =>
-      ld?.guitar?.initialized === true ||
-      ld?.drums?.initialized === true ||
-      ld?.bass?.initialized === true ||
-      ld?.vocals?.initialized === true ||
-      ld?.pro_guitar?.initialized === true ||
-      ld?.pro_bass?.initialized === true,
-    ).length;
-  }, [state.scoresIndex]);
+  /* ── instrument toggles (same backend values as filter modal) ── */
 
-  const dop = useMemo(() => {
-    const raw = Math.round(state.settings.degreeOfParallelism);
-    return Math.max(1, Math.min(32, raw));
-  }, [state.settings.degreeOfParallelism]);
+  const toggleSetting = useCallback(
+    (key: 'queryLead' | 'queryBass' | 'queryDrums' | 'queryVocals' | 'queryProLead' | 'queryProBass' | 'showLead' | 'showBass' | 'showDrums' | 'showVocals' | 'showProLead' | 'showProBass' | 'songsHideInstrumentIcons') => {
+      const next = {...state.settings, [key]: !state.settings[key]};
 
-  const setDop = useCallback((next: number) => {
-    actions.setSettings({...state.settings, degreeOfParallelism: next});
-  }, [actions, state.settings]);
+      // When toggling a show* setting, also reorder the Primary Instrument Order:
+      // hidden instruments move to end; re-enabled instruments return to their default position.
+      const instrumentKey = InstrumentKeys.find(k => showSettingKeyForInstrument(k) === key);
+      if (instrumentKey) {
+        const isNowVisible = !state.settings[key]; // toggling, so new value is the inverse
+        next.songsPrimaryInstrumentOrder = reorderPIOForVisibilityChange(
+          state.settings.songsPrimaryInstrumentOrder,
+          instrumentKey,
+          isNowVisible,
+          state.settings, // pass current (pre-toggle) show settings
+        );
+      }
 
-  const toggleHideSongIcons = useCallback(() => {
-    const next = !state.settings.songsHideInstrumentIcons;
-    actions.setSettings({
-      ...state.settings,
-      songsHideInstrumentIcons: next,
-    });
-  }, [actions, state.settings]);
+      actions.setSettings(next);
+    },
+    [actions, state.settings],
+  );
 
-  const handleClearImageCache = async () => {
-    await actions.clearImageCache();
-    // Optionally trigger a re-sync to download images again
-    await actions.ensureInitializedAsync();
+  const handleClearImageCache = () => {
+    Alert.alert(
+      'Clear Image Cache & Re-Sync',
+      'This will clear all cached songs and images and require an online connection to re-sync them. Your local scores will not be deleted.\n\nOnly proceed if you are ready to re-sync.',
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'Re-Sync',
+          style: 'destructive',
+          onPress: async () => {
+            await actions.clearImageCache();
+            await actions.ensureInitializedAsync({force: true});
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -83,101 +175,137 @@ export function SettingsScreen() {
             keyboardShouldPersistTaps="handled"
           >
 
+        {/* ───── App Settings ───── */}
         <FrostedSurface style={styles.card} tint="dark" intensity={18}>
-          <Text style={styles.cardTitle}>Status</Text>
-          <Text style={styles.body}>Songs: {state.songs.length}</Text>
-          <Text style={styles.body}>Cached scores: {scoresCount}</Text>
-          <Text style={styles.body}>Progress: {state.progressLabel}</Text>
-          <Text style={styles.smallMuted}>{state.metrics}</Text>
-
-          <View style={styles.progressOuter}>
-            <View style={[styles.progressInner, {width: `${Math.max(0, Math.min(100, state.progressPct))}%`}]} />
-          </View>
-
-          <View style={styles.row}>
-            <Pressable
-              style={[styles.button, (state.isInitializing || state.isFetching) && styles.buttonDisabled]}
-              disabled={state.isInitializing || state.isFetching}
-              onPress={() => void actions.ensureInitializedAsync({force: true})}>
-              <Text style={styles.buttonText}>{state.isInitializing ? 'Initializing…' : 'Re-sync Songs'}</Text>
-            </Pressable>
-
-            <Pressable
-              style={[styles.buttonSecondary, (state.isInitializing || state.isFetching) && styles.buttonDisabled]}
-              disabled={state.isInitializing || state.isFetching}
-              onPress={() => void actions.clearLog()}>
-              <Text style={styles.buttonText}>Clear Log</Text>
-            </Pressable>
-          </View>
+          <Text style={styles.sectionTitle}>App Settings</Text>
+          <Text style={styles.sectionHint}>General Festival Score Tracker app settings.</Text>
+            <ToggleRow label="Show Instrument Icons" checked={!state.settings.songsHideInstrumentIcons} onToggle={() => toggleSetting('songsHideInstrumentIcons')} first last />
         </FrostedSurface>
 
+        {/* ───── Show Instruments ───── */}
         <FrostedSurface style={styles.card} tint="dark" intensity={18}>
-          <Text style={styles.cardTitle}>Exchange Code</Text>
-          <TextInput
-            style={styles.input}
-            value={state.exchangeCode}
-            placeholder="Paste exchange code"
-            placeholderTextColor="#607089"
-            autoCapitalize="none"
-            autoCorrect={false}
-            onChangeText={actions.setExchangeCode}
-          />
-
-          <View style={styles.row}>
-            <Pressable
-              style={[styles.button, (!state.exchangeCode.trim() || state.isInitializing || state.isFetching) && styles.buttonDisabled]}
-              disabled={!state.exchangeCode.trim() || state.isInitializing || state.isFetching}
-              onPress={() => void actions.startFetchAsync()}>
-              <Text style={styles.buttonText}>{state.isFetching ? 'Fetching…' : 'Retrieve Scores'}</Text>
-            </Pressable>
-
-            <Pressable
-              style={styles.buttonSecondary}
-              onPress={() => void Linking.openURL(generateExchangeCodeUrl)}>
-              <Text style={styles.buttonText}>Generate Code</Text>
-            </Pressable>
-          </View>
+          <Text style={styles.sectionTitle}>Show Instruments</Text>
+          <Text style={styles.sectionHint}>Choose which instruments to display throughout the app.</Text>
+            <ToggleRow label="Lead"     checked={state.settings.showLead}     onToggle={() => toggleSetting('showLead')} first />
+            <ToggleRow label="Bass"     checked={state.settings.showBass}     onToggle={() => toggleSetting('showBass')} />
+            <ToggleRow label="Drums"    checked={state.settings.showDrums}    onToggle={() => toggleSetting('showDrums')} />
+            <ToggleRow label="Vocals"   checked={state.settings.showVocals}   onToggle={() => toggleSetting('showVocals')} />
+            <ToggleRow label="Pro Lead" checked={state.settings.showProLead}  onToggle={() => toggleSetting('showProLead')} />
+            <ToggleRow label="Pro Bass" checked={state.settings.showProBass}  onToggle={() => toggleSetting('showProBass')} last />
         </FrostedSurface>
 
+        {/* ───── Instrument Query Settings ───── */}
         <FrostedSurface style={styles.card} tint="dark" intensity={18}>
-          <Text style={styles.cardTitle}>Sync</Text>
-          <View style={styles.rowBetween}>
-            <Text style={styles.body}>Concurrency</Text>
-            <Text style={styles.value}>{dop}</Text>
-          </View>
-          <IntSlider min={1} max={32} value={dop} onChange={setDop} disabled={state.isInitializing || state.isFetching} />
-          <Text style={styles.smallMuted}>Range: 1–32. Higher values may be faster, but use more CPU/network.</Text>
+          <Text style={styles.sectionTitle}>Instrument Query Settings</Text>
+          <Text style={styles.sectionHint}>Choose which instruments to sync when fetching scores.</Text>
+            <ToggleRow label="Lead"     checked={state.settings.queryLead}     onToggle={() => toggleSetting('queryLead')} first />
+            <ToggleRow label="Bass"     checked={state.settings.queryBass}     onToggle={() => toggleSetting('queryBass')} />
+            <ToggleRow label="Drums"    checked={state.settings.queryDrums}    onToggle={() => toggleSetting('queryDrums')} />
+            <ToggleRow label="Vocals"   checked={state.settings.queryVocals}   onToggle={() => toggleSetting('queryVocals')} />
+            <ToggleRow label="Pro Lead" checked={state.settings.queryProLead}  onToggle={() => toggleSetting('queryProLead')} />
+            <ToggleRow label="Pro Bass" checked={state.settings.queryProBass}  onToggle={() => toggleSetting('queryProBass')} last />
         </FrostedSurface>
 
+        {/* ───── iOS Settings ───── */}
+        {Platform.OS === 'ios' && (
         <FrostedSurface style={styles.card} tint="dark" intensity={18}>
-          <Text style={styles.cardTitle}>Songs List</Text>
+          <Text style={styles.sectionTitle}>iOS Settings</Text>
+          <Text style={styles.sectionHint}>Settings specific to iOS.</Text>
 
-          <View style={styles.toggleRow}>
-            <Text style={styles.body}>Hide instrument icons</Text>
-            <Switch
-              value={state.settings.songsHideInstrumentIcons}
-              onValueChange={() => toggleHideSongIcons()}
-              trackColor={{false: '#263244', true: '#2D82E6'}}
-              thumbColor={Platform.OS === 'android' ? '#FFFFFF' : undefined}
-              accessibilityLabel="Hide instrument icons"
+            {isLiquidGlassSupported && (
+              <>
+                <DescriptorToggleRow
+                  label="Enable Liquid Glass"
+                  description="Use the iOS 26 liquid glass material on surfaces throughout the app. Disable to potentially improve performance on some devices."
+                  checked={state.settings.iosLiquidGlassEnabled}
+                  onToggle={() => {
+                    actions.setSettings({...state.settings, iosLiquidGlassEnabled: !state.settings.iosLiquidGlassEnabled});
+                  }}
+                  first
+                />
+
+                {false && state.settings.iosLiquidGlassEnabled && (
+                  <View style={[styles.orderRow, styles.orderRowSeparator, {flexDirection: 'column', alignItems: 'stretch'}]}>
+                    <Text style={styles.orderName}>Liquid Glass Style</Text>
+                    <Text style={styles.descriptorText}>Controls the glass effect style used on surfaces.</Text>
+                    <View style={styles.choiceRow}>
+                      <Choice label="None" selected={state.settings.iosLiquidGlassStyle === 'none'} onPress={() => actions.setSettings({...state.settings, iosLiquidGlassStyle: 'none'})} />
+                      <Choice label="Regular" selected={state.settings.iosLiquidGlassStyle === 'regular'} onPress={() => actions.setSettings({...state.settings, iosLiquidGlassStyle: 'regular'})} />
+                      <Choice label="Clear" selected={state.settings.iosLiquidGlassStyle === 'clear'} onPress={() => actions.setSettings({...state.settings, iosLiquidGlassStyle: 'clear'})} />
+                    </View>
+                  </View>
+                )}
+              </>
+            )}
+
+            <DescriptorToggleRow
+              label="Enable Blur"
+              description="Apply a blur effect behind surfaces. Disable to potentially improve performance on some devices."
+              checked={state.settings.iosBlurEnabled}
+              onToggle={() => {
+                actions.setSettings({...state.settings, iosBlurEnabled: !state.settings.iosBlurEnabled});
+              }}
+              disabled={isLiquidGlassSupported && state.settings.iosLiquidGlassEnabled}
+              first={!isLiquidGlassSupported}
+              last
             />
-          </View>
+        </FrostedSurface>
+        )}
+
+        {/* ───── Sync Settings ───── */}
+        <FrostedSurface style={styles.card} tint="dark" intensity={18}>
+          <Text style={styles.sectionTitle}>Sync Settings</Text>
+          <Text style={styles.sectionHint}>Configure how scores are synced.</Text>
+
+            {/* ── Exchange Code ── */}
+            <View style={[styles.orderRow, styles.orderRowFirst, {flexDirection: 'column', alignItems: 'stretch'}]}>
+              <Text style={styles.orderName}>Exchange Code</Text>
+              <Text style={styles.descriptorText}>Paste an exchange code to retrieve your scores from Epic.</Text>
+              <TextInput
+                style={[styles.input, {marginTop: 8}]}
+                value={state.exchangeCode}
+                placeholder="Paste exchange code"
+                placeholderTextColor="#607089"
+                autoCapitalize="none"
+                autoCorrect={false}
+                onChangeText={actions.setExchangeCode}
+              />
+              <Pressable
+                style={[styles.buttonSecondary, {marginTop: 8}]}
+                onPress={() => {
+                  Alert.alert(
+                    'Warning',
+                    'You must already be signed into Epic Games on your default browser to use this. When this link is opened, copy the authorization code and paste it back into this app and this app only.\n\nDo not give this code to anyone else. It enables access to your entire account.\n\nThis code has a short lifespan and must be copied and pasted very quickly. Only proceed if you are aware of all of the above.',
+                    [
+                      {text: 'Cancel', style: 'cancel'},
+                      {text: 'OK', style: 'destructive', onPress: () => void Linking.openURL(generateExchangeCodeUrl)},
+                    ],
+                  );
+                }}>
+                <Text style={styles.buttonText}>Generate Code</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.button, {marginTop: 8}, (!state.exchangeCode.trim() || state.isInitializing || state.isFetching) && styles.buttonDisabled]}
+                disabled={!state.exchangeCode.trim() || state.isInitializing || state.isFetching}
+                onPress={() => void actions.startFetchAsync()}>
+                <Text style={styles.buttonText}>{state.isFetching ? 'Fetching…' : 'Retrieve Scores'}</Text>
+              </Pressable>
+            </View>
+
+            {/* ── Clear Image Cache ── */}
+            <View style={[styles.orderRow, styles.orderRowSeparator, {flexDirection: 'column', alignItems: 'stretch'}]}>
+              <Text style={styles.orderName}>Clear Image Cache & Re-Sync</Text>
+              <Text style={styles.descriptorText}>Clears all cached album art and re-downloads images on next sync.</Text>
+              <Pressable
+                style={({pressed}) => [styles.buttonPurple, {marginTop: 8}, pressed && styles.buttonPressed, state.isInitializing && styles.buttonDisabled]}
+                disabled={state.isInitializing}
+                onPress={handleClearImageCache}>
+                <Text style={styles.buttonText}>Clear Image Cache & Re-Sync</Text>
+              </Pressable>
+            </View>
         </FrostedSurface>
 
-        <FrostedSurface style={styles.card} tint="dark" intensity={18}>
-          <Text style={styles.cardTitle}>Image Cache</Text>
-          <Pressable
-            style={({pressed}) => [styles.buttonPurple, pressed && styles.buttonPressed, state.isInitializing && styles.buttonDisabled]}
-            disabled={state.isInitializing}
-            onPress={handleClearImageCache}>
-            <Text style={styles.buttonText}>Clear Image Cache & Re-sync</Text>
-          </Pressable>
-        </FrostedSurface>
 
-        <FrostedSurface style={styles.card} tint="dark" intensity={18}>
-          <Text style={styles.cardTitle}>Log</Text>
-          <Text style={styles.log}>{state.logJoined || '(empty)'}</Text>
-        </FrostedSurface>
       </ScrollView>
         </MaskedView>
       </View>
@@ -193,64 +321,54 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
     gap: 12,
   },
-  fadeScrollContainer: {
+  fadeScrollContainer: { flex: 1 },
+  fadeMaskContainer: { flex: 1 },
+  fadeMaskOpaque: { flex: 1, backgroundColor: '#000000' },
+  fadeGradient: { height: 32 },
+  content: { paddingTop: 32, gap: 12 },
+
+  /* ── Card (matches Suggestions / Statistics cards) ── */
+  card: { borderRadius: 12, padding: 14, gap: 10 },
+  sectionTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  sectionHint: { color: '#D7DEE8', fontSize: 13, lineHeight: 18 },
+
+  /* ── Toggle list rows ── */
+  orderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  orderRowFirst: { marginTop: 6 },
+  orderRowLast: {},
+  orderRowSeparator: {},
+  orderName: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  rowBtnPressed: { opacity: 0.85 },
+  rowDisabled: { opacity: 0.45 },
+  descriptorText: { color: '#8899AA', fontSize: 12, lineHeight: 16, marginTop: 2 },
+  textDisabled: { color: '#607089' },
+
+  /* ── Choice buttons (matches SortModal) ── */
+  choiceRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  choice: {
     flex: 1,
-  },
-  fadeMaskContainer: {
-    flex: 1,
-  },
-  fadeMaskOpaque: {
-    flex: 1,
-    backgroundColor: '#000000',
-  },
-  fadeGradient: {
-    height: 32,
-  },
-  content: {
-    paddingTop: 32,
-    gap: 12,
-  },
-  body: {
-    color: '#D7DEE8',
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  smallMuted: {
-    color: '#92A0B2',
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  card: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: 12,
-    padding: 12,
-    gap: 8,
-  },
-  cardTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  row: {
-    flexDirection: 'row',
-    gap: 10,
+    borderWidth: 1,
+    borderColor: '#2B3B55',
     alignItems: 'center',
   },
-  rowBetween: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+  choiceSelected: {
+    borderColor: '#2D82E6',
+    backgroundColor: 'rgba(45,130,230,0.18)',
   },
-  toggleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10,
-  },
-  value: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-  },
+  choiceText: { color: '#D7DEE8', fontSize: 12, fontWeight: '700' },
+  choiceTextSelected: { color: '#FFFFFF' },
+
+  /* ── Buttons / inputs (carried over) ── */
+  row: { flexDirection: 'row', gap: 10, alignItems: 'center' },
   button: {
     backgroundColor: '#4C7DFF',
     paddingVertical: 10,
@@ -276,16 +394,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  buttonPressed: {
-    opacity: 0.7,
-  },
-  buttonDisabled: {
-    opacity: 0.5,
-  },
-  buttonText: {
-    color: '#FFFFFF',
-    fontWeight: '600',
-  },
+  buttonPressed: { opacity: 0.7 },
+  buttonDisabled: { opacity: 0.5 },
+  buttonText: { color: '#FFFFFF', fontWeight: '600' },
   input: {
     borderWidth: 1,
     borderColor: '#2B3B55',
@@ -294,23 +405,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     color: '#FFFFFF',
-  },
-  progressOuter: {
-    height: 10,
-    borderRadius: 999,
-    backgroundColor: '#0B1220',
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#2B3B55',
-  },
-  progressInner: {
-    height: '100%',
-    backgroundColor: '#4C7DFF',
-  },
-  log: {
-    color: '#D7DEE8',
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'Consolas',
-    fontSize: 12,
-    lineHeight: 16,
   },
 });

@@ -7,20 +7,25 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {PlatformModal} from './PlatformModal';
 import {FrostedSurface} from '../FrostedSurface';
 import {normalizeInstrumentOrder} from '../../app/songs/songFiltering';
-import type {InstrumentOrderItem, SongSortMode} from '../../core/songListConfig';
+import type {InstrumentOrderItem, InstrumentShowSettings, SongSortMode} from '../../core/songListConfig';
+import {isInstrumentVisible} from '../../core/songListConfig';
 import type {InstrumentKey} from '../../core/instruments';
 import {modalStyles as styles} from './modalStyles';
 
 export function SortModal(props: {
   visible: boolean;
   draft: {sortMode: SongSortMode; sortAscending: boolean; order: InstrumentKey[]};
+  showInstruments: InstrumentShowSettings;
   onChange: (d: {sortMode: SongSortMode; sortAscending: boolean; order: InstrumentKey[]}) => void;
   onCancel: () => void;
   onReset: () => void;
   onApply: () => void;
 }) {
   const orderItems = useMemo(() => normalizeInstrumentOrder(props.draft.order), [props.draft.order]);
-  const normalizedKeys = useMemo(() => orderItems.map(i => i.key), [orderItems]);
+  // Split into visible and hidden based on show-instrument settings
+  const visibleItems = useMemo(() => orderItems.filter(i => isInstrumentVisible(i.key, props.showInstruments)), [orderItems, props.showInstruments]);
+  const hiddenKeys = useMemo(() => orderItems.filter(i => !isInstrumentVisible(i.key, props.showInstruments)).map(i => i.key), [orderItems, props.showInstruments]);
+  const visibleKeys = useMemo(() => visibleItems.map(i => i.key), [visibleItems]);
   const variant = Platform.OS === 'windows' ? 'center' : 'bottom';
   const {height: screenHeight} = useWindowDimensions();
   const {bottom: safeBottom} = useSafeAreaInsets();
@@ -91,18 +96,18 @@ export function SortModal(props: {
             {Platform.OS === 'windows' ? (
               // Windows: keep up/down buttons (no gesture handler support)
               <FrostedSurface style={styles.orderList} tint="dark" intensity={12}>
-              {orderItems.map((it, idx) => (
-                <View key={it.key} style={[styles.orderRow, idx === 0 && styles.orderRowFirst, idx === orderItems.length - 1 && styles.orderRowLast, idx > 0 && styles.orderRowSeparator]}>
+              {visibleItems.map((it, idx) => (
+                <View key={it.key} style={[styles.orderRow, idx === 0 && styles.orderRowFirst, idx === visibleItems.length - 1 && styles.orderRowLast, idx > 0 && styles.orderRowSeparator]}>
                   <Text style={styles.orderName}>{it.displayName}</Text>
                   <View style={styles.orderBtns}>
                     <Pressable
                       onPress={() => {
                         if (idx <= 0) return;
-                        const next = [...normalizedKeys];
+                        const next = [...visibleKeys];
                         const tmp = next[idx - 1];
                         next[idx - 1] = next[idx];
                         next[idx] = tmp;
-                        props.onChange({...props.draft, order: next});
+                        props.onChange({...props.draft, order: [...next, ...hiddenKeys]});
                       }}
                       style={({pressed}) => [styles.orderBtn, pressed && styles.smallBtnPressed]}
                     >
@@ -110,12 +115,12 @@ export function SortModal(props: {
                     </Pressable>
                     <Pressable
                       onPress={() => {
-                        if (idx >= normalizedKeys.length - 1) return;
-                        const next = [...normalizedKeys];
+                        if (idx >= visibleKeys.length - 1) return;
+                        const next = [...visibleKeys];
                         const tmp = next[idx + 1];
                         next[idx + 1] = next[idx];
                         next[idx] = tmp;
-                        props.onChange({...props.draft, order: next});
+                        props.onChange({...props.draft, order: [...next, ...hiddenKeys]});
                       }}
                       style={({pressed}) => [styles.orderBtn, pressed && styles.smallBtnPressed]}
                     >
@@ -128,11 +133,11 @@ export function SortModal(props: {
             ) : (
               <FrostedSurface style={styles.orderList} tint="dark" intensity={12}>
                 <DraggableFlatList<InstrumentOrderItem>
-                  data={orderItems}
+                  data={visibleItems}
                   keyExtractor={(item) => item.key}
                   scrollEnabled={false}
                   onDragEnd={({data}) => {
-                    props.onChange({...props.draft, order: data.map(i => i.key)});
+                    props.onChange({...props.draft, order: [...data.map(i => i.key), ...hiddenKeys]});
                   }}
                   renderItem={({item, drag, isActive, getIndex}: RenderItemParams<InstrumentOrderItem>) => {
                     const idx = getIndex() ?? 0;
@@ -141,7 +146,7 @@ export function SortModal(props: {
                         onLongPress={drag}
                         delayLongPress={100}
                         disabled={isActive}
-                        style={[styles.orderRow, idx === 0 && styles.orderRowFirst, idx === orderItems.length - 1 && styles.orderRowLast, idx > 0 && styles.orderRowSeparator, isActive && styles.orderRowActive]}
+                        style={[styles.orderRow, idx === 0 && styles.orderRowFirst, idx === visibleItems.length - 1 && styles.orderRowLast, idx > 0 && styles.orderRowSeparator, isActive && styles.orderRowActive]}
                       >
                         <Text style={styles.orderName}>{item.displayName}</Text>
                         <Ionicons name="menu" size={20} color="#8899AA" />

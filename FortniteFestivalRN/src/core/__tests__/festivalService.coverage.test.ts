@@ -268,6 +268,7 @@ describe('FestivalService (coverage add-ons)', () => {
       async ensureCached() {
         throw 123;
       },
+      async clearAll() {},
     };
 
     const svc = new FestivalService({http, imageCache: imageCache as any, events: {log: l => logs.push(l)}});

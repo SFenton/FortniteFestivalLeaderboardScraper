@@ -5,6 +5,7 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {PlatformModal} from './PlatformModal';
 import {FrostedSurface} from '../FrostedSurface';
 import type {AdvancedMissingFilters} from '../../core/songListConfig';
+import type {InstrumentShowSettings} from '../../app/songs/songFiltering';
 import {modalStyles as styles} from './modalStyles';
 
 export function FilterModal(props: {
@@ -14,6 +15,9 @@ export function FilterModal(props: {
   onCancel: () => void;
   onReset: () => void;
   onApply: () => void;
+  hideProFilters?: boolean;
+  showInstruments: InstrumentShowSettings;
+  onShowInstrumentToggle: (key: keyof InstrumentShowSettings) => void;
 }) {
   const t = (k: keyof AdvancedMissingFilters) =>
     props.onChange({...props.draft, [k]: !props.draft[k]});
@@ -41,25 +45,10 @@ export function FilterModal(props: {
           <View style={styles.modalSection}>
             <Text style={styles.modalSectionTitle}>Missing</Text>
             <Text style={styles.modalHint}>Only show songs where you are missing scores or full combos on pad or pro instruments.</Text>
-            <FrostedSurface style={styles.orderList} tint="dark" intensity={12}>
               <ToggleRow label="Pad Scores" checked={props.draft.missingPadScores} onToggle={() => t('missingPadScores')} first />
-              <ToggleRow label="Pad FCs" checked={props.draft.missingPadFCs} onToggle={() => t('missingPadFCs')} />
-              <ToggleRow label="Pro Scores" checked={props.draft.missingProScores} onToggle={() => t('missingProScores')} />
-              <ToggleRow label="Pro FCs" checked={props.draft.missingProFCs} onToggle={() => t('missingProFCs')} last />
-            </FrostedSurface>
-          </View>
-
-          <View style={styles.modalSection}>
-            <Text style={styles.modalSectionTitle}>Include Instruments</Text>
-            <Text style={styles.modalHint}>Choose which instruments to show in the app. Impacts all pages.</Text>
-            <FrostedSurface style={styles.orderList} tint="dark" intensity={12}>
-              <ToggleRow label="Lead" checked={props.draft.includeLead} onToggle={() => t('includeLead')} first />
-              <ToggleRow label="Bass" checked={props.draft.includeBass} onToggle={() => t('includeBass')} />
-              <ToggleRow label="Drums" checked={props.draft.includeDrums} onToggle={() => t('includeDrums')} />
-              <ToggleRow label="Vocals" checked={props.draft.includeVocals} onToggle={() => t('includeVocals')} />
-              <ToggleRow label="Pro Lead" checked={props.draft.includeProGuitar} onToggle={() => t('includeProGuitar')} />
-              <ToggleRow label="Pro Bass" checked={props.draft.includeProBass} onToggle={() => t('includeProBass')} last />
-            </FrostedSurface>
+              <ToggleRow label="Pad FCs" checked={props.draft.missingPadFCs} onToggle={() => t('missingPadFCs')} last={!!props.hideProFilters} />
+              {!props.hideProFilters && <ToggleRow label="Pro Scores" checked={props.draft.missingProScores} onToggle={() => t('missingProScores')} />}
+              {!props.hideProFilters && <ToggleRow label="Pro FCs" checked={props.draft.missingProFCs} onToggle={() => t('missingProFCs')} last />}
           </View>
           </ScrollView>
 
@@ -83,9 +72,7 @@ function ToggleRow(props: {label: string; checked: boolean; onToggle: () => void
       onPress={props.onToggle}
       style={({pressed}) => [
         styles.orderRow,
-        props.first && styles.orderRowFirst,
-        props.last && styles.orderRowLast,
-        !props.first && styles.orderRowSeparator,
+        props.first && {marginTop: 6},
         pressed && styles.rowBtnPressed,
       ]}
       accessibilityRole="switch"

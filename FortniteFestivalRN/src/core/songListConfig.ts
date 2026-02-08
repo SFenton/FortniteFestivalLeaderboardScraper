@@ -59,3 +59,77 @@ export const normalizeInstrumentOrder = (keys: ReadonlyArray<InstrumentKey> | un
 
   return out;
 };
+
+/* ── Instrument visibility helpers ── */
+
+export type InstrumentShowSettings = {
+  showLead: boolean;
+  showBass: boolean;
+  showDrums: boolean;
+  showVocals: boolean;
+  showProLead: boolean;
+  showProBass: boolean;
+};
+
+type ShowSettingKey = keyof InstrumentShowSettings;
+
+/** Map an InstrumentKey to its corresponding `show*` settings key. */
+export const showSettingKeyForInstrument = (key: InstrumentKey): ShowSettingKey => {
+  switch (key) {
+    case 'guitar': return 'showLead';
+    case 'bass': return 'showBass';
+    case 'drums': return 'showDrums';
+    case 'vocals': return 'showVocals';
+    case 'pro_guitar': return 'showProLead';
+    case 'pro_bass': return 'showProBass';
+  }
+};
+
+/** Whether an instrument is visible given the current show-instrument settings. */
+export const isInstrumentVisible = (key: InstrumentKey, settings: InstrumentShowSettings): boolean =>
+  settings[showSettingKeyForInstrument(key)];
+
+/**
+ * Reorder the Primary Instrument Order list when an instrument's visibility changes.
+ *
+ * - **Hiding:** moves the instrument to the end of the list.
+ * - **Showing:** re-inserts the instrument at its default-relative position
+ *   among the *visible* instruments (i.e. after the last visible preceding
+ *   instrument in the default order). `showSettings` should reflect the state
+ *   *before* the toggle so that other hidden instruments are correctly skipped.
+ */
+export const reorderPIOForVisibilityChange = (
+  currentOrder: InstrumentKey[],
+  changedKey: InstrumentKey,
+  isNowVisible: boolean,
+  showSettings: InstrumentShowSettings,
+): InstrumentKey[] => {
+  const without = currentOrder.filter(k => k !== changedKey);
+
+  if (!isNowVisible) {
+    // Hidden → push to end
+    return [...without, changedKey];
+  }
+
+  // Re-enabled → find the default-relative insertion point among visible instruments
+  const defaults = defaultPrimaryInstrumentOrder().map(i => i.key);
+  const defaultIndex = defaults.indexOf(changedKey);
+
+  // Walk backwards through the default order from changedKey's position and
+  // find the last preceding instrument that is visible and exists in `without`.
+  let insertAfter = -1;
+  for (let i = defaultIndex - 1; i >= 0; i--) {
+    const pred = defaults[i];
+    // Skip predecessors that are themselves hidden
+    if (!showSettings[showSettingKeyForInstrument(pred)]) continue;
+    const idx = without.indexOf(pred);
+    if (idx !== -1) {
+      insertAfter = idx;
+      break;
+    }
+  }
+
+  const result = [...without];
+  result.splice(insertAfter + 1, 0, changedKey);
+  return result;
+};

@@ -232,6 +232,16 @@ export class FestivalService {
 
   async clearImageCache(): Promise<void> {
     console.log('[FestivalService] Clearing image cache');
+
+    // Delete on-disk cached images
+    if (this.imageCache) {
+      try {
+        await this.imageCache.clearAll();
+      } catch {
+        // swallow
+      }
+    }
+
     // Clear imagePath from all songs
     for (const s of this.songs) {
       s.imagePath = undefined;
@@ -369,8 +379,7 @@ export class FestivalService {
       const total = ordered.length;
       if (total === 0) return true;
 
-      const maxConcurrency = settings.degreeOfParallelism > 0 ? settings.degreeOfParallelism : params.degreeOfParallelism;
-      const limiter = createLimiter(Math.max(1, Math.floor(maxConcurrency)));
+      const limiter = createLimiter(16);
 
       let completed = 0;
       const pending = new Map<string, Song>(ordered.map(s => [s.track.su, s]));
@@ -415,7 +424,7 @@ export class FestivalService {
       };
 
       const workers: Promise<void>[] = [];
-      for (let w = 0; w < maxConcurrency; w++) {
+      for (let w = 0; w < 16; w++) {
         workers.push(
           (async () => {
             while (true) {

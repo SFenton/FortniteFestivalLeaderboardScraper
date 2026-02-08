@@ -26,6 +26,7 @@
     "react-native": "^0.81.5",
     "react-native-bottom-tabs": "^1.1.0",
     "react-native-draggable-flatlist": "^4.0.3",
+    "react-native-fs": "^2.20.0",
     "react-native-gesture-handler": "^2.30.0",
     "react-native-linear-gradient": "^2.8.3",
     "react-native-modal": "^14.0.0-rc.1",
