@@ -10,6 +10,7 @@ import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentat
 import {buildInstrumentStats, buildTopSongCategories, type InstrumentDetailedStats} from '../app/statistics/statistics';
 import type {SuggestionCategory} from '../core/suggestions/types';
 import {getInstrumentIconSource} from '../ui/instruments/instrumentVisuals';
+import {StatisticsInstrumentCard} from '../ui/instruments/StatisticsInstrumentCard';
 import {Screen} from '../ui/Screen';
 import {FrostedSurface} from '../ui/FrostedSurface';
 import {CenteredEmptyStateCard} from '../ui/CenteredEmptyStateCard';
@@ -122,7 +123,7 @@ export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: st
   }, [instrumentStats, topCategories]);
 
   const renderItem = useCallback(({item}: {item: StatsListItem}) => {
-    if (item.type === 'instrument') return <InstrumentCard stats={item.stats} />;
+    if (item.type === 'instrument') return <StatisticsInstrumentCard data={item.stats} />;
     return <TopSongsCard cat={item.cat} songById={songById} onOpenSong={onOpenSong} />;
   }, [onOpenSong, songById]);
 
@@ -186,97 +187,6 @@ export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: st
     </Screen>
   );
 }
-
-const InstrumentCard = React.memo(function InstrumentCard(props: {stats: InstrumentDetailedStats}) {
-  const s = props.stats;
-
-  const pctTotal =
-    s.top1PercentCount +
-    s.top5PercentCount +
-    s.top10PercentCount +
-    s.top25PercentCount +
-    s.top50PercentCount +
-    s.below50PercentCount;
-
-  return (
-    <FrostedSurface style={styles.card} tint="dark" intensity={18}>
-      <View style={styles.cardHeaderRow}>
-        <Image source={getInstrumentIconSource(s.instrumentKey)} style={styles.instrumentIcon} />
-        <View style={styles.cardHeaderText}>
-          <Text style={styles.cardTitle}>{s.instrumentLabel}</Text>
-          <Text style={styles.cardSubtitle}>
-            {s.songsPlayed} of {s.totalSongsInLibrary} songs played ({s.completionPercent.toFixed(1)}%)
-          </Text>
-        </View>
-      </View>
-
-      <View style={styles.statsGrid}>
-        <StatCell label="FCs" value={`${s.fcCount} (${s.fcPercent.toFixed(1)}%)`} />
-        <StatCell label="Gold Stars" value={`${s.goldStarCount}`} />
-        <StatCell label="5 Stars" value={`${s.fiveStarCount}`} />
-        <StatCell label="4 Stars" value={`${s.fourStarCount}`} />
-        <StatCell label="Average Accuracy" value={`${s.averageAccuracy.toFixed(2)}%`} />
-        <StatCell label="Best Accuracy" value={`${s.bestAccuracy.toFixed(2)}%`} />
-        <StatCell label="Average Stars" value={`${s.averageStars.toFixed(2)}`} />
-        <StatCell label="Best Rank" value={s.bestRank > 0 ? s.bestRankFormatted : '—'} />
-        <StatCell label="Weighted Percentile" value={s.weightedPercentileFormatted !== 'N/A' ? s.weightedPercentileFormatted : '—'} />
-      </View>
-
-      {s.songsPlayed > 0 && (
-        <View style={styles.distWrap}>
-          <Text style={styles.sectionTitle}>Percentile Distribution</Text>
-
-          {pctTotal > 0 ? (
-            <View style={styles.distBar}>
-              <DistSeg color="#27ae60" count={s.top1PercentCount} total={pctTotal} />
-              <DistSeg color="#2ecc71" count={s.top5PercentCount} total={pctTotal} />
-              <DistSeg color="#f1c40f" count={s.top10PercentCount} total={pctTotal} />
-              <DistSeg color="#e67e22" count={s.top25PercentCount} total={pctTotal} />
-              <DistSeg color="#e74c3c" count={s.top50PercentCount} total={pctTotal} />
-              <DistSeg color="#7f8c8d" count={s.below50PercentCount} total={pctTotal} />
-            </View>
-          ) : (
-            <Text style={styles.muted}>No percentile data yet.</Text>
-          )}
-
-          <View style={styles.legendGrid}>
-            <LegendItem label="Top 1%" color="#27ae60" value={s.top1PercentCount} />
-            <LegendItem label="Top 5%" color="#2ecc71" value={s.top5PercentCount} />
-            <LegendItem label="Top 10%" color="#f1c40f" value={s.top10PercentCount} />
-            <LegendItem label="Top 25%" color="#e67e22" value={s.top25PercentCount} />
-            <LegendItem label="Top 50%" color="#e74c3c" value={s.top50PercentCount} />
-            <LegendItem label="> 50%" color="#7f8c8d" value={s.below50PercentCount} />
-          </View>
-        </View>
-      )}
-    </FrostedSurface>
-  );
-});
-
-const StatCell = React.memo(function StatCell(props: {label: string; value: string}) {
-  return (
-    <View style={styles.statCell}>
-      <Text style={styles.statLabel}>{props.label}</Text>
-      <Text style={styles.statValue}>{props.value}</Text>
-    </View>
-  );
-});
-
-const DistSeg = React.memo(function DistSeg(props: {color: string; count: number; total: number}) {
-  if (props.count <= 0 || props.total <= 0) return null;
-  return <View style={[styles.distSeg, {backgroundColor: props.color, flex: props.count}]} />;
-});
-
-const LegendItem = React.memo(function LegendItem(props: {label: string; color: string; value: number}) {
-  return (
-    <View style={styles.legendItem}>
-      <View style={[styles.legendSwatch, {backgroundColor: props.color}]} />
-      <Text style={styles.legendText}>
-        {props.label}: {props.value}
-      </Text>
-    </View>
-  );
-});
 
 const TopSongsCard = React.memo(function TopSongsCard(props: {
   cat: SuggestionCategory;
@@ -450,103 +360,6 @@ const styles = StyleSheet.create({
   },
   listSeparator: {
     height: 10,
-  },
-  card: {
-    borderRadius: 16,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.15)',
-    padding: 14,
-    gap: 10,
-  },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    gap: 12,
-    alignItems: 'center',
-  },
-  instrumentIcon: {
-    width: 48,
-    height: 48,
-    resizeMode: 'contain',
-  },
-  cardHeaderText: {
-    flex: 1,
-    gap: 2,
-  },
-  cardTitle: {
-    color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: '800',
-  },
-  cardSubtitle: {
-    color: '#D7DEE8',
-    fontSize: 13,
-    opacity: 0.85,
-  },
-  statsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    columnGap: 16,
-    rowGap: 10,
-    marginTop: 24,
-  },
-  statCell: {
-    width: '47%',
-    gap: 2,
-  },
-  statLabel: {
-    color: '#D7DEE8',
-    fontSize: 12,
-    opacity: 0.85,
-  },
-  statValue: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  distWrap: {
-    gap: 8,
-    marginTop: 24,
-  },
-  sectionTitle: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  muted: {
-    color: '#D7DEE8',
-    opacity: 0.8,
-    fontSize: 13,
-  },
-  distBar: {
-    flexDirection: 'row',
-    height: 12,
-    borderRadius: 6,
-    overflow: 'hidden',
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
-  distSeg: {
-    height: 12,
-  },
-  legendGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    rowGap: 6,
-    columnGap: 12,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  legendSwatch: {
-    width: 10,
-    height: 10,
-    borderRadius: 3,
-  },
-  legendText: {
-    color: '#D7DEE8',
-    fontSize: 12,
-    opacity: 0.9,
   },
   topSongsCard: {
     borderRadius: 12,

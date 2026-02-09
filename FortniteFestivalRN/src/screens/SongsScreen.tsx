@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {FlatList, Image, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View} from 'react-native';
+import {FlatList, Platform, Pressable, StyleSheet, TextInput, useWindowDimensions, View} from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import MaskedView from '@react-native-masked-view/masked-view';
 import LinearGradient from 'react-native-linear-gradient';
@@ -10,12 +10,13 @@ import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentat
 import {useFestival} from '../app/festival/FestivalContext';
 import type {LeaderboardData, Song} from '../core/models';
 import {buildSongDisplayRow, defaultAdvancedMissingFilters, defaultPrimaryInstrumentOrder, filterAndSortSongs, normalizeInstrumentOrder, type InstrumentShowSettings} from '../app/songs/songFiltering';
-import {getInstrumentIconSource, getInstrumentStatusVisual} from '../ui/instruments/instrumentVisuals';
+import {getInstrumentStatusVisual} from '../ui/instruments/instrumentVisuals';
 import {SortModal} from '../ui/Modals/SortModal';
 import {FilterModal} from '../ui/Modals/FilterModal';
 import {FrostedSurface} from '../ui/FrostedSurface';
 import {CenteredEmptyStateCard} from '../ui/CenteredEmptyStateCard';
 import {PageHeader} from '../ui/PageHeader';
+import {SongRow as SongRowView, type InstrumentChipVisual} from '../ui/songs/SongRow';
 import type {AdvancedMissingFilters, SongSortMode} from '../core/songListConfig';
 import type {InstrumentKey} from '../core/instruments';
 
@@ -43,97 +44,19 @@ const SongRow = React.memo(function SongRow(props: {
     return buildSongDisplayRow({song, leaderboardData, settings});
   }, [leaderboardData, settings, showInstrumentIcons, song]);
 
+  const instruments = useMemo<InstrumentChipVisual[] | undefined>(() => {
+    if (!showInstrumentIcons || !row) return undefined;
+    return row.instrumentStatuses.filter(s => s.isEnabled).map(s => {
+      const {fill, stroke} = getInstrumentStatusVisual({hasScore: s.hasScore, isFullCombo: s.isFullCombo});
+      return {instrumentKey: s.instrumentKey, fill, stroke};
+    });
+  }, [row, showInstrumentIcons]);
+
+  const data = useMemo(() => ({title, artist, year, imageUri, instruments}), [title, artist, year, imageUri, instruments]);
+  const handlePress = useCallback(() => onOpen(id, title), [id, title, onOpen]);
+
   return (
-    <Pressable
-      onPress={() => onOpen(id, title)}
-      style={styles.rowPressable}
-      accessibilityRole="button"
-      accessibilityLabel={`Open ${title}`}
-    >
-      {({pressed}) => (
-        <FrostedSurface style={[styles.rowSurface, pressed && styles.rowSurfacePressed]} tint="dark" intensity={12}>
-          {props.useCompactLayout ? (
-            <View style={styles.rowInnerCompact}>
-              <View style={styles.compactTopRow}>
-                <View style={styles.thumbWrap}>
-                  {imageUri ? (
-                    <Image source={{uri: imageUri}} style={styles.thumb} resizeMode="cover" />
-                  ) : (
-                    <View style={styles.thumbPlaceholder} />
-                  )}
-                </View>
-
-                <View style={styles.rowText}>
-                  <Text numberOfLines={1} style={styles.songTitle}>
-                    {title}
-                  </Text>
-                  <Text numberOfLines={1} style={styles.songMeta}>
-                    {artist}
-                    {artist && year ? ' • ' : ''}
-                    {year ?? ''}
-                  </Text>
-                </View>
-              </View>
-
-              {showInstrumentIcons && row ? (
-                <View style={styles.instrumentRowCompact}>
-                  {row.instrumentStatuses.filter(s => s.isEnabled).map(s => {
-                    const {fill, stroke} = getInstrumentStatusVisual({hasScore: s.hasScore, isFullCombo: s.isFullCombo});
-                    return (
-                      <View
-                        key={s.instrumentKey}
-                        style={[styles.instrumentChipCompact, {backgroundColor: fill, borderColor: stroke}]}
-                      >
-                        <Image source={getInstrumentIconSource(s.instrumentKey)} style={styles.instrumentIconCompact} resizeMode="contain" />
-                      </View>
-                    );
-                  })}
-                </View>
-              ) : null}
-            </View>
-          ) : (
-            <View style={styles.rowInner}>
-              <View style={styles.left}>
-                <View style={styles.thumbWrap}>
-                  {imageUri ? (
-                    <Image source={{uri: imageUri}} style={styles.thumb} resizeMode="cover" />
-                  ) : (
-                    <View style={styles.thumbPlaceholder} />
-                  )}
-                </View>
-
-                <View style={styles.rowText}>
-                  <Text numberOfLines={1} style={styles.songTitle}>
-                    {title}
-                  </Text>
-                  <Text numberOfLines={1} style={styles.songMeta}>
-                    {artist}
-                    {artist && year ? ' • ' : ''}
-                    {year ?? ''}
-                  </Text>
-                </View>
-              </View>
-
-              {!props.hideInstrumentIcons && row ? (
-                <View style={styles.instrumentRow}>
-                  {row.instrumentStatuses.filter(s => s.isEnabled).map(s => {
-                    const {fill, stroke} = getInstrumentStatusVisual({hasScore: s.hasScore, isFullCombo: s.isFullCombo});
-                    return (
-                      <View
-                        key={s.instrumentKey}
-                        style={[styles.instrumentChip, {backgroundColor: fill, borderColor: stroke}]}
-                      >
-                        <Image source={getInstrumentIconSource(s.instrumentKey)} style={styles.instrumentIcon} resizeMode="contain" />
-                      </View>
-                    );
-                  })}
-                </View>
-              ) : null}
-            </View>
-          )}
-        </FrostedSurface>
-      )}
-    </Pressable>
+    <SongRowView data={data} compact={props.useCompactLayout} onPress={handlePress} />
   );
 }, (prev, next) => (
   prev.song === next.song &&
@@ -559,109 +482,5 @@ const styles = StyleSheet.create({
   },
   listEmptyGrow: {
     flexGrow: 1,
-  },
-  rowPressable: {
-    marginBottom: 8,
-  },
-  rowSurface: {
-    borderRadius: 12,
-  },
-  rowSurfacePressed: {
-    opacity: 0.92,
-  },
-  rowInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  rowInnerCompact: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 10,
-  },
-  compactTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    minWidth: 0,
-  },
-  left: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    minWidth: 0,
-  },
-  rowText: {
-    flex: 1,
-    minWidth: 0,
-  },
-  instrumentRow: {
-    flexDirection: 'row',
-    gap: 6,
-    alignItems: 'center',
-    flexShrink: 0,
-    marginLeft: 10,
-  },
-  instrumentRowCompact: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    alignSelf: 'center',
-  },
-  instrumentChip: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  instrumentChipCompact: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    borderWidth: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  instrumentIcon: {
-    width: 32,
-    height: 32,
-  },
-  instrumentIconCompact: {
-    width: 24,
-    height: 24,
-  },
-  thumbWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    overflow: 'hidden',
-    backgroundColor: '#0B1220',
-    borderWidth: 1,
-    borderColor: '#263244',
-  },
-  thumb: {
-    width: '100%',
-    height: '100%',
-  },
-  thumbPlaceholder: {
-    flex: 1,
-    backgroundColor: '#0B1220',
-  },
-  songTitle: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  songMeta: {
-    color: '#B8C0CC',
-    fontSize: 12,
-    marginTop: 2,
   },
 });

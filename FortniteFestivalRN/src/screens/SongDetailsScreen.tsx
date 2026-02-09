@@ -15,9 +15,7 @@ import type {InstrumentKey} from '../core/instruments';
 import {normalizeInstrumentOrder} from '../app/songs/songFiltering';
 import {buildSongInfoInstrumentRows} from '../app/songInfo/songInfo';
 import {getInstrumentIconSource} from '../ui/instruments/instrumentVisuals';
-
-const STAR_WHITE_ICON = require('../assets/icons/star_white.png');
-const STAR_GOLD_ICON = require('../assets/icons/star_gold.png');
+import {InstrumentCard, MetricPill, DifficultyBars, StarsVisual} from '../ui/instruments/InstrumentCard';
 
 const CARD_BG = 'rgba(18,24,38,0.78)';
 
@@ -375,48 +373,7 @@ export function SongDetailsView(props: {songId: string; showBack?: boolean; onBa
 
           {useCompactLayout ? (
             instrumentRows.map(r => (
-              <FrostedSurface
-                key={r.key}
-                style={styles.instrumentCard}
-                tint="dark"
-                intensity={22}
-                fallbackColor={CARD_BG}
-              >
-                <View style={styles.compactRowCard}>
-                  <View style={styles.compactTop}>
-                    <View style={styles.instIconCircle}>
-                      <Image source={getInstrumentIconSource(r.key)} style={styles.instIcon} resizeMode="contain" />
-                    </View>
-                    <Text style={styles.instNameCompact} numberOfLines={1}>
-                      {r.name}
-                    </Text>
-                  </View>
-
-                  <View style={styles.compactCenter}>
-                    <DifficultyBars rawDifficulty={r.rawDifficulty} compact />
-                    <StarsVisual hasScore={r.hasScore} starsCount={r.starsCount} isFullCombo={r.isFullCombo} compact />
-                  </View>
-
-                  <View style={styles.metricsBlock}>
-                    <View style={styles.metricRow2}>
-                      <MetricCell label="Score" value={r.scoreDisplay} />
-                      <MetricCell label="Percent Hit" value={r.percentDisplay} highlight={r.isFullCombo} highlightKind="gold" />
-                    </View>
-                    <View style={styles.metricRow2}>
-                      <MetricCell label="Season" value={r.seasonDisplay} />
-                      <MetricCell
-                        label="Percentile"
-                        value={r.percentileDisplay}
-                        highlight={r.isTop5Percentile}
-                        highlightKind="gold"
-                      />
-                    </View>
-                    <View style={styles.metricRow1}>
-                      <MetricCell label="Rank" value={r.rankOutOfDisplay} />
-                    </View>
-                  </View>
-                </View>
-              </FrostedSurface>
+              <InstrumentCard key={r.key} data={r} />
             ))
           ) : (
             <FrostedSurface
@@ -534,93 +491,7 @@ export function SongDetailsScreen(props: SongDetailsScreenProps) {
   );
 }
 
-function MetricPill(props: {value: string; highlight?: boolean; highlightKind?: 'gold'}) {
-  const highlight = Boolean(props.highlight);
-  const kind = props.highlightKind ?? 'gold';
-  const isGold = highlight && kind === 'gold';
-  return (
-    <View style={[styles.pill, isGold && styles.pillGold]}>
-      <Text style={[styles.pillText, isGold && styles.pillTextGold]} numberOfLines={1}>
-        {props.value}
-      </Text>
-    </View>
-  );
-}
 
-function MetricCell(props: {label: string; value: string; highlight?: boolean; highlightKind?: 'gold'}) {
-  return (
-    <View style={styles.metricCell}>
-      <Text style={styles.metricLabel}>{props.label}</Text>
-      <MetricPill value={props.value} highlight={props.highlight} highlightKind={props.highlightKind} />
-    </View>
-  );
-}
-
-function DifficultyBars(props: {rawDifficulty: number; compact?: boolean}) {
-  // Match MAUI: raw 0-6 => display 1-7 filled bars.
-  const raw = Number.isFinite(props.rawDifficulty) ? props.rawDifficulty : 0;
-  const display = Math.max(0, Math.min(6, Math.trunc(raw))) + 1;
-  const barW = props.compact ? 20 : 16;
-  const barH = props.compact ? 40 : 34;
-
-  return (
-    <View style={[styles.diffRow, {gap: props.compact ? 2 : 1}]}
-      accessibilityRole="text"
-      accessibilityLabel={`Difficulty ${display} of 7`}
-    >
-      {Array.from({length: 7}).map((_, idx) => {
-        const filled = idx + 1 <= display;
-        return (
-          <View
-            // eslint-disable-next-line react/no-array-index-key
-            key={idx}
-            style={[
-              styles.diffBar,
-              {
-                width: barW,
-                height: barH,
-                backgroundColor: filled ? '#FFFFFF' : '#666666',
-              },
-            ]}
-          />
-        );
-      })}
-    </View>
-  );
-}
-
-function StarsVisual(props: {
-  hasScore: boolean;
-  starsCount: number;
-  isFullCombo: boolean;
-  compact?: boolean;
-}) {
-  if (!props.hasScore) {
-    return <MetricPill value="N/A" />;
-  }
-
-  const raw = Number.isFinite(props.starsCount) ? props.starsCount : 0;
-  const allGold = raw >= 6;
-  const displayCount = allGold ? 5 : Math.max(1, raw);
-  const size = props.compact ? 40 : 48;
-  const inner = props.compact ? 32 : 40;
-  const outline = props.isFullCombo ? '#FFD700' : 'transparent';
-  const source = allGold ? STAR_GOLD_ICON : STAR_WHITE_ICON;
-
-  return (
-    <View style={styles.starRow}>
-      {Array.from({length: displayCount}).map((_, idx) => (
-        <View
-          // eslint-disable-next-line react/no-array-index-key
-          key={idx}
-          style={[styles.starCircle, {width: size, height: size, borderColor: outline}]}
-        >
-          <Image source={source} style={[styles.starIcon, {width: inner, height: inner}]} resizeMode="contain" />
-        </View>
-      ))}
-    </View>
-  );
-}
 
 const FADE_HEIGHT = 32;
 
@@ -797,12 +668,6 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 1352,
   },
-  instrumentCard: {
-    alignSelf: 'center',
-    width: '100%',
-    borderRadius: 22,
-    padding: 12,
-  },
   tableWrap: {
     alignSelf: 'center',
   },
@@ -845,97 +710,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '800',
     flex: 1,
-  },
-  compactRowCard: {
-    paddingHorizontal: 10,
-    paddingVertical: 12,
-    gap: 10,
-  },
-  compactTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-  },
-  instNameCompact: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 16,
-  },
-  compactCenter: {
-    alignItems: 'center',
-    gap: 8,
-  },
-  metricsBlock: {
-    gap: 12,
-  },
-  metricRow2: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  metricRow1: {
-    flexDirection: 'row',
-  },
-  metricCell: {
-    flex: 1,
-    gap: 2,
-  },
-  metricLabel: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 12,
-    textAlign: 'center',
-  },
-  pill: {
-    backgroundColor: '#1D3A71',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderWidth: 2,
-    borderColor: 'transparent',
-    minHeight: 30,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pillGold: {
-    backgroundColor: '#332915',
-    borderColor: '#FFD700',
-  },
-  pillText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-  },
-  pillTextGold: {
-    color: '#FFD700',
-  },
-  diffRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  diffBar: {
-    transform: [{skewX: '-10deg'}],
-  },
-  starRow: {
-    flexDirection: 'row',
-    gap: 4,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  starCircle: {
-    borderRadius: 999,
-    borderWidth: 2,
-    backgroundColor: 'transparent',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  starText: {
-    textAlign: 'center',
-    textAlignVertical: 'center',
-    fontSize: 22,
-    lineHeight: 32,
-  },
-  starIcon: {
-    // Intentionally empty; size is set inline.
   },
 
   hint: {
