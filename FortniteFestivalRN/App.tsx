@@ -28,7 +28,7 @@ function App() {
 
   return (
     <SafeAreaProvider>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+      <StatusBar barStyle="light-content" />
       <RootView style={styles.root}>
         {/* FestivalProvider wraps everything so song/image sync kicks off
             immediately in the background — even while the user is on the
