@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import PagerView from 'react-native-pager-view';
+import {FrostedSurface} from '../ui/FrostedSurface';
 import {SlidingRowsBackground} from '../ui/SlidingRowsBackground';
 
 /**
@@ -137,9 +138,13 @@ export function IntroScreen({onContinue}: Props) {
               />
             </View>
 
-            <View style={styles.textContainer}>
-              <Text style={styles.title}>{page.title}</Text>
-              <Text style={styles.description}>{page.description}</Text>
+            <View style={styles.spacer} />
+
+            <View style={styles.textArea}>
+              <FrostedSurface style={styles.textContainer} tint="dark" intensity={18}>
+                <Text style={styles.title}>{page.title}</Text>
+                <Text style={styles.description}>{page.description}</Text>
+              </FrostedSurface>
             </View>
           </View>
         ))}
@@ -206,7 +211,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
   },
   imageContainer: {
-    flex: 0.66,
+    flex: 0.6,
     width: IMAGE_WIDTH,
     alignSelf: 'center',
     borderRadius: 20,
@@ -229,11 +234,21 @@ const styles = StyleSheet.create({
     width: '100%',
     flex: 1,
   },
-  textContainer: {
-    flex: 0.34,
-    alignItems: 'center',
+  textArea: {
+    flex: 0.3,
+    width: '100%',
     justifyContent: 'flex-start',
-    paddingTop: 24,
+  },
+  textContainer: {
+    width: '100%',
+    alignItems: 'center',
+    paddingVertical: 24,
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginHorizontal: 8,
+  },
+  spacer: {
+    flex: 0.1,
   },
   title: {
     fontSize: 26,

@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef} from 'react';
 import {Animated, Dimensions, Easing, Image, Platform, StyleSheet, View} from 'react-native';
 import {useFestival} from '../app/festival/FestivalContext';
 
@@ -7,14 +7,14 @@ const TILE_SIZE = 90; // Width & height of each album art tile
 const TILE_GAP = 6; // Gap between tiles
 const TILE_RADIUS = 10; // Border radius for each tile
 const CYCLE_DURATION = 25_000; // ms for one full scroll cycle
-const MIN_IMAGES = 10; // Minimum cached images before activating
+const MIN_IMAGES = 100; // Minimum cached images before activating
 const DIM_OPACITY = 0.72; // Overlay darkness to keep foreground legible
 
 const STEP_SIZE = TILE_SIZE + TILE_GAP;
 const {width: SCREEN_WIDTH, height: SCREEN_HEIGHT} = Dimensions.get('window');
 
-// Visible tiles + 1 buffer on each side.
-const VISIBLE_COUNT = Math.ceil(SCREEN_WIDTH / STEP_SIZE) + 1;
+// Visible tiles + 5 buffer on each side.
+const VISIBLE_COUNT = Math.ceil(SCREEN_WIDTH / STEP_SIZE) + 5;
 // Each half of the strip — viewable window + buffer. Doubled for seamless loop.
 const HALF_COUNT = VISIBLE_COUNT + 2;
 // Total rows that fit vertically.
@@ -23,10 +23,6 @@ const ROW_COUNT = Math.ceil(SCREEN_HEIGHT / STEP_SIZE) + 1;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function pickRandom(candidates: string[]): string {
-  return candidates[Math.floor(Math.random() * candidates.length)];
-}
 
 /** Build a shuffled strip of `count` images, mirrored into two halves. */
 function buildMirroredStrip(candidates: string[]): string[] {
@@ -45,20 +41,14 @@ function buildMirroredStrip(candidates: string[]): string[] {
 
 function SlidingRow({
   initialStrip,
-  allCandidates,
   direction,
   rowIndex,
 }: {
   initialStrip: string[];
-  allCandidates: string[];
   direction: 'left' | 'right';
   rowIndex: number;
 }) {
   const anim = useRef(new Animated.Value(0)).current;
-  const [tiles, setTiles] = useState(initialStrip);
-
-  const candidatesRef = useRef(allCandidates);
-  candidatesRef.current = allCandidates;
 
   const halfWidth = HALF_COUNT * STEP_SIZE;
 
@@ -75,28 +65,6 @@ function SlidingRow({
     loop.start();
     return () => loop.stop();
   }, [anim]);
-
-  // Periodically recycle tiles. Each cycle, we build a fresh shuffled half
-  // and mirror it, so the next loop iteration shows new art. Because both
-  // halves are always identical, the loop reset is visually seamless.
-  // We swap individual tiles rather than the whole set to keep changes subtle.
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setTiles(prev => {
-        const next = [...prev];
-        // Swap 2–3 random tiles per cycle for variety without a jarring full shuffle.
-        const swapCount = 2 + Math.floor(Math.random() * 2);
-        for (let i = 0; i < swapCount; i++) {
-          const pos = Math.floor(Math.random() * HALF_COUNT);
-          const newUri = pickRandom(candidatesRef.current);
-          next[pos] = newUri;
-          next[pos + HALF_COUNT] = newUri; // keep halves mirrored
-        }
-        return next;
-      });
-    }, CYCLE_DURATION);
-    return () => clearInterval(timer);
-  }, []);
 
   // Left:  0 → -halfWidth   (tiles scroll left)
   // Right: -halfWidth → 0   (tiles scroll right)
@@ -116,23 +84,12 @@ function SlidingRow({
         },
       ]}
     >
-      {tiles.map((uri, idx) => (
+      {initialStrip.map((uri, idx) => (
         <View key={idx} style={styles.tileWrap}>
           <Image
             source={{uri}}
             style={styles.tile}
             resizeMode="cover"
-            onError={(e) => {
-              if (idx === 0 && rowIndex === 0) {
-                console.log(`[SlidingRowsBackground] Image load ERROR row=${rowIndex} idx=${idx}: ${e.nativeEvent.error}`);
-                console.log(`[SlidingRowsBackground] Failed URI: ${uri}`);
-              }
-            }}
-            onLoad={() => {
-              if (idx === 0 && rowIndex === 0) {
-                console.log(`[SlidingRowsBackground] Image loaded OK row=${rowIndex} idx=${idx}`);
-              }
-            }}
           />
         </View>
       ))}
@@ -144,10 +101,15 @@ function SlidingRow({
 // Public component
 // ---------------------------------------------------------------------------
 
+const FADE_DURATION = 1_000; // ms to fade rows in once ready
+
 export function SlidingRowsBackground() {
   const {
     state: {songs},
   } = useFestival();
+
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const hasFadedIn = useRef(false);
 
   const imageCandidates = useMemo(
     () => {
@@ -165,16 +127,6 @@ export function SlidingRowsBackground() {
 
   const active = imageCandidates.length >= MIN_IMAGES;
 
-  useEffect(() => {
-    console.log(`[SlidingRowsBackground] songs=${songs.length}, imageCandidates=${imageCandidates.length}, active=${active}`);
-    if (imageCandidates.length > 0 && imageCandidates.length < MIN_IMAGES) {
-      console.log(`[SlidingRowsBackground] Need ${MIN_IMAGES - imageCandidates.length} more images to activate`);
-    }
-    if (imageCandidates.length > 0) {
-      console.log(`[SlidingRowsBackground] Sample imagePath: ${imageCandidates[0]}`);
-    }
-  }, [songs.length, imageCandidates.length, active, imageCandidates, songs]);
-
   const rowStrips = useMemo(() => {
     if (!active) return [];
     return Array.from({length: ROW_COUNT}, () =>
@@ -182,19 +134,34 @@ export function SlidingRowsBackground() {
     );
   }, [active, imageCandidates]);
 
+  // Once active (all rows populated), begin the fade-in.
+  // The rows are already scrolling at opacity 0; this reveals them.
+  useEffect(() => {
+    if (active && rowStrips.length > 0 && !hasFadedIn.current) {
+      hasFadedIn.current = true;
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: FADE_DURATION,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [active, rowStrips.length, fadeAnim]);
+
   if (!active) return null;
 
   return (
     <View style={styles.container} pointerEvents="none">
-      {rowStrips.map((strip, i) => (
-        <SlidingRow
-          key={i}
-          initialStrip={strip}
-          allCandidates={imageCandidates}
-          direction={i % 2 === 0 ? 'left' : 'right'}
-          rowIndex={i}
-        />
-      ))}
+      <Animated.View style={[styles.rowsContainer, {opacity: fadeAnim}]}>
+        {rowStrips.map((strip, i) => (
+          <SlidingRow
+            key={i}
+            initialStrip={strip}
+            direction={i % 2 === 0 ? 'left' : 'right'}
+            rowIndex={i}
+          />
+        ))}
+      </Animated.View>
 
       {/* dark overlay so intro content stays readable */}
       <View style={[styles.dim, {opacity: DIM_OPACITY}]} />
@@ -212,6 +179,9 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     zIndex: 0,
     elevation: 0,
+  },
+  rowsContainer: {
+    ...StyleSheet.absoluteFillObject,
   },
   row: {
     position: 'absolute',
