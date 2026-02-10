@@ -279,6 +279,7 @@ export class SuggestionGenerator {
 
   private mapSong(pair: SongPair): SuggestionSongItem {
     const song = pair.song;
+    const pctDisplay = pair.tracker?.leaderboardPercentileFormatted;
     return {
       songId: song.track.su,
       title: song.track.tt ?? song._title ?? '(unknown)',
@@ -286,6 +287,7 @@ export class SuggestionGenerator {
       stars: stars(pair.tracker),
       percent: pct(pair.tracker),
       fullCombo: pair.tracker ? pair.tracker.isFullCombo : undefined,
+      ...(pctDisplay ? {percentileDisplay: pctDisplay} : undefined),
     };
   }
 
@@ -370,8 +372,26 @@ export class SuggestionGenerator {
     else if (baseKey === 'near_fc_any') title = `FC These Next! (${label})`;
     else if (baseKey === 'almost_six_star') title = `Push ${label} to Gold`;
     else if (baseKey === 'star_gains') title = `Easy Star Gains (${label})`;
+    else if (baseKey === 'almost_elite') title = `Almost Elite (${label})`;
+    else if (baseKey.startsWith('almost_elite_')) {
+      const instr = baseKey.substring('almost_elite_'.length) as InstrumentKey;
+      title = `Almost Elite on ${instrumentLabel(instr)} (${label})`;
+    } else if (baseKey === 'pct_push') title = `Percentile Push (${label})`;
+    else if (baseKey.startsWith('pct_push_')) {
+      const instr = baseKey.substring('pct_push_'.length) as InstrumentKey;
+      title = `Percentile Push: ${instrumentLabel(instr)} (${label})`;
+    }
 
     let desc = `${baseDescription} Limited to ${label} songs.`;
+    if (baseKey === 'almost_elite') desc = `You're in the top 5% on these ${label} songs — one good run could crack the top 1%.`;
+    else if (baseKey.startsWith('almost_elite_')) {
+      const instr = baseKey.substring('almost_elite_'.length) as InstrumentKey;
+      desc = `Your ${instrumentLabel(instr)} scores on these ${label} songs are in the top 5% — push them into the top 1%.`;
+    } else if (baseKey === 'pct_push') desc = `These ${label} scores are close to the next percentile bracket — replay them to climb.`;
+    else if (baseKey.startsWith('pct_push_')) {
+      const instr = baseKey.substring('pct_push_'.length) as InstrumentKey;
+      desc = `Replay these ${label} ${instrumentLabel(instr)} songs to jump to the next percentile bracket.`;
+    }
     if (baseKey === 'unplayed_any') desc = `Unplayed songs from the ${label}.`;
     if (baseKey.startsWith('unplayed_') && baseKey !== 'unplayed_any') {
       const instr = baseKey.substring(9) as InstrumentKey;
@@ -389,7 +409,9 @@ export class SuggestionGenerator {
           baseKey === 'almost_six_star' ||
           baseKey === 'more_stars' ||
           baseKey === 'first_plays_mixed' ||
-          baseKey === 'star_gains'
+          baseKey === 'star_gains' ||
+          baseKey === 'almost_elite' ||
+          baseKey === 'pct_push'
             ? this.mapUniqueSongWithInstrument(p)
             : this.mapUniqueSong(p)
         )),
@@ -441,6 +463,34 @@ export class SuggestionGenerator {
       () => this.unplayedInstrumentDecade('pro_guitar'),
       () => this.unplayedInstrument('pro_bass'),
       () => this.unplayedInstrumentDecade('pro_bass'),
+      () => this.almostElite(),
+      () => this.almostEliteDecade(),
+      () => this.almostEliteInstrument('guitar'),
+      () => this.almostEliteInstrumentDecade('guitar'),
+      () => this.almostEliteInstrument('bass'),
+      () => this.almostEliteInstrumentDecade('bass'),
+      () => this.almostEliteInstrument('drums'),
+      () => this.almostEliteInstrumentDecade('drums'),
+      () => this.almostEliteInstrument('vocals'),
+      () => this.almostEliteInstrumentDecade('vocals'),
+      () => this.almostEliteInstrument('pro_guitar'),
+      () => this.almostEliteInstrumentDecade('pro_guitar'),
+      () => this.almostEliteInstrument('pro_bass'),
+      () => this.almostEliteInstrumentDecade('pro_bass'),
+      () => this.percentilePush(),
+      () => this.percentilePushDecade(),
+      () => this.percentilePushInstrument('guitar'),
+      () => this.percentilePushInstrumentDecade('guitar'),
+      () => this.percentilePushInstrument('bass'),
+      () => this.percentilePushInstrumentDecade('bass'),
+      () => this.percentilePushInstrument('drums'),
+      () => this.percentilePushInstrumentDecade('drums'),
+      () => this.percentilePushInstrument('vocals'),
+      () => this.percentilePushInstrumentDecade('vocals'),
+      () => this.percentilePushInstrument('pro_guitar'),
+      () => this.percentilePushInstrumentDecade('pro_guitar'),
+      () => this.percentilePushInstrument('pro_bass'),
+      () => this.percentilePushInstrumentDecade('pro_bass'),
       () => this.artistFocusUnplayed(),
       () => this.sameNameSets(),
       () => this.sameNameNearFc(),
@@ -940,6 +990,227 @@ export class SuggestionGenerator {
         songs: songs.map(s => this.mapUniqueSong({song: s, tracker: null})),
       },
     ];
+  }
+
+  // ── Percentile tier helpers ────────────────────────────────────────
+
+  private static readonly PERCENTILE_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100];
+
+  /** Convert rawPercentile (fraction) to its bucket ceiling, e.g. 0.0144 → 2. */
+  private static percentileBucket(rawPct: number): number | undefined {
+    if (rawPct <= 0) return undefined;
+    let topPct = rawPct * 100;
+    if (topPct > 100) topPct = 100;
+    if (topPct < 1) topPct = 1;
+    return SuggestionGenerator.PERCENTILE_THRESHOLDS.find(t => topPct <= t) ?? 100;
+  }
+
+  /** Return the next lower threshold for a given bucket. E.g. bucket 5 → next target 4, bucket 10 → next target 5. */
+  private static nextLowerThreshold(bucket: number): number | undefined {
+    const idx = SuggestionGenerator.PERCENTILE_THRESHOLDS.indexOf(bucket);
+    if (idx <= 0) return undefined;
+    return SuggestionGenerator.PERCENTILE_THRESHOLDS[idx - 1];
+  }
+
+  // ── Almost Elite ──────────────────────────────────────────────────
+  //
+  // Songs in the top 5% (bucket 2..5) that could be pushed to top 1%.
+
+  private almostElite(): SuggestionCategory[] {
+    const pool: SongPair[] = [];
+    for (const s of this.songs) {
+      const board = this.scoresIndex[s.track.su];
+      pool.push(
+        ...this.eachTracker(s, board, t => {
+          const b = SuggestionGenerator.percentileBucket(t.rawPercentile);
+          return b != null && b >= 2 && b <= 5;
+        }),
+      );
+    }
+    this.shuffleInPlace(pool);
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit('almost_elite', freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst('almost_elite', pool, take);
+    if (final.length === 0) return [];
+    return [
+      {
+        key: 'almost_elite',
+        title: 'Almost Elite',
+        description: "You're in the top 5% on these — one good run could crack the top 1%.",
+        songs: final.map(p => this.mapUniqueSongWithInstrument(p)),
+      },
+    ];
+  }
+
+  private almostEliteDecade(): SuggestionCategory[] {
+    const pool: SongPair[] = [];
+    for (const s of this.songs) {
+      const board = this.scoresIndex[s.track.su];
+      pool.push(
+        ...this.eachTracker(s, board, t => {
+          const b = SuggestionGenerator.percentileBucket(t.rawPercentile);
+          return b != null && b >= 2 && b <= 5;
+        }),
+      );
+    }
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit('almost_elite_decade_wrap', freshCount)) return [];
+    return this.buildDecadeVariant(
+      'almost_elite',
+      'Almost Elite',
+      "You're in the top 5% on these — one good run could crack the top 1%.",
+      pool,
+    );
+  }
+
+  private almostEliteInstrument(instrument: InstrumentKey): SuggestionCategory[] {
+    const list: SongPair[] = [];
+    for (const s of this.songs) {
+      const tr = getTracker(this.scoresIndex[s.track.su], instrument);
+      if (tr) {
+        const b = SuggestionGenerator.percentileBucket(tr.rawPercentile);
+        if (b != null && b >= 2 && b <= 5) list.push({song: s, tracker: tr});
+      }
+    }
+    this.shuffleInPlace(list);
+    const key = `almost_elite_${instrument}`;
+    const freshCount = this.getFreshCount(list);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst(key, list, take);
+    if (final.length === 0) return [];
+    return [
+      {
+        key,
+        title: `Almost Elite on ${instrumentLabel(instrument)}`,
+        description: `Your ${instrumentLabel(instrument)} scores are in the top 5% — push them into the top 1%.`,
+        songs: final.map(p => this.mapUniqueSong(p)),
+      },
+    ];
+  }
+
+  private almostEliteInstrumentDecade(instrument: InstrumentKey): SuggestionCategory[] {
+    const list: SongPair[] = [];
+    for (const s of this.songs) {
+      const tr = getTracker(this.scoresIndex[s.track.su], instrument);
+      if (tr) {
+        const b = SuggestionGenerator.percentileBucket(tr.rawPercentile);
+        if (b != null && b >= 2 && b <= 5) list.push({song: s, tracker: tr});
+      }
+    }
+    const freshCount = this.getFreshCount(list);
+    const wrapKey = `almost_elite_${instrument}_decade_wrap`;
+    if (!this.shouldEmit(wrapKey, freshCount)) return [];
+    return this.buildDecadeVariant(
+      `almost_elite_${instrument}`,
+      `Almost Elite on ${instrumentLabel(instrument)}`,
+      `Your ${instrumentLabel(instrument)} scores are in the top 5% — push them into the top 1%.`,
+      list,
+    );
+  }
+
+  // ── Percentile Push ───────────────────────────────────────────────
+  //
+  // Songs close to jumping up to the next percentile bracket.
+  // E.g. top 10% → top 5%, top 25% → top 20%, etc.
+
+  private static isNearNextBracket(rawPercentile: number): boolean {
+    const bucket = SuggestionGenerator.percentileBucket(rawPercentile);
+    if (bucket == null || bucket <= 1) return false; // Already top 1% — nothing to push to
+    const next = SuggestionGenerator.nextLowerThreshold(bucket);
+    if (next == null) return false;
+    // "Near" means the raw percentile is in the lower half of the current bucket
+    // e.g. bucket 10 (range 6-10%), raw ~7% → within reach.
+    const topPct = rawPercentile * 100;
+    const midpoint = next + (bucket - next) / 2;
+    return topPct <= midpoint;
+  }
+
+  private percentilePush(): SuggestionCategory[] {
+    const pool: SongPair[] = [];
+    for (const s of this.songs) {
+      const board = this.scoresIndex[s.track.su];
+      pool.push(
+        ...this.eachTracker(s, board, t => SuggestionGenerator.isNearNextBracket(t.rawPercentile)),
+      );
+    }
+    this.shuffleInPlace(pool);
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit('pct_push', freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst('pct_push', pool, take);
+    if (final.length === 0) return [];
+    return [
+      {
+        key: 'pct_push',
+        title: 'Percentile Push',
+        description: 'These scores are close to the next percentile bracket — replay them to climb.',
+        songs: final.map(p => this.mapUniqueSongWithInstrument(p)),
+      },
+    ];
+  }
+
+  private percentilePushDecade(): SuggestionCategory[] {
+    const pool: SongPair[] = [];
+    for (const s of this.songs) {
+      const board = this.scoresIndex[s.track.su];
+      pool.push(
+        ...this.eachTracker(s, board, t => SuggestionGenerator.isNearNextBracket(t.rawPercentile)),
+      );
+    }
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit('pct_push_decade_wrap', freshCount)) return [];
+    return this.buildDecadeVariant(
+      'pct_push',
+      'Percentile Push',
+      'These scores are close to the next percentile bracket — replay them to climb.',
+      pool,
+    );
+  }
+
+  private percentilePushInstrument(instrument: InstrumentKey): SuggestionCategory[] {
+    const list: SongPair[] = [];
+    for (const s of this.songs) {
+      const tr = getTracker(this.scoresIndex[s.track.su], instrument);
+      if (tr && SuggestionGenerator.isNearNextBracket(tr.rawPercentile)) {
+        list.push({song: s, tracker: tr});
+      }
+    }
+    this.shuffleInPlace(list);
+    const key = `pct_push_${instrument}`;
+    const freshCount = this.getFreshCount(list);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst(key, list, take);
+    if (final.length === 0) return [];
+    return [
+      {
+        key,
+        title: `Percentile Push: ${instrumentLabel(instrument)}`,
+        description: `Replay these ${instrumentLabel(instrument)} songs to jump to the next percentile bracket.`,
+        songs: final.map(p => this.mapUniqueSong(p)),
+      },
+    ];
+  }
+
+  private percentilePushInstrumentDecade(instrument: InstrumentKey): SuggestionCategory[] {
+    const list: SongPair[] = [];
+    for (const s of this.songs) {
+      const tr = getTracker(this.scoresIndex[s.track.su], instrument);
+      if (tr && SuggestionGenerator.isNearNextBracket(tr.rawPercentile)) {
+        list.push({song: s, tracker: tr});
+      }
+    }
+    const freshCount = this.getFreshCount(list);
+    const wrapKey = `pct_push_${instrument}_decade_wrap`;
+    if (!this.shouldEmit(wrapKey, freshCount)) return [];
+    return this.buildDecadeVariant(
+      `pct_push_${instrument}`,
+      `Percentile Push: ${instrumentLabel(instrument)}`,
+      `Replay these ${instrumentLabel(instrument)} songs to jump to the next percentile bracket.`,
+      list,
+    );
   }
 
   private sameNameNearFc(): SuggestionCategory[] {

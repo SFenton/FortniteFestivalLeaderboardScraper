@@ -1350,4 +1350,211 @@ describe('SuggestionGenerator', () => {
     const out = gen.generate(songs, scoresIndex);
     expect(Array.isArray(out)).toBe(true);
   });
+
+  // ── Almost Elite ────────────────────────────────────────────────────
+
+  const mkScoresWithPercentile = (
+    songId: string,
+    instrument: string,
+    opts: {pct?: number; fc?: boolean; stars?: number; rawPercentile?: number},
+  ): LeaderboardData => {
+    const t = new ScoreTracker();
+    t.initialized = true;
+    t.percentHit = Math.round((opts.pct ?? 0) * 10000);
+    t.isFullCombo = opts.fc ?? false;
+    t.numStars = opts.stars ?? 0;
+    t.rawPercentile = opts.rawPercentile ?? 0;
+    t.refreshDerived();
+    return {songId, [instrument]: t} as any;
+  };
+
+  test('almostElite emits songs in top 2-5% bucket (mixed)', () => {
+    const rng = {nextInt: (n: number) => 0, nextDouble: () => 0};
+    const songs = [
+      mkSong('a', 'Song A', 'Artist 1', 2001),
+      mkSong('b', 'Song B', 'Artist 2', 2001),
+      mkSong('c', 'Song C', 'Artist 3', 2001),
+    ];
+    const scoresIndex: Record<string, LeaderboardData> = {
+      // rawPercentile 0.03 = top 3% → bucket 3 → qualifies
+      a: mkScoresWithPercentile('a', 'guitar', {pct: 96, stars: 6, rawPercentile: 0.03}),
+      // rawPercentile 0.05 = top 5% → bucket 5 → qualifies
+      b: mkScoresWithPercentile('b', 'guitar', {pct: 95, stars: 6, rawPercentile: 0.05}),
+      // rawPercentile 0.005 = top 0.5% → bucket 1 → does NOT qualify (already elite)
+      c: mkScoresWithPercentile('c', 'guitar', {pct: 99, stars: 6, rawPercentile: 0.005}),
+    };
+    const gen = new SuggestionGenerator({rng, disableSkipping: true, fixedDisplayCount: 3});
+    gen.setSource(songs, scoresIndex);
+    const out = (gen as any).almostElite.call(gen) as Array<{key: string; title: string; songs: any[]}>;
+    expect(out.length).toBe(1);
+    expect(out[0].key).toBe('almost_elite');
+    expect(out[0].title).toBe('Almost Elite');
+    // Should include songs a and b but not c
+    const ids = out[0].songs.map((s: any) => s.songId);
+    expect(ids).toContain('a');
+    expect(ids).toContain('b');
+    expect(ids).not.toContain('c');
+    // Mixed cards should include instrumentKey in rows
+    expect(out[0].songs[0].instrumentKey).toBeDefined();
+    // Percentile cards should include percentileDisplay on each song
+    for (const song of out[0].songs) {
+      expect(song.percentileDisplay).toBeDefined();
+      expect(song.percentileDisplay).toMatch(/^Top \d+%$/);
+    }
+  });
+
+  test('almostElite excludes songs outside top 5% bucket', () => {
+    const rng = {nextInt: (n: number) => 0, nextDouble: () => 0};
+    const songs = [mkSong('a', 'Song A', 'Artist 1', 2001)];
+    const scoresIndex: Record<string, LeaderboardData> = {
+      // rawPercentile 0.12 = top 12% → bucket 15 → does NOT qualify
+      a: mkScoresWithPercentile('a', 'guitar', {pct: 88, stars: 5, rawPercentile: 0.12}),
+    };
+    const gen = new SuggestionGenerator({rng, disableSkipping: true, fixedDisplayCount: 2});
+    gen.setSource(songs, scoresIndex);
+    const out = (gen as any).almostElite.call(gen) as any[];
+    expect(out.length).toBe(0);
+  });
+
+  test('almostEliteInstrument scopes to one instrument', () => {
+    const rng = {nextInt: (n: number) => 0, nextDouble: () => 0};
+    const songs = [mkSong('a', 'Song A', 'Artist 1', 2001)];
+    // Put qualifying percentile on drums, not guitar
+    const drumTracker = new ScoreTracker();
+    drumTracker.initialized = true;
+    drumTracker.percentHit = 960000;
+    drumTracker.numStars = 6;
+    drumTracker.rawPercentile = 0.04; // top 4% → bucket 4
+    drumTracker.refreshDerived();
+    const scoresIndex: Record<string, LeaderboardData> = {
+      a: {songId: 'a', drums: drumTracker},
+    };
+    const gen = new SuggestionGenerator({rng, disableSkipping: true, fixedDisplayCount: 2});
+    gen.setSource(songs, scoresIndex);
+    // Drums should find it
+    const drumOut = (gen as any).almostEliteInstrument.call(gen, 'drums') as any[];
+    expect(drumOut.length).toBe(1);
+    expect(drumOut[0].key).toBe('almost_elite_drums');
+    expect(drumOut[0].title).toBe('Almost Elite on Drums');
+    // Guitar should NOT find it
+    const guitarOut = (gen as any).almostEliteInstrument.call(gen, 'guitar') as any[];
+    expect(guitarOut.length).toBe(0);
+  });
+
+  test('almostEliteInstrument does not include instrumentKey in song rows (header shows it)', () => {
+    const rng = {nextInt: (n: number) => 0, nextDouble: () => 0};
+    const songs = [mkSong('a', 'Song A', 'Artist 1', 2001)];
+    const scoresIndex: Record<string, LeaderboardData> = {
+      a: mkScoresWithPercentile('a', 'guitar', {pct: 96, stars: 6, rawPercentile: 0.03}),
+    };
+    const gen = new SuggestionGenerator({rng, disableSkipping: true, fixedDisplayCount: 2});
+    gen.setSource(songs, scoresIndex);
+    const out = (gen as any).almostEliteInstrument.call(gen, 'guitar') as any[];
+    expect(out.length).toBe(1);
+    // Per-instrument cards use mapUniqueSong which does NOT set instrumentKey
+    expect(out[0].songs[0].instrumentKey).toBeUndefined();
+  });
+
+  // ── Percentile Push ─────────────────────────────────────────────────
+
+  test('percentilePush emits songs near next bracket boundary (mixed)', () => {
+    const rng = {nextInt: (n: number) => 0, nextDouble: () => 0};
+    const songs = [
+      mkSong('a', 'Song A', 'Artist 1', 2001),
+      mkSong('b', 'Song B', 'Artist 2', 2001),
+      mkSong('c', 'Song C', 'Artist 3', 2001),
+    ];
+    const scoresIndex: Record<string, LeaderboardData> = {
+      // rawPercentile 0.06 = top 6% → bucket 10, next target 5. Midpoint = 7.5. 6 <= 7.5 → qualifies
+      a: mkScoresWithPercentile('a', 'guitar', {pct: 94, stars: 5, rawPercentile: 0.06}),
+      // rawPercentile 0.22 = top 22% → bucket 25, next target 20. Midpoint = 22.5. 22 <= 22.5 → qualifies
+      b: mkScoresWithPercentile('b', 'guitar', {pct: 85, stars: 4, rawPercentile: 0.22}),
+      // rawPercentile 0.09 = top 9% → bucket 10, next target 5. Midpoint = 7.5. 9 > 7.5 → does NOT qualify
+      c: mkScoresWithPercentile('c', 'guitar', {pct: 90, stars: 5, rawPercentile: 0.09}),
+    };
+    const gen = new SuggestionGenerator({rng, disableSkipping: true, fixedDisplayCount: 3});
+    gen.setSource(songs, scoresIndex);
+    const out = (gen as any).percentilePush.call(gen) as Array<{key: string; title: string; songs: any[]}>;
+    expect(out.length).toBe(1);
+    expect(out[0].key).toBe('pct_push');
+    expect(out[0].title).toBe('Percentile Push');
+    const ids = out[0].songs.map((s: any) => s.songId);
+    expect(ids).toContain('a');
+    expect(ids).toContain('b');
+    expect(ids).not.toContain('c');
+    // Mixed cards include instrumentKey
+    expect(out[0].songs[0].instrumentKey).toBeDefined();
+  });
+
+  test('percentilePush excludes top-1% songs (nothing to push to)', () => {
+    const rng = {nextInt: (n: number) => 0, nextDouble: () => 0};
+    const songs = [mkSong('a', 'Song A', 'Artist 1', 2001)];
+    const scoresIndex: Record<string, LeaderboardData> = {
+      // Already top 1% → bucket 1 → no next bracket
+      a: mkScoresWithPercentile('a', 'guitar', {pct: 99, stars: 6, rawPercentile: 0.005}),
+    };
+    const gen = new SuggestionGenerator({rng, disableSkipping: true, fixedDisplayCount: 2});
+    gen.setSource(songs, scoresIndex);
+    const out = (gen as any).percentilePush.call(gen) as any[];
+    expect(out.length).toBe(0);
+  });
+
+  test('percentilePushInstrument scopes to one instrument', () => {
+    const rng = {nextInt: (n: number) => 0, nextDouble: () => 0};
+    const songs = [mkSong('a', 'Song A', 'Artist 1', 2001)];
+    const bassTracker = new ScoreTracker();
+    bassTracker.initialized = true;
+    bassTracker.percentHit = 920000;
+    bassTracker.numStars = 5;
+    bassTracker.rawPercentile = 0.06; // top 6% → bucket 10, midpoint 7.5, 6 <= 7.5 → qualifies
+    bassTracker.refreshDerived();
+    const scoresIndex: Record<string, LeaderboardData> = {
+      a: {songId: 'a', bass: bassTracker},
+    };
+    const gen = new SuggestionGenerator({rng, disableSkipping: true, fixedDisplayCount: 2});
+    gen.setSource(songs, scoresIndex);
+    const bassOut = (gen as any).percentilePushInstrument.call(gen, 'bass') as any[];
+    expect(bassOut.length).toBe(1);
+    expect(bassOut[0].key).toBe('pct_push_bass');
+    expect(bassOut[0].title).toBe('Percentile Push: Bass');
+    // Guitar should NOT find it
+    const guitarOut = (gen as any).percentilePushInstrument.call(gen, 'guitar') as any[];
+    expect(guitarOut.length).toBe(0);
+  });
+
+  test('percentilePushInstrument does not include instrumentKey in song rows', () => {
+    const rng = {nextInt: (n: number) => 0, nextDouble: () => 0};
+    const songs = [mkSong('a', 'Song A', 'Artist 1', 2001)];
+    const scoresIndex: Record<string, LeaderboardData> = {
+      a: mkScoresWithPercentile('a', 'guitar', {pct: 94, stars: 5, rawPercentile: 0.06}),
+    };
+    const gen = new SuggestionGenerator({rng, disableSkipping: true, fixedDisplayCount: 2});
+    gen.setSource(songs, scoresIndex);
+    const out = (gen as any).percentilePushInstrument.call(gen, 'guitar') as any[];
+    expect(out.length).toBe(1);
+    expect(out[0].songs[0].instrumentKey).toBeUndefined();
+  });
+
+  test('almostElite and percentilePush appear via getNext pipeline', () => {
+    // Use many songs so session-shown saturation doesn't prevent emission
+    const songs: Song[] = Array.from({length: 60}).map((_, i) =>
+      mkSong(`s${i}`, `Song ${i}`, `Artist ${i % 30}`, 2001),
+    );
+    const scoresIndex: Record<string, LeaderboardData> = {};
+    for (let i = 0; i < 60; i++) {
+      const t = new ScoreTracker();
+      t.initialized = true;
+      t.percentHit = 950000;
+      t.numStars = 6;
+      // Half get top 3% (almost_elite), half get top 6% (percentile push)
+      t.rawPercentile = i < 30 ? 0.03 : 0.06;
+      t.refreshDerived();
+      scoresIndex[`s${i}`] = {songId: `s${i}`, guitar: t};
+    }
+    const gen = new SuggestionGenerator({seed: 42, disableSkipping: true, fixedDisplayCount: 2});
+    const out = gen.getNext(200, songs, scoresIndex);
+    const keys = out.map(c => c.key);
+    expect(keys.some(k => k === 'almost_elite' || k.startsWith('almost_elite_'))).toBe(true);
+    expect(keys.some(k => k === 'pct_push' || k.startsWith('pct_push_'))).toBe(true);
+  });
 });

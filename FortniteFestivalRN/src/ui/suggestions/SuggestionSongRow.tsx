@@ -58,6 +58,7 @@ export const SuggestionSongRow = React.memo(function SuggestionSongRow(props: {
   const isSameNameTitleCategory = props.categoryKey.startsWith('samename_') && !isSameNameNearFcCategory;
   const isUnplayedAnyCategory = props.categoryKey === 'unplayed_any' || props.categoryKey.startsWith('unplayed_any_decade_');
   const isStarGainsCategory = props.categoryKey.startsWith('star_gains');
+  const isPercentileCategory = props.categoryKey.startsWith('almost_elite') || props.categoryKey.startsWith('pct_push');
 
   const right = useMemo(() => {
     if (isUnfcCategory) return '';
@@ -73,9 +74,18 @@ export const SuggestionSongRow = React.memo(function SuggestionSongRow(props: {
 
   const showUnfcBadge = unfcPercent != null;
 
-  const rightInstrumentKey = (isFcTheseNextCategory || isNearFcRelaxedCategory || isGoldStarPushCategory || isFirstPlaysMixedCategory || isStarGainsCategory) ? item.instrumentKey : undefined;
+  const rightInstrumentKey = (isFcTheseNextCategory || isNearFcRelaxedCategory || isGoldStarPushCategory || isFirstPlaysMixedCategory || isStarGainsCategory || isPercentileCategory) ? item.instrumentKey : undefined;
   const rightInstrumentKeyFinal = (rightInstrumentKey || (isSameNameNearFcCategory ? item.instrumentKey : undefined));
   const showRightInstrumentIcon = !!rightInstrumentKeyFinal;
+
+  const percentilePill = useMemo(() => {
+    if (!isPercentileCategory) return undefined;
+    const display = item.percentileDisplay;
+    if (!display) return undefined;
+    // Highlight gold when top 5% or better
+    const isTop5 = display === 'Top 1%' || display === 'Top 2%' || display === 'Top 3%' || display === 'Top 4%' || display === 'Top 5%';
+    return {display, isTop5};
+  }, [isPercentileCategory, item.percentileDisplay]);
 
   const starGainsStarCount = useMemo(() => {
     if (!isStarGainsCategory) return 0;
@@ -151,7 +161,18 @@ export const SuggestionSongRow = React.memo(function SuggestionSongRow(props: {
                   })}
                 </View>
               ) : null}
-              {hideRightSideCompletely ? null : showRightInstrumentIcon ? (
+              {hideRightSideCompletely ? null : isPercentileCategory && percentilePill ? (
+                <View style={styles.songRightPercentile}>
+                  {showRightInstrumentIcon ? (
+                    <Image source={getInstrumentIconSource(rightInstrumentKeyFinal)} style={styles.fcTheseInstrumentIcon} resizeMode="contain" />
+                  ) : null}
+                  <View style={[styles.percentilePill, percentilePill.isTop5 && styles.percentilePillGold]}>
+                    <Text style={[styles.percentilePillText, percentilePill.isTop5 && styles.percentilePillTextGold]} numberOfLines={1}>
+                      {percentilePill.display}
+                    </Text>
+                  </View>
+                </View>
+              ) : showRightInstrumentIcon ? (
                 <View style={styles.songRightSingle}>
                   <Image source={getInstrumentIconSource(rightInstrumentKeyFinal)} style={styles.fcTheseInstrumentIcon} resizeMode="contain" />
                 </View>
@@ -287,6 +308,33 @@ const styles = StyleSheet.create({
     color: '#D7DEE8',
     fontSize: 12,
     fontWeight: '700',
+  },
+  songRightPercentile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  percentilePill: {
+    backgroundColor: '#1D3A71',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  percentilePillGold: {
+    backgroundColor: '#332915',
+    borderColor: '#FFD700',
+  },
+  percentilePillText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 12,
+  },
+  percentilePillTextGold: {
+    color: '#FFD700',
   },
   songTitle: {
     color: '#FFFFFF',

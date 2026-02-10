@@ -8,6 +8,7 @@ export type SuggestionSongItem = {
   percent?: number;
   fullCombo?: boolean;
   instrumentKey?: InstrumentKey;
+  percentileDisplay?: string;
 };
 
 export type SuggestionCategory = {

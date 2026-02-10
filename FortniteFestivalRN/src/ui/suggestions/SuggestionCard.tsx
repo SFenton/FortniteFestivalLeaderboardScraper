@@ -26,6 +26,10 @@ export function SuggestionCard(props: {
       if (suffix === 'any' || suffix.startsWith('any_')) return undefined;
     } else if (cat.key.startsWith('unfc_')) {
       suffix = cat.key.slice('unfc_'.length);
+    } else if (cat.key.startsWith('almost_elite_')) {
+      suffix = cat.key.slice('almost_elite_'.length);
+    } else if (cat.key.startsWith('pct_push_')) {
+      suffix = cat.key.slice('pct_push_'.length);
     }
 
     if (!suffix) return undefined;
