@@ -96,6 +96,7 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
 
   // Seed changes regenerate suggestions. Use a daily seed by default to keep it stable.
   const [seed, setSeed] = useState<number>(() => Math.floor(Date.now() / (1000 * 60 * 60 * 24)));
+  const seedRef = useRef(seed);
 
   const genRef = useRef<SuggestionGenerator | null>(null);
   const nextUiKey = useRef(0);
@@ -104,15 +105,6 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
   const [categories, setCategories] = useState<SuggestionCategoryRow[]>([]);
 
   const listRef = useRef<FlatList<SuggestionCategoryRow> | null>(null);
-
-  const onRegenerate = useCallback(() => {
-    // Jump back to the top so the user immediately sees the new first categories.
-    listRef.current?.scrollToOffset({offset: 0, animated: false});
-
-    const next = Math.floor(Date.now() / (1000 * 60 * 60 * 24)) + Math.floor(Math.random() * 1000);
-    setSeed(next);
-    logUi(`[SUGGESTIONS] regenerate seed=${next}`);
-  }, [logUi]);
 
   const attachUiKeys = useCallback((list: SuggestionCategory[]): SuggestionCategoryRow[] => {
     return list.map(c => ({...c, uiKey: `${c.key}:${nextUiKey.current++}`}));
@@ -147,7 +139,7 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
     setInitialLoading(true);
     setLoadingMore(false);
 
-    const gen = new SuggestionGenerator({seed, disableSkipping: false});
+    const gen = new SuggestionGenerator({seed: seedRef.current, disableSkipping: false});
     genRef.current = gen;
 
     nextUiKey.current = 0;
@@ -178,14 +170,33 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
 
     if (__DEV__) {
       const scoresCount = Object.keys(scoresIndex ?? {}).length;
-      logUi(`[SUGGESTIONS] init songs=${songs.length} scores=${scoresCount} seed=${seed} generated=${picked.length}`);
+      logUi(`[SUGGESTIONS] init songs=${songs.length} scores=${scoresCount} seed=${seedRef.current} generated=${picked.length}`);
     }
     setInitialLoading(false);
-  }, [attachUiKeys, filterForEnabledInstruments, logUi, scoresIndex, seed, songs]);
+  }, [attachUiKeys, filterForEnabledInstruments, logUi, scoresIndex, songs]);
 
   useEffect(() => {
     loadInitial();
   }, [loadInitial]);
+
+  const onRegenerate = useCallback(() => {
+    // Update the seed ref first so loadInitial() picks it up immediately.
+    const next = Math.floor(Date.now() / (1000 * 60 * 60 * 24)) + Math.floor(Math.random() * 1000);
+    seedRef.current = next;
+    setSeed(next);
+
+    // Generate new suggestions directly instead of waiting for the useEffect
+    // to detect the seed change.  This keeps the new categories, the seed
+    // update, and the scroll-to-top in a single React batch so the user never
+    // sees a flash of stale or intermediate data.
+    loadInitial();
+
+    // Scroll after loadInitial so the FlatList already has new data when the
+    // native thread processes the scroll command.
+    listRef.current?.scrollToOffset({offset: 0, animated: false});
+
+    logUi(`[SUGGESTIONS] regenerate seed=${next}`);
+  }, [loadInitial, logUi]);
 
   const loadMore = useCallback(() => {
     if (!songs.length) return;
