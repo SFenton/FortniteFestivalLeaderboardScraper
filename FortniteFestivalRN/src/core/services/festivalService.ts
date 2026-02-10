@@ -298,7 +298,7 @@ export class FestivalService {
       const current = ++completed;
       safeCall(this.events.songProgress, current, total, `Img ${title}`, true);
       try {
-        const local = await this.imageCache.ensureCached(s, {signal: opts?.signal});
+        const local = await this.imageCache?.ensureCached(s, {signal: opts?.signal});
         if (local) s.imagePath = local;
       } catch (e: any) {
         if (canon(String(e?.message)).includes('aborted')) throw e;

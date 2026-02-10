@@ -471,7 +471,6 @@ export function SongDetailsView(props: {songId: string; showBack?: boolean; onBa
             </FrostedSurface>
           )}
 
-          {Platform.OS === 'android' ? <Text style={styles.hint}>Android hardware back is supported.</Text> : null}
           </ScrollView>
           </MaskedView>
         </View>
@@ -710,11 +709,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '800',
     flex: 1,
-  },
-
-  hint: {
-    color: '#D7DEE8',
-    fontSize: 12,
   },
 
   layoutDebugRow: {
