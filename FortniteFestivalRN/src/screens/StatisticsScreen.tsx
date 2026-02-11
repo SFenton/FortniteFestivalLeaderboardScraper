@@ -189,6 +189,7 @@ export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: st
                       <StatisticsInstrumentCard data={s} style={styles.cardGridChildFill} />
                       </View>
                     ))}
+                    {instrumentStats.length % 2 !== 0 && <View style={styles.cardGridCell} />}
                   </View>
                 </>
               )}
@@ -204,6 +205,7 @@ export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: st
                       <TopSongsCard cat={c} songById={songById} onOpenSong={onOpenSong} style={styles.cardGridChildFill} />
                       </View>
                     ))}
+                    {topCategories.length % 2 !== 0 && <View style={styles.cardGridCell} />}
                   </View>
                 </>
               )}

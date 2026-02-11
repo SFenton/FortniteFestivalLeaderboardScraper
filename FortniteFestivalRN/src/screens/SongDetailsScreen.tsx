@@ -382,6 +382,7 @@ export function SongDetailsView(props: {songId: string; showBack?: boolean; onBa
                     <InstrumentCard data={r} />
                   </View>
                 ))}
+                {instrumentRows.length % 2 !== 0 && <View style={styles.cardGridCell} />}
               </View>
             ) : (
               instrumentRows.map(r => (

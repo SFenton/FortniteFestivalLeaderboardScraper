@@ -45,10 +45,10 @@ export function FilterModal(props: {
           <View style={styles.modalSection}>
             <Text style={styles.modalSectionTitle}>Missing</Text>
             <Text style={styles.modalHint}>Only show songs where you are missing scores or full combos on pad or pro instruments.</Text>
-              <ToggleRow label="Pad Scores" checked={props.draft.missingPadScores} onToggle={() => t('missingPadScores')} first />
-              <ToggleRow label="Pad FCs" checked={props.draft.missingPadFCs} onToggle={() => t('missingPadFCs')} last={!!props.hideProFilters} />
-              {!props.hideProFilters && <ToggleRow label="Pro Scores" checked={props.draft.missingProScores} onToggle={() => t('missingProScores')} />}
-              {!props.hideProFilters && <ToggleRow label="Pro FCs" checked={props.draft.missingProFCs} onToggle={() => t('missingProFCs')} last />}
+              <ToggleRow label="Pad Scores" description="Toggle this on to filter to songs that are missing scores on Lead, Bass, Drums, or Vocals." checked={props.draft.missingPadScores} onToggle={() => t('missingPadScores')} first />
+              <ToggleRow label="Pad FCs" description="Toggle this on to filter to songs that are missing FCs on Lead, Bass, Drums, or Vocals." checked={props.draft.missingPadFCs} onToggle={() => t('missingPadFCs')} last={!!props.hideProFilters} />
+              {!props.hideProFilters && <ToggleRow label="Pro Scores" description="Toggle this on to filter to songs that are missing scores on Pro Lead or Pro Bass." checked={props.draft.missingProScores} onToggle={() => t('missingProScores')} />}
+              {!props.hideProFilters && <ToggleRow label="Pro FCs" description="Toggle this on to filter to songs that are missing FCs on Pro Lead or Pro Bass." checked={props.draft.missingProFCs} onToggle={() => t('missingProFCs')} last />}
           </View>
           </ScrollView>
 
@@ -66,7 +66,7 @@ export function FilterModal(props: {
   );
 }
 
-function ToggleRow(props: {label: string; checked: boolean; onToggle: () => void; first?: boolean; last?: boolean}) {
+function ToggleRow(props: {label: string; description?: string; checked: boolean; onToggle: () => void; first?: boolean; last?: boolean}) {
   return (
     <Pressable
       onPress={props.onToggle}
@@ -77,7 +77,10 @@ function ToggleRow(props: {label: string; checked: boolean; onToggle: () => void
       ]}
       accessibilityRole="switch"
     >
-      <Text style={styles.orderName}>{props.label}</Text>
+      <View style={{flex: 1, marginRight: 12}}>
+        <Text style={styles.orderName}>{props.label}</Text>
+        {props.description ? <Text style={styles.modalHint}>{props.description}</Text> : null}
+      </View>
       <Switch
         value={props.checked}
         onValueChange={props.onToggle}
