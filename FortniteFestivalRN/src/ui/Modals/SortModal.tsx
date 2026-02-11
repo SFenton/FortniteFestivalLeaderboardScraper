@@ -1,5 +1,5 @@
 import React, {useMemo} from 'react';
-import {Alert, Platform, Pressable, ScrollView, Text, useWindowDimensions, View} from 'react-native';
+import {Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View} from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import DraggableFlatList, {type RenderItemParams} from 'react-native-draggable-flatlist';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -11,6 +11,7 @@ import type {InstrumentOrderItem, InstrumentShowSettings, SongSortMode} from '..
 import {isInstrumentVisible} from '../../core/songListConfig';
 import type {InstrumentKey} from '../../core/instruments';
 import {modalStyles as styles} from './modalStyles';
+import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
 
 export function SortModal(props: {
   visible: boolean;
@@ -98,7 +99,10 @@ export function SortModal(props: {
               <FrostedSurface style={styles.orderList} tint="dark" intensity={12}>
               {visibleItems.map((it, idx) => (
                 <View key={it.key} style={[styles.orderRow, idx === 0 && styles.orderRowFirst, idx === visibleItems.length - 1 && styles.orderRowLast, idx > 0 && styles.orderRowSeparator]}>
-                  <Text style={styles.orderName}>{it.displayName}</Text>
+                  <View style={localStyles.instrumentLabelRow}>
+                    <Image source={getInstrumentIconSource(it.key)} style={localStyles.instrumentIcon} resizeMode="contain" />
+                    <Text style={styles.orderName}>{it.displayName}</Text>
+                  </View>
                   <View style={styles.orderBtns}>
                     <Pressable
                       onPress={() => {
@@ -148,7 +152,10 @@ export function SortModal(props: {
                         disabled={isActive}
                         style={[styles.orderRow, idx === 0 && styles.orderRowFirst, idx === visibleItems.length - 1 && styles.orderRowLast, idx > 0 && styles.orderRowSeparator, isActive && styles.orderRowActive]}
                       >
-                        <Text style={styles.orderName}>{item.displayName}</Text>
+                        <View style={localStyles.instrumentLabelRow}>
+                          <Image source={getInstrumentIconSource(item.key)} style={localStyles.instrumentIcon} resizeMode="contain" />
+                          <Text style={styles.orderName}>{item.displayName}</Text>
+                        </View>
                         <Ionicons name="menu" size={20} color="#8899AA" />
                       </Pressable>
                     );
@@ -182,3 +189,16 @@ function Choice(props: {label: string; selected: boolean; onPress: () => void}) 
     </Pressable>
   );
 }
+
+const localStyles = StyleSheet.create({
+  instrumentLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  instrumentIcon: {
+    width: 36,
+    height: 36,
+    marginRight: 8,
+  },
+});

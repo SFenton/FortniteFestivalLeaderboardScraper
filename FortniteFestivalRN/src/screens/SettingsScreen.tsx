@@ -1,5 +1,5 @@
 import React, {useCallback} from 'react';
-import {Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View} from 'react-native';
+import {Alert, Image, type ImageSourcePropType, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View} from 'react-native';
 import MaskedView from '@react-native-masked-view/masked-view';
 import LinearGradient from 'react-native-linear-gradient';
 import {isLiquidGlassSupported} from '@callstack/liquid-glass';
@@ -12,10 +12,11 @@ import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 import {PageHeader} from '../ui/PageHeader';
 import {reorderPIOForVisibilityChange, showSettingKeyForInstrument} from '../core/songListConfig';
 import {InstrumentKeys} from '../core/instruments';
+import {getInstrumentIconSource} from '../ui/instruments/instrumentVisuals';
 
 /* ────────────────────────── Toggle row (reused) ────────────────────────── */
 
-function ToggleRow(props: {label: string; checked: boolean; onToggle: () => void; first?: boolean; last?: boolean}) {
+function ToggleRow(props: {label: string; icon?: ImageSourcePropType; checked: boolean; onToggle: () => void; first?: boolean; last?: boolean}) {
   return (
     <Pressable
       onPress={props.onToggle}
@@ -28,7 +29,10 @@ function ToggleRow(props: {label: string; checked: boolean; onToggle: () => void
       ]}
       accessibilityRole="switch"
     >
-      <Text style={styles.orderName}>{props.label}</Text>
+      <View style={styles.toggleLabelRow}>
+        {props.icon && <Image source={props.icon} style={styles.toggleInstrumentIcon} resizeMode="contain" />}
+        <Text style={styles.orderName}>{props.label}</Text>
+      </View>
       <Switch
         value={props.checked}
         onValueChange={props.onToggle}
@@ -226,24 +230,24 @@ export function SettingsScreen() {
         <FrostedSurface style={styles.card} tint="dark" intensity={18}>
           <Text style={styles.sectionTitle}>Show Instruments</Text>
           <Text style={styles.sectionHint}>Choose which instruments to display throughout the app.</Text>
-            <ToggleRow label="Lead"     checked={state.settings.showLead}     onToggle={() => toggleSetting('showLead')} first />
-            <ToggleRow label="Bass"     checked={state.settings.showBass}     onToggle={() => toggleSetting('showBass')} />
-            <ToggleRow label="Drums"    checked={state.settings.showDrums}    onToggle={() => toggleSetting('showDrums')} />
-            <ToggleRow label="Vocals"   checked={state.settings.showVocals}   onToggle={() => toggleSetting('showVocals')} />
-            <ToggleRow label="Pro Lead" checked={state.settings.showProLead}  onToggle={() => toggleSetting('showProLead')} />
-            <ToggleRow label="Pro Bass" checked={state.settings.showProBass}  onToggle={() => toggleSetting('showProBass')} last />
+            <ToggleRow label="Lead"     icon={getInstrumentIconSource('guitar')}     checked={state.settings.showLead}     onToggle={() => toggleSetting('showLead')} first />
+            <ToggleRow label="Bass"     icon={getInstrumentIconSource('bass')}       checked={state.settings.showBass}     onToggle={() => toggleSetting('showBass')} />
+            <ToggleRow label="Drums"    icon={getInstrumentIconSource('drums')}      checked={state.settings.showDrums}    onToggle={() => toggleSetting('showDrums')} />
+            <ToggleRow label="Vocals"   icon={getInstrumentIconSource('vocals')}     checked={state.settings.showVocals}   onToggle={() => toggleSetting('showVocals')} />
+            <ToggleRow label="Pro Lead" icon={getInstrumentIconSource('pro_guitar')} checked={state.settings.showProLead}  onToggle={() => toggleSetting('showProLead')} />
+            <ToggleRow label="Pro Bass" icon={getInstrumentIconSource('pro_bass')}   checked={state.settings.showProBass}  onToggle={() => toggleSetting('showProBass')} last />
         </FrostedSurface>
 
         {/* ───── Instrument Query Settings ───── */}
         <FrostedSurface style={styles.card} tint="dark" intensity={18}>
           <Text style={styles.sectionTitle}>Instrument Query Settings</Text>
           <Text style={styles.sectionHint}>Choose which instruments to sync when fetching scores. Removing instruments you don't typically play can improve sync times.</Text>
-            <ToggleRow label="Lead"     checked={state.settings.queryLead}     onToggle={() => toggleSetting('queryLead')} first />
-            <ToggleRow label="Bass"     checked={state.settings.queryBass}     onToggle={() => toggleSetting('queryBass')} />
-            <ToggleRow label="Drums"    checked={state.settings.queryDrums}    onToggle={() => toggleSetting('queryDrums')} />
-            <ToggleRow label="Vocals"   checked={state.settings.queryVocals}   onToggle={() => toggleSetting('queryVocals')} />
-            <ToggleRow label="Pro Lead" checked={state.settings.queryProLead}  onToggle={() => toggleSetting('queryProLead')} />
-            <ToggleRow label="Pro Bass" checked={state.settings.queryProBass}  onToggle={() => toggleSetting('queryProBass')} last />
+            <ToggleRow label="Lead"     icon={getInstrumentIconSource('guitar')}     checked={state.settings.queryLead}     onToggle={() => toggleSetting('queryLead')} first />
+            <ToggleRow label="Bass"     icon={getInstrumentIconSource('bass')}       checked={state.settings.queryBass}     onToggle={() => toggleSetting('queryBass')} />
+            <ToggleRow label="Drums"    icon={getInstrumentIconSource('drums')}      checked={state.settings.queryDrums}    onToggle={() => toggleSetting('queryDrums')} />
+            <ToggleRow label="Vocals"   icon={getInstrumentIconSource('vocals')}     checked={state.settings.queryVocals}   onToggle={() => toggleSetting('queryVocals')} />
+            <ToggleRow label="Pro Lead" icon={getInstrumentIconSource('pro_guitar')} checked={state.settings.queryProLead}  onToggle={() => toggleSetting('queryProLead')} />
+            <ToggleRow label="Pro Bass" icon={getInstrumentIconSource('pro_bass')}   checked={state.settings.queryProBass}  onToggle={() => toggleSetting('queryProBass')} last />
         </FrostedSurface>
 
         {/* ───── iOS Settings ───── */}
@@ -413,6 +417,8 @@ const styles = StyleSheet.create({
   orderRowLast: {},
   orderRowSeparator: {},
   orderName: { color: '#FFFFFF', fontSize: 13, fontWeight: '700' },
+  toggleLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  toggleInstrumentIcon: { width: 36, height: 36, marginRight: 8 },
   rowBtnPressed: { opacity: 0.85 },
   rowDisabled: { opacity: 0.45 },
   descriptorText: { color: '#8899AA', fontSize: 12, lineHeight: 16, marginTop: 2 },

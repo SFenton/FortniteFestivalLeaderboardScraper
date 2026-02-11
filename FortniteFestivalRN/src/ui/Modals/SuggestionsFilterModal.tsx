@@ -103,12 +103,12 @@ export function SuggestionsFilterModal(props: {
           <View style={styles.modalSection}>
             <Text style={styles.modalSectionTitle}>Instruments</Text>
             <Text style={styles.modalHint}>Choose which instruments appear in your suggestions.</Text>
-            <ToggleRow label="Lead" checked={props.draft.suggestionsLeadFilter} onToggle={() => toggle('suggestionsLeadFilter')} first />
-            <ToggleRow label="Bass" checked={props.draft.suggestionsBassFilter} onToggle={() => toggle('suggestionsBassFilter')} />
-            <ToggleRow label="Drums" checked={props.draft.suggestionsDrumsFilter} onToggle={() => toggle('suggestionsDrumsFilter')} />
-            <ToggleRow label="Vocals" checked={props.draft.suggestionsVocalsFilter} onToggle={() => toggle('suggestionsVocalsFilter')} />
-            <ToggleRow label="Pro Lead" checked={props.draft.suggestionsProLeadFilter} onToggle={() => toggle('suggestionsProLeadFilter')} />
-            <ToggleRow label="Pro Bass" checked={props.draft.suggestionsProBassFilter} onToggle={() => toggle('suggestionsProBassFilter')} last />
+            <ToggleRow label="Lead" icon={getInstrumentIconSource('guitar')} checked={props.draft.suggestionsLeadFilter} onToggle={() => toggle('suggestionsLeadFilter')} first />
+            <ToggleRow label="Bass" icon={getInstrumentIconSource('bass')} checked={props.draft.suggestionsBassFilter} onToggle={() => toggle('suggestionsBassFilter')} />
+            <ToggleRow label="Drums" icon={getInstrumentIconSource('drums')} checked={props.draft.suggestionsDrumsFilter} onToggle={() => toggle('suggestionsDrumsFilter')} />
+            <ToggleRow label="Vocals" icon={getInstrumentIconSource('vocals')} checked={props.draft.suggestionsVocalsFilter} onToggle={() => toggle('suggestionsVocalsFilter')} />
+            <ToggleRow label="Pro Lead" icon={getInstrumentIconSource('pro_guitar')} checked={props.draft.suggestionsProLeadFilter} onToggle={() => toggle('suggestionsProLeadFilter')} />
+            <ToggleRow label="Pro Bass" icon={getInstrumentIconSource('pro_bass')} checked={props.draft.suggestionsProBassFilter} onToggle={() => toggle('suggestionsProBassFilter')} last />
           </View>
 
           <View style={styles.modalSection}>
@@ -186,7 +186,7 @@ export function SuggestionsFilterModal(props: {
   );
 }
 
-function ToggleRow(props: {label: string; description?: string; checked: boolean; onToggle: () => void; disabled?: boolean; first?: boolean; last?: boolean}) {
+function ToggleRow(props: {label: string; icon?: ReturnType<typeof getInstrumentIconSource>; description?: string; checked: boolean; onToggle: () => void; disabled?: boolean; first?: boolean; last?: boolean}) {
   return (
     <Pressable
       onPress={props.disabled ? undefined : props.onToggle}
@@ -198,6 +198,7 @@ function ToggleRow(props: {label: string; description?: string; checked: boolean
       ]}
       accessibilityRole="switch"
     >
+      {props.icon && <Image source={props.icon} style={localStyles.toggleInstrumentIcon} resizeMode="contain" />}
       <View style={{flex: 1, marginRight: 12}}>
         <Text style={styles.orderName}>{props.label}</Text>
         {props.description ? <Text style={styles.modalHint}>{props.description}</Text> : null}
@@ -237,5 +238,10 @@ const localStyles = StyleSheet.create({
   instrumentIcon: {
     width: 32,
     height: 32,
+  },
+  toggleInstrumentIcon: {
+    width: 36,
+    height: 36,
+    marginRight: 16,
   },
 });
