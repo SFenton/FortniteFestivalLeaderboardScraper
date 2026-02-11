@@ -17,6 +17,10 @@ import type {SuggestionCategory} from '../core/suggestions/types';
 import type {InstrumentKey} from '../core/instruments';
 import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 import {SuggestionCard} from '../ui/suggestions/SuggestionCard';
+import {SuggestionsFilterModal, defaultSuggestionsInstrumentFilters} from '../ui/Modals/SuggestionsFilterModal';
+import type {SuggestionsInstrumentFilters} from '../ui/Modals/SuggestionsFilterModal';
+import {SUGGESTION_TYPES, getCategoryTypeId, getCategoryInstrument, globalKeyFor, perInstrumentKeyFor} from '../core/suggestions/suggestionFilterConfig';
+import type {SuggestionTypeId} from '../core/suggestions/suggestionFilterConfig';
 
 const INITIAL_BATCH = 10;
 const SUBSEQUENT_BATCH = 4;
@@ -59,6 +63,37 @@ const filterCategoryForInstruments = (cat: SuggestionCategory, settings: {showLe
   return {...cat, songs: filtered};
 };
 
+const shouldShowCategoryType = (categoryKey: string, settingsObj: Record<string, any>): boolean => {
+  const typeId = getCategoryTypeId(categoryKey);
+  if (!typeId) return true;
+  return settingsObj[globalKeyFor(typeId)] ?? true;
+};
+
+const isPerInstrumentTypeEnabled = (settingsObj: Record<string, any>, instrument: InstrumentKey, typeId: SuggestionTypeId): boolean => {
+  return settingsObj[perInstrumentKeyFor(instrument, typeId)] ?? true;
+};
+
+/** Filter a category based on per-instrument type settings. Drops the category entirely if no songs remain. */
+const filterCategoryForInstrumentTypes = (cat: SuggestionCategory, settingsObj: Record<string, any>): SuggestionCategory | null => {
+  const typeId = getCategoryTypeId(cat.key);
+  if (!typeId) return cat;
+
+  // Single-instrument category (key encodes a specific instrument)
+  const catInstrument = getCategoryInstrument(cat.key);
+  if (catInstrument) {
+    return isPerInstrumentTypeEnabled(settingsObj, catInstrument, typeId) ? cat : null;
+  }
+
+  // Multi-instrument or instrument-agnostic: filter individual songs
+  const filtered = cat.songs.filter(s => {
+    if (!s.instrumentKey) return true;
+    return isPerInstrumentTypeEnabled(settingsObj, s.instrumentKey, typeId);
+  });
+  if (filtered.length === 0) return null;
+  if (filtered.length === cat.songs.length) return cat;
+  return {...cat, songs: filtered};
+};
+
 export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: string) => void}) {
   usePageInstrumentation('Suggestions');
 
@@ -69,23 +104,24 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
 
   const {
     state: {songs, scoresIndex, settings},
-    actions: {logUi},
+    actions,
   } = useFestival();
+  const {logUi} = actions;
 
   const instrumentQuerySettings = useMemo<InstrumentShowSettings>(() => ({
-    showLead: settings.showLead,
-    showBass: settings.showBass,
-    showDrums: settings.showDrums,
-    showVocals: settings.showVocals,
-    showProLead: settings.showProLead,
-    showProBass: settings.showProBass,
+    showLead: settings.suggestionsLeadFilter,
+    showBass: settings.suggestionsBassFilter,
+    showDrums: settings.suggestionsDrumsFilter,
+    showVocals: settings.suggestionsVocalsFilter,
+    showProLead: settings.suggestionsProLeadFilter,
+    showProBass: settings.suggestionsProBassFilter,
   }), [
-    settings.showBass,
-    settings.showDrums,
-    settings.showLead,
-    settings.showProBass,
-    settings.showProLead,
-    settings.showVocals,
+    settings.suggestionsBassFilter,
+    settings.suggestionsDrumsFilter,
+    settings.suggestionsLeadFilter,
+    settings.suggestionsProBassFilter,
+    settings.suggestionsProLeadFilter,
+    settings.suggestionsVocalsFilter,
   ]);
 
   const songById = useMemo(() => {
@@ -106,23 +142,52 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
 
   const listRef = useRef<FlatList<SuggestionCategoryRow> | null>(null);
 
+  // Suggestions filter modal state
+  const [filterVisible, setFilterVisible] = useState(false);
+  const [filterDraft, setFilterDraft] = useState<SuggestionsInstrumentFilters>(() => {
+    const defaults = defaultSuggestionsInstrumentFilters();
+    const draft = {} as Record<string, boolean>;
+    for (const k of Object.keys(defaults)) {
+      draft[k] = (settings as any)[k] ?? (defaults as any)[k];
+    }
+    return draft as unknown as SuggestionsInstrumentFilters;
+  });
+
   const attachUiKeys = useCallback((list: SuggestionCategory[]): SuggestionCategoryRow[] => {
     return list.map(c => ({...c, uiKey: `${c.key}:${nextUiKey.current++}`}));
   }, []);
 
+  const categoryTypeSettings = useMemo(() => {
+    const obj: Record<string, boolean> = {};
+    for (const {id} of SUGGESTION_TYPES) {
+      const gk = globalKeyFor(id);
+      obj[gk] = (settings as any)[gk] ?? true;
+    }
+    return obj;
+  }, [
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    ...SUGGESTION_TYPES.map(({id}) => (settings as any)[globalKeyFor(id)]),
+  ]);
+
   const visibleCategories = useMemo(() => {
     return categories
       .filter(c => shouldShowCategory(c.key, instrumentQuerySettings))
+      .filter(c => shouldShowCategoryType(c.key, categoryTypeSettings))
       .map(c => filterCategoryForInstruments(c, instrumentQuerySettings))
+      .filter((c): c is SuggestionCategoryRow => c !== null)
+      .map(c => filterCategoryForInstrumentTypes(c, settings as any) as SuggestionCategoryRow | null)
       .filter((c): c is SuggestionCategoryRow => c !== null);
-  }, [categories, instrumentQuerySettings]);
+  }, [categories, instrumentQuerySettings, categoryTypeSettings, settings]);
 
   const filterForEnabledInstruments = useCallback((list: SuggestionCategory[]) => {
     return list
       .filter(c => shouldShowCategory(c.key, instrumentQuerySettings))
+      .filter(c => shouldShowCategoryType(c.key, categoryTypeSettings))
       .map(c => filterCategoryForInstruments(c, instrumentQuerySettings))
+      .filter((c): c is SuggestionCategory => c !== null)
+      .map(c => filterCategoryForInstrumentTypes(c, settings as any))
       .filter((c): c is SuggestionCategory => c !== null);
-  }, [instrumentQuerySettings]);
+  }, [instrumentQuerySettings, categoryTypeSettings, settings]);
 
   const canRegenerate = songs.length > 0 && settings.hasEverSyncedScores && visibleCategories.length > 0;
 
@@ -224,20 +289,62 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
     setLoadingMore(false);
   }, [attachUiKeys, filterForEnabledInstruments, initialLoading, loadingMore, scoresIndex, songs]);
 
+  const onOpenFilter = useCallback(() => {
+    const defaults = defaultSuggestionsInstrumentFilters();
+    const draft = {} as Record<string, boolean>;
+    for (const k of Object.keys(defaults)) {
+      draft[k] = (settings as any)[k] ?? (defaults as any)[k];
+    }
+    setFilterDraft(draft as unknown as SuggestionsInstrumentFilters);
+    setFilterVisible(true);
+  }, [settings]);
+
+  const onCancelFilter = useCallback(() => setFilterVisible(false), []);
+
+  const onResetFilter = useCallback(() => {
+    const defaults = defaultSuggestionsInstrumentFilters();
+    setFilterDraft(defaults);
+    actions.setSettings({...settings, ...defaults});
+    setFilterVisible(false);
+  }, [actions, settings]);
+
+  const onApplyFilter = useCallback(() => {
+    actions.setSettings({...settings, ...filterDraft});
+    setFilterVisible(false);
+  }, [actions, filterDraft, settings]);
+
+  const isFilterActive = useMemo(() => {
+    const defaults = defaultSuggestionsInstrumentFilters();
+    return Object.keys(defaults).some(
+      k => ((settings as any)[k] ?? (defaults as any)[k]) !== (defaults as any)[k],
+    );
+  }, [settings]);
+  const filterIconColor = isFilterActive ? '#2D82E6' : '#D7DEE8';
+
   const header = (
     <PageHeader
       title="Suggestions"
       right={
-        canRegenerate ? (
+        <View style={styles.headerActions}>
           <Pressable
-            onPress={onRegenerate}
+            onPress={onOpenFilter}
             style={({pressed}) => [styles.regenBtn, pressed && styles.regenBtnPressed]}
             accessibilityRole="button"
-            accessibilityLabel="Regenerate suggestions"
+            accessibilityLabel="Filter suggestions"
           >
-            <Ionicons name="refresh" size={22} color="#FFFFFF" />
+            <Ionicons name="funnel" size={18} color={filterIconColor} />
           </Pressable>
-        ) : undefined
+          {canRegenerate ? (
+            <Pressable
+              onPress={onRegenerate}
+              style={({pressed}) => [styles.regenBtn, pressed && styles.regenBtnPressed]}
+              accessibilityRole="button"
+              accessibilityLabel="Regenerate suggestions"
+            >
+              <Ionicons name="refresh" size={22} color="#FFFFFF" />
+            </Pressable>
+          ) : null}
+        </View>
       }
     />
   );
@@ -259,6 +366,14 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
           {header}
           <CenteredEmptyStateCard title="No songs yet" body="Songs haven't loaded yet. Check Settings." />
         </View>
+        <SuggestionsFilterModal
+          visible={filterVisible}
+          draft={filterDraft}
+          onChange={setFilterDraft}
+          onCancel={onCancelFilter}
+          onReset={onResetFilter}
+          onApply={onApplyFilter}
+        />
       </Screen>
     );
   }
@@ -272,6 +387,14 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
             <ActivityIndicator />
           </View>
         </View>
+        <SuggestionsFilterModal
+          visible={filterVisible}
+          draft={filterDraft}
+          onChange={setFilterDraft}
+          onCancel={onCancelFilter}
+          onReset={onResetFilter}
+          onApply={onApplyFilter}
+        />
       </Screen>
     );
   }
@@ -287,6 +410,14 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
           {header}
           <CenteredEmptyStateCard title="No Suggestions Available" body={emptyBody} />
         </View>
+        <SuggestionsFilterModal
+          visible={filterVisible}
+          draft={filterDraft}
+          onChange={setFilterDraft}
+          onCancel={onCancelFilter}
+          onReset={onResetFilter}
+          onApply={onApplyFilter}
+        />
       </Screen>
     );
   }
@@ -350,6 +481,15 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
           />
         </MaskedView>
       </View>
+
+      <SuggestionsFilterModal
+        visible={filterVisible}
+        draft={filterDraft}
+        onChange={setFilterDraft}
+        onCancel={onCancelFilter}
+        onReset={onResetFilter}
+        onApply={onApplyFilter}
+      />
     </Screen>
   );
 }
@@ -398,6 +538,11 @@ const styles = StyleSheet.create({
   },
   regenBtnPressed: {
     opacity: 0.85,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   loadingRow: {
     paddingVertical: 18,
