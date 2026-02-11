@@ -1,6 +1,8 @@
 import type {InstrumentKey} from './instruments';
 import type {AdvancedMissingFilters, SongSortMode} from './songListConfig';
 import {defaultAdvancedMissingFilters, defaultPrimaryInstrumentOrder} from './songListConfig';
+import type {SuggestionTypeSettings} from './suggestions/suggestionFilterConfig';
+import {defaultSuggestionTypeSettings} from './suggestions/suggestionFilterConfig';
 
 export type Settings = {
   queryLead: boolean;
@@ -29,6 +31,14 @@ export type Settings = {
   songsAdvancedMissingFilters: AdvancedMissingFilters;
   songsPrimaryInstrumentOrder: InstrumentKey[];
 
+  // Suggestions page instrument filters (separate from global show* toggles)
+  suggestionsLeadFilter: boolean;
+  suggestionsBassFilter: boolean;
+  suggestionsDrumsFilter: boolean;
+  suggestionsVocalsFilter: boolean;
+  suggestionsProLeadFilter: boolean;
+  suggestionsProBassFilter: boolean;
+
   // Songs list compact layout visibility toggles
   // When true, hides instrument icons (metadata-only row).
   songsHideInstrumentIcons: boolean;
@@ -40,7 +50,7 @@ export type Settings = {
   iosLiquidGlassStyle: 'none' | 'regular' | 'clear';
   /** Whether blur effect is enabled on surfaces. Disabled when liquid glass is active. */
   iosBlurEnabled: boolean;
-};
+} & SuggestionTypeSettings;
 
 export const defaultSettings = (): Settings => ({
   queryLead: true,
@@ -65,6 +75,15 @@ export const defaultSettings = (): Settings => ({
   songsSortAscending: true,
   songsAdvancedMissingFilters: defaultAdvancedMissingFilters(),
   songsPrimaryInstrumentOrder: defaultPrimaryInstrumentOrder().map(i => i.key),
+
+  suggestionsLeadFilter: true,
+  suggestionsBassFilter: true,
+  suggestionsDrumsFilter: true,
+  suggestionsVocalsFilter: true,
+  suggestionsProLeadFilter: true,
+  suggestionsProBassFilter: true,
+
+  ...defaultSuggestionTypeSettings(),
 
   songsHideInstrumentIcons: false,
 
