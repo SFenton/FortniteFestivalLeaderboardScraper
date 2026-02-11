@@ -522,6 +522,7 @@ const styles = StyleSheet.create({
   cardContainer: {
     flex: 0.6,
     width: '90%',
+    maxWidth: 600,
     alignSelf: 'center',
     justifyContent: 'center',
   },
@@ -536,6 +537,8 @@ const styles = StyleSheet.create({
   textArea: {
     flex: 0.3,
     width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
     justifyContent: 'flex-start',
   },
   textContainer: {

@@ -32,7 +32,10 @@ const RootView =
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
+const ONBOARDING_COMPLETE_KEY = 'fnfestival:onboardingComplete';
+
 // ── Transition phases ───────────────────────────────────────────────
+//   loading      → checking AsyncStorage for onboarding flag
 //   introSpinner → spinner fades in (0.5 s), carousel mounts invisibly
 //   introReveal  → carousel ready; spinner fades out + carousel fades in (0.5 s)
 //   intro        → carousel is interactive
@@ -41,6 +44,7 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 //   slidingIn    → navigator slides in from the right
 //   done         → navigator is fully visible, intro layers unmounted
 type TransitionPhase =
+  | 'loading'
   | 'introSpinner'
   | 'introReveal'
   | 'intro'
@@ -57,10 +61,43 @@ function TransitionManager() {
   const {state} = useFestival();
   const {isReady} = state;
 
-  const [phase, setPhase] = useState<TransitionPhase>('introSpinner');
+  const [phase, setPhase] = useState<TransitionPhase>('loading');
   const [introSpinnerReady, setIntroSpinnerReady] = useState(false);
   const [carouselReady, setCarouselReady] = useState(false);
   const [spinnerFullyVisible, setSpinnerFullyVisible] = useState(false);
+  /** True when onboarding was skipped (returning user) — drives the fast-path spinner. */
+  const skippedOnboarding = useRef(false);
+
+  // ── Check onboarding flag on mount ────────────────────────────────
+  useEffect(() => {
+    if (phase !== 'loading') return;
+    (async () => {
+      try {
+        if (process.env.JEST_WORKER_ID) {
+          setPhase('introSpinner');
+          return;
+        }
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const AsyncStorageModule = require('@react-native-async-storage/async-storage') as {
+          default?: unknown;
+          getItem?: (k: string) => Promise<string | null>;
+        };
+        const AsyncStorage = ((AsyncStorageModule as any).default ?? AsyncStorageModule) as {
+          getItem: (k: string) => Promise<string | null>;
+        };
+        const value = await AsyncStorage.getItem(ONBOARDING_COMPLETE_KEY);
+        if (value === 'true') {
+          // Returning user — skip carousel, go straight to spinner
+          skippedOnboarding.current = true;
+          setPhase('spinner');
+        } else {
+          setPhase('introSpinner');
+        }
+      } catch {
+        setPhase('introSpinner');
+      }
+    })();
+  }, [phase]);
 
   // Animated values (stable refs — safe in dep arrays)
   const introOpacity = useRef(new Animated.Value(0)).current;   // carousel starts hidden
@@ -109,6 +146,24 @@ function TransitionManager() {
       return;
     }
     setPhase('fadingOut');
+
+    // Persist that onboarding is complete so we skip next time
+    (async () => {
+      try {
+        if (process.env.JEST_WORKER_ID) return;
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const AsyncStorageModule = require('@react-native-async-storage/async-storage') as {
+          default?: unknown;
+          setItem?: (k: string, v: string) => Promise<void>;
+        };
+        const AsyncStorage = ((AsyncStorageModule as any).default ?? AsyncStorageModule) as {
+          setItem: (k: string, v: string) => Promise<void>;
+        };
+        await AsyncStorage.setItem(ONBOARDING_COMPLETE_KEY, 'true');
+      } catch {
+        // ignore
+      }
+    })();
 
     // 1️⃣  Fade carousel to nothing over 0.5 s
     Animated.timing(introOpacity, {
@@ -172,6 +227,19 @@ function TransitionManager() {
     return () => clearTimeout(timer);
   }, [phase, navMounted, spinnerOpacity, navTranslateX]);
 
+  // ── Returning-user path: spinner is already visible, just wait for isReady ──
+  useEffect(() => {
+    if (phase !== 'spinner' || !skippedOnboarding.current || spinnerFullyVisible) return;
+    // If we jumped straight to 'spinner' (returning user), fade spinner in
+    Animated.timing(spinnerOpacity, {
+      toValue: 1,
+      duration: 500,
+      useNativeDriver: true,
+    }).start(() => {
+      setSpinnerFullyVisible(true);
+    });
+  }, [phase, spinnerFullyVisible, spinnerOpacity]);
+
   // ── Derived visibility flags ──────────────────────────────────────
   const mountCarousel =
     phase === 'introSpinner' ||
@@ -180,7 +248,7 @@ function TransitionManager() {
     phase === 'fadingOut';
   const carouselRevealed = phase === 'intro' || phase === 'fadingOut';
   const showIntroSpinner = phase === 'introSpinner' || phase === 'introReveal';
-  const showOutroSpinner = phase === 'spinner' || phase === 'slidingIn';
+  const showOutroSpinner = phase === 'loading' || phase === 'spinner' || phase === 'slidingIn';
   const shouldMountNav = navMounted || phase === 'slidingIn' || phase === 'done';
 
   return (

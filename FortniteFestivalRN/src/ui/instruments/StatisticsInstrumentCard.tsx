@@ -245,12 +245,12 @@ const compactStyles = StyleSheet.create({
   },
   cardTitle: {
     color: '#FFFFFF',
-    fontSize: 15,
+    fontSize: 17,
     fontWeight: '800',
   },
   cardSubtitle: {
     color: '#D7DEE8',
-    fontSize: 10,
+    fontSize: 12,
     opacity: 0.85,
   },
   statsGrid: {
@@ -266,12 +266,12 @@ const compactStyles = StyleSheet.create({
   },
   statLabel: {
     color: '#D7DEE8',
-    fontSize: 9,
+    fontSize: 11,
     opacity: 0.85,
   },
   statValue: {
     color: '#FFFFFF',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '700',
   },
   distWrap: {
@@ -280,7 +280,7 @@ const compactStyles = StyleSheet.create({
   },
   sectionTitle: {
     color: '#FFFFFF',
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '800',
   },
   distBar: {
@@ -297,7 +297,7 @@ const compactStyles = StyleSheet.create({
   },
   legendText: {
     color: '#D7DEE8',
-    fontSize: 9,
+    fontSize: 11,
     opacity: 0.9,
   },
 });
