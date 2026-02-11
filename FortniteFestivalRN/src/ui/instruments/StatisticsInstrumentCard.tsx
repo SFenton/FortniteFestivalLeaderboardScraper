@@ -1,5 +1,5 @@
 import React from 'react';
-import {Image, StyleSheet, Text, View} from 'react-native';
+import {Image, StyleSheet, Text, View, type StyleProp, type ViewStyle} from 'react-native';
 import {FrostedSurface} from '../FrostedSurface';
 import {getInstrumentIconSource} from './instrumentVisuals';
 import type {InstrumentKey} from '../../core/instruments';
@@ -61,7 +61,7 @@ export const LegendItem = React.memo(function LegendItem(props: {label: string; 
 
 // ── Main card ───────────────────────────────────────────────────────
 
-export const StatisticsInstrumentCard = React.memo(function StatisticsInstrumentCard(props: {data: StatisticsCardData; compact?: boolean}) {
+export const StatisticsInstrumentCard = React.memo(function StatisticsInstrumentCard(props: {data: StatisticsCardData; compact?: boolean; style?: StyleProp<ViewStyle>}) {
   const s = props.data;
   const c = Boolean(props.compact);
 
@@ -74,7 +74,7 @@ export const StatisticsInstrumentCard = React.memo(function StatisticsInstrument
     s.below50PercentCount;
 
   return (
-    <FrostedSurface style={c ? compactStyles.card : styles.card} tint="dark" intensity={18}>
+    <FrostedSurface style={[c ? compactStyles.card : styles.card, props.style]} tint="dark" intensity={18}>
       <View style={styles.cardHeaderRow}>
         <Image source={getInstrumentIconSource(s.instrumentKey)} style={c ? compactStyles.instrumentIcon : styles.instrumentIcon} />
         <View style={styles.cardHeaderText}>

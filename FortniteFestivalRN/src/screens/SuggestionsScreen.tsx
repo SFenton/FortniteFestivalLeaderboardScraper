@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {ActivityIndicator, FlatList, Pressable, StyleSheet, Text, useWindowDimensions, View} from 'react-native';
+import {ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View} from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import MaskedView from '@react-native-masked-view/masked-view';
 import LinearGradient from 'react-native-linear-gradient';
@@ -17,6 +17,7 @@ import type {SuggestionCategory} from '../core/suggestions/types';
 import type {InstrumentKey} from '../core/instruments';
 import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 import {SuggestionCard} from '../ui/suggestions/SuggestionCard';
+import {useCardGrid} from '../ui/useCardGrid';
 import {SuggestionsFilterModal, defaultSuggestionsInstrumentFilters} from '../ui/Modals/SuggestionsFilterModal';
 import type {SuggestionsInstrumentFilters} from '../ui/Modals/SuggestionsFilterModal';
 import {SUGGESTION_TYPES, getCategoryTypeId, getCategoryInstrument, globalKeyFor, perInstrumentKeyFor} from '../core/suggestions/suggestionFilterConfig';
@@ -101,6 +102,7 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
 
   const {width} = useWindowDimensions();
   const useCompactLayout = width < 900;
+  const isCardGrid = useCardGrid();
 
   const {
     state: {songs, scoresIndex, settings},
@@ -141,6 +143,7 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
   const [categories, setCategories] = useState<SuggestionCategoryRow[]>([]);
 
   const listRef = useRef<FlatList<SuggestionCategoryRow> | null>(null);
+  const scrollRef = useRef<ScrollView | null>(null);
 
   // Suggestions filter modal state
   const [filterVisible, setFilterVisible] = useState(false);
@@ -256,9 +259,10 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
     // sees a flash of stale or intermediate data.
     loadInitial();
 
-    // Scroll after loadInitial so the FlatList already has new data when the
+    // Scroll after loadInitial so the list already has new data when the
     // native thread processes the scroll command.
     listRef.current?.scrollToOffset({offset: 0, animated: false});
+    scrollRef.current?.scrollTo({y: 0, animated: false});
 
     logUi(`[SUGGESTIONS] regenerate seed=${next}`);
   }, [loadInitial, logUi]);
@@ -288,6 +292,25 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
     }
     setLoadingMore(false);
   }, [attachUiKeys, filterForEnabledInstruments, initialLoading, loadingMore, scoresIndex, songs]);
+
+  // Masonry: split items into two independent columns for tablet grid mode.
+  const [masonryLeft, masonryRight] = useMemo(() => {
+    if (!isCardGrid) return [[], []] as [SuggestionCategoryRow[], SuggestionCategoryRow[]];
+    const left: SuggestionCategoryRow[] = [];
+    const right: SuggestionCategoryRow[] = [];
+    visibleCategories.forEach((item, i) => {
+      if (i % 2 === 0) left.push(item);
+      else right.push(item);
+    });
+    return [left, right];
+  }, [isCardGrid, visibleCategories]);
+
+  const handleMasonryScroll = useCallback((e: any) => {
+    const {layoutMeasurement, contentOffset, contentSize} = e.nativeEvent;
+    if (layoutMeasurement.height + contentOffset.y >= contentSize.height - 300) {
+      loadMore();
+    }
+  }, [loadMore]);
 
   const onOpenFilter = useCallback(() => {
     const defaults = defaultSuggestionsInstrumentFilters();
@@ -450,35 +473,85 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
             </View>
           }
         >
-          <FlatList
-            ref={listRef}
-            style={{flex: 1, marginBottom: tabBarMargin}}
-            contentContainerStyle={{paddingTop: 32, paddingBottom: tabBarHeight + 16}}
-            scrollIndicatorInsets={{bottom: tabBarHeight}}
-            showsVerticalScrollIndicator={false}
-            showsHorizontalScrollIndicator={false}
-            data={visibleCategories}
-            keyExtractor={c => c.uiKey}
-            keyboardShouldPersistTaps="handled"
-            extraData={useCompactLayout}
-            ItemSeparatorComponent={categorySeparator}
-            ListFooterComponent={footer}
-            onEndReachedThreshold={0.4}
-            onEndReached={loadMore}
-            renderItem={({item: cat}) => (
-              <SuggestionCard
-                cat={cat}
-                useCompactLayout={useCompactLayout}
-                songById={songById}
-                scoresIndex={scoresIndex}
-                instrumentQuerySettings={instrumentQuerySettings}
-                onOpenSong={(songId, title) => {
-                  logUi(`[SUGGESTIONS] open ${songId} '${title}' (${cat.key})`);
-                  props.onOpenSong?.(songId, title);
-                }}
-              />
-            )}
-          />
+          {isCardGrid ? (
+            <ScrollView
+              ref={scrollRef}
+              style={{flex: 1, marginBottom: tabBarMargin}}
+              contentContainerStyle={{paddingTop: 32, paddingBottom: tabBarHeight + 16}}
+              scrollIndicatorInsets={{bottom: tabBarHeight}}
+              showsVerticalScrollIndicator={false}
+              showsHorizontalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              onScroll={handleMasonryScroll}
+              scrollEventThrottle={200}
+            >
+              <View style={styles.masonryContainer}>
+                <View style={styles.masonryColumn}>
+                  {masonryLeft.map(cat => (
+                    <SuggestionCard
+                      key={cat.uiKey}
+                      cat={cat}
+                      useCompactLayout={useCompactLayout}
+                      songById={songById}
+                      scoresIndex={scoresIndex}
+                      instrumentQuerySettings={instrumentQuerySettings}
+                      onOpenSong={(songId, title) => {
+                        logUi(`[SUGGESTIONS] open ${songId} '${title}' (${cat.key})`);
+                        props.onOpenSong?.(songId, title);
+                      }}
+                    />
+                  ))}
+                </View>
+                <View style={styles.masonryColumn}>
+                  {masonryRight.map(cat => (
+                    <SuggestionCard
+                      key={cat.uiKey}
+                      cat={cat}
+                      useCompactLayout={useCompactLayout}
+                      songById={songById}
+                      scoresIndex={scoresIndex}
+                      instrumentQuerySettings={instrumentQuerySettings}
+                      onOpenSong={(songId, title) => {
+                        logUi(`[SUGGESTIONS] open ${songId} '${title}' (${cat.key})`);
+                        props.onOpenSong?.(songId, title);
+                      }}
+                    />
+                  ))}
+                </View>
+              </View>
+              {footer}
+            </ScrollView>
+          ) : (
+            <FlatList
+              ref={listRef}
+              style={{flex: 1, marginBottom: tabBarMargin}}
+              contentContainerStyle={{paddingTop: 32, paddingBottom: tabBarHeight + 16}}
+              scrollIndicatorInsets={{bottom: tabBarHeight}}
+              showsVerticalScrollIndicator={false}
+              showsHorizontalScrollIndicator={false}
+              data={visibleCategories}
+              keyExtractor={c => c.uiKey}
+              keyboardShouldPersistTaps="handled"
+              extraData={useCompactLayout}
+              ItemSeparatorComponent={categorySeparator}
+              ListFooterComponent={footer}
+              onEndReachedThreshold={0.4}
+              onEndReached={loadMore}
+              renderItem={({item: cat}) => (
+                <SuggestionCard
+                  cat={cat}
+                  useCompactLayout={useCompactLayout}
+                  songById={songById}
+                  scoresIndex={scoresIndex}
+                  instrumentQuerySettings={instrumentQuerySettings}
+                  onOpenSong={(songId, title) => {
+                    logUi(`[SUGGESTIONS] open ${songId} '${title}' (${cat.key})`);
+                    props.onOpenSong?.(songId, title);
+                  }}
+                />
+              )}
+            />
+          )}
         </MaskedView>
       </View>
 
@@ -551,6 +624,15 @@ const styles = StyleSheet.create({
   },
   categorySeparator: {
     height: 10,
+  },
+  masonryContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  masonryColumn: {
+    flex: 1,
+    gap: 10,
   },
   debugText: {
     color: '#9CA3AF',

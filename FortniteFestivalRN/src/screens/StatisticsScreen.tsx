@@ -1,5 +1,5 @@
 import React, {useCallback, useMemo} from 'react';
-import {FlatList, Image, Pressable, StyleSheet, Text, View} from 'react-native';
+import {FlatList, Image, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import MaskedView from '@react-native-masked-view/masked-view';
 import LinearGradient from 'react-native-linear-gradient';
 
@@ -15,6 +15,7 @@ import {Screen} from '../ui/Screen';
 import {FrostedSurface} from '../ui/FrostedSurface';
 import {CenteredEmptyStateCard} from '../ui/CenteredEmptyStateCard';
 import {PageHeader} from '../ui/PageHeader';
+import {useCardGrid} from '../ui/useCardGrid';
 import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 
 const TOP_SONGS_VIRTUALIZE_THRESHOLD = 12;
@@ -63,6 +64,8 @@ export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: st
   usePageInstrumentation('Statistics');
 
   const {height: tabBarHeight, marginBottom: tabBarMargin} = useTabBarLayout();
+
+  const isCardGrid = useCardGrid();
 
   const {onOpenSong} = props;
 
@@ -165,23 +168,65 @@ export function StatisticsScreen(props: {onOpenSong?: (songId: string, title: st
             </View>
           }
         >
-          <FlatList
-            style={listStyle}
-            contentContainerStyle={listContentStyle}
-            scrollIndicatorInsets={scrollInsets}
-            showsVerticalScrollIndicator={false}
-            showsHorizontalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-            data={data}
-            keyExtractor={i => i.key}
-            renderItem={renderItem}
-            ItemSeparatorComponent={itemSeparator}
-            removeClippedSubviews
-            initialNumToRender={8}
-            maxToRenderPerBatch={6}
-            updateCellsBatchingPeriod={24}
-            windowSize={7}
-          />
+          {isCardGrid ? (
+            <ScrollView
+              style={listStyle}
+              contentContainerStyle={listContentStyle}
+              scrollIndicatorInsets={scrollInsets}
+              showsVerticalScrollIndicator={false}
+              showsHorizontalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              {instrumentStats.length > 0 && (
+                <>
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionHeaderTitle}>Instrument Statistics</Text>
+                    <Text style={styles.sectionHeaderDescription}>A quick look at your overall Festival statistics per instrument.</Text>
+                  </View>
+                  <View style={styles.cardGrid}>
+                    {instrumentStats.map(s => (
+                      <View key={`inst:${s.instrumentKey}`} style={styles.cardGridCell}>
+                      <StatisticsInstrumentCard data={s} style={styles.cardGridChildFill} />
+                      </View>
+                    ))}
+                  </View>
+                </>
+              )}
+              {topCategories.length > 0 && (
+                <>
+                  <View style={[styles.sectionHeader, instrumentStats.length > 0 && styles.cardGridSectionGap]}>
+                    <Text style={styles.sectionHeaderTitle}>Top Songs Per Instrument</Text>
+                    <Text style={styles.sectionHeaderDescription}>A selection of the top five songs you've played per instrument.</Text>
+                  </View>
+                  <View style={styles.cardGrid}>
+                    {topCategories.map(c => (
+                      <View key={`top:${c.key}`} style={styles.cardGridCell}>
+                      <TopSongsCard cat={c} songById={songById} onOpenSong={onOpenSong} style={styles.cardGridChildFill} />
+                      </View>
+                    ))}
+                  </View>
+                </>
+              )}
+            </ScrollView>
+          ) : (
+            <FlatList
+              style={listStyle}
+              contentContainerStyle={listContentStyle}
+              scrollIndicatorInsets={scrollInsets}
+              showsVerticalScrollIndicator={false}
+              showsHorizontalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              data={data}
+              keyExtractor={i => i.key}
+              renderItem={renderItem}
+              ItemSeparatorComponent={itemSeparator}
+              removeClippedSubviews
+              initialNumToRender={8}
+              maxToRenderPerBatch={6}
+              updateCellsBatchingPeriod={24}
+              windowSize={7}
+            />
+          )}
         </MaskedView>
       </View>
     </Screen>
@@ -192,6 +237,7 @@ const TopSongsCard = React.memo(function TopSongsCard(props: {
   cat: SuggestionCategory;
   songById: ReadonlyMap<string, Song>;
   onOpenSong?: (songId: string, title: string) => void;
+  style?: import('react-native').StyleProp<import('react-native').ViewStyle>;
 }) {
   const {cat, songById, onOpenSong} = props;
 
@@ -220,11 +266,11 @@ const TopSongsCard = React.memo(function TopSongsCard(props: {
   }, [cat.key, onOpenSong, songById]);
 
   return (
-    <FrostedSurface style={styles.topSongsCard} tint="dark" intensity={18}>
+    <FrostedSurface style={[styles.topSongsCard, props.style]} tint="dark" intensity={18}>
       <View style={styles.topSongsHeaderRow}>
         <View style={styles.topSongsHeaderLeft}>
           <Text style={styles.topSongsTitle} numberOfLines={1}>{cat.title}</Text>
-          <Text style={styles.topSongsSubtitle}>{cat.description}</Text>
+          <Text style={styles.topSongsSubtitle} numberOfLines={2}>{cat.description}</Text>
         </View>
 
         {catInstrumentKey ? (
@@ -358,6 +404,37 @@ const styles = StyleSheet.create({
   fadeGradient: {
     height: 32,
   },
+  sectionHeader: {
+    gap: 4,
+    marginBottom: 10,
+  },
+  sectionHeaderTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  sectionHeaderDescription: {
+    color: '#D7DEE8',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  cardGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    columnGap: 10,
+    rowGap: 10,
+  },
+  cardGridCell: {
+    flexBasis: '47%',
+    flexGrow: 1,
+    flexShrink: 0,
+  },
+  cardGridChildFill: {
+    flex: 1,
+  },
+  cardGridSectionGap: {
+    marginTop: 42, // 10 base + 32 to match fade gradient top gap
+  },
   listSeparator: {
     height: 10,
   },
@@ -368,8 +445,9 @@ const styles = StyleSheet.create({
   },
   topSongsHeaderRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
+    minHeight: 62, // title (22) + gap (4) + 2 subtitle lines (18×2) = consistent height
   },
   topSongsHeaderLeft: {
     flex: 1,

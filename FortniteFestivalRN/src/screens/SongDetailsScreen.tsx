@@ -16,6 +16,7 @@ import {normalizeInstrumentOrder} from '../app/songs/songFiltering';
 import {buildSongInfoInstrumentRows} from '../app/songInfo/songInfo';
 import {getInstrumentIconSource} from '../ui/instruments/instrumentVisuals';
 import {InstrumentCard, MetricPill, DifficultyBars, StarsVisual} from '../ui/instruments/InstrumentCard';
+import {useCardGrid} from '../ui/useCardGrid';
 
 const CARD_BG = 'rgba(18,24,38,0.78)';
 
@@ -35,7 +36,9 @@ export function SongDetailsView(props: {songId: string; showBack?: boolean; onBa
   const {width} = useWindowDimensions();
   const [rootMeasuredWidth, setRootMeasuredWidth] = useState<number | null>(null);
   const effectiveWidth = rootMeasuredWidth && rootMeasuredWidth > 0 ? rootMeasuredWidth : width;
-  const useCompactLayout = effectiveWidth < 720;
+  const isMobile = Platform.OS === 'android' || Platform.OS === 'ios';
+  const useCompactLayout = isMobile || effectiveWidth < 720;
+  const isCardGrid = useCardGrid(effectiveWidth);
 
   const [wideMeasuredWidth, setWideMeasuredWidth] = useState<number | null>(null);
   const [_dimensionChangeCount, setDimensionChangeCount] = useState(0);
@@ -330,12 +333,12 @@ export function SongDetailsView(props: {songId: string; showBack?: boolean; onBa
             showsHorizontalScrollIndicator={false}
           >
           <FrostedSurface
-            style={[styles.headerCard, useCompactLayout ? styles.headerCardCompact : styles.headerCardWide]}
+            style={[styles.headerCard, useCompactLayout && !isCardGrid ? styles.headerCardCompact : styles.headerCardWide]}
             tint="dark"
             intensity={22}
             fallbackColor={CARD_BG}
           >
-            <View style={[styles.header, useCompactLayout ? styles.headerCompact : styles.headerWide]}>
+            <View style={[styles.header, useCompactLayout && !isCardGrid ? styles.headerCompact : styles.headerWide]}>
               <View style={styles.albumWrapOuter}>
                 <View style={styles.albumWrap}>
                   {imageUri ? (
@@ -346,7 +349,7 @@ export function SongDetailsView(props: {songId: string; showBack?: boolean; onBa
                 </View>
               </View>
 
-              <View style={[styles.headerTextWrap, !useCompactLayout && {width: 320}]}>
+              <View style={[styles.headerTextWrap, (!useCompactLayout || isCardGrid) && {width: 320}]}>
                 <Text style={styles.songTitle} numberOfLines={3}>
                   {title}
                 </Text>
@@ -372,9 +375,19 @@ export function SongDetailsView(props: {songId: string; showBack?: boolean; onBa
           ) : null}
 
           {useCompactLayout ? (
-            instrumentRows.map(r => (
-              <InstrumentCard key={r.key} data={r} />
-            ))
+            isCardGrid ? (
+              <View style={styles.cardGrid}>
+                {instrumentRows.map(r => (
+                  <View key={r.key} style={styles.cardGridCell}>
+                    <InstrumentCard data={r} />
+                  </View>
+                ))}
+              </View>
+            ) : (
+              instrumentRows.map(r => (
+                <InstrumentCard key={r.key} data={r} />
+              ))
+            )
           ) : (
             <FrostedSurface
               style={[styles.scoreGridSurface, styles.scoreGridSurfaceWide]}
@@ -656,6 +669,17 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
     textAlign: 'center',
+  },
+  cardGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    columnGap: 14,
+    rowGap: 14,
+  },
+  cardGridCell: {
+    flexBasis: '47%',
+    flexGrow: 1,
+    flexShrink: 0,
   },
   scoreGridSurface: {
     alignSelf: 'center',

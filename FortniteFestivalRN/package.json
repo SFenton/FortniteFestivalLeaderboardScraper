@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "android": "node scripts/run-android.js",
+    "android:clearCacheBuildDeploy": "node scripts/clear-cache-build-deploy-android.js",
     "ios": "react-native run-ios",
     "lint": "eslint .",
     "start": "react-native start",

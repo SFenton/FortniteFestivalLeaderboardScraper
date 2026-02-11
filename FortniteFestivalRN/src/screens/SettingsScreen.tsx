@@ -397,7 +397,7 @@ const styles = StyleSheet.create({
   content: { paddingTop: 32, gap: 12 },
 
   /* ── Card (matches Suggestions / Statistics cards) ── */
-  card: { borderRadius: 12, padding: 14, gap: 10 },
+  card: { borderRadius: 12, padding: 14, gap: 10, maxWidth: 600, width: '100%', alignSelf: 'center' },
   sectionTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
   sectionHint: { color: '#D7DEE8', fontSize: 13, lineHeight: 18 },
 

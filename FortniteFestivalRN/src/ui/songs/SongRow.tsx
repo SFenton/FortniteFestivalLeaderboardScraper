@@ -119,6 +119,9 @@ export const SongRow = React.memo(function SongRow(props: {
 const styles = StyleSheet.create({
   rowPressable: {
     marginBottom: 8,
+    maxWidth: 600,
+    width: '100%',
+    alignSelf: 'center',
   },
   rowSurface: {
     borderRadius: 12,
