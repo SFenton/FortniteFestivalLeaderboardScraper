@@ -29,16 +29,22 @@ export const SongRow = React.memo(function SongRow(props: {
   data: SongRowDisplayData;
   /** Use stacked (narrow) layout. Default: false. */
   compact?: boolean;
+  /**
+   * When true and compact is also true, instrument icons are placed at the
+   * end of the art/text row instead of on a separate line below.  Use this
+   * on tablet / open-foldable devices where there is enough horizontal room.
+   */
+  inlineInstruments?: boolean;
   /** Called when the row is tapped. Omit to make the row non-interactive. */
   onPress?: () => void;
 }) {
-  const {data, compact, onPress} = props;
+  const {data, compact, inlineInstruments, onPress} = props;
   const {title, artist, year, imageUri, instruments} = data;
   const hasArt = !!imageUri;
 
   const inner = (pressed: boolean) => (
     <FrostedSurface style={[styles.rowSurface, pressed && styles.rowSurfacePressed]} tint="dark" intensity={12}>
-      {compact ? (
+      {compact && !inlineInstruments ? (
         <View style={styles.rowInnerCompact}>
           <View style={[styles.compactTopRow, !hasArt && styles.compactTopRowNoArt]}>
             {hasArt && (
@@ -57,6 +63,37 @@ export const SongRow = React.memo(function SongRow(props: {
 
           {instruments && instruments.length > 0 && (
             <View style={styles.instrumentRowCompact}>
+              {instruments.map(s => (
+                <View
+                  key={s.instrumentKey}
+                  style={[styles.instrumentChipCompact, {backgroundColor: s.fill, borderColor: s.stroke}]}
+                >
+                  <Image source={getInstrumentIconSource(s.instrumentKey)} style={styles.instrumentIconCompact} resizeMode="contain" />
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+      ) : compact && inlineInstruments ? (
+        /* Tablet / open-foldable compact: art + text + icons in one row */
+        <View style={styles.rowInner}>
+          <View style={styles.left}>
+            {hasArt && (
+              <View style={styles.thumbWrap}>
+                <Image source={{uri: imageUri}} style={styles.thumb} resizeMode="cover" />
+              </View>
+            )}
+
+            <View style={[styles.rowText, !hasArt && styles.rowTextCentered]}>
+              <Text numberOfLines={1} style={styles.songTitle}>{title}</Text>
+              <Text numberOfLines={1} style={styles.songMeta}>
+                {artist}{artist && year ? ' • ' : ''}{year ?? ''}
+              </Text>
+            </View>
+          </View>
+
+          {instruments && instruments.length > 0 && (
+            <View style={styles.instrumentRow}>
               {instruments.map(s => (
                 <View
                   key={s.instrumentKey}

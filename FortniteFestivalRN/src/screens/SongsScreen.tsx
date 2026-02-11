@@ -4,6 +4,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import MaskedView from '@react-native-masked-view/masked-view';
 import LinearGradient from 'react-native-linear-gradient';
 import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
+import {useCardGrid} from '../ui/useCardGrid';
 
 import { Screen } from '../ui/Screen';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
@@ -25,6 +26,7 @@ const SongRow = React.memo(function SongRow(props: {
   leaderboardData?: LeaderboardData;
   settings: InstrumentShowSettings;
   useCompactLayout: boolean;
+  inlineInstruments: boolean;
   hideInstrumentIcons: boolean;
   onOpen: (songId: string, title: string) => void;
 }) {
@@ -56,13 +58,14 @@ const SongRow = React.memo(function SongRow(props: {
   const handlePress = useCallback(() => onOpen(id, title), [id, title, onOpen]);
 
   return (
-    <SongRowView data={data} compact={props.useCompactLayout} onPress={handlePress} />
+    <SongRowView data={data} compact={props.useCompactLayout} inlineInstruments={props.inlineInstruments} onPress={handlePress} />
   );
 }, (prev, next) => (
   prev.song === next.song &&
   prev.leaderboardData === next.leaderboardData &&
   prev.settings === next.settings &&
   prev.useCompactLayout === next.useCompactLayout &&
+  prev.inlineInstruments === next.inlineInstruments &&
   prev.hideInstrumentIcons === next.hideInstrumentIcons &&
   prev.onOpen === next.onOpen
 ));
@@ -72,6 +75,7 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
 
   const {width} = useWindowDimensions();
   const useCompactLayout = width < 900;
+  const isTabletOrFoldable = useCardGrid();
 
   const {onOpenSong} = props;
 
@@ -187,11 +191,12 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
         leaderboardData={leaderboardData}
         settings={instrumentQuerySettings}
         useCompactLayout={useCompactLayout}
+        inlineInstruments={isTabletOrFoldable}
         hideInstrumentIcons={settings.songsHideInstrumentIcons}
         onOpen={onOpen}
       />
     );
-  }, [instrumentQuerySettings, onOpen, scoresIndex, settings.songsHideInstrumentIcons, useCompactLayout]);
+  }, [instrumentQuerySettings, isTabletOrFoldable, onOpen, scoresIndex, settings.songsHideInstrumentIcons, useCompactLayout]);
 
   const sortLabel = useMemo(() => {
     switch (settings.songsSortMode) {
