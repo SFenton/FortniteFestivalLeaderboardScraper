@@ -163,14 +163,14 @@ export const SuggestionSongRow = React.memo(function SuggestionSongRow(props: {
               ) : null}
               {hideRightSideCompletely ? null : isPercentileCategory && percentilePill ? (
                 <View style={styles.songRightPercentile}>
-                  {showRightInstrumentIcon ? (
-                    <Image source={getInstrumentIconSource(rightInstrumentKeyFinal)} style={styles.fcTheseInstrumentIcon} resizeMode="contain" />
-                  ) : null}
                   <View style={[styles.percentilePill, percentilePill.isTop5 && styles.percentilePillGold]}>
                     <Text style={[styles.percentilePillText, percentilePill.isTop5 && styles.percentilePillTextGold]} numberOfLines={1}>
                       {percentilePill.display}
                     </Text>
                   </View>
+                  {showRightInstrumentIcon ? (
+                    <Image source={getInstrumentIconSource(rightInstrumentKeyFinal)} style={styles.fcTheseInstrumentIcon} resizeMode="contain" />
+                  ) : null}
                 </View>
               ) : showRightInstrumentIcon ? (
                 <View style={styles.songRightSingle}>

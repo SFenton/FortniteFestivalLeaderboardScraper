@@ -110,20 +110,38 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
   } = useFestival();
   const {logUi} = actions;
 
-  const instrumentQuerySettings = useMemo<InstrumentShowSettings>(() => ({
-    showLead: settings.suggestionsLeadFilter,
-    showBass: settings.suggestionsBassFilter,
-    showDrums: settings.suggestionsDrumsFilter,
-    showVocals: settings.suggestionsVocalsFilter,
-    showProLead: settings.suggestionsProLeadFilter,
-    showProBass: settings.suggestionsProBassFilter,
+  const instrumentVisibility = useMemo<InstrumentShowSettings>(() => ({
+    showLead: settings.showLead,
+    showBass: settings.showBass,
+    showDrums: settings.showDrums,
+    showVocals: settings.showVocals,
+    showProLead: settings.showProLead,
+    showProBass: settings.showProBass,
   }), [
-    settings.suggestionsBassFilter,
-    settings.suggestionsDrumsFilter,
-    settings.suggestionsLeadFilter,
-    settings.suggestionsProBassFilter,
-    settings.suggestionsProLeadFilter,
-    settings.suggestionsVocalsFilter,
+    settings.showLead,
+    settings.showBass,
+    settings.showDrums,
+    settings.showVocals,
+    settings.showProLead,
+    settings.showProBass,
+  ]);
+
+  // Merge app-level visibility and suggestion filters: an instrument only
+  // appears if enabled in BOTH places.
+  const effectiveInstrumentSettings = useMemo<InstrumentShowSettings>(() => ({
+    showLead: settings.showLead && settings.suggestionsLeadFilter,
+    showBass: settings.showBass && settings.suggestionsBassFilter,
+    showDrums: settings.showDrums && settings.suggestionsDrumsFilter,
+    showVocals: settings.showVocals && settings.suggestionsVocalsFilter,
+    showProLead: settings.showProLead && settings.suggestionsProLeadFilter,
+    showProBass: settings.showProBass && settings.suggestionsProBassFilter,
+  }), [
+    settings.showLead, settings.suggestionsLeadFilter,
+    settings.showBass, settings.suggestionsBassFilter,
+    settings.showDrums, settings.suggestionsDrumsFilter,
+    settings.showVocals, settings.suggestionsVocalsFilter,
+    settings.showProLead, settings.suggestionsProLeadFilter,
+    settings.showProBass, settings.suggestionsProBassFilter,
   ]);
 
   const songById = useMemo(() => {
@@ -174,23 +192,23 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
 
   const visibleCategories = useMemo(() => {
     return categories
-      .filter(c => shouldShowCategory(c.key, instrumentQuerySettings))
+      .filter(c => shouldShowCategory(c.key, effectiveInstrumentSettings))
       .filter(c => shouldShowCategoryType(c.key, categoryTypeSettings))
-      .map(c => filterCategoryForInstruments(c, instrumentQuerySettings))
+      .map(c => filterCategoryForInstruments(c, effectiveInstrumentSettings))
       .filter((c): c is SuggestionCategoryRow => c !== null)
       .map(c => filterCategoryForInstrumentTypes(c, settings as any) as SuggestionCategoryRow | null)
       .filter((c): c is SuggestionCategoryRow => c !== null);
-  }, [categories, instrumentQuerySettings, categoryTypeSettings, settings]);
+  }, [categories, effectiveInstrumentSettings, categoryTypeSettings, settings]);
 
   const filterForEnabledInstruments = useCallback((list: SuggestionCategory[]) => {
     return list
-      .filter(c => shouldShowCategory(c.key, instrumentQuerySettings))
+      .filter(c => shouldShowCategory(c.key, effectiveInstrumentSettings))
       .filter(c => shouldShowCategoryType(c.key, categoryTypeSettings))
-      .map(c => filterCategoryForInstruments(c, instrumentQuerySettings))
+      .map(c => filterCategoryForInstruments(c, effectiveInstrumentSettings))
       .filter((c): c is SuggestionCategory => c !== null)
       .map(c => filterCategoryForInstrumentTypes(c, settings as any))
       .filter((c): c is SuggestionCategory => c !== null);
-  }, [instrumentQuerySettings, categoryTypeSettings, settings]);
+  }, [effectiveInstrumentSettings, categoryTypeSettings, settings]);
 
   const canRegenerate = songs.length > 0 && settings.hasEverSyncedScores && visibleCategories.length > 0;
 
@@ -392,6 +410,7 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
         <SuggestionsFilterModal
           visible={filterVisible}
           draft={filterDraft}
+          instrumentVisibility={instrumentVisibility}
           onChange={setFilterDraft}
           onCancel={onCancelFilter}
           onReset={onResetFilter}
@@ -413,6 +432,7 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
         <SuggestionsFilterModal
           visible={filterVisible}
           draft={filterDraft}
+          instrumentVisibility={instrumentVisibility}
           onChange={setFilterDraft}
           onCancel={onCancelFilter}
           onReset={onResetFilter}
@@ -436,6 +456,7 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
         <SuggestionsFilterModal
           visible={filterVisible}
           draft={filterDraft}
+          instrumentVisibility={instrumentVisibility}
           onChange={setFilterDraft}
           onCancel={onCancelFilter}
           onReset={onResetFilter}
@@ -494,7 +515,7 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
                       useCompactLayout={useCompactLayout}
                       songById={songById}
                       scoresIndex={scoresIndex}
-                      instrumentQuerySettings={instrumentQuerySettings}
+                      instrumentQuerySettings={effectiveInstrumentSettings}
                       onOpenSong={(songId, title) => {
                         logUi(`[SUGGESTIONS] open ${songId} '${title}' (${cat.key})`);
                         props.onOpenSong?.(songId, title);
@@ -510,7 +531,7 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
                       useCompactLayout={useCompactLayout}
                       songById={songById}
                       scoresIndex={scoresIndex}
-                      instrumentQuerySettings={instrumentQuerySettings}
+                      instrumentQuerySettings={effectiveInstrumentSettings}
                       onOpenSong={(songId, title) => {
                         logUi(`[SUGGESTIONS] open ${songId} '${title}' (${cat.key})`);
                         props.onOpenSong?.(songId, title);
@@ -543,7 +564,7 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
                   useCompactLayout={useCompactLayout}
                   songById={songById}
                   scoresIndex={scoresIndex}
-                  instrumentQuerySettings={instrumentQuerySettings}
+                  instrumentQuerySettings={effectiveInstrumentSettings}
                   onOpenSong={(songId, title) => {
                     logUi(`[SUGGESTIONS] open ${songId} '${title}' (${cat.key})`);
                     props.onOpenSong?.(songId, title);
@@ -558,6 +579,7 @@ export function SuggestionsScreen(props: {onOpenSong?: (songId: string, title: s
       <SuggestionsFilterModal
         visible={filterVisible}
         draft={filterDraft}
+        instrumentVisibility={instrumentVisibility}
         onChange={setFilterDraft}
         onCancel={onCancelFilter}
         onReset={onResetFilter}

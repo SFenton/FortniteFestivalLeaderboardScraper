@@ -323,7 +323,14 @@ const TopSongRow = React.memo(function TopSongRow(props: {
   onPress: () => void;
 }) {
   const {item} = props;
-  const right = useMemo(() => formatRight(item), [item]);
+  const rightText = useMemo(() => formatRightText(item), [item]);
+
+  const percentilePill = useMemo(() => {
+    if (typeof item.percent !== 'number' || !Number.isFinite(item.percent) || item.percent <= 0) return undefined;
+    const display = `Top ${item.percent.toFixed(2)}%`;
+    const isTop5 = item.percent <= 5;
+    return {display, isTop5};
+  }, [item.percent]);
 
   return (
     <Pressable
@@ -353,11 +360,20 @@ const TopSongRow = React.memo(function TopSongRow(props: {
             </View>
           </View>
 
-          {right ? (
+          {(percentilePill || rightText) ? (
             <View style={styles.topSongRight}>
-              <Text numberOfLines={1} style={styles.topSongRightText}>
-                {right}
-              </Text>
+              {percentilePill ? (
+                <View style={[styles.percentilePill, percentilePill.isTop5 && styles.percentilePillGold]}>
+                  <Text style={[styles.percentilePillText, percentilePill.isTop5 && styles.percentilePillTextGold]} numberOfLines={1}>
+                    {percentilePill.display}
+                  </Text>
+                </View>
+              ) : null}
+              {rightText ? (
+                <Text numberOfLines={1} style={styles.topSongRightText}>
+                  {rightText}
+                </Text>
+              ) : null}
             </View>
           ) : null}
         </View>
@@ -366,12 +382,9 @@ const TopSongRow = React.memo(function TopSongRow(props: {
   );
 });
 
-function formatRight(item: {percent?: number; stars?: number; fullCombo?: boolean}): string {
+/** Format non-percentile right-side text (stars, FC). */
+function formatRightText(item: {stars?: number; fullCombo?: boolean}): string {
   const parts: string[] = [];
-
-  if (typeof item.percent === 'number' && Number.isFinite(item.percent) && item.percent > 0) {
-    parts.push(`Top ${item.percent.toFixed(2)}%`);
-  }
 
   if (typeof item.stars === 'number' && Number.isFinite(item.stars) && item.stars > 0) {
     const displayStars = item.stars >= 6 ? 6 : item.stars;
@@ -542,5 +555,27 @@ const styles = StyleSheet.create({
     color: '#D7DEE8',
     fontSize: 12,
     fontWeight: '700',
+  },
+  percentilePill: {
+    backgroundColor: '#1D3A71',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  percentilePillGold: {
+    backgroundColor: '#332915',
+    borderColor: '#FFD700',
+  },
+  percentilePillText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 12,
+  },
+  percentilePillTextGold: {
+    color: '#FFD700',
   },
 });

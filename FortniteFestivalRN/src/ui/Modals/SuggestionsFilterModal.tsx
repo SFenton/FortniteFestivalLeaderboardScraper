@@ -6,6 +6,7 @@ import {PlatformModal} from './PlatformModal';
 import {FrostedSurface} from '../FrostedSurface';
 import {modalStyles as styles} from './modalStyles';
 import type {InstrumentKey} from '../../core/instruments';
+import type {InstrumentShowSettings} from '../../app/songs/songFiltering';
 import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
 import type {SuggestionTypeSettings, SuggestionTypeSettingsKey} from '../../core/suggestions/suggestionFilterConfig';
 import {SUGGESTION_TYPES, defaultSuggestionTypeSettings, globalKeyFor, perInstrumentKeyFor} from '../../core/suggestions/suggestionFilterConfig';
@@ -32,6 +33,7 @@ export const defaultSuggestionsInstrumentFilters = (): SuggestionsInstrumentFilt
 export function SuggestionsFilterModal(props: {
   visible: boolean;
   draft: SuggestionsInstrumentFilters;
+  instrumentVisibility: InstrumentShowSettings;
   onChange: (d: SuggestionsInstrumentFilters) => void;
   onCancel: () => void;
   onReset: () => void;
@@ -47,7 +49,7 @@ export function SuggestionsFilterModal(props: {
     const gk = globalKeyFor(typeId);
     const turningOff = props.draft[gk];
     const updates: Partial<SuggestionsInstrumentFilters> = {[gk]: !turningOff};
-    for (const inst of instrumentPickerOrder) {
+    for (const inst of visibleInstruments) {
       updates[perInstrumentKeyFor(inst.key, typeId)] = turningOff ? false : true;
     }
     props.onChange({...props.draft, ...updates} as SuggestionsInstrumentFilters);
@@ -62,7 +64,7 @@ export function SuggestionsFilterModal(props: {
     if (turningOn && !props.draft[gk]) {
       updates[gk] = true;
     } else if (!turningOn) {
-      const allOff = instrumentPickerOrder.every(inst => {
+      const allOff = visibleInstruments.every(inst => {
         const pk = perInstrumentKeyFor(inst.key, typeId);
         return pk === key ? true : !props.draft[pk];
       });
@@ -71,14 +73,19 @@ export function SuggestionsFilterModal(props: {
     props.onChange({...props.draft, ...updates} as SuggestionsInstrumentFilters);
   };
 
-  const instrumentPickerOrder: {key: InstrumentKey; label: string}[] = [
-    {key: 'guitar', label: 'Lead'},
-    {key: 'bass', label: 'Bass'},
-    {key: 'vocals', label: 'Vocals'},
-    {key: 'drums', label: 'Drums'},
-    {key: 'pro_guitar', label: 'Pro Lead'},
-    {key: 'pro_bass', label: 'Pro Bass'},
+  const instrumentPickerOrder: {key: InstrumentKey; label: string; filterKey: keyof SuggestionsInstrumentFilters; showKey: keyof InstrumentShowSettings}[] = [
+    {key: 'guitar', label: 'Lead', filterKey: 'suggestionsLeadFilter', showKey: 'showLead'},
+    {key: 'bass', label: 'Bass', filterKey: 'suggestionsBassFilter', showKey: 'showBass'},
+    {key: 'vocals', label: 'Vocals', filterKey: 'suggestionsVocalsFilter', showKey: 'showVocals'},
+    {key: 'drums', label: 'Drums', filterKey: 'suggestionsDrumsFilter', showKey: 'showDrums'},
+    {key: 'pro_guitar', label: 'Pro Lead', filterKey: 'suggestionsProLeadFilter', showKey: 'showProLead'},
+    {key: 'pro_bass', label: 'Pro Bass', filterKey: 'suggestionsProBassFilter', showKey: 'showProBass'},
   ];
+
+  const visibleInstruments = instrumentPickerOrder.filter(i => props.instrumentVisibility[i.showKey]);
+
+  // Clear instrument-specific picker selection if the instrument was hidden in app settings.
+  const effectiveSelectedInstrument = selectedInstrument && visibleInstruments.some(i => i.key === selectedInstrument) ? selectedInstrument : null;
 
   const variant = Platform.OS === 'windows' ? 'center' : 'bottom';
   const {height: screenHeight} = useWindowDimensions();
@@ -103,12 +110,17 @@ export function SuggestionsFilterModal(props: {
           <View style={styles.modalSection}>
             <Text style={styles.modalSectionTitle}>Instruments</Text>
             <Text style={styles.modalHint}>Choose which instruments appear in your suggestions.</Text>
-            <ToggleRow label="Lead" icon={getInstrumentIconSource('guitar')} checked={props.draft.suggestionsLeadFilter} onToggle={() => toggle('suggestionsLeadFilter')} first />
-            <ToggleRow label="Bass" icon={getInstrumentIconSource('bass')} checked={props.draft.suggestionsBassFilter} onToggle={() => toggle('suggestionsBassFilter')} />
-            <ToggleRow label="Drums" icon={getInstrumentIconSource('drums')} checked={props.draft.suggestionsDrumsFilter} onToggle={() => toggle('suggestionsDrumsFilter')} />
-            <ToggleRow label="Vocals" icon={getInstrumentIconSource('vocals')} checked={props.draft.suggestionsVocalsFilter} onToggle={() => toggle('suggestionsVocalsFilter')} />
-            <ToggleRow label="Pro Lead" icon={getInstrumentIconSource('pro_guitar')} checked={props.draft.suggestionsProLeadFilter} onToggle={() => toggle('suggestionsProLeadFilter')} />
-            <ToggleRow label="Pro Bass" icon={getInstrumentIconSource('pro_bass')} checked={props.draft.suggestionsProBassFilter} onToggle={() => toggle('suggestionsProBassFilter')} last />
+            {visibleInstruments.map((inst, i) => (
+              <ToggleRow
+                key={inst.key}
+                label={inst.label}
+                icon={getInstrumentIconSource(inst.key)}
+                checked={props.draft[inst.filterKey]}
+                onToggle={() => toggle(inst.filterKey)}
+                first={i === 0}
+                last={i === visibleInstruments.length - 1}
+              />
+            ))}
           </View>
 
           <View style={styles.modalSection}>
@@ -131,8 +143,8 @@ export function SuggestionsFilterModal(props: {
             <Text style={styles.modalSectionTitle}>Instrument-Specific</Text>
             <Text style={styles.modalHint}>These filters will filter out suggestions on a per-instrument basis, rather than global.</Text>
             <View style={localStyles.instrumentRow}>
-              {instrumentPickerOrder.map(inst => {
-                const isSelected = selectedInstrument === inst.key;
+              {visibleInstruments.map(inst => {
+                const isSelected = effectiveSelectedInstrument === inst.key;
                 return (
                   <Pressable
                     key={inst.key}
@@ -151,17 +163,17 @@ export function SuggestionsFilterModal(props: {
               })}
             </View>
 
-            {selectedInstrument && (
+            {effectiveSelectedInstrument && (
               <View style={{marginTop: 12, gap: 2}}>
                 {SUGGESTION_TYPES.map((st, i) => {
-                  const key = perInstrumentKeyFor(selectedInstrument, st.id);
+                  const key = perInstrumentKeyFor(effectiveSelectedInstrument, st.id);
                   return (
                     <ToggleRow
                       key={st.id}
                       label={st.label}
                       description={st.description}
                       checked={props.draft[key]}
-                      onToggle={() => togglePerInstrument(selectedInstrument, st.id)}
+                      onToggle={() => togglePerInstrument(effectiveSelectedInstrument, st.id)}
                       first={i === 0}
                       last={i === SUGGESTION_TYPES.length - 1}
                     />
