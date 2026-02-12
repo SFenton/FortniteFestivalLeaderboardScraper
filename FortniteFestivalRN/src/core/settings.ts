@@ -1,6 +1,6 @@
 import type {InstrumentKey} from './instruments';
-import type {AdvancedMissingFilters, SongSortMode} from './songListConfig';
-import {defaultAdvancedMissingFilters, defaultPrimaryInstrumentOrder} from './songListConfig';
+import type {AdvancedMissingFilters, MetadataSortKey, SongSortMode} from './songListConfig';
+import {defaultAdvancedMissingFilters, defaultMetadataSortPriority, defaultPrimaryInstrumentOrder} from './songListConfig';
 import type {SuggestionTypeSettings} from './suggestions/suggestionFilterConfig';
 import {defaultSuggestionTypeSettings} from './suggestions/suggestionFilterConfig';
 
@@ -31,6 +31,10 @@ export type Settings = {
   songsAdvancedMissingFilters: AdvancedMissingFilters;
   songsPrimaryInstrumentOrder: InstrumentKey[];
 
+  // Instrument-specific metadata sort priority order.
+  // Determines the cascade order when sorting by instrument-specific properties.
+  songMetadataSortPriority: MetadataSortKey[];
+
   // Suggestions page instrument filters (separate from global show* toggles)
   suggestionsLeadFilter: boolean;
   suggestionsBassFilter: boolean;
@@ -38,6 +42,10 @@ export type Settings = {
   suggestionsVocalsFilter: boolean;
   suggestionsProLeadFilter: boolean;
   suggestionsProBassFilter: boolean;
+
+  // Songs list instrument-specific filter.
+  // When set, only shows metadata for the selected instrument on each song row.
+  songsSelectedInstrumentFilter: InstrumentKey | null;
 
   // Songs list compact layout visibility toggles
   // When true, hides instrument icons (metadata-only row).
@@ -75,6 +83,7 @@ export const defaultSettings = (): Settings => ({
   songsSortAscending: true,
   songsAdvancedMissingFilters: defaultAdvancedMissingFilters(),
   songsPrimaryInstrumentOrder: defaultPrimaryInstrumentOrder().map(i => i.key),
+  songMetadataSortPriority: defaultMetadataSortPriority().map(i => i.key),
 
   suggestionsLeadFilter: true,
   suggestionsBassFilter: true,
@@ -84,6 +93,8 @@ export const defaultSettings = (): Settings => ({
   suggestionsProBassFilter: true,
 
   ...defaultSuggestionTypeSettings(),
+
+  songsSelectedInstrumentFilter: null,
 
   songsHideInstrumentIcons: false,
 

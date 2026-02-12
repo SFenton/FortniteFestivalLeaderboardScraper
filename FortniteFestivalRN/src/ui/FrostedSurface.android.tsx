@@ -13,6 +13,24 @@ type Props = {
   blurEnabled?: boolean;
 } & Omit<ViewProps, 'style' | 'children'>;
 
+/**
+ * Error boundary that silently falls back to a plain View when BlurView
+ * crashes during native view creation (e.g. null activity context on some
+ * Android devices / lifecycle states).
+ */
+class BlurErrorBoundary extends React.Component<
+  {children: React.ReactNode; fallback: React.ReactNode},
+  {hasError: boolean}
+> {
+  state = {hasError: false};
+  static getDerivedStateFromError() {
+    return {hasError: true};
+  }
+  render() {
+    return this.state.hasError ? this.props.fallback : this.props.children;
+  }
+}
+
 export function FrostedSurface(props: Props) {
   const {
     children,
@@ -32,16 +50,24 @@ export function FrostedSurface(props: Props) {
     );
   }
 
-  return (
-    <View {...viewProps} style={[styles.chrome, style]}>
-      <BlurView
-        style={StyleSheet.absoluteFillObject}
-        blurType={tint === 'default' ? 'light' : tint}
-        blurAmount={intensity}
-        reducedTransparencyFallbackColor={fallbackColor}
-      />
-      <View style={styles.content}>{children}</View>
+  const plain = (
+    <View {...viewProps} style={[styles.chrome, style, {backgroundColor: fallbackColor}]}>
+      {children}
     </View>
+  );
+
+  return (
+    <BlurErrorBoundary fallback={plain}>
+      <View {...viewProps} style={[styles.chrome, style]}>
+        <BlurView
+          style={StyleSheet.absoluteFillObject}
+          blurType={tint === 'default' ? 'light' : tint}
+          blurAmount={intensity}
+          reducedTransparencyFallbackColor={fallbackColor}
+        />
+        <View style={styles.content}>{children}</View>
+      </View>
+    </BlurErrorBoundary>
   );
 }
 

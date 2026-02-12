@@ -2,11 +2,11 @@ import type {InstrumentKey} from '../../core/instruments';
 import type {LeaderboardData, ScoreTracker, Song} from '../../core/models';
 import type {Settings} from '../../core/settings';
 
-export type {AdvancedMissingFilters, InstrumentOrderItem, InstrumentShowSettings, SongSortMode} from '../../core/songListConfig';
-export {defaultAdvancedMissingFilters, defaultPrimaryInstrumentOrder, isInstrumentVisible, normalizeInstrumentOrder, reorderPIOForVisibilityChange, showSettingKeyForInstrument} from '../../core/songListConfig';
+export type {AdvancedMissingFilters, InstrumentOrderItem, InstrumentShowSettings, MetadataSortItem, MetadataSortKey, SongSortMode} from '../../core/songListConfig';
+export {defaultAdvancedMissingFilters, defaultMetadataSortPriority, defaultPrimaryInstrumentOrder, instrumentSortModes, isInstrumentSortMode, isInstrumentVisible, normalizeInstrumentOrder, normalizeMetadataSortPriority, reorderPIOForVisibilityChange, showSettingKeyForInstrument} from '../../core/songListConfig';
 
-import type {AdvancedMissingFilters, InstrumentOrderItem, InstrumentShowSettings, SongSortMode} from '../../core/songListConfig';
-import {defaultAdvancedMissingFilters, defaultPrimaryInstrumentOrder} from '../../core/songListConfig';
+import type {AdvancedMissingFilters, InstrumentOrderItem, InstrumentShowSettings, MetadataSortKey, SongSortMode} from '../../core/songListConfig';
+import {defaultAdvancedMissingFilters, defaultMetadataSortPriority, defaultPrimaryInstrumentOrder} from '../../core/songListConfig';
 
 const canon = (s: string | undefined): string => (s ?? '').trim().toLowerCase();
 
@@ -96,6 +96,54 @@ export const songMatchesAdvancedMissing = (
   return match;
 };
 
+/** Compare two songs by a single metadata key. Returns <0, 0, or >0. */
+const compareByMetadataKey = (
+  key: MetadataSortKey,
+  a: Song,
+  b: Song,
+  aTracker: ScoreTracker | undefined,
+  bTracker: ScoreTracker | undefined,
+): number => {
+  switch (key) {
+    case 'title':
+      return canon(a.track.tt).localeCompare(canon(b.track.tt));
+    case 'artist':
+      return canon(a.track.an).localeCompare(canon(b.track.an));
+    case 'score': {
+      const aVal = aTracker?.initialized ? aTracker.maxScore : 0;
+      const bVal = bTracker?.initialized ? bTracker.maxScore : 0;
+      return aVal - bVal;
+    }
+    case 'percentage': {
+      const aVal = aTracker?.initialized ? aTracker.percentHit : 0;
+      const bVal = bTracker?.initialized ? bTracker.percentHit : 0;
+      return aVal - bVal;
+    }
+    case 'percentile': {
+      const aVal = aTracker?.initialized ? aTracker.rawPercentile : 0;
+      const bVal = bTracker?.initialized ? bTracker.rawPercentile : 0;
+      return aVal - bVal;
+    }
+    case 'isfc': {
+      const aVal = aTracker?.initialized && aTracker.isFullCombo ? 1 : 0;
+      const bVal = bTracker?.initialized && bTracker.isFullCombo ? 1 : 0;
+      return aVal - bVal;
+    }
+    case 'stars': {
+      const aVal = aTracker?.initialized ? aTracker.numStars : 0;
+      const bVal = bTracker?.initialized ? bTracker.numStars : 0;
+      return aVal - bVal;
+    }
+    case 'seasonachieved': {
+      const aVal = aTracker?.initialized ? aTracker.seasonAchieved : 0;
+      const bVal = bTracker?.initialized ? bTracker.seasonAchieved : 0;
+      return aVal - bVal;
+    }
+    default:
+      return 0;
+  }
+};
+
 export const filterAndSortSongs = (params: {
   songs: ReadonlyArray<Song>;
   scoresIndex: Readonly<Record<string, LeaderboardData | undefined>>;
@@ -104,12 +152,16 @@ export const filterAndSortSongs = (params: {
   sortMode?: SongSortMode;
   sortAscending?: boolean;
   instrumentOrder?: ReadonlyArray<InstrumentOrderItem>;
+  instrumentFilter?: InstrumentKey | null;
+  metadataSortPriority?: ReadonlyArray<MetadataSortKey>;
 }): Song[] => {
   const filterText = (params.filterText ?? '').trim();
   const sortMode = params.sortMode ?? 'title';
   const sortAscending = params.sortAscending ?? true;
   const advanced = params.advanced ?? defaultAdvancedMissingFilters();
   const instrumentOrder = params.instrumentOrder ?? defaultPrimaryInstrumentOrder();
+  const instrumentFilter = params.instrumentFilter ?? null;
+  const metadataPriority: ReadonlyArray<MetadataSortKey> = params.metadataSortPriority ?? defaultMetadataSortPriority().map(i => i.key);
 
   let q = [...params.songs];
 
@@ -146,7 +198,35 @@ export const filterAndSortSongs = (params: {
       return canon(a.track.tt).localeCompare(canon(b.track.tt));
     }
 
-    // title
+    // Instrument-specific sort modes (require instrumentFilter)
+    if (instrumentFilter && (sortMode === 'isfc' || sortMode === 'score' || sortMode === 'percentage' || sortMode === 'percentile' || sortMode === 'stars' || sortMode === 'seasonachieved')) {
+      const aEntry = params.scoresIndex[a.track.su];
+      const bEntry = params.scoresIndex[b.track.su];
+      const aTracker = aEntry ? selectTracker(aEntry, instrumentFilter) : undefined;
+      const bTracker = bEntry ? selectTracker(bEntry, instrumentFilter) : undefined;
+
+      // Primary sort by the selected mode
+      const primary = compareByMetadataKey(sortMode, a, b, aTracker, bTracker);
+      if (primary !== 0) return primary;
+
+      // Cascade through metadata priority order, skipping the active sort
+      for (const key of metadataPriority) {
+        if (key === sortMode) continue;
+        const c = compareByMetadataKey(key, a, b, aTracker, bTracker);
+        if (c !== 0) return c;
+      }
+      return 0;
+    }
+
+    // title: sort by Title then Artist
+    if (sortMode === 'title') {
+      const at = canon(a.track.tt);
+      const bt = canon(b.track.tt);
+      if (at !== bt) return at.localeCompare(bt);
+      return canon(a.track.an).localeCompare(canon(b.track.an));
+    }
+
+    // default fallback: title then artist
     const at = canon(a.track.tt);
     const bt = canon(b.track.tt);
     if (at !== bt) return at.localeCompare(bt);

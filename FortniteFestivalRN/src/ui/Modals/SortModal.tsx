@@ -1,4 +1,4 @@
-import React, {useMemo} from 'react';
+import React, {useCallback, useMemo} from 'react';
 import {Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View} from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import DraggableFlatList, {type RenderItemParams} from 'react-native-draggable-flatlist';
@@ -6,8 +6,8 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 
 import {PlatformModal} from './PlatformModal';
 import {FrostedSurface} from '../FrostedSurface';
-import {normalizeInstrumentOrder} from '../../app/songs/songFiltering';
-import type {InstrumentOrderItem, InstrumentShowSettings, SongSortMode} from '../../core/songListConfig';
+import {normalizeInstrumentOrder, normalizeMetadataSortPriority} from '../../app/songs/songFiltering';
+import type {InstrumentOrderItem, InstrumentShowSettings, MetadataSortItem, MetadataSortKey, SongSortMode} from '../../core/songListConfig';
 import {isInstrumentVisible} from '../../core/songListConfig';
 import type {InstrumentKey} from '../../core/instruments';
 import {modalStyles as styles} from './modalStyles';
@@ -15,14 +15,23 @@ import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
 
 export function SortModal(props: {
   visible: boolean;
-  draft: {sortMode: SongSortMode; sortAscending: boolean; order: InstrumentKey[]};
+  draft: {sortMode: SongSortMode; sortAscending: boolean; order: InstrumentKey[]; metadataOrder: MetadataSortKey[]};
   showInstruments: InstrumentShowSettings;
-  onChange: (d: {sortMode: SongSortMode; sortAscending: boolean; order: InstrumentKey[]}) => void;
+  instrumentFilter: InstrumentKey | null;
+  onChange: (d: {sortMode: SongSortMode; sortAscending: boolean; order: InstrumentKey[]; metadataOrder: MetadataSortKey[]}) => void;
   onCancel: () => void;
   onReset: () => void;
   onApply: () => void;
 }) {
   const orderItems = useMemo(() => normalizeInstrumentOrder(props.draft.order), [props.draft.order]);
+  const metadataItems = useMemo(() => normalizeMetadataSortPriority(props.draft.metadataOrder), [props.draft.metadataOrder]);
+  const metadataKeys = useMemo(() => metadataItems.map(i => i.key), [metadataItems]);
+
+  /** Set an instrument-specific sort mode (metadata priority order is user-controlled). */
+  const selectInstrumentSortMode = useCallback((mode: MetadataSortKey) => {
+    props.onChange({...props.draft, sortMode: mode});
+  }, [props]);
+
   // Split into visible and hidden based on show-instrument settings
   const visibleItems = useMemo(() => orderItems.filter(i => isInstrumentVisible(i.key, props.showInstruments)), [orderItems, props.showInstruments]);
   const hiddenKeys = useMemo(() => orderItems.filter(i => !isInstrumentVisible(i.key, props.showInstruments)).map(i => i.key), [orderItems, props.showInstruments]);
@@ -69,6 +78,47 @@ export function SortModal(props: {
             </View>
           </View>
 
+          {props.instrumentFilter != null && (
+          <View style={styles.modalSection}>
+            <Text style={styles.modalSectionTitle}>Filtered Instrument Sort Mode</Text>
+            <Text style={styles.modalHint}>Filtering to a single instrument enables more sort options. You can select an option here, or still use the options above.</Text>
+            <View style={styles.choiceRow}>
+              <Choice
+                label="Score"
+                selected={props.draft.sortMode === 'score'}
+                onPress={() => selectInstrumentSortMode('score')}
+              />
+              <Choice
+                label="Percentage"
+                selected={props.draft.sortMode === 'percentage'}
+                onPress={() => selectInstrumentSortMode('percentage')}
+              />
+              <Choice
+                label="Percentile"
+                selected={props.draft.sortMode === 'percentile'}
+                onPress={() => selectInstrumentSortMode('percentile')}
+              />
+            </View>
+            <View style={[styles.choiceRow, {marginTop: 8}]}>
+              <Choice
+                label="Is FC"
+                selected={props.draft.sortMode === 'isfc'}
+                onPress={() => selectInstrumentSortMode('isfc')}
+              />
+              <Choice
+                label="Stars"
+                selected={props.draft.sortMode === 'stars'}
+                onPress={() => selectInstrumentSortMode('stars')}
+              />
+              <Choice
+                label="Season"
+                selected={props.draft.sortMode === 'seasonachieved'}
+                onPress={() => selectInstrumentSortMode('seasonachieved')}
+              />
+            </View>
+          </View>
+          )}
+
           <View style={styles.modalSection}>
             <Text style={styles.modalSectionTitle}>Direction</Text>
             <Text style={styles.modalHint}>Choose whether to sort ascending (A–Z, low–high) or descending (Z–A, high–low).</Text>
@@ -85,6 +135,80 @@ export function SortModal(props: {
               />
             </View>
           </View>
+
+          {props.instrumentFilter != null && (
+          <View style={styles.modalSection}>
+            <Text style={styles.modalSectionTitle}>Metadata Sort Priority</Text>
+            <Text style={styles.modalHint}>
+              {Platform.OS === 'windows'
+                ? 'When two songs tie on the selected sort mode, ties are broken by these properties in order from top to bottom (skipping the active sort).'
+                : 'Drag to reorder. When two songs tie on the selected sort mode, ties are broken by these properties in order from top to bottom (skipping the active sort).'}
+            </Text>
+
+            {Platform.OS === 'windows' ? (
+              <FrostedSurface style={styles.orderList} tint="dark" intensity={12}>
+              {metadataItems.map((it, idx) => (
+                <View key={it.key} style={[styles.orderRow, idx === 0 && styles.orderRowFirst, idx === metadataItems.length - 1 && styles.orderRowLast, idx > 0 && styles.orderRowSeparator]}>
+                  <Text style={styles.orderName}>{it.displayName}</Text>
+                  <View style={styles.orderBtns}>
+                    <Pressable
+                      onPress={() => {
+                        if (idx <= 0) return;
+                        const next = [...metadataKeys];
+                        const tmp = next[idx - 1];
+                        next[idx - 1] = next[idx];
+                        next[idx] = tmp;
+                        props.onChange({...props.draft, metadataOrder: next});
+                      }}
+                      style={({pressed}) => [styles.orderBtn, pressed && styles.smallBtnPressed]}
+                    >
+                      <Text style={styles.orderBtnText}>↑</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => {
+                        if (idx >= metadataKeys.length - 1) return;
+                        const next = [...metadataKeys];
+                        const tmp = next[idx + 1];
+                        next[idx + 1] = next[idx];
+                        next[idx] = tmp;
+                        props.onChange({...props.draft, metadataOrder: next});
+                      }}
+                      style={({pressed}) => [styles.orderBtn, pressed && styles.smallBtnPressed]}
+                    >
+                      <Text style={styles.orderBtnText}>↓</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ))}
+              </FrostedSurface>
+            ) : (
+              <FrostedSurface style={styles.orderList} tint="dark" intensity={12}>
+                <DraggableFlatList<MetadataSortItem>
+                  data={metadataItems}
+                  keyExtractor={(item) => item.key}
+                  scrollEnabled={false}
+                  onDragEnd={({data}) => {
+                    props.onChange({...props.draft, metadataOrder: data.map(i => i.key)});
+                  }}
+                  renderItem={({item, drag, isActive, getIndex}: RenderItemParams<MetadataSortItem>) => {
+                    const idx = getIndex() ?? 0;
+                    return (
+                      <Pressable
+                        onLongPress={drag}
+                        delayLongPress={100}
+                        disabled={isActive}
+                        style={[styles.orderRow, idx === 0 && styles.orderRowFirst, idx === metadataItems.length - 1 && styles.orderRowLast, idx > 0 && styles.orderRowSeparator, isActive && styles.orderRowActive]}
+                      >
+                        <Text style={styles.orderName}>{item.displayName}</Text>
+                        <Ionicons name="menu" size={20} color="#8899AA" />
+                      </Pressable>
+                    );
+                  }}
+                />
+              </FrostedSurface>
+            )}
+          </View>
+          )}
 
           <View style={styles.modalSection}>
             <Text style={styles.modalSectionTitle}>Primary Instrument Order</Text>

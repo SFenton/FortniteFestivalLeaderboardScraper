@@ -3,6 +3,10 @@ import {Image, Pressable, StyleSheet, Text, View} from 'react-native';
 import {FrostedSurface} from '../FrostedSurface';
 import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
 import type {InstrumentKey} from '../../core/instruments';
+import type {MetadataSortKey} from '../../core/songListConfig';
+
+const STAR_WHITE_ICON = require('../../assets/icons/star_white.png');
+const STAR_GOLD_ICON = require('../../assets/icons/star_gold.png');
 
 // ── Public types ────────────────────────────────────────────────────
 
@@ -13,6 +17,18 @@ export type InstrumentChipVisual = {
   stroke: string;
 };
 
+/** Detailed metadata for a single-instrument filter view. */
+export type InstrumentDetailData = {
+  scoreDisplay: string;
+  starsCount: number;
+  hasScore: boolean;
+  isFullCombo: boolean;
+  seasonDisplay: string;
+  percentHitDisplay?: string;
+  percentileDisplay?: string;
+  isTop5Percentile?: boolean;
+};
+
 /** Everything the row needs to render – no domain models required. */
 export type SongRowDisplayData = {
   title: string;
@@ -21,7 +37,132 @@ export type SongRowDisplayData = {
   imageUri?: string;
   /** When omitted the instrument chips are hidden. */
   instruments?: InstrumentChipVisual[];
+  /** Present only when filtering to a single instrument. */
+  instrumentDetail?: InstrumentDetailData;
+  /** Display priority order for instrument metadata. Position 0 = top row, 1-3 = bottom row, 4 = hidden. */
+  metadataDisplayOrder?: MetadataSortKey[];
 };
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+function MiniStars(props: {starsCount: number; isFullCombo: boolean; hasScore: boolean}) {
+  if (!props.hasScore) return null;
+  const raw = Number.isFinite(props.starsCount) ? props.starsCount : 0;
+  const allGold = raw >= 6;
+  const displayCount = allGold ? 5 : Math.max(1, raw);
+  const source = allGold ? STAR_GOLD_ICON : STAR_WHITE_ICON;
+  const outline = props.isFullCombo ? '#FFD700' : 'transparent';
+  return (
+    <View style={styles.miniStarRow}>
+      {Array.from({length: displayCount}).map((_, idx) => (
+        <View key={idx} style={[styles.miniStarCircle, {borderColor: outline}]}>
+          <Image source={source} style={styles.miniStarIcon} resizeMode="contain" />
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function SeasonPill(props: {seasonDisplay: string}) {
+  if (!props.seasonDisplay) return null;
+  return (
+    <View style={styles.seasonPill}>
+      <Text style={styles.seasonPillText} numberOfLines={1}>{props.seasonDisplay}</Text>
+    </View>
+  );
+}
+
+function PercentPill(props: {percentHitDisplay?: string; isFullCombo?: boolean}) {
+  if (!props.percentHitDisplay) return null;
+  const gold = Boolean(props.isFullCombo);
+  return (
+    <View style={[styles.percentPill, gold && styles.percentPillGold]}>
+      <Text style={[styles.percentPillText, gold && styles.percentPillTextGold]} numberOfLines={1}>{props.percentHitDisplay}</Text>
+    </View>
+  );
+}
+
+function PercentilePill(props: {percentileDisplay?: string; isTop5?: boolean}) {
+  if (!props.percentileDisplay) return null;
+  const gold = Boolean(props.isTop5);
+  return (
+    <View style={[styles.percentilePill, gold && styles.percentilePillGold]}>
+      <Text style={[styles.percentilePillText, gold && styles.percentilePillTextGold]} numberOfLines={1}>{props.percentileDisplay}</Text>
+    </View>
+  );
+}
+
+const DEFAULT_METADATA_ORDER: MetadataSortKey[] = ['title', 'artist', 'score', 'percentage', 'percentile', 'isfc', 'stars', 'seasonachieved'];
+
+function FCBadge() {
+  return (
+    <View style={styles.fcBadge}>
+      <Text style={styles.fcBadgeText}>FC</Text>
+    </View>
+  );
+}
+
+function renderMetadataElement(key: MetadataSortKey, detail: InstrumentDetailData, allKeys: MetadataSortKey[]): React.ReactElement | null {
+  const is100FC = detail.hasScore && detail.isFullCombo && detail.percentHitDisplay === '100%';
+  switch (key) {
+    case 'score':
+      return detail.hasScore && detail.scoreDisplay
+        ? <Text style={styles.scoreStarsScoreText}>{detail.scoreDisplay}</Text>
+        : null;
+    case 'percentage':
+      if (is100FC) {
+        // If isfc also exists in the visible keys, the earlier one renders FC and the later one is skipped.
+        const pctIdx = allKeys.indexOf('percentage');
+        const fcIdx = allKeys.indexOf('isfc');
+        if (fcIdx !== -1 && fcIdx < pctIdx) return null; // isfc already rendered FC
+        return <FCBadge />; // percentage comes first, render as FC
+      }
+      return <PercentPill percentHitDisplay={detail.percentHitDisplay} isFullCombo={detail.isFullCombo} />;
+    case 'isfc':
+      if (is100FC) {
+        const pctIdx = allKeys.indexOf('percentage');
+        const fcIdx = allKeys.indexOf('isfc');
+        if (pctIdx !== -1 && pctIdx < fcIdx) return null; // percentage already rendered FC
+        return <FCBadge />; // isfc comes first, render as FC
+      }
+      return detail.hasScore && detail.isFullCombo ? <FCBadge /> : null;
+    case 'stars':
+      return (
+        <View style={styles.scoreStarsInner}>
+          <MiniStars starsCount={detail.starsCount} isFullCombo={detail.isFullCombo} hasScore={detail.hasScore} />
+        </View>
+      );
+    case 'seasonachieved':
+      return <SeasonPill seasonDisplay={detail.seasonDisplay} />;
+    case 'percentile':
+      return <PercentilePill percentileDisplay={detail.percentileDisplay} isTop5={detail.isTop5Percentile} />;
+    case 'title':
+    case 'artist':
+      return null; // rendered in the main row header
+    default:
+      return null;
+  }
+}
+
+const FIXED_WIDTH_KEYS: ReadonlySet<MetadataSortKey> = new Set<MetadataSortKey>([]);
+
+function MetadataBottomRow(props: {keys: MetadataSortKey[]; detail: InstrumentDetailData; allKeys: MetadataSortKey[]}) {
+  if (!props.detail.hasScore) return null;
+  const elements: React.ReactNode[] = [];
+  for (const key of props.keys) {
+    const el = renderMetadataElement(key, props.detail, props.allKeys);
+    if (el) {
+      const useFixed = FIXED_WIDTH_KEYS.has(key);
+      elements.push(<View key={key} style={useFixed ? styles.metadataCellFixed : styles.metadataCell}>{el}</View>);
+    }
+  }
+  if (elements.length === 0) return null;
+  return (
+    <View style={styles.scoreStarsRow}>
+      {elements}
+    </View>
+  );
+}
 
 // ── Component ───────────────────────────────────────────────────────
 
@@ -39,102 +180,187 @@ export const SongRow = React.memo(function SongRow(props: {
   onPress?: () => void;
 }) {
   const {data, compact, inlineInstruments, onPress} = props;
-  const {title, artist, year, imageUri, instruments} = data;
+  const {title, artist, year, imageUri, instruments, instrumentDetail, metadataDisplayOrder} = data;
   const hasArt = !!imageUri;
+  const isSingleInstrument = instruments?.length === 1 && !!instrumentDetail;
+  const metaOrder = metadataDisplayOrder ?? DEFAULT_METADATA_ORDER;
+  // Keys that are only meaningful for sorting (already rendered in the row header).
+  const instrumentMetaOrder = metaOrder.filter(k => k !== 'title' && k !== 'artist');
 
   const inner = (pressed: boolean) => (
     <FrostedSurface style={[styles.rowSurface, pressed && styles.rowSurfacePressed]} tint="dark" intensity={12}>
       {compact && !inlineInstruments ? (
         <View style={styles.rowInnerCompact}>
-          <View style={[styles.compactTopRow, !hasArt && styles.compactTopRowNoArt]}>
-            {hasArt && (
-              <View style={styles.thumbWrap}>
-                <Image source={{uri: imageUri}} style={styles.thumb} resizeMode="cover" />
-              </View>
-            )}
-
-            <View style={[styles.rowText, !hasArt && styles.rowTextCentered]}>
-              <Text numberOfLines={1} style={styles.songTitle}>{title}</Text>
-              <Text numberOfLines={1} style={styles.songMeta}>
-                {artist}{artist && year ? ' • ' : ''}{year ?? ''}
-              </Text>
-            </View>
-          </View>
-
-          {instruments && instruments.length > 0 && (
-            <View style={styles.instrumentRowCompact}>
-              {instruments.map(s => (
-                <View
-                  key={s.instrumentKey}
-                  style={[styles.instrumentChipCompact, {backgroundColor: s.fill, borderColor: s.stroke}]}
-                >
-                  <Image source={getInstrumentIconSource(s.instrumentKey)} style={styles.instrumentIconCompact} resizeMode="contain" />
+          {isSingleInstrument && instruments && instrumentDetail ? (
+            <>
+              <View style={styles.compactTopRow}>
+                {hasArt && (
+                  <View style={styles.thumbWrap}>
+                    <Image source={{uri: imageUri}} style={styles.thumb} resizeMode="cover" />
+                  </View>
+                )}
+                <View style={[styles.rowText, !hasArt && styles.rowTextCentered]}>
+                  <Text numberOfLines={1} style={styles.songTitle}>{title}</Text>
+                  <Text numberOfLines={1} style={styles.songMeta}>
+                    {artist}{artist && year ? ' • ' : ''}{year ?? ''}
+                  </Text>
                 </View>
-              ))}
-            </View>
+                <View style={styles.detailStrip}>
+                  {renderMetadataElement(instrumentMetaOrder[0], instrumentDetail, instrumentMetaOrder)}
+                  <View
+                    style={[styles.instrumentChipCompact, {backgroundColor: instruments[0].fill, borderColor: instruments[0].stroke}]}
+                  >
+                    <Image source={getInstrumentIconSource(instruments[0].instrumentKey)} style={styles.instrumentIconCompact} resizeMode="contain" />
+                  </View>
+                </View>
+              </View>
+              <MetadataBottomRow keys={instrumentMetaOrder.slice(1)} detail={instrumentDetail} allKeys={instrumentMetaOrder} />
+            </>
+          ) : (
+            <>
+              <View style={[styles.compactTopRow, !hasArt && styles.compactTopRowNoArt]}>
+                {hasArt && (
+                  <View style={styles.thumbWrap}>
+                    <Image source={{uri: imageUri}} style={styles.thumb} resizeMode="cover" />
+                  </View>
+                )}
+                <View style={[styles.rowText, !hasArt && styles.rowTextCentered]}>
+                  <Text numberOfLines={1} style={styles.songTitle}>{title}</Text>
+                  <Text numberOfLines={1} style={styles.songMeta}>
+                    {artist}{artist && year ? ' • ' : ''}{year ?? ''}
+                  </Text>
+                </View>
+              </View>
+              {instruments && instruments.length > 0 && (
+                <View style={styles.instrumentRowCompact}>
+                  {instruments.map(s => (
+                    <View
+                      key={s.instrumentKey}
+                      style={[styles.instrumentChipCompact, {backgroundColor: s.fill, borderColor: s.stroke}]}
+                    >
+                      <Image source={getInstrumentIconSource(s.instrumentKey)} style={styles.instrumentIconCompact} resizeMode="contain" />
+                    </View>
+                  ))}
+                </View>
+              )}
+            </>
           )}
         </View>
       ) : compact && inlineInstruments ? (
         /* Tablet / open-foldable compact: art + text + icons in one row */
-        <View style={styles.rowInner}>
-          <View style={styles.left}>
-            {hasArt && (
-              <View style={styles.thumbWrap}>
-                <Image source={{uri: imageUri}} style={styles.thumb} resizeMode="cover" />
+        isSingleInstrument && instruments && instrumentDetail ? (
+          <View style={styles.rowInnerCompact}>
+            <View style={styles.rowInnerRow}>
+              <View style={styles.left}>
+                {hasArt && (
+                  <View style={styles.thumbWrap}>
+                    <Image source={{uri: imageUri}} style={styles.thumb} resizeMode="cover" />
+                  </View>
+                )}
+                <View style={[styles.rowText, !hasArt && styles.rowTextCentered]}>
+                  <Text numberOfLines={1} style={styles.songTitle}>{title}</Text>
+                  <Text numberOfLines={1} style={styles.songMeta}>
+                    {artist}{artist && year ? ' • ' : ''}{year ?? ''}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.detailStrip}>
+                {renderMetadataElement(instrumentMetaOrder[0], instrumentDetail, instrumentMetaOrder)}
+                <View
+                  style={[styles.instrumentChipCompact, {backgroundColor: instruments[0].fill, borderColor: instruments[0].stroke}]}
+                >
+                  <Image source={getInstrumentIconSource(instruments[0].instrumentKey)} style={styles.instrumentIconCompact} resizeMode="contain" />
+                </View>
+              </View>
+            </View>
+            <MetadataBottomRow keys={instrumentMetaOrder.slice(1)} detail={instrumentDetail} allKeys={instrumentMetaOrder} />
+          </View>
+        ) : (
+          <View style={styles.rowInner}>
+            <View style={styles.left}>
+              {hasArt && (
+                <View style={styles.thumbWrap}>
+                  <Image source={{uri: imageUri}} style={styles.thumb} resizeMode="cover" />
+                </View>
+              )}
+              <View style={[styles.rowText, !hasArt && styles.rowTextCentered]}>
+                <Text numberOfLines={1} style={styles.songTitle}>{title}</Text>
+                <Text numberOfLines={1} style={styles.songMeta}>
+                  {artist}{artist && year ? ' • ' : ''}{year ?? ''}
+                </Text>
+              </View>
+            </View>
+            {instruments && instruments.length > 0 && (
+              <View style={styles.instrumentRow}>
+                {instruments.map(s => (
+                  <View
+                    key={s.instrumentKey}
+                    style={[styles.instrumentChipCompact, {backgroundColor: s.fill, borderColor: s.stroke}]}
+                  >
+                    <Image source={getInstrumentIconSource(s.instrumentKey)} style={styles.instrumentIconCompact} resizeMode="contain" />
+                  </View>
+                ))}
               </View>
             )}
-
-            <View style={[styles.rowText, !hasArt && styles.rowTextCentered]}>
-              <Text numberOfLines={1} style={styles.songTitle}>{title}</Text>
-              <Text numberOfLines={1} style={styles.songMeta}>
-                {artist}{artist && year ? ' • ' : ''}{year ?? ''}
-              </Text>
-            </View>
           </View>
-
-          {instruments && instruments.length > 0 && (
-            <View style={styles.instrumentRow}>
-              {instruments.map(s => (
-                <View
-                  key={s.instrumentKey}
-                  style={[styles.instrumentChipCompact, {backgroundColor: s.fill, borderColor: s.stroke}]}
-                >
-                  <Image source={getInstrumentIconSource(s.instrumentKey)} style={styles.instrumentIconCompact} resizeMode="contain" />
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
+        )
       ) : (
-        <View style={styles.rowInner}>
-          <View style={styles.left}>
-            {hasArt && (
-              <View style={styles.thumbWrap}>
-                <Image source={{uri: imageUri}} style={styles.thumb} resizeMode="cover" />
+        isSingleInstrument && instruments && instrumentDetail ? (
+          <View style={styles.rowInnerCompact}>
+            <View style={styles.rowInnerRow}>
+              <View style={styles.left}>
+                {hasArt && (
+                  <View style={styles.thumbWrap}>
+                    <Image source={{uri: imageUri}} style={styles.thumb} resizeMode="cover" />
+                  </View>
+                )}
+                <View style={[styles.rowText, !hasArt && styles.rowTextCentered]}>
+                  <Text numberOfLines={1} style={styles.songTitle}>{title}</Text>
+                  <Text numberOfLines={1} style={styles.songMeta}>
+                    {artist}{artist && year ? ' • ' : ''}{year ?? ''}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.detailStrip}>
+                {renderMetadataElement(instrumentMetaOrder[0], instrumentDetail, instrumentMetaOrder)}
+                <View
+                  style={[styles.instrumentChip, {backgroundColor: instruments[0].fill, borderColor: instruments[0].stroke}]}
+                >
+                  <Image source={getInstrumentIconSource(instruments[0].instrumentKey)} style={styles.instrumentIcon} resizeMode="contain" />
+                </View>
+              </View>
+            </View>
+            <MetadataBottomRow keys={instrumentMetaOrder.slice(1)} detail={instrumentDetail} allKeys={instrumentMetaOrder} />
+          </View>
+        ) : (
+          <View style={styles.rowInner}>
+            <View style={styles.left}>
+              {hasArt && (
+                <View style={styles.thumbWrap}>
+                  <Image source={{uri: imageUri}} style={styles.thumb} resizeMode="cover" />
+                </View>
+              )}
+              <View style={[styles.rowText, !hasArt && styles.rowTextCentered]}>
+                <Text numberOfLines={1} style={styles.songTitle}>{title}</Text>
+                <Text numberOfLines={1} style={styles.songMeta}>
+                  {artist}{artist && year ? ' • ' : ''}{year ?? ''}
+                </Text>
+              </View>
+            </View>
+            {instruments && instruments.length > 0 && (
+              <View style={styles.instrumentRow}>
+                {instruments.map(s => (
+                  <View
+                    key={s.instrumentKey}
+                    style={[styles.instrumentChip, {backgroundColor: s.fill, borderColor: s.stroke}]}
+                  >
+                    <Image source={getInstrumentIconSource(s.instrumentKey)} style={styles.instrumentIcon} resizeMode="contain" />
+                  </View>
+                ))}
               </View>
             )}
-
-            <View style={[styles.rowText, !hasArt && styles.rowTextCentered]}>
-              <Text numberOfLines={1} style={styles.songTitle}>{title}</Text>
-              <Text numberOfLines={1} style={styles.songMeta}>
-                {artist}{artist && year ? ' • ' : ''}{year ?? ''}
-              </Text>
-            </View>
           </View>
-
-          {instruments && instruments.length > 0 && (
-            <View style={styles.instrumentRow}>
-              {instruments.map(s => (
-                <View
-                  key={s.instrumentKey}
-                  style={[styles.instrumentChip, {backgroundColor: s.fill, borderColor: s.stroke}]}
-                >
-                  <Image source={getInstrumentIconSource(s.instrumentKey)} style={styles.instrumentIcon} resizeMode="contain" />
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
+        )
       )}
     </FrostedSurface>
   );
@@ -267,5 +493,159 @@ const styles = StyleSheet.create({
     color: '#B8C0CC',
     fontSize: 12,
     marginTop: 2,
+  },
+
+  // ── Instrument detail strip (single-instrument filter) ──
+
+  detailStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 0,
+    marginLeft: 10,
+  },
+  detailStripCentered: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  rowInnerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  miniStarRow: {
+    flexDirection: 'row',
+    gap: 3,
+    alignItems: 'center',
+  },
+  miniStarCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  miniStarIcon: {
+    width: 20,
+    height: 20,
+  },
+  seasonPill: {
+    backgroundColor: '#1D3A71',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    minWidth: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  seasonPillText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  percentPill: {
+    backgroundColor: '#1D3A71',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    minWidth: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  percentPillText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  percentPillGold: {
+    backgroundColor: '#332915',
+    borderColor: '#FFD700',
+    borderWidth: 2,
+  },
+  percentPillTextGold: {
+    color: '#FFD700',
+  },
+
+  // ── Percentile pill ──
+
+  percentilePill: {
+    backgroundColor: '#1D3A71',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  percentilePillGold: {
+    backgroundColor: '#332915',
+    borderColor: '#FFD700',
+  },
+  percentilePillText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  percentilePillTextGold: {
+    color: '#FFD700',
+  },
+
+  // ── FC badge ──
+
+  fcBadge: {
+    backgroundColor: '#332915',
+    borderColor: '#FFD700',
+    borderWidth: 2,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    minWidth: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fcBadgeText: {
+    color: '#FFD700',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+
+  // ── Score + stars row below the main content ──
+
+  scoreStarsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingBottom: 2,
+  },
+  metadataCell: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  metadataCellFixed: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scoreStarsInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scoreStarsScoreText: {
+    color: '#D7DEE8',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  scoreStarsSep: {
+    color: '#556677',
+    fontSize: 16,
+    fontWeight: '400',
   },
 });

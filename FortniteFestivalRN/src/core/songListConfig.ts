@@ -1,6 +1,12 @@
 import type {InstrumentKey} from './instruments';
 
-export type SongSortMode = 'title' | 'artist' | 'hasfc';
+export type SongSortMode = 'title' | 'artist' | 'hasfc' | 'isfc' | 'score' | 'percentage' | 'percentile' | 'stars' | 'seasonachieved';
+
+/** Sort modes that require an active instrument filter to be meaningful. */
+export const instrumentSortModes: ReadonlyArray<SongSortMode> = ['score', 'percentage', 'percentile', 'isfc', 'stars', 'seasonachieved'];
+
+export const isInstrumentSortMode = (mode: SongSortMode): boolean =>
+  (instrumentSortModes as ReadonlyArray<string>).includes(mode);
 
 export type AdvancedMissingFilters = {
   missingPadFCs: boolean;
@@ -27,6 +33,38 @@ export const defaultAdvancedMissingFilters = (): AdvancedMissingFilters => ({
   includeProGuitar: true,
   includeProBass: true,
 });
+
+// ── Metadata sort priority (instrument-specific views) ──
+
+export type MetadataSortKey = 'title' | 'artist' | 'score' | 'percentage' | 'percentile' | 'isfc' | 'stars' | 'seasonachieved';
+
+export type MetadataSortItem = {key: MetadataSortKey; displayName: string};
+
+export const defaultMetadataSortPriority = (): MetadataSortItem[] => [
+  {key: 'title', displayName: 'Title'},
+  {key: 'artist', displayName: 'Artist'},
+  {key: 'score', displayName: 'Score'},
+  {key: 'percentage', displayName: 'Percentage'},
+  {key: 'percentile', displayName: 'Percentile'},
+  {key: 'isfc', displayName: 'Is FC'},
+  {key: 'stars', displayName: 'Stars'},
+  {key: 'seasonachieved', displayName: 'Season Achieved'},
+];
+
+export const normalizeMetadataSortPriority = (keys: ReadonlyArray<MetadataSortKey> | undefined): MetadataSortItem[] => {
+  const base = defaultMetadataSortPriority();
+  if (!keys || keys.length === 0) return base;
+  const map = new Map<MetadataSortKey, MetadataSortItem>(base.map(i => [i.key, i]));
+  const out: MetadataSortItem[] = [];
+  for (const k of keys) {
+    const it = map.get(k);
+    if (it) { out.push(it); map.delete(k); }
+  }
+  for (const it of map.values()) out.push(it);
+  return out;
+};
+
+// ── Instrument order ──
 
 export type InstrumentOrderItem = {key: InstrumentKey; displayName: string};
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import {Alert, Platform, Pressable, ScrollView, Switch, Text, useWindowDimensions, View} from 'react-native';
+import {Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, useWindowDimensions, View} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 
 import {PlatformModal} from './PlatformModal';
@@ -7,6 +7,8 @@ import {FrostedSurface} from '../FrostedSurface';
 import type {AdvancedMissingFilters} from '../../core/songListConfig';
 import type {InstrumentShowSettings} from '../../app/songs/songFiltering';
 import {modalStyles as styles} from './modalStyles';
+import type {InstrumentKey} from '../../core/instruments';
+import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
 
 export function FilterModal(props: {
   visible: boolean;
@@ -18,9 +20,27 @@ export function FilterModal(props: {
   hideProFilters?: boolean;
   showInstruments: InstrumentShowSettings;
   onShowInstrumentToggle: (key: keyof InstrumentShowSettings) => void;
+  selectedInstrumentFilter: InstrumentKey | null;
+  onSelectedInstrumentFilterChange: (key: InstrumentKey | null) => void;
 }) {
   const t = (k: keyof AdvancedMissingFilters) =>
     props.onChange({...props.draft, [k]: !props.draft[k]});
+
+  const instrumentPickerOrder: {key: InstrumentKey; label: string; showKey: keyof InstrumentShowSettings}[] = [
+    {key: 'guitar', label: 'Lead', showKey: 'showLead'},
+    {key: 'bass', label: 'Bass', showKey: 'showBass'},
+    {key: 'vocals', label: 'Vocals', showKey: 'showVocals'},
+    {key: 'drums', label: 'Drums', showKey: 'showDrums'},
+    {key: 'pro_guitar', label: 'Pro Lead', showKey: 'showProLead'},
+    {key: 'pro_bass', label: 'Pro Bass', showKey: 'showProBass'},
+  ];
+
+  const visibleInstruments = instrumentPickerOrder.filter(i => props.showInstruments[i.showKey]);
+
+  // Clear selection if the instrument was hidden in settings.
+  const effectiveSelected = props.selectedInstrumentFilter && visibleInstruments.some(i => i.key === props.selectedInstrumentFilter)
+    ? props.selectedInstrumentFilter
+    : null;
 
   const variant = Platform.OS === 'windows' ? 'center' : 'bottom';
   const {height: screenHeight} = useWindowDimensions();
@@ -49,6 +69,31 @@ export function FilterModal(props: {
               <ToggleRow label="Pad FCs" description="Toggle this on to filter to songs that are missing FCs on Lead, Bass, Drums, or Vocals." checked={props.draft.missingPadFCs} onToggle={() => t('missingPadFCs')} last={!!props.hideProFilters} />
               {!props.hideProFilters && <ToggleRow label="Pro Scores" description="Toggle this on to filter to songs that are missing scores on Pro Lead or Pro Bass." checked={props.draft.missingProScores} onToggle={() => t('missingProScores')} />}
               {!props.hideProFilters && <ToggleRow label="Pro FCs" description="Toggle this on to filter to songs that are missing FCs on Pro Lead or Pro Bass." checked={props.draft.missingProFCs} onToggle={() => t('missingProFCs')} last />}
+          </View>
+
+          <View style={styles.modalSection}>
+            <Text style={styles.modalSectionTitle}>Instrument</Text>
+            <Text style={styles.modalHint}>Select an instrument to only show its metadata on each song row. When none is selected, all instruments are shown.</Text>
+            <View style={localStyles.instrumentRow}>
+              {visibleInstruments.map(inst => {
+                const isSelected = effectiveSelected === inst.key;
+                return (
+                  <Pressable
+                    key={inst.key}
+                    onPress={() => props.onSelectedInstrumentFilterChange(isSelected ? null : inst.key)}
+                    style={({pressed}) => [
+                      localStyles.instrumentBtn,
+                      isSelected && localStyles.instrumentBtnSelected,
+                      pressed && styles.smallBtnPressed,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={inst.label}
+                  >
+                    <Image source={getInstrumentIconSource(inst.key)} style={localStyles.instrumentIcon} resizeMode="contain" />
+                  </Pressable>
+                );
+              })}
+            </View>
           </View>
           </ScrollView>
 
@@ -90,3 +135,30 @@ function ToggleRow(props: {label: string; description?: string; checked: boolean
     </Pressable>
   );
 }
+
+const localStyles = StyleSheet.create({
+  instrumentRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    gap: 8,
+  },
+  instrumentBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  instrumentBtnSelected: {
+    borderColor: '#1A5FB4',
+    backgroundColor: '#2D82E6',
+  },
+  instrumentIcon: {
+    width: 32,
+    height: 32,
+  },
+});

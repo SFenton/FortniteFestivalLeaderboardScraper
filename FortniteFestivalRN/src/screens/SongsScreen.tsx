@@ -10,26 +10,32 @@ import { Screen } from '../ui/Screen';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
 import {useFestival} from '../app/festival/FestivalContext';
 import type {LeaderboardData, Song} from '../core/models';
-import {buildSongDisplayRow, defaultAdvancedMissingFilters, defaultPrimaryInstrumentOrder, filterAndSortSongs, normalizeInstrumentOrder, type InstrumentShowSettings} from '../app/songs/songFiltering';
+import {buildSongDisplayRow, defaultAdvancedMissingFilters, defaultMetadataSortPriority, defaultPrimaryInstrumentOrder, filterAndSortSongs, normalizeInstrumentOrder, normalizeMetadataSortPriority, type InstrumentShowSettings} from '../app/songs/songFiltering';
 import {getInstrumentStatusVisual} from '../ui/instruments/instrumentVisuals';
 import {SortModal} from '../ui/Modals/SortModal';
 import {FilterModal} from '../ui/Modals/FilterModal';
 import {FrostedSurface} from '../ui/FrostedSurface';
 import {CenteredEmptyStateCard} from '../ui/CenteredEmptyStateCard';
 import {PageHeader} from '../ui/PageHeader';
-import {SongRow as SongRowView, type InstrumentChipVisual} from '../ui/songs/SongRow';
-import type {AdvancedMissingFilters, SongSortMode} from '../core/songListConfig';
+import {SongRow as SongRowView, type InstrumentChipVisual, type InstrumentDetailData, type SongRowDisplayData} from '../ui/songs/SongRow';
+import type {AdvancedMissingFilters, MetadataSortKey, SongSortMode} from '../core/songListConfig';
 import type {InstrumentKey} from '../core/instruments';
+import {formatIntegerWithCommas} from '../app/format/formatters';
+import {formatSeason} from '../app/songInfo/songInfo';
 
-const SongRow = React.memo(function SongRow(props: {
+type SongRowWrapperProps = {
   song: Song;
   leaderboardData?: LeaderboardData;
   settings: InstrumentShowSettings;
   useCompactLayout: boolean;
   inlineInstruments: boolean;
   hideInstrumentIcons: boolean;
+  selectedInstrumentFilter: InstrumentKey | null;
+  metadataDisplayOrder: MetadataSortKey[];
   onOpen: (songId: string, title: string) => void;
-}) {
+};
+
+const SongRow = React.memo<SongRowWrapperProps>(function SongRow(props) {
   const {song, leaderboardData, settings, onOpen} = props;
 
   const id = song.track.su;
@@ -48,13 +54,38 @@ const SongRow = React.memo(function SongRow(props: {
 
   const instruments = useMemo<InstrumentChipVisual[] | undefined>(() => {
     if (!showInstrumentIcons || !row) return undefined;
-    return row.instrumentStatuses.filter(s => s.isEnabled).map(s => {
+    const all = row.instrumentStatuses.filter(s => s.isEnabled).map(s => {
       const {fill, stroke} = getInstrumentStatusVisual({hasScore: s.hasScore, isFullCombo: s.isFullCombo});
       return {instrumentKey: s.instrumentKey, fill, stroke};
     });
-  }, [row, showInstrumentIcons]);
+    if (props.selectedInstrumentFilter) {
+      return all.filter(s => s.instrumentKey === props.selectedInstrumentFilter);
+    }
+    return all;
+  }, [row, showInstrumentIcons, props.selectedInstrumentFilter]);
 
-  const data = useMemo(() => ({title, artist, year, imageUri, instruments}), [title, artist, year, imageUri, instruments]);
+  const instrumentDetail = useMemo<InstrumentDetailData | undefined>(() => {
+    if (!props.selectedInstrumentFilter) return undefined;
+    if (!leaderboardData) {
+      return {scoreDisplay: '', starsCount: 0, hasScore: false, isFullCombo: false, seasonDisplay: ''};
+    }
+    const tracker = (leaderboardData as any)[props.selectedInstrumentFilter];
+    if (!tracker || !tracker.initialized) {
+      return {scoreDisplay: '', starsCount: 0, hasScore: false, isFullCombo: false, seasonDisplay: ''};
+    }
+    return {
+      scoreDisplay: formatIntegerWithCommas(tracker.maxScore),
+      starsCount: tracker.numStars,
+      hasScore: true,
+      isFullCombo: tracker.isFullCombo,
+      seasonDisplay: formatSeason(tracker.seasonAchieved),
+      percentHitDisplay: tracker.percentHit > 0 ? `${Math.floor(tracker.percentHit / 10000)}%` : undefined,
+      percentileDisplay: tracker.leaderboardPercentileFormatted || (tracker.rank > 0 ? `#${formatIntegerWithCommas(tracker.rank)}` : undefined),
+      isTop5Percentile: tracker.rawPercentile > 0 && tracker.rawPercentile <= 0.05,
+    };
+  }, [leaderboardData, props.selectedInstrumentFilter]);
+
+  const data = useMemo<SongRowDisplayData>(() => ({title, artist, year, imageUri, instruments, instrumentDetail, metadataDisplayOrder: props.metadataDisplayOrder}), [title, artist, year, imageUri, instruments, instrumentDetail, props.metadataDisplayOrder]);
   const handlePress = useCallback(() => onOpen(id, title), [id, title, onOpen]);
 
   return (
@@ -67,6 +98,8 @@ const SongRow = React.memo(function SongRow(props: {
   prev.useCompactLayout === next.useCompactLayout &&
   prev.inlineInstruments === next.inlineInstruments &&
   prev.hideInstrumentIcons === next.hideInstrumentIcons &&
+  prev.selectedInstrumentFilter === next.selectedInstrumentFilter &&
+  prev.metadataDisplayOrder === next.metadataDisplayOrder &&
   prev.onOpen === next.onOpen
 ));
 
@@ -117,13 +150,15 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
   const [showSort, setShowSort] = useState(false);
   const [showFilter, setShowFilter] = useState(false);
 
-  const [sortDraft, setSortDraft] = useState<{sortMode: SongSortMode; sortAscending: boolean; order: InstrumentKey[]}>({
+  const [sortDraft, setSortDraft] = useState<{sortMode: SongSortMode; sortAscending: boolean; order: InstrumentKey[]; metadataOrder: MetadataSortKey[]}>({
     sortMode: settings.songsSortMode,
     sortAscending: settings.songsSortAscending,
     order: normalizeInstrumentOrder(settings.songsPrimaryInstrumentOrder).map(i => i.key),
+    metadataOrder: settings.songMetadataSortPriority,
   });
 
   const [filterDraft, setFilterDraft] = useState<AdvancedMissingFilters>(settings.songsAdvancedMissingFilters);
+  const [instrumentFilterDraft, setInstrumentFilterDraft] = useState<InstrumentKey | null>(settings.songsSelectedInstrumentFilter);
 
   useEffect(() => {
     // Keep drafts in sync if settings change externally (e.g., after storage load)
@@ -131,16 +166,21 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
       sortMode: settings.songsSortMode,
       sortAscending: settings.songsSortAscending,
       order: normalizeInstrumentOrder(settings.songsPrimaryInstrumentOrder).map(i => i.key),
+      metadataOrder: settings.songMetadataSortPriority,
     });
     setFilterDraft(settings.songsAdvancedMissingFilters);
+    setInstrumentFilterDraft(settings.songsSelectedInstrumentFilter);
   }, [
     settings.songsAdvancedMissingFilters,
     settings.songsPrimaryInstrumentOrder,
     settings.songsSortAscending,
     settings.songsSortMode,
+    settings.songsSelectedInstrumentFilter,
+    settings.songMetadataSortPriority,
   ]);
 
   const queryNorm = query.trim().toLowerCase();
+  const normalizedMetadataKeys = useMemo(() => normalizeMetadataSortPriority(settings.songMetadataSortPriority).map(i => i.key), [settings.songMetadataSortPriority]);
   const filtered = useMemo(() => {
     const orderItems = normalizeInstrumentOrder(settings.songsPrimaryInstrumentOrder);
     return filterAndSortSongs({
@@ -151,8 +191,10 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
       sortMode: settings.songsSortMode,
       sortAscending: settings.songsSortAscending,
       instrumentOrder: orderItems,
+      instrumentFilter: settings.songsSelectedInstrumentFilter,
+      metadataSortPriority: normalizedMetadataKeys,
     });
-  }, [queryNorm, scoresIndex, settings.songsAdvancedMissingFilters, settings.songsPrimaryInstrumentOrder, settings.songsSortAscending, settings.songsSortMode, songs]);
+  }, [queryNorm, scoresIndex, settings.songsAdvancedMissingFilters, settings.songsPrimaryInstrumentOrder, settings.songsSortAscending, settings.songsSortMode, settings.songsSelectedInstrumentFilter, normalizedMetadataKeys, songs]);
 
   // Log song catalog once when it becomes available.
   const loggedCountRef = useRef<number | null>(null);
@@ -193,10 +235,12 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
         useCompactLayout={useCompactLayout}
         inlineInstruments={isTabletOrFoldable}
         hideInstrumentIcons={settings.songsHideInstrumentIcons}
+        selectedInstrumentFilter={settings.songsSelectedInstrumentFilter}
+        metadataDisplayOrder={normalizedMetadataKeys}
         onOpen={onOpen}
       />
     );
-  }, [instrumentQuerySettings, isTabletOrFoldable, onOpen, scoresIndex, settings.songsHideInstrumentIcons, useCompactLayout]);
+  }, [instrumentQuerySettings, isTabletOrFoldable, normalizedMetadataKeys, onOpen, scoresIndex, settings.songsHideInstrumentIcons, settings.songsSelectedInstrumentFilter, useCompactLayout]);
 
   const sortLabel = useMemo(() => {
     switch (settings.songsSortMode) {
@@ -206,6 +250,18 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
         return 'Artist';
       case 'hasfc':
         return 'Has FC';
+      case 'isfc':
+        return 'Is FC';
+      case 'score':
+        return 'Score';
+      case 'percentage':
+        return 'Percentage';
+      case 'stars':
+        return 'Stars';
+      case 'seasonachieved':
+        return 'Season';
+      case 'percentile':
+        return 'Percentile';
       default:
         return String(settings.songsSortMode);
     }
@@ -225,9 +281,10 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
       !f.includeDrums ||
       !f.includeVocals ||
       !f.includeProGuitar ||
-      !f.includeProBass
+      !f.includeProBass ||
+      settings.songsSelectedInstrumentFilter != null
     );
-  }, [settings.songsAdvancedMissingFilters]);
+  }, [settings.songsAdvancedMissingFilters, settings.songsSelectedInstrumentFilter]);
 
   const filterLabel = useMemo(() => {
     const f = settings.songsAdvancedMissingFilters;
@@ -247,13 +304,16 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
 
     if (parts.length === 0 && instruments.length === 0) return 'No filters applied';
     if (instruments.length > 0) parts.push(`excluding ${instruments.join(', ')}`);
+    if (settings.songsSelectedInstrumentFilter) parts.push(`instrument: ${settings.songsSelectedInstrumentFilter}`);
     return parts.join('; ');
-  }, [settings.songsAdvancedMissingFilters]);
+  }, [settings.songsAdvancedMissingFilters, settings.songsSelectedInstrumentFilter]);
 
   const defaultOrder = defaultPrimaryInstrumentOrder().map(i => i.key);
   const currentOrder = normalizeInstrumentOrder(settings.songsPrimaryInstrumentOrder).map(i => i.key);
   const isOrderChanged = defaultOrder.length !== currentOrder.length || defaultOrder.some((k, i) => k !== currentOrder[i]);
-  const isSortActive = settings.songsSortMode !== 'title' || settings.songsSortAscending !== true || isOrderChanged;
+  const defaultMeta = defaultMetadataSortPriority().map(i => i.key);
+  const isMetaOrderChanged = defaultMeta.length !== normalizedMetadataKeys.length || defaultMeta.some((k, i) => k !== normalizedMetadataKeys[i]);
+  const isSortActive = settings.songsSortMode !== 'title' || settings.songsSortAscending !== true || isOrderChanged || isMetaOrderChanged;
   const sortIconColor = isSortActive ? '#2D82E6' : '#D7DEE8';
   const filterIconColor = isFilterActive ? '#2D82E6' : '#D7DEE8';
 
@@ -282,6 +342,7 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
                 sortMode: settings.songsSortMode,
                 sortAscending: settings.songsSortAscending,
                 order: normalizeInstrumentOrder(settings.songsPrimaryInstrumentOrder).map(i => i.key),
+                metadataOrder: settings.songMetadataSortPriority,
               });
               setShowSort(true);
             }}
@@ -295,6 +356,7 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
           <Pressable
             onPress={() => {
               setFilterDraft(settings.songsAdvancedMissingFilters);
+              setInstrumentFilterDraft(settings.songsSelectedInstrumentFilter);
               setShowFilter(true);
             }}
             style={({pressed}) => [styles.iconBtnBare, pressed && styles.smallBtnPressed]}
@@ -350,12 +412,14 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
           visible={showSort}
           draft={sortDraft}
           showInstruments={instrumentQuerySettings}
+          instrumentFilter={settings.songsSelectedInstrumentFilter}
           onChange={setSortDraft}
           onCancel={() => {
             setSortDraft({
               sortMode: settings.songsSortMode,
               sortAscending: settings.songsSortAscending,
               order: normalizeInstrumentOrder(settings.songsPrimaryInstrumentOrder).map(i => i.key),
+              metadataOrder: settings.songMetadataSortPriority,
             });
             setShowSort(false);
           }}
@@ -364,6 +428,7 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
               sortMode: 'title' as SongSortMode,
               sortAscending: true,
               order: defaultPrimaryInstrumentOrder().map(i => i.key),
+              metadataOrder: defaultMetadataSortPriority().map(i => i.key),
             };
             setSortDraft(defaults);
             setShowSort(false);
@@ -373,16 +438,18 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
               songsSortMode: defaults.sortMode,
               songsSortAscending: defaults.sortAscending,
               songsPrimaryInstrumentOrder: defaults.order,
+              songMetadataSortPriority: defaults.metadataOrder,
             });
           }}
           onApply={() => {
             setShowSort(false);
-            logUi(`[SONGS] apply sort mode=${sortDraft.sortMode} asc=${sortDraft.sortAscending} order=${sortDraft.order.join(',')}`);
+            logUi(`[SONGS] apply sort mode=${sortDraft.sortMode} asc=${sortDraft.sortAscending} order=${sortDraft.order.join(',')} meta=${sortDraft.metadataOrder.join(',')}`);
             const next = {
               ...settings,
               songsSortMode: sortDraft.sortMode,
               songsSortAscending: sortDraft.sortAscending,
               songsPrimaryInstrumentOrder: sortDraft.order,
+              songMetadataSortPriority: sortDraft.metadataOrder,
             };
             setSettings(next);
           }}
@@ -401,15 +468,18 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
           onReset={() => {
             const defaults = defaultAdvancedMissingFilters();
             setFilterDraft(defaults);
+            setInstrumentFilterDraft(null);
             setShowFilter(false);
             logUi('[SONGS] reset filters to defaults');
-            setSettings({...settings, songsAdvancedMissingFilters: defaults});
+            setSettings({...settings, songsAdvancedMissingFilters: defaults, songsSelectedInstrumentFilter: null});
           }}
           onApply={() => {
             setShowFilter(false);
             logUi(`[SONGS] apply advanced filters`);
-            setSettings({...settings, songsAdvancedMissingFilters: filterDraft});
+            setSettings({...settings, songsAdvancedMissingFilters: filterDraft, songsSelectedInstrumentFilter: instrumentFilterDraft});
           }}
+          selectedInstrumentFilter={instrumentFilterDraft}
+          onSelectedInstrumentFilterChange={setInstrumentFilterDraft}
         />
       </View>
     </Screen>
