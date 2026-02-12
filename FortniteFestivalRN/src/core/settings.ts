@@ -1,6 +1,6 @@
 import type {InstrumentKey} from './instruments';
-import type {AdvancedMissingFilters, MetadataSortKey, SongSortMode} from './songListConfig';
-import {defaultAdvancedMissingFilters, defaultMetadataSortPriority, defaultPrimaryInstrumentOrder} from './songListConfig';
+import type {AdvancedMissingFilters, MetadataSortKey, SongRowVisualKey, SongSortMode} from './songListConfig';
+import {defaultAdvancedMissingFilters, defaultMetadataSortPriority, defaultPrimaryInstrumentOrder, defaultSongRowVisualOrder} from './songListConfig';
 import type {SuggestionTypeSettings} from './suggestions/suggestionFilterConfig';
 import {defaultSuggestionTypeSettings} from './suggestions/suggestionFilterConfig';
 
@@ -35,6 +35,13 @@ export type Settings = {
   // Determines the cascade order when sorting by instrument-specific properties.
   songMetadataSortPriority: MetadataSortKey[];
 
+  // Whether to use an independent visual order for song row metadata (vs. following sort priority).
+  songRowVisualOrderEnabled: boolean;
+
+  // Song row visual display order (independent of sort order).
+  // Controls the order metadata items appear in on filtered-instrument song rows.
+  songRowVisualOrder: SongRowVisualKey[];
+
   // Suggestions page instrument filters (separate from global show* toggles)
   suggestionsLeadFilter: boolean;
   suggestionsBassFilter: boolean;
@@ -50,6 +57,15 @@ export type Settings = {
   // Songs list compact layout visibility toggles
   // When true, hides instrument icons (metadata-only row).
   songsHideInstrumentIcons: boolean;
+
+  // Instrument metadata visibility toggles.
+  // When filtering to a single instrument, these control which metadata pieces appear on each song row.
+  metadataShowScore: boolean;
+  metadataShowPercentage: boolean;
+  metadataShowPercentile: boolean;
+  metadataShowSeasonAchieved: boolean;
+  metadataShowIsFC: boolean;
+  metadataShowStars: boolean;
 
   // iOS-specific settings (only relevant on iOS 26+)
   /** Whether liquid glass effect is enabled (iOS 26+ only). */
@@ -84,6 +100,8 @@ export const defaultSettings = (): Settings => ({
   songsAdvancedMissingFilters: defaultAdvancedMissingFilters(),
   songsPrimaryInstrumentOrder: defaultPrimaryInstrumentOrder().map(i => i.key),
   songMetadataSortPriority: defaultMetadataSortPriority().map(i => i.key),
+  songRowVisualOrderEnabled: false,
+  songRowVisualOrder: defaultSongRowVisualOrder().map(i => i.key),
 
   suggestionsLeadFilter: true,
   suggestionsBassFilter: true,
@@ -97,6 +115,13 @@ export const defaultSettings = (): Settings => ({
   songsSelectedInstrumentFilter: null,
 
   songsHideInstrumentIcons: false,
+
+  metadataShowScore: true,
+  metadataShowPercentage: true,
+  metadataShowPercentile: true,
+  metadataShowSeasonAchieved: true,
+  metadataShowIsFC: true,
+  metadataShowStars: true,
 
   iosLiquidGlassEnabled: true,
   iosLiquidGlassStyle: 'regular',

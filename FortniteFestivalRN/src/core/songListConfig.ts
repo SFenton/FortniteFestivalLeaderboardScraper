@@ -127,6 +127,33 @@ export const showSettingKeyForInstrument = (key: InstrumentKey): ShowSettingKey 
 export const isInstrumentVisible = (key: InstrumentKey, settings: InstrumentShowSettings): boolean =>
   settings[showSettingKeyForInstrument(key)];
 
+// ── Song row visual order (display-only, independent of sort) ──
+
+export type SongRowVisualKey = 'score' | 'percentage' | 'percentile' | 'stars' | 'seasonachieved';
+
+export type SongRowVisualItem = {key: SongRowVisualKey; displayName: string};
+
+export const defaultSongRowVisualOrder = (): SongRowVisualItem[] => [
+  {key: 'score', displayName: 'Score'},
+  {key: 'percentage', displayName: 'Percent'},
+  {key: 'percentile', displayName: 'Percentile'},
+  {key: 'stars', displayName: 'Stars'},
+  {key: 'seasonachieved', displayName: 'Season Achieved'},
+];
+
+export const normalizeSongRowVisualOrder = (keys: ReadonlyArray<SongRowVisualKey> | undefined): SongRowVisualItem[] => {
+  const base = defaultSongRowVisualOrder();
+  if (!keys || keys.length === 0) return base;
+  const map = new Map<SongRowVisualKey, SongRowVisualItem>(base.map(i => [i.key, i]));
+  const out: SongRowVisualItem[] = [];
+  for (const k of keys) {
+    const it = map.get(k);
+    if (it) { out.push(it); map.delete(k); }
+  }
+  for (const it of map.values()) out.push(it);
+  return out;
+};
+
 /**
  * Reorder the Primary Instrument Order list when an instrument's visibility changes.
  *

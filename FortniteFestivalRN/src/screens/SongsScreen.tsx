@@ -11,6 +11,7 @@ import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentat
 import {useFestival} from '../app/festival/FestivalContext';
 import type {LeaderboardData, Song} from '../core/models';
 import {buildSongDisplayRow, defaultAdvancedMissingFilters, defaultMetadataSortPriority, defaultPrimaryInstrumentOrder, filterAndSortSongs, normalizeInstrumentOrder, normalizeMetadataSortPriority, type InstrumentShowSettings} from '../app/songs/songFiltering';
+import {normalizeSongRowVisualOrder} from '../core/songListConfig';
 import {getInstrumentStatusVisual} from '../ui/instruments/instrumentVisuals';
 import {SortModal} from '../ui/Modals/SortModal';
 import {FilterModal} from '../ui/Modals/FilterModal';
@@ -181,6 +182,57 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
 
   const queryNorm = query.trim().toLowerCase();
   const normalizedMetadataKeys = useMemo(() => normalizeMetadataSortPriority(settings.songMetadataSortPriority).map(i => i.key), [settings.songMetadataSortPriority]);
+
+  // Filter metadata keys based on instrument metadata visibility settings.
+  const visibleMetadataKeys = useMemo(() => {
+    const hidden = new Set<MetadataSortKey>();
+    if (!settings.metadataShowScore) hidden.add('score');
+    if (!settings.metadataShowPercentage) hidden.add('percentage');
+    if (!settings.metadataShowPercentile) hidden.add('percentile');
+    if (!settings.metadataShowSeasonAchieved) hidden.add('seasonachieved');
+    if (!settings.metadataShowIsFC) hidden.add('isfc');
+    if (!settings.metadataShowStars) hidden.add('stars');
+    if (hidden.size === 0) return normalizedMetadataKeys;
+    return normalizedMetadataKeys.filter(k => !hidden.has(k));
+  }, [normalizedMetadataKeys, settings.metadataShowScore, settings.metadataShowPercentage, settings.metadataShowPercentile, settings.metadataShowSeasonAchieved, settings.metadataShowIsFC, settings.metadataShowStars]);
+
+  // Build visual display order for song rows.
+  // When songRowVisualOrderEnabled is true, use the independent visual order setting.
+  // When false, fall back to the sort-priority-based order (previous behaviour).
+  const visibleDisplayOrder = useMemo<MetadataSortKey[]>(() => {
+    if (!settings.songRowVisualOrderEnabled) {
+      return visibleMetadataKeys;
+    }
+
+    const hidden = new Set<string>();
+    if (!settings.metadataShowScore) hidden.add('score');
+    if (!settings.metadataShowPercentage) hidden.add('percentage');
+    if (!settings.metadataShowPercentile) hidden.add('percentile');
+    if (!settings.metadataShowSeasonAchieved) hidden.add('seasonachieved');
+    if (!settings.metadataShowStars) hidden.add('stars');
+    if (!settings.metadataShowIsFC) hidden.add('isfc');
+
+    // Start with the user's visual order, filtered by visibility
+    const visualKeys = normalizeSongRowVisualOrder(settings.songRowVisualOrder).map(i => i.key) as MetadataSortKey[];
+    let order: MetadataSortKey[] = visualKeys.filter(k => !hidden.has(k));
+
+    // Append isfc if visible (not part of the visual order setting)
+    if (!hidden.has('isfc')) {
+      order.push('isfc');
+    }
+
+    // If the current sort mode is a metadata key, promote it to position 0
+    // so it appears in the inline top-right detail strip.
+    const sm = settings.songsSortMode;
+    if (sm !== 'title' && sm !== 'artist' && sm !== 'hasfc') {
+      const smKey = sm as MetadataSortKey;
+      if (!hidden.has(smKey) && order.includes(smKey)) {
+        order = [smKey, ...order.filter(k => k !== smKey)];
+      }
+    }
+
+    return order;
+  }, [settings.songRowVisualOrderEnabled, visibleMetadataKeys, settings.songRowVisualOrder, settings.songsSortMode, settings.metadataShowScore, settings.metadataShowPercentage, settings.metadataShowPercentile, settings.metadataShowSeasonAchieved, settings.metadataShowIsFC, settings.metadataShowStars]);
   const filtered = useMemo(() => {
     const orderItems = normalizeInstrumentOrder(settings.songsPrimaryInstrumentOrder);
     return filterAndSortSongs({
@@ -236,11 +288,11 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
         inlineInstruments={isTabletOrFoldable}
         hideInstrumentIcons={settings.songsHideInstrumentIcons}
         selectedInstrumentFilter={settings.songsSelectedInstrumentFilter}
-        metadataDisplayOrder={normalizedMetadataKeys}
+        metadataDisplayOrder={visibleDisplayOrder}
         onOpen={onOpen}
       />
     );
-  }, [instrumentQuerySettings, isTabletOrFoldable, normalizedMetadataKeys, onOpen, scoresIndex, settings.songsHideInstrumentIcons, settings.songsSelectedInstrumentFilter, useCompactLayout]);
+  }, [instrumentQuerySettings, isTabletOrFoldable, visibleDisplayOrder, onOpen, scoresIndex, settings.songsHideInstrumentIcons, settings.songsSelectedInstrumentFilter, useCompactLayout]);
 
   const sortLabel = useMemo(() => {
     switch (settings.songsSortMode) {
@@ -413,6 +465,14 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
           draft={sortDraft}
           showInstruments={instrumentQuerySettings}
           instrumentFilter={settings.songsSelectedInstrumentFilter}
+          metadataVisibility={{
+            score: settings.metadataShowScore,
+            percentage: settings.metadataShowPercentage,
+            percentile: settings.metadataShowPercentile,
+            seasonachieved: settings.metadataShowSeasonAchieved,
+            isfc: settings.metadataShowIsFC,
+            stars: settings.metadataShowStars,
+          }}
           onChange={setSortDraft}
           onCancel={() => {
             setSortDraft({

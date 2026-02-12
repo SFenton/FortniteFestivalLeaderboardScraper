@@ -1,5 +1,5 @@
 import React from 'react';
-import {Image, Pressable, StyleSheet, Text, View} from 'react-native';
+import {Image, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View} from 'react-native';
 import {FrostedSurface} from '../FrostedSurface';
 import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
 import type {InstrumentKey} from '../../core/instruments';
@@ -146,17 +146,51 @@ function renderMetadataElement(key: MetadataSortKey, detail: InstrumentDetailDat
 
 const FIXED_WIDTH_KEYS: ReadonlySet<MetadataSortKey> = new Set<MetadataSortKey>([]);
 
-function MetadataBottomRow(props: {keys: MetadataSortKey[]; detail: InstrumentDetailData; allKeys: MetadataSortKey[]}) {
+function MetadataBottomRow(props: {keys: MetadataSortKey[]; detail: InstrumentDetailData; allKeys: MetadataSortKey[]; isPhone?: boolean; isWideLayout?: boolean}) {
   if (!props.detail.hasScore) return null;
-  const elements: React.ReactNode[] = [];
+  // First pass: collect visible entries so we can count them before building nodes.
+  const visibleEntries: {key: MetadataSortKey; el: React.ReactElement}[] = [];
   for (const key of props.keys) {
     const el = renderMetadataElement(key, props.detail, props.allKeys);
     if (el) {
-      const useFixed = FIXED_WIDTH_KEYS.has(key);
-      elements.push(<View key={key} style={useFixed ? styles.metadataCellFixed : styles.metadataCell}>{el}</View>);
+      visibleEntries.push({key, el});
     }
   }
-  if (elements.length === 0) return null;
+  if (visibleEntries.length === 0) return null;
+  // On phones with exactly 4 elements, give stars flex:2 so it doesn't get crushed.
+  const starsFlexOverride = props.isPhone && visibleEntries.length === 4;
+  const elements: React.ReactNode[] = visibleEntries.map(({key, el}) => {
+    const useFixed = FIXED_WIDTH_KEYS.has(key);
+    const flexStyle = key === 'stars' && starsFlexOverride ? {flex: 2} : undefined;
+    return <View key={key} style={[useFixed ? styles.metadataCellFixed : styles.metadataCell, flexStyle]}>{el}</View>;
+  });
+  // When exactly 2 items: use spacers only on wide layouts (landscape tablet / open foldable).
+  if (elements.length === 2) {
+    if (props.isWideLayout) {
+      return (
+        <View style={styles.scoreStarsRow}>
+          <View key="spacer-l" style={styles.metadataCell} />
+          {elements}
+          <View key="spacer-r" style={styles.metadataCell} />
+        </View>
+      );
+    }
+    if (props.isPhone) {
+      return (
+        <View style={styles.scoreStarsRow}>
+          <View key="spacer-l" style={{flex: 0.5}} />
+          <View key="slot-l" style={styles.metadataCellLeft}>{visibleEntries[0].el}</View>
+          <View key="slot-r" style={styles.metadataCellRight}>{visibleEntries[1].el}</View>
+          <View key="spacer-r" style={{flex: 0.5}} />
+        </View>
+      );
+    }
+    return (
+      <View style={styles.scoreStarsRow}>
+        {elements}
+      </View>
+    );
+  }
   return (
     <View style={styles.scoreStarsRow}>
       {elements}
@@ -187,6 +221,12 @@ export const SongRow = React.memo(function SongRow(props: {
   // Keys that are only meaningful for sorting (already rendered in the row header).
   const instrumentMetaOrder = metaOrder.filter(k => k !== 'title' && k !== 'artist');
 
+  // Detect phone-class device (not tablet/foldable, not Windows).
+  const {width: winWidth, height: winHeight} = useWindowDimensions();
+  const isPhone = Platform.OS !== 'windows' && Math.min(winWidth, winHeight) < 600;
+  // Wide layout: landscape tablet or open foldable (min dimension >= 600 and landscape).
+  const isWideLayout = Platform.OS !== 'windows' && Math.min(winWidth, winHeight) >= 600 && winWidth > winHeight;
+
   const inner = (pressed: boolean) => (
     <FrostedSurface style={[styles.rowSurface, pressed && styles.rowSurfacePressed]} tint="dark" intensity={12}>
       {compact && !inlineInstruments ? (
@@ -214,7 +254,7 @@ export const SongRow = React.memo(function SongRow(props: {
                   </View>
                 </View>
               </View>
-              <MetadataBottomRow keys={instrumentMetaOrder.slice(1)} detail={instrumentDetail} allKeys={instrumentMetaOrder} />
+              <MetadataBottomRow keys={instrumentMetaOrder.slice(1)} detail={instrumentDetail} allKeys={instrumentMetaOrder} isPhone={isPhone} isWideLayout={isWideLayout} />
             </>
           ) : (
             <>
@@ -273,7 +313,7 @@ export const SongRow = React.memo(function SongRow(props: {
                 </View>
               </View>
             </View>
-            <MetadataBottomRow keys={instrumentMetaOrder.slice(1)} detail={instrumentDetail} allKeys={instrumentMetaOrder} />
+            <MetadataBottomRow keys={instrumentMetaOrder.slice(1)} detail={instrumentDetail} allKeys={instrumentMetaOrder} isPhone={isPhone} isWideLayout={isWideLayout} />
           </View>
         ) : (
           <View style={styles.rowInner}>
@@ -330,7 +370,7 @@ export const SongRow = React.memo(function SongRow(props: {
                 </View>
               </View>
             </View>
-            <MetadataBottomRow keys={instrumentMetaOrder.slice(1)} detail={instrumentDetail} allKeys={instrumentMetaOrder} />
+            <MetadataBottomRow keys={instrumentMetaOrder.slice(1)} detail={instrumentDetail} allKeys={instrumentMetaOrder} isPhone={isPhone} isWideLayout={isWideLayout} />
           </View>
         ) : (
           <View style={styles.rowInner}>
@@ -631,6 +671,16 @@ const styles = StyleSheet.create({
   },
   metadataCellFixed: {
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  metadataCellLeft: {
+    flex: 1,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+  },
+  metadataCellRight: {
+    flex: 1,
+    alignItems: 'flex-end',
     justifyContent: 'center',
   },
   scoreStarsInner: {

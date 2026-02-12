@@ -1,8 +1,10 @@
-import React, {useCallback} from 'react';
+import React, {useCallback, useMemo} from 'react';
 import {Alert, Image, type ImageSourcePropType, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View} from 'react-native';
 import MaskedView from '@react-native-masked-view/masked-view';
 import LinearGradient from 'react-native-linear-gradient';
 import {isLiquidGlassSupported} from '@callstack/liquid-glass';
+import DraggableFlatList, {type RenderItemParams} from 'react-native-draggable-flatlist';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 import { Screen } from '../ui/Screen';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
@@ -10,35 +12,40 @@ import {useFestival} from '../app/festival/FestivalContext';
 import {FrostedSurface} from '../ui/FrostedSurface';
 import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 import {PageHeader} from '../ui/PageHeader';
-import {reorderPIOForVisibilityChange, showSettingKeyForInstrument} from '../core/songListConfig';
+import {reorderPIOForVisibilityChange, showSettingKeyForInstrument, normalizeSongRowVisualOrder} from '../core/songListConfig';
+import type {SongRowVisualItem, SongRowVisualKey} from '../core/songListConfig';
 import {InstrumentKeys} from '../core/instruments';
 import {getInstrumentIconSource} from '../ui/instruments/instrumentVisuals';
 
 /* ────────────────────────── Toggle row (reused) ────────────────────────── */
 
-function ToggleRow(props: {label: string; icon?: ImageSourcePropType; checked: boolean; onToggle: () => void; first?: boolean; last?: boolean}) {
+function ToggleRow(props: {label: string; icon?: ImageSourcePropType; checked: boolean; onToggle: () => void; disabled?: boolean; first?: boolean; last?: boolean}) {
   return (
     <Pressable
-      onPress={props.onToggle}
+      onPress={props.disabled ? undefined : props.onToggle}
+      disabled={props.disabled}
       style={({pressed}) => [
         styles.orderRow,
         props.first && styles.orderRowFirst,
         props.last && styles.orderRowLast,
         !props.first && styles.orderRowSeparator,
-        pressed && styles.rowBtnPressed,
+        pressed && !props.disabled && styles.rowBtnPressed,
+        props.disabled && styles.rowDisabled,
       ]}
       accessibilityRole="switch"
     >
       <View style={styles.toggleLabelRow}>
         {props.icon && <Image source={props.icon} style={styles.toggleInstrumentIcon} resizeMode="contain" />}
-        <Text style={styles.orderName}>{props.label}</Text>
+        <Text style={[styles.orderName, props.disabled && styles.textDisabled]}>{props.label}</Text>
       </View>
-      <Switch
-        value={props.checked}
-        onValueChange={props.onToggle}
-        trackColor={{false: '#263244', true: 'rgba(45,130,230,1)'}}
-        thumbColor={props.checked ? '#FFFFFF' : '#8899AA'}
-      />
+      <View style={props.disabled ? styles.rowDisabled : undefined} pointerEvents={props.disabled ? 'none' : 'auto'}>
+        <Switch
+          value={props.checked}
+          onValueChange={props.onToggle}
+          trackColor={{false: '#263244', true: 'rgba(45,130,230,1)'}}
+          thumbColor={props.checked ? '#FFFFFF' : '#8899AA'}
+        />
+      </View>
     </Pressable>
   );
 }
@@ -109,8 +116,14 @@ export function SettingsScreen() {
 
   /* ── instrument toggles (same backend values as filter modal) ── */
 
+  const showActiveCount = [state.settings.showLead, state.settings.showBass, state.settings.showDrums, state.settings.showVocals, state.settings.showProLead, state.settings.showProBass].filter(Boolean).length;
+  const queryActiveCount = [state.settings.queryLead, state.settings.queryBass, state.settings.queryDrums, state.settings.queryVocals, state.settings.queryProLead, state.settings.queryProBass].filter(Boolean).length;
+
+  const visualOrderItems = useMemo(() => normalizeSongRowVisualOrder(state.settings.songRowVisualOrder), [state.settings.songRowVisualOrder]);
+  const visualOrderKeys = useMemo(() => visualOrderItems.map(i => i.key), [visualOrderItems]);
+
   const toggleSetting = useCallback(
-    (key: 'queryLead' | 'queryBass' | 'queryDrums' | 'queryVocals' | 'queryProLead' | 'queryProBass' | 'showLead' | 'showBass' | 'showDrums' | 'showVocals' | 'showProLead' | 'showProBass' | 'songsHideInstrumentIcons') => {
+    (key: 'queryLead' | 'queryBass' | 'queryDrums' | 'queryVocals' | 'queryProLead' | 'queryProBass' | 'showLead' | 'showBass' | 'showDrums' | 'showVocals' | 'showProLead' | 'showProBass' | 'songsHideInstrumentIcons' | 'metadataShowScore' | 'metadataShowPercentage' | 'metadataShowPercentile' | 'metadataShowSeasonAchieved' | 'metadataShowIsFC' | 'metadataShowStars') => {
       const next = {...state.settings, [key]: !state.settings[key]};
 
       // When toggling a show* setting, also reorder the Primary Instrument Order:
@@ -224,30 +237,125 @@ export function SettingsScreen() {
               onToggle={() => toggleSetting('songsHideInstrumentIcons')}
               first last
             />
+
+            {/* ── Song Row Visual Order ── */}
+            <View style={{marginTop: 12}}>
+              <DescriptorToggleRow
+                label="Enable Independent Song Row Visual Order"
+                description="When enabled, the metadata display order on song rows is controlled separately from sort priority below. When disabled, metadata is displayed in sort priority order."
+                checked={state.settings.songRowVisualOrderEnabled}
+                onToggle={() => actions.setSettings({...state.settings, songRowVisualOrderEnabled: !state.settings.songRowVisualOrderEnabled})}
+                first last
+              />
+            </View>
+
+            {state.settings.songRowVisualOrderEnabled && (
+            <View style={{marginTop: 12}}>
+              <Text style={styles.innerSectionTitle}>Song Row Visual Order</Text>
+              <Text style={styles.sectionHint}>
+                When filtering to a single instrument in the song list, extra metadata is displayed. Choose the order it appears in on the bottom row.{'\n\n'}Note: if you sort by a piece of metadata, that metadata will appear in the row above. This does not impact sort order, just the visual order of the data you see.
+              </Text>
+
+              {Platform.OS === 'windows' ? (
+                <FrostedSurface style={styles.orderList} tint="dark" intensity={12}>
+                  {visualOrderItems.map((it, idx) => (
+                    <View key={it.key} style={[styles.orderRow, idx === 0 && styles.orderRowFirst, idx === visualOrderItems.length - 1 && styles.orderRowLast, idx > 0 && styles.orderRowSeparator]}>
+                      <Text style={styles.orderName}>{it.displayName}</Text>
+                      <View style={styles.orderBtns}>
+                        <Pressable
+                          onPress={() => {
+                            if (idx <= 0) return;
+                            const next = [...visualOrderKeys];
+                            const tmp = next[idx - 1];
+                            next[idx - 1] = next[idx];
+                            next[idx] = tmp;
+                            actions.setSettings({...state.settings, songRowVisualOrder: next});
+                          }}
+                          style={({pressed}) => [styles.orderBtn, pressed && styles.smallBtnPressed]}
+                        >
+                          <Text style={styles.orderBtnText}>↑</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => {
+                            if (idx >= visualOrderKeys.length - 1) return;
+                            const next = [...visualOrderKeys];
+                            const tmp = next[idx + 1];
+                            next[idx + 1] = next[idx];
+                            next[idx] = tmp;
+                            actions.setSettings({...state.settings, songRowVisualOrder: next});
+                          }}
+                          style={({pressed}) => [styles.orderBtn, pressed && styles.smallBtnPressed]}
+                        >
+                          <Text style={styles.orderBtnText}>↓</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ))}
+                </FrostedSurface>
+              ) : (
+                <FrostedSurface style={styles.orderList} tint="dark" intensity={12}>
+                  <DraggableFlatList<SongRowVisualItem>
+                    data={visualOrderItems}
+                    keyExtractor={(item) => item.key}
+                    scrollEnabled={false}
+                    onDragEnd={({data}) => {
+                      actions.setSettings({...state.settings, songRowVisualOrder: data.map(i => i.key)});
+                    }}
+                    renderItem={({item, drag, isActive, getIndex}: RenderItemParams<SongRowVisualItem>) => {
+                      const idx = getIndex() ?? 0;
+                      return (
+                        <Pressable
+                          onLongPress={drag}
+                          delayLongPress={100}
+                          disabled={isActive}
+                          style={[styles.orderRow, idx === 0 && styles.orderRowFirst, idx === visualOrderItems.length - 1 && styles.orderRowLast, idx > 0 && styles.orderRowSeparator, isActive && styles.orderRowActive]}
+                        >
+                          <Text style={styles.orderName}>{item.displayName}</Text>
+                          <Ionicons name="menu" size={20} color="#8899AA" />
+                        </Pressable>
+                      );
+                    }}
+                  />
+                </FrostedSurface>
+              )}
+            </View>
+            )}
         </FrostedSurface>
 
         {/* ───── Show Instruments ───── */}
         <FrostedSurface style={styles.card} tint="dark" intensity={18}>
           <Text style={styles.sectionTitle}>Show Instruments</Text>
           <Text style={styles.sectionHint}>Choose which instruments to display throughout the app.</Text>
-            <ToggleRow label="Lead"     icon={getInstrumentIconSource('guitar')}     checked={state.settings.showLead}     onToggle={() => toggleSetting('showLead')} first />
-            <ToggleRow label="Bass"     icon={getInstrumentIconSource('bass')}       checked={state.settings.showBass}     onToggle={() => toggleSetting('showBass')} />
-            <ToggleRow label="Drums"    icon={getInstrumentIconSource('drums')}      checked={state.settings.showDrums}    onToggle={() => toggleSetting('showDrums')} />
-            <ToggleRow label="Vocals"   icon={getInstrumentIconSource('vocals')}     checked={state.settings.showVocals}   onToggle={() => toggleSetting('showVocals')} />
-            <ToggleRow label="Pro Lead" icon={getInstrumentIconSource('pro_guitar')} checked={state.settings.showProLead}  onToggle={() => toggleSetting('showProLead')} />
-            <ToggleRow label="Pro Bass" icon={getInstrumentIconSource('pro_bass')}   checked={state.settings.showProBass}  onToggle={() => toggleSetting('showProBass')} last />
+            <ToggleRow label="Lead"     icon={getInstrumentIconSource('guitar')}     checked={state.settings.showLead}     onToggle={() => toggleSetting('showLead')} disabled={state.settings.showLead && showActiveCount <= 1} first />
+            <ToggleRow label="Bass"     icon={getInstrumentIconSource('bass')}       checked={state.settings.showBass}     onToggle={() => toggleSetting('showBass')} disabled={state.settings.showBass && showActiveCount <= 1} />
+            <ToggleRow label="Drums"    icon={getInstrumentIconSource('drums')}      checked={state.settings.showDrums}    onToggle={() => toggleSetting('showDrums')} disabled={state.settings.showDrums && showActiveCount <= 1} />
+            <ToggleRow label="Vocals"   icon={getInstrumentIconSource('vocals')}     checked={state.settings.showVocals}   onToggle={() => toggleSetting('showVocals')} disabled={state.settings.showVocals && showActiveCount <= 1} />
+            <ToggleRow label="Pro Lead" icon={getInstrumentIconSource('pro_guitar')} checked={state.settings.showProLead}  onToggle={() => toggleSetting('showProLead')} disabled={state.settings.showProLead && showActiveCount <= 1} />
+            <ToggleRow label="Pro Bass" icon={getInstrumentIconSource('pro_bass')}   checked={state.settings.showProBass}  onToggle={() => toggleSetting('showProBass')} disabled={state.settings.showProBass && showActiveCount <= 1} last />
+        </FrostedSurface>
+
+        {/* ───── Show Instrument Metadata ───── */}
+        <FrostedSurface style={styles.card} tint="dark" intensity={18}>
+          <Text style={styles.sectionTitle}>Show Instrument Metadata</Text>
+          <Text style={styles.sectionHint}>When filtering songs down to one instrument in the song list, extra metadata for that song can appear. Choose what you'd like to see in the song row here.</Text>
+            <ToggleRow label="Score"           checked={state.settings.metadataShowScore}           onToggle={() => toggleSetting('metadataShowScore')} first />
+            <ToggleRow label="Percentage"       checked={state.settings.metadataShowPercentage}      onToggle={() => toggleSetting('metadataShowPercentage')} />
+            <ToggleRow label="Percentile"       checked={state.settings.metadataShowPercentile}      onToggle={() => toggleSetting('metadataShowPercentile')} />
+            <ToggleRow label="Season Achieved"  checked={state.settings.metadataShowSeasonAchieved}  onToggle={() => toggleSetting('metadataShowSeasonAchieved')} />
+            <ToggleRow label="Is FC"            checked={state.settings.metadataShowIsFC}            onToggle={() => toggleSetting('metadataShowIsFC')} />
+            <ToggleRow label="Stars"            checked={state.settings.metadataShowStars}           onToggle={() => toggleSetting('metadataShowStars')} last />
         </FrostedSurface>
 
         {/* ───── Instrument Query Settings ───── */}
         <FrostedSurface style={styles.card} tint="dark" intensity={18}>
           <Text style={styles.sectionTitle}>Instrument Query Settings</Text>
           <Text style={styles.sectionHint}>Choose which instruments to sync when fetching scores. Removing instruments you don't typically play can improve sync times.</Text>
-            <ToggleRow label="Lead"     icon={getInstrumentIconSource('guitar')}     checked={state.settings.queryLead}     onToggle={() => toggleSetting('queryLead')} first />
-            <ToggleRow label="Bass"     icon={getInstrumentIconSource('bass')}       checked={state.settings.queryBass}     onToggle={() => toggleSetting('queryBass')} />
-            <ToggleRow label="Drums"    icon={getInstrumentIconSource('drums')}      checked={state.settings.queryDrums}    onToggle={() => toggleSetting('queryDrums')} />
-            <ToggleRow label="Vocals"   icon={getInstrumentIconSource('vocals')}     checked={state.settings.queryVocals}   onToggle={() => toggleSetting('queryVocals')} />
-            <ToggleRow label="Pro Lead" icon={getInstrumentIconSource('pro_guitar')} checked={state.settings.queryProLead}  onToggle={() => toggleSetting('queryProLead')} />
-            <ToggleRow label="Pro Bass" icon={getInstrumentIconSource('pro_bass')}   checked={state.settings.queryProBass}  onToggle={() => toggleSetting('queryProBass')} last />
+            <ToggleRow label="Lead"     icon={getInstrumentIconSource('guitar')}     checked={state.settings.queryLead}     onToggle={() => toggleSetting('queryLead')} disabled={state.settings.queryLead && queryActiveCount <= 1} first />
+            <ToggleRow label="Bass"     icon={getInstrumentIconSource('bass')}       checked={state.settings.queryBass}     onToggle={() => toggleSetting('queryBass')} disabled={state.settings.queryBass && queryActiveCount <= 1} />
+            <ToggleRow label="Drums"    icon={getInstrumentIconSource('drums')}      checked={state.settings.queryDrums}    onToggle={() => toggleSetting('queryDrums')} disabled={state.settings.queryDrums && queryActiveCount <= 1} />
+            <ToggleRow label="Vocals"   icon={getInstrumentIconSource('vocals')}     checked={state.settings.queryVocals}   onToggle={() => toggleSetting('queryVocals')} disabled={state.settings.queryVocals && queryActiveCount <= 1} />
+            <ToggleRow label="Pro Lead" icon={getInstrumentIconSource('pro_guitar')} checked={state.settings.queryProLead}  onToggle={() => toggleSetting('queryProLead')} disabled={state.settings.queryProLead && queryActiveCount <= 1} />
+            <ToggleRow label="Pro Bass" icon={getInstrumentIconSource('pro_bass')}   checked={state.settings.queryProBass}  onToggle={() => toggleSetting('queryProBass')} disabled={state.settings.queryProBass && queryActiveCount <= 1} last />
         </FrostedSurface>
 
         {/* ───── iOS Settings ───── */}
@@ -403,6 +511,7 @@ const styles = StyleSheet.create({
   /* ── Card (matches Suggestions / Statistics cards) ── */
   card: { borderRadius: 12, padding: 14, gap: 10, maxWidth: 600, width: '100%', alignSelf: 'center' },
   sectionTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  innerSectionTitle: { color: '#FFFFFF', fontSize: 14, fontWeight: '700', marginBottom: 4 },
   sectionHint: { color: '#D7DEE8', fontSize: 13, lineHeight: 18 },
 
   /* ── Toggle list rows ── */
@@ -423,6 +532,46 @@ const styles = StyleSheet.create({
   rowDisabled: { opacity: 0.45 },
   descriptorText: { color: '#8899AA', fontSize: 12, lineHeight: 16, marginTop: 2 },
   textDisabled: { color: '#607089' },
+
+  /* ── Reorderable list (mirrors SortModal pattern) ── */
+  orderList: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#263244',
+    overflow: 'hidden',
+    marginTop: 8,
+  },
+  orderRowActive: {
+    backgroundColor: '#1A2940',
+    borderRadius: 12,
+    transform: [{scale: 1.03}],
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  orderBtns: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  orderBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#2B3B55',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  orderBtnText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  smallBtnPressed: {
+    opacity: 0.85,
+  },
 
   /* ── Choice buttons (matches SortModal) ── */
   choiceRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
