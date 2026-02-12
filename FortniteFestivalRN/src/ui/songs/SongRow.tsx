@@ -82,11 +82,11 @@ function PercentPill(props: {percentHitDisplay?: string; isFullCombo?: boolean})
   );
 }
 
-function PercentilePill(props: {percentileDisplay?: string; isTop5?: boolean}) {
+function PercentilePill(props: {percentileDisplay?: string; isTop5?: boolean; compact?: boolean}) {
   if (!props.percentileDisplay) return null;
   const gold = Boolean(props.isTop5);
   return (
-    <View style={[styles.percentilePill, gold && styles.percentilePillGold]}>
+    <View style={[styles.percentilePill, gold && styles.percentilePillGold, props.compact && styles.percentilePillCompact]}>
       <Text style={[styles.percentilePillText, gold && styles.percentilePillTextGold]} numberOfLines={1}>{props.percentileDisplay}</Text>
     </View>
   );
@@ -102,7 +102,7 @@ function FCBadge() {
   );
 }
 
-function renderMetadataElement(key: MetadataSortKey, detail: InstrumentDetailData, allKeys: MetadataSortKey[]): React.ReactElement | null {
+function renderMetadataElement(key: MetadataSortKey, detail: InstrumentDetailData, allKeys: MetadataSortKey[], options?: {compactPercentile?: boolean}): React.ReactElement | null {
   const is100FC = detail.hasScore && detail.isFullCombo && detail.percentHitDisplay === '100%';
   switch (key) {
     case 'score':
@@ -134,8 +134,13 @@ function renderMetadataElement(key: MetadataSortKey, detail: InstrumentDetailDat
       );
     case 'seasonachieved':
       return <SeasonPill seasonDisplay={detail.seasonDisplay} />;
-    case 'percentile':
-      return <PercentilePill percentileDisplay={detail.percentileDisplay} isTop5={detail.isTop5Percentile} />;
+    case 'percentile': {
+      let pctDisplay = detail.percentileDisplay;
+      if (options?.compactPercentile && pctDisplay) {
+        pctDisplay = pctDisplay.replace(/^Top\s+/i, '');
+      }
+      return <PercentilePill percentileDisplay={pctDisplay} isTop5={detail.isTop5Percentile} compact={options?.compactPercentile} />;
+    }
     case 'title':
     case 'artist':
       return null; // rendered in the main row header
@@ -157,12 +162,19 @@ function MetadataBottomRow(props: {keys: MetadataSortKey[]; detail: InstrumentDe
     }
   }
   if (visibleEntries.length === 0) return null;
+  const hasStars = visibleEntries.some(e => e.key === 'stars');
   // On phones with exactly 4 elements, give stars flex:2 so it doesn't get crushed.
   const starsFlexOverride = props.isPhone && visibleEntries.length === 4;
+  // On phones with exactly 4 elements and stars present, shorten percentile text.
+  const compactPercentile = props.isPhone && visibleEntries.length === 4 && hasStars;
   const elements: React.ReactNode[] = visibleEntries.map(({key, el}) => {
     const useFixed = FIXED_WIDTH_KEYS.has(key);
     const flexStyle = key === 'stars' && starsFlexOverride ? {flex: 2} : undefined;
-    return <View key={key} style={[useFixed ? styles.metadataCellFixed : styles.metadataCell, flexStyle]}>{el}</View>;
+    // Re-render percentile with compact text when needed.
+    const finalEl = key === 'percentile' && compactPercentile
+      ? renderMetadataElement(key, props.detail, props.allKeys, {compactPercentile: true}) ?? el
+      : el;
+    return <View key={key} style={[useFixed ? styles.metadataCellFixed : styles.metadataCell, flexStyle]}>{finalEl}</View>;
   });
   // When exactly 2 items: use spacers only on wide layouts (landscape tablet / open foldable).
   if (elements.length === 2) {
@@ -621,12 +633,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     borderWidth: 2,
     borderColor: 'transparent',
+    minWidth: 80,
     alignItems: 'center',
     justifyContent: 'center',
   },
   percentilePillGold: {
     backgroundColor: '#332915',
     borderColor: '#FFD700',
+  },
+  percentilePillCompact: {
+    minWidth: 46,
   },
   percentilePillText: {
     color: '#FFFFFF',
