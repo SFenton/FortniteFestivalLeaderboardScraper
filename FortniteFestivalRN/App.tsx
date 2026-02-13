@@ -9,7 +9,7 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
-import {SafeAreaProvider} from 'react-native-safe-area-context';
+import {SafeAreaProvider, initialWindowMetrics} from 'react-native-safe-area-context';
 
 import {AppNavigator} from './src/navigation/AppNavigator';
 import {FestivalProvider, useFestival} from './src/app/festival/FestivalContext';
@@ -323,7 +323,7 @@ function App() {
   console.log('[App] Rendering App component, Platform:', Platform.OS);
 
   return (
-    <SafeAreaProvider>
+    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
       <StatusBar barStyle="light-content" />
       <RootView style={styles.root}>
         {/* FestivalProvider wraps everything so song/image sync kicks off
