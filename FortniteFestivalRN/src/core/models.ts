@@ -36,6 +36,7 @@ export type V1TrackedStats = {
   FULL_COMBO?: number;
   STARS_EARNED?: number;
   SEASON?: number;
+  DIFFICULTY?: number;
 };
 
 export type V1SessionHistory = {
@@ -57,10 +58,24 @@ export type V1LeaderboardPage = {
   entries: V1LeaderboardEntry[];
 };
 
+// Game difficulty the high score was achieved on (from API DIFFICULTY field).
+// 0 = Easy, 1 = Medium, 2 = Hard, 3 = Expert, -1 = unknown/not yet fetched.
+export type GameDifficulty = -1 | 0 | 1 | 2 | 3;
+
+export const GAME_DIFFICULTY_LABELS: Record<GameDifficulty, string> = {
+  [-1]: 'Unknown',
+  [0]: 'Easy',
+  [1]: 'Medium',
+  [2]: 'Hard',
+  [3]: 'Expert',
+};
+
 export class ScoreTracker {
   initialized = false;
   maxScore = 0;
   difficulty = 0;
+  /** Game difficulty the high score was played on: 0=Easy, 1=Medium, 2=Hard, 3=Expert, -1=unknown */
+  gameDifficulty: GameDifficulty = -1;
   numStars = 0;
   isFullCombo = false;
   // Stored as “percent * 10,000”. Example: 98.76% => 987,600.

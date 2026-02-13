@@ -1,6 +1,21 @@
 import type {InstrumentKey} from './instruments';
 
-export type SongSortMode = 'title' | 'artist' | 'hasfc' | 'isfc' | 'score' | 'percentage' | 'percentile' | 'stars' | 'seasonachieved';
+/** Bucket thresholds used for leaderboard percentile display ("Top N%"). */
+export const PERCENTILE_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100] as const;
+
+/**
+ * Map a raw percentile fraction (e.g. 0.0144) to its display bucket (e.g. 2).
+ * Returns 0 when the tracker has no percentile data.
+ */
+export const percentileBucket = (rawPercentile: number): number => {
+  if (rawPercentile <= 0) return 0;
+  let topPct = rawPercentile * 100;
+  if (topPct > 100) topPct = 100;
+  if (topPct < 1) topPct = 1;
+  return PERCENTILE_THRESHOLDS.find(t => topPct <= t) ?? 100;
+};
+
+export type SongSortMode = 'title' | 'artist' | 'year' | 'hasfc' | 'isfc' | 'score' | 'percentage' | 'percentile' | 'stars' | 'seasonachieved';
 
 /** Sort modes that require an active instrument filter to be meaningful. */
 export const instrumentSortModes: ReadonlyArray<SongSortMode> = ['score', 'percentage', 'percentile', 'isfc', 'stars', 'seasonachieved'];
@@ -19,6 +34,24 @@ export type AdvancedMissingFilters = {
   includeVocals: boolean;
   includeProGuitar: boolean;
   includeProBass: boolean;
+  /**
+   * Per-season visibility filter.
+   * Key = season number (0 = "No Season"). Value = whether that season is shown.
+   * An empty object means "show all seasons" (default).
+   */
+  seasonFilter: Record<number, boolean>;
+  /**
+   * Per-percentile-bucket visibility filter.
+   * Key = bucket value from PERCENTILE_THRESHOLDS (0 = "No Percentile").
+   * An empty object means "show all" (default); explicit false = hidden.
+   */
+  percentileFilter: Record<number, boolean>;
+  /**
+   * Per-star-count visibility filter.
+   * Key = number of stars (0 = "No Stars", 1–5 = star counts, 6 = gold stars).
+   * An empty object means "show all" (default); explicit false = hidden.
+   */
+  starsFilter: Record<number, boolean>;
 };
 
 export const defaultAdvancedMissingFilters = (): AdvancedMissingFilters => ({
@@ -32,17 +65,21 @@ export const defaultAdvancedMissingFilters = (): AdvancedMissingFilters => ({
   includeVocals: true,
   includeProGuitar: true,
   includeProBass: true,
+  seasonFilter: {},
+  percentileFilter: {},
+  starsFilter: {},
 });
 
 // ── Metadata sort priority (instrument-specific views) ──
 
-export type MetadataSortKey = 'title' | 'artist' | 'score' | 'percentage' | 'percentile' | 'isfc' | 'stars' | 'seasonachieved';
+export type MetadataSortKey = 'title' | 'artist' | 'year' | 'score' | 'percentage' | 'percentile' | 'isfc' | 'stars' | 'seasonachieved';
 
 export type MetadataSortItem = {key: MetadataSortKey; displayName: string};
 
 export const defaultMetadataSortPriority = (): MetadataSortItem[] => [
   {key: 'title', displayName: 'Title'},
   {key: 'artist', displayName: 'Artist'},
+  {key: 'year', displayName: 'Year'},
   {key: 'score', displayName: 'Score'},
   {key: 'percentage', displayName: 'Percentage'},
   {key: 'percentile', displayName: 'Percentile'},

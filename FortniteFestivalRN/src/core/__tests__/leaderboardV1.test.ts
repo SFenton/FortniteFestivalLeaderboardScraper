@@ -113,8 +113,8 @@ describe('leaderboardV1', () => {
           rank: 50,
           percentile: 0.02,
           sessionHistory: [
-            {trackedStats: {SCORE: 100, ACCURACY: 900000, FULL_COMBO: 0, STARS_EARNED: 4, SEASON: 1}},
-            {trackedStats: {SCORE: 200, ACCURACY: 950000, FULL_COMBO: 1, STARS_EARNED: 5, SEASON: 3}},
+            {trackedStats: {SCORE: 100, ACCURACY: 900000, FULL_COMBO: 0, STARS_EARNED: 4, SEASON: 1, DIFFICULTY: 2}},
+            {trackedStats: {SCORE: 200, ACCURACY: 950000, FULL_COMBO: 1, STARS_EARNED: 5, SEASON: 3, DIFFICULTY: 3}},
           ],
         },
       ],
@@ -130,6 +130,7 @@ describe('leaderboardV1', () => {
     expect(t.calculatedNumEntries).toBeGreaterThanOrEqual(50);
     expect(t.percentHitFormatted).toContain('%');
     expect(t.leaderboardPercentileFormatted).toContain('Top');
+    expect(t.gameDifficulty).toBe(3);
   });
 
   test('updateTrackerFromV1 can create a new tracker when existing is omitted', () => {
@@ -142,6 +143,7 @@ describe('leaderboardV1', () => {
     const t = updateTrackerFromV1({page, accountId: 'acc', difficulty: 1});
     expect(t).toBeInstanceOf(ScoreTracker);
     expect(t.maxScore).toBe(10);
+    expect(t.gameDifficulty).toBe(-1); // no DIFFICULTY in response => stays unknown
   });
 
   test('updateTrackerFromV1 does not overwrite a higher existing score', () => {

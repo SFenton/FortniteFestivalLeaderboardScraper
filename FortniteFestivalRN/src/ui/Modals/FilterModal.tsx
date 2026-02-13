@@ -1,9 +1,12 @@
-import React from 'react';
+import React, {useCallback, useMemo} from 'react';
 import {Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, useWindowDimensions, View} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 import {PlatformModal} from './PlatformModal';
 import {FrostedSurface} from '../FrostedSurface';
+import {Accordion} from '../Accordion';
+import {PERCENTILE_THRESHOLDS} from '../../core/songListConfig';
 import type {AdvancedMissingFilters} from '../../core/songListConfig';
 import type {InstrumentShowSettings} from '../../app/songs/songFiltering';
 import {modalStyles as styles} from './modalStyles';
@@ -22,6 +25,14 @@ export function FilterModal(props: {
   onShowInstrumentToggle: (key: keyof InstrumentShowSettings) => void;
   selectedInstrumentFilter: InstrumentKey | null;
   onSelectedInstrumentFilterChange: (key: InstrumentKey | null) => void;
+  /** Whether the Season Achieved metadata column is enabled in settings. */
+  seasonVisible?: boolean;
+  /** Sorted list of distinct season numbers present in the local DB. */
+  availableSeasons?: number[];
+  /** Sorted list of distinct percentile buckets present in the local DB. */
+  availablePercentiles?: number[];
+  /** Sorted list of distinct star counts present in the local DB (1–6). */
+  availableStars?: number[];
 }) {
   const t = (k: keyof AdvancedMissingFilters) =>
     props.onChange({...props.draft, [k]: !props.draft[k]});
@@ -95,6 +106,51 @@ export function FilterModal(props: {
               })}
             </View>
           </View>
+
+          {props.selectedInstrumentFilter != null && props.seasonVisible && (
+          <View style={styles.modalSection}>
+            <Accordion
+              title="Season"
+              hint="Filter songs by the season in which the score was achieved on the selected instrument."
+            >
+              <SeasonsToggles
+                availableSeasons={props.availableSeasons ?? []}
+                seasonFilter={props.draft.seasonFilter ?? {}}
+                onSeasonFilterChange={(next) => props.onChange({...props.draft, seasonFilter: next})}
+              />
+            </Accordion>
+          </View>
+          )}
+
+          {props.selectedInstrumentFilter != null && (
+          <View style={styles.modalSection}>
+            <Accordion
+              title="Percentile"
+              hint="Show or hide songs based on their leaderboard ranking bracket for the selected instrument."
+            >
+              <PercentileToggles
+                availablePercentiles={props.availablePercentiles ?? []}
+                percentileFilter={props.draft.percentileFilter ?? {}}
+                onPercentileFilterChange={(next) => props.onChange({...props.draft, percentileFilter: next})}
+              />
+            </Accordion>
+          </View>
+          )}
+
+          {props.selectedInstrumentFilter != null && (
+          <View style={styles.modalSection}>
+            <Accordion
+              title="Stars"
+              hint="Filter songs by the number of stars you have on your high score."
+            >
+              <StarsToggles
+                availableStars={props.availableStars ?? []}
+                starsFilter={props.draft.starsFilter ?? {}}
+                onStarsFilterChange={(next) => props.onChange({...props.draft, starsFilter: next})}
+              />
+            </Accordion>
+          </View>
+          )}
           </ScrollView>
 
           {/* Pinned footer */}
@@ -136,7 +192,199 @@ function ToggleRow(props: {label: string; description?: string; checked: boolean
   );
 }
 
+function SeasonsToggles(props: {
+  availableSeasons: number[];
+  seasonFilter: Record<number, boolean>;
+  onSeasonFilterChange: (next: Record<number, boolean>) => void;
+}) {
+  // "No Season" (0) + one toggle per season
+  const allKeys = useMemo(() => [0, ...props.availableSeasons], [props.availableSeasons]);
+  // Empty record = all enabled; explicit false = disabled
+  const isEnabled = (s: number) => props.seasonFilter[s] !== false;
+  const toggle = (s: number) =>
+    props.onSeasonFilterChange({...props.seasonFilter, [s]: !isEnabled(s)});
+  const clearAll = () =>
+    props.onSeasonFilterChange(Object.fromEntries(allKeys.map(k => [k, false])));
+  const selectAll = () =>
+    // Reset to empty object (= all enabled)
+    props.onSeasonFilterChange({});
+  return (
+    <>
+      <View style={localStyles.bulkBtnRow}>
+        <Pressable onPress={clearAll} style={({pressed}) => [localStyles.bulkBtn, localStyles.bulkBtnDanger, pressed && styles.smallBtnPressed]}>
+          <Ionicons name="close" size={14} color="#FFFFFF" />
+          <Text style={localStyles.bulkBtnText}>Clear All</Text>
+        </Pressable>
+        <Pressable onPress={selectAll} style={({pressed}) => [localStyles.bulkBtn, localStyles.bulkBtnSuccess, pressed && styles.smallBtnPressed]}>
+          <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+          <Text style={localStyles.bulkBtnText}>Select All</Text>
+        </Pressable>
+      </View>
+      {allKeys.map((s, idx) => (
+        <ToggleRow
+          key={s}
+          label={s === 0 ? 'No Season' : `Season ${s}`}
+          checked={isEnabled(s)}
+          onToggle={() => toggle(s)}
+          first={idx === 0}
+          last={idx === allKeys.length - 1}
+        />
+      ))}
+    </>
+  );
+}
+
+function PercentileToggles(props: {
+  availablePercentiles: number[];
+  percentileFilter: Record<number, boolean>;
+  onPercentileFilterChange: (next: Record<number, boolean>) => void;
+}) {
+  // Show every supported bucket: 0 = "No Percentile" + all thresholds.
+  const allKeys = useMemo(() => [0, ...PERCENTILE_THRESHOLDS], []);
+  const isEnabled = (k: number) => props.percentileFilter[k] !== false;
+  const toggle = (k: number) =>
+    props.onPercentileFilterChange({...props.percentileFilter, [k]: !isEnabled(k)});
+  const clearAll = () =>
+    props.onPercentileFilterChange(Object.fromEntries(allKeys.map(k => [k, false])));
+  const selectAll = () =>
+    props.onPercentileFilterChange({});
+  return (
+    <>
+      <View style={localStyles.bulkBtnRow}>
+        <Pressable onPress={clearAll} style={({pressed}) => [localStyles.bulkBtn, localStyles.bulkBtnDanger, pressed && styles.smallBtnPressed]}>
+          <Ionicons name="close" size={14} color="#FFFFFF" />
+          <Text style={localStyles.bulkBtnText}>Clear All</Text>
+        </Pressable>
+        <Pressable onPress={selectAll} style={({pressed}) => [localStyles.bulkBtn, localStyles.bulkBtnSuccess, pressed && styles.smallBtnPressed]}>
+          <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+          <Text style={localStyles.bulkBtnText}>Select All</Text>
+        </Pressable>
+      </View>
+      {allKeys.map((k, idx) => (
+        <ToggleRow
+          key={k}
+          label={k === 0 ? 'No Percentile' : `Top ${k}%`}
+          checked={isEnabled(k)}
+          onToggle={() => toggle(k)}
+          first={idx === 0}
+          last={idx === allKeys.length - 1}
+        />
+      ))}
+    </>
+  );
+}
+
+const STAR_WHITE_ICON = require('../../assets/icons/star_white.png');
+const STAR_GOLD_ICON = require('../../assets/icons/star_gold.png');
+
+/** Ordered star filter keys: 0 = No Stars, 6 = Gold Stars, then 5 down to 1. */
+const STAR_FILTER_ORDER = [0, 6, 5, 4, 3, 2, 1] as const;
+
+function StarIcons({count, gold}: {count: number; gold?: boolean}) {
+  const icons = [];
+  for (let i = 0; i < count; i++) {
+    icons.push(
+      <Image
+        key={i}
+        source={gold ? STAR_GOLD_ICON : STAR_WHITE_ICON}
+        style={localStyles.starIcon}
+        resizeMode="contain"
+      />,
+    );
+  }
+  return <View style={localStyles.starIconRow}>{icons}</View>;
+}
+
+function StarToggleRow(props: {starCount: number; checked: boolean; onToggle: () => void; first?: boolean; last?: boolean}) {
+  const {starCount, checked, onToggle, first, last} = props;
+  const label = starCount === 0 ? 'No Stars' : starCount === 6 ? 'Gold Stars' : `${starCount} Stars`;
+  return (
+    <Pressable
+      onPress={onToggle}
+      style={({pressed}) => [
+        styles.orderRow,
+        first && {marginTop: 6},
+        pressed && styles.rowBtnPressed,
+      ]}
+      accessibilityRole="switch"
+      accessibilityLabel={label}
+    >
+      <View style={{flex: 1, marginRight: 12}}>
+        {starCount === 0 ? (
+          <Text style={styles.orderName}>No Stars</Text>
+        ) : starCount === 6 ? (
+          <StarIcons count={5} gold />
+        ) : (
+          <StarIcons count={starCount} />
+        )}
+      </View>
+      <Switch
+        value={checked}
+        onValueChange={onToggle}
+        trackColor={{false: '#263244', true: 'rgba(45,130,230,1)'}}
+        thumbColor={checked ? '#FFFFFF' : '#8899AA'}
+      />
+    </Pressable>
+  );
+}
+
+function StarsToggles(props: {
+  availableStars: number[];
+  starsFilter: Record<number, boolean>;
+  onStarsFilterChange: (next: Record<number, boolean>) => void;
+}) {
+  // Stars are a small fixed set (0–6), so always show every option.
+  const allKeys = STAR_FILTER_ORDER;
+  const isEnabled = useCallback((k: number) => props.starsFilter[k] !== false, [props.starsFilter]);
+  const toggle = useCallback(
+    (k: number) => props.onStarsFilterChange({...props.starsFilter, [k]: !isEnabled(k)}),
+    [props.starsFilter, isEnabled, props.onStarsFilterChange],
+  );
+  const clearAll = useCallback(
+    () => props.onStarsFilterChange(Object.fromEntries(allKeys.map(k => [k, false]))),
+    [allKeys, props.onStarsFilterChange],
+  );
+  const selectAll = useCallback(
+    () => props.onStarsFilterChange({}),
+    [props.onStarsFilterChange],
+  );
+
+  return (
+    <>
+      <View style={localStyles.bulkBtnRow}>
+        <Pressable onPress={clearAll} style={({pressed}) => [localStyles.bulkBtn, localStyles.bulkBtnDanger, pressed && styles.smallBtnPressed]}>
+          <Ionicons name="close" size={14} color="#FFFFFF" />
+          <Text style={localStyles.bulkBtnText}>Clear All</Text>
+        </Pressable>
+        <Pressable onPress={selectAll} style={({pressed}) => [localStyles.bulkBtn, localStyles.bulkBtnSuccess, pressed && styles.smallBtnPressed]}>
+          <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+          <Text style={localStyles.bulkBtnText}>Select All</Text>
+        </Pressable>
+      </View>
+      {allKeys.map((k, idx) => (
+        <StarToggleRow
+          key={k}
+          starCount={k}
+          checked={isEnabled(k)}
+          onToggle={() => toggle(k)}
+          first={idx === 0}
+          last={idx === allKeys.length - 1}
+        />
+      ))}
+    </>
+  );
+}
+
 const localStyles = StyleSheet.create({
+  starIcon: {
+    width: 32,
+    height: 32,
+  },
+  starIconRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
   instrumentRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -160,5 +408,33 @@ const localStyles = StyleSheet.create({
   instrumentIcon: {
     width: 32,
     height: 32,
+  },
+  bulkBtnRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 4,
+  },
+  bulkBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  bulkBtnDanger: {
+    borderColor: 'rgba(198,40,40,0.4)',
+    backgroundColor: 'rgba(198,40,40,0.4)',
+  },
+  bulkBtnSuccess: {
+    borderColor: 'rgba(40,167,69,0.4)',
+    backgroundColor: 'rgba(40,167,69,0.4)',
+  },
+  bulkBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
 });

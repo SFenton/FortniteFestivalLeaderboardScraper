@@ -10,7 +10,7 @@ import { Screen } from '../ui/Screen';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
 import {useFestival} from '../app/festival/FestivalContext';
 import type {LeaderboardData, Song} from '../core/models';
-import {buildSongDisplayRow, defaultAdvancedMissingFilters, defaultMetadataSortPriority, defaultPrimaryInstrumentOrder, filterAndSortSongs, normalizeInstrumentOrder, normalizeMetadataSortPriority, type InstrumentShowSettings} from '../app/songs/songFiltering';
+import {buildSongDisplayRow, defaultAdvancedMissingFilters, defaultMetadataSortPriority, defaultPrimaryInstrumentOrder, filterAndSortSongs, normalizeInstrumentOrder, normalizeMetadataSortPriority, percentileBucket, type InstrumentShowSettings} from '../app/songs/songFiltering';
 import {normalizeSongRowVisualOrder} from '../core/songListConfig';
 import {getInstrumentStatusVisual} from '../ui/instruments/instrumentVisuals';
 import {SortModal} from '../ui/Modals/SortModal';
@@ -23,6 +23,16 @@ import type {AdvancedMissingFilters, MetadataSortKey, SongSortMode} from '../cor
 import type {InstrumentKey} from '../core/instruments';
 import {formatIntegerWithCommas} from '../app/format/formatters';
 import {formatSeason} from '../app/songInfo/songInfo';
+import {GAME_DIFFICULTY_LABELS} from '../core/models';
+import type {GameDifficulty} from '../core/models';
+
+const GAME_DIFF_SHORT: Record<GameDifficulty, string> = {
+  [-1]: '',
+  [0]: 'E',
+  [1]: 'M',
+  [2]: 'H',
+  [3]: 'X',
+};
 
 type SongRowWrapperProps = {
   song: Song;
@@ -83,6 +93,7 @@ const SongRow = React.memo<SongRowWrapperProps>(function SongRow(props) {
       percentHitDisplay: tracker.percentHit > 0 ? `${Math.floor(tracker.percentHit / 10000)}%` : undefined,
       percentileDisplay: tracker.leaderboardPercentileFormatted || (tracker.rank > 0 ? `#${formatIntegerWithCommas(tracker.rank)}` : undefined),
       isTop5Percentile: tracker.rawPercentile > 0 && tracker.rawPercentile <= 0.05,
+      gameDifficultyDisplay: GAME_DIFF_SHORT[tracker.gameDifficulty as GameDifficulty] || undefined,
     };
   }, [leaderboardData, props.selectedInstrumentFilter]);
 
@@ -150,6 +161,46 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
   const [query, setQuery] = useState('');
   const [showSort, setShowSort] = useState(false);
   const [showFilter, setShowFilter] = useState(false);
+
+  // Distinct season numbers across all instruments in the local DB (sorted ascending).
+  const availableSeasons = useMemo(() => {
+    const set = new Set<number>();
+    for (const ld of Object.values(scoresIndex)) {
+      for (const key of ['guitar', 'bass', 'vocals', 'drums', 'pro_guitar', 'pro_bass'] as const) {
+        const tr = ld[key];
+        if (tr?.initialized && tr.seasonAchieved > 0) set.add(tr.seasonAchieved);
+      }
+    }
+    return Array.from(set).sort((a, b) => a - b);
+  }, [scoresIndex]);
+
+  // Distinct percentile buckets across all instruments in the local DB (sorted ascending).
+  const availablePercentiles = useMemo(() => {
+    const set = new Set<number>();
+    for (const ld of Object.values(scoresIndex)) {
+      for (const key of ['guitar', 'bass', 'vocals', 'drums', 'pro_guitar', 'pro_bass'] as const) {
+        const tr = ld[key];
+        if (tr?.initialized && tr.rawPercentile > 0) {
+          set.add(percentileBucket(tr.rawPercentile));
+        }
+      }
+    }
+    return Array.from(set).sort((a, b) => a - b);
+  }, [scoresIndex]);
+
+  // Distinct star counts across all instruments in the local DB (sorted descending).
+  const availableStars = useMemo(() => {
+    const set = new Set<number>();
+    for (const ld of Object.values(scoresIndex)) {
+      for (const key of ['guitar', 'bass', 'vocals', 'drums', 'pro_guitar', 'pro_bass'] as const) {
+        const tr = ld[key];
+        if (tr?.initialized && tr.numStars > 0) {
+          set.add(Math.min(tr.numStars, 6));
+        }
+      }
+    }
+    return Array.from(set).sort((a, b) => b - a);
+  }, [scoresIndex]);
 
   const [sortDraft, setSortDraft] = useState<{sortMode: SongSortMode; sortAscending: boolean; order: InstrumentKey[]; metadataOrder: MetadataSortKey[]}>({
     sortMode: settings.songsSortMode,
@@ -334,6 +385,8 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
       !f.includeVocals ||
       !f.includeProGuitar ||
       !f.includeProBass ||
+      Object.values(f.seasonFilter ?? {}).some(v => v === false) ||
+      Object.values(f.percentileFilter ?? {}).some(v => v === false) ||
       settings.songsSelectedInstrumentFilter != null
     );
   }, [settings.songsAdvancedMissingFilters, settings.songsSelectedInstrumentFilter]);
@@ -357,6 +410,12 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
     if (parts.length === 0 && instruments.length === 0) return 'No filters applied';
     if (instruments.length > 0) parts.push(`excluding ${instruments.join(', ')}`);
     if (settings.songsSelectedInstrumentFilter) parts.push(`instrument: ${settings.songsSelectedInstrumentFilter}`);
+    const sf = f.seasonFilter ?? {};
+    const excludedSeasons = Object.entries(sf).filter(([, v]) => v === false).map(([k]) => Number(k) === 0 ? 'No Season' : `S${k}`);
+    if (excludedSeasons.length > 0) parts.push(`excluding seasons: ${excludedSeasons.join(', ')}`);
+    const pf = f.percentileFilter ?? {};
+    const excludedPct = Object.entries(pf).filter(([, v]) => v === false).map(([k]) => Number(k) === 0 ? 'No Percentile' : `Top ${k}%`);
+    if (excludedPct.length > 0) parts.push(`excluding percentiles: ${excludedPct.join(', ')}`);
     return parts.join('; ');
   }, [settings.songsAdvancedMissingFilters, settings.songsSelectedInstrumentFilter]);
 
@@ -540,6 +599,10 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
           }}
           selectedInstrumentFilter={instrumentFilterDraft}
           onSelectedInstrumentFilterChange={setInstrumentFilterDraft}
+          seasonVisible={settings.metadataShowSeasonAchieved}
+          availableSeasons={availableSeasons}
+          availablePercentiles={availablePercentiles}
+          availableStars={availableStars}
         />
       </View>
     </Screen>

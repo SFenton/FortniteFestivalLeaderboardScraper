@@ -27,6 +27,8 @@ export type InstrumentDetailData = {
   percentHitDisplay?: string;
   percentileDisplay?: string;
   isTop5Percentile?: boolean;
+  /** Game difficulty the score was played on: E, M, H, X, or empty if unknown. */
+  gameDifficultyDisplay?: string;
 };
 
 /** Everything the row needs to render – no domain models required. */
@@ -72,6 +74,23 @@ function SeasonPill(props: {seasonDisplay: string}) {
   );
 }
 
+const DIFF_COLORS: Record<string, {bg: string; border: string; text: string}> = {
+  E: {bg: '#1B3A2F', border: '#34D399', text: '#34D399'},
+  M: {bg: '#3A351B', border: '#FBBF24', text: '#FBBF24'},
+  H: {bg: '#3A1B1B', border: '#F87171', text: '#F87171'},
+  X: {bg: '#2D1B3A', border: '#C084FC', text: '#C084FC'},
+};
+
+function DifficultyPill(props: {display?: string}) {
+  if (!props.display) return null;
+  const colors = DIFF_COLORS[props.display] ?? {bg: '#1D3A71', border: 'transparent', text: '#FFFFFF'};
+  return (
+    <View style={[styles.diffPill, {backgroundColor: colors.bg, borderColor: colors.border}]}>
+      <Text style={[styles.diffPillText, {color: colors.text}]} numberOfLines={1}>{props.display}</Text>
+    </View>
+  );
+}
+
 function PercentPill(props: {percentHitDisplay?: string; isFullCombo?: boolean}) {
   if (!props.percentHitDisplay) return null;
   const gold = Boolean(props.isFullCombo);
@@ -82,17 +101,17 @@ function PercentPill(props: {percentHitDisplay?: string; isFullCombo?: boolean})
   );
 }
 
-function PercentilePill(props: {percentileDisplay?: string; isTop5?: boolean; compact?: boolean}) {
+function PercentilePill(props: {percentileDisplay?: string; isTop5?: boolean}) {
   if (!props.percentileDisplay) return null;
   const gold = Boolean(props.isTop5);
   return (
-    <View style={[styles.percentilePill, gold && styles.percentilePillGold, props.compact && styles.percentilePillCompact]}>
+    <View style={[styles.percentilePill, gold && styles.percentilePillGold]}>
       <Text style={[styles.percentilePillText, gold && styles.percentilePillTextGold]} numberOfLines={1}>{props.percentileDisplay}</Text>
     </View>
   );
 }
 
-const DEFAULT_METADATA_ORDER: MetadataSortKey[] = ['title', 'artist', 'score', 'percentage', 'percentile', 'isfc', 'stars', 'seasonachieved'];
+const DEFAULT_METADATA_ORDER: MetadataSortKey[] = ['title', 'artist', 'year', 'score', 'percentage', 'percentile', 'isfc', 'stars', 'seasonachieved'];
 
 function FCBadge() {
   return (
@@ -102,7 +121,7 @@ function FCBadge() {
   );
 }
 
-function renderMetadataElement(key: MetadataSortKey, detail: InstrumentDetailData, allKeys: MetadataSortKey[], options?: {compactPercentile?: boolean}): React.ReactElement | null {
+function renderMetadataElement(key: MetadataSortKey, detail: InstrumentDetailData, allKeys: MetadataSortKey[]): React.ReactElement | null {
   const is100FC = detail.hasScore && detail.isFullCombo && detail.percentHitDisplay === '100%';
   switch (key) {
     case 'score':
@@ -135,14 +154,12 @@ function renderMetadataElement(key: MetadataSortKey, detail: InstrumentDetailDat
     case 'seasonachieved':
       return <SeasonPill seasonDisplay={detail.seasonDisplay} />;
     case 'percentile': {
-      let pctDisplay = detail.percentileDisplay;
-      if (options?.compactPercentile && pctDisplay) {
-        pctDisplay = pctDisplay.replace(/^Top\s+/i, '');
-      }
-      return <PercentilePill percentileDisplay={pctDisplay} isTop5={detail.isTop5Percentile} compact={options?.compactPercentile} />;
+      const pctDisplay = detail.percentileDisplay;
+      return <PercentilePill percentileDisplay={pctDisplay} isTop5={detail.isTop5Percentile} />;
     }
     case 'title':
     case 'artist':
+    case 'year':
       return null; // rendered in the main row header
     default:
       return null;
@@ -162,19 +179,26 @@ function MetadataBottomRow(props: {keys: MetadataSortKey[]; detail: InstrumentDe
     }
   }
   if (visibleEntries.length === 0) return null;
-  const hasStars = visibleEntries.some(e => e.key === 'stars');
-  // On phones with exactly 4 elements, give stars flex:2 so it doesn't get crushed.
-  const starsFlexOverride = props.isPhone && visibleEntries.length === 4;
-  // On phones with exactly 4 elements and stars present, shorten percentile text.
-  const compactPercentile = props.isPhone && visibleEntries.length === 4 && hasStars;
+
+  // On phones with exactly 4 elements, use a 2×2 grid so every element can breathe.
+  if (props.isPhone && visibleEntries.length === 4) {
+    return (
+      <View style={styles.metadataGrid}>
+        <View style={styles.metadataGridRow}>
+          <View key={visibleEntries[0].key} style={styles.metadataGridCell}>{visibleEntries[0].el}</View>
+          <View key={visibleEntries[1].key} style={styles.metadataGridCell}>{visibleEntries[1].el}</View>
+        </View>
+        <View style={styles.metadataGridRow}>
+          <View key={visibleEntries[2].key} style={styles.metadataGridCell}>{visibleEntries[2].el}</View>
+          <View key={visibleEntries[3].key} style={styles.metadataGridCell}>{visibleEntries[3].el}</View>
+        </View>
+      </View>
+    );
+  }
+
   const elements: React.ReactNode[] = visibleEntries.map(({key, el}) => {
     const useFixed = FIXED_WIDTH_KEYS.has(key);
-    const flexStyle = key === 'stars' && starsFlexOverride ? {flex: 2} : undefined;
-    // Re-render percentile with compact text when needed.
-    const finalEl = key === 'percentile' && compactPercentile
-      ? renderMetadataElement(key, props.detail, props.allKeys, {compactPercentile: true}) ?? el
-      : el;
-    return <View key={key} style={[useFixed ? styles.metadataCellFixed : styles.metadataCell, flexStyle]}>{finalEl}</View>;
+    return <View key={key} style={useFixed ? styles.metadataCellFixed : styles.metadataCell}>{el}</View>;
   });
   // When exactly 2 items: use spacers only on wide layouts (landscape tablet / open foldable).
   if (elements.length === 2) {
@@ -259,6 +283,7 @@ export const SongRow = React.memo(function SongRow(props: {
                 </View>
                 <View style={styles.detailStrip}>
                   {renderMetadataElement(instrumentMetaOrder[0], instrumentDetail, instrumentMetaOrder)}
+                  <DifficultyPill display={instrumentDetail.gameDifficultyDisplay} />
                   <View
                     style={[styles.instrumentChipCompact, {backgroundColor: instruments[0].fill, borderColor: instruments[0].stroke}]}
                   >
@@ -318,6 +343,7 @@ export const SongRow = React.memo(function SongRow(props: {
               </View>
               <View style={styles.detailStrip}>
                 {renderMetadataElement(instrumentMetaOrder[0], instrumentDetail, instrumentMetaOrder)}
+                <DifficultyPill display={instrumentDetail.gameDifficultyDisplay} />
                 <View
                   style={[styles.instrumentChipCompact, {backgroundColor: instruments[0].fill, borderColor: instruments[0].stroke}]}
                 >
@@ -375,6 +401,7 @@ export const SongRow = React.memo(function SongRow(props: {
               </View>
               <View style={styles.detailStrip}>
                 {renderMetadataElement(instrumentMetaOrder[0], instrumentDetail, instrumentMetaOrder)}
+                <DifficultyPill display={instrumentDetail.gameDifficultyDisplay} />
                 <View
                   style={[styles.instrumentChip, {backgroundColor: instruments[0].fill, borderColor: instruments[0].stroke}]}
                 >
@@ -586,13 +613,26 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
   },
+  diffPill: {
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  diffPillText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
   seasonPill: {
     backgroundColor: '#1D3A71',
     borderRadius: 8,
     paddingHorizontal: 10,
     borderWidth: 2,
     borderColor: 'transparent',
-    minWidth: 46,
+    minWidth: 80,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -607,7 +647,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     borderWidth: 2,
     borderColor: 'transparent',
-    minWidth: 46,
+    minWidth: 80,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -641,9 +681,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#332915',
     borderColor: '#FFD700',
   },
-  percentilePillCompact: {
-    minWidth: 46,
-  },
   percentilePillText: {
     color: '#FFFFFF',
     fontSize: 14,
@@ -661,7 +698,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderRadius: 8,
     paddingHorizontal: 8,
-    minWidth: 46,
+    minWidth: 80,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -679,6 +716,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 4,
     paddingBottom: 2,
+  },
+  metadataGrid: {
+    gap: 8,
+    paddingBottom: 2,
+    marginTop: 2,
+  },
+  metadataGridRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  metadataGridCell: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   metadataCell: {
     flex: 1,

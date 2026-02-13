@@ -22,6 +22,7 @@ const asString = (v: unknown): string | undefined => (typeof v === 'string' ? v 
 
 export const parseV1LeaderboardPage = (body: string | null | undefined): V1LeaderboardPage | null => {
   if (!body) return null;
+  console.log(body);
   const trimmed = body.trim();
   if (!trimmed.startsWith('{')) return null;
 
@@ -57,6 +58,7 @@ export const parseV1LeaderboardPage = (body: string | null | undefined): V1Leade
               if (asNumber(tracked.FULL_COMBO) != null) ts.FULL_COMBO = tracked.FULL_COMBO;
               if (asNumber(tracked.STARS_EARNED) != null) ts.STARS_EARNED = tracked.STARS_EARNED;
               if (asNumber(tracked.SEASON) != null) ts.SEASON = tracked.SEASON;
+              if (asNumber(tracked.DIFFICULTY) != null) ts.DIFFICULTY = tracked.DIFFICULTY;
               h.trackedStats = ts;
               if (typeof ts.SCORE === 'number' && ts.SCORE > bestScore) bestScore = ts.SCORE;
             }
@@ -113,6 +115,9 @@ export const updateTrackerFromV1 = (params: {
     if (typeof bestStats.FULL_COMBO === 'number') tracker.isFullCombo = bestStats.FULL_COMBO === 1;
     if (typeof bestStats.STARS_EARNED === 'number') tracker.numStars = bestStats.STARS_EARNED;
     if (typeof bestStats.SEASON === 'number' && bestStats.SEASON > 0) tracker.seasonAchieved = bestStats.SEASON;
+    if (typeof bestStats.DIFFICULTY === 'number' && bestStats.DIFFICULTY >= 0 && bestStats.DIFFICULTY <= 3) {
+      tracker.gameDifficulty = bestStats.DIFFICULTY as 0 | 1 | 2 | 3;
+    }
   }
 
   if (typeof entry.percentile === 'number' && entry.percentile > 0) tracker.rawPercentile = entry.percentile;

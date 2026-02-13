@@ -37,6 +37,7 @@ type DbScoreRow = {
   GuitarPct?: number | null;
   GuitarSeason?: number | null;
   GuitarRank?: number | null;
+  GuitarGameDiff?: number | null;
 
   DrumsScore?: number | null;
   DrumsDiff?: number | null;
@@ -45,6 +46,7 @@ type DbScoreRow = {
   DrumsPct?: number | null;
   DrumsSeason?: number | null;
   DrumsRank?: number | null;
+  DrumsGameDiff?: number | null;
 
   BassScore?: number | null;
   BassDiff?: number | null;
@@ -53,6 +55,7 @@ type DbScoreRow = {
   BassPct?: number | null;
   BassSeason?: number | null;
   BassRank?: number | null;
+  BassGameDiff?: number | null;
 
   VocalsScore?: number | null;
   VocalsDiff?: number | null;
@@ -61,6 +64,7 @@ type DbScoreRow = {
   VocalsPct?: number | null;
   VocalsSeason?: number | null;
   VocalsRank?: number | null;
+  VocalsGameDiff?: number | null;
 
   ProGuitarScore?: number | null;
   ProGuitarDiff?: number | null;
@@ -69,6 +73,7 @@ type DbScoreRow = {
   ProGuitarPct?: number | null;
   ProGuitarSeason?: number | null;
   ProGuitarRank?: number | null;
+  ProGuitarGameDiff?: number | null;
 
   ProBassScore?: number | null;
   ProBassDiff?: number | null;
@@ -77,6 +82,7 @@ type DbScoreRow = {
   ProBassPct?: number | null;
   ProBassSeason?: number | null;
   ProBassRank?: number | null;
+  ProBassGameDiff?: number | null;
 
   GuitarTotal?: number | null;
   DrumsTotal?: number | null;
@@ -122,6 +128,8 @@ function readTracker(row: DbScoreRow, prefix: string): ScoreTracker | undefined 
   tracker.rank = safeInt((row as any)[`${prefix}Rank`]);
   tracker.initialized = tracker.maxScore > 0;
 
+  const rawGameDiff = safeInt((row as any)[`${prefix}GameDiff`]);
+  tracker.gameDifficulty = (rawGameDiff >= 0 && rawGameDiff <= 3 ? rawGameDiff : -1) as import('../../core/models').GameDifficulty;
   tracker.totalEntries = safeInt((row as any)[`${prefix}Total`]);
   tracker.rawPercentile =
     typeof (row as any)[`${prefix}RawPct`] === 'number' ? ((row as any)[`${prefix}RawPct`] as number) : 0;
@@ -142,7 +150,7 @@ function hasAnyScore(ld: LeaderboardData): boolean {
 }
 
 function scoreParamsForTracker(t: ScoreTracker | undefined): number[] {
-  if (!t) return [0, 0, 0, 0, 0, 0, 0];
+  if (!t) return [0, 0, 0, 0, 0, 0, 0, -1];
   return [
     safeInt(t.maxScore),
     safeInt(t.difficulty),
@@ -151,6 +159,7 @@ function scoreParamsForTracker(t: ScoreTracker | undefined): number[] {
     safeInt(t.percentHit),
     safeInt(t.seasonAchieved),
     safeInt(t.rank),
+    safeInt(t.gameDifficulty),
   ];
 }
 
@@ -194,12 +203,12 @@ export class SqliteFestivalPersistence implements FestivalPersistence {
       await this.db.executeSql(
         `CREATE TABLE IF NOT EXISTS Scores (
           SongId TEXT PRIMARY KEY,
-          GuitarScore INTEGER, GuitarDiff INTEGER, GuitarStars INTEGER, GuitarFC INTEGER, GuitarPct INTEGER, GuitarSeason INTEGER, GuitarRank INTEGER,
-          DrumsScore INTEGER, DrumsDiff INTEGER, DrumsStars INTEGER, DrumsFC INTEGER, DrumsPct INTEGER, DrumsSeason INTEGER, DrumsRank INTEGER,
-          BassScore INTEGER, BassDiff INTEGER, BassStars INTEGER, BassFC INTEGER, BassPct INTEGER, BassSeason INTEGER, BassRank INTEGER,
-          VocalsScore INTEGER, VocalsDiff INTEGER, VocalsStars INTEGER, VocalsFC INTEGER, VocalsPct INTEGER, VocalsSeason INTEGER, VocalsRank INTEGER,
-          ProGuitarScore INTEGER, ProGuitarDiff INTEGER, ProGuitarStars INTEGER, ProGuitarFC INTEGER, ProGuitarPct INTEGER, ProGuitarSeason INTEGER, ProGuitarRank INTEGER,
-          ProBassScore INTEGER, ProBassDiff INTEGER, ProBassStars INTEGER, ProBassFC INTEGER, ProBassPct INTEGER, ProBassSeason INTEGER, ProBassRank INTEGER,
+          GuitarScore INTEGER, GuitarDiff INTEGER, GuitarStars INTEGER, GuitarFC INTEGER, GuitarPct INTEGER, GuitarSeason INTEGER, GuitarRank INTEGER, GuitarGameDiff INTEGER,
+          DrumsScore INTEGER, DrumsDiff INTEGER, DrumsStars INTEGER, DrumsFC INTEGER, DrumsPct INTEGER, DrumsSeason INTEGER, DrumsRank INTEGER, DrumsGameDiff INTEGER,
+          BassScore INTEGER, BassDiff INTEGER, BassStars INTEGER, BassFC INTEGER, BassPct INTEGER, BassSeason INTEGER, BassRank INTEGER, BassGameDiff INTEGER,
+          VocalsScore INTEGER, VocalsDiff INTEGER, VocalsStars INTEGER, VocalsFC INTEGER, VocalsPct INTEGER, VocalsSeason INTEGER, VocalsRank INTEGER, VocalsGameDiff INTEGER,
+          ProGuitarScore INTEGER, ProGuitarDiff INTEGER, ProGuitarStars INTEGER, ProGuitarFC INTEGER, ProGuitarPct INTEGER, ProGuitarSeason INTEGER, ProGuitarRank INTEGER, ProGuitarGameDiff INTEGER,
+          ProBassScore INTEGER, ProBassDiff INTEGER, ProBassStars INTEGER, ProBassFC INTEGER, ProBassPct INTEGER, ProBassSeason INTEGER, ProBassRank INTEGER, ProBassGameDiff INTEGER,
           GuitarTotal INTEGER, DrumsTotal INTEGER, BassTotal INTEGER, VocalsTotal INTEGER, ProGuitarTotal INTEGER, ProBassTotal INTEGER,
           GuitarRawPct REAL, DrumsRawPct REAL, BassRawPct REAL, VocalsRawPct REAL, ProGuitarRawPct REAL, ProBassRawPct REAL,
           GuitarCalcTotal INTEGER, DrumsCalcTotal INTEGER, BassCalcTotal INTEGER, VocalsCalcTotal INTEGER, ProGuitarCalcTotal INTEGER, ProBassCalcTotal INTEGER,
@@ -244,6 +253,13 @@ export class SqliteFestivalPersistence implements FestivalPersistence {
         {table: 'Scores', name: 'VocalsCalcTotal', type: 'INTEGER'},
         {table: 'Scores', name: 'ProGuitarCalcTotal', type: 'INTEGER'},
         {table: 'Scores', name: 'ProBassCalcTotal', type: 'INTEGER'},
+
+        {table: 'Scores', name: 'GuitarGameDiff', type: 'INTEGER'},
+        {table: 'Scores', name: 'DrumsGameDiff', type: 'INTEGER'},
+        {table: 'Scores', name: 'BassGameDiff', type: 'INTEGER'},
+        {table: 'Scores', name: 'VocalsGameDiff', type: 'INTEGER'},
+        {table: 'Scores', name: 'ProGuitarGameDiff', type: 'INTEGER'},
+        {table: 'Scores', name: 'ProBassGameDiff', type: 'INTEGER'},
       ];
 
       for (const m of migrations) {
@@ -263,12 +279,12 @@ export class SqliteFestivalPersistence implements FestivalPersistence {
 
     const res = await this.db.executeSql<DbScoreRow>(
       `SELECT sc.SongId as SongId, s.Title, s.Artist,
-        sc.GuitarScore, sc.GuitarDiff, sc.GuitarStars, sc.GuitarFC, sc.GuitarPct, sc.GuitarSeason, sc.GuitarRank,
-        sc.DrumsScore, sc.DrumsDiff, sc.DrumsStars, sc.DrumsFC, sc.DrumsPct, sc.DrumsSeason, sc.DrumsRank,
-        sc.BassScore, sc.BassDiff, sc.BassStars, sc.BassFC, sc.BassPct, sc.BassSeason, sc.BassRank,
-        sc.VocalsScore, sc.VocalsDiff, sc.VocalsStars, sc.VocalsFC, sc.VocalsPct, sc.VocalsSeason, sc.VocalsRank,
-        sc.ProGuitarScore, sc.ProGuitarDiff, sc.ProGuitarStars, sc.ProGuitarFC, sc.ProGuitarPct, sc.ProGuitarSeason, sc.ProGuitarRank,
-        sc.ProBassScore, sc.ProBassDiff, sc.ProBassStars, sc.ProBassFC, sc.ProBassPct, sc.ProBassSeason, sc.ProBassRank,
+        sc.GuitarScore, sc.GuitarDiff, sc.GuitarStars, sc.GuitarFC, sc.GuitarPct, sc.GuitarSeason, sc.GuitarRank, sc.GuitarGameDiff,
+        sc.DrumsScore, sc.DrumsDiff, sc.DrumsStars, sc.DrumsFC, sc.DrumsPct, sc.DrumsSeason, sc.DrumsRank, sc.DrumsGameDiff,
+        sc.BassScore, sc.BassDiff, sc.BassStars, sc.BassFC, sc.BassPct, sc.BassSeason, sc.BassRank, sc.BassGameDiff,
+        sc.VocalsScore, sc.VocalsDiff, sc.VocalsStars, sc.VocalsFC, sc.VocalsPct, sc.VocalsSeason, sc.VocalsRank, sc.VocalsGameDiff,
+        sc.ProGuitarScore, sc.ProGuitarDiff, sc.ProGuitarStars, sc.ProGuitarFC, sc.ProGuitarPct, sc.ProGuitarSeason, sc.ProGuitarRank, sc.ProGuitarGameDiff,
+        sc.ProBassScore, sc.ProBassDiff, sc.ProBassStars, sc.ProBassFC, sc.ProBassPct, sc.ProBassSeason, sc.ProBassRank, sc.ProBassGameDiff,
         sc.GuitarTotal, sc.DrumsTotal, sc.BassTotal, sc.VocalsTotal, sc.ProGuitarTotal, sc.ProBassTotal,
         sc.GuitarRawPct, sc.DrumsRawPct, sc.BassRawPct, sc.VocalsRawPct, sc.ProGuitarRawPct, sc.ProBassRawPct,
         sc.GuitarCalcTotal, sc.DrumsCalcTotal, sc.BassCalcTotal, sc.VocalsCalcTotal, sc.ProGuitarCalcTotal, sc.ProBassCalcTotal
@@ -310,34 +326,34 @@ export class SqliteFestivalPersistence implements FestivalPersistence {
       const scoreSql =
         `INSERT INTO Scores (
           SongId,
-          GuitarScore,GuitarDiff,GuitarStars,GuitarFC,GuitarPct,GuitarSeason,GuitarRank,
-          DrumsScore,DrumsDiff,DrumsStars,DrumsFC,DrumsPct,DrumsSeason,DrumsRank,
-          BassScore,BassDiff,BassStars,BassFC,BassPct,BassSeason,BassRank,
-          VocalsScore,VocalsDiff,VocalsStars,VocalsFC,VocalsPct,VocalsSeason,VocalsRank,
-          ProGuitarScore,ProGuitarDiff,ProGuitarStars,ProGuitarFC,ProGuitarPct,ProGuitarSeason,ProGuitarRank,
-          ProBassScore,ProBassDiff,ProBassStars,ProBassFC,ProBassPct,ProBassSeason,ProBassRank,
+          GuitarScore,GuitarDiff,GuitarStars,GuitarFC,GuitarPct,GuitarSeason,GuitarRank,GuitarGameDiff,
+          DrumsScore,DrumsDiff,DrumsStars,DrumsFC,DrumsPct,DrumsSeason,DrumsRank,DrumsGameDiff,
+          BassScore,BassDiff,BassStars,BassFC,BassPct,BassSeason,BassRank,BassGameDiff,
+          VocalsScore,VocalsDiff,VocalsStars,VocalsFC,VocalsPct,VocalsSeason,VocalsRank,VocalsGameDiff,
+          ProGuitarScore,ProGuitarDiff,ProGuitarStars,ProGuitarFC,ProGuitarPct,ProGuitarSeason,ProGuitarRank,ProGuitarGameDiff,
+          ProBassScore,ProBassDiff,ProBassStars,ProBassFC,ProBassPct,ProBassSeason,ProBassRank,ProBassGameDiff,
           GuitarTotal,DrumsTotal,BassTotal,VocalsTotal,ProGuitarTotal,ProBassTotal,
           GuitarRawPct,DrumsRawPct,BassRawPct,VocalsRawPct,ProGuitarRawPct,ProBassRawPct,
           GuitarCalcTotal,DrumsCalcTotal,BassCalcTotal,VocalsCalcTotal,ProGuitarCalcTotal,ProBassCalcTotal
         ) VALUES (
           ?,
-          ?,?,?,?,?,?, ?,
-          ?,?,?,?,?,?, ?,
-          ?,?,?,?,?,?, ?,
-          ?,?,?,?,?,?, ?,
-          ?,?,?,?,?,?, ?,
-          ?,?,?,?,?,?, ?,
+          ?,?,?,?,?,?,?,?,
+          ?,?,?,?,?,?,?,?,
+          ?,?,?,?,?,?,?,?,
+          ?,?,?,?,?,?,?,?,
+          ?,?,?,?,?,?,?,?,
+          ?,?,?,?,?,?,?,?,
           ?,?,?,?,?,?,
           ?,?,?,?,?,?,
           ?,?,?,?,?,?
         )
         ON CONFLICT(SongId) DO UPDATE SET
-          GuitarScore=excluded.GuitarScore,GuitarDiff=excluded.GuitarDiff,GuitarStars=excluded.GuitarStars,GuitarFC=excluded.GuitarFC,GuitarPct=excluded.GuitarPct,GuitarSeason=excluded.GuitarSeason,GuitarRank=excluded.GuitarRank,GuitarTotal=excluded.GuitarTotal,GuitarRawPct=excluded.GuitarRawPct,GuitarCalcTotal=excluded.GuitarCalcTotal,
-          DrumsScore=excluded.DrumsScore,DrumsDiff=excluded.DrumsDiff,DrumsStars=excluded.DrumsStars,DrumsFC=excluded.DrumsFC,DrumsPct=excluded.DrumsPct,DrumsSeason=excluded.DrumsSeason,DrumsRank=excluded.DrumsRank,DrumsTotal=excluded.DrumsTotal,DrumsRawPct=excluded.DrumsRawPct,DrumsCalcTotal=excluded.DrumsCalcTotal,
-          BassScore=excluded.BassScore,BassDiff=excluded.BassDiff,BassStars=excluded.BassStars,BassFC=excluded.BassFC,BassPct=excluded.BassPct,BassSeason=excluded.BassSeason,BassRank=excluded.BassRank,BassTotal=excluded.BassTotal,BassRawPct=excluded.BassRawPct,BassCalcTotal=excluded.BassCalcTotal,
-          VocalsScore=excluded.VocalsScore,VocalsDiff=excluded.VocalsDiff,VocalsStars=excluded.VocalsStars,VocalsFC=excluded.VocalsFC,VocalsPct=excluded.VocalsPct,VocalsSeason=excluded.VocalsSeason,VocalsRank=excluded.VocalsRank,VocalsTotal=excluded.VocalsTotal,VocalsRawPct=excluded.VocalsRawPct,VocalsCalcTotal=excluded.VocalsCalcTotal,
-          ProGuitarScore=excluded.ProGuitarScore,ProGuitarDiff=excluded.ProGuitarDiff,ProGuitarStars=excluded.ProGuitarStars,ProGuitarFC=excluded.ProGuitarFC,ProGuitarPct=excluded.ProGuitarPct,ProGuitarSeason=excluded.ProGuitarSeason,ProGuitarRank=excluded.ProGuitarRank,ProGuitarTotal=excluded.ProGuitarTotal,ProGuitarRawPct=excluded.ProGuitarRawPct,ProGuitarCalcTotal=excluded.ProGuitarCalcTotal,
-          ProBassScore=excluded.ProBassScore,ProBassDiff=excluded.ProBassDiff,ProBassStars=excluded.ProBassStars,ProBassFC=excluded.ProBassFC,ProBassPct=excluded.ProBassPct,ProBassSeason=excluded.ProBassSeason,ProBassRank=excluded.ProBassRank,ProBassTotal=excluded.ProBassTotal,ProBassRawPct=excluded.ProBassRawPct,ProBassCalcTotal=excluded.ProBassCalcTotal`;
+          GuitarScore=excluded.GuitarScore,GuitarDiff=excluded.GuitarDiff,GuitarStars=excluded.GuitarStars,GuitarFC=excluded.GuitarFC,GuitarPct=excluded.GuitarPct,GuitarSeason=excluded.GuitarSeason,GuitarRank=excluded.GuitarRank,GuitarGameDiff=excluded.GuitarGameDiff,GuitarTotal=excluded.GuitarTotal,GuitarRawPct=excluded.GuitarRawPct,GuitarCalcTotal=excluded.GuitarCalcTotal,
+          DrumsScore=excluded.DrumsScore,DrumsDiff=excluded.DrumsDiff,DrumsStars=excluded.DrumsStars,DrumsFC=excluded.DrumsFC,DrumsPct=excluded.DrumsPct,DrumsSeason=excluded.DrumsSeason,DrumsRank=excluded.DrumsRank,DrumsGameDiff=excluded.DrumsGameDiff,DrumsTotal=excluded.DrumsTotal,DrumsRawPct=excluded.DrumsRawPct,DrumsCalcTotal=excluded.DrumsCalcTotal,
+          BassScore=excluded.BassScore,BassDiff=excluded.BassDiff,BassStars=excluded.BassStars,BassFC=excluded.BassFC,BassPct=excluded.BassPct,BassSeason=excluded.BassSeason,BassRank=excluded.BassRank,BassGameDiff=excluded.BassGameDiff,BassTotal=excluded.BassTotal,BassRawPct=excluded.BassRawPct,BassCalcTotal=excluded.BassCalcTotal,
+          VocalsScore=excluded.VocalsScore,VocalsDiff=excluded.VocalsDiff,VocalsStars=excluded.VocalsStars,VocalsFC=excluded.VocalsFC,VocalsPct=excluded.VocalsPct,VocalsSeason=excluded.VocalsSeason,VocalsRank=excluded.VocalsRank,VocalsGameDiff=excluded.VocalsGameDiff,VocalsTotal=excluded.VocalsTotal,VocalsRawPct=excluded.VocalsRawPct,VocalsCalcTotal=excluded.VocalsCalcTotal,
+          ProGuitarScore=excluded.ProGuitarScore,ProGuitarDiff=excluded.ProGuitarDiff,ProGuitarStars=excluded.ProGuitarStars,ProGuitarFC=excluded.ProGuitarFC,ProGuitarPct=excluded.ProGuitarPct,ProGuitarSeason=excluded.ProGuitarSeason,ProGuitarRank=excluded.ProGuitarRank,ProGuitarGameDiff=excluded.ProGuitarGameDiff,ProGuitarTotal=excluded.ProGuitarTotal,ProGuitarRawPct=excluded.ProGuitarRawPct,ProGuitarCalcTotal=excluded.ProGuitarCalcTotal,
+          ProBassScore=excluded.ProBassScore,ProBassDiff=excluded.ProBassDiff,ProBassStars=excluded.ProBassStars,ProBassFC=excluded.ProBassFC,ProBassPct=excluded.ProBassPct,ProBassSeason=excluded.ProBassSeason,ProBassRank=excluded.ProBassRank,ProBassGameDiff=excluded.ProBassGameDiff,ProBassTotal=excluded.ProBassTotal,ProBassRawPct=excluded.ProBassRawPct,ProBassCalcTotal=excluded.ProBassCalcTotal`;
 
       for (const ld of scores) {
         if (!hasAnyScore(ld)) continue;

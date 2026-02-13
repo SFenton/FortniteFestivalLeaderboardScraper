@@ -91,6 +91,11 @@ export function SortModal(props: {
                 onPress={() => props.onChange({...props.draft, sortMode: 'artist'})}
               />
               <Choice
+                label="Year"
+                selected={props.draft.sortMode === 'year'}
+                onPress={() => props.onChange({...props.draft, sortMode: 'year'})}
+              />
+              <Choice
                 label="Has FC"
                 selected={props.draft.sortMode === 'hasfc'}
                 onPress={() => props.onChange({...props.draft, sortMode: 'hasfc'})}

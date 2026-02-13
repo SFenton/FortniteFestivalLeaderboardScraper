@@ -3,10 +3,10 @@ import type {LeaderboardData, ScoreTracker, Song} from '../../core/models';
 import type {Settings} from '../../core/settings';
 
 export type {AdvancedMissingFilters, InstrumentOrderItem, InstrumentShowSettings, MetadataSortItem, MetadataSortKey, SongSortMode} from '../../core/songListConfig';
-export {defaultAdvancedMissingFilters, defaultMetadataSortPriority, defaultPrimaryInstrumentOrder, instrumentSortModes, isInstrumentSortMode, isInstrumentVisible, normalizeInstrumentOrder, normalizeMetadataSortPriority, reorderPIOForVisibilityChange, showSettingKeyForInstrument} from '../../core/songListConfig';
+export {defaultAdvancedMissingFilters, defaultMetadataSortPriority, defaultPrimaryInstrumentOrder, instrumentSortModes, isInstrumentSortMode, isInstrumentVisible, normalizeInstrumentOrder, normalizeMetadataSortPriority, PERCENTILE_THRESHOLDS, percentileBucket, reorderPIOForVisibilityChange, showSettingKeyForInstrument} from '../../core/songListConfig';
 
 import type {AdvancedMissingFilters, InstrumentOrderItem, InstrumentShowSettings, MetadataSortKey, SongSortMode} from '../../core/songListConfig';
-import {defaultAdvancedMissingFilters, defaultMetadataSortPriority, defaultPrimaryInstrumentOrder} from '../../core/songListConfig';
+import {defaultAdvancedMissingFilters, defaultMetadataSortPriority, defaultPrimaryInstrumentOrder, percentileBucket} from '../../core/songListConfig';
 
 const canon = (s: string | undefined): string => (s ?? '').trim().toLowerCase();
 
@@ -109,6 +109,11 @@ const compareByMetadataKey = (
       return canon(a.track.tt).localeCompare(canon(b.track.tt));
     case 'artist':
       return canon(a.track.an).localeCompare(canon(b.track.an));
+    case 'year': {
+      const aVal = a.track.ry ?? 0;
+      const bVal = b.track.ry ?? 0;
+      return aVal - bVal;
+    }
     case 'score': {
       const aVal = aTracker?.initialized ? aTracker.maxScore : 0;
       const bVal = bTracker?.initialized ? bTracker.maxScore : 0;
@@ -178,11 +183,62 @@ export const filterAndSortSongs = (params: {
     q = q.filter(s => songMatchesAdvancedMissing(s, params.scoresIndex, advanced));
   }
 
+  // Season filter – only applies when an instrument is selected and at least one
+  // season has been explicitly toggled off (empty record = all shown).
+  const sf = advanced.seasonFilter ?? {};
+  const hasSeasonFilter = instrumentFilter != null && Object.values(sf).some(v => v === false);
+  if (hasSeasonFilter) {
+    q = q.filter(s => {
+      const entry = params.scoresIndex[s.track.su];
+      const tracker = entry ? selectTracker(entry, instrumentFilter!) : undefined;
+      const season = tracker?.initialized ? tracker.seasonAchieved : 0;
+      // If the season is explicitly false, exclude the song; otherwise include it.
+      return sf[season] !== false;
+    });
+  }
+
+  // Percentile filter – same pattern as season filter.
+  const pf = advanced.percentileFilter ?? {};
+  const hasPercentileFilter = instrumentFilter != null && Object.values(pf).some(v => v === false);
+  if (hasPercentileFilter) {
+    q = q.filter(s => {
+      const entry = params.scoresIndex[s.track.su];
+      const tracker = entry ? selectTracker(entry, instrumentFilter!) : undefined;
+      const bucket = tracker?.initialized ? percentileBucket(tracker.rawPercentile) : 0;
+      return pf[bucket] !== false;
+    });
+  }
+
+  // Stars filter – same pattern as season/percentile filter.
+  const stf = advanced.starsFilter ?? {};
+  const hasStarsFilter = instrumentFilter != null && Object.values(stf).some(v => v === false);
+  if (hasStarsFilter) {
+    q = q.filter(s => {
+      const entry = params.scoresIndex[s.track.su];
+      const tracker = entry ? selectTracker(entry, instrumentFilter!) : undefined;
+      const stars = tracker?.initialized ? Math.min(tracker.numStars, 6) : 0;
+      return stf[stars] !== false;
+    });
+  }
+
   q.sort((a, b) => {
+    if (sortMode === 'year') {
+      const ay = a.track.ry ?? 0;
+      const by = b.track.ry ?? 0;
+      if (ay !== by) return ay - by;
+      const at = canon(a.track.tt);
+      const bt = canon(b.track.tt);
+      if (at !== bt) return at.localeCompare(bt);
+      return canon(a.track.an).localeCompare(canon(b.track.an));
+    }
+
     if (sortMode === 'artist') {
       const aa = canon(a.track.an);
       const bb = canon(b.track.an);
       if (aa !== bb) return aa.localeCompare(bb);
+      const ay = a.track.ry ?? 0;
+      const by = b.track.ry ?? 0;
+      if (ay !== by) return ay - by;
       return canon(a.track.tt).localeCompare(canon(b.track.tt));
     }
 
@@ -195,7 +251,13 @@ export const filterAndSortSongs = (params: {
       const bSeq = songHasSequentialTopFCsScore(b.track.su, params.scoresIndex, instrumentOrder);
       if (aSeq !== bSeq) return bSeq - aSeq;
 
-      return canon(a.track.tt).localeCompare(canon(b.track.tt));
+      const ay = a.track.ry ?? 0;
+      const by = b.track.ry ?? 0;
+      if (ay !== by) return ay - by;
+      const at2 = canon(a.track.tt);
+      const bt2 = canon(b.track.tt);
+      if (at2 !== bt2) return at2.localeCompare(bt2);
+      return canon(a.track.an).localeCompare(canon(b.track.an));
     }
 
     // Instrument-specific sort modes (require instrumentFilter)
@@ -218,15 +280,21 @@ export const filterAndSortSongs = (params: {
       return 0;
     }
 
-    // title: sort by Title then Artist
+    // title: sort by Title then Year then Artist
     if (sortMode === 'title') {
       const at = canon(a.track.tt);
       const bt = canon(b.track.tt);
       if (at !== bt) return at.localeCompare(bt);
+      const ay = a.track.ry ?? 0;
+      const by = b.track.ry ?? 0;
+      if (ay !== by) return ay - by;
       return canon(a.track.an).localeCompare(canon(b.track.an));
     }
 
-    // default fallback: title then artist
+    // default fallback: year then title then artist
+    const ayr = a.track.ry ?? 0;
+    const byr = b.track.ry ?? 0;
+    if (ayr !== byr) return ayr - byr;
     const at = canon(a.track.tt);
     const bt = canon(b.track.tt);
     if (at !== bt) return at.localeCompare(bt);
