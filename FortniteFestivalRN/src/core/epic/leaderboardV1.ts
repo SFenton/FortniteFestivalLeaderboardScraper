@@ -22,7 +22,6 @@ const asString = (v: unknown): string | undefined => (typeof v === 'string' ? v 
 
 export const parseV1LeaderboardPage = (body: string | null | undefined): V1LeaderboardPage | null => {
   if (!body) return null;
-  console.log(body);
   const trimmed = body.trim();
   if (!trimmed.startsWith('{')) return null;
 

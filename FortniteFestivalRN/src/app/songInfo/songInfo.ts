@@ -1,5 +1,6 @@
 import type {InstrumentKey} from '../../core/instruments';
 import type {LeaderboardData, ScoreTracker, Song} from '../../core/models';
+import {formatIntegerWithCommas} from '../format/formatters';
 
 export type SongInfoInstrumentRow = {
   key: InstrumentKey;
@@ -8,6 +9,7 @@ export type SongInfoInstrumentRow = {
   hasScore: boolean;
   isFullCombo: boolean;
   starsCount: number;
+  gameDifficultyDisplay?: string;
   scoreDisplay: string;
   percentDisplay: string;
   seasonDisplay: string;
@@ -61,6 +63,14 @@ export const composeRankOutOf = (rankDisplay: string, totalEntriesDisplay: strin
   return `#${rankDisplay}`;
 };
 
+const GAME_DIFF_SHORT: Record<number, string> = {
+  [-1]: '',
+  [0]: 'E',
+  [1]: 'M',
+  [2]: 'H',
+  [3]: 'X',
+};
+
 const selectTracker = (ld: LeaderboardData, key: InstrumentKey): ScoreTracker | undefined => (ld as any)[key] as
   | ScoreTracker
   | undefined;
@@ -101,13 +111,15 @@ export const buildSongInfoInstrumentRows = (params: {
     const hasScore = Boolean(tr?.initialized);
     const isFullCombo = Boolean(tr?.initialized && tr.isFullCombo);
     const starsCount = hasScore ? tr!.numStars : 0;
-    const scoreDisplay = hasScore ? String(tr!.maxScore) : '0';
+    const gameDifficultyDisplay = hasScore ? GAME_DIFF_SHORT[tr!.gameDifficulty] || undefined : undefined;
+    const scoreDisplay = hasScore ? formatIntegerWithCommas(tr!.maxScore) : '0';
     const percentDisplay = hasScore ? (isFullCombo ? '100%' : formatPercent(tr!.percentHit)) : '0%';
     const seasonDisplay = hasScore ? formatSeason(tr!.seasonAchieved) : 'N/A';
 
     const percentileDisplay = hasScore ? tr!.leaderboardPercentileFormatted || 'N/A' : 'N/A';
-    const rankDisplay = hasScore && tr!.rank > 0 ? String(tr!.rank) : 'N/A';
-    const totalEntriesDisplay = hasScore && tr!.calculatedNumEntries > 0 ? String(tr!.calculatedNumEntries) : 'N/A';
+    const rankDisplay = hasScore && tr!.rank > 0 ? formatIntegerWithCommas(tr!.rank) : 'N/A';
+    const totalEntriesDisplay =
+      hasScore && tr!.calculatedNumEntries > 0 ? formatIntegerWithCommas(tr!.calculatedNumEntries) : 'N/A';
 
     const isTop5Percentile = Boolean(hasScore && tr!.rawPercentile > 0 && tr!.rawPercentile <= 0.05);
 
@@ -121,6 +133,7 @@ export const buildSongInfoInstrumentRows = (params: {
       hasScore,
       isFullCombo,
       starsCount,
+      gameDifficultyDisplay,
       scoreDisplay,
       percentDisplay,
       seasonDisplay,

@@ -18,6 +18,7 @@ export interface InstrumentCardData {
   isFullCombo: boolean;
   starsCount: number;
   rawDifficulty: number;
+  gameDifficultyDisplay?: string;
   scoreDisplay: string;
   percentDisplay: string;
   seasonDisplay: string;
@@ -25,6 +26,12 @@ export interface InstrumentCardData {
   rankOutOfDisplay: string;
   isTop5Percentile: boolean;
 }
+const DIFF_FULL_LABELS: Record<string, string> = {
+  E: 'Easy',
+  M: 'Medium',
+  H: 'Hard',
+  X: 'Expert',
+};
 
 // ── Sub-components ──────────────────────────────────────────────────
 
@@ -115,6 +122,11 @@ export function StarsVisual(props: {
   );
 }
 
+const getDifficultyFullName = (display?: string): string => {
+  if (!display) return 'N/A';
+  return DIFF_FULL_LABELS[display] ?? 'N/A';
+};
+
 // ── Main card ───────────────────────────────────────────────────────
 
 export function InstrumentCard(props: {data: InstrumentCardData}) {
@@ -152,6 +164,9 @@ export function InstrumentCard(props: {data: InstrumentCardData}) {
           </View>
           <View style={styles.metricRow1}>
             <MetricCell label="Rank" value={r.rankOutOfDisplay} />
+          </View>
+          <View style={styles.metricRow1}>
+            <MetricCell label="Difficulty" value={getDifficultyFullName(r.gameDifficultyDisplay)} />
           </View>
         </View>
       </View>

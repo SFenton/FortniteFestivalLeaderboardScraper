@@ -19,11 +19,11 @@ describe('app/songInfo', () => {
     const song: Song = {track: {su: 'a', tt: 'A', an: 'X', in: {gr: 3}}};
     const t = Object.assign(new ScoreTracker(), {
       initialized: true,
-      maxScore: 123,
+      maxScore: 12345,
       percentHit: 999000,
       isFullCombo: false,
       seasonAchieved: 2,
-      rank: 12,
+      rank: 1234,
       calculatedNumEntries: 1000,
       rawPercentile: 0.02,
       difficulty: 4,
@@ -35,8 +35,11 @@ describe('app/songInfo', () => {
     const rows = buildSongInfoInstrumentRows({song, instrumentOrder: ['guitar'], scoresIndex});
     expect(rows[0].name).toBe('Lead');
     expect(rows[0].starsCount).toBe(0);
-    expect(rows[0].scoreDisplay).toBe('123');
+    expect(rows[0].scoreDisplay).toBe('12,345');
     expect(rows[0].seasonDisplay).toBe(formatSeason(2));
+    expect(rows[0].rankDisplay).toBe('1,234');
+    expect(rows[0].totalEntriesDisplay).toBe('1,000');
+    expect(rows[0].rankOutOfDisplay).toBe('#1,234 / 1,000');
     expect(rows[0].isTop5Percentile).toBe(true);
   });
 });
