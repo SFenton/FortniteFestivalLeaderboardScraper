@@ -6,6 +6,7 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 
 import {PlatformModal} from './PlatformModal';
 import {FrostedSurface} from '../FrostedSurface';
+import {Accordion} from '../Accordion';
 import {normalizeInstrumentOrder, normalizeMetadataSortPriority} from '../../app/songs/songFiltering';
 import type {InstrumentOrderItem, InstrumentShowSettings, MetadataSortItem, MetadataSortKey, SongSortMode} from '../../core/songListConfig';
 import {isInstrumentVisible} from '../../core/songListConfig';
@@ -19,6 +20,7 @@ export type MetadataVisibility = {
   percentage: boolean;
   percentile: boolean;
   seasonachieved: boolean;
+  intensity: boolean;
   isfc: boolean;
   stars: boolean;
 };
@@ -42,13 +44,13 @@ export function SortModal(props: {
   const mv = props.metadataVisibility;
   const visibleMetadataItems = useMemo(() => {
     if (!mv) return metadataItems;
-    const visMap: Record<string, boolean> = {score: mv.score, percentage: mv.percentage, percentile: mv.percentile, seasonachieved: mv.seasonachieved, isfc: mv.isfc, stars: mv.stars};
+    const visMap: Record<string, boolean> = {score: mv.score, percentage: mv.percentage, percentile: mv.percentile, seasonachieved: mv.seasonachieved, intensity: mv.intensity, isfc: mv.isfc, stars: mv.stars};
     return metadataItems.filter(i => visMap[i.key] !== false);
   }, [metadataItems, mv]);
   const visibleMetadataKeys = useMemo(() => visibleMetadataItems.map(i => i.key), [visibleMetadataItems]);
 
   /** Set an instrument-specific sort mode (metadata priority order is user-controlled). */
-  const selectInstrumentSortMode = useCallback((mode: MetadataSortKey) => {
+  const selectInstrumentSortMode = useCallback((mode: SongSortMode) => {
     props.onChange({...props.draft, sortMode: mode});
   }, [props]);
 
@@ -77,68 +79,47 @@ export function SortModal(props: {
           {/* Scrollable content */}
           <ScrollView style={isMobile ? styles.modalScrollContent : undefined} contentContainerStyle={isMobile ? styles.modalScrollInner : undefined} showsVerticalScrollIndicator={false}>
           <View style={styles.modalSection}>
-            <Text style={styles.modalSectionTitle}>Mode</Text>
-            <Text style={styles.modalHint}>Choose which property to sort the song list by.</Text>
-            <View style={styles.choiceRow}>
-              <Choice
-                label="Title"
-                selected={props.draft.sortMode === 'title'}
-                onPress={() => props.onChange({...props.draft, sortMode: 'title'})}
-              />
-              <Choice
-                label="Artist"
-                selected={props.draft.sortMode === 'artist'}
-                onPress={() => props.onChange({...props.draft, sortMode: 'artist'})}
-              />
-              <Choice
-                label="Year"
-                selected={props.draft.sortMode === 'year'}
-                onPress={() => props.onChange({...props.draft, sortMode: 'year'})}
-              />
-              <Choice
-                label="Has FC"
-                selected={props.draft.sortMode === 'hasfc'}
-                onPress={() => props.onChange({...props.draft, sortMode: 'hasfc'})}
-              />
-            </View>
+            <Accordion
+              title="Mode"
+              hint="Choose which property to sort the song list by."
+              initiallyOpen
+            >
+              <RadioRow label="Title" selected={props.draft.sortMode === 'title'} onPress={() => props.onChange({...props.draft, sortMode: 'title'})} first />
+              <RadioRow label="Artist" selected={props.draft.sortMode === 'artist'} onPress={() => props.onChange({...props.draft, sortMode: 'artist'})} />
+              <RadioRow label="Year" selected={props.draft.sortMode === 'year'} onPress={() => props.onChange({...props.draft, sortMode: 'year'})} />
+              <RadioRow label="Has FC" selected={props.draft.sortMode === 'hasfc'} onPress={() => props.onChange({...props.draft, sortMode: 'hasfc'})} last />
+            </Accordion>
           </View>
 
           {props.instrumentFilter != null && (() => {
             const mv = props.metadataVisibility;
-            const fismChoices: {label: string; mode: MetadataSortKey}[] = [
-              ...(mv?.score !== false ? [{label: 'Score', mode: 'score' as MetadataSortKey}] : []),
-              ...(mv?.percentage !== false ? [{label: 'Percentage', mode: 'percentage' as MetadataSortKey}] : []),
-              ...(mv?.percentile !== false ? [{label: 'Percentile', mode: 'percentile' as MetadataSortKey}] : []),
-              ...(mv?.isfc !== false ? [{label: 'Is FC', mode: 'isfc' as MetadataSortKey}] : []),
-              ...(mv?.stars !== false ? [{label: 'Stars', mode: 'stars' as MetadataSortKey}] : []),
-              ...(mv?.seasonachieved !== false ? [{label: 'Season', mode: 'seasonachieved' as MetadataSortKey}] : []),
+            const fismChoices: {label: string; mode: SongSortMode}[] = [
+              ...(mv?.score !== false ? [{label: 'Score', mode: 'score' as SongSortMode}] : []),
+              ...(mv?.percentage !== false ? [{label: 'Percentage', mode: 'percentage' as SongSortMode}] : []),
+              ...(mv?.percentile !== false ? [{label: 'Percentile', mode: 'percentile' as SongSortMode}] : []),
+              ...(mv?.isfc !== false ? [{label: 'Is FC', mode: 'isfc' as SongSortMode}] : []),
+              ...(mv?.stars !== false ? [{label: 'Stars', mode: 'stars' as SongSortMode}] : []),
+              ...(mv?.seasonachieved !== false ? [{label: 'Season', mode: 'seasonachieved' as SongSortMode}] : []),
+              ...(mv?.intensity !== false ? [{label: 'Intensity', mode: 'intensity' as SongSortMode}] : []),
             ];
             if (fismChoices.length === 0) return null;
-            // Chunk into rows of 3, padding incomplete rows with invisible spacers
-            const rows: ({label: string; mode: MetadataSortKey} | null)[][] = [];
-            for (let i = 0; i < fismChoices.length; i += 3) {
-              const row = fismChoices.slice(i, i + 3);
-              while (row.length < 3) row.push(null as any);
-              rows.push(row);
-            }
             return (
               <View style={styles.modalSection}>
-                <Text style={styles.modalSectionTitle}>Filtered Instrument Sort Mode</Text>
-                <Text style={styles.modalHint}>Filtering to a single instrument enables more sort options. You can select an option here, or still use the options above.</Text>
-                {rows.map((row, ri) => (
-                  <View key={ri} style={[styles.choiceRow, ri > 0 && {marginTop: 8}]}>
-                    {row.map((c, ci) => c ? (
-                      <Choice
-                        key={c.mode}
-                        label={c.label}
-                        selected={props.draft.sortMode === c.mode}
-                        onPress={() => selectInstrumentSortMode(c.mode)}
-                      />
-                    ) : (
-                      <View key={`spacer-${ci}`} style={{flex: 1}} />
-                    ))}
-                  </View>
-                ))}
+                <Accordion
+                  title="Filtered Instrument Sort Mode"
+                  hint="Filtering to a single instrument enables more sort options. You can select an option here, or still use the options above."
+                >
+                  {fismChoices.map((c, idx) => (
+                    <RadioRow
+                      key={c.mode}
+                      label={c.label}
+                      selected={props.draft.sortMode === c.mode}
+                      onPress={() => selectInstrumentSortMode(c.mode)}
+                      first={idx === 0}
+                      last={idx === fismChoices.length - 1}
+                    />
+                  ))}
+                </Accordion>
               </View>
             );
           })()}
@@ -162,7 +143,7 @@ export function SortModal(props: {
 
           {props.instrumentFilter != null && (() => {
             const mv = props.metadataVisibility;
-            const anyMetadataVisible = mv ? (mv.score || mv.percentage || mv.percentile || mv.isfc || mv.stars || mv.seasonachieved) : true;
+            const anyMetadataVisible = mv ? (mv.score || mv.percentage || mv.percentile || mv.isfc || mv.stars || mv.seasonachieved || mv.intensity) : true;
             if (!anyMetadataVisible) return null;
             return (
           <View style={styles.modalSection}>
@@ -345,6 +326,28 @@ function Choice(props: {label: string; selected: boolean; onPress: () => void}) 
       <FrostedSurface style={[styles.choice, props.selected && styles.choiceSelected]} tint="dark" intensity={12}>
         <Text style={[styles.choiceText, props.selected && styles.choiceTextSelected]}>{props.label}</Text>
       </FrostedSurface>
+    </Pressable>
+  );
+}
+
+function RadioRow(props: {label: string; selected: boolean; onPress: () => void; first?: boolean; last?: boolean}) {
+  return (
+    <Pressable
+      onPress={props.onPress}
+      style={({pressed}) => [
+        styles.orderRow,
+        props.first && {marginTop: 6},
+        pressed && styles.rowBtnPressed,
+      ]}
+      accessibilityRole="radio"
+      accessibilityState={{selected: props.selected}}
+    >
+      <Text style={styles.orderName}>{props.label}</Text>
+      <Ionicons
+        name={props.selected ? 'radio-button-on' : 'radio-button-off'}
+        size={22}
+        color={props.selected ? '#2D82E6' : '#8899AA'}
+      />
     </Pressable>
   );
 }

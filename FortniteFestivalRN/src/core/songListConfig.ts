@@ -15,10 +15,10 @@ export const percentileBucket = (rawPercentile: number): number => {
   return PERCENTILE_THRESHOLDS.find(t => topPct <= t) ?? 100;
 };
 
-export type SongSortMode = 'title' | 'artist' | 'year' | 'hasfc' | 'isfc' | 'score' | 'percentage' | 'percentile' | 'stars' | 'seasonachieved';
+export type SongSortMode = 'title' | 'artist' | 'year' | 'hasfc' | 'isfc' | 'score' | 'percentage' | 'percentile' | 'stars' | 'seasonachieved' | 'intensity';
 
 /** Sort modes that require an active instrument filter to be meaningful. */
-export const instrumentSortModes: ReadonlyArray<SongSortMode> = ['score', 'percentage', 'percentile', 'isfc', 'stars', 'seasonachieved'];
+export const instrumentSortModes: ReadonlyArray<SongSortMode> = ['score', 'percentage', 'percentile', 'isfc', 'stars', 'seasonachieved', 'intensity'];
 
 export const isInstrumentSortMode = (mode: SongSortMode): boolean =>
   (instrumentSortModes as ReadonlyArray<string>).includes(mode);
@@ -54,7 +54,7 @@ export type AdvancedMissingFilters = {
   starsFilter: Record<number, boolean>;
   /**
    * Per-difficulty visibility filter for the selected instrument's high score.
-   * Key = game difficulty (-1 = "No difficulty", 0 = Easy, 1 = Medium, 2 = Hard, 3 = Expert).
+   * Key = song difficulty bars (0 = "No Score", 1–7 = easiest→hardest).
    * An empty object means "show all" (default); explicit false = hidden.
    */
   difficultyFilter: Record<number, boolean>;
@@ -79,7 +79,7 @@ export const defaultAdvancedMissingFilters = (): AdvancedMissingFilters => ({
 
 // ── Metadata sort priority (instrument-specific views) ──
 
-export type MetadataSortKey = 'title' | 'artist' | 'year' | 'score' | 'percentage' | 'percentile' | 'isfc' | 'stars' | 'seasonachieved';
+export type MetadataSortKey = 'title' | 'artist' | 'year' | 'score' | 'percentage' | 'percentile' | 'isfc' | 'stars' | 'seasonachieved' | 'intensity';
 
 export type MetadataSortItem = {key: MetadataSortKey; displayName: string};
 
@@ -93,6 +93,7 @@ export const defaultMetadataSortPriority = (): MetadataSortItem[] => [
   {key: 'isfc', displayName: 'Is FC'},
   {key: 'stars', displayName: 'Stars'},
   {key: 'seasonachieved', displayName: 'Season Achieved'},
+  {key: 'intensity', displayName: 'Song Intensity'},
 ];
 
 export const normalizeMetadataSortPriority = (keys: ReadonlyArray<MetadataSortKey> | undefined): MetadataSortItem[] => {
@@ -173,7 +174,7 @@ export const isInstrumentVisible = (key: InstrumentKey, settings: InstrumentShow
 
 // ── Song row visual order (display-only, independent of sort) ──
 
-export type SongRowVisualKey = 'score' | 'percentage' | 'percentile' | 'stars' | 'seasonachieved';
+export type SongRowVisualKey = 'score' | 'percentage' | 'percentile' | 'stars' | 'seasonachieved' | 'intensity';
 
 export type SongRowVisualItem = {key: SongRowVisualKey; displayName: string};
 
@@ -183,6 +184,7 @@ export const defaultSongRowVisualOrder = (): SongRowVisualItem[] => [
   {key: 'percentile', displayName: 'Percentile'},
   {key: 'stars', displayName: 'Stars'},
   {key: 'seasonachieved', displayName: 'Season Achieved'},
+  {key: 'intensity', displayName: 'Song Intensity'},
 ];
 
 export const normalizeSongRowVisualOrder = (keys: ReadonlyArray<SongRowVisualKey> | undefined): SongRowVisualItem[] => {

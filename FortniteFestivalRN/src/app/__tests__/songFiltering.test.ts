@@ -64,8 +64,8 @@ describe('app/songs/songFiltering', () => {
     const easySong = mkSong('easy', 'Easy Song', 'X');
     const expertSong = mkSong('expert', 'Expert Song', 'Y');
 
-    const easyTracker = Object.assign(new ScoreTracker(), {initialized: true, gameDifficulty: 0});
-    const expertTracker = Object.assign(new ScoreTracker(), {initialized: true, gameDifficulty: 3});
+    const easyTracker = Object.assign(new ScoreTracker(), {initialized: true, difficulty: 0});
+    const expertTracker = Object.assign(new ScoreTracker(), {initialized: true, difficulty: 6});
 
     const scoresIndex: Record<string, LeaderboardData> = {
       easy: {songId: 'easy', guitar: easyTracker},
@@ -81,11 +81,14 @@ describe('app/songs/songFiltering', () => {
       advanced: {
         ...defaultAdvancedMissingFilters(),
         difficultyFilter: {
-          0: true,
           1: true,
           2: true,
-          3: false,
-          [-1]: true,
+          3: true,
+          4: true,
+          5: true,
+          6: true,
+          7: false,
+          0: true,
         },
       },
     });

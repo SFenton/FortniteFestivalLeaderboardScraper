@@ -123,7 +123,7 @@ export function SettingsScreen() {
   const visualOrderKeys = useMemo(() => visualOrderItems.map(i => i.key), [visualOrderItems]);
 
   const toggleSetting = useCallback(
-    (key: 'queryLead' | 'queryBass' | 'queryDrums' | 'queryVocals' | 'queryProLead' | 'queryProBass' | 'showLead' | 'showBass' | 'showDrums' | 'showVocals' | 'showProLead' | 'showProBass' | 'songsHideInstrumentIcons' | 'metadataShowScore' | 'metadataShowPercentage' | 'metadataShowPercentile' | 'metadataShowSeasonAchieved' | 'metadataShowIsFC' | 'metadataShowStars') => {
+    (key: 'queryLead' | 'queryBass' | 'queryDrums' | 'queryVocals' | 'queryProLead' | 'queryProBass' | 'showLead' | 'showBass' | 'showDrums' | 'showVocals' | 'showProLead' | 'showProBass' | 'songsHideInstrumentIcons' | 'metadataShowScore' | 'metadataShowPercentage' | 'metadataShowPercentile' | 'metadataShowSeasonAchieved' | 'metadataShowDifficulty' | 'metadataShowIsFC' | 'metadataShowStars') => {
       const next = {...state.settings, [key]: !state.settings[key]};
 
       // When toggling a show* setting, also reorder the Primary Instrument Order:
@@ -342,6 +342,7 @@ export function SettingsScreen() {
             <ToggleRow label="Percentage"       checked={state.settings.metadataShowPercentage}      onToggle={() => toggleSetting('metadataShowPercentage')} />
             <ToggleRow label="Percentile"       checked={state.settings.metadataShowPercentile}      onToggle={() => toggleSetting('metadataShowPercentile')} />
             <ToggleRow label="Season Achieved"  checked={state.settings.metadataShowSeasonAchieved}  onToggle={() => toggleSetting('metadataShowSeasonAchieved')} />
+            <ToggleRow label="Song Intensity"   checked={state.settings.metadataShowDifficulty}      onToggle={() => toggleSetting('metadataShowDifficulty')} />
             <ToggleRow label="Is FC"            checked={state.settings.metadataShowIsFC}            onToggle={() => toggleSetting('metadataShowIsFC')} />
             <ToggleRow label="Stars"            checked={state.settings.metadataShowStars}           onToggle={() => toggleSetting('metadataShowStars')} last />
         </FrostedSurface>

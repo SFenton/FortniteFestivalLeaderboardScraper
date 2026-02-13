@@ -34,6 +34,26 @@ const GAME_DIFF_SHORT: Record<GameDifficulty, string> = {
   [3]: 'X',
 };
 
+const songIntensityFallback = (song: Song, key: InstrumentKey): number => {
+  const i = song.track.in ?? {};
+  switch (key) {
+    case 'guitar':
+      return i.gr ?? 0;
+    case 'bass':
+      return i.ba ?? 0;
+    case 'drums':
+      return i.ds ?? 0;
+    case 'vocals':
+      return i.vl ?? 0;
+    case 'pro_guitar':
+      return i.pg ?? i.gr ?? 0;
+    case 'pro_bass':
+      return i.pb ?? i.ba ?? 0;
+    default:
+      return 0;
+  }
+};
+
 type SongRowWrapperProps = {
   song: Song;
   leaderboardData?: LeaderboardData;
@@ -93,9 +113,14 @@ const SongRow = React.memo<SongRowWrapperProps>(function SongRow(props) {
       percentHitDisplay: tracker.percentHit > 0 ? `${Math.floor(tracker.percentHit / 10000)}%` : undefined,
       percentileDisplay: tracker.leaderboardPercentileFormatted || (tracker.rank > 0 ? `#${formatIntegerWithCommas(tracker.rank)}` : undefined),
       isTop5Percentile: tracker.rawPercentile > 0 && tracker.rawPercentile <= 0.05,
+      songIntensityRaw: (() => {
+        const raw = Number.isFinite(tracker.difficulty) ? Math.trunc(tracker.difficulty) : 0;
+        const resolved = raw !== 0 ? raw : songIntensityFallback(song, props.selectedInstrumentFilter);
+        return Math.max(0, Math.min(6, resolved));
+      })(),
       gameDifficultyDisplay: GAME_DIFF_SHORT[tracker.gameDifficulty as GameDifficulty] || undefined,
     };
-  }, [leaderboardData, props.selectedInstrumentFilter]);
+  }, [leaderboardData, props.selectedInstrumentFilter, song]);
 
   const data = useMemo<SongRowDisplayData>(() => ({title, artist, year, imageUri, instruments, instrumentDetail, metadataDisplayOrder: props.metadataDisplayOrder}), [title, artist, year, imageUri, instruments, instrumentDetail, props.metadataDisplayOrder]);
   const handlePress = useCallback(() => onOpen(id, title), [id, title, onOpen]);
@@ -241,11 +266,12 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
     if (!settings.metadataShowPercentage) hidden.add('percentage');
     if (!settings.metadataShowPercentile) hidden.add('percentile');
     if (!settings.metadataShowSeasonAchieved) hidden.add('seasonachieved');
+    if (!settings.metadataShowDifficulty) hidden.add('intensity');
     if (!settings.metadataShowIsFC) hidden.add('isfc');
     if (!settings.metadataShowStars) hidden.add('stars');
     if (hidden.size === 0) return normalizedMetadataKeys;
     return normalizedMetadataKeys.filter(k => !hidden.has(k));
-  }, [normalizedMetadataKeys, settings.metadataShowScore, settings.metadataShowPercentage, settings.metadataShowPercentile, settings.metadataShowSeasonAchieved, settings.metadataShowIsFC, settings.metadataShowStars]);
+  }, [normalizedMetadataKeys, settings.metadataShowScore, settings.metadataShowPercentage, settings.metadataShowPercentile, settings.metadataShowSeasonAchieved, settings.metadataShowDifficulty, settings.metadataShowIsFC, settings.metadataShowStars]);
 
   // Build visual display order for song rows.
   // When songRowVisualOrderEnabled is true, use the independent visual order setting.
@@ -260,6 +286,7 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
     if (!settings.metadataShowPercentage) hidden.add('percentage');
     if (!settings.metadataShowPercentile) hidden.add('percentile');
     if (!settings.metadataShowSeasonAchieved) hidden.add('seasonachieved');
+    if (!settings.metadataShowDifficulty) hidden.add('intensity');
     if (!settings.metadataShowStars) hidden.add('stars');
     if (!settings.metadataShowIsFC) hidden.add('isfc');
 
@@ -283,7 +310,7 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
     }
 
     return order;
-  }, [settings.songRowVisualOrderEnabled, visibleMetadataKeys, settings.songRowVisualOrder, settings.songsSortMode, settings.metadataShowScore, settings.metadataShowPercentage, settings.metadataShowPercentile, settings.metadataShowSeasonAchieved, settings.metadataShowIsFC, settings.metadataShowStars]);
+  }, [settings.songRowVisualOrderEnabled, visibleMetadataKeys, settings.songRowVisualOrder, settings.songsSortMode, settings.metadataShowScore, settings.metadataShowPercentage, settings.metadataShowPercentile, settings.metadataShowSeasonAchieved, settings.metadataShowDifficulty, settings.metadataShowIsFC, settings.metadataShowStars]);
   const filtered = useMemo(() => {
     const orderItems = normalizeInstrumentOrder(settings.songsPrimaryInstrumentOrder);
     return filterAndSortSongs({
@@ -422,11 +449,8 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
       .filter(([, v]) => v === false)
       .map(([k]) => {
         const d = Number(k);
-        if (d === -1) return 'No Score';
-        if (d === 0) return 'Easy';
-        if (d === 1) return 'Medium';
-        if (d === 2) return 'Hard';
-        return 'Expert';
+        if (d === 0) return 'No Score';
+        return `Difficulty ${d}`;
       });
     if (excludedDifficulty.length > 0) parts.push(`excluding difficulties: ${excludedDifficulty.join(', ')}`);
     return parts.join('; ');
@@ -542,6 +566,7 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
             percentage: settings.metadataShowPercentage,
             percentile: settings.metadataShowPercentile,
             seasonachieved: settings.metadataShowSeasonAchieved,
+            intensity: settings.metadataShowDifficulty,
             isfc: settings.metadataShowIsFC,
             stars: settings.metadataShowStars,
           }}

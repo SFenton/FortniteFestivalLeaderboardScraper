@@ -1,5 +1,6 @@
 import React from 'react';
 import {Image, StyleSheet, Text, View} from 'react-native';
+import Svg, {Polygon} from 'react-native-svg';
 import {FrostedSurface} from '../FrostedSurface';
 import {getInstrumentIconSource} from './instrumentVisuals';
 import type {InstrumentKey} from '../../core/instruments';
@@ -57,16 +58,17 @@ export function MetricCell(props: {label: string; value: string; highlight?: boo
   );
 }
 
-export function DifficultyBars(props: {rawDifficulty: number; compact?: boolean}) {
-  // Match MAUI: raw 0-6 => display 1-7 filled bars.
+export function DifficultyBars(props: {rawDifficulty: number; compact?: boolean; barWidth?: number; barHeight?: number; gap?: number}) {
   const raw = Number.isFinite(props.rawDifficulty) ? props.rawDifficulty : 0;
   const display = Math.max(0, Math.min(6, Math.trunc(raw))) + 1;
-  const barW = props.compact ? 20 : 16;
-  const barH = props.compact ? 40 : 34;
+  const barW = props.barWidth ?? (props.compact ? 20 : 16);
+  const barH = props.barHeight ?? (props.compact ? 40 : 34);
+  const offset = Math.min(Math.max(Math.round(barW * 0.26), 1), Math.floor(barW * 0.45));
+  const gap = props.gap ?? (props.compact ? 2 : 1);
 
   return (
     <View
-      style={[styles.diffRow, {gap: props.compact ? 2 : 1}]}
+      style={[styles.diffRow, {gap}]}
       accessibilityRole="text"
       accessibilityLabel={`Difficulty ${display} of 7`}
     >
@@ -76,14 +78,19 @@ export function DifficultyBars(props: {rawDifficulty: number; compact?: boolean}
           <View
             key={idx}
             style={[
-              styles.diffBar,
               {
                 width: barW,
                 height: barH,
-                backgroundColor: filled ? '#FFFFFF' : '#666666',
               },
             ]}
-          />
+          >
+            <Svg width={barW} height={barH}>
+              <Polygon
+                points={`${offset},0 ${barW},0 ${barW - offset},${barH} 0,${barH}`}
+                fill={filled ? '#FFFFFF' : '#666666'}
+              />
+            </Svg>
+          </View>
         );
       })}
     </View>
@@ -218,9 +225,6 @@ const styles = StyleSheet.create({
   diffRow: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  diffBar: {
-    transform: [{skewX: '-10deg'}],
   },
   starRow: {
     flexDirection: 'row',

@@ -2,6 +2,7 @@ import React from 'react';
 import {Image, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View} from 'react-native';
 import {FrostedSurface} from '../FrostedSurface';
 import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
+import {DifficultyBars} from '../instruments/InstrumentCard';
 import type {InstrumentKey} from '../../core/instruments';
 import type {MetadataSortKey} from '../../core/songListConfig';
 
@@ -27,6 +28,8 @@ export type InstrumentDetailData = {
   percentHitDisplay?: string;
   percentileDisplay?: string;
   isTop5Percentile?: boolean;
+  /** Song intensity raw value (0-6), displayed as 1-7 bars. */
+  songIntensityRaw?: number;
   /** Game difficulty the score was played on: E, M, H, X, or empty if unknown. */
   gameDifficultyDisplay?: string;
 };
@@ -91,6 +94,15 @@ function DifficultyPill(props: {display?: string}) {
   );
 }
 
+function SongIntensityPill(props: {raw?: number}) {
+  if (props.raw == null) return null;
+  return (
+    <View style={styles.songIntensityPill}>
+      <DifficultyBars rawDifficulty={props.raw} barWidth={8} barHeight={20} gap={1} />
+    </View>
+  );
+}
+
 function PercentPill(props: {percentHitDisplay?: string; isFullCombo?: boolean}) {
   if (!props.percentHitDisplay) return null;
   const gold = Boolean(props.isFullCombo);
@@ -111,7 +123,7 @@ function PercentilePill(props: {percentileDisplay?: string; isTop5?: boolean}) {
   );
 }
 
-const DEFAULT_METADATA_ORDER: MetadataSortKey[] = ['title', 'artist', 'year', 'score', 'percentage', 'percentile', 'isfc', 'stars', 'seasonachieved'];
+const DEFAULT_METADATA_ORDER: MetadataSortKey[] = ['title', 'artist', 'year', 'score', 'percentage', 'percentile', 'isfc', 'stars', 'seasonachieved', 'intensity'];
 
 function FCBadge() {
   return (
@@ -153,6 +165,8 @@ function renderMetadataElement(key: MetadataSortKey, detail: InstrumentDetailDat
       );
     case 'seasonachieved':
       return <SeasonPill seasonDisplay={detail.seasonDisplay} />;
+    case 'intensity':
+      return <SongIntensityPill raw={detail.songIntensityRaw} />;
     case 'percentile': {
       const pctDisplay = detail.percentileDisplay;
       return <PercentilePill percentileDisplay={pctDisplay} isTop5={detail.isTop5Percentile} />;
@@ -168,17 +182,51 @@ function renderMetadataElement(key: MetadataSortKey, detail: InstrumentDetailDat
 
 const FIXED_WIDTH_KEYS: ReadonlySet<MetadataSortKey> = new Set<MetadataSortKey>([]);
 
-function MetadataBottomRow(props: {keys: MetadataSortKey[]; detail: InstrumentDetailData; allKeys: MetadataSortKey[]; isPhone?: boolean; isWideLayout?: boolean}) {
-  if (!props.detail.hasScore) return null;
-  // First pass: collect visible entries so we can count them before building nodes.
-  const visibleEntries: {key: MetadataSortKey; el: React.ReactElement}[] = [];
-  for (const key of props.keys) {
-    const el = renderMetadataElement(key, props.detail, props.allKeys);
-    if (el) {
-      visibleEntries.push({key, el});
-    }
+type MetadataEntry = {key: MetadataSortKey; el: React.ReactElement};
+
+function collectVisibleMetadataEntries(keys: MetadataSortKey[], detail: InstrumentDetailData, allKeys: MetadataSortKey[]): MetadataEntry[] {
+  const visibleEntries: MetadataEntry[] = [];
+  for (const key of keys) {
+    const el = renderMetadataElement(key, detail, allKeys);
+    if (el) visibleEntries.push({key, el});
   }
+  return visibleEntries;
+}
+
+function MetadataBottomRow(props: {entries: MetadataEntry[]; isPhone?: boolean; isWideLayout?: boolean}) {
+  const visibleEntries = props.entries;
   if (visibleEntries.length === 0) return null;
+
+  // When the bottom metadata area has 5+ elements, split into two rows
+  // so SongRow can have up to 3 rows total (main row + 2 metadata rows).
+  // On wide layouts (landscape / open foldable), render all in a single row.
+  if (visibleEntries.length >= 5) {
+    if (props.isWideLayout) {
+      return (
+        <View style={styles.metadataGridRow}>
+          {visibleEntries.map(({key, el}) => (
+            <View key={key} style={styles.metadataGridCell}>{el}</View>
+          ))}
+        </View>
+      );
+    }
+    const top = visibleEntries.slice(0, 3);
+    const bottom = visibleEntries.slice(3);
+    return (
+      <View style={styles.metadataGrid}>
+        <View style={styles.metadataGridRow}>
+          {top.map(({key, el}) => (
+            <View key={key} style={styles.metadataGridCell}>{el}</View>
+          ))}
+        </View>
+        <View style={styles.metadataGridRow}>
+          {bottom.map(({key, el}) => (
+            <View key={key} style={styles.metadataGridCell}>{el}</View>
+          ))}
+        </View>
+      </View>
+    );
+  }
 
   // On phones with exactly 4 elements, use a 2×2 grid so every element can breathe.
   if (props.isPhone && visibleEntries.length === 4) {
@@ -256,12 +304,19 @@ export const SongRow = React.memo(function SongRow(props: {
   const metaOrder = metadataDisplayOrder ?? DEFAULT_METADATA_ORDER;
   // Keys that are only meaningful for sorting (already rendered in the row header).
   const instrumentMetaOrder = metaOrder.filter(k => k !== 'title' && k !== 'artist');
+  const visibleMetadataEntries = React.useMemo(() => {
+    if (!instrumentDetail) return [];
+    return collectVisibleMetadataEntries(instrumentMetaOrder, instrumentDetail, instrumentMetaOrder);
+  }, [instrumentDetail, instrumentMetaOrder]);
+  const topMetadataCount = 1;
+  const topMetadataEntries = visibleMetadataEntries.slice(0, topMetadataCount);
+  const bottomMetadataEntries = visibleMetadataEntries.slice(topMetadataCount);
 
   // Detect phone-class device (not tablet/foldable, not Windows).
   const {width: winWidth, height: winHeight} = useWindowDimensions();
   const isPhone = Platform.OS !== 'windows' && Math.min(winWidth, winHeight) < 600;
-  // Wide layout: landscape tablet or open foldable (min dimension >= 600 and landscape).
-  const isWideLayout = Platform.OS !== 'windows' && Math.min(winWidth, winHeight) >= 600 && winWidth > winHeight;
+  // Wide layout: landscape (any device) or open foldable / tablet (min dimension >= 600).
+  const isWideLayout = Platform.OS !== 'windows' && (winWidth > winHeight || Math.min(winWidth, winHeight) >= 600);
 
   const inner = (pressed: boolean) => (
     <FrostedSurface style={[styles.rowSurface, pressed && styles.rowSurfacePressed]} tint="dark" intensity={12}>
@@ -282,7 +337,9 @@ export const SongRow = React.memo(function SongRow(props: {
                   </Text>
                 </View>
                 <View style={styles.detailStrip}>
-                  {renderMetadataElement(instrumentMetaOrder[0], instrumentDetail, instrumentMetaOrder)}
+                  {topMetadataEntries.map(({key, el}) => (
+                    <View key={key}>{el}</View>
+                  ))}
                   <DifficultyPill display={instrumentDetail.gameDifficultyDisplay} />
                   <View
                     style={[styles.instrumentChipCompact, {backgroundColor: instruments[0].fill, borderColor: instruments[0].stroke}]}
@@ -291,7 +348,7 @@ export const SongRow = React.memo(function SongRow(props: {
                   </View>
                 </View>
               </View>
-              <MetadataBottomRow keys={instrumentMetaOrder.slice(1)} detail={instrumentDetail} allKeys={instrumentMetaOrder} isPhone={isPhone} isWideLayout={isWideLayout} />
+              <MetadataBottomRow entries={bottomMetadataEntries} isPhone={isPhone} isWideLayout={isWideLayout} />
             </>
           ) : (
             <>
@@ -342,7 +399,9 @@ export const SongRow = React.memo(function SongRow(props: {
                 </View>
               </View>
               <View style={styles.detailStrip}>
-                {renderMetadataElement(instrumentMetaOrder[0], instrumentDetail, instrumentMetaOrder)}
+                {topMetadataEntries.map(({key, el}) => (
+                  <View key={key}>{el}</View>
+                ))}
                 <DifficultyPill display={instrumentDetail.gameDifficultyDisplay} />
                 <View
                   style={[styles.instrumentChipCompact, {backgroundColor: instruments[0].fill, borderColor: instruments[0].stroke}]}
@@ -351,7 +410,7 @@ export const SongRow = React.memo(function SongRow(props: {
                 </View>
               </View>
             </View>
-            <MetadataBottomRow keys={instrumentMetaOrder.slice(1)} detail={instrumentDetail} allKeys={instrumentMetaOrder} isPhone={isPhone} isWideLayout={isWideLayout} />
+            <MetadataBottomRow entries={bottomMetadataEntries} isPhone={isPhone} isWideLayout={isWideLayout} />
           </View>
         ) : (
           <View style={styles.rowInner}>
@@ -400,7 +459,9 @@ export const SongRow = React.memo(function SongRow(props: {
                 </View>
               </View>
               <View style={styles.detailStrip}>
-                {renderMetadataElement(instrumentMetaOrder[0], instrumentDetail, instrumentMetaOrder)}
+                {topMetadataEntries.map(({key, el}) => (
+                  <View key={key}>{el}</View>
+                ))}
                 <DifficultyPill display={instrumentDetail.gameDifficultyDisplay} />
                 <View
                   style={[styles.instrumentChip, {backgroundColor: instruments[0].fill, borderColor: instruments[0].stroke}]}
@@ -409,7 +470,7 @@ export const SongRow = React.memo(function SongRow(props: {
                 </View>
               </View>
             </View>
-            <MetadataBottomRow keys={instrumentMetaOrder.slice(1)} detail={instrumentDetail} allKeys={instrumentMetaOrder} isPhone={isPhone} isWideLayout={isWideLayout} />
+            <MetadataBottomRow entries={bottomMetadataEntries} isPhone={isPhone} isWideLayout={isWideLayout} />
           </View>
         ) : (
           <View style={styles.rowInner}>
@@ -444,16 +505,18 @@ export const SongRow = React.memo(function SongRow(props: {
     </FrostedSurface>
   );
 
+  const rowStyle = isWideLayout ? styles.rowPressableWide : styles.rowPressable;
+
   if (onPress) {
     return (
-      <Pressable onPress={onPress} style={styles.rowPressable} accessibilityRole="button" accessibilityLabel={`Open ${title}`}>
+      <Pressable onPress={onPress} style={rowStyle} accessibilityRole="button" accessibilityLabel={`Open ${title}`}>
         {({pressed}) => inner(pressed)}
       </Pressable>
     );
   }
 
   // Non-interactive – just render the surface.
-  return <View style={styles.rowPressable}>{inner(false)}</View>;
+  return <View style={rowStyle}>{inner(false)}</View>;
 });
 
 // ── Styles ──────────────────────────────────────────────────────────
@@ -462,6 +525,11 @@ const styles = StyleSheet.create({
   rowPressable: {
     marginBottom: 8,
     maxWidth: 600,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  rowPressableWide: {
+    marginBottom: 8,
     width: '100%',
     alignSelf: 'center',
   },
@@ -625,6 +693,13 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '800',
+  },
+  songIntensityPill: {
+    paddingHorizontal: 8,
+    minWidth: 80,
+    minHeight: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   seasonPill: {
     backgroundColor: '#1D3A71',

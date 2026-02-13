@@ -14,6 +14,39 @@ const selectTracker = (ld: LeaderboardData, key: InstrumentKey): ScoreTracker | 
   | ScoreTracker
   | undefined;
 
+const fallbackDifficulty = (song: Song, key: InstrumentKey): number => {
+  const i = song.track.in ?? {};
+  switch (key) {
+    case 'guitar':
+      return i.gr ?? 0;
+    case 'bass':
+      return i.ba ?? 0;
+    case 'drums':
+      return i.ds ?? 0;
+    case 'vocals':
+      return i.vl ?? 0;
+    case 'pro_guitar':
+      return i.pg ?? i.gr ?? 0;
+    case 'pro_bass':
+      return i.pb ?? i.ba ?? 0;
+    default:
+      return 0;
+  }
+};
+
+const difficultyBucketForSong = (
+  song: Song,
+  entry: LeaderboardData | undefined,
+  key: InstrumentKey,
+): number => {
+  const tracker = entry ? selectTracker(entry, key) : undefined;
+  if (!tracker?.initialized) return 0;
+  const raw = Number.isFinite(tracker.difficulty) ? Math.trunc(tracker.difficulty) : 0;
+  const resolved = raw !== 0 ? raw : fallbackDifficulty(song, key);
+  const clamped = Math.max(0, Math.min(6, resolved));
+  return clamped + 1;
+};
+
 export const instrumentHasFC = (ld: LeaderboardData, key: InstrumentKey): boolean => {
   const tr = selectTracker(ld, key);
   return Boolean(tr && tr.initialized && tr.isFullCombo);
@@ -144,6 +177,13 @@ const compareByMetadataKey = (
       const bVal = bTracker?.initialized ? bTracker.seasonAchieved : 0;
       return aVal - bVal;
     }
+    case 'intensity': {
+      const aRaw = aTracker?.initialized ? aTracker.difficulty : -1;
+      const bRaw = bTracker?.initialized ? bTracker.difficulty : -1;
+      const aVal = aRaw >= 0 ? Math.max(0, Math.min(6, Math.trunc(aRaw))) + 1 : 0;
+      const bVal = bRaw >= 0 ? Math.max(0, Math.min(6, Math.trunc(bRaw))) + 1 : 0;
+      return aVal - bVal;
+    }
     default:
       return 0;
   }
@@ -227,9 +267,8 @@ export const filterAndSortSongs = (params: {
   if (hasDifficultyFilter) {
     q = q.filter(s => {
       const entry = params.scoresIndex[s.track.su];
-      const tracker = entry ? selectTracker(entry, instrumentFilter!) : undefined;
-      const difficulty = tracker?.initialized ? tracker.gameDifficulty : -1;
-      return df[difficulty] !== false;
+      const difficultyBucket = difficultyBucketForSong(s, entry, instrumentFilter!);
+      return df[difficultyBucket] !== false;
     });
   }
 
@@ -273,7 +312,7 @@ export const filterAndSortSongs = (params: {
     }
 
     // Instrument-specific sort modes (require instrumentFilter)
-    if (instrumentFilter && (sortMode === 'isfc' || sortMode === 'score' || sortMode === 'percentage' || sortMode === 'percentile' || sortMode === 'stars' || sortMode === 'seasonachieved')) {
+    if (instrumentFilter && (sortMode === 'isfc' || sortMode === 'score' || sortMode === 'percentage' || sortMode === 'percentile' || sortMode === 'stars' || sortMode === 'seasonachieved' || sortMode === 'intensity')) {
       const aEntry = params.scoresIndex[a.track.su];
       const bEntry = params.scoresIndex[b.track.su];
       const aTracker = aEntry ? selectTracker(aEntry, instrumentFilter) : undefined;

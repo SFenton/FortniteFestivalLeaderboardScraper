@@ -12,6 +12,7 @@ import type {InstrumentShowSettings} from '../../app/songs/songFiltering';
 import {modalStyles as styles} from './modalStyles';
 import type {InstrumentKey} from '../../core/instruments';
 import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
+import {DifficultyBars} from '../instruments/InstrumentCard';
 
 export function FilterModal(props: {
   visible: boolean;
@@ -155,8 +156,8 @@ export function FilterModal(props: {
           {props.selectedInstrumentFilter != null && (
           <View style={styles.modalSection}>
             <Accordion
-              title="Difficulty"
-              hint="Filter songs by the difficulty your highest score was achieved on."
+              title="Song Intensity"
+              hint="Filter by song intensity for the selected instrument."
             >
               <DifficultyToggles
                 difficultyFilter={props.draft.difficultyFilter ?? {}}
@@ -290,7 +291,7 @@ function PercentileToggles(props: {
 
 const STAR_WHITE_ICON = require('../../assets/icons/star_white.png');
 const STAR_GOLD_ICON = require('../../assets/icons/star_gold.png');
-const DIFFICULTY_FILTER_ORDER = [0, 1, 2, 3, -1] as const;
+const DIFFICULTY_FILTER_ORDER = [1, 2, 3, 4, 5, 6, 7, 0] as const;
 
 /** Ordered star filter keys: 6 = Gold Stars, then 5 down to 1, then 0 = No Score. */
 const STAR_FILTER_ORDER = [6, 5, 4, 3, 2, 1, 0] as const;
@@ -422,9 +423,9 @@ function DifficultyToggles(props: {
         </Pressable>
       </View>
       {allKeys.map((k, idx) => (
-        <ToggleRow
+        <DifficultyToggleRow
           key={k}
-          label={k === -1 ? 'No Score' : k === 0 ? 'Easy' : k === 1 ? 'Medium' : k === 2 ? 'Hard' : 'Expert'}
+          difficulty={k}
           checked={isEnabled(k)}
           onToggle={() => toggle(k)}
           first={idx === 0}
@@ -432,6 +433,36 @@ function DifficultyToggles(props: {
         />
       ))}
     </>
+  );
+}
+
+function DifficultyToggleRow(props: {difficulty: number; checked: boolean; onToggle: () => void; first?: boolean; last?: boolean}) {
+  const {difficulty, checked, onToggle, first} = props;
+  return (
+    <Pressable
+      onPress={onToggle}
+      style={({pressed}) => [
+        styles.orderRow,
+        first && {marginTop: 6},
+        pressed && styles.rowBtnPressed,
+      ]}
+      accessibilityRole="switch"
+      accessibilityLabel={difficulty === 0 ? 'No Score' : `Difficulty ${difficulty} of 7`}
+    >
+      <View style={{flex: 1, marginRight: 12}}>
+        {difficulty === 0 ? (
+          <Text style={styles.orderName}>No Score</Text>
+        ) : (
+          <DifficultyBars rawDifficulty={difficulty - 1} compact barWidth={14} barHeight={28} gap={2} />
+        )}
+      </View>
+      <Switch
+        value={checked}
+        onValueChange={onToggle}
+        trackColor={{false: '#263244', true: 'rgba(45,130,230,1)'}}
+        thumbColor={checked ? '#FFFFFF' : '#8899AA'}
+      />
+    </Pressable>
   );
 }
 
