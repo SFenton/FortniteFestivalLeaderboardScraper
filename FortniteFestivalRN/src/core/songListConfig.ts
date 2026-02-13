@@ -52,6 +52,12 @@ export type AdvancedMissingFilters = {
    * An empty object means "show all" (default); explicit false = hidden.
    */
   starsFilter: Record<number, boolean>;
+  /**
+   * Per-difficulty visibility filter for the selected instrument's high score.
+   * Key = game difficulty (-1 = "No difficulty", 0 = Easy, 1 = Medium, 2 = Hard, 3 = Expert).
+   * An empty object means "show all" (default); explicit false = hidden.
+   */
+  difficultyFilter: Record<number, boolean>;
 };
 
 export const defaultAdvancedMissingFilters = (): AdvancedMissingFilters => ({
@@ -68,6 +74,7 @@ export const defaultAdvancedMissingFilters = (): AdvancedMissingFilters => ({
   seasonFilter: {},
   percentileFilter: {},
   starsFilter: {},
+  difficultyFilter: {},
 });
 
 // ── Metadata sort priority (instrument-specific views) ──

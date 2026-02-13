@@ -221,6 +221,18 @@ export const filterAndSortSongs = (params: {
     });
   }
 
+  // Difficulty filter – same pattern as season/percentile/stars filter.
+  const df = advanced.difficultyFilter ?? {};
+  const hasDifficultyFilter = instrumentFilter != null && Object.values(df).some(v => v === false);
+  if (hasDifficultyFilter) {
+    q = q.filter(s => {
+      const entry = params.scoresIndex[s.track.su];
+      const tracker = entry ? selectTracker(entry, instrumentFilter!) : undefined;
+      const difficulty = tracker?.initialized ? tracker.gameDifficulty : -1;
+      return df[difficulty] !== false;
+    });
+  }
+
   q.sort((a, b) => {
     if (sortMode === 'year') {
       const ay = a.track.ry ?? 0;

@@ -151,6 +151,20 @@ export function FilterModal(props: {
             </Accordion>
           </View>
           )}
+
+          {props.selectedInstrumentFilter != null && (
+          <View style={styles.modalSection}>
+            <Accordion
+              title="Difficulty"
+              hint="Filter songs by the difficulty your highest score was achieved on."
+            >
+              <DifficultyToggles
+                difficultyFilter={props.draft.difficultyFilter ?? {}}
+                onDifficultyFilterChange={(next) => props.onChange({...props.draft, difficultyFilter: next})}
+              />
+            </Accordion>
+          </View>
+          )}
           </ScrollView>
 
           {/* Pinned footer */}
@@ -197,8 +211,8 @@ function SeasonsToggles(props: {
   seasonFilter: Record<number, boolean>;
   onSeasonFilterChange: (next: Record<number, boolean>) => void;
 }) {
-  // "No Season" (0) + one toggle per season
-  const allKeys = useMemo(() => [0, ...props.availableSeasons], [props.availableSeasons]);
+  // One toggle per season + "No Score" (0) at the bottom.
+  const allKeys = useMemo(() => [...props.availableSeasons, 0], [props.availableSeasons]);
   // Empty record = all enabled; explicit false = disabled
   const isEnabled = (s: number) => props.seasonFilter[s] !== false;
   const toggle = (s: number) =>
@@ -223,7 +237,7 @@ function SeasonsToggles(props: {
       {allKeys.map((s, idx) => (
         <ToggleRow
           key={s}
-          label={s === 0 ? 'No Season' : `Season ${s}`}
+          label={s === 0 ? 'No Score' : `Season ${s}`}
           checked={isEnabled(s)}
           onToggle={() => toggle(s)}
           first={idx === 0}
@@ -239,8 +253,8 @@ function PercentileToggles(props: {
   percentileFilter: Record<number, boolean>;
   onPercentileFilterChange: (next: Record<number, boolean>) => void;
 }) {
-  // Show every supported bucket: 0 = "No Percentile" + all thresholds.
-  const allKeys = useMemo(() => [0, ...PERCENTILE_THRESHOLDS], []);
+  // Show every supported bucket with "No Score" (0) at the bottom.
+  const allKeys = useMemo(() => [...PERCENTILE_THRESHOLDS, 0], []);
   const isEnabled = (k: number) => props.percentileFilter[k] !== false;
   const toggle = (k: number) =>
     props.onPercentileFilterChange({...props.percentileFilter, [k]: !isEnabled(k)});
@@ -263,7 +277,7 @@ function PercentileToggles(props: {
       {allKeys.map((k, idx) => (
         <ToggleRow
           key={k}
-          label={k === 0 ? 'No Percentile' : `Top ${k}%`}
+          label={k === 0 ? 'No Score' : `Top ${k}%`}
           checked={isEnabled(k)}
           onToggle={() => toggle(k)}
           first={idx === 0}
@@ -276,9 +290,10 @@ function PercentileToggles(props: {
 
 const STAR_WHITE_ICON = require('../../assets/icons/star_white.png');
 const STAR_GOLD_ICON = require('../../assets/icons/star_gold.png');
+const DIFFICULTY_FILTER_ORDER = [0, 1, 2, 3, -1] as const;
 
-/** Ordered star filter keys: 0 = No Stars, 6 = Gold Stars, then 5 down to 1. */
-const STAR_FILTER_ORDER = [0, 6, 5, 4, 3, 2, 1] as const;
+/** Ordered star filter keys: 6 = Gold Stars, then 5 down to 1, then 0 = No Score. */
+const STAR_FILTER_ORDER = [6, 5, 4, 3, 2, 1, 0] as const;
 
 function StarIcons({count, gold}: {count: number; gold?: boolean}) {
   const icons = [];
@@ -297,7 +312,7 @@ function StarIcons({count, gold}: {count: number; gold?: boolean}) {
 
 function StarToggleRow(props: {starCount: number; checked: boolean; onToggle: () => void; first?: boolean; last?: boolean}) {
   const {starCount, checked, onToggle, first, last} = props;
-  const label = starCount === 0 ? 'No Stars' : starCount === 6 ? 'Gold Stars' : `${starCount} Stars`;
+  const label = starCount === 0 ? 'No Score' : starCount === 6 ? 'Gold Stars' : `${starCount} Stars`;
   return (
     <Pressable
       onPress={onToggle}
@@ -311,7 +326,7 @@ function StarToggleRow(props: {starCount: number; checked: boolean; onToggle: ()
     >
       <View style={{flex: 1, marginRight: 12}}>
         {starCount === 0 ? (
-          <Text style={styles.orderName}>No Stars</Text>
+          <Text style={styles.orderName}>No Score</Text>
         ) : starCount === 6 ? (
           <StarIcons count={5} gold />
         ) : (
@@ -365,6 +380,51 @@ function StarsToggles(props: {
         <StarToggleRow
           key={k}
           starCount={k}
+          checked={isEnabled(k)}
+          onToggle={() => toggle(k)}
+          first={idx === 0}
+          last={idx === allKeys.length - 1}
+        />
+      ))}
+    </>
+  );
+}
+
+function DifficultyToggles(props: {
+  difficultyFilter: Record<number, boolean>;
+  onDifficultyFilterChange: (next: Record<number, boolean>) => void;
+}) {
+  const allKeys = DIFFICULTY_FILTER_ORDER;
+  const isEnabled = useCallback((k: number) => props.difficultyFilter[k] !== false, [props.difficultyFilter]);
+  const toggle = useCallback(
+    (k: number) => props.onDifficultyFilterChange({...props.difficultyFilter, [k]: !isEnabled(k)}),
+    [props.difficultyFilter, isEnabled, props.onDifficultyFilterChange],
+  );
+  const clearAll = useCallback(
+    () => props.onDifficultyFilterChange(Object.fromEntries(allKeys.map(k => [k, false]))),
+    [allKeys, props.onDifficultyFilterChange],
+  );
+  const selectAll = useCallback(
+    () => props.onDifficultyFilterChange({}),
+    [props.onDifficultyFilterChange],
+  );
+
+  return (
+    <>
+      <View style={localStyles.bulkBtnRow}>
+        <Pressable onPress={clearAll} style={({pressed}) => [localStyles.bulkBtn, localStyles.bulkBtnDanger, pressed && styles.smallBtnPressed]}>
+          <Ionicons name="close" size={14} color="#FFFFFF" />
+          <Text style={localStyles.bulkBtnText}>Clear All</Text>
+        </Pressable>
+        <Pressable onPress={selectAll} style={({pressed}) => [localStyles.bulkBtn, localStyles.bulkBtnSuccess, pressed && styles.smallBtnPressed]}>
+          <Ionicons name="checkmark" size={14} color="#FFFFFF" />
+          <Text style={localStyles.bulkBtnText}>Select All</Text>
+        </Pressable>
+      </View>
+      {allKeys.map((k, idx) => (
+        <ToggleRow
+          key={k}
+          label={k === -1 ? 'No Score' : k === 0 ? 'Easy' : k === 1 ? 'Medium' : k === 2 ? 'Hard' : 'Expert'}
           checked={isEnabled(k)}
           onToggle={() => toggle(k)}
           first={idx === 0}

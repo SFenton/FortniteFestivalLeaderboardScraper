@@ -59,4 +59,37 @@ describe('app/songs/songFiltering', () => {
     expect(row.instrumentStatuses.find(x => x.instrumentKey === 'guitar')?.hasScore).toBe(true);
     expect(row.instrumentStatuses.find(x => x.instrumentKey === 'drums')?.isEnabled).toBe(false);
   });
+
+  test('filterAndSortSongs applies difficulty filter for selected instrument', () => {
+    const easySong = mkSong('easy', 'Easy Song', 'X');
+    const expertSong = mkSong('expert', 'Expert Song', 'Y');
+
+    const easyTracker = Object.assign(new ScoreTracker(), {initialized: true, gameDifficulty: 0});
+    const expertTracker = Object.assign(new ScoreTracker(), {initialized: true, gameDifficulty: 3});
+
+    const scoresIndex: Record<string, LeaderboardData> = {
+      easy: {songId: 'easy', guitar: easyTracker},
+      expert: {songId: 'expert', guitar: expertTracker},
+    };
+
+    const out = filterAndSortSongs({
+      songs: [easySong, expertSong],
+      scoresIndex,
+      sortMode: 'title',
+      sortAscending: true,
+      instrumentFilter: 'guitar',
+      advanced: {
+        ...defaultAdvancedMissingFilters(),
+        difficultyFilter: {
+          0: true,
+          1: true,
+          2: true,
+          3: false,
+          [-1]: true,
+        },
+      },
+    });
+
+    expect(out.map(s => s.track.su)).toEqual(['easy']);
+  });
 });

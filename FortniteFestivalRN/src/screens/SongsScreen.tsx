@@ -168,7 +168,7 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
     for (const ld of Object.values(scoresIndex)) {
       for (const key of ['guitar', 'bass', 'vocals', 'drums', 'pro_guitar', 'pro_bass'] as const) {
         const tr = ld[key];
-        if (tr?.initialized && tr.seasonAchieved > 0) set.add(tr.seasonAchieved);
+        if (tr?.initialized && tr.seasonAchieved > 0 && tr.seasonAchieved !== 1) set.add(tr.seasonAchieved);
       }
     }
     return Array.from(set).sort((a, b) => a - b);
@@ -387,6 +387,7 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
       !f.includeProBass ||
       Object.values(f.seasonFilter ?? {}).some(v => v === false) ||
       Object.values(f.percentileFilter ?? {}).some(v => v === false) ||
+      Object.values(f.difficultyFilter ?? {}).some(v => v === false) ||
       settings.songsSelectedInstrumentFilter != null
     );
   }, [settings.songsAdvancedMissingFilters, settings.songsSelectedInstrumentFilter]);
@@ -411,11 +412,23 @@ export function SongsScreen(props: {onOpenSong?: (songId: string, title: string)
     if (instruments.length > 0) parts.push(`excluding ${instruments.join(', ')}`);
     if (settings.songsSelectedInstrumentFilter) parts.push(`instrument: ${settings.songsSelectedInstrumentFilter}`);
     const sf = f.seasonFilter ?? {};
-    const excludedSeasons = Object.entries(sf).filter(([, v]) => v === false).map(([k]) => Number(k) === 0 ? 'No Season' : `S${k}`);
+    const excludedSeasons = Object.entries(sf).filter(([, v]) => v === false).map(([k]) => Number(k) === 0 ? 'No Score' : `S${k}`);
     if (excludedSeasons.length > 0) parts.push(`excluding seasons: ${excludedSeasons.join(', ')}`);
     const pf = f.percentileFilter ?? {};
-    const excludedPct = Object.entries(pf).filter(([, v]) => v === false).map(([k]) => Number(k) === 0 ? 'No Percentile' : `Top ${k}%`);
+    const excludedPct = Object.entries(pf).filter(([, v]) => v === false).map(([k]) => Number(k) === 0 ? 'No Score' : `Top ${k}%`);
     if (excludedPct.length > 0) parts.push(`excluding percentiles: ${excludedPct.join(', ')}`);
+    const df = f.difficultyFilter ?? {};
+    const excludedDifficulty = Object.entries(df)
+      .filter(([, v]) => v === false)
+      .map(([k]) => {
+        const d = Number(k);
+        if (d === -1) return 'No Score';
+        if (d === 0) return 'Easy';
+        if (d === 1) return 'Medium';
+        if (d === 2) return 'Hard';
+        return 'Expert';
+      });
+    if (excludedDifficulty.length > 0) parts.push(`excluding difficulties: ${excludedDifficulty.join(', ')}`);
     return parts.join('; ');
   }, [settings.songsAdvancedMissingFilters, settings.songsSelectedInstrumentFilter]);
 
