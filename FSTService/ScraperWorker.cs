@@ -1,9 +1,8 @@
 using FortniteFestival.Core;
-using FortniteFestival.Core.Auth;
-using FortniteFestival.Core.Config;
 using FortniteFestival.Core.Services;
 using FortniteFestival.Core.Persistence;
 using FSTService.Auth;
+using FSTService.Persistence;
 using FSTService.Scraping;
 using Microsoft.Extensions.Options;
 
@@ -15,14 +14,19 @@ namespace FSTService;
 /// Lifecycle:
 ///   1. Ensure authenticated (device auth → refresh → device code setup)
 ///   2. Initialize FestivalService (song catalog, images)
-///   3. Fetch scores for all songs/instruments
-///   4. Sleep for configured interval
-///   5. Repeat
+///   3. Scrape global leaderboards for all songs (V1 alltime)
+///   4. Persist to sharded SQLite DBs, resolve names, rebuild personal DBs
+///   5. Sleep for configured interval
+///   6. Repeat
 /// </summary>
 public sealed class ScraperWorker : BackgroundService
 {
     private readonly TokenManager _tokenManager;
     private readonly GlobalLeaderboardScraper _globalScraper;
+    private readonly GlobalLeaderboardPersistence _persistence;
+    private readonly AccountNameResolver _nameResolver;
+    private readonly PersonalDbBuilder _personalDbBuilder;
+    private readonly ScrapeProgressTracker _progress;
     private readonly IOptions<ScraperOptions> _options;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<ScraperWorker> _log;
@@ -30,12 +34,20 @@ public sealed class ScraperWorker : BackgroundService
     public ScraperWorker(
         TokenManager tokenManager,
         GlobalLeaderboardScraper globalScraper,
+        GlobalLeaderboardPersistence persistence,
+        AccountNameResolver nameResolver,
+        PersonalDbBuilder personalDbBuilder,
+        ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
         IHostApplicationLifetime lifetime,
         ILogger<ScraperWorker> log)
     {
         _tokenManager = tokenManager;
         _globalScraper = globalScraper;
+        _persistence = persistence;
+        _nameResolver = nameResolver;
+        _personalDbBuilder = personalDbBuilder;
+        _progress = progress;
         _options = options;
         _lifetime = lifetime;
         _log = log;
@@ -107,6 +119,13 @@ public sealed class ScraperWorker : BackgroundService
             return;
         }
 
+        // --resolve-only mode: skip scraping, just resolve unresolved account names
+        if (opts.ResolveOnly)
+        {
+            await RunResolveOnlyAsync(stoppingToken);
+            return;
+        }
+
         // Main scrape loop
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -144,42 +163,54 @@ public sealed class ScraperWorker : BackgroundService
         return true;
     }
 
-    /// <summary>
-    /// Build an <see cref="ExchangeCodeToken"/> that Core's FestivalService understands
-    /// from the service's token manager state. Core only reads access_token + account_id.
-    /// </summary>
-    private async Task<ExchangeCodeToken?> BuildCoreTokenAsync(CancellationToken ct)
-    {
-        var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
-        if (accessToken is null) return null;
+    // ─── Resolve-only mode ──────────────────────────────────────
 
-        var accountId = _tokenManager.AccountId;
-        if (string.IsNullOrEmpty(accountId))
+    /// <summary>
+    /// Skip scraping entirely.  Resolve display names for any account IDs
+    /// already stored in the meta DB with LastResolved = NULL, then exit.
+    /// </summary>
+    private async Task RunResolveOnlyAsync(CancellationToken ct)
+    {
+        var unresolvedCount = _persistence.Meta.GetUnresolvedAccountCount();
+        _log.LogInformation("--resolve-only: {Count} unresolved account(s) in meta DB.", unresolvedCount);
+
+        if (unresolvedCount == 0)
         {
-            _log.LogError("Have access token but no account ID.");
-            return null;
+            _log.LogInformation("Nothing to resolve. Exiting.");
+            return;
         }
 
-        return new ExchangeCodeToken
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ResolvingNames);
+        try
         {
-            access_token = accessToken,
-            account_id = accountId,
-        };
+            var resolved = await _nameResolver.ResolveNewAccountsAsync(maxConcurrency: 8, ct);
+            _log.LogInformation("--resolve-only complete. {Resolved} account(s) resolved.", resolved);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogError(ex, "Account name resolution failed.");
+        }
     }
 
-    private static Settings BuildSettings(ScraperOptions opts) => new()
+    private static IReadOnlyList<string> GetEnabledInstruments(ScraperOptions opts)
     {
-        DegreeOfParallelism = opts.DegreeOfParallelism,
-        QueryLead = opts.QueryLead,
-        QueryDrums = opts.QueryDrums,
-        QueryVocals = opts.QueryVocals,
-        QueryBass = opts.QueryBass,
-        QueryProLead = opts.QueryProLead,
-        QueryProBass = opts.QueryProBass,
-    };
+        var instruments = new List<string>();
+        if (opts.QueryLead)    instruments.Add("Solo_Guitar");
+        if (opts.QueryBass)    instruments.Add("Solo_Bass");
+        if (opts.QueryVocals)  instruments.Add("Solo_Vocals");
+        if (opts.QueryDrums)   instruments.Add("Solo_Drums");
+        if (opts.QueryProLead) instruments.Add("Solo_PeripheralGuitar");
+        if (opts.QueryProBass) instruments.Add("Solo_PeripheralBass");
+        return instruments;
+    }
 
-    // ─── Scrape pass (full) ─────────────────────────────────────
+    // ─── Scrape pass (V1 alltime global) ────────────────────────
 
+    /// <summary>
+    /// Scrape all songs via V1 alltime global leaderboards.
+    /// Persistence is pipelined: each song's results are written to SQLite
+    /// as they arrive, overlapping disk I/O with ongoing network I/O.
+    /// </summary>
     private async Task RunScrapePassAsync(
         FestivalService service,
         ScraperOptions opts,
@@ -187,20 +218,167 @@ public sealed class ScraperWorker : BackgroundService
     {
         _log.LogInformation("Starting scrape pass...");
 
-        var token = await BuildCoreTokenAsync(ct);
-        if (token is null)
+        var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
+        if (accessToken is null)
         {
             _log.LogError("Cannot obtain access token. Skipping this pass.");
             return;
         }
 
+        var accountId = _tokenManager.AccountId!;
+
         // Re-sync the song catalog in case new songs appeared
         await service.SyncSongsAsync();
 
-        var settings = BuildSettings(opts);
-        var success = await service.FetchScoresWithTokenAsync(token, filteredSongIds: null, settings);
+        // Start scrape log entry
+        var scrapeId = _persistence.Meta.StartScrapeRun();
+        _log.LogInformation("Scrape run #{ScrapeId} started.", scrapeId);
 
-        LogInstrumentation(service, success ? "succeeded" : "FAILED");
+        // Load registered account IDs for change detection
+        var registeredIds = _persistence.Meta.GetRegisteredAccountIds();
+        if (registeredIds.Count > 0)
+            _log.LogInformation("{Count} registered user(s) will be tracked for score changes.", registeredIds.Count);
+
+        // Build scrape requests: one per song, all enabled instruments.
+        // We no longer filter by catalog difficulty metadata because
+        // difficulty 0 is a valid value (not "uncharted"), and the API
+        // returns real leaderboard data for every instrument on every song.
+        var enabledInstruments = GetEnabledInstruments(opts);
+        var scrapeRequests = service.Songs
+            .Where(s => s.track?.su is not null)
+            .Select(song => new GlobalLeaderboardScraper.SongScrapeRequest
+            {
+                SongId = song.track.su,
+                Instruments = enabledInstruments,
+                Label = song.track.tt,
+            })
+            .ToList();
+
+        _log.LogInformation("Scraping {SongCount} songs across {InstrumentCount} instrument types (DOP={Dop})...",
+            scrapeRequests.Count, enabledInstruments.Count, opts.DegreeOfParallelism);
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        // ── Initialize progress tracker ──
+        int totalLeaderboards = scrapeRequests.Sum(r => r.Instruments.Count);
+        int cachedPages = LoadCachedPageEstimate(opts);
+        _progress.BeginPass(totalLeaderboards, scrapeRequests.Count, cachedPages);
+
+        // Tell the progress tracker how many leaderboards each instrument has
+        var instrumentTotals = enabledInstruments
+            .ToDictionary(i => i, _ => scrapeRequests.Count);
+        _progress.SetInstrumentTotals(instrumentTotals);
+
+        // ── Pipelined: per-instrument channel writers ──
+        var aggregates = _persistence.StartWriters(ct);
+        int totalRequests = 0;
+        long totalBytes = 0;
+
+        var allResults = await _globalScraper.ScrapeManySongsAsync(
+            scrapeRequests, accessToken, accountId, opts.DegreeOfParallelism,
+            onSongComplete: async (songId, results) =>
+            {
+                // Called concurrently from multiple song tasks.
+                // Enqueue each instrument result into its dedicated channel —
+                // no cross-instrument lock, back-pressure if the writer falls behind.
+                bool hasData = false;
+                foreach (var result in results)
+                {
+                    Interlocked.Add(ref totalRequests, result.Requests);
+                    Interlocked.Add(ref totalBytes, result.BytesReceived);
+
+                    if (result.Entries.Count == 0) continue;
+                    hasData = true;
+
+                    await _persistence.EnqueueResultAsync(result, registeredIds, ct);
+                }
+                if (hasData) aggregates.IncrementSongsWithData();
+            },
+            ct);
+
+        // Wait for all per-instrument writers to drain
+        await _persistence.DrainWritersAsync();
+
+        sw.Stop();
+
+        // Save page estimate for next run (still in Scraping phase, so current has the data)
+        var currentOp = _progress.GetProgressResponse().Current;
+        SaveCachedPageEstimate(opts, currentOp?.Pages?.DiscoveredTotal ?? 0);
+
+        // Complete scrape log
+        _persistence.Meta.CompleteScrapeRun(scrapeId, aggregates.SongsWithData, aggregates.TotalEntries, totalRequests, totalBytes);
+
+        _log.LogInformation(
+            "Scrape run #{ScrapeId} complete. {Songs} songs with data, {Entries} entries, " +
+            "{Requests} HTTP requests, {Bytes} bytes, {Changes} score changes detected, elapsed={Elapsed:F1}s",
+            scrapeId, aggregates.SongsWithData, aggregates.TotalEntries, totalRequests, totalBytes,
+            aggregates.TotalChanges, sw.Elapsed.TotalSeconds);
+
+        // Report entry counts per instrument
+        var counts = _persistence.GetEntryCounts();
+        foreach (var (instrument, count) in counts)
+            _log.LogInformation("  {Instrument}: {Count:N0} entries", instrument, count);
+
+        // ── Post-pass: resolve display names for new accounts ──
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ResolvingNames);
+        try
+        {
+            await _nameResolver.ResolveNewAccountsAsync(maxConcurrency: 8, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Account name resolution failed. Will retry next pass.");
+        }
+
+        // ── Post-pass: rebuild personal DBs for registered users with score changes ──
+        if (aggregates.ChangedAccountIds.Count > 0)
+        {
+            _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.RebuildingPersonalDbs);
+            try
+            {
+                var changedIds = new HashSet<string>(aggregates.ChangedAccountIds, StringComparer.OrdinalIgnoreCase);
+                var rebuilt = _personalDbBuilder.RebuildForAccounts(changedIds, _persistence.Meta);
+                if (rebuilt > 0)
+                    _log.LogInformation("Rebuilt {Count} personal DB(s) for users with score changes.", rebuilt);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "Personal DB rebuild failed. Will retry next pass.");
+            }
+        }
+
+        _progress.EndPass();
+    }
+
+    // ─── Cached page estimate ───────────────────────────────────
+
+    private static int LoadCachedPageEstimate(ScraperOptions opts)
+    {
+        try
+        {
+            var path = Path.Combine(Path.GetFullPath(opts.DataDirectory), "page-estimate.json");
+            if (!File.Exists(path)) return 0;
+            var json = File.ReadAllText(path);
+            var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("totalPages", out var tp))
+                return tp.GetInt32();
+        }
+        catch { }
+        return 0;
+    }
+
+    private static void SaveCachedPageEstimate(ScraperOptions opts, int totalPages)
+    {
+        try
+        {
+            var path = Path.Combine(Path.GetFullPath(opts.DataDirectory), "page-estimate.json");
+            File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(new
+            {
+                totalPages,
+                savedAt = DateTime.UtcNow.ToString("o"),
+            }));
+        }
+        catch { }
     }
 
     // ─── Song test ───────────────────────────────────────────────
@@ -252,21 +430,12 @@ public sealed class ScraperWorker : BackgroundService
 
         var accountId = _tokenManager.AccountId!;
 
-        // Build scrape requests, filtering to only charted instruments per song
-        var scrapeRequests = matched.Select(song =>
+        // Build scrape requests — query all instruments for every song
+        var scrapeRequests = matched.Select(song => new GlobalLeaderboardScraper.SongScrapeRequest
         {
-            var available = GlobalLeaderboardScraper.GetAvailableInstruments(song);
-            var skipped = GlobalLeaderboardScraper.AllInstruments.Except(available).ToList();
-            if (skipped.Count > 0)
-                _log.LogInformation("[{Title}] Skipping {Count} uncharted instruments: {Instruments}",
-                    song.track.tt, skipped.Count, string.Join(", ", skipped));
-
-            return new GlobalLeaderboardScraper.SongScrapeRequest
-            {
-                SongId = song.track.su,
-                Instruments = available,
-                Label = song.track.tt,
-            };
+            SongId = song.track.su,
+            Instruments = GlobalLeaderboardScraper.AllInstruments,
+            Label = song.track.tt,
         }).ToList();
 
         _log.LogInformation("Scraping {SongCount} song(s) across all instruments (DOP={Dop})...",
@@ -274,7 +443,7 @@ public sealed class ScraperWorker : BackgroundService
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var allResults = await _globalScraper.ScrapeManySongsAsync(
-            scrapeRequests, accessToken, accountId, opts.DegreeOfParallelism, ct);
+            scrapeRequests, accessToken, accountId, opts.DegreeOfParallelism, onSongComplete: null, ct);
         sw.Stop();
 
         // Grand summary
@@ -310,29 +479,5 @@ public sealed class ScraperWorker : BackgroundService
                     _log.LogInformation("    ... and {More} more entries", result.Entries.Count - 3);
             }
         }
-    }
-
-    // ─── Logging helpers ────────────────────────────────────────
-
-    private void LogInstrumentation(FestivalService service, string result)
-    {
-        var (improved, empty, errors, requests, bytes, elapsed) = service.GetInstrumentation();
-        _log.LogInformation(
-            "Scrape pass {Result}. Improved={Improved}, Empty={Empty}, Errors={Errors}, " +
-            "Requests={Requests}, Bytes={Bytes}, Elapsed={Elapsed:F1}s",
-            result, improved, empty, errors, requests, bytes, elapsed);
-    }
-
-    private void PrintTracker(string instrument, ScoreTracker? tracker)
-    {
-        if (tracker is null || !tracker.initialized)
-        {
-            _log.LogInformation("  {Instrument}: (no data)", instrument);
-            return;
-        }
-        _log.LogInformation(
-            "  {Instrument}: Score={Score}, Rank={Rank}, Stars={Stars}, Accuracy={Accuracy}%, FC={FC}",
-            instrument, tracker.maxScore, tracker.rank, tracker.numStars,
-            tracker.percentHit, tracker.isFullCombo ? "YES" : "no");
     }
 }

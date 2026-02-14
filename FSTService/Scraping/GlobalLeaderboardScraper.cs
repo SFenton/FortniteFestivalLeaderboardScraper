@@ -52,10 +52,12 @@ public sealed class GlobalLeaderboardScraper
 
     private readonly HttpClient _http;
     private readonly ILogger<GlobalLeaderboardScraper> _log;
+    private readonly ScrapeProgressTracker _progress;
 
-    public GlobalLeaderboardScraper(HttpClient http, ILogger<GlobalLeaderboardScraper> log)
+    public GlobalLeaderboardScraper(HttpClient http, ScrapeProgressTracker progress, ILogger<GlobalLeaderboardScraper> log)
     {
         _http = http;
+        _progress = progress;
         _log = log;
     }
 
@@ -140,10 +142,14 @@ public sealed class GlobalLeaderboardScraper
             .ToDictionary(r => r.Instrument, r => r.Entry!);
     }
 
-    // ─── Single page fetch ──────────────────────────
+    // ─── Single page fetch (with retry) ─────────────
+
+    /// <summary>Max retries for transient HTTP failures (429, 5xx, timeouts).</summary>
+    private const int MaxRetries = 3;
 
     /// <summary>
-    /// Fetch and parse a single leaderboard page. Returns null on failure.
+    /// Fetch and parse a single leaderboard page with automatic retry on
+    /// transient failures (429, 5xx, network errors, timeouts).
     /// Thread-safe (no shared mutable state).
     /// </summary>
     private async Task<(ParsedPage? Page, int BodyLength)> FetchPageAsync(
@@ -152,35 +158,122 @@ public sealed class GlobalLeaderboardScraper
         int page,
         string accessToken,
         string accountId,
+        AdaptiveConcurrencyLimiter? limiter,
         CancellationToken ct)
     {
         var url = $"{EventsBase}/api/v1/leaderboards/FNFestival/alltime_{songId}_{instrument}" +
                   $"/alltime/{accountId}?page={page}&rank=0&appId=Fortnite&showLiveSessions=false";
 
-        var req = new HttpRequestMessage(HttpMethod.Get, url);
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-
-        var res = await _http.SendAsync(req, ct);
-
-        if (!res.IsSuccessStatusCode)
+        for (int attempt = 0; attempt <= MaxRetries; attempt++)
         {
-            _log.LogWarning("Leaderboard request failed for {Song}/{Instrument} page {Page}: {Status}",
-                songId, instrument, page, res.StatusCode);
+            if (attempt > 0)
+            {
+                // Exponential backoff: 500ms, 1s, 2s
+                var backoff = TimeSpan.FromMilliseconds(500 * Math.Pow(2, attempt - 1));
+                await Task.Delay(backoff, ct);
+            }
+
+            HttpResponseMessage res;
+            try
+            {
+                var req = new HttpRequestMessage(HttpMethod.Get, url);
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                res = await _http.SendAsync(req, ct);
+            }
+            catch (HttpRequestException ex) when (attempt < MaxRetries)
+            {
+                _log.LogWarning("HTTP error for {Song}/{Instrument} page {Page} (attempt {Attempt}): {Error}",
+                    songId, instrument, page, attempt + 1, ex.Message);
+                _progress.ReportRetry();
+                limiter?.ReportFailure();
+                continue;
+            }
+            catch (TaskCanceledException) when (!ct.IsCancellationRequested && attempt < MaxRetries)
+            {
+                _log.LogWarning("Timeout for {Song}/{Instrument} page {Page} (attempt {Attempt})",
+                    songId, instrument, page, attempt + 1);
+                _progress.ReportRetry();
+                limiter?.ReportFailure();
+                continue;
+            }
+
+            if (res.IsSuccessStatusCode)
+            {
+                await using var stream = await res.Content.ReadAsStreamAsync(ct);
+                var contentLength = (int)(res.Content.Headers.ContentLength ?? 0);
+                var parsed = await ParsePageAsync(stream, ct);
+
+                if (parsed is not null)
+                {
+                    limiter?.ReportSuccess();
+                    return (parsed, contentLength > 0 ? contentLength : parsed.EstimatedBytes);
+                }
+
+                // Parse failure on a 200 — read body for diagnostics
+                string parseBody = "";
+                try
+                {
+                    // Stream already consumed; re-request to peek at body
+                    // (stream is not seekable, so we can't rewind)
+                    parseBody = $"ContentLength={contentLength}, ContentType={res.Content.Headers.ContentType}";
+                }
+                catch { }
+
+                if (attempt < MaxRetries)
+                {
+                    _log.LogWarning("Parse failure for {Song}/{Instrument} page {Page} (attempt {Attempt}): {Detail}",
+                        songId, instrument, page, attempt + 1, parseBody);
+                    _progress.ReportRetry();
+                    limiter?.ReportFailure();
+                    continue;
+                }
+
+                _log.LogWarning("Failed to parse {Song}/{Instrument} page {Page} after {Attempts} attempts: {Detail}",
+                    songId, instrument, page, MaxRetries + 1, parseBody);
+                return (null, 0);
+            }
+
+            var statusCode = (int)res.StatusCode;
+            bool retryable = statusCode == 429 || statusCode >= 500;
+
+            // Read a snippet of the error response body for diagnostics
+            string errorBody = "";
+            try
+            {
+                var body = await res.Content.ReadAsStringAsync(ct);
+                errorBody = body.Length > 200 ? body[..200] : body;
+            }
+            catch { }
+
+            if (retryable && attempt < MaxRetries)
+            {
+                // Honor Retry-After header on 429
+                if (statusCode == 429 && res.Headers.RetryAfter?.Delta is TimeSpan retryAfter)
+                {
+                    _log.LogWarning("Rate-limited on {Song}/{Instrument} page {Page}, waiting {Delay:F1}s: {Body}",
+                        songId, instrument, page, retryAfter.TotalSeconds, errorBody);
+                    _progress.ReportRetry();
+                    limiter?.ReportFailure();
+                    res.Dispose();
+                    await Task.Delay(retryAfter, ct);
+                    continue;
+                }
+
+                _log.LogWarning("{StatusCode} for {Song}/{Instrument} page {Page} (attempt {Attempt}): {Body}",
+                    statusCode, songId, instrument, page, attempt + 1, errorBody);
+                _progress.ReportRetry();
+                limiter?.ReportFailure();
+                res.Dispose();
+                continue;
+            }
+
+            _log.LogWarning("Leaderboard request failed for {Song}/{Instrument} page {Page}: {StatusCode} {Body}",
+                songId, instrument, page, statusCode, errorBody);
+            res.Dispose();
             return (null, 0);
         }
 
-        // Stream-parse to avoid large string allocations
-        await using var stream = await res.Content.ReadAsStreamAsync(ct);
-        var contentLength = (int)(res.Content.Headers.ContentLength ?? 0);
-        var parsed = await ParsePageAsync(stream, ct);
-
-        if (parsed is null)
-        {
-            _log.LogWarning("Failed to parse leaderboard page for {Song}/{Instrument} page {Page}",
-                songId, instrument, page);
-        }
-
-        return (parsed, contentLength > 0 ? contentLength : parsed?.EstimatedBytes ?? 0);
+        return (null, 0);
     }
 
     // ─── Single instrument (parallel pages) ─────────
@@ -188,30 +281,38 @@ public sealed class GlobalLeaderboardScraper
     /// <summary>
     /// Scrape all pages of a single leaderboard (one song + one instrument).
     /// Page 0 is fetched first to discover totalPages, then pages 1…N are
-    /// fetched concurrently, throttled by <paramref name="semaphore"/>.
+    /// fetched concurrently, throttled by <paramref name="limiter"/>.
     /// </summary>
     public async Task<GlobalLeaderboardResult> ScrapeLeaderboardAsync(
         string songId,
         string instrument,
         string accessToken,
         string accountId,
-        SemaphoreSlim? semaphore = null,
+        AdaptiveConcurrencyLimiter? limiter = null,
         CancellationToken ct = default)
     {
         // ── Page 0: discover totalPages ──
-        if (semaphore is not null) await semaphore.WaitAsync(ct);
+        if (limiter is not null) await limiter.WaitAsync(ct);
         (ParsedPage? firstPage, int firstLen) page0;
         try
         {
-            page0 = await FetchPageAsync(songId, instrument, 0, accessToken, accountId, ct);
+            page0 = await FetchPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct);
         }
         finally
         {
-            semaphore?.Release();
+            limiter?.Release();
+        }
+
+        // Report page-0 to progress tracker (even if empty)
+        if (page0.firstPage is not null)
+        {
+            _progress.ReportPage0(page0.firstPage.TotalPages > 0 ? page0.firstPage.TotalPages : 1);
+            _progress.ReportPageFetched(page0.firstLen);
         }
 
         if (page0.firstPage is null || page0.firstPage.TotalPages == 0)
         {
+            _progress.ReportLeaderboardComplete(instrument);
             return new GlobalLeaderboardResult
             {
                 SongId = songId,
@@ -225,6 +326,7 @@ public sealed class GlobalLeaderboardScraper
         }
 
         int totalPages = page0.firstPage.TotalPages;
+
         var allEntries = new ConcurrentBag<(int Page, List<LeaderboardEntry> Entries)>();
         allEntries.Add((0, page0.firstPage.Entries));
 
@@ -233,28 +335,31 @@ public sealed class GlobalLeaderboardScraper
 
         if (totalPages > 1)
         {
-            // ── Pages 1…N in parallel ──
-            var tasks = new List<Task>();
+            // ── Pages 1…N in parallel (no Task.Run — pure async I/O) ──
+            var tasks = new List<Task>(totalPages - 1);
             for (int p = 1; p < totalPages; p++)
             {
                 int pageNum = p; // capture
-                tasks.Add(Task.Run(async () =>
+                tasks.Add(FetchAndCollectPageAsync(pageNum));
+            }
+
+            async Task FetchAndCollectPageAsync(int pageNum)
+            {
+                if (limiter is not null) await limiter.WaitAsync(ct);
+                try
                 {
-                    if (semaphore is not null) await semaphore.WaitAsync(ct);
-                    try
-                    {
-                        var (parsed, bodyLen) = await FetchPageAsync(
-                            songId, instrument, pageNum, accessToken, accountId, ct);
-                        Interlocked.Increment(ref requestCount);
-                        Interlocked.Add(ref totalBytes, bodyLen);
-                        if (parsed is not null)
-                            allEntries.Add((pageNum, parsed.Entries));
-                    }
-                    finally
-                    {
-                        semaphore?.Release();
-                    }
-                }, ct));
+                    var (parsed, bodyLen) = await FetchPageAsync(
+                        songId, instrument, pageNum, accessToken, accountId, limiter, ct);
+                    Interlocked.Increment(ref requestCount);
+                    Interlocked.Add(ref totalBytes, bodyLen);
+                    _progress.ReportPageFetched(bodyLen);
+                    if (parsed is not null)
+                        allEntries.Add((pageNum, parsed.Entries));
+                }
+                finally
+                {
+                    limiter?.Release();
+                }
             }
 
             await Task.WhenAll(tasks);
@@ -265,6 +370,8 @@ public sealed class GlobalLeaderboardScraper
             .OrderBy(x => x.Page)
             .SelectMany(x => x.Entries)
             .ToList();
+
+        _progress.ReportLeaderboardComplete(instrument);
 
         return new GlobalLeaderboardResult
         {
@@ -280,8 +387,8 @@ public sealed class GlobalLeaderboardScraper
 
     /// <summary>
     /// Scrape all instruments for a single song, all in parallel.
-    /// When called standalone, creates its own semaphore; when called from
-    /// <see cref="ScrapeManySongsAsync"/>, shares the cross-song semaphore.
+    /// When called standalone, creates its own limiter; when called from
+    /// <see cref="ScrapeManySongsAsync"/>, shares the cross-song adaptive limiter.
     /// </summary>
     public async Task<List<GlobalLeaderboardResult>> ScrapeSongAsync(
         string songId,
@@ -289,28 +396,22 @@ public sealed class GlobalLeaderboardScraper
         string accountId,
         IEnumerable<string>? instruments = null,
         int maxConcurrency = DefaultMaxConcurrency,
-        SemaphoreSlim? sharedSemaphore = null,
+        AdaptiveConcurrencyLimiter? sharedLimiter = null,
         CancellationToken ct = default)
     {
         var instList = (instruments ?? AllInstruments).ToList();
-        var semaphore = sharedSemaphore ?? new SemaphoreSlim(maxConcurrency, maxConcurrency);
+        var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(
+            maxConcurrency, 256, 2048,
+            _log);
 
         // Launch all instruments in parallel
         var tasks = instList.Select(inst =>
-            ScrapeLeaderboardAsync(songId, inst, accessToken, accountId, semaphore, ct))
-            .ToList();
+        {
+            return ScrapeLeaderboardAsync(songId, inst, accessToken, accountId, limiter, ct);
+        }).ToList();
 
         var resultsArr = await Task.WhenAll(tasks);
-        var results = resultsArr.ToList();
-
-        foreach (var r in results)
-        {
-            _log.LogInformation("  {Instrument}: {Entries} entries across {Pages}/{TotalPages} pages ({Requests} reqs, {Bytes} bytes)",
-                r.Instrument, r.Entries.Count, r.PagesScraped, r.TotalPages,
-                r.Requests, r.BytesReceived);
-        }
-
-        return results;
+        return resultsArr.ToList();
     }
 
     /// <summary>
@@ -329,18 +430,26 @@ public sealed class GlobalLeaderboardScraper
     /// semaphore across ALL songs × instruments × pages.  This keeps the
     /// Epic API at a steady request rate without idle gaps between songs.
     /// </summary>
+    /// <param name="onSongComplete">
+    /// Optional callback invoked as each song completes, enabling pipelined
+    /// persistence (disk I/O overlaps with remaining network I/O).
+    /// </param>
     /// <returns>Dictionary keyed by songId → list of per-instrument results.</returns>
     public async Task<Dictionary<string, List<GlobalLeaderboardResult>>> ScrapeManySongsAsync(
         IReadOnlyList<SongScrapeRequest> requests,
         string accessToken,
         string accountId,
         int maxConcurrency = DefaultMaxConcurrency,
+        Func<string, List<GlobalLeaderboardResult>, ValueTask>? onSongComplete = null,
         CancellationToken ct = default)
     {
-        var semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+        using var limiter = new AdaptiveConcurrencyLimiter(
+            maxConcurrency, minDop: 256, maxDop: 2048,
+            _log);
+        _progress.SetAdaptiveLimiter(limiter);
         var results = new ConcurrentDictionary<string, List<GlobalLeaderboardResult>>();
 
-        _log.LogInformation("Starting multi-song scrape: {SongCount} songs, DOP={MaxConcurrency}",
+        _log.LogInformation("Starting multi-song scrape: {SongCount} songs, DOP={MaxConcurrency} (adaptive)",
             requests.Count, maxConcurrency);
 
         var tasks = requests.Select(async req =>
@@ -348,18 +457,21 @@ public sealed class GlobalLeaderboardScraper
             var songResults = await ScrapeSongAsync(
                 req.SongId, accessToken, accountId,
                 instruments: req.Instruments,
-                sharedSemaphore: semaphore,
+                sharedLimiter: limiter,
                 ct: ct);
 
             results[req.SongId] = songResults;
 
-            var totalEntries = songResults.Sum(r => r.Entries.Count);
-            var totalReqs = songResults.Sum(r => r.Requests);
-            _log.LogInformation("[{Label}] done — {Entries} entries, {Reqs} requests",
-                req.Label ?? req.SongId, totalEntries, totalReqs);
+            // Fire callback so caller can persist immediately (pipelined).
+            // Report song-level progress AFTER the callback so that the
+            // progress counter doesn't race ahead of actual persistence.
+            if (onSongComplete is not null)
+                await onSongComplete(req.SongId, songResults);
+            _progress.ReportSongComplete();
         }).ToList();
 
         await Task.WhenAll(tasks);
+        _progress.SetAdaptiveLimiter(null);
 
         return new Dictionary<string, List<GlobalLeaderboardResult>>(results);
     }

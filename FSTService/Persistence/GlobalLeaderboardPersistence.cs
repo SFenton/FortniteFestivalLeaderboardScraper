@@ -1,0 +1,361 @@
+using System.Threading.Channels;
+using FSTService.Scraping;
+
+namespace FSTService.Persistence;
+
+/// <summary>
+/// Coordinates the per-instrument sharded databases and the central meta DB.
+/// This is the single entry point that <see cref="ScraperWorker"/> uses to
+/// persist global leaderboard results.
+///
+/// During a scrape pass, persistence is fully pipelined via per-instrument
+/// <see cref="Channel{T}"/> writers.  Each of the 6 instruments has its own
+/// dedicated writer task that drains work items and writes to its own SQLite
+/// file — zero cross-instrument contention.
+///
+/// File layout (all under the configured data directory):
+///   fst-meta.db                  ← ScrapeLog, ScoreHistory, AccountNames, RegisteredUsers
+///   fst-Solo_Guitar.db           ← LeaderboardEntries for Guitar
+///   fst-Solo_Bass.db             ← LeaderboardEntries for Bass
+///   …one per instrument…
+/// </summary>
+public sealed class GlobalLeaderboardPersistence : IDisposable
+{
+    private readonly Dictionary<string, InstrumentDatabase> _instrumentDbs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly MetaDatabase _metaDb;
+    private readonly ILogger<GlobalLeaderboardPersistence> _log;
+    private readonly ILoggerFactory _loggerFactory;
+    private readonly string _dataDir;
+
+    /// <summary>The meta database (ScrapeLog, ScoreHistory, etc.).</summary>
+    public MetaDatabase Meta => _metaDb;
+
+    public GlobalLeaderboardPersistence(string dataDir, MetaDatabase metaDb,
+                                        ILoggerFactory loggerFactory,
+                                        ILogger<GlobalLeaderboardPersistence> log)
+    {
+        _dataDir = dataDir;
+        _metaDb = metaDb;
+        _loggerFactory = loggerFactory;
+        _log = log;
+
+        if (!Directory.Exists(dataDir))
+            Directory.CreateDirectory(dataDir);
+    }
+
+    /// <summary>
+    /// Ensure all schemas exist (meta DB + one instrument DB per known instrument).
+    /// Call once at startup before the first scrape pass.
+    /// </summary>
+    public void Initialize()
+    {
+        _metaDb.EnsureSchema();
+
+        foreach (var instrument in GlobalLeaderboardScraper.AllInstruments)
+        {
+            GetOrCreateInstrumentDb(instrument);
+        }
+
+        _log.LogInformation("GlobalLeaderboardPersistence initialized. " +
+                            "{InstrumentCount} instrument DBs in {DataDir}",
+                            _instrumentDbs.Count, _dataDir);
+    }
+
+    /// <summary>
+    /// Get (or create on first access) the <see cref="InstrumentDatabase"/>
+    /// for a given instrument key (e.g. "Solo_Guitar").
+    /// New instruments added in the future are automatically handled.
+    /// </summary>
+    public InstrumentDatabase GetOrCreateInstrumentDb(string instrument)
+    {
+        if (_instrumentDbs.TryGetValue(instrument, out var db))
+            return db;
+
+        var dbPath = Path.Combine(_dataDir, $"fst-{instrument}.db");
+        db = new InstrumentDatabase(
+            instrument, dbPath,
+            _loggerFactory.CreateLogger<InstrumentDatabase>());
+        db.EnsureSchema();
+        _instrumentDbs[instrument] = db;
+
+        _log.LogDebug("Opened instrument DB: {Instrument} → {Path}", instrument, dbPath);
+        return db;
+    }
+
+    /// <summary>
+    /// Persist a single <see cref="GlobalLeaderboardResult"/> (one song + one instrument)
+    /// by UPSERTing into the correct instrument DB. Optionally detects score changes
+    /// for registered users.
+    /// </summary>
+    /// <returns>
+    /// The number of rows affected and the set of account IDs seen in this result.
+    /// </returns>
+    public PersistResult PersistResult(GlobalLeaderboardResult result,
+                                       IReadOnlySet<string>? registeredAccountIds = null)
+    {
+        var db = GetOrCreateInstrumentDb(result.Instrument);
+
+        // ── Pre-UPSERT: snapshot registered users' current state for change detection ──
+        Dictionary<string, LeaderboardEntry>? previousState = null;
+        if (registeredAccountIds is { Count: > 0 })
+        {
+            previousState = new Dictionary<string, LeaderboardEntry>(StringComparer.OrdinalIgnoreCase);
+            foreach (var entry in result.Entries)
+            {
+                if (registeredAccountIds.Contains(entry.AccountId))
+                {
+                    var existing = db.GetEntry(result.SongId, entry.AccountId);
+                    if (existing is not null)
+                        previousState[entry.AccountId] = existing;
+                }
+            }
+        }
+
+        // ── UPSERT all entries in one transaction ──
+        var rowsAffected = db.UpsertEntries(result.SongId, result.Entries);
+
+        // ── Post-UPSERT: detect score changes for registered users ──
+        int changesDetected = 0;
+        var changedAccountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (previousState is not null)
+        {
+            foreach (var entry in result.Entries)
+            {
+                if (!registeredAccountIds!.Contains(entry.AccountId))
+                    continue;
+
+                if (previousState.TryGetValue(entry.AccountId, out var prev))
+                {
+                    // Existing entry — check if score actually changed
+                    if (entry.Score != prev.Score)
+                    {
+                        _metaDb.InsertScoreChange(
+                            result.SongId, result.Instrument, entry.AccountId,
+                            prev.Score, entry.Score, prev.Rank, entry.Rank);
+                        changesDetected++;
+                        changedAccountIds.Add(entry.AccountId);
+                    }
+                }
+                else
+                {
+                    // New entry for a registered user — record as a new score
+                    _metaDb.InsertScoreChange(
+                        result.SongId, result.Instrument, entry.AccountId,
+                        null, entry.Score, null, entry.Rank);
+                    changesDetected++;
+                    changedAccountIds.Add(entry.AccountId);
+                }
+            }
+        }
+
+        // Persist account IDs to meta DB so the name resolver can
+        // pick them up independently (survives crashes, enables --resolve-only).
+        _metaDb.InsertAccountIds(result.Entries.Select(e => e.AccountId));
+
+        return new PersistResult
+        {
+            RowsAffected = rowsAffected,
+            ScoreChangesDetected = changesDetected,
+            ChangedAccountIds = changedAccountIds,
+        };
+    }
+
+    /// <summary>
+    /// Get total entry counts across all instrument DBs (for status reporting).
+    /// </summary>
+    public Dictionary<string, long> GetEntryCounts()
+    {
+        var counts = new Dictionary<string, long>(_instrumentDbs.Count);
+        foreach (var (instrument, db) in _instrumentDbs)
+            counts[instrument] = db.GetTotalEntryCount();
+        return counts;
+    }
+
+    // ─── Channel-based pipelined persistence ────────────────────
+
+    /// <summary>Work item for the per-instrument writer channels.</summary>
+    public sealed class PersistWorkItem
+    {
+        public required GlobalLeaderboardResult Result { get; init; }
+        public IReadOnlySet<string>? RegisteredAccountIds { get; init; }
+    }
+
+    /// <summary>Aggregate counters collected during a pipelined scrape pass.</summary>
+    public sealed class PipelineAggregates
+    {
+        private int _totalEntries;
+        private int _totalChanges;
+        private int _songsWithData;
+        private readonly ConcurrentHashSet _changedAccountIds = new();
+
+        public int TotalEntries => _totalEntries;
+        public int TotalChanges => _totalChanges;
+        public int SongsWithData => _songsWithData;
+        public IReadOnlyCollection<string> ChangedAccountIds => _changedAccountIds;
+
+        public void AddEntries(int count) => Interlocked.Add(ref _totalEntries, count);
+        public void AddChanges(int count) => Interlocked.Add(ref _totalChanges, count);
+        public void IncrementSongsWithData() => Interlocked.Increment(ref _songsWithData);
+        public void AddChangedAccountIds(IEnumerable<string> ids) => _changedAccountIds.AddRange(ids);
+
+        /// <summary>Thread-safe HashSet built on ConcurrentDictionary.</summary>
+        private sealed class ConcurrentHashSet : IReadOnlyCollection<string>
+        {
+            private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _dict = new(StringComparer.OrdinalIgnoreCase);
+            public int Count => _dict.Count;
+            public void AddRange(IEnumerable<string> items) { foreach (var item in items) _dict.TryAdd(item, 0); }
+            public IEnumerator<string> GetEnumerator() => _dict.Keys.GetEnumerator();
+            System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+        }
+    }
+
+    private Dictionary<string, Channel<PersistWorkItem>>? _channels;
+    private List<Task>? _writerTasks;
+    private PipelineAggregates? _aggregates;
+
+    /// <summary>
+    /// Start per-instrument writer tasks.  Call once before the scrape loop begins.
+    /// Each instrument gets a bounded channel (capacity 32) and a dedicated writer task.
+    /// </summary>
+    public PipelineAggregates StartWriters(CancellationToken ct = default)
+    {
+        _aggregates = new PipelineAggregates();
+        _channels = new Dictionary<string, Channel<PersistWorkItem>>(StringComparer.OrdinalIgnoreCase);
+        _writerTasks = new List<Task>();
+
+        foreach (var instrument in _instrumentDbs.Keys)
+        {
+            var channel = Channel.CreateBounded<PersistWorkItem>(new BoundedChannelOptions(32)
+            {
+                SingleReader = true,
+                SingleWriter = false,
+                FullMode = BoundedChannelFullMode.Wait,
+            });
+            _channels[instrument] = channel;
+
+            var db = _instrumentDbs[instrument];
+            var agg = _aggregates;
+            var task = Task.Run(async () =>
+            {
+                await foreach (var item in channel.Reader.ReadAllAsync(ct))
+                {
+                    try
+                    {
+                        var persistResult = PersistResult(item.Result, item.RegisteredAccountIds);
+                        agg.AddChangedAccountIds(persistResult.ChangedAccountIds);
+                        agg.AddEntries(item.Result.Entries.Count);
+                        agg.AddChanges(persistResult.ScoreChangesDetected);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.LogError(ex, "Writer error for {Instrument}/{SongId}",
+                            item.Result.Instrument, item.Result.SongId);
+                    }
+                }
+            }, ct);
+
+            _writerTasks.Add(task);
+        }
+
+        _log.LogInformation("Started {Count} per-instrument writer tasks.", _writerTasks.Count);
+        return _aggregates;
+    }
+
+    /// <summary>
+    /// Enqueue a single instrument result for asynchronous persistence.
+    /// Non-blocking unless the channel is full (capacity 32), in which case
+    /// it applies back-pressure to the caller — naturally throttling the
+    /// scraper when persistence can't keep up.
+    /// </summary>
+    public async ValueTask EnqueueResultAsync(GlobalLeaderboardResult result,
+                                               IReadOnlySet<string>? registeredAccountIds,
+                                               CancellationToken ct = default)
+    {
+        if (_channels is null)
+            throw new InvalidOperationException("Writers not started. Call StartWriters() first.");
+
+        if (!_channels.TryGetValue(result.Instrument, out var channel))
+        {
+            _log.LogWarning("No writer channel for instrument {Instrument}. Dropping result.", result.Instrument);
+            return;
+        }
+
+        await channel.Writer.WriteAsync(new PersistWorkItem
+        {
+            Result = result,
+            RegisteredAccountIds = registeredAccountIds,
+        }, ct);
+    }
+
+    /// <summary>
+    /// Signal all writers that no more items will arrive, then wait for them
+    /// to drain.  Call after the scrape loop completes.
+    /// </summary>
+    public async Task DrainWritersAsync()
+    {
+        if (_channels is null || _writerTasks is null) return;
+
+        // Signal completion on all channels
+        foreach (var channel in _channels.Values)
+            channel.Writer.TryComplete();
+
+        // Wait for all writer tasks to finish draining
+        await Task.WhenAll(_writerTasks);
+
+        _log.LogInformation("All per-instrument writers drained.");
+        _channels = null;
+        _writerTasks = null;
+    }
+
+    /// <summary>
+    /// Get a player's scores across all instruments (player profile).
+    /// </summary>
+    public List<PlayerScoreDto> GetPlayerProfile(string accountId)
+    {
+        var allScores = new List<PlayerScoreDto>();
+        foreach (var (_, db) in _instrumentDbs)
+            allScores.AddRange(db.GetPlayerScores(accountId));
+        return allScores;
+    }
+
+    /// <summary>
+    /// Get the leaderboard for a specific song + instrument.
+    /// </summary>
+    public List<LeaderboardEntryDto>? GetLeaderboard(string songId, string instrument, int? top = null)
+    {
+        if (!_instrumentDbs.TryGetValue(instrument, out var db))
+            return null;
+        return db.GetLeaderboard(songId, top);
+    }
+
+    /// <summary>
+    /// Get a list of all known instrument keys.
+    /// </summary>
+    public IReadOnlyList<string> GetInstrumentKeys()
+        => _instrumentDbs.Keys.ToList();
+
+    public void Dispose()
+    {
+        foreach (var db in _instrumentDbs.Values)
+            db.Dispose();
+        _metaDb.Dispose();
+    }
+}
+
+/// <summary>
+/// Result of persisting one <see cref="GlobalLeaderboardResult"/>.
+/// </summary>
+public sealed class PersistResult
+{
+    /// <summary>Number of rows inserted or updated.</summary>
+    public int RowsAffected { get; init; }
+
+    /// <summary>Number of score changes detected for registered users.</summary>
+    public int ScoreChangesDetected { get; init; }
+
+    /// <summary>
+    /// Account IDs of registered users whose scores changed in this result.
+    /// Used to flag personal DB rebuilds.
+    /// </summary>
+    public HashSet<string> ChangedAccountIds { get; init; } = [];
+}

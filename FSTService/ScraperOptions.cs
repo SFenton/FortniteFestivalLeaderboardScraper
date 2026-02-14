@@ -28,7 +28,12 @@ public sealed class ScraperOptions
     public bool QueryProBass { get; set; } = true;
 
     /// <summary>
-    /// Path to the SQLite database file.
+    /// Root directory for all data files (instrument DBs, meta DB, core DB, credentials).
+    /// </summary>
+    public string DataDirectory { get; set; } = "data";
+
+    /// <summary>
+    /// Path to the SQLite database file (core song catalog / personal scores).
     /// </summary>
     public string DatabasePath { get; set; } = "data/fst-service.db";
 
@@ -42,6 +47,13 @@ public sealed class ScraperOptions
     /// Set via <c>--setup</c> CLI argument.
     /// </summary>
     public bool SetupOnly { get; set; }
+
+    /// <summary>
+    /// When true, skip scraping and only run account name resolution
+    /// against unresolved IDs already in the meta DB. Then exit.
+    /// Set via <c>--resolve-only</c> CLI argument.
+    /// </summary>
+    public bool ResolveOnly { get; set; }
 
     /// <summary>
     /// When set, fetch scores for a single matching song and exit.
