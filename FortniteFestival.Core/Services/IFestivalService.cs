@@ -59,5 +59,14 @@ namespace FortniteFestival.Core.Services
             IEnumerable<InstrumentType> instruments,
             Settings settings
         );
+
+        /// <summary>
+        /// Fetch scores using a pre-obtained token (for service/headless scenarios).
+        /// </summary>
+        Task<bool> FetchScoresWithTokenAsync(
+            Auth.ExchangeCodeToken token,
+            IList<string> filteredSongIds,
+            Settings settings
+        );
     }
 }

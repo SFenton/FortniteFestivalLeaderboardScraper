@@ -474,6 +474,44 @@ namespace FortniteFestival.Core.Services
                 _runSw.Elapsed.TotalSeconds
             );
 
+        /// <summary>
+        /// Fetch scores using a pre-obtained token (service/headless path).
+        /// Skips the exchange-code-to-token step entirely.
+        /// </summary>
+        public async Task<bool> FetchScoresWithTokenAsync(
+            ExchangeCodeToken token,
+            IList<string> filteredSongIds,
+            Settings settings
+        )
+        {
+            if (IsFetching)
+                return false;
+            if (!_songSyncComplete || !_imagesSyncComplete)
+                return false;
+            _authFailed = false;
+            _unauthorizedLogged = false;
+            IsFetching = true;
+            _songsCompletedThisPass.Clear();
+            _songsCurrentlyUpdating.Clear();
+            while (_prioritizedSongIds.TryDequeue(out _)) { }
+            _runSw.Restart();
+            _instImproved = 0; _instEmpty = 0; _instErrors = 0; _instRequests = 0; _instBytes = 0;
+
+            if (token == null || string.IsNullOrEmpty(token.access_token))
+            {
+                LogLine("FetchScoresWithTokenAsync: token is null or has empty access_token.");
+                IsFetching = false;
+                return false;
+            }
+            if (!await VerifyTokenAsync(token).ConfigureAwait(false))
+            {
+                LogLine("FetchScoresWithTokenAsync: token verification failed.");
+                IsFetching = false;
+                return false;
+            }
+            return await FetchScoresInternalAsync(token, settings?.DegreeOfParallelism ?? 16, filteredSongIds, settings).ConfigureAwait(false);
+        }
+
         public async Task<bool> FetchScoresAsync(
             string exchangeCode,
             int degreeOfParallelism,
@@ -517,6 +555,16 @@ namespace FortniteFestival.Core.Services
                 IsFetching = false;
                 return false;
             }
+            return await FetchScoresInternalAsync(token, degreeOfParallelism, filteredSongIds, settings).ConfigureAwait(false);
+        }
+
+        private async Task<bool> FetchScoresInternalAsync(
+            ExchangeCodeToken token,
+            int degreeOfParallelism,
+            IList<string> filteredSongIds,
+            Settings settings
+        )
+        {
             var prioritized = Songs
                 .Select((s, i) => new { s, i })
                 .OrderBy(x => _scores.ContainsKey(x.s.track.su) ? 1 : 0)
