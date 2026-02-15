@@ -9,7 +9,7 @@ namespace FSTService.Auth;
 /// – Persists refresh tokens to disk for cross-restart persistence
 /// – Falls back to device-code flow when no credentials exist
 /// </summary>
-public sealed class TokenManager
+public class TokenManager
 {
     private readonly EpicAuthService _auth;
     private readonly ICredentialStore _store;
@@ -34,12 +34,12 @@ public sealed class TokenManager
     /// <summary>
     /// The currently authenticated Epic account ID, or null if not authenticated.
     /// </summary>
-    public string? AccountId => _currentToken?.AccountId;
+    public virtual string? AccountId => _currentToken?.AccountId;
 
     /// <summary>
     /// Get a valid access token, refreshing or re-authenticating as needed.
     /// </summary>
-    public async Task<string?> GetAccessTokenAsync(CancellationToken ct = default)
+    public virtual async Task<string?> GetAccessTokenAsync(CancellationToken ct = default)
     {
         await _lock.WaitAsync(ct);
         try
@@ -85,7 +85,7 @@ public sealed class TokenManager
     /// Perform the interactive device code setup flow.
     /// Blocks until the user completes login in their browser.
     /// </summary>
-    public async Task<bool> PerformDeviceCodeSetupAsync(CancellationToken ct = default)
+    public virtual async Task<bool> PerformDeviceCodeSetupAsync(CancellationToken ct = default)
     {
         _log.LogInformation("Starting device code login flow...");
 

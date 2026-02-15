@@ -93,6 +93,7 @@ namespace FortniteFestival.Core
 
     public class V1SessionHistory
     {
+        public string endTime { get; set; }
         public V1TrackedStats trackedStats { get; set; }
     }
 

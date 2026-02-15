@@ -251,17 +251,44 @@ For one registered user:
    b. This is the season where the current high score was set
    c. Query seasons 1, 2, ..., S for this song/instrument/account
       - Use LookupAccountAsync with the seasonal window instead of "alltime"
-      - Each season's response gives us the score at the END of that season
-   d. Walk backwards from S: if S=7, query seasons 1→7
-      - But be smart: binary search or sequential with early termination
-      - If season 3 returns null → user didn't play before season 4
-      - If season 3 and 4 return the same score → no improvement in S4
-   e. Build ScoreHistory entries for each detected change:
-      - First play: season N, score X
-      - Improvement: season M, score Y (Y > X)
-      - Improvement: season S, score Z (Z > Y) ← this is the current all-time score
+      - Each season's response gives us the best score AND endTime for that season
+   d. The API returns `endTime` on each sessionHistory entry — an ISO 8601
+      timestamp of when the session was played (e.g. "2024-04-24T09:55:59.467Z").
+      This gives us the exact datetime the high score was set.
+   e. Collect all season responses into a list of
+      (score, accuracy, fc, stars, season, rank, percentile, endTime).
+   f. Sort by endTime ascending.
+   g. Walk through the sorted list, keeping only entries where the score
+      strictly ascends (each score > previous kept score). This produces
+      the progression timeline — only the moments the player improved:
+      - First play: season N, score X, rank R, endTime T1
+      - Improvement: season M, score Y (Y > X), rank R', endTime T2
+      - Improvement: season S, score Z (Z > Y), rank R'', endTime T3
+   h. Build ScoreHistory entries for each kept entry.
+      Each entry is a **point-in-time snapshot** capturing the full state
+      at the moment the score was set — even if rank degrades later:
+      - OldScore / NewScore (score delta)
+      - OldRank / NewRank (rank at the time — preserved as a historical snapshot)
+      - Accuracy (percentage achieved on that play)
+      - IsFullCombo (whether FC was achieved on that play)
+      - Stars (star/difficulty rating achieved on that play)
+      - Percentile (percentile ranking at the time — snapshot, not updated)
+      - Season (the season in which the score was set)
+      - ScoreAchievedAt (the endTime from the API — exact play timestamp)
 3. Insert all ScoreHistory entries into fst-meta.db → ScoreHistory
 4. Mark the user's history as "reconstructed" so we don't do it again
+
+**Important:** Ranks and percentiles stored in ScoreHistory are **snapshots** —
+they reflect the player's position at the time the score was recorded. They are
+never retroactively updated when other players surpass the user. This gives
+users an accurate timeline of their achievements ("I was rank 42 when I set
+this score") rather than a constantly-shifting view.
+
+**endTime source:** The V1 leaderboard API returns `endTime` on each
+`sessionHistory` entry (see [FNLookup docs](https://github.com/FNLookup/data/blob/main/festival/docs/Leaderboards/Public.md)).
+This is the authoritative timestamp for when the score was achieved. For
+live-scraped score changes, `endTime` is also captured and stored as
+`ScoreAchievedAt` in ScoreHistory (with `ChangedAt` being the scrape time).
 ```
 
 ### Smart Querying Strategy
@@ -481,7 +508,23 @@ Backfilled entries affect neighborhood queries for Opps. Once the user's low-ran
 
 ### ScoreHistory
 
-History reconstruction writes to `ScoreHistory` in the meta DB — the same table used by live change detection. The `ChangedAt` field for reconstructed entries should use a synthetic timestamp (e.g., the season's end date) rather than "now", so the history timeline makes sense.
+History reconstruction writes to `ScoreHistory` in the meta DB — the same table used by live change detection. For reconstructed entries, `ScoreAchievedAt` holds the API's `endTime` (the exact timestamp the score was set) while `ChangedAt` is the time the reconstruction ran.
+
+Each `ScoreHistory` row is a **point-in-time snapshot**. In addition to OldScore/NewScore and OldRank/NewRank, it captures:
+
+| Column | Description |
+|--------|-------------|
+| `Accuracy` | Accuracy percentage achieved on this play |
+| `IsFullCombo` | Whether a full combo was achieved |
+| `Stars` | Star rating / difficulty level achieved |
+| `Percentile` | Percentile ranking at the time the score was recorded |
+| `Season` | The season in which the score was set |
+| `ScoreAchievedAt` | ISO 8601 timestamp when the session ended (from `endTime` in the API). Exact play time. |
+| `ChangedAt` | When the row was written (scrape time for live detection, reconstruction time for backfill) |
+
+These values are **never retroactively updated**. Even if the user's rank drops later as other players surpass them, the recorded rank/percentile reflects the state when the score was set. This gives users an accurate historical timeline ("I was rank 42 in the top 0.3% when I set this score") and supports features like "personal best rank" tracking.
+
+For **reconstructed** entries (from seasonal leaderboard queries), the API returns rank, accuracy, FC, stars, percentile, **and `endTime`** for the best session. The `endTime` is the real datetime the score was achieved — enabling accurate timeline graphs without relying on season boundaries.
 
 ---
 

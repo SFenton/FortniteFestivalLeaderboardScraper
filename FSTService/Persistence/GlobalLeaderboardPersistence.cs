@@ -131,7 +131,9 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                     {
                         _metaDb.InsertScoreChange(
                             result.SongId, result.Instrument, entry.AccountId,
-                            prev.Score, entry.Score, prev.Rank, entry.Rank);
+                            prev.Score, entry.Score, prev.Rank, entry.Rank,
+                            entry.Accuracy, entry.IsFullCombo, entry.Stars,
+                            entry.Percentile, entry.Season, entry.EndTime);
                         changesDetected++;
                         changedAccountIds.Add(entry.AccountId);
                     }
@@ -141,7 +143,9 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                     // New entry for a registered user — record as a new score
                     _metaDb.InsertScoreChange(
                         result.SongId, result.Instrument, entry.AccountId,
-                        null, entry.Score, null, entry.Rank);
+                        null, entry.Score, null, entry.Rank,
+                        entry.Accuracy, entry.IsFullCombo, entry.Stars,
+                        entry.Percentile, entry.Season, entry.EndTime);
                     changesDetected++;
                     changedAccountIds.Add(entry.AccountId);
                 }
@@ -187,16 +191,32 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         private int _totalChanges;
         private int _songsWithData;
         private readonly ConcurrentHashSet _changedAccountIds = new();
+        private readonly System.Collections.Concurrent.ConcurrentBag<(string AccountId, string SongId, string Instrument)>
+            _seenRegisteredEntries = new();
 
         public int TotalEntries => _totalEntries;
         public int TotalChanges => _totalChanges;
         public int SongsWithData => _songsWithData;
         public IReadOnlyCollection<string> ChangedAccountIds => _changedAccountIds;
 
+        /// <summary>
+        /// All (AccountId, SongId, Instrument) tuples for registered users whose entries
+        /// were present in the scraped pages this pass. Used by post-scrape refresh to
+        /// identify stale entries that need re-querying.
+        /// </summary>
+        public IReadOnlyCollection<(string AccountId, string SongId, string Instrument)>
+            SeenRegisteredEntries => _seenRegisteredEntries;
+
         public void AddEntries(int count) => Interlocked.Add(ref _totalEntries, count);
         public void AddChanges(int count) => Interlocked.Add(ref _totalChanges, count);
         public void IncrementSongsWithData() => Interlocked.Increment(ref _songsWithData);
         public void AddChangedAccountIds(IEnumerable<string> ids) => _changedAccountIds.AddRange(ids);
+
+        /// <summary>Record which registered user entries were seen in this pass.</summary>
+        public void AddSeenRegisteredEntries(IEnumerable<(string, string, string)> entries)
+        {
+            foreach (var e in entries) _seenRegisteredEntries.Add(e);
+        }
 
         /// <summary>Thread-safe HashSet built on ConcurrentDictionary.</summary>
         private sealed class ConcurrentHashSet : IReadOnlyCollection<string>
@@ -245,6 +265,15 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                         agg.AddChangedAccountIds(persistResult.ChangedAccountIds);
                         agg.AddEntries(item.Result.Entries.Count);
                         agg.AddChanges(persistResult.ScoreChangesDetected);
+
+                        // Track which registered users were seen in this result
+                        if (item.RegisteredAccountIds is { Count: > 0 })
+                        {
+                            var seen = item.Result.Entries
+                                .Where(e => item.RegisteredAccountIds.Contains(e.AccountId))
+                                .Select(e => (e.AccountId, item.Result.SongId, item.Result.Instrument));
+                            agg.AddSeenRegisteredEntries(seen);
+                        }
                     }
                     catch (Exception ex)
                     {

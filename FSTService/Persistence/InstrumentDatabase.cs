@@ -55,6 +55,7 @@ public sealed class InstrumentDatabase : IDisposable
                 Stars         INTEGER,
                 Season        INTEGER,
                 Percentile    REAL,
+                EndTime       TEXT,
                 FirstSeenAt   TEXT    NOT NULL,
                 LastUpdatedAt TEXT    NOT NULL,
                 PRIMARY KEY (SongId, AccountId)
@@ -73,6 +74,9 @@ public sealed class InstrumentDatabase : IDisposable
         // ── Migration: drop deprecated columns from existing DBs ──
         MigrateDropColumn(conn, "Rank");
         MigrateDropColumn(conn, "PointsEarned");
+
+        // ── Migration: add EndTime column to existing DBs ──
+        MigrateAddColumn(conn, "EndTime", "TEXT");
 
         // ── Recreate IX_Song with Score DESC ──
         using var createNewIdx = conn.CreateCommand();
@@ -103,9 +107,9 @@ public sealed class InstrumentDatabase : IDisposable
         cmd.Transaction = tx;
         cmd.CommandText = """
             INSERT INTO LeaderboardEntries
-                (SongId, AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, FirstSeenAt, LastUpdatedAt)
+                (SongId, AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime, FirstSeenAt, LastUpdatedAt)
             VALUES
-                (@songId, @accountId, @score, @accuracy, @fc, @stars, @season, @pct, @now, @now)
+                (@songId, @accountId, @score, @accuracy, @fc, @stars, @season, @pct, @endTime, @now, @now)
             ON CONFLICT(SongId, AccountId) DO UPDATE SET
                 Score         = excluded.Score,
                 Accuracy      = excluded.Accuracy,
@@ -113,6 +117,7 @@ public sealed class InstrumentDatabase : IDisposable
                 Stars         = excluded.Stars,
                 Season        = excluded.Season,
                 Percentile    = excluded.Percentile,
+                EndTime       = excluded.EndTime,
                 LastUpdatedAt = excluded.LastUpdatedAt
             WHERE Score != excluded.Score;
             """;
@@ -125,6 +130,7 @@ public sealed class InstrumentDatabase : IDisposable
         var pStars     = cmd.Parameters.Add("@stars", SqliteType.Integer);
         var pSeason    = cmd.Parameters.Add("@season", SqliteType.Integer);
         var pPct       = cmd.Parameters.Add("@pct", SqliteType.Real);
+        var pEndTime   = cmd.Parameters.Add("@endTime", SqliteType.Text);
         var pNow       = cmd.Parameters.Add("@now", SqliteType.Text);
 
         cmd.Prepare();
@@ -139,6 +145,7 @@ public sealed class InstrumentDatabase : IDisposable
             pStars.Value     = entry.Stars;
             pSeason.Value    = entry.Season;
             pPct.Value       = entry.Percentile;
+            pEndTime.Value   = (object?)entry.EndTime ?? DBNull.Value;
             pNow.Value       = now;
 
             affected += cmd.ExecuteNonQuery();
@@ -157,7 +164,7 @@ public sealed class InstrumentDatabase : IDisposable
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT Score, Accuracy, IsFullCombo, Stars, Season, Percentile
+            SELECT Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime
             FROM LeaderboardEntries
             WHERE SongId = @songId AND AccountId = @accountId;
             """;
@@ -176,6 +183,7 @@ public sealed class InstrumentDatabase : IDisposable
             Stars        = reader.IsDBNull(3) ? 0 : reader.GetInt32(3),
             Season       = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
             Percentile   = reader.IsDBNull(5) ? 0 : reader.GetDouble(5),
+            EndTime      = reader.IsDBNull(6) ? null : reader.GetString(6),
         };
     }
 
@@ -188,6 +196,15 @@ public sealed class InstrumentDatabase : IDisposable
         return (long)(cmd.ExecuteScalar() ?? 0);
     }
 
+    /// <summary>Get any single SongId from the database (for probing). Returns null if empty.</summary>
+    public string? GetAnySongId()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT SongId FROM LeaderboardEntries LIMIT 1;";
+        return cmd.ExecuteScalar() as string;
+    }
+
     /// <summary>
     /// Get the leaderboard for a song, ordered by rank.
     /// Optionally limit to top N entries.
@@ -197,8 +214,8 @@ public sealed class InstrumentDatabase : IDisposable
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = top.HasValue
-            ? "SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile FROM LeaderboardEntries WHERE SongId = @songId ORDER BY Score DESC LIMIT @top;"
-            : "SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile FROM LeaderboardEntries WHERE SongId = @songId ORDER BY Score DESC;";
+            ? "SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime FROM LeaderboardEntries WHERE SongId = @songId ORDER BY Score DESC LIMIT @top;"
+            : "SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime FROM LeaderboardEntries WHERE SongId = @songId ORDER BY Score DESC;";
         cmd.Parameters.AddWithValue("@songId", songId);
         if (top.HasValue)
             cmd.Parameters.AddWithValue("@top", top.Value);
@@ -219,7 +236,7 @@ public sealed class InstrumentDatabase : IDisposable
     {
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT SongId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile FROM LeaderboardEntries WHERE AccountId = @accountId ORDER BY SongId;";
+        cmd.CommandText = "SELECT SongId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime FROM LeaderboardEntries WHERE AccountId = @accountId ORDER BY SongId;";
         cmd.Parameters.AddWithValue("@accountId", accountId);
 
         var scores = new List<PlayerScoreDto>();
@@ -236,6 +253,7 @@ public sealed class InstrumentDatabase : IDisposable
                 Stars        = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
                 Season       = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
                 Percentile   = reader.IsDBNull(6) ? 0 : reader.GetDouble(6),
+                EndTime      = reader.IsDBNull(7) ? null : reader.GetString(7),
             });
         }
         return scores;
@@ -252,6 +270,7 @@ public sealed class InstrumentDatabase : IDisposable
             Stars        = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
             Season       = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
             Percentile   = reader.IsDBNull(6) ? 0 : reader.GetDouble(6),
+            EndTime      = reader.IsDBNull(7) ? null : reader.GetString(7),
         };
     }
 
@@ -314,5 +333,23 @@ public sealed class InstrumentDatabase : IDisposable
         drop.ExecuteNonQuery();
 
         _log.LogInformation("Migrated {Instrument}: dropped column {Column}", _instrument, columnName);
+    }
+
+    /// <summary>
+    /// Add a column to LeaderboardEntries if it doesn't already exist.
+    /// Safe to call repeatedly — no-ops when the column is already present.
+    /// </summary>
+    private void MigrateAddColumn(SqliteConnection conn, string columnName, string columnType)
+    {
+        using var check = conn.CreateCommand();
+        check.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('LeaderboardEntries') WHERE name = '{columnName}';";
+        var exists = (long)(check.ExecuteScalar() ?? 0);
+        if (exists > 0) return;
+
+        using var alter = conn.CreateCommand();
+        alter.CommandText = $"ALTER TABLE LeaderboardEntries ADD COLUMN {columnName} {columnType};";
+        alter.ExecuteNonQuery();
+
+        _log.LogInformation("Migrated {Instrument}: added column {Column} ({Type})", _instrument, columnName, columnType);
     }
 }

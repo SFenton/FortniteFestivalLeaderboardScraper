@@ -52,6 +52,12 @@ public sealed class MetaDatabase : IDisposable
                 NewScore    INTEGER,
                 OldRank     INTEGER,
                 NewRank     INTEGER,
+                Accuracy    INTEGER,
+                IsFullCombo INTEGER,
+                Stars       INTEGER,
+                Percentile  REAL,
+                Season      INTEGER,
+                ScoreAchievedAt TEXT,
                 ChangedAt   TEXT    NOT NULL
             );
 
@@ -74,8 +80,91 @@ public sealed class MetaDatabase : IDisposable
 
             CREATE INDEX IF NOT EXISTS IX_Reg_Account ON RegisteredUsers (AccountId);
 
+            CREATE TABLE IF NOT EXISTS UserSessions (
+                Id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                Username         TEXT    NOT NULL,
+                DeviceId         TEXT    NOT NULL,
+                RefreshTokenHash TEXT    NOT NULL UNIQUE,
+                Platform         TEXT,
+                IssuedAt         TEXT    NOT NULL,
+                ExpiresAt        TEXT    NOT NULL,
+                LastRefreshedAt  TEXT,
+                RevokedAt        TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_Sessions_Username ON UserSessions (Username);
+            CREATE INDEX IF NOT EXISTS IX_Sessions_Token    ON UserSessions (RefreshTokenHash) WHERE RevokedAt IS NULL;
+
+            CREATE TABLE IF NOT EXISTS BackfillStatus (
+                AccountId         TEXT    PRIMARY KEY,
+                Status            TEXT    NOT NULL DEFAULT 'pending',
+                SongsChecked      INTEGER NOT NULL DEFAULT 0,
+                EntriesFound      INTEGER NOT NULL DEFAULT 0,
+                TotalSongsToCheck INTEGER NOT NULL DEFAULT 0,
+                StartedAt         TEXT,
+                CompletedAt       TEXT,
+                LastResumedAt     TEXT,
+                ErrorMessage      TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS BackfillProgress (
+                AccountId   TEXT    NOT NULL,
+                SongId      TEXT    NOT NULL,
+                Instrument  TEXT    NOT NULL,
+                Checked     INTEGER NOT NULL DEFAULT 0,
+                EntryFound  INTEGER NOT NULL DEFAULT 0,
+                CheckedAt   TEXT,
+                PRIMARY KEY (AccountId, SongId, Instrument)
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_BfProgress_Account ON BackfillProgress (AccountId);
+
+            CREATE TABLE IF NOT EXISTS HistoryReconStatus (
+                AccountId             TEXT    PRIMARY KEY,
+                Status                TEXT    NOT NULL DEFAULT 'pending',
+                SongsProcessed        INTEGER NOT NULL DEFAULT 0,
+                TotalSongsToProcess   INTEGER NOT NULL DEFAULT 0,
+                SeasonsQueried        INTEGER NOT NULL DEFAULT 0,
+                HistoryEntriesFound   INTEGER NOT NULL DEFAULT 0,
+                StartedAt             TEXT,
+                CompletedAt           TEXT,
+                ErrorMessage          TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS HistoryReconProgress (
+                AccountId   TEXT    NOT NULL,
+                SongId      TEXT    NOT NULL,
+                Instrument  TEXT    NOT NULL,
+                Processed   INTEGER NOT NULL DEFAULT 0,
+                ProcessedAt TEXT,
+                PRIMARY KEY (AccountId, SongId, Instrument)
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_HrProgress_Account ON HistoryReconProgress (AccountId);
+
+            CREATE TABLE IF NOT EXISTS SeasonWindows (
+                SeasonNumber INTEGER PRIMARY KEY,
+                EventId      TEXT    NOT NULL,
+                WindowId     TEXT    NOT NULL,
+                DiscoveredAt TEXT    NOT NULL
+            );
+
             """;
         cmd.ExecuteNonQuery();
+
+        // ── Migrations: add snapshot columns to ScoreHistory (existing DBs) ──
+        MigrateAddColumn(conn, "ScoreHistory", "Accuracy", "INTEGER");
+        MigrateAddColumn(conn, "ScoreHistory", "IsFullCombo", "INTEGER");
+        MigrateAddColumn(conn, "ScoreHistory", "Stars", "INTEGER");
+        MigrateAddColumn(conn, "ScoreHistory", "Percentile", "REAL");
+        MigrateAddColumn(conn, "ScoreHistory", "Season", "INTEGER");
+        MigrateAddColumn(conn, "ScoreHistory", "ScoreAchievedAt", "TEXT");
+
+        // ── Migrations: add columns to RegisteredUsers (existing DBs) ──
+        MigrateAddColumn(conn, "RegisteredUsers", "DisplayName", "TEXT");
+        MigrateAddColumn(conn, "RegisteredUsers", "Platform", "TEXT");
+        MigrateAddColumn(conn, "RegisteredUsers", "LastLoginAt", "TEXT");
+
         _initialized = true;
 
         _log.LogDebug("Meta DB schema ensured.");
@@ -162,14 +251,19 @@ public sealed class MetaDatabase : IDisposable
     /// Record a score change for a registered user.
     /// </summary>
     public void InsertScoreChange(string songId, string instrument, string accountId,
-                                  int? oldScore, int newScore, int? oldRank, int newRank)
+                                  int? oldScore, int newScore, int? oldRank, int newRank,
+                                  int? accuracy = null, bool? isFullCombo = null,
+                                  int? stars = null, double? percentile = null,
+                                  int? season = null, string? scoreAchievedAt = null)
     {
         var now = DateTime.UtcNow.ToString("o");
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO ScoreHistory (SongId, Instrument, AccountId, OldScore, NewScore, OldRank, NewRank, ChangedAt)
-            VALUES (@songId, @instrument, @accountId, @oldScore, @newScore, @oldRank, @newRank, @now);
+            INSERT INTO ScoreHistory (SongId, Instrument, AccountId, OldScore, NewScore, OldRank, NewRank,
+                                     Accuracy, IsFullCombo, Stars, Percentile, Season, ScoreAchievedAt, ChangedAt)
+            VALUES (@songId, @instrument, @accountId, @oldScore, @newScore, @oldRank, @newRank,
+                    @accuracy, @fc, @stars, @percentile, @season, @scoreAchievedAt, @now);
             """;
         cmd.Parameters.AddWithValue("@songId", songId);
         cmd.Parameters.AddWithValue("@instrument", instrument);
@@ -178,6 +272,12 @@ public sealed class MetaDatabase : IDisposable
         cmd.Parameters.AddWithValue("@newScore", newScore);
         cmd.Parameters.AddWithValue("@oldRank", oldRank.HasValue ? oldRank.Value : DBNull.Value);
         cmd.Parameters.AddWithValue("@newRank", newRank);
+        cmd.Parameters.AddWithValue("@accuracy", accuracy.HasValue ? accuracy.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("@fc", isFullCombo.HasValue ? (isFullCombo.Value ? 1 : 0) : DBNull.Value);
+        cmd.Parameters.AddWithValue("@stars", stars.HasValue ? stars.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("@percentile", percentile.HasValue ? percentile.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("@season", season.HasValue ? season.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("@scoreAchievedAt", (object?)scoreAchievedAt ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@now", now);
         cmd.ExecuteNonQuery();
     }
@@ -347,7 +447,8 @@ public sealed class MetaDatabase : IDisposable
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT SongId, Instrument, OldScore, NewScore, OldRank, NewRank, ChangedAt
+            SELECT SongId, Instrument, OldScore, NewScore, OldRank, NewRank,
+                   Accuracy, IsFullCombo, Stars, Percentile, Season, ScoreAchievedAt, ChangedAt
             FROM ScoreHistory
             WHERE AccountId = @accountId
             ORDER BY Id DESC
@@ -362,13 +463,19 @@ public sealed class MetaDatabase : IDisposable
         {
             entries.Add(new ScoreHistoryEntry
             {
-                SongId     = reader.GetString(0),
-                Instrument = reader.GetString(1),
-                OldScore   = reader.IsDBNull(2) ? null : reader.GetInt32(2),
-                NewScore   = reader.GetInt32(3),
-                OldRank    = reader.IsDBNull(4) ? null : reader.GetInt32(4),
-                NewRank    = reader.GetInt32(5),
-                ChangedAt  = reader.GetString(6),
+                SongId      = reader.GetString(0),
+                Instrument  = reader.GetString(1),
+                OldScore    = reader.IsDBNull(2) ? null : reader.GetInt32(2),
+                NewScore    = reader.GetInt32(3),
+                OldRank     = reader.IsDBNull(4) ? null : reader.GetInt32(4),
+                NewRank     = reader.GetInt32(5),
+                Accuracy    = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+                IsFullCombo = reader.IsDBNull(7) ? null : reader.GetInt32(7) == 1,
+                Stars       = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                Percentile  = reader.IsDBNull(9) ? null : reader.GetDouble(9),
+                Season      = reader.IsDBNull(10) ? null : reader.GetInt32(10),
+                ScoreAchievedAt = reader.IsDBNull(11) ? null : reader.GetString(11),
+                ChangedAt   = reader.GetString(12),
             });
         }
         return entries;
@@ -452,6 +559,672 @@ public sealed class MetaDatabase : IDisposable
         return (long)(cmd.ExecuteScalar() ?? 0) > 0;
     }
 
+    // ─── UserSessions ───────────────────────────────────────────
+
+    /// <summary>
+    /// Insert a new session. Returns the auto-generated session ID.
+    /// </summary>
+    public long InsertSession(string username, string deviceId, string refreshTokenHash,
+                              string? platform, DateTime expiresAt)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO UserSessions (Username, DeviceId, RefreshTokenHash, Platform, IssuedAt, ExpiresAt)
+            VALUES (@username, @deviceId, @hash, @platform, @now, @expiresAt);
+            SELECT last_insert_rowid();
+            """;
+        cmd.Parameters.AddWithValue("@username", username);
+        cmd.Parameters.AddWithValue("@deviceId", deviceId);
+        cmd.Parameters.AddWithValue("@hash", refreshTokenHash);
+        cmd.Parameters.AddWithValue("@platform", (object?)platform ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@now", now);
+        cmd.Parameters.AddWithValue("@expiresAt", expiresAt.ToString("o"));
+        return (long)(cmd.ExecuteScalar() ?? 0);
+    }
+
+    /// <summary>
+    /// Find an active (non-revoked, non-expired) session by refresh token hash.
+    /// </summary>
+    public UserSessionInfo? GetActiveSession(string refreshTokenHash)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT Id, Username, DeviceId, Platform, IssuedAt, ExpiresAt
+            FROM UserSessions
+            WHERE RefreshTokenHash = @hash
+              AND RevokedAt IS NULL
+              AND ExpiresAt > @now
+            LIMIT 1;
+            """;
+        cmd.Parameters.AddWithValue("@hash", refreshTokenHash);
+        cmd.Parameters.AddWithValue("@now", now);
+
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read()) return null;
+
+        return new UserSessionInfo
+        {
+            Id       = reader.GetInt64(0),
+            Username = reader.GetString(1),
+            DeviceId = reader.GetString(2),
+            Platform = reader.IsDBNull(3) ? null : reader.GetString(3),
+            IssuedAt = DateTime.Parse(reader.GetString(4), null, System.Globalization.DateTimeStyles.RoundtripKind),
+            ExpiresAt = DateTime.Parse(reader.GetString(5), null, System.Globalization.DateTimeStyles.RoundtripKind),
+        };
+    }
+
+    /// <summary>
+    /// Revoke a session by its refresh token hash.
+    /// </summary>
+    public void RevokeSession(string refreshTokenHash)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE UserSessions
+            SET RevokedAt = @now
+            WHERE RefreshTokenHash = @hash AND RevokedAt IS NULL;
+            """;
+        cmd.Parameters.AddWithValue("@hash", refreshTokenHash);
+        cmd.Parameters.AddWithValue("@now", now);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Revoke all sessions for a username (e.g., "sign out everywhere").
+    /// </summary>
+    public void RevokeAllSessions(string username)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE UserSessions
+            SET RevokedAt = @now
+            WHERE Username = @username AND RevokedAt IS NULL;
+            """;
+        cmd.Parameters.AddWithValue("@username", username);
+        cmd.Parameters.AddWithValue("@now", now);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Delete expired and revoked sessions older than a cutoff (cleanup).
+    /// Returns the number of rows deleted.
+    /// </summary>
+    public int CleanupExpiredSessions(DateTime cutoff)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            DELETE FROM UserSessions
+            WHERE (RevokedAt IS NOT NULL AND RevokedAt < @cutoff)
+               OR (ExpiresAt < @cutoff);
+            """;
+        cmd.Parameters.AddWithValue("@cutoff", cutoff.ToString("o"));
+        return cmd.ExecuteNonQuery();
+    }
+
+    // ─── Backfill Tracking ──────────────────────────────────────
+
+    /// <summary>
+    /// Create or reset a backfill status entry for an account. Sets status to 'pending'.
+    /// </summary>
+    public void EnqueueBackfill(string accountId, int totalSongsToCheck)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO BackfillStatus (AccountId, Status, TotalSongsToCheck)
+            VALUES (@id, 'pending', @total)
+            ON CONFLICT(AccountId) DO UPDATE SET
+                Status            = CASE WHEN Status = 'complete' THEN Status ELSE 'pending' END,
+                TotalSongsToCheck = @total
+            WHERE Status != 'complete';
+            """;
+        cmd.Parameters.AddWithValue("@id", accountId);
+        cmd.Parameters.AddWithValue("@total", totalSongsToCheck);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Get all backfill requests that are pending or in_progress.
+    /// </summary>
+    public List<BackfillStatusInfo> GetPendingBackfills()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT AccountId, Status, SongsChecked, EntriesFound, TotalSongsToCheck,
+                   StartedAt, CompletedAt, LastResumedAt, ErrorMessage
+            FROM BackfillStatus
+            WHERE Status IN ('pending', 'in_progress')
+            ORDER BY rowid;
+            """;
+        var list = new List<BackfillStatusInfo>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(ReadBackfillStatus(reader));
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// Get the backfill status for a specific account.
+    /// </summary>
+    public BackfillStatusInfo? GetBackfillStatus(string accountId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT AccountId, Status, SongsChecked, EntriesFound, TotalSongsToCheck,
+                   StartedAt, CompletedAt, LastResumedAt, ErrorMessage
+            FROM BackfillStatus
+            WHERE AccountId = @id;
+            """;
+        cmd.Parameters.AddWithValue("@id", accountId);
+        using var reader = cmd.ExecuteReader();
+        return reader.Read() ? ReadBackfillStatus(reader) : null;
+    }
+
+    /// <summary>
+    /// Mark a backfill as in_progress with a start/resume timestamp.
+    /// </summary>
+    public void StartBackfill(string accountId)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE BackfillStatus
+            SET Status = 'in_progress', StartedAt = COALESCE(StartedAt, @now), LastResumedAt = @now
+            WHERE AccountId = @id;
+            """;
+        cmd.Parameters.AddWithValue("@id", accountId);
+        cmd.Parameters.AddWithValue("@now", now);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Mark a backfill as complete.
+    /// </summary>
+    public void CompleteBackfill(string accountId)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE BackfillStatus
+            SET Status = 'complete', CompletedAt = @now
+            WHERE AccountId = @id;
+            """;
+        cmd.Parameters.AddWithValue("@id", accountId);
+        cmd.Parameters.AddWithValue("@now", now);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Mark a backfill as errored.
+    /// </summary>
+    public void FailBackfill(string accountId, string errorMessage)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE BackfillStatus
+            SET Status = 'error', ErrorMessage = @err
+            WHERE AccountId = @id;
+            """;
+        cmd.Parameters.AddWithValue("@id", accountId);
+        cmd.Parameters.AddWithValue("@err", errorMessage);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Update the progress counters for a backfill.
+    /// </summary>
+    public void UpdateBackfillProgress(string accountId, int songsChecked, int entriesFound)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE BackfillStatus
+            SET SongsChecked = @checked, EntriesFound = @found
+            WHERE AccountId = @id;
+            """;
+        cmd.Parameters.AddWithValue("@id", accountId);
+        cmd.Parameters.AddWithValue("@checked", songsChecked);
+        cmd.Parameters.AddWithValue("@found", entriesFound);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Mark a specific song/instrument as checked for an account's backfill.
+    /// </summary>
+    public void MarkBackfillSongChecked(string accountId, string songId, string instrument, bool entryFound)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO BackfillProgress (AccountId, SongId, Instrument, Checked, EntryFound, CheckedAt)
+            VALUES (@acct, @song, @inst, 1, @found, @now)
+            ON CONFLICT(AccountId, SongId, Instrument) DO UPDATE SET
+                Checked    = 1,
+                EntryFound = @found,
+                CheckedAt  = @now;
+            """;
+        cmd.Parameters.AddWithValue("@acct", accountId);
+        cmd.Parameters.AddWithValue("@song", songId);
+        cmd.Parameters.AddWithValue("@inst", instrument);
+        cmd.Parameters.AddWithValue("@found", entryFound ? 1 : 0);
+        cmd.Parameters.AddWithValue("@now", now);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Get the set of song/instrument pairs already checked for an account (for resumption).
+    /// </summary>
+    public HashSet<(string SongId, string Instrument)> GetCheckedBackfillPairs(string accountId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT SongId, Instrument
+            FROM BackfillProgress
+            WHERE AccountId = @acct AND Checked = 1;
+            """;
+        cmd.Parameters.AddWithValue("@acct", accountId);
+
+        var set = new HashSet<(string, string)>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            set.Add((reader.GetString(0), reader.GetString(1)));
+        }
+        return set;
+    }
+
+    private static BackfillStatusInfo ReadBackfillStatus(Microsoft.Data.Sqlite.SqliteDataReader reader)
+    {
+        return new BackfillStatusInfo
+        {
+            AccountId         = reader.GetString(0),
+            Status            = reader.GetString(1),
+            SongsChecked      = reader.GetInt32(2),
+            EntriesFound      = reader.GetInt32(3),
+            TotalSongsToCheck = reader.GetInt32(4),
+            StartedAt         = reader.IsDBNull(5) ? null : reader.GetString(5),
+            CompletedAt       = reader.IsDBNull(6) ? null : reader.GetString(6),
+            LastResumedAt     = reader.IsDBNull(7) ? null : reader.GetString(7),
+            ErrorMessage      = reader.IsDBNull(8) ? null : reader.GetString(8),
+        };
+    }
+
+    // ─── RegisteredUsers (enhanced) ─────────────────────────────
+
+    /// <summary>
+    /// Register or update a user+device pair. Sets DisplayName, Platform, LastLoginAt.
+    /// Returns true if newly inserted.
+    /// </summary>
+    public bool RegisterOrUpdateUser(string deviceId, string accountId,
+                                     string? displayName, string? platform)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO RegisteredUsers (DeviceId, AccountId, RegisteredAt, DisplayName, Platform, LastLoginAt)
+            VALUES (@deviceId, @accountId, @now, @displayName, @platform, @now)
+            ON CONFLICT(DeviceId, AccountId) DO UPDATE SET
+                DisplayName = @displayName,
+                Platform    = @platform,
+                LastLoginAt = @now;
+            """;
+        cmd.Parameters.AddWithValue("@deviceId", deviceId);
+        cmd.Parameters.AddWithValue("@accountId", accountId);
+        cmd.Parameters.AddWithValue("@displayName", (object?)displayName ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@platform", (object?)platform ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@now", now);
+        // INSERT OR IGNORE returns 0 if conflict; ON CONFLICT DO UPDATE always returns 1,
+        // but we need to distinguish. Use a separate check.
+        cmd.ExecuteNonQuery();
+
+        // Check if just inserted (RegisteredAt == LastLoginAt == now)
+        using var check = conn.CreateCommand();
+        check.CommandText = """
+            SELECT RegisteredAt FROM RegisteredUsers
+            WHERE DeviceId = @deviceId AND AccountId = @accountId;
+            """;
+        check.Parameters.AddWithValue("@deviceId", deviceId);
+        check.Parameters.AddWithValue("@accountId", accountId);
+        var registeredAt = check.ExecuteScalar() as string;
+        return registeredAt == now;
+    }
+
+    /// <summary>
+    /// Look up an Epic account ID by display name (username) from AccountNames.
+    /// Returns null if the username hasn't been resolved by the scraper yet.
+    /// </summary>
+    public string? GetAccountIdForUsername(string username)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT AccountId FROM AccountNames
+            WHERE DisplayName = @username COLLATE NOCASE
+            LIMIT 1;
+            """;
+        cmd.Parameters.AddWithValue("@username", username);
+        return cmd.ExecuteScalar() as string;
+    }
+
+    /// <summary>
+    /// Get registration info for a specific username + device.
+    /// </summary>
+    public RegisteredUserInfo? GetRegistrationInfo(string username, string deviceId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT AccountId, DisplayName, RegisteredAt, LastLoginAt
+            FROM RegisteredUsers
+            WHERE AccountId = @username AND DeviceId = @deviceId
+            LIMIT 1;
+            """;
+        cmd.Parameters.AddWithValue("@username", username);
+        cmd.Parameters.AddWithValue("@deviceId", deviceId);
+
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read()) return null;
+
+        return new RegisteredUserInfo
+        {
+            AccountId    = reader.GetString(0),
+            DisplayName  = reader.IsDBNull(1) ? null : reader.GetString(1),
+            RegisteredAt = reader.GetString(2),
+            LastLoginAt  = reader.IsDBNull(3) ? null : reader.GetString(3),
+        };
+    }
+
+    // ─── History Reconstruction Tracking ───────────────────────
+
+    /// <summary>
+    /// Create or reset a history reconstruction status entry. Sets status to 'pending'.
+    /// </summary>
+    public void EnqueueHistoryRecon(string accountId, int totalSongsToProcess)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO HistoryReconStatus (AccountId, Status, TotalSongsToProcess)
+            VALUES (@id, 'pending', @total)
+            ON CONFLICT(AccountId) DO UPDATE SET
+                Status              = CASE WHEN Status = 'complete' THEN Status ELSE 'pending' END,
+                TotalSongsToProcess = @total
+            WHERE Status != 'complete';
+            """;
+        cmd.Parameters.AddWithValue("@id", accountId);
+        cmd.Parameters.AddWithValue("@total", totalSongsToProcess);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Get all history recon requests that are pending or in_progress.
+    /// </summary>
+    public List<HistoryReconStatusInfo> GetPendingHistoryRecons()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT AccountId, Status, SongsProcessed, TotalSongsToProcess,
+                   SeasonsQueried, HistoryEntriesFound, StartedAt, CompletedAt, ErrorMessage
+            FROM HistoryReconStatus
+            WHERE Status IN ('pending', 'in_progress')
+            ORDER BY rowid;
+            """;
+        var list = new List<HistoryReconStatusInfo>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            list.Add(ReadHistoryReconStatus(reader));
+        return list;
+    }
+
+    /// <summary>
+    /// Get history recon status for a specific account.
+    /// </summary>
+    public HistoryReconStatusInfo? GetHistoryReconStatus(string accountId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT AccountId, Status, SongsProcessed, TotalSongsToProcess,
+                   SeasonsQueried, HistoryEntriesFound, StartedAt, CompletedAt, ErrorMessage
+            FROM HistoryReconStatus
+            WHERE AccountId = @id;
+            """;
+        cmd.Parameters.AddWithValue("@id", accountId);
+        using var reader = cmd.ExecuteReader();
+        return reader.Read() ? ReadHistoryReconStatus(reader) : null;
+    }
+
+    /// <summary>
+    /// Mark a history recon as in_progress.
+    /// </summary>
+    public void StartHistoryRecon(string accountId)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE HistoryReconStatus
+            SET Status = 'in_progress', StartedAt = COALESCE(StartedAt, @now)
+            WHERE AccountId = @id;
+            """;
+        cmd.Parameters.AddWithValue("@id", accountId);
+        cmd.Parameters.AddWithValue("@now", now);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Mark a history recon as complete.
+    /// </summary>
+    public void CompleteHistoryRecon(string accountId)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE HistoryReconStatus
+            SET Status = 'complete', CompletedAt = @now
+            WHERE AccountId = @id;
+            """;
+        cmd.Parameters.AddWithValue("@id", accountId);
+        cmd.Parameters.AddWithValue("@now", now);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Mark a history recon as errored.
+    /// </summary>
+    public void FailHistoryRecon(string accountId, string errorMessage)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE HistoryReconStatus
+            SET Status = 'error', ErrorMessage = @err
+            WHERE AccountId = @id;
+            """;
+        cmd.Parameters.AddWithValue("@id", accountId);
+        cmd.Parameters.AddWithValue("@err", errorMessage);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Update the progress counters for a history recon.
+    /// </summary>
+    public void UpdateHistoryReconProgress(string accountId, int songsProcessed,
+                                            int seasonsQueried, int historyEntriesFound)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE HistoryReconStatus
+            SET SongsProcessed = @songs, SeasonsQueried = @seasons, HistoryEntriesFound = @entries
+            WHERE AccountId = @id;
+            """;
+        cmd.Parameters.AddWithValue("@id", accountId);
+        cmd.Parameters.AddWithValue("@songs", songsProcessed);
+        cmd.Parameters.AddWithValue("@seasons", seasonsQueried);
+        cmd.Parameters.AddWithValue("@entries", historyEntriesFound);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Mark a specific song/instrument as processed for history recon.
+    /// </summary>
+    public void MarkHistoryReconSongProcessed(string accountId, string songId, string instrument)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO HistoryReconProgress (AccountId, SongId, Instrument, Processed, ProcessedAt)
+            VALUES (@acct, @song, @inst, 1, @now)
+            ON CONFLICT(AccountId, SongId, Instrument) DO UPDATE SET
+                Processed   = 1,
+                ProcessedAt = @now;
+            """;
+        cmd.Parameters.AddWithValue("@acct", accountId);
+        cmd.Parameters.AddWithValue("@song", songId);
+        cmd.Parameters.AddWithValue("@inst", instrument);
+        cmd.Parameters.AddWithValue("@now", now);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Get the set of song/instrument pairs already processed for history recon (for resumption).
+    /// </summary>
+    public HashSet<(string SongId, string Instrument)> GetProcessedHistoryReconPairs(string accountId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT SongId, Instrument
+            FROM HistoryReconProgress
+            WHERE AccountId = @acct AND Processed = 1;
+            """;
+        cmd.Parameters.AddWithValue("@acct", accountId);
+
+        var set = new HashSet<(string, string)>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            set.Add((reader.GetString(0), reader.GetString(1)));
+        return set;
+    }
+
+    // ─── SeasonWindows ──────────────────────────────────────────
+
+    /// <summary>
+    /// Insert or update a season window.
+    /// </summary>
+    public void UpsertSeasonWindow(int seasonNumber, string eventId, string windowId)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO SeasonWindows (SeasonNumber, EventId, WindowId, DiscoveredAt)
+            VALUES (@season, @eventId, @windowId, @now)
+            ON CONFLICT(SeasonNumber) DO UPDATE SET
+                EventId  = @eventId,
+                WindowId = @windowId;
+            """;
+        cmd.Parameters.AddWithValue("@season", seasonNumber);
+        cmd.Parameters.AddWithValue("@eventId", eventId);
+        cmd.Parameters.AddWithValue("@windowId", windowId);
+        cmd.Parameters.AddWithValue("@now", now);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Get all known season windows, ordered by season number.
+    /// </summary>
+    public List<SeasonWindowInfo> GetSeasonWindows()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT SeasonNumber, EventId, WindowId, DiscoveredAt
+            FROM SeasonWindows
+            ORDER BY SeasonNumber;
+            """;
+
+        var list = new List<SeasonWindowInfo>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new SeasonWindowInfo
+            {
+                SeasonNumber = reader.GetInt32(0),
+                EventId      = reader.GetString(1),
+                WindowId     = reader.GetString(2),
+                DiscoveredAt = reader.GetString(3),
+            });
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// Get a specific season window by season number.
+    /// </summary>
+    public SeasonWindowInfo? GetSeasonWindow(int seasonNumber)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT SeasonNumber, EventId, WindowId, DiscoveredAt
+            FROM SeasonWindows
+            WHERE SeasonNumber = @season;
+            """;
+        cmd.Parameters.AddWithValue("@season", seasonNumber);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read()) return null;
+
+        return new SeasonWindowInfo
+        {
+            SeasonNumber = reader.GetInt32(0),
+            EventId      = reader.GetString(1),
+            WindowId     = reader.GetString(2),
+            DiscoveredAt = reader.GetString(3),
+        };
+    }
+
+    private static HistoryReconStatusInfo ReadHistoryReconStatus(SqliteDataReader reader)
+    {
+        return new HistoryReconStatusInfo
+        {
+            AccountId           = reader.GetString(0),
+            Status              = reader.GetString(1),
+            SongsProcessed      = reader.GetInt32(2),
+            TotalSongsToProcess = reader.GetInt32(3),
+            SeasonsQueried      = reader.GetInt32(4),
+            HistoryEntriesFound = reader.GetInt32(5),
+            StartedAt           = reader.IsDBNull(6) ? null : reader.GetString(6),
+            CompletedAt         = reader.IsDBNull(7) ? null : reader.GetString(7),
+            ErrorMessage        = reader.IsDBNull(8) ? null : reader.GetString(8),
+        };
+    }
+
     // ─── Helpers ────────────────────────────────────────────────
 
     private readonly object _writeLock = new();
@@ -471,6 +1244,23 @@ public sealed class MetaDatabase : IDisposable
     public void Dispose()
     {
         // No persistent connections to clean up.
+    }
+
+    /// <summary>
+    /// Idempotent migration: adds a column to a table if it doesn't already exist.
+    /// </summary>
+    private void MigrateAddColumn(SqliteConnection conn, string table, string column, string type)
+    {
+        using var check = conn.CreateCommand();
+        check.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{column}';";
+        var exists = (long)(check.ExecuteScalar() ?? 0);
+        if (exists > 0) return;
+
+        using var alter = conn.CreateCommand();
+        alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {type};";
+        alter.ExecuteNonQuery();
+
+        _log.LogInformation("Migrated {Table}: added column {Column} ({Type})", table, column, type);
     }
 }
 

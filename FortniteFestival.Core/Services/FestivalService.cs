@@ -898,6 +898,8 @@ namespace FortniteFestival.Core.Services
                                     foreach (var s in sh.EnumerateArray())
                                     {
                                         var hs = new V1SessionHistory();
+                                        if (s.TryGetProperty("endTime", out var etProp) && etProp.ValueKind == JsonValueKind.String)
+                                            hs.endTime = etProp.GetString();
                                         if (s.TryGetProperty("trackedStats", out var ts) && ts.ValueKind == JsonValueKind.Object)
                                         {
                                             var stats = new V1TrackedStats();

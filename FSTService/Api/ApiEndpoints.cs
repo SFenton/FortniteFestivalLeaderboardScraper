@@ -186,6 +186,30 @@ public static class ApiEndpoints
         .RequireAuthorization()
         .RequireRateLimiting("protected");
 
+        app.MapGet("/api/backfill/{accountId}/status", (
+            string accountId,
+            MetaDatabase metaDb) =>
+        {
+            var status = metaDb.GetBackfillStatus(accountId);
+            if (status is null)
+                return Results.NotFound(new { error = "No backfill found for this account." });
+
+            return Results.Ok(new
+            {
+                accountId  = status.AccountId,
+                status     = status.Status,
+                songsChecked     = status.SongsChecked,
+                totalSongsToCheck = status.TotalSongsToCheck,
+                entriesFound     = status.EntriesFound,
+                startedAt        = status.StartedAt,
+                completedAt      = status.CompletedAt,
+                errorMessage     = status.ErrorMessage,
+            });
+        })
+        .WithTags("Backfill")
+        .RequireAuthorization()
+        .RequireRateLimiting("protected");
+
         // ─── Sync endpoints (protected, require API key) ────
 
         app.MapGet("/api/sync/{deviceId}/version", (

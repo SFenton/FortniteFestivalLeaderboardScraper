@@ -15,7 +15,7 @@ namespace FSTService.Scraping;
 /// This is best-effort: if the API is down or an account is unresolvable, the scrape
 /// is not affected. Unresolved accounts are retried on the next pass.
 /// </summary>
-public sealed class AccountNameResolver
+public class AccountNameResolver
 {
     private const string AccountBase = "https://account-public-service-prod.ol.epicgames.com";
 
@@ -50,7 +50,7 @@ public sealed class AccountNameResolver
     /// <param name="maxConcurrency">Max parallel API requests (default 4).</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Number of newly resolved accounts.</returns>
-    public async Task<int> ResolveNewAccountsAsync(
+    public virtual async Task<int> ResolveNewAccountsAsync(
         int maxConcurrency = 4,
         CancellationToken ct = default)
     {

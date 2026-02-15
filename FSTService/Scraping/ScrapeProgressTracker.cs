@@ -23,6 +23,9 @@ public sealed class ScrapeProgressTracker
         Scraping,
         ResolvingNames,
         RebuildingPersonalDbs,
+        RefreshingRegisteredUsers,
+        BackfillingScores,
+        ReconstructingHistory,
     }
 
     private volatile ScrapePhase _phase = ScrapePhase.Idle;

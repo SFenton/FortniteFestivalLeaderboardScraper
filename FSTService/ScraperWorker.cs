@@ -26,6 +26,10 @@ public sealed class ScraperWorker : BackgroundService
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly AccountNameResolver _nameResolver;
     private readonly PersonalDbBuilder _personalDbBuilder;
+    private readonly ScoreBackfiller _backfiller;
+    private readonly BackfillQueue _backfillQueue;
+    private readonly PostScrapeRefresher _refresher;
+    private readonly HistoryReconstructor _historyReconstructor;
     private readonly ScrapeProgressTracker _progress;
     private readonly IOptions<ScraperOptions> _options;
     private readonly IHostApplicationLifetime _lifetime;
@@ -37,6 +41,10 @@ public sealed class ScraperWorker : BackgroundService
         GlobalLeaderboardPersistence persistence,
         AccountNameResolver nameResolver,
         PersonalDbBuilder personalDbBuilder,
+        ScoreBackfiller backfiller,
+        BackfillQueue backfillQueue,
+        PostScrapeRefresher refresher,
+        HistoryReconstructor historyReconstructor,
         ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
         IHostApplicationLifetime lifetime,
@@ -47,6 +55,10 @@ public sealed class ScraperWorker : BackgroundService
         _persistence = persistence;
         _nameResolver = nameResolver;
         _personalDbBuilder = personalDbBuilder;
+        _backfiller = backfiller;
+        _backfillQueue = backfillQueue;
+        _refresher = refresher;
+        _historyReconstructor = historyReconstructor;
         _progress = progress;
         _options = options;
         _lifetime = lifetime;
@@ -363,7 +375,212 @@ public sealed class ScraperWorker : BackgroundService
             }
         }
 
+        // ── Post-pass: refresh stale/missing entries for registered users ──
+        if (registeredIds.Count > 0)
+        {
+            _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.RefreshingRegisteredUsers);
+            try
+            {
+                var seenSet = new HashSet<(string AccountId, string SongId, string Instrument)>(
+                    aggregates.SeenRegisteredEntries);
+                var chartedSongIds = scrapeRequests.Select(r => r.SongId).ToList();
+
+                var refreshToken = await _tokenManager.GetAccessTokenAsync(ct);
+                if (refreshToken is not null)
+                {
+                    var refreshed = await _refresher.RefreshAllAsync(
+                        registeredIds, seenSet, chartedSongIds,
+                        refreshToken, _tokenManager.AccountId!, ct);
+                    if (refreshed > 0)
+                        _log.LogInformation("Post-scrape refresh updated {Count} entries for registered users.", refreshed);
+                }
+                else
+                {
+                    _log.LogWarning("No access token for post-scrape refresh. Will retry next pass.");
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "Post-scrape refresh failed. Will retry next pass.");
+            }
+        }
+
+        // ── Post-pass: backfill missing scores for registered users ──
+        await RunBackfillPhaseAsync(service, ct);
+
+        // ── Post-pass: reconstruct score history for registered users (one-time) ──
+        await RunHistoryReconPhaseAsync(ct);
+
+        // ── Post-pass: clean up expired/revoked auth sessions ──
+        try
+        {
+            var cleaned = _persistence.Meta.CleanupExpiredSessions(DateTime.UtcNow.AddDays(-7));
+            if (cleaned > 0)
+                _log.LogInformation("Cleaned up {Count} expired/revoked auth session(s).", cleaned);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Auth session cleanup failed. Will retry next pass.");
+        }
+
         _progress.EndPass();
+    }
+
+    // ─── Backfill phase ─────────────────────────────────────────
+
+    /// <summary>
+    /// Run backfills for any queued accounts (from login/registration) and
+    /// also resume any in-progress backfills that were interrupted.
+    /// </summary>
+    private async Task RunBackfillPhaseAsync(FestivalService service, CancellationToken ct)
+    {
+        // Drain any newly queued requests from login
+        var queued = _backfillQueue.DrainAll();
+
+        // Also pick up any pending/in_progress backfills from the DB
+        var pending = _persistence.Meta.GetPendingBackfills();
+
+        // Merge: create a distinct set of account IDs to process
+        var accountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var req in queued) accountIds.Add(req.AccountId);
+        foreach (var bf in pending) accountIds.Add(bf.AccountId);
+
+        if (accountIds.Count == 0) return;
+
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.BackfillingScores);
+
+        var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
+        if (accessToken is null)
+        {
+            _log.LogWarning("No access token available for backfill. Will retry next pass.");
+            // Re-enqueue so they're not lost
+            foreach (var id in accountIds) _backfillQueue.Enqueue(new BackfillRequest(id));
+            return;
+        }
+
+        var callerAccountId = _tokenManager.AccountId!;
+
+        foreach (var accountId in accountIds)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var found = await _backfiller.BackfillAccountAsync(
+                    accountId, service, accessToken, callerAccountId, ct);
+
+                // Rebuild personal DB for this user if we found new entries
+                if (found > 0)
+                {
+                    try
+                    {
+                        _personalDbBuilder.RebuildForAccounts(
+                            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { accountId },
+                            _persistence.Meta);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.LogWarning(ex, "Personal DB rebuild after backfill failed for {AccountId}.", accountId);
+                    }
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Backfill failed for {AccountId}. Will retry next pass.", accountId);
+            }
+        }
+    }
+
+    // ─── History Reconstruction phase ───────────────────────────
+
+    /// <summary>
+    /// Run history reconstruction for registered users whose backfill is complete
+    /// but whose history hasn't been reconstructed yet.
+    /// </summary>
+    private async Task RunHistoryReconPhaseAsync(CancellationToken ct)
+    {
+        // Find accounts with completed backfill but no completed history recon
+        var registeredIds = _persistence.Meta.GetRegisteredAccountIds();
+        if (registeredIds.Count == 0) return;
+
+        var accountsToReconstruct = new List<string>();
+        foreach (var accountId in registeredIds)
+        {
+            var backfillStatus = _persistence.Meta.GetBackfillStatus(accountId);
+            if (backfillStatus?.Status != "complete") continue; // Backfill must finish first
+
+            var reconStatus = _persistence.Meta.GetHistoryReconStatus(accountId);
+            if (reconStatus?.Status == "complete") continue; // Already reconstructed
+
+            accountsToReconstruct.Add(accountId);
+        }
+
+        if (accountsToReconstruct.Count == 0) return;
+
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ReconstructingHistory);
+
+        var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
+        if (accessToken is null)
+        {
+            _log.LogWarning("No access token available for history reconstruction. Will retry next pass.");
+            return;
+        }
+
+        var callerAccountId = _tokenManager.AccountId!;
+
+        // Discover season windows (cached after first call)
+        IReadOnlyList<Persistence.SeasonWindowInfo> seasonWindows;
+        try
+        {
+            seasonWindows = await _historyReconstructor.DiscoverSeasonWindowsAsync(
+                accessToken, callerAccountId, ct);
+
+            if (seasonWindows.Count == 0)
+            {
+                _log.LogWarning("No season windows discovered. Skipping history reconstruction.");
+                return;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Season window discovery failed. Will retry next pass.");
+            return;
+        }
+
+        foreach (var accountId in accountsToReconstruct)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var entries = await _historyReconstructor.ReconstructAccountAsync(
+                    accountId, seasonWindows, accessToken, callerAccountId, ct);
+
+                if (entries > 0)
+                {
+                    _log.LogInformation(
+                        "History reconstruction for {AccountId}: {Entries} score history entries created.",
+                        accountId, entries);
+
+                    // Rebuild personal DB to include new history
+                    try
+                    {
+                        _personalDbBuilder.RebuildForAccounts(
+                            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { accountId },
+                            _persistence.Meta);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.LogWarning(ex, "Personal DB rebuild after history recon failed for {AccountId}.", accountId);
+                    }
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "History reconstruction failed for {AccountId}. Will retry next pass.", accountId);
+                _persistence.Meta.FailHistoryRecon(accountId, ex.Message);
+            }
+        }
     }
 
     // ─── Cached page estimate ───────────────────────────────────

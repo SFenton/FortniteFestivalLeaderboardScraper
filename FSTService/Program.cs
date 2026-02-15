@@ -8,6 +8,7 @@ using FSTService.Persistence;
 using FSTService.Scraping;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -54,9 +55,6 @@ builder.Services.PostConfigure<ScraperOptions>(opts =>
     }
 });
 
-var scraperOpts = builder.Configuration
-    .GetSection(ScraperOptions.Section)
-    .Get<ScraperOptions>() ?? new ScraperOptions();
 var apiSettings = builder.Configuration
     .GetSection(ApiSettings.Section)
     .Get<ApiSettings>() ?? new ApiSettings();
@@ -88,7 +86,8 @@ builder.Services.AddHttpClient<AccountNameResolver>()
 builder.Services.AddSingleton<FSTService.Scraping.ScrapeProgressTracker>();
 builder.Services.AddSingleton<ICredentialStore>(sp =>
 {
-    var path = Path.GetFullPath(scraperOpts.DeviceAuthPath);
+    var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
+    var path = Path.GetFullPath(opts.DeviceAuthPath);
     var log = sp.GetRequiredService<ILogger<FileCredentialStore>>();
     return new FileCredentialStore(path, log);
 });
@@ -98,32 +97,65 @@ builder.Services.AddSingleton<TokenManager>();
 
 // ─── Persistence ────────────────────────────────────────────
 
-var dataDir = Path.GetFullPath(scraperOpts.DataDirectory);
 builder.Services.AddSingleton<MetaDatabase>(sp =>
 {
-    var metaPath = Path.Combine(dataDir, "fst-meta.db");
+    var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
+    var metaPath = Path.Combine(Path.GetFullPath(opts.DataDirectory), "fst-meta.db");
     return new MetaDatabase(metaPath, sp.GetRequiredService<ILogger<MetaDatabase>>());
 });
 
 builder.Services.AddSingleton<GlobalLeaderboardPersistence>(sp =>
-    new GlobalLeaderboardPersistence(
-        dataDir,
+{
+    var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
+    return new GlobalLeaderboardPersistence(
+        Path.GetFullPath(opts.DataDirectory),
         sp.GetRequiredService<MetaDatabase>(),
         sp.GetRequiredService<ILoggerFactory>(),
-        sp.GetRequiredService<ILogger<GlobalLeaderboardPersistence>>()));
+        sp.GetRequiredService<ILogger<GlobalLeaderboardPersistence>>());
+});
 
 // PersonalDbBuilder — generates per-device personal SQLite DBs for mobile sync
 builder.Services.AddSingleton<PersonalDbBuilder>(sp =>
-    new PersonalDbBuilder(
+{
+    var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
+    return new PersonalDbBuilder(
         sp.GetRequiredService<GlobalLeaderboardPersistence>(),
         sp.GetRequiredService<FestivalService>(),
-        dataDir,
-        sp.GetRequiredService<ILogger<PersonalDbBuilder>>()));
+        Path.GetFullPath(opts.DataDirectory),
+        sp.GetRequiredService<ILogger<PersonalDbBuilder>>());
+});
+
+// ─── JWT / User Auth ────────────────────────────────────────
+
+builder.Services.Configure<JwtSettings>(
+    builder.Configuration.GetSection(JwtSettings.Section));
+
+var jwtSettings = builder.Configuration
+    .GetSection(JwtSettings.Section)
+    .Get<JwtSettings>() ?? new JwtSettings();
+
+builder.Services.AddSingleton<JwtTokenService>();
+
+builder.Services.AddSingleton<BackfillQueue>();
+builder.Services.AddSingleton<ScoreBackfiller>();
+builder.Services.AddSingleton<PostScrapeRefresher>();
+
+builder.Services.AddHttpClient<HistoryReconstructor>()
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        MaxConnectionsPerServer = 32,
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+        AutomaticDecompression = System.Net.DecompressionMethods.All,
+    });
+
+builder.Services.AddSingleton<UserAuthService>();
 
 // Core FestivalService — song catalog sync. Shared with API for /api/songs.
 builder.Services.AddSingleton<FestivalService>(sp =>
 {
-    var dbPath = Path.GetFullPath(scraperOpts.DatabasePath);
+    var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
+    var dbPath = Path.GetFullPath(opts.DatabasePath);
     var dbDir = Path.GetDirectoryName(dbPath);
     if (!string.IsNullOrEmpty(dbDir) && !Directory.Exists(dbDir))
         Directory.CreateDirectory(dbDir);
@@ -142,7 +174,8 @@ builder.Services
     .AddScheme<ApiKeyAuthOptions, ApiKeyAuthHandler>("ApiKey", opts =>
     {
         opts.ApiKey = apiSettings.ApiKey;
-    });
+    })
+    .AddScheme<BearerAuthOptions, BearerTokenAuthHandler>("Bearer", _ => { });
 builder.Services.AddAuthorization();
 
 // ─── Rate limiting ──────────────────────────────────────────
@@ -154,6 +187,13 @@ builder.Services.AddRateLimiter(opts =>
     opts.AddFixedWindowLimiter("public", window =>
     {
         window.PermitLimit = 60;
+        window.Window = TimeSpan.FromMinutes(1);
+        window.QueueLimit = 0;
+    });
+
+    opts.AddFixedWindowLimiter("auth", window =>
+    {
+        window.PermitLimit = 10;
         window.Window = TimeSpan.FromMinutes(1);
         window.QueueLimit = 0;
     });
@@ -207,5 +247,9 @@ app.UseAuthorization();
 
 // Map API endpoints
 app.MapApiEndpoints();
+app.MapAuthEndpoints();
 
 app.Run();
+
+// Enable WebApplicationFactory<Program> for integration testing
+public partial class Program { }

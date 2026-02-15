@@ -13,7 +13,7 @@ namespace FSTService.Persistence;
 /// Personal DBs are stored under <c>data/personal/{deviceId}.db</c> and shipped
 /// whole (not deltas) since the file size is trivial.
 /// </summary>
-public sealed class PersonalDbBuilder
+public class PersonalDbBuilder
 {
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly FestivalService _festivalService;
@@ -107,7 +107,7 @@ public sealed class PersonalDbBuilder
     /// Build personal DBs for all devices registered to any of the given account IDs.
     /// Returns the number of DBs rebuilt.
     /// </summary>
-    public int RebuildForAccounts(IReadOnlySet<string> changedAccountIds, MetaDatabase metaDb)
+    public virtual int RebuildForAccounts(IReadOnlySet<string> changedAccountIds, MetaDatabase metaDb)
     {
         if (changedAccountIds.Count == 0) return 0;
 
@@ -145,7 +145,9 @@ public sealed class PersonalDbBuilder
 
     private void BuildDatabase(string dbPath, string accountId, IReadOnlyList<Song> songs)
     {
-        var connStr = new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString();
+        // Disable connection pooling so the file handle is fully released
+        // after conn.Dispose(), allowing the subsequent File.Move to succeed.
+        var connStr = new SqliteConnectionStringBuilder { DataSource = dbPath, Pooling = false }.ToString();
 
         using var conn = new SqliteConnection(connStr);
         conn.Open();

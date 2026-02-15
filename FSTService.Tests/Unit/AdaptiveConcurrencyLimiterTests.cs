@@ -1,0 +1,170 @@
+using FSTService.Scraping;
+using Microsoft.Extensions.Logging;
+using NSubstitute;
+
+namespace FSTService.Tests.Unit;
+
+public class AdaptiveConcurrencyLimiterTests : IDisposable
+{
+    private readonly ILogger _log = Substitute.For<ILogger>();
+    private AdaptiveConcurrencyLimiter? _limiter;
+
+    public void Dispose()
+    {
+        _limiter?.Dispose();
+    }
+
+    [Fact]
+    public void Constructor_SetsInitialDop()
+    {
+        _limiter = new AdaptiveConcurrencyLimiter(16, 4, 64, _log);
+        Assert.Equal(16, _limiter.CurrentDop);
+    }
+
+    [Fact]
+    public async Task WaitAsync_And_Release_WorkCorrectly()
+    {
+        _limiter = new AdaptiveConcurrencyLimiter(2, 1, 10, _log);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
+        // Should acquire 2 slots without blocking
+        await _limiter.WaitAsync(cts.Token);
+        await _limiter.WaitAsync(cts.Token);
+
+        // Release both
+        _limiter.Release();
+        _limiter.Release();
+
+        // Should be able to acquire again
+        await _limiter.WaitAsync(cts.Token);
+        _limiter.Release();
+    }
+
+    [Fact]
+    public void ReportSuccess_BelowWindow_DoesNotChangeDop()
+    {
+        _limiter = new AdaptiveConcurrencyLimiter(16, 4, 64, _log);
+
+        // Report fewer than 500 successes — should not trigger evaluation
+        for (int i = 0; i < 499; i++)
+            _limiter.ReportSuccess();
+
+        Assert.Equal(16, _limiter.CurrentDop);
+    }
+
+    [Fact]
+    public void AllSuccesses_AtWindow_IncreaseDop()
+    {
+        _limiter = new AdaptiveConcurrencyLimiter(16, 4, 64, _log);
+
+        // Report 500 successes with 0 failures → error rate 0% < 1% → increase by 16
+        for (int i = 0; i < 500; i++)
+            _limiter.ReportSuccess();
+
+        Assert.Equal(32, _limiter.CurrentDop); // 16 + 16
+    }
+
+    [Fact]
+    public void HighErrorRate_AtWindow_DecreasesDop()
+    {
+        _limiter = new AdaptiveConcurrencyLimiter(32, 4, 64, _log);
+
+        // Report 475 successes and 25 failures → 5% error rate
+        // But we need > 5% to decrease, so use more failures
+        // 474 successes, 26 failures = 5.2% > 5% → decrease
+        for (int i = 0; i < 474; i++)
+            _limiter.ReportSuccess();
+        for (int i = 0; i < 26; i++)
+            _limiter.ReportFailure();
+
+        // 32 * 0.75 = 24
+        Assert.Equal(24, _limiter.CurrentDop);
+    }
+
+    [Fact]
+    public void ErrorRateInMiddle_NoChange()
+    {
+        _limiter = new AdaptiveConcurrencyLimiter(16, 4, 64, _log);
+
+        // 490 successes, 10 failures = 2% error rate (between 1% and 5%)
+        for (int i = 0; i < 490; i++)
+            _limiter.ReportSuccess();
+        for (int i = 0; i < 10; i++)
+            _limiter.ReportFailure();
+
+        Assert.Equal(16, _limiter.CurrentDop); // No change
+    }
+
+    [Fact]
+    public void Dop_ClampedAtMax()
+    {
+        _limiter = new AdaptiveConcurrencyLimiter(56, 4, 64, _log);
+
+        // All successes → increase by 16 → would be 72, clamped to 64
+        for (int i = 0; i < 500; i++)
+            _limiter.ReportSuccess();
+
+        Assert.Equal(64, _limiter.CurrentDop);
+    }
+
+    [Fact]
+    public void Dop_ClampedAtMin()
+    {
+        _limiter = new AdaptiveConcurrencyLimiter(5, 4, 64, _log);
+
+        // All failures → high error rate → decrease by 0.75 → 5*0.75 = 3.75 → 3, but clamped to 4
+        for (int i = 0; i < 500; i++)
+            _limiter.ReportFailure();
+
+        Assert.Equal(4, _limiter.CurrentDop);
+    }
+
+    [Fact]
+    public void MultipleWindows_AccumulateCorrectly()
+    {
+        _limiter = new AdaptiveConcurrencyLimiter(16, 4, 128, _log);
+
+        // First window: all successes → 16 → 32
+        for (int i = 0; i < 500; i++)
+            _limiter.ReportSuccess();
+        Assert.Equal(32, _limiter.CurrentDop);
+
+        // Second window: all successes → 32 → 48
+        for (int i = 0; i < 500; i++)
+            _limiter.ReportSuccess();
+        Assert.Equal(48, _limiter.CurrentDop);
+    }
+
+    [Fact]
+    public void MinDop_EnforcedAt1_WhenConfiguredBelow()
+    {
+        // minDop = 0 should be clamped to 1 internally
+        _limiter = new AdaptiveConcurrencyLimiter(2, 0, 64, _log);
+
+        // All failures → decrease → 2*0.75=1, but min should be 1
+        for (int i = 0; i < 500; i++)
+            _limiter.ReportFailure();
+
+        Assert.True(_limiter.CurrentDop >= 1);
+    }
+
+    [Fact]
+    public async Task HighErrorRate_WithInFlightTokens_LogsPartialDrain()
+    {
+        _limiter = new AdaptiveConcurrencyLimiter(32, 4, 64, _log);
+
+        // Acquire many tokens to keep them "in-flight"
+        for (int i = 0; i < 30; i++)
+            await _limiter.WaitAsync(CancellationToken.None);
+
+        // Now 30 of 32 tokens are in-flight. Only 2 tokens are in the semaphore.
+        // Trigger DOP decrease: 32 → 24 means draining 8 tokens.
+        // But only 2 are available → drained (2) < target (8) → hits the partial drain log path.
+        for (int i = 0; i < 474; i++)
+            _limiter.ReportSuccess();
+        for (int i = 0; i < 26; i++)
+            _limiter.ReportFailure();
+
+        Assert.Equal(24, _limiter.CurrentDop);
+    }
+}

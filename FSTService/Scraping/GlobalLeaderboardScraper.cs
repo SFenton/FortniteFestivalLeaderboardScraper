@@ -15,7 +15,7 @@ namespace FSTService.Scraping;
 ///
 /// Both instrument-level and page-level requests are parallelised.
 /// </summary>
-public sealed class GlobalLeaderboardScraper
+public class GlobalLeaderboardScraper
 {
     private const string EventsBase = "https://events-public-service-live.ol.epicgames.com";
 
@@ -90,8 +90,44 @@ public sealed class GlobalLeaderboardScraper
         string callerAccountId,
         CancellationToken ct = default)
     {
+        return await LookupAccountInWindowAsync(
+            songId, instrument, "alltime", targetAccountId,
+            accessToken, callerAccountId, ct);
+    }
+
+    /// <summary>
+    /// Fetch a specific player's leaderboard entry for one song + instrument
+    /// in a specific seasonal window. Returns null if the player has no entry
+    /// in that season.
+    /// </summary>
+    public async Task<LeaderboardEntry?> LookupSeasonalAsync(
+        string songId,
+        string instrument,
+        string windowId,
+        string targetAccountId,
+        string accessToken,
+        string callerAccountId,
+        CancellationToken ct = default)
+    {
+        return await LookupAccountInWindowAsync(
+            songId, instrument, windowId, targetAccountId,
+            accessToken, callerAccountId, ct);
+    }
+
+    /// <summary>
+    /// Internal helper: fetch a player's entry in a specific window (alltime or seasonal).
+    /// </summary>
+    private async Task<LeaderboardEntry?> LookupAccountInWindowAsync(
+        string songId,
+        string instrument,
+        string windowId,
+        string targetAccountId,
+        string accessToken,
+        string callerAccountId,
+        CancellationToken ct)
+    {
         var url = $"{EventsBase}/api/v1/leaderboards/FNFestival/alltime_{songId}_{instrument}" +
-                  $"/alltime/{callerAccountId}?page=0&rank=0" +
+                  $"/{windowId}/{callerAccountId}?page=0&rank=0" +
                   $"&teamAccountIds={targetAccountId}&appId=Fortnite&showLiveSessions=false";
 
         var req = new HttpRequestMessage(HttpMethod.Get, url);
@@ -435,7 +471,7 @@ public sealed class GlobalLeaderboardScraper
     /// persistence (disk I/O overlaps with remaining network I/O).
     /// </param>
     /// <returns>Dictionary keyed by songId → list of per-instrument results.</returns>
-    public async Task<Dictionary<string, List<GlobalLeaderboardResult>>> ScrapeManySongsAsync(
+    public virtual async Task<Dictionary<string, List<GlobalLeaderboardResult>>> ScrapeManySongsAsync(
         IReadOnlyList<SongScrapeRequest> requests,
         string accessToken,
         string accountId,
@@ -517,6 +553,7 @@ public sealed class GlobalLeaderboardScraper
                         int bestFullCombo = 0;
                         int bestStars = 0;
                         int bestSeason = 0;
+                        string? bestEndTime = null;
 
                         foreach (var session in sh.EnumerateArray())
                         {
@@ -537,6 +574,8 @@ public sealed class GlobalLeaderboardScraper
                                     ? se.GetInt32() : 0;
                                 bestSeason = ts.TryGetProperty("SEASON", out var sn) && sn.ValueKind == JsonValueKind.Number
                                     ? sn.GetInt32() : 0;
+                                bestEndTime = session.TryGetProperty("endTime", out var et) && et.ValueKind == JsonValueKind.String
+                                    ? et.GetString() : null;
                             }
                         }
 
@@ -545,6 +584,7 @@ public sealed class GlobalLeaderboardScraper
                         entry.IsFullCombo = bestFullCombo == 1;
                         entry.Stars = bestStars;
                         entry.Season = bestSeason;
+                        entry.EndTime = bestEndTime;
                     }
 
                     entries.Add(entry);
@@ -584,6 +624,8 @@ public sealed class LeaderboardEntry
     public bool IsFullCombo { get; set; }
     public int Stars { get; set; }
     public int Season { get; set; }
+    /// <summary>ISO 8601 timestamp when the best session ended (from API's endTime field). Null when not available.</summary>
+    public string? EndTime { get; set; }
 }
 
 /// <summary>
