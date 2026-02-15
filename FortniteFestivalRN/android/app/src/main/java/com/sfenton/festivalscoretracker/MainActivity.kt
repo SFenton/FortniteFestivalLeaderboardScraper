@@ -1,4 +1,4 @@
-package com.fortnitefestivalrn
+package com.sfenton.festivalscoretracker
 
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration

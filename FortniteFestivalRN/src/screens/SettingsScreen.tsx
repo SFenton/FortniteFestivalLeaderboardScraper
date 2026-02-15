@@ -1,4 +1,4 @@
-import React, {useCallback, useMemo} from 'react';
+import React, {useCallback, useMemo, useState} from 'react';
 import {Alert, Image, type ImageSourcePropType, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View} from 'react-native';
 import MaskedView from '@react-native-masked-view/masked-view';
 import LinearGradient from 'react-native-linear-gradient';
@@ -16,6 +16,7 @@ import {reorderPIOForVisibilityChange, showSettingKeyForInstrument, normalizeSon
 import type {SongRowVisualItem, SongRowVisualKey} from '../core/songListConfig';
 import {InstrumentKeys} from '../core/instruments';
 import {getInstrumentIconSource} from '../ui/instruments/instrumentVisuals';
+import {useAuth} from '../app/auth/AuthContext';
 
 /* ────────────────────────── Toggle row (reused) ────────────────────────── */
 
@@ -110,6 +111,9 @@ export function SettingsScreen() {
   usePageInstrumentation('Settings');
   const {height: tabBarHeight, marginBottom: tabBarMargin} = useTabBarLayout();
   const {state, actions} = useFestival();
+  const {auth, authActions} = useAuth();
+  const [settingsServiceEndpoint, setSettingsServiceEndpoint] = useState('');
+  const [settingsEpicUsername, setSettingsEpicUsername] = useState('');
 
   const generateExchangeCodeUrl =
     'https://www.epicgames.com/id/api/redirect?clientId=ec684b8c687f479fadea3cb2ad83f5c6&responseType=code';
@@ -358,6 +362,71 @@ export function SettingsScreen() {
             <ToggleRow label="Pro Lead" icon={getInstrumentIconSource('pro_guitar')} checked={state.settings.queryProLead}  onToggle={() => toggleSetting('queryProLead')} disabled={state.settings.queryProLead && queryActiveCount <= 1} />
             <ToggleRow label="Pro Bass" icon={getInstrumentIconSource('pro_bass')}   checked={state.settings.queryProBass}  onToggle={() => toggleSetting('queryProBass')} disabled={state.settings.queryProBass && queryActiveCount <= 1} last />
         </FrostedSurface>
+
+        {/* ───── Connect / Switch Mode ───── */}
+        {auth.status === 'local' ? (
+        <FrostedSurface style={styles.card} tint="dark" intensity={18}>
+          <Text style={styles.sectionTitle}>Connect to Festival Score Tracker</Text>
+          <Text style={styles.sectionHint}>
+            Sync your scores automatically, see friends, rankings, score history, and more.
+          </Text>
+            <View style={[styles.orderRow, styles.orderRowFirst, {flexDirection: 'column', alignItems: 'stretch'}]}>
+              <Text style={styles.orderName}>Service Endpoint</Text>
+              <Text style={styles.descriptorText}>
+                Enter the endpoint of the Festival Score Tracker service you want to connect to.
+              </Text>
+              <FrostedSurface style={[styles.exchangeCodeSurface, {marginTop: 8}]} tint="dark" intensity={18}>
+                <TextInput
+                  style={styles.exchangeCodeInput}
+                  placeholder="https://example.com"
+                  placeholderTextColor="rgba(255,255,255,0.4)"
+                  value={settingsServiceEndpoint}
+                  onChangeText={setSettingsServiceEndpoint}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </FrostedSurface>
+            </View>
+            <View style={[styles.orderRow, styles.orderRowSeparator, {flexDirection: 'column', alignItems: 'stretch'}]}>
+              <Text style={styles.orderName}>Epic Games Username</Text>
+              <Text style={styles.descriptorText}>
+                Enter your Epic Games username here.
+              </Text>
+              <FrostedSurface style={[styles.exchangeCodeSurface, {marginTop: 8}]} tint="dark" intensity={18}>
+                <TextInput
+                  style={styles.exchangeCodeInput}
+                  placeholder="Username"
+                  placeholderTextColor="rgba(255,255,255,0.4)"
+                  value={settingsEpicUsername}
+                  onChangeText={setSettingsEpicUsername}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </FrostedSurface>
+            </View>
+            <View style={[styles.orderRow, styles.orderRowSeparator, {flexDirection: 'column', alignItems: 'stretch'}]}>
+              <Pressable
+                onPress={() => authActions.signInWithService(settingsServiceEndpoint, settingsEpicUsername)}
+                style={({pressed}) => [styles.buttonPurple, pressed && styles.buttonPressed]}>
+                <Text style={styles.buttonText}>Sign In</Text>
+              </Pressable>
+            </View>
+        </FrostedSurface>
+        ) : auth.status === 'authenticated' ? (
+        <FrostedSurface style={styles.card} tint="dark" intensity={18}>
+          <Text style={styles.sectionTitle}>Switch to Local Mode</Text>
+          <Text style={styles.sectionHint}>
+            Fetch scores directly from Epic with an exchange code. No account required.
+          </Text>
+            <View style={[styles.orderRow, styles.orderRowFirst, {flexDirection: 'column', alignItems: 'stretch'}]}>
+              <Pressable
+                onPress={() => authActions.promptLocal()}
+                style={({pressed}) => [styles.buttonSecondary, pressed && styles.buttonPressed]}>
+                <Text style={styles.buttonText}>Use Local</Text>
+              </Pressable>
+            </View>
+        </FrostedSurface>
+        ) : null}
 
         {/* ───── iOS Settings ───── */}
         {Platform.OS === 'ios' && (

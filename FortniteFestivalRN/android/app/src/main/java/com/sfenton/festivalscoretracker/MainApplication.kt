@@ -1,4 +1,4 @@
-package com.fortnitefestivalrn
+package com.sfenton.festivalscoretracker
 
 import android.app.Application
 import com.facebook.react.PackageList
