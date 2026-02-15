@@ -7,7 +7,7 @@
   IgnorableNamespaces="uap rescap">
 
   <Identity
-    Name="FortniteFestivalRN"
+    Name="com.sfenton.festivalscoretracker"
     Publisher="CN=sfent"
     Version="1.0.0.0" />
 

@@ -25,18 +25,23 @@ function pickDriveLetter() {
 }
 
 function findExistingShortCwd(projectRoot) {
-  // If the machine already has a SUBST/mapped drive pointing at the repo root,
+  // If the machine already has a SUBST/mapped drive pointing at the project root,
   // reuse it (avoids failing when R:-Z: are all already taken).
-  const leaf = path.basename(projectRoot);
   const candidates = ['R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'];
 
   for (const letter of candidates) {
     const candidateRoot = `${letter}:\\`;
     if (!fs.existsSync(candidateRoot)) continue;
 
+    // Check if the drive root itself IS the project (subst directly to project dir).
+    const androidGradlew = path.join(candidateRoot, 'android', 'gradlew.bat');
+    if (fs.existsSync(androidGradlew)) return candidateRoot;
+
+    // Also check if the drive maps to the parent (legacy: project is one level down).
+    const leaf = path.basename(projectRoot);
     const candidateCwd = path.join(candidateRoot, leaf);
-    const androidGradlew = path.join(candidateCwd, 'android', 'gradlew.bat');
-    if (fs.existsSync(androidGradlew)) return candidateCwd;
+    const androidGradlew2 = path.join(candidateCwd, 'android', 'gradlew.bat');
+    if (fs.existsSync(androidGradlew2)) return candidateCwd;
   }
 
   return null;
@@ -81,15 +86,12 @@ if (process.platform === 'win32') {
       process.exit(1);
     }
 
-    // Map the *parent* folder so the project isn't at the drive root (Yarn on Windows
-    // can mis-handle writes to "X:" when cwd is exactly "X:\\").
-    const parent = path.dirname(projectRoot);
-    const leaf = path.basename(projectRoot);
+    // Map the drive letter directly to the project folder for the shortest
+    // possible paths.  This avoids Windows 260-char path limits in ninja.
+    ensureSubst(driveLetter, projectRoot);
 
-    ensureSubst(driveLetter, parent);
-
-    const shortCwd = `${driveLetter}:\\${leaf}`;
-    console.log(`Using SUBST short path: ${driveLetter}:\\ -> ${parent}`);
+    const shortCwd = `${driveLetter}:\\`;
+    console.log(`Using SUBST short path: ${driveLetter}:\\ -> ${projectRoot}`);
     console.log(`Running from: ${shortCwd}`);
 
     clearAutolinkingCache(shortCwd);

@@ -77,13 +77,14 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace "com.fortnitefestivalrn"
+    namespace "com.sfenton.festivalscoretracker"
     defaultConfig {
-        applicationId "com.fortnitefestivalrn"
+        applicationId "com.sfenton.festivalscoretracker"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        manifestPlaceholders = [appAuthRedirectScheme: "festscoretracker"]
     }
     signingConfigs {
         debug {
@@ -105,6 +106,7 @@ android {
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
     }
+
 }
 
 dependencies {

@@ -30,14 +30,18 @@ function run(command, args, options = {}) {
 // ── SUBST helpers (copied from run-android.js) ──────────────────────
 
 function findExistingShortCwd(projectRoot) {
-  const leaf = path.basename(projectRoot);
   const candidates = ['R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'];
   for (const letter of candidates) {
     const candidateRoot = `${letter}:\\`;
     if (!fs.existsSync(candidateRoot)) continue;
+    // Check if the drive root itself IS the project.
+    const androidGradlew = path.join(candidateRoot, 'android', 'gradlew.bat');
+    if (fs.existsSync(androidGradlew)) return candidateRoot;
+    // Also check legacy: project is one level down.
+    const leaf = path.basename(projectRoot);
     const candidateCwd = path.join(candidateRoot, leaf);
-    const androidGradlew = path.join(candidateCwd, 'android', 'gradlew.bat');
-    if (fs.existsSync(androidGradlew)) return candidateCwd;
+    const androidGradlew2 = path.join(candidateCwd, 'android', 'gradlew.bat');
+    if (fs.existsSync(androidGradlew2)) return candidateCwd;
   }
   return null;
 }
@@ -70,11 +74,9 @@ if (process.platform === 'win32') {
       console.error('Could not find a free drive letter for SUBST (R:-Z: all in use).');
       process.exit(1);
     }
-    const parent = path.dirname(projectRoot);
-    const leaf = path.basename(projectRoot);
-    ensureSubst(driveLetter, parent);
-    cwd = `${driveLetter}:\\${leaf}`;
-    console.log(`Using SUBST short path: ${driveLetter}:\\ -> ${parent}`);
+    ensureSubst(driveLetter, projectRoot);
+    cwd = `${driveLetter}:\\`;
+    console.log(`Using SUBST short path: ${driveLetter}:\\ -> ${projectRoot}`);
   }
 }
 
