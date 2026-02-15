@@ -21,3 +21,13 @@ export * from './persistence/file/fileStore.types';
 export * from './persistence/file/jsonSettingsPersistence';
 export * from './persistence/file/fileJsonFestivalPersistence';
 export * from './calendar/calendarModels.types';
+
+// App-level pure logic (view-model / filtering / formatting)
+export * from './app/formatters';
+export * from './app/scoreRows';
+export * from './app/songInfo';
+export * from './app/songFiltering';
+export * from './app/statistics';
+export * from './app/logBuffer';
+export * from './app/progress';
+export * from './app/findIndexBy';

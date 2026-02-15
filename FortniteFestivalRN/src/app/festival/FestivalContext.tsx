@@ -5,8 +5,8 @@ import {defaultSettings} from '@festival/core';
 import type {LeaderboardData, Song} from '@festival/core';
 import {FestivalService} from '@festival/core';
 
-import {BatchedLogBuffer} from '../process/logBuffer';
-import {computeProgressState} from '../process/progress';
+import {BatchedLogBuffer} from '@festival/core';
+import {computeProgressState} from '@festival/core';
 import {createFestivalPersistence} from '../../platform/festivalPersistence';
 import {createFetchHttpClient} from '../../platform/httpClient';
 import {createNativeImageCache} from '../../platform/imageCache';

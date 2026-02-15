@@ -3,12 +3,10 @@ import {FlatList, Image, Pressable, ScrollView, StyleSheet, Text, View} from 're
 import MaskedView from '@react-native-masked-view/masked-view';
 import LinearGradient from 'react-native-linear-gradient';
 
-import type {InstrumentKey} from '@festival/core';
-import type {Song} from '@festival/core';
+import type {InstrumentKey, Song, SuggestionCategory} from '@festival/core';
+import {buildInstrumentStats, buildTopSongCategories, type InstrumentDetailedStats} from '@festival/core';
 import {useFestival} from '../app/festival/FestivalContext';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
-import {buildInstrumentStats, buildTopSongCategories, type InstrumentDetailedStats} from '../app/statistics/statistics';
-import type {SuggestionCategory} from '@festival/core';
 import {getInstrumentIconSource} from '@festival/ui/instruments/instrumentVisuals';
 import {StatisticsInstrumentCard} from '@festival/ui/instruments/StatisticsInstrumentCard';
 import {Screen} from '@festival/ui/Screen';

@@ -19,10 +19,7 @@ import {SongRow, type SongRowDisplayData} from '@festival/ui/songs/SongRow';
 import {MAUI_STATUS_COLORS} from '@festival/ui/instruments/instrumentVisuals';
 import {useFestival} from '../app/festival/FestivalContext';
 import {SuggestionCard} from '@festival/ui/suggestions/SuggestionCard';
-import type {SuggestionCategory, SuggestionSongItem} from '@festival/core';
-import type {LeaderboardData, Song} from '@festival/core';
-import type {InstrumentShowSettings} from '../app/songs/songFiltering';
-import type {InstrumentKey} from '@festival/core';
+import type {SuggestionCategory, SuggestionSongItem, InstrumentShowSettings, InstrumentKey, LeaderboardData, Song} from '@festival/core';
 
 /**
  * Fortnite Festival signature purple tones.
