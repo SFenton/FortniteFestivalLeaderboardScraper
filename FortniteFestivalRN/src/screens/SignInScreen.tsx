@@ -1,23 +1,13 @@
 import React, {useCallback, useRef, useState} from 'react';
 import {
-  Animated,
-  LayoutAnimation,
   Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
-  UIManager,
   View,
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
-
-if (
-  Platform.OS === 'android' &&
-  UIManager.setLayoutAnimationEnabledExperimental
-) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
 
 import {FrostedSurface} from '../ui/FrostedSurface';
 import {useAuth} from '../app/auth/AuthContext';
@@ -37,28 +27,20 @@ const COLORS = {
  * re-launch when no persisted auth mode exists).
  *
  * Two options:
- *   • Sign in with Epic Games  (primary, purple)
+ *   • Enter Epic Games Username  (primary, purple)
  *   • Use Locally              (secondary, dark — shows warning alert)
  *
  * The transparent background lets the SlidingRowsBackground shine through.
  */
 export function SignInScreen({onContinue}: {onContinue: () => void}) {
   const {authActions} = useAuth();
-  const [epicExpanded, setEpicExpanded] = useState(false);
-  const [exchangeCode, setExchangeCode] = useState('');
+  const [serviceEndpoint, setServiceEndpoint] = useState('');
+  const [epicUsername, setEpicUsername] = useState('');
   const inputRef = useRef<TextInput>(null);
 
-  const toggleEpicExpanded = useCallback(() => {
-    if (!epicExpanded) {
-      // First click — expand the text box
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      setEpicExpanded(true);
-      setTimeout(() => inputRef.current?.focus(), 300);
-    } else {
-      // Second click — text box already open, proceed with sign-in
-      authActions.signInWithEpic(exchangeCode);
-    }
-  }, [epicExpanded, authActions, exchangeCode]);
+  const handleSignIn = useCallback(() => {
+    authActions.signInWithService(serviceEndpoint, epicUsername);
+  }, [authActions, serviceEndpoint, epicUsername]);
 
   const handleLocal = () => {
     // Show the warning alert; if the user confirms, persist local mode
@@ -79,32 +61,44 @@ export function SignInScreen({onContinue}: {onContinue: () => void}) {
 
       {/* Option cards — single blurred surface with both choices */}
       <FrostedSurface style={styles.card} tint="dark" intensity={18}>
-        {/* ── Epic Games login ──────────────────────────────────── */}
-        <Text style={styles.cardTitle}>Sign in with Epic Games</Text>
+        {/* ── Service login ──────────────────────────────────── */}
+        <Text style={styles.cardTitle}>Connect to Festival Score Tracker</Text>
         <Text style={styles.cardBody}>
           Sync your scores automatically, see friends, rankings, score history, and more.
         </Text>
-        {epicExpanded && (
-          <View style={styles.exchangeCodeContainer}>
-            <Text style={styles.cardBody}>
-              In order to use Epic Games authentication, you will need to
-              enter the endpoint of the Festival Score Tracker service you want
-              to connect to here.
-            </Text>
-            <TextInput
-              ref={inputRef}
-              style={styles.exchangeCodeInput}
-              placeholder="https://example.com"
-              placeholderTextColor="rgba(255,255,255,0.4)"
-              value={exchangeCode}
-              onChangeText={setExchangeCode}
-              autoCapitalize="none"
-              autoCorrect={false}
-              selectionColor={COLORS.epicButtonBorder}
-            />
-          </View>
-        )}
-        <Pressable onPress={toggleEpicExpanded} style={({pressed}) => pressed && styles.pressed}>
+        <View style={styles.exchangeCodeContainer}>
+          <Text style={styles.cardBody}>
+            Enter the endpoint of the Festival Score Tracker service you want
+            to connect to.
+          </Text>
+          <TextInput
+            ref={inputRef}
+            style={styles.exchangeCodeInput}
+            placeholder="https://example.com"
+            placeholderTextColor="rgba(255,255,255,0.4)"
+            value={serviceEndpoint}
+            onChangeText={setServiceEndpoint}
+            autoCapitalize="none"
+            autoCorrect={false}
+            selectionColor={COLORS.epicButtonBorder}
+          />
+        </View>
+        <View style={styles.exchangeCodeContainer}>
+          <Text style={styles.cardBody}>
+            Enter your Epic Games username here.
+          </Text>
+          <TextInput
+            style={styles.exchangeCodeInput}
+            placeholder="Username"
+            placeholderTextColor="rgba(255,255,255,0.4)"
+            value={epicUsername}
+            onChangeText={setEpicUsername}
+            autoCapitalize="none"
+            autoCorrect={false}
+            selectionColor={COLORS.epicButtonBorder}
+          />
+        </View>
+        <Pressable onPress={handleSignIn} style={({pressed}) => pressed && styles.pressed}>
           <View style={styles.epicButton}>
             <Text style={styles.epicButtonText}>Sign In</Text>
           </View>

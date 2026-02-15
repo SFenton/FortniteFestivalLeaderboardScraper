@@ -2,11 +2,11 @@
  * Persisted authentication mode.
  *
  * - `'local'`  — app runs stand-alone, user pastes exchange codes manually.
- * - `'epic'`   — user signed in via Epic Games; service-mediated sync.
+ * - `'service'` — user signed in via Festival Score Tracker service.
  *
  * `null` / missing means the user has never chosen — show the sign-in screen.
  */
-export type AuthMode = 'local' | 'epic';
+export type AuthMode = 'local' | 'service';
 
 /**
  * AsyncStorage key for the persisted auth mode.

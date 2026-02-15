@@ -8,18 +8,13 @@ import {
   SERVICE_ENDPOINT_KEY,
 } from '../../core/auth/authTypes';
 import {FstAuthClient, FstAuthError} from '../../core/auth/fstAuthClient';
-import {
-  authorizeWithEpic,
-  EpicAuthCancelledError,
-  EpicAuthNotInstalledError,
-} from '../../core/auth/epicOAuth';
 
 // ── Auth state machine ──────────────────────────────────────────────
 export type AuthStatus =
   | 'loading'           // reading persisted mode on mount
   | 'choosing'          // no persisted mode — show sign-in screen
   | 'local'             // local mode chosen
-  | 'authenticated';    // Epic login succeeded (future)
+  | 'authenticated';    // Service login succeeded
   // 'unauthenticated' will be added when service auth lands
 
 type AuthState = {
@@ -27,7 +22,7 @@ type AuthState = {
   mode: AuthMode | null;
   /** Persisted session (tokens + profile) when status === 'authenticated'. */
   session: AuthSession | null;
-  /** FST service endpoint URL when mode === 'epic'. */
+  /** FST service endpoint URL when mode === 'service'. */
   serviceEndpoint: string | null;
 };
 
@@ -39,13 +34,14 @@ type AuthActions = {
   promptLocal: () => void;
 
   /**
-   * User chose "Sign in with Epic Games".
-   * Opens the Epic OAuth browser, sends the auth code to the FST service
-   * at the given endpoint, and stores the resulting tokens.
+   * User chose to connect to a Festival Score Tracker service.
+   * Sends the username to the FST service at the given endpoint
+   * and stores the resulting tokens.
    *
    * @param serviceEndpoint  The FST service URL entered by the user.
+   * @param username         The user's Epic Games display name.
    */
-  signInWithEpic: (serviceEndpoint: string) => void;
+  signInWithService: (serviceEndpoint: string, username: string) => void;
 
   /** Reset back to the sign-in screen (wipes persisted mode + tokens). */
   signOut: () => Promise<void>;
@@ -107,7 +103,7 @@ async function getDeviceId(): Promise<string> {
 async function loadPersistedMode(): Promise<AuthMode | null> {
   const storage = getAsyncStorage();
   const raw = await storage.getItem(AUTH_MODE_STORAGE_KEY);
-  if (raw === 'local' || raw === 'epic') return raw;
+  if (raw === 'local' || raw === 'service') return raw;
   return null;
 }
 
@@ -174,11 +170,11 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
 
         if (mode === 'local') {
           setAuth({status: 'local', mode: 'local', session: null, serviceEndpoint: null});
-        } else if (mode === 'epic' && session && endpoint) {
+        } else if (mode === 'service' && session && endpoint) {
           // Check if access token is still valid
           const expiresAt = new Date(session.expiresAt);
           if (expiresAt > new Date()) {
-            setAuth({status: 'authenticated', mode: 'epic', session, serviceEndpoint: endpoint});
+            setAuth({status: 'authenticated', mode: 'service', session, serviceEndpoint: endpoint});
           } else {
             // Token expired — try to refresh
             try {
@@ -193,7 +189,7 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
                 ).toISOString(),
               };
               await persistSession(newSession);
-              setAuth({status: 'authenticated', mode: 'epic', session: newSession, serviceEndpoint: endpoint});
+              setAuth({status: 'authenticated', mode: 'service', session: newSession, serviceEndpoint: endpoint});
             } catch {
               // Refresh failed — force re-login
               setAuth({status: 'choosing', mode: null, session: null, serviceEndpoint: null});
@@ -219,7 +215,7 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
     const message =
       'Selecting local allows the app to be used locally, and make all leaderboard requests itself. ' +
       'However, it removes certain features from the app, and requires the user to copy and paste a sensitive code from Epic Games code endpoints.\n\n' +
-      'We recommend using the Epic Games login if you have a Festival Score Tracker service endpoint available to you. ' +
+      'We recommend connecting to a Festival Score Tracker service if you have an endpoint available to you. ' +
       'Continue with local mode at your own risk.';
 
     if (Platform.OS === 'ios') {
@@ -236,31 +232,32 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
     }
   }, [confirmLocal]);
 
-  const signInWithEpic = useCallback((serviceEndpoint: string) => {
+  const signInWithService = useCallback((serviceEndpoint: string, username: string) => {
     const endpoint = serviceEndpoint.trim();
+    const name = username.trim();
     if (!endpoint) {
-      Alert.alert('Missing Endpoint', 'Please enter the Festival Score Tracker service URL.');
+      Alert.alert('Missing Endpoint', 'Please enter the Festival Score Tracker service endpoint.');
+      return;
+    }
+    if (!name) {
+      Alert.alert('Missing Username', 'Please enter your Epic Games username.');
       return;
     }
 
     (async () => {
       try {
-        // 1. Open Epic's login page in a browser (handles 2FA on their end)
-        // The redirect URL points to FSTService, which 302s back to the app.
-        const {authorizationCode} = await authorizeWithEpic(endpoint);
-
-        // 2. Generate a device identifier
+        // 1. Generate a device identifier
         const deviceId = await getDeviceId();
 
-        // 3. Send the auth code to our FSTService to exchange for tokens
+        // 2. Send the username to the FST service to register/login
         const client = new FstAuthClient(endpoint);
         const loginResult = await client.login(
-          authorizationCode,
+          name,
           deviceId,
           Platform.OS as 'ios' | 'android' | 'windows',
         );
 
-        // 4. Build session and persist everything
+        // 3. Build session and persist everything
         const session: AuthSession = {
           accessToken: loginResult.accessToken,
           refreshToken: loginResult.refreshToken,
@@ -272,33 +269,19 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
         };
 
         await Promise.all([
-          persistMode('epic'),
+          persistMode('service'),
           persistSession(session),
           persistEndpoint(endpoint),
         ]);
 
-        // 5. Transition to authenticated
+        // 4. Transition to authenticated
         setAuth({
           status: 'authenticated',
-          mode: 'epic',
+          mode: 'service',
           session,
           serviceEndpoint: endpoint,
         });
       } catch (error: any) {
-        if (error instanceof EpicAuthCancelledError) {
-          // User cancelled — silently return to sign-in
-          return;
-        }
-
-        if (error instanceof EpicAuthNotInstalledError) {
-          Alert.alert(
-            'Not Available',
-            'Epic Games sign-in requires a native library that is not yet installed. ' +
-              'Please install react-native-app-auth and rebuild.',
-          );
-          return;
-        }
-
         if (error instanceof FstAuthError) {
           Alert.alert(
             'Sign-In Failed',
@@ -335,9 +318,9 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
   const value = useMemo<AuthContextValue>(
     () => ({
       auth,
-      authActions: {confirmLocal, promptLocal, signInWithEpic, signOut},
+      authActions: {confirmLocal, promptLocal, signInWithService, signOut},
     }),
-    [auth, confirmLocal, promptLocal, signInWithEpic, signOut],
+    [auth, confirmLocal, promptLocal, signInWithService, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

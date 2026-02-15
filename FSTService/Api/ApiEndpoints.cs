@@ -97,32 +97,6 @@ public static class ApiEndpoints
         .WithTags("Players")
         .RequireRateLimiting("public");
 
-        // ─── Epic OAuth callback (public, used as redirect URL) ─
-
-        // Epic's Developer Portal does not allow custom URI schemes
-        // (e.g. festscoretracker://) as redirect URLs.  Instead, we
-        // register this HTTPS endpoint as the redirect URL.  When Epic
-        // redirects the user's browser here with ?code=XYZ, we issue a
-        // 302 to the app's custom-scheme deep link so react-native-app-auth
-        // can intercept it.
-        app.MapGet("/api/auth/epiccallback", (HttpContext context) =>
-        {
-            var code  = context.Request.Query["code"].FirstOrDefault();
-            var state = context.Request.Query["state"].FirstOrDefault();
-
-            if (string.IsNullOrEmpty(code))
-                return Results.BadRequest(new { error = "Missing 'code' query parameter." });
-
-            // Build the deep-link URL that react-native-app-auth is listening for.
-            var deepLink = $"festscoretracker://auth/callback?code={Uri.EscapeDataString(code)}";
-            if (!string.IsNullOrEmpty(state))
-                deepLink += $"&state={Uri.EscapeDataString(state)}";
-
-            return Results.Redirect(deepLink);
-        })
-        .WithTags("Auth")
-        .RequireRateLimiting("public");
-
         // ─── Protected endpoints (require API key) ──────────
 
         app.MapGet("/api/status", (
