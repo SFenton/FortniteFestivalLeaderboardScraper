@@ -28,7 +28,7 @@ jobs:
           dotnet-version: "9.0.x"
 
       - name: Restore dependencies
-        run: dotnet restore FortniteFestivalLeaderboardScraper.sln
+        run: dotnet restore FSTService.Tests/FSTService.Tests.csproj
 
       - name: Build
         run: dotnet build FSTService.Tests/FSTService.Tests.csproj -c Release --no-restore
