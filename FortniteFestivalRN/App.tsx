@@ -16,7 +16,7 @@ import {FestivalProvider, useFestival} from './src/app/festival/FestivalContext'
 import {AuthProvider, useAuth} from './src/app/auth/AuthContext';
 import {IntroScreen} from './src/screens/IntroScreen';
 import {SignInScreen} from './src/screens/SignInScreen';
-import {SlidingRowsBackground} from './src/ui/SlidingRowsBackground';
+import {SlidingRowsBackground} from '@festival/ui/SlidingRowsBackground';
 
 if (Platform.OS !== 'windows') {
   // `react-native-screens`' Windows native project currently targets UWP/WinUI2,
@@ -300,7 +300,7 @@ function TransitionManager() {
     <View style={transitionStyles.root}>
       {/* Animated album art mosaic — lives behind everything and persists
           through carousel → sign-in → spinner → slide-in so it never flickers. */}
-      {phase !== 'done' && <SlidingRowsBackground />}
+      {phase !== 'done' && <SlidingRowsBackground songs={state.songs} />}
 
       {/* Carousel — mounted during introSpinner (invisible) so it can warm up */}
       {mountCarousel && (

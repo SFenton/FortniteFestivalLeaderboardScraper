@@ -1604,6 +1604,16 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@festival/ui@workspace:packages/ui":
+  version: 0.0.0-use.local
+  resolution: "@festival/ui@workspace:packages/ui"
+  peerDependencies:
+    "@festival/core": "*"
+    react: "*"
+    react-native: "*"
+  languageName: unknown
+  linkType: soft
+
 "@hapi/hoek@npm:^9.0.0, @hapi/hoek@npm:^9.3.0":
   version: 9.3.0
   resolution: "@hapi/hoek@npm:9.3.0"

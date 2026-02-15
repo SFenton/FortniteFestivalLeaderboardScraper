@@ -20,8 +20,8 @@ import { SongsNavigator } from './SongsNavigator';
 import { SuggestionsNavigator } from './SuggestionsNavigator';
 import { StatisticsNavigator } from './StatisticsNavigator';
 import {useWindowsFlyoutUi, WindowsFlyoutUiProvider} from './windowsFlyoutUi';
-import { AnimatedBackground } from '../ui/AnimatedBackground';
-import { FrostedSurface } from '../ui/FrostedSurface';
+import { AnimatedBackground } from '@festival/ui/AnimatedBackground';
+import { FrostedSurface } from '@festival/ui/FrostedSurface';
 
 export type AppNavParamList = {
   [Routes.Songs]: undefined;
@@ -291,7 +291,7 @@ function AppNavigatorInner() {
   console.log('[AppNavigator] Rendering AppNavigator, Platform:', Platform.OS);
   const {chromeHidden} = useWindowsFlyoutUi();
   const {
-    state: {isReady, progressPct, settings},
+    state: {isReady, progressPct, settings, songs},
     actions,
   } = useFestival();
 
@@ -328,7 +328,7 @@ function AppNavigatorInner() {
   return (
     <View style={{flex: 1, backgroundColor: '#1A0830'}}>
       {!(Platform.OS === 'windows' && chromeHidden) ? (
-        <AnimatedBackground animate dimOpacity={0.7} />
+        <AnimatedBackground songs={songs} animate dimOpacity={0.7} />
       ) : null}
       <View style={{flex: 1}} pointerEvents={showBootOverlay ? 'none' : 'auto'}>
         <NavigationContainer

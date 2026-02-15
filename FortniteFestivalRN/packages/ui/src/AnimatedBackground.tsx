@@ -1,6 +1,6 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {Animated, StyleSheet, View} from 'react-native';
-import {useFestival} from '../app/festival/FestivalContext';
+import type {Song} from '@festival/core';
 
 const FADE_DURATION = 1000; // 1 second fade
 const DISPLAY_DURATION = 5000; // 5 seconds display time
@@ -99,10 +99,8 @@ function startMotion(layer: Layer) {
   ]).start();
 }
 
-export function AnimatedBackground(props: {animate?: boolean; dimOpacity?: number}) {
-  const {
-    state: {songs},
-  } = useFestival();
+export function AnimatedBackground(props: {songs: Song[]; animate?: boolean; dimOpacity?: number}) {
+  const {songs} = props;
 
   const animate = props.animate ?? true;
   const dimOpacity = props.dimOpacity ?? 0.7;

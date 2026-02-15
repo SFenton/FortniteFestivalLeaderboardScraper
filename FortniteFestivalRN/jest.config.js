@@ -5,6 +5,8 @@ module.exports = {
   moduleNameMapper: {
     '^@festival/core$': '<rootDir>/packages/core/src',
     '^@festival/core/(.*)$': '<rootDir>/packages/core/src/$1',
+    '^@festival/ui$': '<rootDir>/packages/ui/src',
+    '^@festival/ui/(.*)$': '<rootDir>/packages/ui/src/$1',
   },
   transformIgnorePatterns: [
     'node_modules/(?!((jest-)?react-native|@react-native|@react-navigation|react-native-gesture-handler|react-native-reanimated|react-native-screens|react-native-safe-area-context|react-native-drawer-layout|react-native-vector-icons)/)',

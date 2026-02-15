@@ -1,6 +1,6 @@
 import React, {useEffect, useMemo, useRef} from 'react';
 import {Animated, Dimensions, Easing, Image, Platform, StyleSheet, View} from 'react-native';
-import {useFestival} from '../app/festival/FestivalContext';
+import type {Song} from '@festival/core';
 
 // ── Configuration ───────────────────────────────────────────────────
 const TILE_SIZE = 90; // Width & height of each album art tile
@@ -103,10 +103,8 @@ function SlidingRow({
 
 const FADE_DURATION = 1_000; // ms to fade rows in once ready
 
-export function SlidingRowsBackground() {
-  const {
-    state: {songs},
-  } = useFestival();
+export function SlidingRowsBackground(props: {songs: Song[]}) {
+  const {songs} = props;
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const hasFadedIn = useRef(false);

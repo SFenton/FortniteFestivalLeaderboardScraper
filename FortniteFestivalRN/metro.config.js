@@ -8,6 +8,7 @@ const rnwPath = fs.realpathSync(
 
 // Workspace packages that Metro needs to watch and resolve
 const corePackagePath = path.resolve(__dirname, 'packages/core');
+const uiPackagePath = path.resolve(__dirname, 'packages/ui');
 
 //
 
@@ -20,7 +21,7 @@ const corePackagePath = path.resolve(__dirname, 'packages/core');
 
 const config = {
   // Watch workspace packages so Metro picks up changes in real-time
-  watchFolders: [corePackagePath],
+  watchFolders: [corePackagePath, uiPackagePath],
   //
   resolver: {
     // Watchman is great when installed/healthy, but when its socket isn't available Metro can hang

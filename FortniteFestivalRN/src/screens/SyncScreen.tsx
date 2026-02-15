@@ -1,8 +1,8 @@
 import React, {useEffect, useMemo} from 'react';
 import {Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 
-import { Screen } from '../ui/Screen';
-import {FrostedSurface} from '../ui/FrostedSurface';
+import { Screen } from '@festival/ui/Screen';
+import {FrostedSurface} from '@festival/ui/FrostedSurface';
 import {useFestival} from '../app/festival/FestivalContext';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
 import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';

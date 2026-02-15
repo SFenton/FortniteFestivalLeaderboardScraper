@@ -3,7 +3,9 @@
   "compilerOptions": {
     "paths": {
       "@festival/core": ["./packages/core/src"],
-      "@festival/core/*": ["./packages/core/src/*"]
+      "@festival/core/*": ["./packages/core/src/*"],
+      "@festival/ui": ["./packages/ui/src"],
+      "@festival/ui/*": ["./packages/ui/src/*"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx"],

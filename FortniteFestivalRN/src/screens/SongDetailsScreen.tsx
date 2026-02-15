@@ -6,17 +6,17 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import MaskedView from '@react-native-masked-view/masked-view';
 import LinearGradient from 'react-native-linear-gradient';
 
-import {Screen} from '../ui/Screen';
-import {FrostedSurface} from '../ui/FrostedSurface';
-import {PageHeader} from '../ui/PageHeader';
+import {Screen} from '@festival/ui/Screen';
+import {FrostedSurface} from '@festival/ui/FrostedSurface';
+import {PageHeader} from '@festival/ui/PageHeader';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
 import {useFestival} from '../app/festival/FestivalContext';
 import type {InstrumentKey} from '@festival/core';
 import {normalizeInstrumentOrder} from '../app/songs/songFiltering';
 import {buildSongInfoInstrumentRows} from '../app/songInfo/songInfo';
-import {getInstrumentIconSource} from '../ui/instruments/instrumentVisuals';
-import {InstrumentCard, MetricPill, DifficultyBars, StarsVisual} from '../ui/instruments/InstrumentCard';
-import {useCardGrid} from '../ui/useCardGrid';
+import {getInstrumentIconSource} from '@festival/ui/instruments/instrumentVisuals';
+import {InstrumentCard, MetricPill, DifficultyBars, StarsVisual} from '@festival/ui/instruments/InstrumentCard';
+import {useCardGrid} from '@festival/ui/useCardGrid';
 
 const CARD_BG = 'rgba(18,24,38,0.78)';
 
