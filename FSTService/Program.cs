@@ -35,6 +35,10 @@ builder.Services.PostConfigure<ScraperOptions>(opts =>
         {
             opts.SetupOnly = true;
         }
+        else if (args[i].Equals("--once", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.RunOnce = true;
+        }
         else if (args[i].Equals("--resolve-only", StringComparison.OrdinalIgnoreCase))
         {
             opts.ResolveOnly = true;

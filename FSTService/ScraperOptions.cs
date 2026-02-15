@@ -49,6 +49,13 @@ public sealed class ScraperOptions
     public bool SetupOnly { get; set; }
 
     /// <summary>
+    /// When true, run a single scrape + resolve pass and then exit
+    /// instead of looping on the interval timer.
+    /// Set via <c>--once</c> CLI argument.
+    /// </summary>
+    public bool RunOnce { get; set; }
+
+    /// <summary>
     /// When true, skip scraping and only run account name resolution
     /// against unresolved IDs already in the meta DB. Then exit.
     /// Set via <c>--resolve-only</c> CLI argument.

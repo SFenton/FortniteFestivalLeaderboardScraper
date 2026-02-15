@@ -131,6 +131,12 @@ public sealed class ScraperWorker : BackgroundService
         {
             await RunScrapePassAsync(service, opts, stoppingToken);
 
+            if (opts.RunOnce)
+            {
+                _log.LogInformation("--once: scrape + resolve pass complete. Exiting.");
+                break;
+            }
+
             _log.LogInformation("Next scrape in {Interval}. Sleeping...", opts.ScrapeInterval);
             try
             {
@@ -470,8 +476,8 @@ public sealed class ScraperWorker : BackgroundService
                 foreach (var entry in result.Entries.Take(3))
                 {
                     _log.LogInformation(
-                        "    #{Rank}  {AccountId}  Score={Score}  Accuracy={Accuracy}%  Stars={Stars}  FC={FC}",
-                        entry.Rank, entry.AccountId, entry.Score, entry.Accuracy,
+                        "    {AccountId}  Score={Score}  Accuracy={Accuracy}%  Stars={Stars}  FC={FC}",
+                        entry.AccountId, entry.Score, entry.Accuracy,
                         entry.Stars, entry.IsFullCombo ? "YES" : "no");
                 }
 

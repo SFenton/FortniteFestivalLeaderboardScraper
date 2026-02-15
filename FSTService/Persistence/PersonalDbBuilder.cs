@@ -289,7 +289,7 @@ public sealed class PersonalDbBuilder
         }
 
         // Build INSERT statement matching the RN schema column order:
-        //   Per-instrument inline: Score, Diff, Stars, FC, Pct, Season, Rank, GameDiff
+        //   Per-instrument inline: Score, Diff, Stars, FC, Pct, Season, GameDiff
         //   Then grouped:          {Inst}Total, {Inst}RawPct, {Inst}CalcTotal
         var prefixes = new[] { "Guitar", "Drums", "Bass", "Vocals", "ProGuitar", "ProBass" };
 
@@ -298,7 +298,7 @@ public sealed class PersonalDbBuilder
 
         foreach (var prefix in prefixes)
         {
-            foreach (var suffix in new[] { "Score", "Diff", "Stars", "FC", "Pct", "Season", "Rank", "GameDiff" })
+            foreach (var suffix in new[] { "Score", "Diff", "Stars", "FC", "Pct", "Season", "GameDiff" })
             {
                 columns.Add($"{prefix}{suffix}");
                 parameters.Add($"@{prefix}{suffix}");
@@ -380,7 +380,6 @@ public sealed class PersonalDbBuilder
                 paramMap[$"@{prefix}FC"].Value       = score.IsFullCombo ? 1 : 0;
                 paramMap[$"@{prefix}Pct"].Value      = score.Accuracy;
                 paramMap[$"@{prefix}Season"].Value   = score.Season;
-                paramMap[$"@{prefix}Rank"].Value     = score.Rank;
                 paramMap[$"@{prefix}GameDiff"].Value = -1; // Not available from leaderboard data
                 paramMap[$"@{prefix}Total"].Value    = 0;  // Total entry count not stored per-song
                 paramMap[$"@{prefix}RawPct"].Value   = score.Percentile;

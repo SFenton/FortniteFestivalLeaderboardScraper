@@ -506,8 +506,6 @@ public sealed class GlobalLeaderboardScraper
 
                     if (e.TryGetProperty("rank", out var rk) && rk.ValueKind == JsonValueKind.Number)
                         entry.Rank = rk.GetInt32();
-                    if (e.TryGetProperty("pointsEarned", out var pe) && pe.ValueKind == JsonValueKind.Number)
-                        entry.PointsEarned = pe.GetInt32();
                     if (e.TryGetProperty("percentile", out var pct) && pct.ValueKind == JsonValueKind.Number)
                         entry.Percentile = pct.GetDouble();
 
@@ -580,7 +578,6 @@ public sealed class LeaderboardEntry
 {
     public string AccountId { get; set; } = "";
     public int Rank { get; set; }
-    public int PointsEarned { get; set; }
     public double Percentile { get; set; }
     public int Score { get; set; }
     public int Accuracy { get; set; }

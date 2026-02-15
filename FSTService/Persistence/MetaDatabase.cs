@@ -271,32 +271,35 @@ public sealed class MetaDatabase : IDisposable
         var now = DateTime.UtcNow.ToString("o");
         int affected = 0;
 
-        using var conn = OpenConnection();
-        using var tx = conn.BeginTransaction();
-        using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT INTO AccountNames (AccountId, DisplayName, LastResolved)
-            VALUES (@id, @name, @now)
-            ON CONFLICT(AccountId) DO UPDATE SET
-                DisplayName  = excluded.DisplayName,
-                LastResolved = excluded.LastResolved;
-            """;
-
-        var pId   = cmd.Parameters.Add("@id", SqliteType.Text);
-        var pName = cmd.Parameters.Add("@name", SqliteType.Text);
-        var pNow  = cmd.Parameters.Add("@now", SqliteType.Text);
-        cmd.Prepare();
-
-        foreach (var (accountId, displayName) in accounts)
+        lock (_writeLock)
         {
-            pId.Value   = accountId;
-            pName.Value = displayName is not null ? displayName : DBNull.Value;
-            pNow.Value  = now;
-            affected += cmd.ExecuteNonQuery();
-        }
+            using var conn = OpenConnection();
+            using var tx = conn.BeginTransaction();
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO AccountNames (AccountId, DisplayName, LastResolved)
+                VALUES (@id, @name, @now)
+                ON CONFLICT(AccountId) DO UPDATE SET
+                    DisplayName  = excluded.DisplayName,
+                    LastResolved = excluded.LastResolved;
+                """;
 
-        tx.Commit();
+            var pId   = cmd.Parameters.Add("@id", SqliteType.Text);
+            var pName = cmd.Parameters.Add("@name", SqliteType.Text);
+            var pNow  = cmd.Parameters.Add("@now", SqliteType.Text);
+            cmd.Prepare();
+
+            foreach (var (accountId, displayName) in accounts)
+            {
+                pId.Value   = accountId;
+                pName.Value = displayName is not null ? displayName : DBNull.Value;
+                pNow.Value  = now;
+                affected += cmd.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+        }
         return affected;
     }
 
@@ -451,13 +454,15 @@ public sealed class MetaDatabase : IDisposable
 
     // ─── Helpers ────────────────────────────────────────────────
 
+    private readonly object _writeLock = new();
+
     private SqliteConnection OpenConnection()
     {
         var conn = new SqliteConnection(_connectionString);
         conn.Open();
 
         using var pragma = conn.CreateCommand();
-        pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;";
+        pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;";
         pragma.ExecuteNonQuery();
 
         return conn;
