@@ -7,8 +7,8 @@ import DraggableFlatList, {type RenderItemParams} from 'react-native-draggable-f
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
 import { Screen } from '@festival/ui/Screen';
-import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
-import {useFestival} from '../app/festival/FestivalContext';
+import {usePageInstrumentation} from '@festival/contexts';
+import {useFestival} from '@festival/contexts';
 import {FrostedSurface} from '@festival/ui/FrostedSurface';
 import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 import {PageHeader} from '@festival/ui/PageHeader';
@@ -16,7 +16,7 @@ import {reorderPIOForVisibilityChange, showSettingKeyForInstrument, normalizeSon
 import type {SongRowVisualItem, SongRowVisualKey} from '@festival/core';
 import {InstrumentKeys} from '@festival/core';
 import {getInstrumentIconSource} from '@festival/ui/instruments/instrumentVisuals';
-import {useAuth} from '../app/auth/AuthContext';
+import {useAuth} from '@festival/contexts';
 
 /* ────────────────────────── Toggle row (reused) ────────────────────────── */
 

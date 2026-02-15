@@ -15,7 +15,7 @@ import { SettingsScreen } from '../screens/SettingsScreen';
 import { WindowsSongsHost } from '../screens/WindowsSongsHost';
 import { WindowsSuggestionsHost } from '../screens/WindowsSuggestionsHost';
 import { WindowsStatisticsHost } from '../screens/WindowsStatisticsHost';
-import { useFestival } from '../app/festival/FestivalContext';
+import { useFestival } from '@festival/contexts';
 import { SongsNavigator } from './SongsNavigator';
 import { SuggestionsNavigator } from './SuggestionsNavigator';
 import { StatisticsNavigator } from './StatisticsNavigator';

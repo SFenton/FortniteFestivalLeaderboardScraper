@@ -12,8 +12,8 @@ import {
 import {SafeAreaProvider, initialWindowMetrics} from 'react-native-safe-area-context';
 
 import {AppNavigator} from './src/navigation/AppNavigator';
-import {FestivalProvider, useFestival} from './src/app/festival/FestivalContext';
-import {AuthProvider, useAuth} from './src/app/auth/AuthContext';
+import {FestivalProvider, useFestival} from '@festival/contexts';
+import {AuthProvider, useAuth} from '@festival/contexts';
 import {IntroScreen} from './src/screens/IntroScreen';
 import {SignInScreen} from './src/screens/SignInScreen';
 import {SlidingRowsBackground} from '@festival/ui/SlidingRowsBackground';

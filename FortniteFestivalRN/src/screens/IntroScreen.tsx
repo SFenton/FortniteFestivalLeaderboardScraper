@@ -17,7 +17,7 @@ import {InstrumentCard, type InstrumentCardData} from '@festival/ui/instruments/
 import {StatisticsInstrumentCard, type StatisticsCardData} from '@festival/ui/instruments/StatisticsInstrumentCard';
 import {SongRow, type SongRowDisplayData} from '@festival/ui/songs/SongRow';
 import {MAUI_STATUS_COLORS} from '@festival/ui/instruments/instrumentVisuals';
-import {useFestival} from '../app/festival/FestivalContext';
+import {useFestival} from '@festival/contexts';
 import {SuggestionCard} from '@festival/ui/suggestions/SuggestionCard';
 import type {SuggestionCategory, SuggestionSongItem, InstrumentShowSettings, InstrumentKey, LeaderboardData, Song} from '@festival/core';
 

@@ -3,8 +3,8 @@ import {Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, V
 
 import { Screen } from '@festival/ui/Screen';
 import {FrostedSurface} from '@festival/ui/FrostedSurface';
-import {useFestival} from '../app/festival/FestivalContext';
-import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
+import {useFestival} from '@festival/contexts';
+import {usePageInstrumentation} from '@festival/contexts';
 import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 
 export function SyncScreen() {

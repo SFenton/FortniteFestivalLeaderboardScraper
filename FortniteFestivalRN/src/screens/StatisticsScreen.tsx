@@ -5,8 +5,8 @@ import LinearGradient from 'react-native-linear-gradient';
 
 import type {InstrumentKey, Song, SuggestionCategory} from '@festival/core';
 import {buildInstrumentStats, buildTopSongCategories, type InstrumentDetailedStats} from '@festival/core';
-import {useFestival} from '../app/festival/FestivalContext';
-import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
+import {useFestival} from '@festival/contexts';
+import {usePageInstrumentation} from '@festival/contexts';
 import {getInstrumentIconSource} from '@festival/ui/instruments/instrumentVisuals';
 import {StatisticsInstrumentCard} from '@festival/ui/instruments/StatisticsInstrumentCard';
 import {Screen} from '@festival/ui/Screen';

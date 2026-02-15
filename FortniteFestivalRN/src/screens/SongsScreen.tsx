@@ -7,8 +7,8 @@ import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 import {useCardGrid} from '@festival/ui/useCardGrid';
 
 import { Screen } from '@festival/ui/Screen';
-import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
-import {useFestival} from '../app/festival/FestivalContext';
+import {usePageInstrumentation} from '@festival/contexts';
+import {useFestival} from '@festival/contexts';
 import type {LeaderboardData, Song, AdvancedMissingFilters, MetadataSortKey, SongSortMode, InstrumentKey, GameDifficulty, InstrumentShowSettings} from '@festival/core';
 import {buildSongDisplayRow, defaultAdvancedMissingFilters, defaultMetadataSortPriority, defaultPrimaryInstrumentOrder, filterAndSortSongs, normalizeInstrumentOrder, normalizeMetadataSortPriority, percentileBucket} from '@festival/core';
 import {normalizeSongRowVisualOrder, formatIntegerWithCommas, formatSeason, GAME_DIFFICULTY_LABELS} from '@festival/core';
