@@ -7,7 +7,9 @@
       "@festival/ui": ["./packages/ui/src"],
       "@festival/ui/*": ["./packages/ui/src/*"],
       "@festival/contexts": ["./packages/contexts/src"],
-      "@festival/contexts/*": ["./packages/contexts/src/*"]
+      "@festival/contexts/*": ["./packages/contexts/src/*"],
+      "@festival/local-app": ["./packages/local-app/src"],
+      "@festival/local-app/*": ["./packages/local-app/src/*"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx"],
