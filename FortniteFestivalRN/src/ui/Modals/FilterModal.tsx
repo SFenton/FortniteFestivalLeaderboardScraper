@@ -6,11 +6,11 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import {PlatformModal} from './PlatformModal';
 import {FrostedSurface} from '../FrostedSurface';
 import {Accordion} from '../Accordion';
-import {PERCENTILE_THRESHOLDS} from '../../core/songListConfig';
-import type {AdvancedMissingFilters} from '../../core/songListConfig';
+import {PERCENTILE_THRESHOLDS} from '@festival/core';
+import type {AdvancedMissingFilters} from '@festival/core';
 import type {InstrumentShowSettings} from '../../app/songs/songFiltering';
 import {modalStyles as styles} from './modalStyles';
-import type {InstrumentKey} from '../../core/instruments';
+import type {InstrumentKey} from '@festival/core';
 import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
 import {DifficultyBars} from '../instruments/InstrumentCard';
 

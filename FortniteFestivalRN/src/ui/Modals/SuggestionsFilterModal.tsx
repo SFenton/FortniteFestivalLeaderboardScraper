@@ -5,11 +5,11 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {PlatformModal} from './PlatformModal';
 import {FrostedSurface} from '../FrostedSurface';
 import {modalStyles as styles} from './modalStyles';
-import type {InstrumentKey} from '../../core/instruments';
+import type {InstrumentKey} from '@festival/core';
 import type {InstrumentShowSettings} from '../../app/songs/songFiltering';
 import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
-import type {SuggestionTypeSettings, SuggestionTypeSettingsKey} from '../../core/suggestions/suggestionFilterConfig';
-import {SUGGESTION_TYPES, defaultSuggestionTypeSettings, globalKeyFor, perInstrumentKeyFor} from '../../core/suggestions/suggestionFilterConfig';
+import type {SuggestionTypeSettings, SuggestionTypeSettingsKey} from '@festival/core';
+import {SUGGESTION_TYPES, defaultSuggestionTypeSettings, globalKeyFor, perInstrumentKeyFor} from '@festival/core';
 
 export type SuggestionsInstrumentFilters = {
   suggestionsLeadFilter: boolean;

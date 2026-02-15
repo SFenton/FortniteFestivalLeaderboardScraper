@@ -1,7 +1,7 @@
-import type {FestivalPersistence} from '../../core/persistence';
-import type {LeaderboardData, Song} from '../../core/models';
-import {ScoreTracker} from '../../core/models';
-import {parseJson, savePretty} from '../../core/io/jsonSerializer';
+import type {FestivalPersistence} from '@festival/core';
+import type {LeaderboardData, Song} from '@festival/core';
+import {ScoreTracker} from '@festival/core';
+import {parseJson, savePretty} from '@festival/core';
 import type {KeyValueStore} from './keyValueStore.types';
 
 export type KeyValueFestivalPersistenceKeys = {

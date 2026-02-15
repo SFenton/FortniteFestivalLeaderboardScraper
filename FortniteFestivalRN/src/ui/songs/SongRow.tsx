@@ -3,8 +3,8 @@ import {Image, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View}
 import {FrostedSurface} from '../FrostedSurface';
 import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
 import {DifficultyBars} from '../instruments/InstrumentCard';
-import type {InstrumentKey} from '../../core/instruments';
-import type {MetadataSortKey} from '../../core/songListConfig';
+import type {InstrumentKey} from '@festival/core';
+import type {MetadataSortKey} from '@festival/core';
 
 const STAR_WHITE_ICON = require('../../assets/icons/star_white.png');
 const STAR_GOLD_ICON = require('../../assets/icons/star_gold.png');

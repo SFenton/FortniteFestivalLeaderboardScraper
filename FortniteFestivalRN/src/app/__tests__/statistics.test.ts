@@ -1,5 +1,5 @@
-import {ScoreTracker} from '../../core/models';
-import type {LeaderboardData} from '../../core/models';
+import {ScoreTracker} from '@festival/core';
+import type {LeaderboardData} from '@festival/core';
 import {buildInstrumentStats, buildTopSongCategories} from '../statistics/statistics';
 
 describe('app/statistics', () => {

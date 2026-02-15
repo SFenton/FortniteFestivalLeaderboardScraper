@@ -1,5 +1,5 @@
-import {ScoreTracker} from '../../core/models';
-import type {LeaderboardData} from '../../core/models';
+import {ScoreTracker} from '@festival/core';
+import type {LeaderboardData} from '@festival/core';
 import {buildScoreRows} from '../scores/scoreRows';
 
 describe('app/scores/buildScoreRows', () => {

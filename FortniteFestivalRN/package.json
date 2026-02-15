@@ -2,6 +2,9 @@
   "name": "FortniteFestivalRN",
   "version": "0.0.1",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "android": "node scripts/run-android.js",
     "android:clearCacheBuildDeploy": "node scripts/clear-cache-build-deploy-android.js",

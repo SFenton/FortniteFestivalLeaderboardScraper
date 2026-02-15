@@ -1,5 +1,5 @@
-import type {InstrumentKey} from '../../core/instruments';
-import type {LeaderboardData, ScoreTracker, Song} from '../../core/models';
+import type {InstrumentKey} from '@festival/core';
+import type {LeaderboardData, ScoreTracker, Song} from '@festival/core';
 import {formatIntegerWithCommas} from '../format/formatters';
 
 export type SongInfoInstrumentRow = {

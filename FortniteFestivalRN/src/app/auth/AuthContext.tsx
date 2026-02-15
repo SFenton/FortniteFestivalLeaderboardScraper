@@ -1,13 +1,13 @@
 import React, {createContext, useCallback, useContext, useEffect, useMemo, useState} from 'react';
 import {Alert, Platform} from 'react-native';
 
-import type {AuthMode, AuthSession} from '../../core/auth/authTypes';
+import type {AuthMode, AuthSession} from '@festival/core';
 import {
   AUTH_MODE_STORAGE_KEY,
   AUTH_SESSION_KEY,
   SERVICE_ENDPOINT_KEY,
-} from '../../core/auth/authTypes';
-import {FstAuthClient, FstAuthError} from '../../core/auth/fstAuthClient';
+} from '@festival/core';
+import {FstAuthClient, FstAuthError} from '@festival/core';
 
 // ── Auth state machine ──────────────────────────────────────────────
 export type AuthStatus =

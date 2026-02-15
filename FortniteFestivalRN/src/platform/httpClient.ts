@@ -1,4 +1,4 @@
-import type {HttpClient, HttpResponse} from '../core/services/types';
+import type {HttpClient, HttpResponse} from '@festival/core';
 
 const asRecord = (headers?: Record<string, string>): Record<string, string> => headers ?? {};
 

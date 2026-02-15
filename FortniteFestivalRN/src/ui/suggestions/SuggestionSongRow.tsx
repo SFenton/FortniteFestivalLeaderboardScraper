@@ -4,8 +4,8 @@ import {MarqueeText} from '../MarqueeText';
 import {getInstrumentIconSource, getInstrumentStatusVisual} from '../instruments/instrumentVisuals';
 import {buildSongDisplayRow, type InstrumentShowSettings} from '../../app/songs/songFiltering';
 import {formatIntegerWithCommas} from '../../app/format/formatters';
-import type {LeaderboardData, Song} from '../../core/models';
-import type {SuggestionSongItem} from '../../core/suggestions/types';
+import type {LeaderboardData, Song} from '@festival/core';
+import type {SuggestionSongItem} from '@festival/core';
 
 const STAR_WHITE_ICON = require('../../assets/icons/star_white.png');
 const STAR_GOLD_ICON = require('../../assets/icons/star_gold.png');

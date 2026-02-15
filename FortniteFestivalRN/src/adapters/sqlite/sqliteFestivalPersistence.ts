@@ -1,7 +1,7 @@
-import type {FestivalPersistence} from '../../core/persistence';
-import {ScoreTracker} from '../../core/models';
-import type {LeaderboardData, Song} from '../../core/models';
-import type {InstrumentKey} from '../../core/instruments';
+import type {FestivalPersistence} from '@festival/core';
+import {ScoreTracker} from '@festival/core';
+import type {LeaderboardData, Song} from '@festival/core';
+import type {InstrumentKey} from '@festival/core';
 import type {SqliteDatabase, SqliteTransaction} from './sqliteDb.types';
 
 type DbSongRow = {

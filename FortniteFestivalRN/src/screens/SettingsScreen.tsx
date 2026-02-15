@@ -12,9 +12,9 @@ import {useFestival} from '../app/festival/FestivalContext';
 import {FrostedSurface} from '../ui/FrostedSurface';
 import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 import {PageHeader} from '../ui/PageHeader';
-import {reorderPIOForVisibilityChange, showSettingKeyForInstrument, normalizeSongRowVisualOrder} from '../core/songListConfig';
-import type {SongRowVisualItem, SongRowVisualKey} from '../core/songListConfig';
-import {InstrumentKeys} from '../core/instruments';
+import {reorderPIOForVisibilityChange, showSettingKeyForInstrument, normalizeSongRowVisualOrder} from '@festival/core';
+import type {SongRowVisualItem, SongRowVisualKey} from '@festival/core';
+import {InstrumentKeys} from '@festival/core';
 import {getInstrumentIconSource} from '../ui/instruments/instrumentVisuals';
 import {useAuth} from '../app/auth/AuthContext';
 

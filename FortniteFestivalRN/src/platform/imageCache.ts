@@ -1,8 +1,8 @@
 import {Platform} from 'react-native';
 import RNFS from 'react-native-fs';
 
-import type {Song} from '../core/models';
-import type {ImageCache} from '../core/services/types';
+import type {Song} from '@festival/core';
+import type {ImageCache} from '@festival/core';
 
 const IMAGE_CACHE_DIR =
   Platform.OS === 'windows'

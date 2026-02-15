@@ -1,6 +1,6 @@
 import {KeyValueFestivalPersistence} from '../keyValueFestivalPersistence';
 import {InMemoryKeyValueStore} from '../inMemoryKeyValueStore';
-import type {LeaderboardData, Song} from '../../../core/models';
+import type {LeaderboardData, Song} from '@festival/core';
 
 describe('KeyValueFestivalPersistence', () => {
   test('loadScores returns [] on missing key', async () => {

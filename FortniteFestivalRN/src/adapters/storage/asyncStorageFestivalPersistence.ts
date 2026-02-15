@@ -1,4 +1,4 @@
-import type {FestivalPersistence} from '../../core/persistence';
+import type {FestivalPersistence} from '@festival/core';
 import {KeyValueFestivalPersistence} from './keyValueFestivalPersistence';
 import {AsyncStorageKeyValueStore} from './asyncStorageKeyValueStore';
 

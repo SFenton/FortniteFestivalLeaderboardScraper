@@ -1,6 +1,6 @@
-import type {InstrumentKey} from '../../core/instruments';
-import type {LeaderboardData, ScoreTracker} from '../../core/models';
-import type {SuggestionCategory, SuggestionSongItem} from '../../core/suggestions/types';
+import type {InstrumentKey} from '@festival/core';
+import type {LeaderboardData, ScoreTracker} from '@festival/core';
+import type {SuggestionCategory, SuggestionSongItem} from '@festival/core';
 
 export type InstrumentDetailedStats = {
   instrumentKey: InstrumentKey;

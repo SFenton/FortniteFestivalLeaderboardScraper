@@ -8,9 +8,9 @@ import {PlatformModal} from './PlatformModal';
 import {FrostedSurface} from '../FrostedSurface';
 import {Accordion} from '../Accordion';
 import {normalizeInstrumentOrder, normalizeMetadataSortPriority} from '../../app/songs/songFiltering';
-import type {InstrumentOrderItem, InstrumentShowSettings, MetadataSortItem, MetadataSortKey, SongSortMode} from '../../core/songListConfig';
-import {isInstrumentVisible} from '../../core/songListConfig';
-import type {InstrumentKey} from '../../core/instruments';
+import type {InstrumentOrderItem, InstrumentShowSettings, MetadataSortItem, MetadataSortKey, SongSortMode} from '@festival/core';
+import {isInstrumentVisible} from '@festival/core';
+import type {InstrumentKey} from '@festival/core';
 import {modalStyles as styles} from './modalStyles';
 import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
 

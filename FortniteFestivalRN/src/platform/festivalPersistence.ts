@@ -1,6 +1,6 @@
 import {Platform} from 'react-native';
-import type {FestivalPersistence} from '../core/persistence';
-import {InMemoryFestivalPersistence} from '../core/persistence';
+import type {FestivalPersistence} from '@festival/core';
+import {InMemoryFestivalPersistence} from '@festival/core';
 
 declare const process:
   | {

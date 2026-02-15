@@ -1598,6 +1598,12 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@festival/core@workspace:packages/core":
+  version: 0.0.0-use.local
+  resolution: "@festival/core@workspace:packages/core"
+  languageName: unknown
+  linkType: soft
+
 "@hapi/hoek@npm:^9.0.0, @hapi/hoek@npm:^9.3.0":
   version: 9.3.0
   resolution: "@hapi/hoek@npm:9.3.0"

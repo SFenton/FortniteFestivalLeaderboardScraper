@@ -1,12 +1,12 @@
-import type {InstrumentKey} from '../../core/instruments';
-import type {LeaderboardData, ScoreTracker, Song} from '../../core/models';
-import type {Settings} from '../../core/settings';
+import type {InstrumentKey} from '@festival/core';
+import type {LeaderboardData, ScoreTracker, Song} from '@festival/core';
+import type {Settings} from '@festival/core';
 
-export type {AdvancedMissingFilters, InstrumentOrderItem, InstrumentShowSettings, MetadataSortItem, MetadataSortKey, SongSortMode} from '../../core/songListConfig';
-export {defaultAdvancedMissingFilters, defaultMetadataSortPriority, defaultPrimaryInstrumentOrder, instrumentSortModes, isInstrumentSortMode, isInstrumentVisible, normalizeInstrumentOrder, normalizeMetadataSortPriority, PERCENTILE_THRESHOLDS, percentileBucket, reorderPIOForVisibilityChange, showSettingKeyForInstrument} from '../../core/songListConfig';
+export type {AdvancedMissingFilters, InstrumentOrderItem, InstrumentShowSettings, MetadataSortItem, MetadataSortKey, SongSortMode} from '@festival/core';
+export {defaultAdvancedMissingFilters, defaultMetadataSortPriority, defaultPrimaryInstrumentOrder, instrumentSortModes, isInstrumentSortMode, isInstrumentVisible, normalizeInstrumentOrder, normalizeMetadataSortPriority, PERCENTILE_THRESHOLDS, percentileBucket, reorderPIOForVisibilityChange, showSettingKeyForInstrument} from '@festival/core';
 
-import type {AdvancedMissingFilters, InstrumentOrderItem, InstrumentShowSettings, MetadataSortKey, SongSortMode} from '../../core/songListConfig';
-import {defaultAdvancedMissingFilters, defaultMetadataSortPriority, defaultPrimaryInstrumentOrder, percentileBucket} from '../../core/songListConfig';
+import type {AdvancedMissingFilters, InstrumentOrderItem, InstrumentShowSettings, MetadataSortKey, SongSortMode} from '@festival/core';
+import {defaultAdvancedMissingFilters, defaultMetadataSortPriority, defaultPrimaryInstrumentOrder, percentileBucket} from '@festival/core';
 
 const canon = (s: string | undefined): string => (s ?? '').trim().toLowerCase();
 

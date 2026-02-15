@@ -1,9 +1,9 @@
 import React, {createContext, useCallback, useContext, useEffect, useMemo, useRef, useState} from 'react';
 
-import type {Settings} from '../../core/settings';
-import {defaultSettings} from '../../core/settings';
-import type {LeaderboardData, Song} from '../../core/models';
-import {FestivalService} from '../../core/services/festivalService';
+import type {Settings} from '@festival/core';
+import {defaultSettings} from '@festival/core';
+import type {LeaderboardData, Song} from '@festival/core';
+import {FestivalService} from '@festival/core';
 
 import {BatchedLogBuffer} from '../process/logBuffer';
 import {computeProgressState} from '../process/progress';

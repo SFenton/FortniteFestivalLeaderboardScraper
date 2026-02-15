@@ -1,5 +1,5 @@
-import type {InstrumentKey} from '../../core/instruments';
-import type {LeaderboardData, ScoreTracker} from '../../core/models';
+import type {InstrumentKey} from '@festival/core';
+import type {LeaderboardData, ScoreTracker} from '@festival/core';
 
 export type ScoreInstrument = 'Lead' | 'Drums' | 'Vocals' | 'Bass' | 'ProLead' | 'ProBass';
 export type ScoreSortColumn = 'Title' | 'Artist' | 'Score' | 'Percent' | 'Stars' | 'FC' | 'Season';

@@ -1,7 +1,7 @@
 import {SqliteFestivalPersistence} from '../sqliteFestivalPersistence';
 import type {SqliteDatabase, SqliteResultSet, SqliteRowList} from '../sqliteDb.types';
-import type {LeaderboardData, Song} from '../../../core/models';
-import {ScoreTracker} from '../../../core/models';
+import type {LeaderboardData, Song} from '@festival/core';
+import {ScoreTracker} from '@festival/core';
 
 function rowsOf<T>(items: T[]): SqliteRowList<T> {
   return {

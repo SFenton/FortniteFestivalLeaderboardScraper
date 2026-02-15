@@ -3,7 +3,7 @@ import {Image, StyleSheet, Text, View} from 'react-native';
 import Svg, {Polygon} from 'react-native-svg';
 import {FrostedSurface} from '../FrostedSurface';
 import {getInstrumentIconSource} from './instrumentVisuals';
-import type {InstrumentKey} from '../../core/instruments';
+import type {InstrumentKey} from '@festival/core';
 
 const STAR_WHITE_ICON = require('../../assets/icons/star_white.png');
 const STAR_GOLD_ICON = require('../../assets/icons/star_gold.png');

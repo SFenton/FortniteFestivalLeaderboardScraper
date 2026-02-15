@@ -11,7 +11,7 @@ import {FrostedSurface} from '../ui/FrostedSurface';
 import {PageHeader} from '../ui/PageHeader';
 import {usePageInstrumentation} from '../app/instrumentation/usePageInstrumentation';
 import {useFestival} from '../app/festival/FestivalContext';
-import type {InstrumentKey} from '../core/instruments';
+import type {InstrumentKey} from '@festival/core';
 import {normalizeInstrumentOrder} from '../app/songs/songFiltering';
 import {buildSongInfoInstrumentRows} from '../app/songInfo/songInfo';
 import {getInstrumentIconSource} from '../ui/instruments/instrumentVisuals';

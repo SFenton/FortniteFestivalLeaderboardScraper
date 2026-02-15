@@ -1,6 +1,6 @@
-import {ScoreTracker} from '../../core/models';
-import type {LeaderboardData, Song} from '../../core/models';
-import {defaultSettings} from '../../core/settings';
+import {ScoreTracker} from '@festival/core';
+import type {LeaderboardData, Song} from '@festival/core';
+import {defaultSettings} from '@festival/core';
 import {buildSongDisplayRow, defaultAdvancedMissingFilters, defaultPrimaryInstrumentOrder, filterAndSortSongs, songMatchesAdvancedMissing} from '../songs/songFiltering';
 
 describe('app/songs/songFiltering', () => {

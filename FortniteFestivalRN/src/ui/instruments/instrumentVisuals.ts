@@ -1,5 +1,5 @@
 import type { ImageSourcePropType } from 'react-native';
-import type { InstrumentKey } from '../../core/instruments';
+import type { InstrumentKey } from '@festival/core';
 
 export const MAUI_STATUS_COLORS = {
   fullCombo: { fill: '#FFD700', stroke: '#CFA500' },

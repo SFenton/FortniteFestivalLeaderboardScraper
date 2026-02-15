@@ -2,7 +2,7 @@ import React from 'react';
 import {Image, StyleSheet, Text, View, type StyleProp, type ViewStyle} from 'react-native';
 import {FrostedSurface} from '../FrostedSurface';
 import {getInstrumentIconSource} from './instrumentVisuals';
-import type {InstrumentKey} from '../../core/instruments';
+import type {InstrumentKey} from '@festival/core';
 
 // ── Public data type ────────────────────────────────────────────────
 
