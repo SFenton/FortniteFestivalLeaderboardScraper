@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <UseWinUI3 Condition="'$(UseWinUI3)' == ''">true</UseWinUI3>
+
+    <Platform Condition="'$(Platform)' == '' and '$(PlatformTarget)' != ''">$(PlatformTarget)</Platform>
+    <Platform Condition="'$(Platform)' == ''">x64</Platform>
+
+    <Native-Platform Condition="'$(Native-Platform)' == '' and '$(Platform)' == 'Win32'">x86</Native-Platform>
+    <Native-Platform Condition="'$(Native-Platform)' == '' and '$(Platform)' != '' and '$(Platform)' != 'Win32'">$(Platform)</Native-Platform>
+    <Native-Platform Condition="'$(Native-Platform)' == '' and '$(PlatformTarget)' != ''">$(PlatformTarget)</Native-Platform>
+  </PropertyGroup>
+</Project>

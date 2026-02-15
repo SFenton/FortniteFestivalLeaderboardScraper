@@ -1,0 +1,25 @@
+# docker-compose.yml for the remote Docker host machine.
+# Place this file (and optionally a .env with overrides) on the host.
+#
+# First-time setup:
+#   1. Create a GitHub PAT with read:packages scope.
+#   2. echo YOUR_PAT | docker login ghcr.io -u SFenton --password-stdin
+#
+# Usage:
+#   docker compose pull
+#   docker compose up -d
+
+services:
+  fstservice:
+    image: ghcr.io/sfenton/fstservice:latest
+    container_name: fstservice
+    restart: unless-stopped
+    volumes:
+      - ./fst-data:/app/data
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      - DOTNET_ENVIRONMENT=Production
+      # Override scraper settings via environment variables if needed:
+      # - Scraper__ScrapeInterval=04:00:00
+      # - Scraper__DegreeOfParallelism=16

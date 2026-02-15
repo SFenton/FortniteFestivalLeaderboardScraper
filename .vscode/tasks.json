@@ -1,0 +1,49 @@
+{
+  // Build and run tasks for FortniteFestival Core and MAUI (Windows target)
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "restore",
+      "type": "shell",
+      "command": "dotnet restore .\\FortniteFestivalLeaderboardScraper.sln",
+      "problemMatcher": ["$msCompile"],
+      "group": "build"
+    },
+    {
+      "label": "build core",
+      "type": "shell",
+      "command": "dotnet build .\\FortniteFestival.Core\\FortniteFestival.Core.csproj -c Debug --no-restore",
+      "dependsOn": ["restore"],
+      "problemMatcher": ["$msCompile"],
+      "group": "build"
+    },
+    {
+      "label": "build maui windows",
+      "type": "shell",
+      "command": "dotnet build .\\FortniteFestival.LeaderboardScraper.MAUI\\FortniteFestival.LeaderboardScraper.MAUI.csproj -f net9.0-windows10.0.19041.0 -c Debug --no-restore",
+      "dependsOn": ["restore"],
+      "problemMatcher": ["$msCompile"],
+      "group": "build"
+    },
+    {
+      "label": "run maui windows",
+      "type": "shell",
+      "command": "dotnet build .\\FortniteFestival.LeaderboardScraper.MAUI\\FortniteFestival.LeaderboardScraper.MAUI.csproj -t:Run -f net9.0-windows10.0.19041.0 -c Debug --no-restore",
+      "dependsOn": ["build maui windows"],
+      "problemMatcher": ["$msCompile"],
+      "group": "none"
+    },
+    {
+      "label": "clean",
+      "type": "shell",
+      "command": "dotnet clean .\\FortniteFestivalLeaderboardScraper.sln",
+      "problemMatcher": []
+    },
+    {
+      "label": "check maui workload",
+      "type": "shell",
+      "command": "dotnet workload list | findstr /I maui",
+      "problemMatcher": []
+    }
+  ]
+}

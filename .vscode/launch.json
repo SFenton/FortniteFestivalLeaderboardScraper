@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug MAUI (Windows)",
+      "type": "dotnet",
+      "request": "launch",
+      "preLaunchTask": "build maui windows",
+      "program": "${workspaceFolder}\\FortniteFestival.LeaderboardScraper.MAUI\\bin\\Debug\\net9.0-windows10.0.19041.0\\win10-x64\\FortniteFestival.LeaderboardScraper.MAUI.exe",
+      "cwd": "${workspaceFolder}\\FortniteFestival.LeaderboardScraper.MAUI",
+      "console": "internalConsole"
+    }
+  ]
+}

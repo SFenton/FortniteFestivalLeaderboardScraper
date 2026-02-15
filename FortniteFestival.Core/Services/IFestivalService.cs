@@ -13,9 +13,60 @@ namespace FortniteFestival.Core.Services
         event Action<string> Log; // log line
         event Action<string> SongAvailabilityChanged; // songId
         event Action<LeaderboardData> ScoreUpdated; // per song
-        event Action<int,int,string,bool> SongProgress; // current, total, title, started(true)/completed(false)
+        event Action<int, int, string, bool> SongProgress; // current, total, title, started(true)/completed(false)
+
+        // Per-song update tracking
+        event Action<string> SongUpdateStarted; // songId - fired when a song starts updating
+        event Action<string> SongUpdateCompleted; // songId - fired when a song finishes updating
+        
+        /// <summary>
+        /// Checks if a song has been completed in the current fetch pass.
+        /// </summary>
+        bool IsSongCompletedThisPass(string songId);
+        
+        /// <summary>
+        /// Checks if a song is currently being updated.
+        /// </summary>
+        bool IsSongUpdating(string songId);
+        
+        /// <summary>
+        /// Prioritizes a song to be fetched next (moves it to front of queue).
+        /// Returns true if the song was found and prioritized.
+        /// </summary>
+        bool PrioritizeSong(string songId);
+
+        // Returns instrumentation counters: improved scores, empty leaderboards, errors, total requests, total bytes, elapsed seconds
+        (
+            long improved,
+            long empty,
+            long errors,
+            long requests,
+            long bytes,
+            double elapsedSec
+        ) GetInstrumentation();
         Task InitializeAsync(); // load DB, initial song sync
         Task SyncSongsAsync();
-        Task<bool> FetchScoresAsync(string exchangeCode, int degreeOfParallelism, IList<string> filteredSongIds, Settings settings);
+        Task<bool> FetchScoresAsync(
+            string exchangeCode,
+            int degreeOfParallelism,
+            IList<string> filteredSongIds,
+            Settings settings
+        );
+        Task<bool> FetchScoresAsync(
+            string exchangeCode,
+            int degreeOfParallelism,
+            IList<string> filteredSongIds,
+            IEnumerable<InstrumentType> instruments,
+            Settings settings
+        );
+
+        /// <summary>
+        /// Fetch scores using a pre-obtained token (for service/headless scenarios).
+        /// </summary>
+        Task<bool> FetchScoresWithTokenAsync(
+            Auth.ExchangeCodeToken token,
+            IList<string> filteredSongIds,
+            Settings settings
+        );
     }
 }

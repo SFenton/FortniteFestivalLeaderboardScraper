@@ -1,0 +1,37 @@
+# ── Build artifacts ───────────────────────────────────────────
+**/bin/
+**/obj/
+**/out/
+
+# ── IDE / editor files ───────────────────────────────────────
+.vs/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# ── Git ──────────────────────────────────────────────────────
+.git/
+.gitattributes
+.gitignore
+
+# ── Projects not needed for the FSTService build ─────────────
+FortniteFestival.LeaderboardScraper.MAUI/
+FortniteFestivalRN/
+docs/
+
+# ── Data / credentials (never bake into an image) ───────────
+FSTService/data/
+*.db
+device-auth.json
+
+# ── Docker files (no need to copy into context) ─────────────
+**/Dockerfile
+**/docker-compose*.yml
+**/.dockerignore
+
+# ── Misc ─────────────────────────────────────────────────────
+README.md
+*.md
+coverage/
