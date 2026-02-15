@@ -20,6 +20,8 @@ services:
       - "127.0.0.1:8080:8080"
     environment:
       - DOTNET_ENVIRONMENT=Production
+      # Set to true to disable background scraping (API-only mode)
+      # - Scraper__ApiOnly=true
       # Override scraper settings via environment variables if needed:
       # - Scraper__ScrapeInterval=04:00:00
       # - Scraper__DegreeOfParallelism=16

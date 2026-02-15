@@ -77,6 +77,16 @@ public sealed class ScraperWorker : BackgroundService
     {
         var opts = _options.Value;
 
+        // --api-only mode: skip all background work, let the API serve requests
+        if (opts.ApiOnly)
+        {
+            _log.LogInformation("Running in --api-only mode. Background scraping disabled. API is active.");
+            // Keep the worker alive (but idle) so the host doesn't shut down
+            try { await Task.Delay(Timeout.Infinite, stoppingToken); }
+            catch (OperationCanceledException) { /* normal shutdown */ }
+            return;
+        }
+
         // --setup mode: only do device code auth, then exit
         if (opts.SetupOnly)
         {

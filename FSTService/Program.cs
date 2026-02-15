@@ -43,6 +43,10 @@ builder.Services.PostConfigure<ScraperOptions>(opts =>
         {
             opts.ResolveOnly = true;
         }
+        else if (args[i].Equals("--api-only", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.ApiOnly = true;
+        }
         else if (args[i].Equals("--test", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
         {
             opts.TestSongQuery = args[++i];

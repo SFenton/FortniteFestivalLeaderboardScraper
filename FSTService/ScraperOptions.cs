@@ -43,6 +43,14 @@ public sealed class ScraperOptions
     public string DeviceAuthPath { get; set; } = "data/device-auth.json";
 
     /// <summary>
+    /// When true, start only the HTTP API layer — do not run any background
+    /// scraping.  Useful for testing API endpoints (e.g. auth callback) without
+    /// waiting for the full scrape loop.
+    /// Set via <c>--api-only</c> CLI argument or <c>Scraper__ApiOnly=true</c> env var.
+    /// </summary>
+    public bool ApiOnly { get; set; }
+
+    /// <summary>
     /// When true, only run the device-code auth setup and exit.
     /// Set via <c>--setup</c> CLI argument.
     /// </summary>
