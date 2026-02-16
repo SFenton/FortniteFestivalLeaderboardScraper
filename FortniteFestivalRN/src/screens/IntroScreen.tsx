@@ -12,13 +12,18 @@ import {
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import PagerView from 'react-native-pager-view';
-import {FrostedSurface} from '@festival/ui/FrostedSurface';
-import {InstrumentCard, type InstrumentCardData} from '@festival/ui/instruments/InstrumentCard';
-import {StatisticsInstrumentCard, type StatisticsCardData} from '@festival/ui/instruments/StatisticsInstrumentCard';
-import {SongRow, type SongRowDisplayData} from '@festival/ui/songs/SongRow';
-import {MAUI_STATUS_COLORS} from '@festival/ui/instruments/instrumentVisuals';
+import {
+  FrostedSurface,
+  InstrumentCard,
+  type InstrumentCardData,
+  StatisticsInstrumentCard,
+  type StatisticsCardData,
+  SongRow,
+  type SongRowDisplayData,
+  MAUI_STATUS_COLORS,
+  SuggestionCard,
+} from '@festival/ui';
 import {useFestival} from '@festival/contexts';
-import {SuggestionCard} from '@festival/ui/suggestions/SuggestionCard';
 import type {SuggestionCategory, SuggestionSongItem, InstrumentShowSettings, InstrumentKey, LeaderboardData, Song} from '@festival/core';
 
 /**

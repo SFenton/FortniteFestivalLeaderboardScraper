@@ -226,13 +226,13 @@ describe('SuggestionGenerator', () => {
 
     const moreStars = buildDecadeVariant.call(gen, 'more_stars', 'Push These to Gold Stars', 'desc', pool);
     expect(moreStars[0].title).toContain("00's");
-    expect(moreStars[0].title).toContain('Gold Stars');
+    expect(moreStars[0].title).toContain('Gold');
 
     const unfcG = buildDecadeVariant.call(gen, 'unfc_guitar', 'Finish the Guitar FCs', 'desc', pool);
-    expect(unfcG[0].title).toBe("Close Guitar FCs on Songs From the 00's");
+    expect(unfcG[0].title).toBe("Close Guitar FCs (00's)");
 
     const unplayedAny = buildDecadeVariant.call(gen, 'unplayed_any', 'Try Something New', 'desc', pool);
-    expect(unplayedAny[0].title).toBe("First Plays from the 00's");
+    expect(unplayedAny[0].title).toBe("First Plays (00's)");
     expect(unplayedAny[0].description).toBe("Unplayed songs from the 00's.");
 
     const unplayedG = buildDecadeVariant.call(gen, 'unplayed_guitar', 'New on Guitar', 'desc', pool);
@@ -249,7 +249,7 @@ describe('SuggestionGenerator', () => {
     expect(nearAny[0].title).toBe("FC These Next! (00's)");
 
     const almostSix = buildDecadeVariant.call(gen, 'almost_six_star', 'Push to Gold Stars', 'desc', pool);
-    expect(almostSix[0].title).toBe("Push 00's Songs to Gold Stars");
+    expect(almostSix[0].title).toBe("Push 00's to Gold");
 
     const gains = buildDecadeVariant.call(gen, 'star_gains', 'Easy Star Gains', 'desc', pool);
     expect(gains[0].title).toBe("Easy Star Gains (00's)");

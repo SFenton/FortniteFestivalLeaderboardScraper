@@ -11,6 +11,7 @@ jest.mock('react-native-reanimated', () => {
       linear: (t) => t,
     },
     runOnJS: (fn) => fn,
+    runOnUI: (fn) => () => {},
     useSharedValue: (value) => ({ value }),
     useAnimatedStyle: (updater) => updater(),
     useAnimatedProps: (updater) => updater(),
@@ -36,6 +37,15 @@ jest.mock('react-native-screens', () => {
 });
 
 jest.mock('@react-navigation/bottom-tabs/unstable', () => {
+  const actual = jest.requireActual('@react-navigation/bottom-tabs');
+
+  return {
+    ...actual,
+    createNativeBottomTabNavigator: actual.createBottomTabNavigator,
+  };
+});
+
+jest.mock('@bottom-tabs/react-navigation', () => {
   const actual = jest.requireActual('@react-navigation/bottom-tabs');
 
   return {

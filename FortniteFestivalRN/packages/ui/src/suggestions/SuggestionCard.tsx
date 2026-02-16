@@ -3,9 +3,8 @@ import {FlatList, Image, Platform, StyleSheet, Text, View} from 'react-native';
 import {FrostedSurface} from '../FrostedSurface';
 import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
 import {SuggestionSongRow} from './SuggestionSongRow';
-import type {LeaderboardData, Song} from '@festival/core';
+import type {LeaderboardData, Song, InstrumentShowSettings} from '@festival/core';
 import type {SuggestionCategory, SuggestionSongItem} from '@festival/core';
-import type {InstrumentShowSettings} from '../../app/songs/songFiltering';
 
 export function SuggestionCard(props: {
   cat: SuggestionCategory;

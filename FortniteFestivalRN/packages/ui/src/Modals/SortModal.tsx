@@ -7,7 +7,7 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {PlatformModal} from './PlatformModal';
 import {FrostedSurface} from '../FrostedSurface';
 import {Accordion} from '../Accordion';
-import {normalizeInstrumentOrder, normalizeMetadataSortPriority} from '../../app/songs/songFiltering';
+import {normalizeInstrumentOrder, normalizeMetadataSortPriority} from '@festival/core';
 import type {InstrumentOrderItem, InstrumentShowSettings, MetadataSortItem, MetadataSortKey, SongSortMode} from '@festival/core';
 import {isInstrumentVisible} from '@festival/core';
 import type {InstrumentKey} from '@festival/core';

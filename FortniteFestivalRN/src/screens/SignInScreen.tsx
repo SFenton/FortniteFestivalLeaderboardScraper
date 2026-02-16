@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 
-import {FrostedSurface} from '@festival/ui/FrostedSurface';
+import {FrostedSurface} from '@festival/ui';
 import {useAuth} from '@festival/contexts';
 
 // ── Colors — matches the intro carousel's Fortnite Festival palette ──

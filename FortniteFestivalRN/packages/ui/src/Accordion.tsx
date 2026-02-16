@@ -1,7 +1,7 @@
 import React, {useCallback, useEffect, useState} from 'react';
 import {LayoutChangeEvent, Pressable, StyleSheet, Text, View} from 'react-native';
-import Animated, {useAnimatedStyle, useSharedValue, withTiming} from 'react-native-reanimated';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import Animated, {useAnimatedStyle, useSharedValue, withTiming} from 'react-native-reanimated';
 
 // ── Types ───────────────────────────────────────────────────────────
 

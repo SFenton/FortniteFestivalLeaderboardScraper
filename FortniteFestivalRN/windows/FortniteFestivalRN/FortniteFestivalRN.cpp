@@ -10,6 +10,7 @@
 
 #include <winrt/Microsoft.UI.Windowing.h>
 #include <string>
+#include <Shlwapi.h>  // PathCchCombine is from pathcch.h, already available via pch
 
 // A PackageProvider containing any turbo modules you define within this app project
 struct CompReactPackageProvider
@@ -32,6 +33,17 @@ _Use_decl_annotations_ int CALLBACK WinMain(HINSTANCE instance, HINSTANCE, PSTR 
   WCHAR appDirectory[MAX_PATH];
   GetModuleFileNameW(NULL, appDirectory, MAX_PATH);
   PathCchRemoveFileSpec(appDirectory, MAX_PATH);
+
+  // Register bundled Ionicons font so react-native-vector-icons can render
+  // glyphs using fontFamily: 'Ionicons'.  Flag 0 (instead of FR_PRIVATE)
+  // adds the font to the session font table so it is visible to both GDI
+  // and DirectWrite.  The Composition renderer uses DirectWrite exclusively;
+  // FR_PRIVATE fonts are invisible to DirectWrite.
+  {
+    WCHAR fontPath[MAX_PATH];
+    PathCchCombine(fontPath, MAX_PATH, appDirectory, L"Fonts\\Ionicons.ttf");
+    AddFontResourceExW(fontPath, 0, 0);
+  }
 
   // Create a ReactNativeWin32App with the ReactNativeAppBuilder
   auto reactNativeWin32App{winrt::Microsoft::ReactNative::ReactNativeAppBuilder().Build()};

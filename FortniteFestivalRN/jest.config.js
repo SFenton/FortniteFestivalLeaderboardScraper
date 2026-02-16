@@ -15,7 +15,7 @@ module.exports = {
     '^@festival/server-app/(.*)$': '<rootDir>/packages/server-app/src/$1',
   },
   transformIgnorePatterns: [
-    'node_modules/(?!((jest-)?react-native|@react-native|@react-navigation|react-native-gesture-handler|react-native-reanimated|react-native-screens|react-native-safe-area-context|react-native-drawer-layout|react-native-vector-icons)/)',
+    'node_modules/(?!((jest-)?react-native|@react-native|@react-native-masked-view|@react-navigation|@bottom-tabs|react-native-gesture-handler|react-native-reanimated|react-native-screens|react-native-safe-area-context|react-native-drawer-layout|react-native-vector-icons|react-native-linear-gradient|react-native-draggable-flatlist)/)',
   ],
   collectCoverage: true,
   collectCoverageFrom: [
@@ -29,10 +29,10 @@ module.exports = {
   coveragePathIgnorePatterns: ['/node_modules/', '/android/', '/ios/', '/windows/', '/macos/'],
   coverageThreshold: {
     global: {
-      branches: 85,
-      functions: 90,
-      lines: 90,
-      statements: 90,
+      branches: 95,
+      functions: 95,
+      lines: 95,
+      statements: 95,
     },
   },
 };

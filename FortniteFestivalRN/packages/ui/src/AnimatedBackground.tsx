@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
-import {Animated, StyleSheet, View} from 'react-native';
+import {Animated, Platform, StyleSheet, View} from 'react-native';
 import type {Song} from '@festival/core';
 
 const FADE_DURATION = 1000; // 1 second fade
@@ -74,6 +74,9 @@ function makeLayer(imageIndex: number): Layer {
 function startMotion(layer: Layer) {
   const preset = randomMotion();
 
+  // RNW native-driver transforms are unreliable; use JS driver on Windows.
+  const nativeDriver = Platform.OS !== 'windows';
+
   // Snap to start position – setValue() pushes straight to native.
   layer.scale.setValue(preset.scale[0]);
   layer.translateX.setValue(preset.translateX[0]);
@@ -84,17 +87,17 @@ function startMotion(layer: Layer) {
     Animated.timing(layer.scale, {
       toValue: preset.scale[1],
       duration: MOTION_DURATION,
-      useNativeDriver: true,
+      useNativeDriver: nativeDriver,
     }),
     Animated.timing(layer.translateX, {
       toValue: preset.translateX[1],
       duration: MOTION_DURATION,
-      useNativeDriver: true,
+      useNativeDriver: nativeDriver,
     }),
     Animated.timing(layer.translateY, {
       toValue: preset.translateY[1],
       duration: MOTION_DURATION,
-      useNativeDriver: true,
+      useNativeDriver: nativeDriver,
     }),
   ]).start();
 }
@@ -174,12 +177,12 @@ export function AnimatedBackground(props: {songs: Song[]; animate?: boolean; dim
       Animated.timing(active.opacity, {
         toValue: 0,
         duration: FADE_DURATION,
-        useNativeDriver: true,
+        useNativeDriver: Platform.OS !== 'windows',
       }),
       Animated.timing(standby.opacity, {
         toValue: 1,
         duration: FADE_DURATION,
-        useNativeDriver: true,
+        useNativeDriver: Platform.OS !== 'windows',
       }),
     ]).start(() => {
       // Standby is now the visible layer. Flip the pointer.

@@ -17,7 +17,7 @@ import {FestivalProvider, useFestival} from '@festival/contexts';
 import {AuthProvider, useAuth} from '@festival/contexts';
 import {IntroScreen} from './src/screens/IntroScreen';
 import {SignInScreen} from './src/screens/SignInScreen';
-import {SlidingRowsBackground} from '@festival/ui/SlidingRowsBackground';
+import {SlidingRowsBackground} from '@festival/ui';
 
 if (Platform.OS !== 'windows') {
   // `react-native-screens`' Windows native project currently targets UWP/WinUI2,
@@ -123,13 +123,17 @@ function TransitionManager() {
   const spinnerOpacity = useRef(new Animated.Value(0)).current;
   const navTranslateX = useRef(new Animated.Value(SCREEN_WIDTH)).current;
 
+  // RNW native-driver transforms are unreliable (see WindowsFlyout comment);
+  // keep all transition animations JS-driven on Windows.
+  const nativeDriver = Platform.OS !== 'windows';
+
   // ── Intro entrance: fade in the intro spinner ─────────────────────
   useEffect(() => {
     if (phase !== 'introSpinner') return;
     Animated.timing(introSpinnerOpacity, {
       toValue: 1,
       duration: 500,
-      useNativeDriver: true,
+      useNativeDriver: nativeDriver,
     }).start(() => {
       setIntroSpinnerReady(true);
     });
@@ -145,13 +149,13 @@ function TransitionManager() {
       Animated.timing(introSpinnerOpacity, {
         toValue: 0,
         duration: 500,
-        useNativeDriver: true,
+        useNativeDriver: nativeDriver,
       }),
       // Fade in carousel
       Animated.timing(introOpacity, {
         toValue: 1,
         duration: 500,
-        useNativeDriver: true,
+        useNativeDriver: nativeDriver,
       }),
     ]).start(() => {
       setPhase('intro');
@@ -187,7 +191,7 @@ function TransitionManager() {
     Animated.timing(introOpacity, {
       toValue: 0,
       duration: 500,
-      useNativeDriver: true,
+      useNativeDriver: nativeDriver,
     }).start(() => {
       // After carousel fades, show sign-in screen
       setPhase('signIn');
@@ -201,7 +205,7 @@ function TransitionManager() {
     Animated.timing(signInOpacity, {
       toValue: 1,
       duration: 400,
-      useNativeDriver: true,
+      useNativeDriver: nativeDriver,
     }).start();
   }, [phase, signInOpacity]);
 
@@ -216,7 +220,7 @@ function TransitionManager() {
     Animated.timing(signInOpacity, {
       toValue: 0,
       duration: 500,
-      useNativeDriver: true,
+      useNativeDriver: nativeDriver,
     }).start(() => {
       setPhase('spinner');
     });
@@ -256,14 +260,14 @@ function TransitionManager() {
         Animated.timing(spinnerOpacity, {
           toValue: 0,
           duration: 400,
-          useNativeDriver: true,
+          useNativeDriver: nativeDriver,
         }),
         // Slide navigator in from the right
         Animated.timing(navTranslateX, {
           toValue: 0,
           duration: 500,
           easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
+          useNativeDriver: nativeDriver,
         }),
       ]).start(() => {
         setPhase('done');
@@ -279,7 +283,7 @@ function TransitionManager() {
     Animated.timing(spinnerOpacity, {
       toValue: 1,
       duration: 500,
-      useNativeDriver: true,
+      useNativeDriver: nativeDriver,
     }).start(() => {
       setSpinnerFullyVisible(true);
     });

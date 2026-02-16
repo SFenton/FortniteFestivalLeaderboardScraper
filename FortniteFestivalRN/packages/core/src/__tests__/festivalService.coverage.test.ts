@@ -336,4 +336,104 @@ describe('FestivalService (coverage add-ons)', () => {
 
     expect(res).toBe(true);
   });
+
+  /* ── deleteAllScores ── */
+
+  test('deleteAllScores clears scores and persists', async () => {
+    const saved: any[] = [];
+    const persistence = {
+      loadSongs: async () => [],
+      loadScores: async () => [],
+      saveSongs: async () => {},
+      saveScores: async (s: any) => { saved.push(s); },
+    };
+    const {http} = makeFakeHttp({});
+    const svc = new FestivalService({http, persistence});
+    await svc.deleteAllScores();
+    expect(saved).toEqual([[]]);
+  });
+
+  test('deleteAllScores without persistence does not throw', async () => {
+    const {http} = makeFakeHttp({});
+    const svc = new FestivalService({http});
+    await expect(svc.deleteAllScores()).resolves.toBeUndefined();
+  });
+
+  test('deleteAllScores swallows persistence error', async () => {
+    const persistence = {
+      loadSongs: async () => [],
+      loadScores: async () => [],
+      saveSongs: async () => {},
+      saveScores: async () => { throw new Error('boom'); },
+    };
+    const {http} = makeFakeHttp({});
+    const svc = new FestivalService({http, persistence});
+    await expect(svc.deleteAllScores()).resolves.toBeUndefined();
+  });
+
+  /* ── clearImageCache ── */
+
+  test('clearImageCache without imageCache or persistence does not throw', async () => {
+    const {http} = makeFakeHttp({});
+    const svc = new FestivalService({http});
+    await expect(svc.clearImageCache()).resolves.toBeUndefined();
+  });
+
+  test('clearImageCache with imageCache calls clearAll', async () => {
+    let cleared = false;
+    const imageCache = {
+      ensureCached: async () => undefined,
+      clearAll: async () => { cleared = true; },
+    };
+    const {http} = makeFakeHttp({});
+    const svc = new FestivalService({http, imageCache});
+    await svc.clearImageCache();
+    expect(cleared).toBe(true);
+  });
+
+  test('clearImageCache swallows imageCache.clearAll error', async () => {
+    const imageCache = {
+      ensureCached: async () => undefined,
+      clearAll: async () => { throw new Error('fail'); },
+    };
+    const {http} = makeFakeHttp({});
+    const svc = new FestivalService({http, imageCache});
+    await expect(svc.clearImageCache()).resolves.toBeUndefined();
+  });
+
+  test('clearImageCache clears imagePath from songs and persists', async () => {
+    const savedSongs: any[] = [];
+    const persistence = {
+      loadSongs: async () => [{track: {su: 'a', tt: 'A', an: 'X', in: {}}, imagePath: '/cache/a.png'}],
+      loadScores: async () => [],
+      saveSongs: async (s: any) => { savedSongs.push([...s]); },
+      saveScores: async () => {},
+    };
+    const imageCache = {
+      ensureCached: async () => undefined,
+      clearAll: async () => {},
+    };
+    const {http} = makeFakeHttp({});
+    const svc = new FestivalService({http, persistence, imageCache});
+    await svc.initialize();
+    await svc.clearImageCache();
+    // Songs should have imagePath cleared
+    expect(savedSongs.length).toBeGreaterThan(0);
+    const lastSave = savedSongs[savedSongs.length - 1];
+    for (const s of lastSave) {
+      expect(s.imagePath).toBeUndefined();
+    }
+  });
+
+  test('clearImageCache swallows persistence.saveSongs error', async () => {
+    const persistence = {
+      loadSongs: async () => [],
+      loadScores: async () => [],
+      saveSongs: async () => { throw new Error('disk full'); },
+      saveScores: async () => {},
+    };
+    const {http} = makeFakeHttp({});
+    const svc = new FestivalService({http, persistence});
+    await expect(svc.clearImageCache()).resolves.toBeUndefined();
+  });
 });

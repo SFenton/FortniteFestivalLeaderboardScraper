@@ -2,9 +2,8 @@ import React, {useMemo} from 'react';
 import {Image, Pressable, StyleSheet, Text, View} from 'react-native';
 import {MarqueeText} from '../MarqueeText';
 import {getInstrumentIconSource, getInstrumentStatusVisual} from '../instruments/instrumentVisuals';
-import {buildSongDisplayRow, type InstrumentShowSettings} from '../../app/songs/songFiltering';
-import {formatIntegerWithCommas} from '../../app/format/formatters';
-import type {LeaderboardData, Song} from '@festival/core';
+import {buildSongDisplayRow, formatIntegerWithCommas} from '@festival/core';
+import type {InstrumentShowSettings, LeaderboardData, Song} from '@festival/core';
 import type {SuggestionSongItem} from '@festival/core';
 
 const STAR_WHITE_ICON = require('../../assets/icons/star_white.png');

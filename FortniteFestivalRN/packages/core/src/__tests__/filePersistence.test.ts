@@ -9,16 +9,16 @@ describe('File-based persistence (portable)', () => {
     const p = new JsonSettingsPersistence(store, 'settings.json');
 
     const s1 = await p.loadSettings();
-    expect(s1.degreeOfParallelism).toBe(16);
+    expect(s1.queryLead).toBe(true);
 
     await store.writeText('settings.json', '{not-json');
     const s2 = await p.loadSettings();
-    expect(s2.degreeOfParallelism).toBe(16);
+    expect(s2.queryLead).toBe(true);
 
-    await store.writeText('settings.json', JSON.stringify({degreeOfParallelism: 5, queryLead: false}));
+    await store.writeText('settings.json', JSON.stringify({queryLead: false, queryDrums: false}));
     const s3 = await p.loadSettings();
-    expect(s3.degreeOfParallelism).toBe(5);
     expect(s3.queryLead).toBe(false);
+    expect(s3.queryDrums).toBe(false);
   });
 
   test('JsonSettingsPersistence save writes pretty JSON', async () => {
@@ -26,7 +26,6 @@ describe('File-based persistence (portable)', () => {
     const p = new JsonSettingsPersistence(store, 'settings.json');
 
     await p.saveSettings({
-      degreeOfParallelism: 3,
       queryLead: true,
       queryDrums: false,
       queryVocals: false,
@@ -37,13 +36,13 @@ describe('File-based persistence (portable)', () => {
 
     const txt = await store.readText('settings.json');
     expect(txt).toContain('\n');
-    expect(txt).toContain('"degreeOfParallelism": 3');
+    expect(txt).toContain('"queryLead": true');
   });
 
   test('JsonSettingsPersistence save ignores circular/unserializable input', async () => {
     const store = new InMemoryFileStore();
     const p = new JsonSettingsPersistence(store, 'settings.json');
-    const circular: any = {degreeOfParallelism: 1};
+    const circular: any = {queryLead: true};
     circular.self = circular;
     await p.saveSettings(circular);
     expect(await store.exists('settings.json')).toBe(false);

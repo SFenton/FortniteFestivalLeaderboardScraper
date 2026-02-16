@@ -81,7 +81,7 @@
       </AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>shell32.lib;user32.lib;windowsapp.lib;%(AdditionalDependenices)</AdditionalDependencies>
+      <AdditionalDependencies>gdi32.lib;shell32.lib;user32.lib;windowsapp.lib;%(AdditionalDependenices)</AdditionalDependencies>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
@@ -123,7 +123,20 @@
     <Image Include="FortniteFestivalRN.ico" />
     <Image Include="small.ico" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Ionicons font for react-native-vector-icons; loaded at startup via AddFontResourceEx -->
+    <Content Include="Fonts\Ionicons.ttf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <!-- Explicitly copy bundled fonts to the output directory so
+       AddFontResourceExW can find them at startup. -->
+  <Target Name="CopyBundledFonts" AfterTargets="Build">
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\Fonts\Ionicons.ttf"
+          DestinationFolder="$(OutDir)Fonts\"
+          SkipUnchangedFiles="true" />
+  </Target>
   <ImportGroup Label="ReactNativeWindowsTargets">
     <Import Project="$(ReactNativeWindowsDir)\PropertySheets\External\Microsoft.ReactNative.Composition.CppApp.targets" Condition="Exists('$(ReactNativeWindowsDir)\PropertySheets\External\Microsoft.ReactNative.Composition.CppApp.targets')" />
   </ImportGroup>
