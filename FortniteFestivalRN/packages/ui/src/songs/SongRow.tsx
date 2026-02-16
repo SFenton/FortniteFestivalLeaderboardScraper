@@ -316,8 +316,8 @@ export const SongRow = React.memo(function SongRow(props: {
   // Detect phone-class device (not tablet/foldable, not Windows).
   const {width: winWidth, height: winHeight} = useWindowSize();
   const isPhone = Platform.OS !== 'windows' && Math.min(winWidth, winHeight) < 600;
-  // Wide layout: landscape (any device) or open foldable / tablet (min dimension >= 600).
-  const isWideLayout = Platform.OS !== 'windows' && (winWidth > winHeight || Math.min(winWidth, winHeight) >= 600);
+  // Wide layout: landscape (any device), open foldable / tablet (min dimension >= 600), or Windows.
+  const isWideLayout = Platform.OS === 'windows' || winWidth > winHeight || Math.min(winWidth, winHeight) >= 600;
 
   const inner = (pressed: boolean) => (
     <FrostedSurface style={[styles.rowSurface, pressed && styles.rowSurfacePressed]} tint="dark" intensity={12}>

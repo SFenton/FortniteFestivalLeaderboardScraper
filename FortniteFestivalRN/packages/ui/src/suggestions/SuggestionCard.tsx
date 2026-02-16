@@ -117,6 +117,8 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
     gap: 8,
+    maxWidth: 1080,
+    width: '100%',
   },
   cardHeaderRow: {
     flexDirection: 'row',

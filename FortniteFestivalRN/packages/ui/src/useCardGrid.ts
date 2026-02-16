@@ -1,5 +1,4 @@
-import {Platform} from 'react-native';
-import {useWindowSize} from './useWindowSize';
+import {Platform, useWindowDimensions} from 'react-native';
 
 /**
  * Returns `true` when the device should display a 2-column card grid instead
@@ -19,9 +18,15 @@ import {useWindowSize} from './useWindowSize';
  *   `useWindowDimensions().width` when omitted or ≤ 0.
  */
 export function useCardGrid(effectiveWidth?: number): boolean {
-  const {width, height} = useWindowSize();
+  const {width, height} = useWindowDimensions();
 
   const w = effectiveWidth != null && effectiveWidth > 0 ? effectiveWidth : width;
+
+  // Windows always renders at minimum 720p (1280×720), so it is always in
+  // landscape / dual-column mode.  No need to check a breakpoint.
+  if (Platform.OS === 'windows') {
+    return true;
+  }
 
   if (Platform.OS === 'ios') {
     return w > height;

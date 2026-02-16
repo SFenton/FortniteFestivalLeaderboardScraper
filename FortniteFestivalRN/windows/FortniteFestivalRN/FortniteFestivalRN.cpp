@@ -81,6 +81,23 @@ static LRESULT CALLBACK ResizeThrottleProc(
       }
       break;
 
+    case WM_GETMINMAXINFO: {
+      // Enforce a minimum window size of 1280×720 DIPs (720p).
+      // WM_GETMINMAXINFO values are in physical pixels for PMv2 windows,
+      // so scale from DIPs via the window's current DPI.
+      auto *mmi = reinterpret_cast<MINMAXINFO *>(lParam);
+      UINT dpi = GetDpiForWindow(hWnd);
+      int minClientW = MulDiv(1280, static_cast<int>(dpi), 96);
+      int minClientH = MulDiv(720, static_cast<int>(dpi), 96);
+      RECT rc = {0, 0, minClientW, minClientH};
+      DWORD style = static_cast<DWORD>(GetWindowLongPtrW(hWnd, GWL_STYLE));
+      DWORD exStyle = static_cast<DWORD>(GetWindowLongPtrW(hWnd, GWL_EXSTYLE));
+      AdjustWindowRectExForDpi(&rc, style, FALSE, exStyle, dpi);
+      mmi->ptMinTrackSize.x = rc.right - rc.left;
+      mmi->ptMinTrackSize.y = rc.bottom - rc.top;
+      return 0;
+    }
+
     case WM_NCDESTROY:
       RemoveWindowSubclass(hWnd, ResizeThrottleProc, RESIZE_SUBCLASS_ID);
       delete state;
@@ -190,7 +207,7 @@ _Use_decl_annotations_ int CALLBACK WinMain(HINSTANCE instance, HINSTANCE, PSTR 
                       reinterpret_cast<DWORD_PTR>(state));
   }
 
-  appWindow.Resize({1000, 1000});
+  appWindow.Resize({1280, 720});
 
   // Get the ReactViewOptions so we can set the initial RN component to load
   auto viewOptions{reactNativeWin32App.ReactViewOptions()};

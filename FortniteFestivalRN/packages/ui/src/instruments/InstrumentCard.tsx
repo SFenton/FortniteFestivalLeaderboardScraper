@@ -185,8 +185,8 @@ export function InstrumentCard(props: {data: InstrumentCardData}) {
 
 const styles = StyleSheet.create({
   card: {
-    alignSelf: 'center',
     width: '100%',
+    maxWidth: 1080,
     borderRadius: 22,
     padding: 12,
   },

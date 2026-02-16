@@ -13,7 +13,7 @@ type Props = {
 } & Omit<ViewProps, 'style' | 'children'>;
 
 export function FrostedSurface(props: Props) {
-  const {children, style, fallbackColor = 'rgba(18,24,38,0.78)', ...viewProps} = props;
+  const {children, style, fallbackColor = 'rgba(18,24,38,0.97)', ...viewProps} = props;
   return (
     <View {...viewProps} style={[styles.chrome, style, {backgroundColor: fallbackColor}]}>
       {children}
