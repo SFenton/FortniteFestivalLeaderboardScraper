@@ -9,8 +9,86 @@
 #include "NativeModules.h"
 
 #include <winrt/Microsoft.UI.Windowing.h>
+#include <winrt/Microsoft.UI.Interop.h>
+#include <commctrl.h>
+#pragma comment(lib, "comctl32.lib")
 #include <string>
 #include <Shlwapi.h>  // PathCchCombine is from pathcch.h, already available via pch
+
+// ── Resize throttle ────────────────────────────────────────────────
+// RNW's Fabric Composition renderer crashes (access violation in
+// Microsoft.ReactNative.dll) when AppWindow.Changed → Arrange() fires
+// faster than the layout engine can process each layout pass.
+//
+// We subclass the HWND to coalesce WM_SIZE messages during interactive
+// window dragging (WM_ENTERSIZEMOVE / WM_EXITSIZEMOVE).  Other WM_SIZE
+// sources (maximize, restore, programmatic Resize()) pass through
+// immediately so the app still feels snappy for those operations.
+// ---------------------------------------------------------------------------
+
+static constexpr UINT_PTR RESIZE_SUBCLASS_ID = 1;
+static constexpr UINT_PTR RESIZE_TIMER_ID = 42;
+static constexpr UINT RESIZE_COALESCE_MS = 80;
+
+struct ResizeThrottleState {
+  WPARAM lastWParam{0};
+  LPARAM lastLParam{0};
+  bool pending{false};
+  bool inSizeMove{false};
+};
+
+static LRESULT CALLBACK ResizeThrottleProc(
+    HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
+    UINT_PTR /*uIdSubclass*/, DWORD_PTR dwRefData) {
+  auto *state = reinterpret_cast<ResizeThrottleState *>(dwRefData);
+
+  switch (uMsg) {
+    case WM_ENTERSIZEMOVE:
+      state->inSizeMove = true;
+      return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+
+    case WM_EXITSIZEMOVE:
+      state->inSizeMove = false;
+      // Immediately flush any pending size so the final size is applied.
+      KillTimer(hWnd, RESIZE_TIMER_ID);
+      if (state->pending) {
+        state->pending = false;
+        DefSubclassProc(hWnd, WM_SIZE, state->lastWParam, state->lastLParam);
+      }
+      return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+
+    case WM_SIZE:
+      if (state->inSizeMove) {
+        // During interactive drag — coalesce.
+        state->lastWParam = wParam;
+        state->lastLParam = lParam;
+        state->pending = true;
+        KillTimer(hWnd, RESIZE_TIMER_ID);
+        SetTimer(hWnd, RESIZE_TIMER_ID, RESIZE_COALESCE_MS, nullptr);
+        return 0; // suppress — don't let AppWindow fire Changed
+      }
+      // Not dragging (maximize, restore, programmatic, etc.) — pass through.
+      break;
+
+    case WM_TIMER:
+      if (wParam == RESIZE_TIMER_ID) {
+        KillTimer(hWnd, RESIZE_TIMER_ID);
+        if (state->pending) {
+          state->pending = false;
+          return DefSubclassProc(hWnd, WM_SIZE, state->lastWParam, state->lastLParam);
+        }
+        return 0;
+      }
+      break;
+
+    case WM_NCDESTROY:
+      RemoveWindowSubclass(hWnd, ResizeThrottleProc, RESIZE_SUBCLASS_ID);
+      delete state;
+      return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+  }
+
+  return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+}
 
 // A PackageProvider containing any turbo modules you define within this app project
 struct CompReactPackageProvider
@@ -39,10 +117,16 @@ _Use_decl_annotations_ int CALLBACK WinMain(HINSTANCE instance, HINSTANCE, PSTR 
   // adds the font to the session font table so it is visible to both GDI
   // and DirectWrite.  The Composition renderer uses DirectWrite exclusively;
   // FR_PRIVATE fonts are invisible to DirectWrite.
+  //
+  // Use SendNotifyMessage (not SendMessage) for the WM_FONTCHANGE broadcast
+  // so that we don't block waiting for every window on the system to respond.
   {
     WCHAR fontPath[MAX_PATH];
     PathCchCombine(fontPath, MAX_PATH, appDirectory, L"Fonts\\Ionicons.ttf");
-    AddFontResourceExW(fontPath, 0, 0);
+    int fontsAdded = AddFontResourceExW(fontPath, 0, 0);
+    if (fontsAdded > 0) {
+      SendNotifyMessage(HWND_BROADCAST, WM_FONTCHANGE, 0, 0);
+    }
   }
 
   // Create a ReactNativeWin32App with the ReactNativeAppBuilder
@@ -96,12 +180,15 @@ _Use_decl_annotations_ int CALLBACK WinMain(HINSTANCE instance, HINSTANCE, PSTR 
     overlapped.IsMinimizable(true);
   }
 
-  appWindow.Changed([](auto const &, winrt::Microsoft::UI::Windowing::AppWindowChangedEventArgs const &args) {
-    if (!args.DidSizeChange())
-      return;
-    // Best-effort debug signal in Visual Studio Output window.
-    OutputDebugStringW(L"[RNW] AppWindow size changed\n");
-  });
+  // ── Install resize throttle on the HWND ─────────────────────────
+  // Must be done BEFORE Start() so the subclass intercepts WM_SIZE
+  // before RNW's own AppWindow.Changed handler can call Arrange().
+  {
+    auto hwnd = winrt::Microsoft::UI::GetWindowFromWindowId(appWindow.Id());
+    auto *state = new ResizeThrottleState();
+    SetWindowSubclass(hwnd, ResizeThrottleProc, RESIZE_SUBCLASS_ID,
+                      reinterpret_cast<DWORD_PTR>(state));
+  }
 
   appWindow.Resize({1000, 1000});
 

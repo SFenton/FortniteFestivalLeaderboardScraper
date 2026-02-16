@@ -13,6 +13,11 @@ export const modalStyles = StyleSheet.create({
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
   },
+  modalCardWindows: {
+    flex: 1,
+    maxWidth: undefined,
+    borderRadius: 0,
+  },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',

@@ -123,22 +123,32 @@ export function AnimatedBackground(props: {songs: Song[]; animate?: boolean; dim
   // Force a render when layer image indices change (since they live in refs).
   const [, forceRender] = useState(0);
 
-  // Get songs with images (as a stable list for effect dependencies).
+  // Get songs with images.  We only want to rebuild the shuffled playlist
+  // when the set of available images *actually* changes — not on every songs
+  // array reference update (which happens every 2 s during image sync).
+  // Tracking the count of candidates is a cheap heuristic that avoids
+  // resetting the crossfade back to images 0 & 1 on every tick.
   const imageCandidates = React.useMemo(
     () => songs.map(s => s.imagePath).filter(Boolean) as string[],
     [songs],
   );
+  const candidateCount = imageCandidates.length;
+  const prevCandidateCount = useRef(0);
 
-  // Build the shuffled URI list.
+  // Build the shuffled URI list — only when the pool size changes materially.
   useEffect(() => {
-    if (imageCandidates.length === 0) {
+    // Skip if the count hasn't changed (same pool, just a new array ref).
+    if (candidateCount === prevCandidateCount.current) return;
+    prevCandidateCount.current = candidateCount;
+
+    if (candidateCount === 0) {
       setImageUris([]);
       return;
     }
 
     const shuffled = [...imageCandidates]
       .sort(() => Math.random() - 0.5)
-      .slice(0, Math.min(100, imageCandidates.length));
+      .slice(0, Math.min(100, candidateCount));
 
     if (shuffled.length > 0) {
       setImageUris(shuffled);
@@ -154,7 +164,11 @@ export function AnimatedBackground(props: {songs: Song[]; animate?: boolean; dim
     } else {
       setImageUris([]);
     }
-  }, [imageCandidates, layerA, layerB]);
+    // candidateCount is the only value that should trigger a rebuild.
+    // imageCandidates / layerA / layerB are read but intentionally excluded
+    // to avoid resetting the crossfade on every songs-array reference change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidateCount]);
 
   // Start motion on the initial active layer.
   useEffect(() => {

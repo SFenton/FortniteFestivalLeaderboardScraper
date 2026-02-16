@@ -284,7 +284,7 @@ export function IntroScreen({onContinue, onReady, revealed = false}: Props) {
         Animated.timing(a, {
           toValue: 1,
           duration: FADE_DURATION,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'windows',
         }),
       ),
     ).start();

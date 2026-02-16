@@ -144,7 +144,7 @@ const config = {
         platform === 'windows' &&
         context.originModulePath &&
         context.originModulePath
-          .replace(/\\\\/g, '/')
+          .replace(/[\\/]/g, '/')
           .includes('/react-native-vector-icons/') &&
         (moduleName === './lib/create-icon-set' ||
          moduleName === '../lib/create-icon-set' ||

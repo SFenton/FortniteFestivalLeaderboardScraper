@@ -1,5 +1,5 @@
 import React, {useCallback, useMemo} from 'react';
-import {Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, useWindowDimensions, View} from 'react-native';
+import {Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
@@ -12,6 +12,7 @@ import {modalStyles as styles} from './modalStyles';
 import type {InstrumentKey} from '@festival/core';
 import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
 import {DifficultyBars} from '../instruments/InstrumentCard';
+import {useWindowSize} from '../useWindowSize';
 
 export function FilterModal(props: {
   visible: boolean;
@@ -54,13 +55,13 @@ export function FilterModal(props: {
     : null;
 
   const variant = Platform.OS === 'windows' ? 'center' : 'bottom';
-  const {height: screenHeight} = useWindowDimensions();
+  const {height: screenHeight} = useWindowSize();
   const {bottom: safeBottom} = useSafeAreaInsets();
   const isMobile = Platform.OS !== 'windows';
 
   return (
     <PlatformModal visible={props.visible} onRequestClose={props.onCancel} variant={variant} fullWidth={isMobile}>
-      <FrostedSurface style={[styles.modalCard, isMobile && styles.modalCardMobile, isMobile && {height: screenHeight * 0.8}]} tint="dark" intensity={18}>
+      <FrostedSurface style={[styles.modalCard, isMobile && styles.modalCardMobile, !isMobile && styles.modalCardWindows, isMobile && {height: screenHeight * 0.8}]} tint="dark" intensity={18}>
           {/* Pinned header */}
           <View style={[styles.modalHeader, isMobile && styles.modalHeaderPinned]}>
             <Text style={styles.modalTitle}>Filter Songs</Text>
@@ -72,7 +73,7 @@ export function FilterModal(props: {
           </View>
 
           {/* Scrollable content */}
-          <ScrollView style={isMobile ? styles.modalScrollContent : undefined} contentContainerStyle={isMobile ? styles.modalScrollInner : undefined} showsVerticalScrollIndicator={false}>
+          <ScrollView style={styles.modalScrollContent} contentContainerStyle={styles.modalScrollInner} showsVerticalScrollIndicator={false}>
           <View style={styles.modalSection}>
             <Text style={styles.modalSectionTitle}>Missing</Text>
             <Text style={styles.modalHint}>Only show songs where you are missing scores or full combos on pad or pro instruments.</Text>

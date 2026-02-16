@@ -1,4 +1,5 @@
-import {Platform, useWindowDimensions} from 'react-native';
+import {Platform} from 'react-native';
+import {useWindowSize} from './useWindowSize';
 
 /**
  * Returns `true` when the device should display a 2-column card grid instead
@@ -18,7 +19,7 @@ import {Platform, useWindowDimensions} from 'react-native';
  *   `useWindowDimensions().width` when omitted or ≤ 0.
  */
 export function useCardGrid(effectiveWidth?: number): boolean {
-  const {width, height} = useWindowDimensions();
+  const {width, height} = useWindowSize();
 
   const w = effectiveWidth != null && effectiveWidth > 0 ? effectiveWidth : width;
 
@@ -30,6 +31,7 @@ export function useCardGrid(effectiveWidth?: number): boolean {
     return Math.min(w, height) >= 600;
   }
 
-  // Non-mobile platforms (Windows, web, etc.) – not applicable.
-  return false;
+  // Non-mobile platforms (Windows, web, etc.) – use a width breakpoint so the
+  // card grid kicks in at the same point where mobile tablets would show it.
+  return w >= 720;
 }

@@ -3,6 +3,7 @@ import {
   Animated,
   Easing,
   LayoutChangeEvent,
+  Platform,
   StyleProp,
   Text,
   TextStyle,
@@ -61,13 +62,13 @@ export function MarqueeText(props: {
           toValue: -distance,
           duration: durationMs,
           easing: Easing.linear,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'windows',
         }),
         Animated.delay(endDelayMs),
         Animated.timing(translateX, {
           toValue: 0,
           duration: 0,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'windows',
         }),
       ]),
     );

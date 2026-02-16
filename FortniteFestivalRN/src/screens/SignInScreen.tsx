@@ -7,6 +7,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import {FestivalTextInput} from '@festival/ui';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 
 import {FrostedSurface} from '@festival/ui';
@@ -71,7 +72,7 @@ export function SignInScreen({onContinue}: {onContinue: () => void}) {
             Enter the endpoint of the Festival Score Tracker service you want
             to connect to.
           </Text>
-          <TextInput
+          <FestivalTextInput
             ref={inputRef}
             style={styles.exchangeCodeInput}
             placeholder="https://example.com"
@@ -87,7 +88,7 @@ export function SignInScreen({onContinue}: {onContinue: () => void}) {
           <Text style={styles.cardBody}>
             Enter your Epic Games username here.
           </Text>
-          <TextInput
+          <FestivalTextInput
             style={styles.exchangeCodeInput}
             placeholder="Username"
             placeholderTextColor="rgba(255,255,255,0.4)"

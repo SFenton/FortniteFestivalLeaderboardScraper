@@ -1,5 +1,5 @@
-import React, {useEffect, useMemo, useRef} from 'react';
-import {Animated, Dimensions, Easing, Image, Platform, StyleSheet, View} from 'react-native';
+import React, {useCallback, useEffect, useMemo, useRef} from 'react';
+import {Animated, Dimensions, Easing, Image, Platform, StyleSheet, useWindowDimensions, View} from 'react-native';
 import type {Song} from '@festival/core';
 
 // ── Configuration ───────────────────────────────────────────────────
@@ -11,24 +11,28 @@ const MIN_IMAGES = 100; // Minimum cached images before activating
 const DIM_OPACITY = 0.72; // Overlay darkness to keep foreground legible
 
 const STEP_SIZE = TILE_SIZE + TILE_GAP;
-const {width: SCREEN_WIDTH, height: SCREEN_HEIGHT} = Dimensions.get('window');
 
-// Visible tiles + 5 buffer on each side.
-const VISIBLE_COUNT = Math.ceil(SCREEN_WIDTH / STEP_SIZE) + 5;
-// Each half of the strip — viewable window + buffer. Doubled for seamless loop.
-const HALF_COUNT = VISIBLE_COUNT + 2;
-// Total rows that fit vertically.
-const ROW_COUNT = Math.ceil(SCREEN_HEIGHT / STEP_SIZE) + 1;
+// RNW native-driver transforms are unreliable (same as App.tsx);
+// keep animations JS-driven on Windows.
+const USE_NATIVE_DRIVER = Platform.OS !== 'windows';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Compute tile/row counts from current window dimensions. */
+function computeCounts(screenWidth: number, screenHeight: number) {
+  const visibleCount = Math.ceil(screenWidth / STEP_SIZE) + 5;
+  const halfCount = visibleCount + 2;
+  const rowCount = Math.ceil(screenHeight / STEP_SIZE) + 1;
+  return {halfCount, rowCount};
+}
+
 /** Build a shuffled strip of `count` images, mirrored into two halves. */
-function buildMirroredStrip(candidates: string[]): string[] {
+function buildMirroredStrip(candidates: string[], halfCount: number): string[] {
   const half: string[] = [];
   const shuffled = [...candidates].sort(() => Math.random() - 0.5);
-  for (let i = 0; i < HALF_COUNT; i++) {
+  for (let i = 0; i < halfCount; i++) {
     half.push(shuffled[i % shuffled.length]);
   }
   return [...half, ...half]; // second half = mirror → seamless loop reset
@@ -43,14 +47,16 @@ function SlidingRow({
   initialStrip,
   direction,
   rowIndex,
+  halfCount,
 }: {
   initialStrip: string[];
   direction: 'left' | 'right';
   rowIndex: number;
+  halfCount: number;
 }) {
   const anim = useRef(new Animated.Value(0)).current;
 
-  const halfWidth = HALF_COUNT * STEP_SIZE;
+  const halfWidth = halfCount * STEP_SIZE;
 
   // Continuous loop — runs entirely on the native thread, no JS round-trips.
   useEffect(() => {
@@ -59,7 +65,7 @@ function SlidingRow({
         toValue: 1,
         duration: CYCLE_DURATION,
         easing: Easing.linear,
-        useNativeDriver: true,
+        useNativeDriver: USE_NATIVE_DRIVER,
       }),
     );
     loop.start();
@@ -106,6 +112,12 @@ const FADE_DURATION = 1_000; // ms to fade rows in once ready
 export function SlidingRowsBackground(props: {songs: Song[]}) {
   const {songs} = props;
 
+  const {width: screenWidth, height: screenHeight} = useWindowDimensions();
+  const {halfCount, rowCount} = useMemo(
+    () => computeCounts(screenWidth, screenHeight),
+    [screenWidth, screenHeight],
+  );
+
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const hasFadedIn = useRef(false);
 
@@ -127,10 +139,11 @@ export function SlidingRowsBackground(props: {songs: Song[]}) {
 
   const rowStrips = useMemo(() => {
     if (!active) return [];
-    return Array.from({length: ROW_COUNT}, () =>
-      buildMirroredStrip(imageCandidates),
+    return Array.from({length: rowCount}, () =>
+      buildMirroredStrip(imageCandidates, halfCount),
     );
-  }, [active, imageCandidates]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, imageCandidates, rowCount, halfCount]);
 
   // Once active (all rows populated), begin the fade-in.
   // The rows are already scrolling at opacity 0; this reveals them.
@@ -141,7 +154,7 @@ export function SlidingRowsBackground(props: {songs: Song[]}) {
         toValue: 1,
         duration: FADE_DURATION,
         easing: Easing.out(Easing.ease),
-        useNativeDriver: true,
+        useNativeDriver: USE_NATIVE_DRIVER,
       }).start();
     }
   }, [active, rowStrips.length, fadeAnim]);
@@ -157,6 +170,7 @@ export function SlidingRowsBackground(props: {songs: Song[]}) {
             initialStrip={strip}
             direction={i % 2 === 0 ? 'left' : 'right'}
             rowIndex={i}
+            halfCount={halfCount}
           />
         ))}
       </Animated.View>

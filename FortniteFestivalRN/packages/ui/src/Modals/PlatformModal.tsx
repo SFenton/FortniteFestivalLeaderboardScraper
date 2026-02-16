@@ -1,9 +1,11 @@
-import React from 'react';
-import {Platform, Pressable, StyleSheet, View} from 'react-native';
+import React, {useEffect, useRef} from 'react';
+import {Animated, Platform, Pressable, StyleSheet, View} from 'react-native';
 
 import RNModal from 'react-native-modal';
 
 type Variant = 'center' | 'bottom';
+
+const WIN_FLYOUT_WIDTH = 600;
 
 export function PlatformModal(props: {
   visible: boolean;
@@ -16,17 +18,9 @@ export function PlatformModal(props: {
   const {visible, onRequestClose, variant, fullWidth, children} = props;
 
   // RNW's built-in Modal can pop as a separate window/dialog.
-  // For Windows we render an in-tree overlay instead.
+  // For Windows we render an in-tree overlay with a right-side flyout.
   if (Platform.OS === 'windows') {
-    if (!visible) return null;
-    return (
-      <View style={styles.winOverlay} pointerEvents="box-none">
-        <Pressable style={styles.winScrim} onPress={onRequestClose} />
-        <View style={[styles.winContent, variant === 'bottom' ? styles.winContentBottom : styles.winContentCenter]} pointerEvents="box-none">
-          {children}
-        </View>
-      </View>
-    );
+    return <WindowsFlyoutModal visible={visible} onRequestClose={onRequestClose}>{children}</WindowsFlyoutModal>;
   }
 
   return (
@@ -47,6 +41,71 @@ export function PlatformModal(props: {
   );
 }
 
+/** Right-side flyout panel for Windows, matching the left-side nav flyout pattern. */
+function WindowsFlyoutModal(props: {visible: boolean; onRequestClose: () => void; children: React.ReactNode}) {
+  const {visible, onRequestClose, children} = props;
+  const translateX = useRef(new Animated.Value(WIN_FLYOUT_WIDTH)).current;
+  const scrimOpacity = useRef(new Animated.Value(0)).current;
+  const prevVisibleRef = useRef(visible);
+
+  useEffect(() => {
+    const wasVisible = prevVisibleRef.current;
+    prevVisibleRef.current = visible;
+
+    if (visible && !wasVisible) {
+      // Stop any in-flight close animation.
+      translateX.stopAnimation();
+      scrimOpacity.stopAnimation();
+
+      // Reset to closed position, then animate open.
+      translateX.setValue(WIN_FLYOUT_WIDTH);
+      scrimOpacity.setValue(0);
+
+      Animated.parallel([
+        Animated.timing(translateX, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: false,
+        }),
+        Animated.timing(scrimOpacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: false,
+        }),
+      ]).start();
+    } else if (!visible && wasVisible) {
+      Animated.parallel([
+        Animated.timing(translateX, {
+          toValue: WIN_FLYOUT_WIDTH,
+          duration: 160,
+          useNativeDriver: false,
+        }),
+        Animated.timing(scrimOpacity, {
+          toValue: 0,
+          duration: 160,
+          useNativeDriver: false,
+        }),
+      ]).start();
+    }
+  }, [visible, translateX, scrimOpacity]);
+
+  if (!visible) return null;
+
+  return (
+    <View style={styles.winOverlay} pointerEvents="box-none">
+      <Animated.View style={[styles.winScrim, {opacity: scrimOpacity}]}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onRequestClose} />
+      </Animated.View>
+      <Animated.View
+        style={[styles.winFlyout, {transform: [{translateX}]}]}
+        pointerEvents="auto"
+      >
+        {children}
+      </Animated.View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   winOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -56,15 +115,13 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.55)',
   },
-  winContent: {
-    ...StyleSheet.absoluteFillObject,
-    padding: 18,
-  },
-  winContentCenter: {
-    justifyContent: 'center',
-  },
-  winContentBottom: {
-    justifyContent: 'flex-end',
+  winFlyout: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    right: 0,
+    width: WIN_FLYOUT_WIDTH,
+    zIndex: 10,
   },
 
   mobileCenter: {

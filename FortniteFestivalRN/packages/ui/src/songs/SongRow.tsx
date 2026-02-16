@@ -1,8 +1,9 @@
 import React from 'react';
-import {Image, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View} from 'react-native';
+import {Image, Platform, Pressable, StyleSheet, Text, View} from 'react-native';
 import {FrostedSurface} from '../FrostedSurface';
 import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
 import {DifficultyBars} from '../instruments/InstrumentCard';
+import {useWindowSize} from '../useWindowSize';
 import type {InstrumentKey} from '@festival/core';
 import type {MetadataSortKey} from '@festival/core';
 
@@ -313,7 +314,7 @@ export const SongRow = React.memo(function SongRow(props: {
   const bottomMetadataEntries = visibleMetadataEntries.slice(topMetadataCount);
 
   // Detect phone-class device (not tablet/foldable, not Windows).
-  const {width: winWidth, height: winHeight} = useWindowDimensions();
+  const {width: winWidth, height: winHeight} = useWindowSize();
   const isPhone = Platform.OS !== 'windows' && Math.min(winWidth, winHeight) < 600;
   // Wide layout: landscape (any device) or open foldable / tablet (min dimension >= 600).
   const isWideLayout = Platform.OS !== 'windows' && (winWidth > winHeight || Math.min(winWidth, winHeight) >= 600);
@@ -505,7 +506,7 @@ export const SongRow = React.memo(function SongRow(props: {
     </FrostedSurface>
   );
 
-  const rowStyle = isWideLayout ? styles.rowPressableWide : styles.rowPressable;
+  const rowStyle = isWideLayout || Platform.OS === 'windows' ? styles.rowPressableWide : styles.rowPressable;
 
   if (onPress) {
     return (
