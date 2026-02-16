@@ -11,6 +11,8 @@ module.exports = {
     '^@festival/contexts/(.*)$': '<rootDir>/packages/contexts/src/$1',
     '^@festival/local-app$': '<rootDir>/packages/local-app/src',
     '^@festival/local-app/(.*)$': '<rootDir>/packages/local-app/src/$1',
+    '^@festival/server-app$': '<rootDir>/packages/server-app/src',
+    '^@festival/server-app/(.*)$': '<rootDir>/packages/server-app/src/$1',
   },
   transformIgnorePatterns: [
     'node_modules/(?!((jest-)?react-native|@react-native|@react-navigation|react-native-gesture-handler|react-native-reanimated|react-native-screens|react-native-safe-area-context|react-native-drawer-layout|react-native-vector-icons)/)',

@@ -9,7 +9,9 @@
       "@festival/contexts": ["./packages/contexts/src"],
       "@festival/contexts/*": ["./packages/contexts/src/*"],
       "@festival/local-app": ["./packages/local-app/src"],
-      "@festival/local-app/*": ["./packages/local-app/src/*"]
+      "@festival/local-app/*": ["./packages/local-app/src/*"],
+      "@festival/server-app": ["./packages/server-app/src"],
+      "@festival/server-app/*": ["./packages/server-app/src/*"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx"],
