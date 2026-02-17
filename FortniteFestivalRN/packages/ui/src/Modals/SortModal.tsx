@@ -1,12 +1,11 @@
 import React, {useCallback, useMemo} from 'react';
-import {Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View} from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import DraggableFlatList, {type RenderItemParams} from 'react-native-draggable-flatlist';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 
 import {PlatformModal} from './PlatformModal';
 import {FrostedSurface} from '../FrostedSurface';
-import {useWindowSize} from '../useWindowSize';
 import {Accordion} from '../Accordion';
 import {normalizeInstrumentOrder, normalizeMetadataSortPriority} from '@festival/core';
 import type {InstrumentOrderItem, InstrumentShowSettings, MetadataSortItem, MetadataSortKey, SongSortMode} from '@festival/core';
@@ -60,7 +59,7 @@ export function SortModal(props: {
   const hiddenKeys = useMemo(() => orderItems.filter(i => !isInstrumentVisible(i.key, props.showInstruments)).map(i => i.key), [orderItems, props.showInstruments]);
   const visibleKeys = useMemo(() => visibleItems.map(i => i.key), [visibleItems]);
   const variant = Platform.OS === 'windows' ? 'center' : 'bottom';
-  const {height: screenHeight} = useWindowSize();
+  const {height: screenHeight} = useWindowDimensions();
   const {bottom: safeBottom} = useSafeAreaInsets();
   const isMobile = Platform.OS !== 'windows';
 

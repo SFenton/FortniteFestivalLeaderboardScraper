@@ -5,6 +5,7 @@ export * from './httpErrorHelper';
 export * from './concurrency';
 export * from './persistence';
 export * from './songListConfig';
+export * from './instrumentFilters';
 export * from './suggestions/types';
 export * from './suggestions/suggestionGenerator';
 export * from './suggestions/suggestionFilterConfig';

@@ -1,11 +1,11 @@
 import React, {useState} from 'react';
-import {Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View} from 'react-native';
+import {Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 
 import {PlatformModal} from './PlatformModal';
 import {FrostedSurface} from '../FrostedSurface';
+import {ToggleRow} from '../controls/ToggleRow';
 import {modalStyles as styles} from './modalStyles';
-import {useWindowSize} from '../useWindowSize';
 import type {InstrumentKey, InstrumentShowSettings} from '@festival/core';
 import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
 import type {SuggestionTypeSettings, SuggestionTypeSettingsKey} from '@festival/core';
@@ -88,7 +88,7 @@ export function SuggestionsFilterModal(props: {
   const effectiveSelectedInstrument = selectedInstrument && visibleInstruments.some(i => i.key === selectedInstrument) ? selectedInstrument : null;
 
   const variant = Platform.OS === 'windows' ? 'center' : 'bottom';
-  const {height: screenHeight} = useWindowSize();
+  const {height: screenHeight} = useWindowDimensions();
   const {bottom: safeBottom} = useSafeAreaInsets();
   const isMobile = Platform.OS !== 'windows';
 
@@ -198,34 +198,6 @@ export function SuggestionsFilterModal(props: {
   );
 }
 
-function ToggleRow(props: {label: string; icon?: ReturnType<typeof getInstrumentIconSource>; description?: string; checked: boolean; onToggle: () => void; disabled?: boolean; first?: boolean; last?: boolean}) {
-  return (
-    <Pressable
-      onPress={props.disabled ? undefined : props.onToggle}
-      style={({pressed}) => [
-        styles.orderRow,
-        props.first && {marginTop: 6},
-        !props.disabled && pressed && styles.rowBtnPressed,
-        props.disabled && {opacity: 0.4},
-      ]}
-      accessibilityRole="switch"
-    >
-      {props.icon && <Image source={props.icon} style={localStyles.toggleInstrumentIcon} resizeMode="contain" />}
-      <View style={{flex: 1, marginRight: 12}}>
-        <Text style={styles.orderName}>{props.label}</Text>
-        {props.description ? <Text style={styles.modalHint}>{props.description}</Text> : null}
-      </View>
-      <Switch
-        value={props.checked}
-        onValueChange={props.disabled ? undefined : props.onToggle}
-        disabled={props.disabled}
-        trackColor={{false: '#263244', true: 'rgba(45,130,230,1)'}}
-        thumbColor={props.checked ? '#FFFFFF' : '#8899AA'}
-      />
-    </Pressable>
-  );
-}
-
 const localStyles = StyleSheet.create({
   instrumentRow: {
     flexDirection: 'row',
@@ -250,10 +222,5 @@ const localStyles = StyleSheet.create({
   instrumentIcon: {
     width: 32,
     height: 32,
-  },
-  toggleInstrumentIcon: {
-    width: 36,
-    height: 36,
-    marginRight: 16,
   },
 });

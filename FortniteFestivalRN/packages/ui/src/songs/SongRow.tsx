@@ -1,9 +1,9 @@
 import React from 'react';
-import {Image, Platform, Pressable, StyleSheet, Text, View} from 'react-native';
+import {Image, Platform, Pressable, StyleSheet, Text, useWindowDimensions, View} from 'react-native';
 import {FrostedSurface} from '../FrostedSurface';
 import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
 import {DifficultyBars} from '../instruments/InstrumentCard';
-import {useWindowSize} from '../useWindowSize';
+import {Colors, Radius, Font, Gap, Opacity, Size, MaxWidth} from '../theme';
 import type {InstrumentKey} from '@festival/core';
 import type {MetadataSortKey} from '@festival/core';
 
@@ -314,7 +314,7 @@ export const SongRow = React.memo(function SongRow(props: {
   const bottomMetadataEntries = visibleMetadataEntries.slice(topMetadataCount);
 
   // Detect phone-class device (not tablet/foldable, not Windows).
-  const {width: winWidth, height: winHeight} = useWindowSize();
+  const {width: winWidth, height: winHeight} = useWindowDimensions();
   const isPhone = Platform.OS !== 'windows' && Math.min(winWidth, winHeight) < 600;
   // Wide layout: landscape (any device), open foldable / tablet (min dimension >= 600), or Windows.
   const isWideLayout = Platform.OS === 'windows' || winWidth > winHeight || Math.min(winWidth, winHeight) >= 600;
@@ -524,38 +524,38 @@ export const SongRow = React.memo(function SongRow(props: {
 
 const styles = StyleSheet.create({
   rowPressable: {
-    marginBottom: 8,
-    maxWidth: 600,
+    marginBottom: Gap.md,
+    maxWidth: MaxWidth.narrow,
     width: '100%',
     alignSelf: 'center',
   },
   rowPressableWide: {
-    marginBottom: 8,
+    marginBottom: Gap.md,
     width: '100%',
     alignSelf: 'center',
   },
   rowSurface: {
-    borderRadius: 12,
+    borderRadius: Radius.md,
   },
   rowSurfacePressed: {
-    opacity: 0.92,
+    opacity: Opacity.icon,
   },
   rowInner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: Gap.xl,
+    paddingVertical: Gap.lg,
   },
   rowInnerCompact: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 10,
+    paddingHorizontal: Gap.xl,
+    paddingVertical: Gap.lg,
+    gap: Gap.lg,
   },
   compactTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: Gap.lg,
     minWidth: 0,
   },
   compactTopRowNoArt: {
@@ -565,7 +565,7 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: Gap.lg,
     minWidth: 0,
   },
   rowText: {
@@ -581,27 +581,27 @@ const styles = StyleSheet.create({
     gap: 6,
     alignItems: 'center',
     flexShrink: 0,
-    marginLeft: 10,
+    marginLeft: Gap.lg,
   },
   instrumentRowCompact: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: Gap.md,
     alignItems: 'center',
     justifyContent: 'center',
     alignSelf: 'center',
   },
   instrumentChip: {
-    width: 40,
-    height: 40,
+    width: Size.iconLg,
+    height: Size.iconLg,
     borderRadius: 20,
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
   },
   instrumentChipCompact: {
-    width: 34,
-    height: 34,
+    width: Size.control,
+    height: Size.control,
     borderRadius: 17,
     borderWidth: 2,
     alignItems: 'center',
@@ -612,17 +612,17 @@ const styles = StyleSheet.create({
     height: 32,
   },
   instrumentIconCompact: {
-    width: 24,
-    height: 24,
+    width: Size.iconSm,
+    height: Size.iconSm,
   },
   thumbWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
+    width: Size.thumb,
+    height: Size.thumb,
+    borderRadius: Radius.sm,
     overflow: 'hidden',
-    backgroundColor: '#0B1220',
+    backgroundColor: Colors.backgroundCard,
     borderWidth: 1,
-    borderColor: '#263244',
+    borderColor: Colors.borderCard,
   },
   thumb: {
     width: '100%',
@@ -630,17 +630,17 @@ const styles = StyleSheet.create({
   },
   thumbPlaceholder: {
     flex: 1,
-    backgroundColor: '#0B1220',
+    backgroundColor: Colors.backgroundCard,
   },
   songTitle: {
-    color: '#FFFFFF',
-    fontSize: 14,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
     fontWeight: '700',
   },
   songMeta: {
     color: '#B8C0CC',
-    fontSize: 12,
-    marginTop: 2,
+    fontSize: Font.sm,
+    marginTop: Gap.xs,
   },
 
   // ── Instrument detail strip (single-instrument filter) ──
@@ -648,15 +648,15 @@ const styles = StyleSheet.create({
   detailStrip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: Gap.md,
     flexShrink: 0,
-    marginLeft: 10,
+    marginLeft: Gap.lg,
   },
   detailStripCentered: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: Gap.md,
   },
   rowInnerRow: {
     flexDirection: 'row',
@@ -669,9 +669,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   miniStarCircle: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: Size.iconSm,
+    height: Size.iconSm,
+    borderRadius: Gap.xl,
     borderWidth: 1.5,
     backgroundColor: 'transparent',
     alignItems: 'center',
@@ -683,7 +683,7 @@ const styles = StyleSheet.create({
     height: 20,
   },
   diffPill: {
-    borderRadius: 8,
+    borderRadius: Radius.xs,
     paddingHorizontal: 6,
     borderWidth: 2,
     borderColor: 'transparent',
@@ -691,96 +691,96 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   diffPillText: {
-    color: '#FFFFFF',
-    fontSize: 14,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
     fontWeight: '800',
   },
   songIntensityPill: {
-    paddingHorizontal: 8,
-    minWidth: 80,
-    minHeight: 28,
+    paddingHorizontal: Gap.md,
+    minWidth: Size.pillMinWidth,
+    minHeight: Size.iconMd,
     alignItems: 'center',
     justifyContent: 'center',
   },
   seasonPill: {
     backgroundColor: '#1D3A71',
-    borderRadius: 8,
-    paddingHorizontal: 10,
+    borderRadius: Radius.xs,
+    paddingHorizontal: Gap.lg,
     borderWidth: 2,
     borderColor: 'transparent',
-    minWidth: 80,
+    minWidth: Size.pillMinWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },
   seasonPillText: {
-    color: '#FFFFFF',
-    fontSize: 14,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
     fontWeight: '800',
   },
   percentPill: {
     backgroundColor: '#1D3A71',
-    borderRadius: 8,
-    paddingHorizontal: 10,
+    borderRadius: Radius.xs,
+    paddingHorizontal: Gap.lg,
     borderWidth: 2,
     borderColor: 'transparent',
-    minWidth: 80,
+    minWidth: Size.pillMinWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },
   percentPillText: {
-    color: '#FFFFFF',
-    fontSize: 14,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
     fontWeight: '800',
   },
   percentPillGold: {
     backgroundColor: '#332915',
-    borderColor: '#FFD700',
+    borderColor: Colors.gold,
     borderWidth: 2,
   },
   percentPillTextGold: {
-    color: '#FFD700',
+    color: Colors.gold,
   },
 
   // ── Percentile pill ──
 
   percentilePill: {
     backgroundColor: '#1D3A71',
-    borderRadius: 8,
-    paddingHorizontal: 8,
+    borderRadius: Radius.xs,
+    paddingHorizontal: Gap.md,
     borderWidth: 2,
     borderColor: 'transparent',
-    minWidth: 80,
+    minWidth: Size.pillMinWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },
   percentilePillGold: {
     backgroundColor: '#332915',
-    borderColor: '#FFD700',
+    borderColor: Colors.gold,
   },
   percentilePillText: {
-    color: '#FFFFFF',
-    fontSize: 14,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
     fontWeight: '800',
   },
   percentilePillTextGold: {
-    color: '#FFD700',
+    color: Colors.gold,
   },
 
   // ── FC badge ──
 
   fcBadge: {
     backgroundColor: '#332915',
-    borderColor: '#FFD700',
+    borderColor: Colors.gold,
     borderWidth: 2,
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    minWidth: 80,
+    borderRadius: Radius.xs,
+    paddingHorizontal: Gap.md,
+    minWidth: Size.pillMinWidth,
     alignItems: 'center',
     justifyContent: 'center',
   },
   fcBadgeText: {
-    color: '#FFD700',
-    fontSize: 14,
+    color: Colors.gold,
+    fontSize: Font.md,
     fontWeight: '800',
   },
 
@@ -790,18 +790,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    paddingBottom: 2,
+    gap: Gap.sm,
+    paddingBottom: Gap.xs,
   },
   metadataGrid: {
-    gap: 8,
-    paddingBottom: 2,
-    marginTop: 2,
+    gap: Gap.md,
+    paddingBottom: Gap.xs,
+    marginTop: Gap.xs,
   },
   metadataGridRow: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 4,
+    gap: Gap.sm,
   },
   metadataGridCell: {
     flex: 1,
@@ -833,13 +833,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   scoreStarsScoreText: {
-    color: '#D7DEE8',
-    fontSize: 16,
+    color: Colors.textSecondary,
+    fontSize: Font.lg,
     fontWeight: '700',
   },
   scoreStarsSep: {
     color: '#556677',
-    fontSize: 16,
+    fontSize: Font.lg,
     fontWeight: '400',
   },
 });

@@ -2,6 +2,7 @@ import React from 'react';
 import {Image, StyleSheet, Text, View, type StyleProp, type ViewStyle} from 'react-native';
 import {FrostedSurface} from '../FrostedSurface';
 import {getInstrumentIconSource} from './instrumentVisuals';
+import {Colors, Radius, Font, LineHeight, Gap, Opacity, MaxWidth} from '../theme';
 import type {InstrumentKey} from '@festival/core';
 
 // ── Public data type ────────────────────────────────────────────────
@@ -132,17 +133,17 @@ export const StatisticsInstrumentCard = React.memo(function StatisticsInstrument
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 16,
+    borderRadius: Radius.lg,
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.15)',
     padding: 14,
-    gap: 10,
-    maxWidth: 1080,
+    gap: Gap.lg,
+    maxWidth: MaxWidth.card,
     width: '100%',
   },
   cardHeaderRow: {
     flexDirection: 'row',
-    gap: 12,
+    gap: Gap.xl,
     alignItems: 'center',
   },
   instrumentIcon: {
@@ -152,68 +153,68 @@ const styles = StyleSheet.create({
   },
   cardHeaderText: {
     flex: 1,
-    gap: 2,
+    gap: Gap.xs,
   },
   cardTitle: {
-    color: '#FFFFFF',
-    fontSize: 20,
+    color: Colors.textPrimary,
+    fontSize: Font.xl,
     fontWeight: '800',
   },
   cardSubtitle: {
-    color: '#D7DEE8',
+    color: Colors.textSecondary,
     fontSize: 13,
-    opacity: 0.85,
+    opacity: Opacity.pressed,
   },
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     columnGap: 16,
-    rowGap: 10,
-    marginTop: 24,
+    rowGap: Gap.lg,
+    marginTop: Gap.section,
   },
   statCell: {
     width: '47%',
-    gap: 2,
+    gap: Gap.xs,
   },
   statLabel: {
-    color: '#D7DEE8',
-    fontSize: 12,
-    opacity: 0.85,
+    color: Colors.textSecondary,
+    fontSize: Font.sm,
+    opacity: Opacity.pressed,
   },
   statValue: {
-    color: '#FFFFFF',
-    fontSize: 14,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
     fontWeight: '700',
   },
   distWrap: {
-    gap: 8,
-    marginTop: 24,
+    gap: Gap.md,
+    marginTop: Gap.section,
   },
   sectionTitle: {
-    color: '#FFFFFF',
-    fontSize: 14,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
     fontWeight: '800',
   },
   muted: {
-    color: '#D7DEE8',
+    color: Colors.textSecondary,
     opacity: 0.8,
     fontSize: 13,
   },
   distBar: {
     flexDirection: 'row',
-    height: 12,
+    height: Gap.xl,
     borderRadius: 6,
     overflow: 'hidden',
     backgroundColor: 'rgba(255,255,255,0.08)',
   },
   distSeg: {
-    height: 12,
+    height: Gap.xl,
   },
   legendGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     rowGap: 6,
-    columnGap: 12,
+    columnGap: Gap.xl,
   },
   legendItem: {
     flexDirection: 'row',
@@ -221,23 +222,23 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   legendSwatch: {
-    width: 10,
-    height: 10,
+    width: Gap.lg,
+    height: Gap.lg,
     borderRadius: 3,
   },
   legendText: {
-    color: '#D7DEE8',
-    fontSize: 12,
+    color: Colors.textSecondary,
+    fontSize: Font.sm,
     opacity: 0.9,
   },
 });
 
 const compactStyles = StyleSheet.create({
   card: {
-    borderRadius: 12,
+    borderRadius: Radius.md,
     borderWidth: 1.5,
     borderColor: 'rgba(255,255,255,0.15)',
-    padding: 10,
+    padding: Gap.lg,
     gap: 6,
   },
   instrumentIcon: {
@@ -246,49 +247,49 @@ const compactStyles = StyleSheet.create({
     resizeMode: 'contain',
   },
   cardTitle: {
-    color: '#FFFFFF',
+    color: Colors.textPrimary,
     fontSize: 17,
     fontWeight: '800',
   },
   cardSubtitle: {
-    color: '#D7DEE8',
-    fontSize: 12,
-    opacity: 0.85,
+    color: Colors.textSecondary,
+    fontSize: Font.sm,
+    opacity: Opacity.pressed,
   },
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    columnGap: 10,
-    rowGap: 4,
-    marginTop: 8,
+    columnGap: Gap.lg,
+    rowGap: Gap.sm,
+    marginTop: Gap.md,
   },
   statCell: {
     width: '47%',
     gap: 1,
   },
   statLabel: {
-    color: '#D7DEE8',
-    fontSize: 11,
-    opacity: 0.85,
+    color: Colors.textSecondary,
+    fontSize: Font.xs,
+    opacity: Opacity.pressed,
   },
   statValue: {
-    color: '#FFFFFF',
+    color: Colors.textPrimary,
     fontSize: 13,
     fontWeight: '700',
   },
   distWrap: {
-    gap: 4,
-    marginTop: 8,
+    gap: Gap.sm,
+    marginTop: Gap.md,
   },
   sectionTitle: {
-    color: '#FFFFFF',
+    color: Colors.textPrimary,
     fontSize: 13,
     fontWeight: '800',
   },
   distBar: {
     flexDirection: 'row',
-    height: 8,
-    borderRadius: 4,
+    height: Gap.md,
+    borderRadius: Gap.sm,
     overflow: 'hidden',
     backgroundColor: 'rgba(255,255,255,0.08)',
   },
@@ -298,8 +299,8 @@ const compactStyles = StyleSheet.create({
     borderRadius: 2,
   },
   legendText: {
-    color: '#D7DEE8',
-    fontSize: 11,
+    color: Colors.textSecondary,
+    fontSize: Font.xs,
     opacity: 0.9,
   },
 });

@@ -1,6 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useRef} from 'react';
-import {Animated, Dimensions, Easing, Image, Platform, StyleSheet, View} from 'react-native';
-import {useWindowSize} from './useWindowSize';
+import {Animated, Dimensions, Easing, Image, Platform, StyleSheet, useWindowDimensions, View} from 'react-native';
 import type {Song} from '@festival/core';
 
 // ── Configuration ───────────────────────────────────────────────────
@@ -113,7 +112,7 @@ const FADE_DURATION = 1_000; // ms to fade rows in once ready
 export function SlidingRowsBackground(props: {songs: Song[]}) {
   const {songs} = props;
 
-  const {width: screenWidth, height: screenHeight} = useWindowSize();
+  const {width: screenWidth, height: screenHeight} = useWindowDimensions();
   const {halfCount, rowCount} = useMemo(
     () => computeCounts(screenWidth, screenHeight),
     [screenWidth, screenHeight],

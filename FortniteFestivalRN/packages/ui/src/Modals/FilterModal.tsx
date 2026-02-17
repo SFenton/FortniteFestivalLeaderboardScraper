@@ -1,18 +1,18 @@
 import React, {useCallback, useMemo} from 'react';
-import {Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View} from 'react-native';
+import {Alert, Image, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, useWindowDimensions, View} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
 import {PlatformModal} from './PlatformModal';
 import {FrostedSurface} from '../FrostedSurface';
 import {Accordion} from '../Accordion';
+import {ToggleRow} from '../controls/ToggleRow';
 import {PERCENTILE_THRESHOLDS} from '@festival/core';
 import type {AdvancedMissingFilters, InstrumentShowSettings} from '@festival/core';
 import {modalStyles as styles} from './modalStyles';
 import type {InstrumentKey} from '@festival/core';
 import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
 import {DifficultyBars} from '../instruments/InstrumentCard';
-import {useWindowSize} from '../useWindowSize';
 
 export function FilterModal(props: {
   visible: boolean;
@@ -55,7 +55,7 @@ export function FilterModal(props: {
     : null;
 
   const variant = Platform.OS === 'windows' ? 'center' : 'bottom';
-  const {height: screenHeight} = useWindowSize();
+  const {height: screenHeight} = useWindowDimensions();
   const {bottom: safeBottom} = useSafeAreaInsets();
   const isMobile = Platform.OS !== 'windows';
 
@@ -179,31 +179,6 @@ export function FilterModal(props: {
           </View>
       </FrostedSurface>
     </PlatformModal>
-  );
-}
-
-function ToggleRow(props: {label: string; description?: string; checked: boolean; onToggle: () => void; first?: boolean; last?: boolean}) {
-  return (
-    <Pressable
-      onPress={props.onToggle}
-      style={({pressed}) => [
-        styles.orderRow,
-        props.first && {marginTop: 6},
-        pressed && styles.rowBtnPressed,
-      ]}
-      accessibilityRole="switch"
-    >
-      <View style={{flex: 1, marginRight: 12}}>
-        <Text style={styles.orderName}>{props.label}</Text>
-        {props.description ? <Text style={styles.modalHint}>{props.description}</Text> : null}
-      </View>
-      <Switch
-        value={props.checked}
-        onValueChange={props.onToggle}
-        trackColor={{false: '#263244', true: 'rgba(45,130,230,1)'}}
-        thumbColor={props.checked ? '#FFFFFF' : '#8899AA'}
-      />
-    </Pressable>
   );
 }
 

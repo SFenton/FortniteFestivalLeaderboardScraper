@@ -1598,6 +1598,29 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@festival/app-screens@workspace:packages/app-screens":
+  version: 0.0.0-use.local
+  resolution: "@festival/app-screens@workspace:packages/app-screens"
+  peerDependencies:
+    "@bottom-tabs/react-navigation": "*"
+    "@callstack/liquid-glass": "*"
+    "@festival/contexts": "*"
+    "@festival/core": "*"
+    "@festival/ui": "*"
+    "@react-native-masked-view/masked-view": "*"
+    "@react-navigation/bottom-tabs": "*"
+    "@react-navigation/native": "*"
+    "@react-navigation/native-stack": "*"
+    react: "*"
+    react-native: "*"
+    react-native-draggable-flatlist: "*"
+    react-native-gesture-handler: "*"
+    react-native-linear-gradient: "*"
+    react-native-safe-area-context: "*"
+    react-native-vector-icons: "*"
+  languageName: unknown
+  linkType: soft
+
 "@festival/contexts@workspace:packages/contexts":
   version: 0.0.0-use.local
   resolution: "@festival/contexts@workspace:packages/contexts"
@@ -1622,6 +1645,7 @@ __metadata:
   peerDependencies:
     "@bottom-tabs/react-navigation": "*"
     "@callstack/liquid-glass": "*"
+    "@festival/app-screens": "*"
     "@festival/contexts": "*"
     "@festival/core": "*"
     "@festival/ui": "*"
@@ -1645,6 +1669,7 @@ __metadata:
   peerDependencies:
     "@bottom-tabs/react-navigation": "*"
     "@callstack/liquid-glass": "*"
+    "@festival/app-screens": "*"
     "@festival/contexts": "*"
     "@festival/core": "*"
     "@festival/ui": "*"

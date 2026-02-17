@@ -8,6 +8,8 @@
       "@festival/ui/*": ["./packages/ui/src/*"],
       "@festival/contexts": ["./packages/contexts/src"],
       "@festival/contexts/*": ["./packages/contexts/src/*"],
+      "@festival/app-screens": ["./packages/app-screens/src"],
+      "@festival/app-screens/*": ["./packages/app-screens/src/*"],
       "@festival/local-app": ["./packages/local-app/src"],
       "@festival/local-app/*": ["./packages/local-app/src/*"],
       "@festival/server-app": ["./packages/server-app/src"],

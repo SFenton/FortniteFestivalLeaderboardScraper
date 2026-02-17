@@ -1,7 +1,7 @@
 import React, {useCallback, useMemo} from 'react';
-import {FlatList, Image, Platform, StyleSheet, Text, View} from 'react-native';
-import {FrostedSurface} from '../FrostedSurface';
-import {getInstrumentIconSource} from '../instruments/instrumentVisuals';
+import {FlatList, Platform, StyleSheet, View} from 'react-native';
+import {Gap} from '../theme';
+import {CategoryCard} from '../cards/CategoryCard';
 import {SuggestionSongRow} from './SuggestionSongRow';
 import type {LeaderboardData, Song, InstrumentShowSettings} from '@festival/core';
 import type {SuggestionCategory, SuggestionSongItem} from '@festival/core';
@@ -61,101 +61,45 @@ export function SuggestionCard(props: {
   const songSeparator = useCallback(() => <View style={styles.songSeparator} />, []);
 
   return (
-    <FrostedSurface style={styles.card} tint="dark" intensity={18}>
-      <View style={styles.cardHeaderRow}>
-        <View style={styles.cardHeaderLeft}>
-          <Text style={styles.cardTitle} numberOfLines={1}>
-            {cat.title}
-          </Text>
-          <Text style={styles.cardSubtitle}>{cat.description}</Text>
-        </View>
-
-        {catInstrumentKey ? (
-          <View style={styles.cardHeaderRight}>
-            <Image source={getInstrumentIconSource(catInstrumentKey)} style={styles.cardHeaderIcon} resizeMode="contain" />
-          </View>
-        ) : null}
-      </View>
-
-      <View style={styles.songList}>
-        {useVirtualSongsList ? (
-          <FlatList
-            data={cat.songs}
-            keyExtractor={s => `${cat.key}:${s.songId}`}
-            renderItem={renderSong}
-            ItemSeparatorComponent={songSeparator}
-            scrollEnabled={false}
-            keyboardShouldPersistTaps="handled"
-            removeClippedSubviews={Platform.OS === 'android'}
-            initialNumToRender={8}
-            maxToRenderPerBatch={6}
-            updateCellsBatchingPeriod={24}
-            windowSize={5}
+    <CategoryCard
+      title={cat.title}
+      description={cat.description}
+      instrumentKey={catInstrumentKey}>
+      {useVirtualSongsList ? (
+        <FlatList
+          data={cat.songs}
+          keyExtractor={s => `${cat.key}:${s.songId}`}
+          renderItem={renderSong}
+          ItemSeparatorComponent={songSeparator}
+          scrollEnabled={false}
+          keyboardShouldPersistTaps="handled"
+          removeClippedSubviews={Platform.OS === 'android'}
+          initialNumToRender={8}
+          maxToRenderPerBatch={6}
+          updateCellsBatchingPeriod={24}
+          windowSize={5}
+        />
+      ) : (
+        cat.songs.map(s => (
+          <SuggestionSongRow
+            key={`${cat.key}:${s.songId}`}
+            categoryKey={cat.key}
+            item={s}
+            useCompactLayout={props.useCompactLayout}
+            hideArt={props.hideArt}
+            song={props.songById.get(s.songId)}
+            leaderboardData={props.scoresIndex[s.songId]}
+            settings={props.instrumentQuerySettings}
+            onOpenSong={props.onOpenSong}
           />
-        ) : (
-          cat.songs.map(s => (
-            <SuggestionSongRow
-              key={`${cat.key}:${s.songId}`}
-              categoryKey={cat.key}
-              item={s}
-              useCompactLayout={props.useCompactLayout}
-              hideArt={props.hideArt}
-              song={props.songById.get(s.songId)}
-              leaderboardData={props.scoresIndex[s.songId]}
-              settings={props.instrumentQuerySettings}
-              onOpenSong={props.onOpenSong}
-            />
-          ))
-        )}
-      </View>
-    </FrostedSurface>
+        ))
+      )}
+    </CategoryCard>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    borderRadius: 12,
-    padding: 12,
-    gap: 8,
-    maxWidth: 1080,
-    width: '100%',
-  },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  cardHeaderLeft: {
-    flex: 1,
-    minWidth: 0,
-    gap: 4,
-  },
-  cardHeaderRight: {
-    flexShrink: 0,
-    paddingLeft: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cardTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  cardHeaderIcon: {
-    width: 28,
-    height: 28,
-    opacity: 0.92,
-  },
-  cardSubtitle: {
-    color: '#D7DEE8',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  songList: {
-    gap: 8,
-    marginTop: 4,
-  },
   songSeparator: {
-    height: 8,
+    height: Gap.md,
   },
 });

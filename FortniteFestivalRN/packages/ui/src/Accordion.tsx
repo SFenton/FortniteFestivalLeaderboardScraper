@@ -1,7 +1,7 @@
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useState} from 'react';
 import {LayoutChangeEvent, Pressable, StyleSheet, Text, View} from 'react-native';
-import Ionicons from 'react-native-vector-icons/Ionicons';
-import Animated, {useAnimatedStyle, useSharedValue, withTiming} from 'react-native-reanimated';
+import {useAccordionAnimation} from './useAccordionAnimation';
+import {Colors, Font, LineHeight, Gap, Opacity} from './theme';
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -18,19 +18,11 @@ export type AccordionProps = {
 
 // ── Component ───────────────────────────────────────────────────────
 
-const ANIMATION_DURATION = 250;
-
 export function Accordion({title, hint, initiallyOpen = false, children}: AccordionProps) {
   const [open, setOpen] = useState(initiallyOpen);
   const [contentHeight, setContentHeight] = useState(0);
 
-  const animatedHeight = useSharedValue(initiallyOpen ? 1 : 0);
-  const chevronRotation = useSharedValue(initiallyOpen ? 1 : 0);
-
-  useEffect(() => {
-    animatedHeight.value = withTiming(open ? 1 : 0, {duration: ANIMATION_DURATION});
-    chevronRotation.value = withTiming(open ? 1 : 0, {duration: ANIMATION_DURATION});
-  }, [open, animatedHeight, chevronRotation]);
+  const {AnimatedView, bodyStyle, chevronElement} = useAccordionAnimation(open, contentHeight);
 
   const toggle = useCallback(() => setOpen(prev => !prev), []);
 
@@ -38,16 +30,6 @@ export function Accordion({title, hint, initiallyOpen = false, children}: Accord
     const h = e.nativeEvent.layout.height;
     if (h > 0) setContentHeight(h);
   }, []);
-
-  const bodyStyle = useAnimatedStyle(() => ({
-    height: contentHeight > 0 ? animatedHeight.value * contentHeight : undefined,
-    opacity: animatedHeight.value,
-    overflow: 'hidden' as const,
-  }));
-
-  const chevronStyle = useAnimatedStyle(() => ({
-    transform: [{rotate: `${chevronRotation.value * 180}deg`}],
-  }));
 
   return (
     <View style={styles.container}>
@@ -62,17 +44,15 @@ export function Accordion({title, hint, initiallyOpen = false, children}: Accord
           <Text style={styles.title}>{title}</Text>
           {hint ? <Text style={styles.hint}>{hint}</Text> : null}
         </View>
-        <Animated.View style={chevronStyle}>
-          <Ionicons name="chevron-down" size={20} color="#8899AA" />
-        </Animated.View>
+        {chevronElement}
       </Pressable>
 
       {/* Collapsible body */}
-      <Animated.View style={bodyStyle}>
+      <AnimatedView style={bodyStyle}>
         <View onLayout={onContentLayout} style={styles.body}>
           {children}
         </View>
-      </Animated.View>
+      </AnimatedView>
     </View>
   );
 }
@@ -87,28 +67,28 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 4,
+    paddingVertical: Gap.sm,
   },
   headerPressed: {
-    opacity: 0.85,
+    opacity: Opacity.pressed,
   },
   headerText: {
     flex: 1,
-    marginRight: 12,
-    gap: 4,
+    marginRight: Gap.xl,
+    gap: Gap.sm,
   },
   title: {
-    color: '#FFFFFF',
-    fontSize: 16,
+    color: Colors.textPrimary,
+    fontSize: Font.lg,
     fontWeight: '800',
   },
   hint: {
-    color: '#D7DEE8',
-    opacity: 0.85,
-    fontSize: 12,
-    lineHeight: 16,
+    color: Colors.textSecondary,
+    opacity: Opacity.pressed,
+    fontSize: Font.sm,
+    lineHeight: LineHeight.sm,
   },
   body: {
-    paddingTop: 8,
+    paddingTop: Gap.md,
   },
 });

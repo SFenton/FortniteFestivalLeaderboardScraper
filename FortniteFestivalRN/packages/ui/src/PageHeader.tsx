@@ -1,5 +1,6 @@
 import React from 'react';
 import {Platform, StyleProp, StyleSheet, Text, View, ViewStyle} from 'react-native';
+import {Colors, Font, Gap} from './theme';
 
 export function PageHeader(props: {
   title?: string;
@@ -28,17 +29,17 @@ const styles = StyleSheet.create({
   left: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: Gap.lg,
     flexShrink: 1,
   },
   title: {
-    color: '#FFFFFF',
-    fontSize: Platform.OS === 'ios' ? 34 : 22,
+    color: Colors.textPrimary,
+    fontSize: Platform.OS === 'ios' ? 34 : Font.title,
     fontWeight: '700',
     lineHeight: Platform.OS === 'ios' ? 41 : 28,
     includeFontPadding: false,
   },
   right: {
-    marginLeft: 12,
+    marginLeft: Gap.xl,
   },
 });

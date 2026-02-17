@@ -1,0 +1,13 @@
+{
+  "name": "@festival/contexts",
+  "version": "0.0.1",
+  "private": true,
+  "main": "src/index.ts",
+  "peerDependencies": {
+    "@festival/core": "*",
+    "@react-native-async-storage/async-storage": "*",
+    "react": "*",
+    "react-native": "*",
+    "react-native-fs": "*"
+  }
+}

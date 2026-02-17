@@ -2,6 +2,7 @@ import React from 'react';
 import {StyleProp, StyleSheet, Text, View, ViewStyle} from 'react-native';
 
 import {FrostedSurface} from './FrostedSurface';
+import {Colors, Radius, Font, LineHeight, Gap, Opacity} from './theme';
 
 type Props = {
   title: string;
@@ -45,23 +46,23 @@ const styles = StyleSheet.create({
   },
   card: {
     width: '100%',
-    borderRadius: 12,
-    paddingVertical: 24,
-    paddingHorizontal: 16,
-    gap: 12,
+    borderRadius: Radius.md,
+    paddingVertical: Gap.section,
+    paddingHorizontal: Font.lg,
+    gap: Gap.xl,
   },
   title: {
-    color: '#FFFFFF',
-    fontSize: 16,
+    color: Colors.textPrimary,
+    fontSize: Font.lg,
     fontWeight: '700',
     textAlign: 'center',
   },
   body: {
-    color: '#D7DEE8',
+    color: Colors.textSecondary,
     fontSize: 13,
-    opacity: 0.85,
+    opacity: Opacity.pressed,
     textAlign: 'center',
-    lineHeight: 18,
+    lineHeight: LineHeight.md,
     marginTop: 14,
   },
 });

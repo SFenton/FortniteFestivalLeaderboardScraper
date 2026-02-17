@@ -13,6 +13,7 @@ const rnPath = fs.realpathSync(
 const corePackagePath = path.resolve(__dirname, 'packages/core');
 const uiPackagePath = path.resolve(__dirname, 'packages/ui');
 const contextsPackagePath = path.resolve(__dirname, 'packages/contexts');
+const appScreensPackagePath = path.resolve(__dirname, 'packages/app-screens');
 const localAppPackagePath = path.resolve(__dirname, 'packages/local-app');
 const serverAppPackagePath = path.resolve(__dirname, 'packages/server-app');
 
@@ -27,7 +28,7 @@ const serverAppPackagePath = path.resolve(__dirname, 'packages/server-app');
 
 const config = {
   // Watch workspace packages so Metro picks up changes in real-time
-  watchFolders: [corePackagePath, uiPackagePath, contextsPackagePath, localAppPackagePath, serverAppPackagePath],
+  watchFolders: [corePackagePath, uiPackagePath, contextsPackagePath, appScreensPackagePath, localAppPackagePath, serverAppPackagePath],
   //
   resolver: {
     // Register 'windows' so Metro resolves .windows.js platform overrides

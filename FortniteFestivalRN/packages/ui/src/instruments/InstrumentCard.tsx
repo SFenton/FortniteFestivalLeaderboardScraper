@@ -1,8 +1,9 @@
 import React from 'react';
 import {Image, StyleSheet, Text, View} from 'react-native';
-import Svg, {Polygon} from 'react-native-svg';
 import {FrostedSurface} from '../FrostedSurface';
 import {getInstrumentIconSource} from './instrumentVisuals';
+import {DifficultyBars} from './DifficultyBars';
+import {Colors, Radius, Font, Gap, MaxWidth, Size} from '../theme';
 import type {InstrumentKey} from '@festival/core';
 
 const STAR_WHITE_ICON = require('../../assets/icons/star_white.png');
@@ -58,44 +59,8 @@ export function MetricCell(props: {label: string; value: string; highlight?: boo
   );
 }
 
-export function DifficultyBars(props: {rawDifficulty: number; compact?: boolean; barWidth?: number; barHeight?: number; gap?: number}) {
-  const raw = Number.isFinite(props.rawDifficulty) ? props.rawDifficulty : 0;
-  const display = Math.max(0, Math.min(6, Math.trunc(raw))) + 1;
-  const barW = props.barWidth ?? (props.compact ? 20 : 16);
-  const barH = props.barHeight ?? (props.compact ? 40 : 34);
-  const offset = Math.min(Math.max(Math.round(barW * 0.26), 1), Math.floor(barW * 0.45));
-  const gap = props.gap ?? (props.compact ? 2 : 1);
-
-  return (
-    <View
-      style={[styles.diffRow, {gap}]}
-      accessibilityRole="text"
-      accessibilityLabel={`Difficulty ${display} of 7`}
-    >
-      {Array.from({length: 7}).map((_, idx) => {
-        const filled = idx + 1 <= display;
-        return (
-          <View
-            key={idx}
-            style={[
-              {
-                width: barW,
-                height: barH,
-              },
-            ]}
-          >
-            <Svg width={barW} height={barH}>
-              <Polygon
-                points={`${offset},0 ${barW},0 ${barW - offset},${barH} 0,${barH}`}
-                fill={filled ? '#FFFFFF' : '#666666'}
-              />
-            </Svg>
-          </View>
-        );
-      })}
-    </View>
-  );
-}
+export {DifficultyBars} from './DifficultyBars';
+export type {DifficultyBarsProps} from './DifficultyBars';
 
 export function StarsVisual(props: {
   hasScore: boolean;
@@ -186,20 +151,20 @@ export function InstrumentCard(props: {data: InstrumentCardData}) {
 const styles = StyleSheet.create({
   card: {
     width: '100%',
-    maxWidth: 1080,
+    maxWidth: MaxWidth.card,
     borderRadius: 22,
-    padding: 12,
+    padding: Gap.xl,
   },
   body: {
-    paddingHorizontal: 10,
-    paddingVertical: 12,
-    gap: 10,
+    paddingHorizontal: Gap.lg,
+    paddingVertical: Gap.xl,
+    gap: Gap.lg,
   },
   top: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 12,
+    gap: Gap.xl,
   },
   iconCircle: {
     width: 48,
@@ -210,60 +175,56 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   icon: {
-    width: 40,
-    height: 40,
+    width: Size.iconLg,
+    height: Size.iconLg,
   },
   instName: {
-    color: '#FFFFFF',
+    color: Colors.textPrimary,
     fontWeight: '800',
-    fontSize: 16,
+    fontSize: Font.lg,
   },
   center: {
     alignItems: 'center',
-    gap: 8,
-  },
-  diffRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    gap: Gap.md,
   },
   starRow: {
     flexDirection: 'row',
-    gap: 4,
+    gap: Gap.sm,
     alignItems: 'center',
     justifyContent: 'center',
   },
   starCircle: {
-    borderRadius: 999,
+    borderRadius: Radius.full,
     borderWidth: 2,
     backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
   },
   metrics: {
-    gap: 12,
+    gap: Gap.xl,
   },
   metricRow2: {
     flexDirection: 'row',
-    gap: 12,
+    gap: Gap.xl,
   },
   metricRow1: {
     flexDirection: 'row',
   },
   metricCell: {
     flex: 1,
-    gap: 2,
+    gap: Gap.xs,
   },
   metricLabel: {
-    color: '#FFFFFF',
+    color: Colors.textPrimary,
     fontWeight: '800',
-    fontSize: 12,
+    fontSize: Font.sm,
     textAlign: 'center',
   },
   pill: {
     backgroundColor: '#1D3A71',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    borderRadius: Radius.sm,
+    paddingHorizontal: Gap.md,
+    paddingVertical: Gap.sm,
     borderWidth: 2,
     borderColor: 'transparent',
     minHeight: 30,
@@ -272,13 +233,13 @@ const styles = StyleSheet.create({
   },
   pillGold: {
     backgroundColor: '#332915',
-    borderColor: '#FFD700',
+    borderColor: Colors.gold,
   },
   pillText: {
-    color: '#FFFFFF',
+    color: Colors.textPrimary,
     fontWeight: '800',
   },
   pillTextGold: {
-    color: '#FFD700',
+    color: Colors.gold,
   },
 });

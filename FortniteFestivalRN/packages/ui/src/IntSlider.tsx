@@ -1,5 +1,6 @@
 import React, {useCallback, useMemo, useState} from 'react';
 import {StyleSheet, View} from 'react-native';
+import {Colors, Radius, Opacity} from './theme';
 
 type Props = {
   min: number;
@@ -69,14 +70,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   wrapDisabled: {
-    opacity: 0.5,
+    opacity: Opacity.disabled,
   },
   track: {
     height: 6,
-    borderRadius: 999,
-    backgroundColor: '#0B1220',
+    borderRadius: Radius.full,
+    backgroundColor: Colors.backgroundCard,
     borderWidth: 1,
-    borderColor: '#2B3B55',
+    borderColor: Colors.borderPrimary,
     overflow: 'hidden',
   },
   fill: {
