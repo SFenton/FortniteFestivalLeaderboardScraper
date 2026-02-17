@@ -129,7 +129,7 @@ export const SuggestionSongRow = React.memo(function SuggestionSongRow(props: {
 
   const rightContent = useMemo(() => (
     <View style={songRowStyles.songRight}>
-      {!hideRightSideCompletely && !showUnfcBadge && !showRightInstrumentIcon && !props.useCompactLayout && row ? (
+      {!hideRightSideCompletely && !showUnfcBadge && !showRightInstrumentIcon && !isPercentileCategory && !props.useCompactLayout && row ? (
         <View style={styles.instrumentRow}>
           {row.instrumentStatuses.map(s => {
             const {fill, stroke} = getInstrumentStatusVisual({hasScore: s.hasScore, isFullCombo: s.isFullCombo});
