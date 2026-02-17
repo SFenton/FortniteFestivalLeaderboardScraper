@@ -21,6 +21,7 @@ public sealed class ScrapeProgressTracker
         Idle,
         Initializing,
         Scraping,
+        CalculatingFirstSeen,
         ResolvingNames,
         RebuildingPersonalDbs,
         RefreshingRegisteredUsers,
@@ -230,6 +231,16 @@ public sealed class ScrapeProgressTracker
                 Operation = "Initializing",
                 StartedAtUtc = _phaseStartedAtUtc,
                 ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 1),
+            },
+            ScrapePhase.RefreshingRegisteredUsers or
+            ScrapePhase.BackfillingScores or
+            ScrapePhase.ReconstructingHistory or
+            ScrapePhase.CalculatingFirstSeen => new OperationSnapshot
+            {
+                Operation = phase.ToString(),
+                StartedAtUtc = _phaseStartedAtUtc,
+                ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 1),
+                CurrentDop = _adaptiveLimiter?.CurrentDop,
             },
             _ => null,
         };

@@ -31,6 +31,7 @@ public class ScraperWorkerModeTests : IDisposable
     private readonly BackfillQueue _backfillQueue;
     private readonly PostScrapeRefresher _refresher;
     private readonly HistoryReconstructor _historyReconstructor;
+    private readonly FirstSeenSeasonCalculator _firstSeenCalculator;
     private readonly ScrapeProgressTracker _progress;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<ScraperWorker> _log;
@@ -65,7 +66,8 @@ public class ScraperWorkerModeTests : IDisposable
         _scraper = Substitute.For<GlobalLeaderboardScraper>(
             new HttpClient(),
             new ScrapeProgressTracker(),
-            Substitute.For<ILogger<GlobalLeaderboardScraper>>());
+            Substitute.For<ILogger<GlobalLeaderboardScraper>>(),
+            0);
 
         _nameResolver = Substitute.For<AccountNameResolver>(
             new HttpClient(), _metaDb, _tokenManager,
@@ -75,6 +77,7 @@ public class ScraperWorkerModeTests : IDisposable
         _personalDbBuilder = Substitute.For<PersonalDbBuilder>(
             _persistence,
             new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null),
+            _metaDb,
             _tempDir,
             Substitute.For<ILogger<PersonalDbBuilder>>());
 
@@ -84,15 +87,20 @@ public class ScraperWorkerModeTests : IDisposable
 
         _backfillQueue = new BackfillQueue();
 
+        _progress = new ScrapeProgressTracker();
+
         _refresher = Substitute.For<PostScrapeRefresher>(
             _scraper, _persistence,
             Substitute.For<ILogger<PostScrapeRefresher>>());
 
         _historyReconstructor = Substitute.For<HistoryReconstructor>(
-            _scraper, _persistence, new HttpClient(),
+            _scraper, _persistence, new HttpClient(), _progress,
             Substitute.For<ILogger<HistoryReconstructor>>());
 
-        _progress = new ScrapeProgressTracker();
+        _firstSeenCalculator = Substitute.For<FirstSeenSeasonCalculator>(
+            _scraper, _persistence, _progress,
+            Substitute.For<ILogger<FirstSeenSeasonCalculator>>());
+
         _lifetime = Substitute.For<IHostApplicationLifetime>();
         _log = Substitute.For<ILogger<ScraperWorker>>();
     }
@@ -116,7 +124,7 @@ public class ScraperWorkerModeTests : IDisposable
         return new ScraperWorker(
             _tokenManager, _scraper, _persistence, _nameResolver,
             _personalDbBuilder, _backfiller, _backfillQueue, _refresher,
-            _historyReconstructor, _progress, options, _lifetime, _log);
+            _historyReconstructor, _firstSeenCalculator, _progress, options, _lifetime, _log);
     }
 
     /// <summary>Invoke a private async method on ScraperWorker via reflection.</summary>
@@ -296,7 +304,7 @@ public class ScraperWorkerModeTests : IDisposable
 
         await _backfiller.DidNotReceive().BackfillAccountAsync(
             Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -315,7 +323,7 @@ public class ScraperWorkerModeTests : IDisposable
         // Should not have called backfiller
         await _backfiller.DidNotReceive().BackfillAccountAsync(
             Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -329,7 +337,7 @@ public class ScraperWorkerModeTests : IDisposable
 
         _backfiller.BackfillAccountAsync(
             Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(5));
 
         _personalDbBuilder.RebuildForAccounts(
@@ -342,7 +350,7 @@ public class ScraperWorkerModeTests : IDisposable
         await InvokePrivateAsync(worker, "RunBackfillPhaseAsync", service, CancellationToken.None);
 
         await _backfiller.Received(1).BackfillAccountAsync(
-            "acct1", service, "token", "callerAcct", Arg.Any<CancellationToken>());
+            "acct1", service, "token", "callerAcct", ct: Arg.Any<CancellationToken>());
         _personalDbBuilder.Received(1).RebuildForAccounts(
             Arg.Any<IReadOnlySet<string>>(), Arg.Any<MetaDatabase>());
     }
@@ -358,7 +366,7 @@ public class ScraperWorkerModeTests : IDisposable
 
         _backfiller.BackfillAccountAsync(
             Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(0));
 
         var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
@@ -382,11 +390,11 @@ public class ScraperWorkerModeTests : IDisposable
 
         _backfiller.BackfillAccountAsync(
             "acct1", Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("failure"));
         _backfiller.BackfillAccountAsync(
             "acct2", Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(3));
 
         var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
@@ -398,7 +406,7 @@ public class ScraperWorkerModeTests : IDisposable
         // Both accounts attempted
         await _backfiller.Received(2).BackfillAccountAsync(
             Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -412,7 +420,7 @@ public class ScraperWorkerModeTests : IDisposable
 
         _backfiller.BackfillAccountAsync(
             Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(1));
 
         _personalDbBuilder.RebuildForAccounts(
@@ -494,7 +502,9 @@ public class ScraperWorkerModeTests : IDisposable
 
         _historyReconstructor.ReconstructAccountAsync(
             Arg.Any<string>(), Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(10));
 
         _personalDbBuilder.RebuildForAccounts(
@@ -505,7 +515,9 @@ public class ScraperWorkerModeTests : IDisposable
         await InvokePrivateAsync(worker, "RunHistoryReconPhaseAsync", CancellationToken.None);
 
         await _historyReconstructor.Received(1).ReconstructAccountAsync(
-            "acct1", windows, "token", "callerAcct", Arg.Any<CancellationToken>());
+            "acct1", windows, "token", "callerAcct",
+            Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>());
         _personalDbBuilder.Received(1).RebuildForAccounts(
             Arg.Any<IReadOnlySet<string>>(), Arg.Any<MetaDatabase>());
     }
@@ -531,7 +543,9 @@ public class ScraperWorkerModeTests : IDisposable
 
         await _historyReconstructor.DidNotReceive().ReconstructAccountAsync(
             Arg.Any<string>(), Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -579,7 +593,9 @@ public class ScraperWorkerModeTests : IDisposable
 
         _historyReconstructor.ReconstructAccountAsync(
             Arg.Any<string>(), Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("recon error"));
 
         var worker = CreateWorker();
@@ -688,7 +704,7 @@ public class ScraperWorkerModeTests : IDisposable
 
         _backfiller.BackfillAccountAsync(
             Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(0));
 
         var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
@@ -699,7 +715,7 @@ public class ScraperWorkerModeTests : IDisposable
         // Both accounts should have been processed
         await _backfiller.Received(2).BackfillAccountAsync(
             Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>());
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1010,7 +1026,7 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlySet<string>>(),
             Arg.Any<HashSet<(string, string, string)>>(),
             Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(0));
 
         var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2 };
@@ -1023,7 +1039,7 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlySet<string>>(),
             Arg.Any<HashSet<(string, string, string)>>(),
             Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>());
 
         // Personal DB rebuild should be called because registered user had score changes
         _personalDbBuilder.Received().RebuildForAccounts(
@@ -1082,7 +1098,7 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlySet<string>>(),
             Arg.Any<HashSet<(string, string, string)>>(),
             Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(5));
 
         var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2 };
@@ -1139,7 +1155,7 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlySet<string>>(),
             Arg.Any<HashSet<(string, string, string)>>(),
             Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(0));
 
         var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2 };
@@ -1174,7 +1190,7 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlySet<string>>(),
             Arg.Any<HashSet<(string, string, string)>>(),
             Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("Refresh crashed"));
 
         var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2 };

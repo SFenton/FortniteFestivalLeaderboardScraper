@@ -121,6 +121,7 @@ builder.Services.AddSingleton<PersonalDbBuilder>(sp =>
     return new PersonalDbBuilder(
         sp.GetRequiredService<GlobalLeaderboardPersistence>(),
         sp.GetRequiredService<FestivalService>(),
+        sp.GetRequiredService<MetaDatabase>(),
         Path.GetFullPath(opts.DataDirectory),
         sp.GetRequiredService<ILogger<PersonalDbBuilder>>());
 });
@@ -139,6 +140,7 @@ builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddSingleton<BackfillQueue>();
 builder.Services.AddSingleton<ScoreBackfiller>();
 builder.Services.AddSingleton<PostScrapeRefresher>();
+builder.Services.AddSingleton<FirstSeenSeasonCalculator>();
 
 builder.Services.AddHttpClient<HistoryReconstructor>()
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler

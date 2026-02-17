@@ -144,7 +144,14 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     [Fact]
     public async Task ApiRegister_WithAuth_RegistersAndReturnsOk()
     {
-        var content = JsonContent.Create(new { deviceId = "testDev1", accountId = "testAcct1" });
+        // Seed display name so register endpoint can resolve username → accountId
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            metaDb.InsertAccountNames(new[] { ("testAcct1", (string?)"TestUser1") });
+        }
+
+        var content = JsonContent.Create(new { deviceId = "testDev1", username = "TestUser1" });
         var response = await _authedClient.PostAsync("/api/register", content);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -171,8 +178,15 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     [Fact]
     public async Task ApiPlayerHistory_RegisteredUser_ReturnsHistory()
     {
+        // Seed display name so register endpoint can resolve username → accountId
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            metaDb.InsertAccountNames(new[] { ("histAcct", (string?)"HistUser") });
+        }
+
         // Register a user first
-        var regContent = JsonContent.Create(new { deviceId = "histDev", accountId = "histAcct" });
+        var regContent = JsonContent.Create(new { deviceId = "histDev", username = "HistUser" });
         await _authedClient.PostAsync("/api/register", regContent);
 
         var response = await _authedClient.GetAsync("/api/player/histAcct/history");
@@ -334,8 +348,15 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     [Fact]
     public async Task SyncVersion_RegisteredDevice_ReturnsVersion()
     {
+        // Seed display name so register endpoint can resolve username → accountId
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            metaDb.InsertAccountNames(new[] { ("syncAcct", (string?)"SyncUser") });
+        }
+
         // Register a device first
-        var regContent = JsonContent.Create(new { deviceId = "syncDev", accountId = "syncAcct" });
+        var regContent = JsonContent.Create(new { deviceId = "syncDev", username = "SyncUser" });
         await _authedClient.PostAsync("/api/register", regContent);
 
         var response = await _authedClient.GetAsync("/api/sync/syncDev/version");
@@ -354,8 +375,15 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     [Fact]
     public async Task Sync_RegisteredDevice_ReturnsDbOrError()
     {
+        // Seed display name so register endpoint can resolve username → accountId
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            metaDb.InsertAccountNames(new[] { ("dlAcct", (string?)"DlUser") });
+        }
+
         // Register a device
-        var regContent = JsonContent.Create(new { deviceId = "dlDev", accountId = "dlAcct" });
+        var regContent = JsonContent.Create(new { deviceId = "dlDev", username = "DlUser" });
         await _authedClient.PostAsync("/api/register", regContent);
 
         var response = await _authedClient.GetAsync("/api/sync/dlDev");

@@ -12,7 +12,9 @@ namespace FSTService.Scraping;
 /// <para>Algorithm per song/instrument:</para>
 /// <list type="number">
 ///   <item>Read the all-time entry (from instrument DB). Get season S = current high-score season.</item>
-///   <item>Query seasons 1…S via <see cref="GlobalLeaderboardScraper.LookupSeasonalAsync"/>.</item>
+///   <item>Query seasons F…S (where F = song's <c>FirstSeenSeason</c>) via
+///         <see cref="GlobalLeaderboardScraper.LookupSeasonalAsync"/>. Seasons before the
+///         song existed are skipped, significantly reducing API calls for newer songs.</item>
 ///   <item>Collect all season responses into a list sorted by endTime ascending.</item>
 ///   <item>Walk the sorted list, keeping only entries where the score strictly increases
 ///         (the moments the player actually improved).</item>
@@ -28,21 +30,21 @@ public class HistoryReconstructor
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly MetaDatabase _metaDb;
     private readonly HttpClient _http;
+    private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<HistoryReconstructor> _log;
-
-    /// <summary>Max concurrent API lookups during history reconstruction.</summary>
-    private const int DegreeOfParallelism = 2;
 
     public HistoryReconstructor(
         GlobalLeaderboardScraper scraper,
         GlobalLeaderboardPersistence persistence,
         HttpClient http,
+        ScrapeProgressTracker progress,
         ILogger<HistoryReconstructor> log)
     {
         _scraper = scraper;
         _persistence = persistence;
         _metaDb = persistence.Meta;
         _http = http;
+        _progress = progress;
         _log = log;
     }
 
@@ -199,13 +201,32 @@ public class HistoryReconstructor
     }
 
     /// <summary>
-    /// Probe for season windows by convention: test "season_1", "season_2", … until we get no result.
+    /// Build the event ID prefix for a given season number per FNLookup convention:
+    /// Season 1 = "evergreen", Season 2–9 = "season002"–"season009", Season 10+ = "season010" etc.
+    /// </summary>
+    internal static string GetSeasonPrefix(int seasonNumber)
+    {
+        if (seasonNumber == 1) return "evergreen";
+        return $"season{seasonNumber:D3}";
+    }
+
+    /// <summary>
+    /// Probe for season windows by convention using FNLookup event ID format:
+    /// Season 1 = "evergreen", Season 2+ = "season00N".
     /// Uses a known charted song and a known instrument to probe.
+    /// Stops after two consecutive failures.
     /// </summary>
     private async Task<List<SeasonWindowInfo>> ProbeSeasonWindowsAsync(
         string accessToken, string callerAccountId, CancellationToken ct)
     {
         var windows = new List<SeasonWindowInfo>();
+
+        var testSongId = FindProbeSongId();
+        if (testSongId is null)
+        {
+            _log.LogWarning("No songs available for season probing. Stopping discovery.");
+            return windows;
+        }
 
         // Try season numbers 1..20 — stop on two consecutive failures
         int consecutiveFailures = 0;
@@ -213,34 +234,30 @@ public class HistoryReconstructor
         {
             ct.ThrowIfCancellationRequested();
 
-            var windowId = $"season_{season}";
+            // FNLookup convention:
+            //   Season 1:  eventId = evergreen_{su},        windowId = {su}_{type}
+            //   Season N:  eventId = season00N_{su},         windowId = {su}_{type}
+            //   Alltime:   eventId = alltime_{su}_{type},    windowId = alltime
+            // Our LookupSeasonalAsync builds: eventId = {prefix}_{songId}, windowId = {songId}_{instrument}
+            // So we pass the season prefix as the "windowId" parameter.
+            var seasonPrefix = GetSeasonPrefix(season);
             try
             {
-                // Probe by calling the leaderboard with this window ID.
-                // We don't need a specific song — any valid song will do.
-                // Find a song from the DB that we know has entries.
-                var testSongId = FindProbeSongId();
-                if (testSongId is null)
-                {
-                    _log.LogWarning("No songs available for season probing. Stopping discovery.");
-                    break;
-                }
-
                 var entry = await _scraper.LookupSeasonalAsync(
-                    testSongId, "Solo_Guitar", windowId,
-                    callerAccountId, accessToken, callerAccountId, ct);
+                    testSongId, "Solo_Guitar", seasonPrefix,
+                    callerAccountId, accessToken, callerAccountId, ct: ct);
 
                 // Even if entry is null (the caller has no score in that season),
                 // a non-error response means the season window exists.
                 windows.Add(new SeasonWindowInfo
                 {
                     SeasonNumber = season,
-                    EventId = $"alltime_{testSongId}_Solo_Guitar",
-                    WindowId = windowId,
+                    EventId = $"{seasonPrefix}_{testSongId}",
+                    WindowId = seasonPrefix,
                 });
                 consecutiveFailures = 0;
 
-                _log.LogDebug("Season {Season} window '{WindowId}' exists.", season, windowId);
+                _log.LogDebug("Season {Season} window '{Prefix}' exists.", season, seasonPrefix);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -282,6 +299,8 @@ public class HistoryReconstructor
         IReadOnlyList<SeasonWindowInfo> seasonWindows,
         string accessToken,
         string callerAccountId,
+        int degreeOfParallelism = 16,
+        AdaptiveConcurrencyLimiter? sharedLimiter = null,
         CancellationToken ct = default)
     {
         // Check if already completed
@@ -333,6 +352,9 @@ public class HistoryReconstructor
         // Get already-processed pairs (for resumption)
         var alreadyProcessed = _metaDb.GetProcessedHistoryReconPairs(accountId);
 
+        // Bulk-load FirstSeenSeason data so we can skip seasons before a song existed
+        var firstSeenMap = _metaDb.GetAllFirstSeenSeasons();
+
         _log.LogInformation(
             "Reconstructing history for {AccountId}: {Total} song/instrument pairs to process ({Already} already done).",
             accountId, reconstructable.Count, alreadyProcessed.Count);
@@ -341,34 +363,80 @@ public class HistoryReconstructor
         int songsProcessed = alreadyProcessed.Count;
         int seasonsQueried = 0;
 
-        using var semaphore = new SemaphoreSlim(DegreeOfParallelism);
+        // Use the shared limiter if provided (multi-user parallelism), otherwise create a local one.
+        bool ownsLimiter = sharedLimiter is null;
+        AdaptiveConcurrencyLimiter limiter;
+        if (ownsLimiter)
+        {
+            int initialDop = Math.Max(1, degreeOfParallelism / 2);
+            int maxDop = degreeOfParallelism * 2;
+            limiter = new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: maxDop, _log);
+            _progress.SetAdaptiveLimiter(limiter);
 
-        // Process sequentially to be gentle on the API
+            _log.LogInformation(
+                "Using local adaptive concurrency limiter: initial DOP={InitialDop}, min={MinDop}, max={MaxDop}.",
+                initialDop, 2, maxDop);
+        }
+        else
+        {
+            limiter = sharedLimiter;
+            _log.LogDebug("Using shared adaptive concurrency limiter (DOP={Dop}).", limiter.CurrentDop);
+        }
+
+        try
+        {
+
+        // Process song/instrument pairs in parallel, throttled by adaptive limiter.
+        // Each inner season query acquires/releases the limiter, so concurrency is
+        // controlled at the individual API call level (not the song level).
+        var tasks = new List<Task>();
         foreach (var (songId, instrument, alltimeEntry) in reconstructable)
         {
-            ct.ThrowIfCancellationRequested();
-
             if (alreadyProcessed.Contains((songId, instrument)))
             {
                 continue; // Already processed in a previous run
             }
 
+            // Determine the earliest season this song could have data in.
+            // If FirstSeenSeason data is available, use it; otherwise skip entirely —
+            // no FirstSeenSeason means the song is likely not released yet (just in the API catalog).
+            if (!firstSeenMap.TryGetValue(songId, out var fss))
+            {
+                _log.LogDebug("Skipping {Song}/{Instrument}: no FirstSeenSeason data (song may not be released yet).",
+                    songId, instrument);
+                Interlocked.Increment(ref songsProcessed);
+                _metaDb.MarkHistoryReconSongProcessed(accountId, songId, instrument);
+                continue;
+            }
+            int songMinSeason = fss.FirstSeenSeason ?? fss.EstimatedSeason;
+
+            tasks.Add(ProcessOneSongAsync(songId, instrument, alltimeEntry, songMinSeason));
+        }
+
+        async Task ProcessOneSongAsync(string songId, string instrument, LeaderboardEntry alltimeEntry, int songMinSeason)
+        {
             try
             {
-                var (entries, queriesMade) = await ReconstructSongHistoryAsync(
+                var (entries, queries) = await ReconstructSongHistoryAsync(
                     accountId, songId, instrument, alltimeEntry,
-                    seasonWindows, accessToken, callerAccountId, ct);
+                    songMinSeason, seasonWindows, accessToken, callerAccountId, limiter, ct);
 
-                totalHistoryEntries += entries;
-                seasonsQueried += queriesMade;
-                songsProcessed++;
+                Interlocked.Add(ref totalHistoryEntries, entries);
+                Interlocked.Add(ref seasonsQueried, queries);
+                var processed = Interlocked.Increment(ref songsProcessed);
 
                 _metaDb.MarkHistoryReconSongProcessed(accountId, songId, instrument);
 
-                // Update progress every 10 songs
-                if (songsProcessed % 10 == 0)
+                // Update progress every 50 songs
+                if (processed % 50 == 0)
                 {
-                    _metaDb.UpdateHistoryReconProgress(accountId, songsProcessed, seasonsQueried, totalHistoryEntries);
+                    _metaDb.UpdateHistoryReconProgress(accountId, processed,
+                        Volatile.Read(ref seasonsQueried),
+                        Volatile.Read(ref totalHistoryEntries));
+
+                    _log.LogDebug(
+                        "History recon progress: {Processed}/{Total} songs, DOP={Dop}.",
+                        processed, reconstructable.Count, limiter.CurrentDop);
                 }
             }
             catch (OperationCanceledException) { throw; }
@@ -377,8 +445,11 @@ public class HistoryReconstructor
                 _log.LogWarning(ex,
                     "History recon failed for {AccountId}/{Song}/{Instrument}. Skipping.",
                     accountId, songId, instrument);
+                Interlocked.Increment(ref songsProcessed);
             }
         }
+
+        await Task.WhenAll(tasks);
 
         // Final update
         _metaDb.UpdateHistoryReconProgress(accountId, songsProcessed, seasonsQueried, totalHistoryEntries);
@@ -389,85 +460,122 @@ public class HistoryReconstructor
             accountId, totalHistoryEntries, seasonsQueried, songsProcessed);
 
         return totalHistoryEntries;
+        }
+        finally
+        {
+            if (ownsLimiter)
+                limiter.Dispose();
+        }
     }
 
     /// <summary>
     /// Reconstruct the score history for one song/instrument by querying
     /// seasonal leaderboards and building a progression timeline.
+    /// Unlike the previous implementation that only kept the best score per season,
+    /// this version fetches ALL sessions from each season's <c>sessionHistory</c>
+    /// array, giving a complete picture of every score improvement.
     /// </summary>
+    /// <param name="firstSeenSeason">The earliest season this song existed in (from FirstSeenSeason data).
+    /// Seasons before this are skipped, avoiding unnecessary API calls.</param>
     /// <returns>A tuple of (history entries created, season queries made).</returns>
     private async Task<(int EntriesCreated, int QueriesMade)> ReconstructSongHistoryAsync(
         string accountId,
         string songId,
         string instrument,
         LeaderboardEntry alltimeEntry,
+        int firstSeenSeason,
         IReadOnlyList<SeasonWindowInfo> seasonWindows,
         string accessToken,
         string callerAccountId,
+        AdaptiveConcurrencyLimiter limiter,
         CancellationToken ct)
     {
         int maxSeason = alltimeEntry.Season;
         if (maxSeason <= 1)
             return (0, 0); // No history to reconstruct
 
-        // Query seasons 1..maxSeason
-        var seasonEntries = new List<(int Season, LeaderboardEntry Entry)>();
-        int queriesMade = 0;
+        // Start from the song's FirstSeenSeason instead of season 1.
+        // This avoids querying seasons that predate the song's existence.
+        int startSeason = Math.Max(1, Math.Min(firstSeenSeason, maxSeason));
 
-        for (int s = 1; s <= maxSeason; s++)
+        // Build the list of seasons to query
+        var seasonsToQuery = new List<(int Season, SeasonWindowInfo Window)>();
+        for (int s = startSeason; s <= maxSeason; s++)
         {
-            ct.ThrowIfCancellationRequested();
-
             var window = seasonWindows.FirstOrDefault(w => w.SeasonNumber == s);
             if (window is null)
             {
                 _log.LogDebug("No window found for season {Season}. Skipping.", s);
                 continue;
             }
+            seasonsToQuery.Add((s, window));
+        }
 
+        if (seasonsToQuery.Count == 0)
+            return (0, 0);
+
+        // Query all seasons in parallel, collecting ALL sessions from each.
+        // Each season query acquires/releases the adaptive concurrency limiter.
+        var allSessions = new System.Collections.Concurrent.ConcurrentBag<(int Season, SessionHistoryEntry Session)>();
+        int queriesMade = 0;
+
+        var tasks = seasonsToQuery.Select(async item =>
+        {
+            var (s, window) = item;
+            await limiter.WaitAsync(ct);
             try
             {
-                var entry = await _scraper.LookupSeasonalAsync(
+                var sessions = await _scraper.LookupSeasonalSessionsAsync(
                     songId, instrument, window.WindowId,
-                    accountId, accessToken, callerAccountId, ct);
-                queriesMade++;
+                    accountId, accessToken, callerAccountId, limiter, ct);
+                Interlocked.Increment(ref queriesMade);
 
-                if (entry is not null)
+                if (sessions is not null)
                 {
-                    seasonEntries.Add((s, entry));
+                    foreach (var session in sessions)
+                    {
+                        allSessions.Add((s, session));
+                    }
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _log.LogDebug(ex, "Seasonal lookup failed for {Song}/{Instrument}/season_{Season}.",
                     songId, instrument, s);
-                queriesMade++;
+                Interlocked.Increment(ref queriesMade);
             }
-        }
+            finally
+            {
+                limiter.Release();
+            }
+        }).ToList();
 
-        if (seasonEntries.Count == 0)
+        await Task.WhenAll(tasks);
+
+        if (allSessions.IsEmpty)
             return (0, queriesMade);
 
-        // Sort by endTime ascending (fall back to season number if endTime is null)
-        seasonEntries.Sort((a, b) =>
+        // Sort all sessions by endTime ascending (fall back to season number if endTime is null)
+        var sortedSessions = allSessions.ToList();
+        sortedSessions.Sort((a, b) =>
         {
-            if (a.Entry.EndTime is not null && b.Entry.EndTime is not null)
+            if (a.Session.EndTime is not null && b.Session.EndTime is not null)
             {
-                return string.Compare(a.Entry.EndTime, b.Entry.EndTime, StringComparison.Ordinal);
+                return string.Compare(a.Session.EndTime, b.Session.EndTime, StringComparison.Ordinal);
             }
             return a.Season.CompareTo(b.Season);
         });
 
-        // Walk through sorted entries, keeping only those where score strictly increases
-        var progression = new List<(int Season, LeaderboardEntry Entry)>();
+        // Walk through sorted sessions, keeping only those where score strictly increases
+        var progression = new List<(int Season, SessionHistoryEntry Session)>();
         int prevScore = 0;
 
-        foreach (var (season, entry) in seasonEntries)
+        foreach (var (season, session) in sortedSessions)
         {
-            if (entry.Score > prevScore)
+            if (session.Score > prevScore)
             {
-                progression.Add((season, entry));
-                prevScore = entry.Score;
+                progression.Add((season, session));
+                prevScore = session.Score;
             }
         }
 
@@ -476,17 +584,18 @@ public class HistoryReconstructor
         int? previousScore = null;
         int? previousRank = null;
 
-        foreach (var (season, entry) in progression)
+        foreach (var (season, session) in progression)
         {
             _metaDb.InsertScoreChange(
                 songId, instrument, accountId,
-                previousScore, entry.Score,
-                previousRank, entry.Rank,
-                entry.Accuracy, entry.IsFullCombo, entry.Stars,
-                entry.Percentile, season, entry.EndTime);
+                previousScore, session.Score,
+                previousRank, session.Rank,
+                session.Accuracy, session.IsFullCombo, session.Stars,
+                session.Percentile, season, session.EndTime,
+                seasonRank: session.Rank);
 
-            previousScore = entry.Score;
-            previousRank = entry.Rank;
+            previousScore = session.Score;
+            previousRank = session.Rank;
             entriesCreated++;
         }
 

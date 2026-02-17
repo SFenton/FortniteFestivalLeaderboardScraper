@@ -45,12 +45,12 @@ public class HistoryReconstructorInstanceTests : IDisposable
         var scraperHttp = new HttpClient(scraperHandler);
         var progress = new ScrapeProgressTracker();
         var scraperLog = Substitute.For<ILogger<GlobalLeaderboardScraper>>();
-        var scraper = new GlobalLeaderboardScraper(scraperHttp, progress, scraperLog);
+        var scraper = new GlobalLeaderboardScraper(scraperHttp, progress, scraperLog, maxLookupRetries: 0);
 
         var eventsHandler = new MockHttpMessageHandler();
         var eventsHttp = new HttpClient(eventsHandler);
 
-        var recon = new HistoryReconstructor(scraper, _persistence, eventsHttp, _log);
+        var recon = new HistoryReconstructor(scraper, _persistence, eventsHttp, progress, _log);
         return (recon, scraperHandler, eventsHandler);
     }
 
@@ -115,10 +115,10 @@ public class HistoryReconstructorInstanceTests : IDisposable
             AccountId = "probe_acct", Score = 100, Rank = 1
         }]);
 
-        // Probe season_1: found (non-error response → window exists)
-        scraperHandler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
-        // Probe season_2: found
-        scraperHandler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
+        // Probe evergreen (season 1): found (non-error response → window exists)
+        scraperHandler.EnqueueJsonOk("[]");
+        // Probe season002 (season 2): found
+        scraperHandler.EnqueueJsonOk("[]");
         // Seasons 3 and 4: no more queued responses → MockHttpMessageHandler throws
         // → ProbeSeasonWindowsAsync catches the exception → consecutiveFailures reaches 2 → stops
 
@@ -126,6 +126,8 @@ public class HistoryReconstructorInstanceTests : IDisposable
 
         // Should have found 2 seasons before 2 consecutive failures stopped probing
         Assert.Equal(2, result.Count);
+        Assert.Equal("evergreen", result[0].WindowId);
+        Assert.Equal("season002", result[1].WindowId);
     }
 
     // ─── ReconstructAccountAsync ────────────────────────
@@ -183,6 +185,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         {
             AccountId = "acct1", Score = 5000, Rank = 100, Season = 3
         }]);
+        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null);
 
         var windows = new List<SeasonWindowInfo>
         {
@@ -193,22 +196,22 @@ public class HistoryReconstructorInstanceTests : IDisposable
 
         // Seasonal lookups: season 1 → 1000, season 2 → 3000, season 3 → 5000
         scraperHandler.EnqueueJsonOk("""
-        { "page": 0, "totalPages": 1, "entries": [{
+        [{
             "teamId":"acct1","rank":500,"percentile":0.1,
             "sessionHistory":[{"endTime":"2024-01-01T00:00:00Z","trackedStats":{"SCORE":1000,"ACCURACY":80,"STARS_EARNED":3}}]
-        }]}
+        }]
         """);
         scraperHandler.EnqueueJsonOk("""
-        { "page": 0, "totalPages": 1, "entries": [{
+        [{
             "teamId":"acct1","rank":300,"percentile":0.3,
             "sessionHistory":[{"endTime":"2024-04-01T00:00:00Z","trackedStats":{"SCORE":3000,"ACCURACY":90,"STARS_EARNED":4}}]
-        }]}
+        }]
         """);
         scraperHandler.EnqueueJsonOk("""
-        { "page": 0, "totalPages": 1, "entries": [{
+        [{
             "teamId":"acct1","rank":100,"percentile":0.5,
             "sessionHistory":[{"endTime":"2024-07-01T00:00:00Z","trackedStats":{"SCORE":5000,"ACCURACY":95,"STARS_EARNED":5}}]
-        }]}
+        }]
         """);
 
         var result = await recon.ReconstructAccountAsync(
@@ -232,6 +235,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         {
             AccountId = "acct1", Score = 5000, Rank = 100, Season = 3
         }]);
+        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null);
 
         var windows = new List<SeasonWindowInfo>
         {
@@ -242,22 +246,22 @@ public class HistoryReconstructorInstanceTests : IDisposable
 
         // Season 1: 3000, Season 2: 2000 (no increase), Season 3: 5000
         scraperHandler.EnqueueJsonOk("""
-        { "page":0,"totalPages":1,"entries":[{
+        [{
             "teamId":"acct1","rank":1,"percentile":1.0,
             "sessionHistory":[{"endTime":"2024-01-01T00:00:00Z","trackedStats":{"SCORE":3000}}]
-        }]}
+        }]
         """);
         scraperHandler.EnqueueJsonOk("""
-        { "page":0,"totalPages":1,"entries":[{
+        [{
             "teamId":"acct1","rank":1,"percentile":1.0,
             "sessionHistory":[{"endTime":"2024-04-01T00:00:00Z","trackedStats":{"SCORE":2000}}]
-        }]}
+        }]
         """);
         scraperHandler.EnqueueJsonOk("""
-        { "page":0,"totalPages":1,"entries":[{
+        [{
             "teamId":"acct1","rank":1,"percentile":1.0,
             "sessionHistory":[{"endTime":"2024-07-01T00:00:00Z","trackedStats":{"SCORE":5000}}]
-        }]}
+        }]
         """);
 
         var result = await recon.ReconstructAccountAsync(
@@ -279,6 +283,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         {
             AccountId = "acct1", Score = 5000, Rank = 100, Season = 2
         }]);
+        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null);
 
         var windows = new List<SeasonWindowInfo>
         {
@@ -290,10 +295,10 @@ public class HistoryReconstructorInstanceTests : IDisposable
         scraperHandler.EnqueueException(new HttpRequestException("connection error"));
         // Season 2 lookup returns score
         scraperHandler.EnqueueJsonOk("""
-        { "page":0,"totalPages":1,"entries":[{
+        [{
             "teamId":"acct1","rank":50,"percentile":0.5,
             "sessionHistory":[{"endTime":"2024-04-01T00:00:00Z","trackedStats":{"SCORE":5000}}]
-        }]}
+        }]
         """);
 
         var result = await recon.ReconstructAccountAsync(
@@ -315,6 +320,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         {
             AccountId = "acct1", Score = 3000, Rank = 200, Season = 3
         }]);
+        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null);
 
         // Only provide windows for season 1 and 3 — season 2 is missing
         var windows = new List<SeasonWindowInfo>
@@ -325,16 +331,16 @@ public class HistoryReconstructorInstanceTests : IDisposable
 
         // Season 1: 1000, Season 3: 3000
         scraperHandler.EnqueueJsonOk("""
-        { "page":0,"totalPages":1,"entries":[{
+        [{
             "teamId":"acct1","rank":500,"percentile":0.1,
             "sessionHistory":[{"endTime":"2024-01-01T00:00:00Z","trackedStats":{"SCORE":1000}}]
-        }]}
+        }]
         """);
         scraperHandler.EnqueueJsonOk("""
-        { "page":0,"totalPages":1,"entries":[{
+        [{
             "teamId":"acct1","rank":200,"percentile":0.3,
             "sessionHistory":[{"endTime":"2024-07-01T00:00:00Z","trackedStats":{"SCORE":3000}}]
-        }]}
+        }]
         """);
 
         var result = await recon.ReconstructAccountAsync(
@@ -356,6 +362,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         {
             AccountId = "acct1", Score = 1000, Rank = 100, Season = 2
         }]);
+        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null);
 
         var windows = new List<SeasonWindowInfo>
         {
@@ -389,6 +396,8 @@ public class HistoryReconstructorInstanceTests : IDisposable
         {
             AccountId = "acct1", Score = 3000, Rank = 200, Season = 2
         }]);
+        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null);
+        _metaDb.Db.UpsertFirstSeenSeason("songB", 1, 1, 1, null);
 
         var windows = new List<SeasonWindowInfo>
         {
@@ -404,16 +413,16 @@ public class HistoryReconstructorInstanceTests : IDisposable
 
         // Only songB should be processed (2 seasons to query)
         scraperHandler.EnqueueJsonOk("""
-        { "page":0,"totalPages":1,"entries":[{
+        [{
             "teamId":"acct1","rank":300,"percentile":0.2,
             "sessionHistory":[{"endTime":"2024-01-01T00:00:00Z","trackedStats":{"SCORE":1000}}]
-        }]}
+        }]
         """);
         scraperHandler.EnqueueJsonOk("""
-        { "page":0,"totalPages":1,"entries":[{
+        [{
             "teamId":"acct1","rank":200,"percentile":0.3,
             "sessionHistory":[{"endTime":"2024-04-01T00:00:00Z","trackedStats":{"SCORE":3000}}]
-        }]}
+        }]
         """);
 
         var result = await recon.ReconstructAccountAsync(
@@ -440,6 +449,8 @@ public class HistoryReconstructorInstanceTests : IDisposable
         {
             AccountId = "acct1", Score = 3000, Rank = 200, Season = 2
         }]);
+        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null);
+        _metaDb.Db.UpsertFirstSeenSeason("songB", 1, 1, 1, null);
 
         var windows = new List<SeasonWindowInfo>
         {
@@ -451,20 +462,20 @@ public class HistoryReconstructorInstanceTests : IDisposable
         scraperHandler.EnqueueException(new HttpRequestException("songA lookup failed"));
         // SongA season 2 won't be queried because season 1 exception isn't caught inside ReconstructSongHistoryAsync's LookupSeasonalAsync call
         // Actually, let me re-read: the catch in ReconstructSongHistoryAsync catches and continues
-        scraperHandler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
+        scraperHandler.EnqueueJsonOk("""[]""");
 
         // SongB: success for both seasons
         scraperHandler.EnqueueJsonOk("""
-        { "page":0,"totalPages":1,"entries":[{
+        [{
             "teamId":"acct1","rank":300,"percentile":0.2,
             "sessionHistory":[{"endTime":"2024-01-01T00:00:00Z","trackedStats":{"SCORE":1000}}]
-        }]}
+        }]
         """);
         scraperHandler.EnqueueJsonOk("""
-        { "page":0,"totalPages":1,"entries":[{
+        [{
             "teamId":"acct1","rank":200,"percentile":0.3,
             "sessionHistory":[{"endTime":"2024-04-01T00:00:00Z","trackedStats":{"SCORE":3000}}]
-        }]}
+        }]
         """);
 
         var result = await recon.ReconstructAccountAsync(
@@ -509,5 +520,248 @@ public class HistoryReconstructorInstanceTests : IDisposable
         // Should have discovered exactly 1 season window (season_1)
         Assert.Single(windows);
         Assert.Equal(1, windows[0].SeasonNumber);
+    }
+
+    // ─── Multi-session reconstruction ───────────────────
+
+    [Fact]
+    public async Task ReconstructAccountAsync_MultipleSessionsPerSeason_CapturesAllImprovements()
+    {
+        var (recon, scraperHandler, _) = CreateReconstructor();
+
+        // Add an all-time entry with season 2 (so reconstruction queries seasons 1 & 2)
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("songA", [new LeaderboardEntry
+        {
+            AccountId = "acct1", Score = 600000, Rank = 10, Season = 2
+        }]);
+        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null);
+
+        var windows = new List<SeasonWindowInfo>
+        {
+            new() { SeasonNumber = 1, EventId = "e1", WindowId = "season_1" },
+            new() { SeasonNumber = 2, EventId = "e2", WindowId = "season_2" },
+        };
+
+        // Season 1: 3 sessions showing progression within the season
+        scraperHandler.EnqueueJsonOk("""
+        [{
+            "teamId":"acct1","rank":500,"percentile":0.1,
+            "sessionHistory":[
+                {"endTime":"2024-01-01T00:00:00Z","trackedStats":{"SCORE":100000,"ACCURACY":800000,"STARS_EARNED":3}},
+                {"endTime":"2024-01-15T00:00:00Z","trackedStats":{"SCORE":250000,"ACCURACY":880000,"STARS_EARNED":4}},
+                {"endTime":"2024-02-01T00:00:00Z","trackedStats":{"SCORE":400000,"ACCURACY":950000,"STARS_EARNED":5}}
+            ]
+        }]
+        """);
+
+        // Season 2: 2 sessions
+        scraperHandler.EnqueueJsonOk("""
+        [{
+            "teamId":"acct1","rank":10,"percentile":0.5,
+            "sessionHistory":[
+                {"endTime":"2024-04-01T00:00:00Z","trackedStats":{"SCORE":500000,"ACCURACY":970000,"STARS_EARNED":5}},
+                {"endTime":"2024-05-01T00:00:00Z","trackedStats":{"SCORE":600000,"ACCURACY":990000,"FULL_COMBO":1,"STARS_EARNED":6}}
+            ]
+        }]
+        """);
+
+        var result = await recon.ReconstructAccountAsync(
+            "acct1", windows, "token", "caller");
+
+        // All 5 sessions show strictly increasing scores:
+        // 100k → 250k → 400k → 500k → 600k
+        Assert.Equal(5, result);
+
+        var history = _metaDb.Db.GetScoreHistory("acct1", 100);
+        Assert.Equal(5, history.Count);
+    }
+
+    [Fact]
+    public async Task ReconstructAccountAsync_MultipleSessionsWithNonIncreasing_FiltersCorrectly()
+    {
+        var (recon, scraperHandler, _) = CreateReconstructor();
+
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("songA", [new LeaderboardEntry
+        {
+            AccountId = "acct1", Score = 500000, Rank = 50, Season = 2
+        }]);
+        _metaDb.Db.UpsertFirstSeenSeason("songA", 1, 1, 1, null);
+
+        var windows = new List<SeasonWindowInfo>
+        {
+            new() { SeasonNumber = 1, EventId = "e1", WindowId = "season_1" },
+            new() { SeasonNumber = 2, EventId = "e2", WindowId = "season_2" },
+        };
+
+        // Season 1: 4 sessions, but scores go 100k → 200k → 150k → 300k
+        // (150k is less than 200k — should be filtered out)
+        scraperHandler.EnqueueJsonOk("""
+        [{
+            "teamId":"acct1","rank":100,"percentile":0.2,
+            "sessionHistory":[
+                {"endTime":"2024-01-01T00:00:00Z","trackedStats":{"SCORE":100000}},
+                {"endTime":"2024-01-10T00:00:00Z","trackedStats":{"SCORE":200000}},
+                {"endTime":"2024-01-20T00:00:00Z","trackedStats":{"SCORE":150000}},
+                {"endTime":"2024-02-01T00:00:00Z","trackedStats":{"SCORE":300000}}
+            ]
+        }]
+        """);
+
+        // Season 2: 2 sessions, 400k → 500k
+        scraperHandler.EnqueueJsonOk("""
+        [{
+            "teamId":"acct1","rank":50,"percentile":0.5,
+            "sessionHistory":[
+                {"endTime":"2024-04-01T00:00:00Z","trackedStats":{"SCORE":400000}},
+                {"endTime":"2024-05-01T00:00:00Z","trackedStats":{"SCORE":500000}}
+            ]
+        }]
+        """);
+
+        var result = await recon.ReconstructAccountAsync(
+            "acct1", windows, "token", "caller");
+
+        // 100k → 200k → (150k skipped) → 300k → 400k → 500k = 5 entries
+        Assert.Equal(5, result);
+    }
+
+    // ─── FirstSeenSeason optimization ───────────────────
+
+    [Fact]
+    public async Task ReconstructAccountAsync_WithFirstSeenSeason_SkipsEarlierSeasons()
+    {
+        var (recon, scraperHandler, _) = CreateReconstructor();
+
+        // Song has all-time entry in season 5
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("songA", [new LeaderboardEntry
+        {
+            AccountId = "acct1", Score = 10000, Rank = 50, Season = 5
+        }]);
+
+        // Record that songA first appeared in season 3
+        _metaDb.Db.UpsertFirstSeenSeason("songA",
+            firstSeenSeason: 3, minObservedSeason: 3,
+            estimatedSeason: 3, probeResult: "first_play");
+
+        var windows = new List<SeasonWindowInfo>
+        {
+            new() { SeasonNumber = 1, EventId = "e1", WindowId = "season_1" },
+            new() { SeasonNumber = 2, EventId = "e2", WindowId = "season_2" },
+            new() { SeasonNumber = 3, EventId = "e3", WindowId = "season_3" },
+            new() { SeasonNumber = 4, EventId = "e4", WindowId = "season_4" },
+            new() { SeasonNumber = 5, EventId = "e5", WindowId = "season_5" },
+        };
+
+        // Only seasons 3, 4, 5 should be queried (not 1, 2)
+        scraperHandler.EnqueueJsonOk("""
+        [{
+            "teamId":"acct1","rank":200,"percentile":0.2,
+            "sessionHistory":[{"endTime":"2024-07-01T00:00:00Z","trackedStats":{"SCORE":3000}}]
+        }]
+        """);
+        scraperHandler.EnqueueJsonOk("""
+        [{
+            "teamId":"acct1","rank":100,"percentile":0.3,
+            "sessionHistory":[{"endTime":"2024-10-01T00:00:00Z","trackedStats":{"SCORE":7000}}]
+        }]
+        """);
+        scraperHandler.EnqueueJsonOk("""
+        [{
+            "teamId":"acct1","rank":50,"percentile":0.5,
+            "sessionHistory":[{"endTime":"2025-01-01T00:00:00Z","trackedStats":{"SCORE":10000}}]
+        }]
+        """);
+
+        var result = await recon.ReconstructAccountAsync(
+            "acct1", windows, "token", "caller");
+
+        // 3 entries: 3000 → 7000 → 10000
+        Assert.Equal(3, result);
+        // Only 3 HTTP requests (seasons 3, 4, 5), not 5
+        Assert.Equal(3, scraperHandler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task ReconstructAccountAsync_WithEstimatedSeason_SkipsEarlierSeasons()
+    {
+        var (recon, scraperHandler, _) = CreateReconstructor();
+
+        // Song has all-time entry in season 4
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("songB", [new LeaderboardEntry
+        {
+            AccountId = "acct1", Score = 5000, Rank = 100, Season = 4
+        }]);
+
+        // Song has no real FirstSeenSeason, only EstimatedSeason
+        _metaDb.Db.UpsertFirstSeenSeason("songB",
+            firstSeenSeason: null, minObservedSeason: null,
+            estimatedSeason: 2, probeResult: null);
+
+        var windows = new List<SeasonWindowInfo>
+        {
+            new() { SeasonNumber = 1, EventId = "e1", WindowId = "season_1" },
+            new() { SeasonNumber = 2, EventId = "e2", WindowId = "season_2" },
+            new() { SeasonNumber = 3, EventId = "e3", WindowId = "season_3" },
+            new() { SeasonNumber = 4, EventId = "e4", WindowId = "season_4" },
+        };
+
+        // Only seasons 2, 3, 4 should be queried (not 1)
+        scraperHandler.EnqueueJsonOk("""
+        [{
+            "teamId":"acct1","rank":300,"percentile":0.1,
+            "sessionHistory":[{"endTime":"2024-04-01T00:00:00Z","trackedStats":{"SCORE":2000}}]
+        }]
+        """);
+        scraperHandler.EnqueueJsonOk("""
+        [{
+            "teamId":"acct1","rank":200,"percentile":0.2,
+            "sessionHistory":[{"endTime":"2024-07-01T00:00:00Z","trackedStats":{"SCORE":3500}}]
+        }]
+        """);
+        scraperHandler.EnqueueJsonOk("""
+        [{
+            "teamId":"acct1","rank":100,"percentile":0.3,
+            "sessionHistory":[{"endTime":"2024-10-01T00:00:00Z","trackedStats":{"SCORE":5000}}]
+        }]
+        """);
+
+        var result = await recon.ReconstructAccountAsync(
+            "acct1", windows, "token", "caller");
+
+        Assert.Equal(3, result);
+        Assert.Equal(3, scraperHandler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task ReconstructAccountAsync_NoFirstSeenData_SkipsSong()
+    {
+        var (recon, scraperHandler, _) = CreateReconstructor();
+
+        // Song without any FirstSeenSeason data — likely not released yet
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("songC", [new LeaderboardEntry
+        {
+            AccountId = "acct1", Score = 5000, Rank = 100, Season = 3
+        }]);
+
+        // No UpsertFirstSeenSeason — songC is NOT in the firstSeenMap
+
+        var windows = new List<SeasonWindowInfo>
+        {
+            new() { SeasonNumber = 1, EventId = "e1", WindowId = "season_1" },
+            new() { SeasonNumber = 2, EventId = "e2", WindowId = "season_2" },
+            new() { SeasonNumber = 3, EventId = "e3", WindowId = "season_3" },
+        };
+
+        // No HTTP requests should be made — the song is skipped entirely
+        var result = await recon.ReconstructAccountAsync(
+            "acct1", windows, "token", "caller");
+
+        Assert.Equal(0, result);
+        Assert.Equal(0, scraperHandler.Requests.Count);
     }
 }

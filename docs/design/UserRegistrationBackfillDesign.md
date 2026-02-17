@@ -521,10 +521,20 @@ Each `ScoreHistory` row is a **point-in-time snapshot**. In addition to OldScore
 | `Season` | The season in which the score was set |
 | `ScoreAchievedAt` | ISO 8601 timestamp when the session ended (from `endTime` in the API). Exact play time. |
 | `ChangedAt` | When the row was written (scrape time for live detection, reconstruction time for backfill) |
+| `SeasonRank` | Rank from seasonal leaderboard. Populated by **HistoryReconstructor**. Note: Epic returns one rank per player per season (the final rank), so all entries within a season share the same value. |
+| `AllTimeRank` | Rank from alltime leaderboard at lookup time. Populated by **ScoreBackfiller**, **PostScrapeRefresher**, and **GlobalLeaderboardPersistence**. |
 
 These values are **never retroactively updated**. Even if the user's rank drops later as other players surpass them, the recorded rank/percentile reflects the state when the score was set. This gives users an accurate historical timeline ("I was rank 42 in the top 0.3% when I set this score") and supports features like "personal best rank" tracking.
 
 For **reconstructed** entries (from seasonal leaderboard queries), the API returns rank, accuracy, FC, stars, percentile, **and `endTime`** for the best session. The `endTime` is the real datetime the score was achieved — enabling accurate timeline graphs without relying on season boundaries.
+
+#### Deduplication
+
+Both HistoryReconstructor (seasonal queries) and ScoreBackfiller (alltime lookups) can discover the same score event. A unique index on `(AccountId, SongId, Instrument, NewScore, ScoreAchievedAt)` prevents duplicate rows. The `INSERT` uses `ON CONFLICT DO UPDATE` with `COALESCE` to merge:
+- `SeasonRank` from HistoryReconstructor
+- `AllTimeRank` from ScoreBackfiller/PostScrapeRefresher/GlobalLeaderboardPersistence
+
+This means running both processes for the same user produces a single row per score event with both rank columns populated.
 
 ---
 

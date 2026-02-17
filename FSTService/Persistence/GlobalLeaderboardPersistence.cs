@@ -133,7 +133,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                             result.SongId, result.Instrument, entry.AccountId,
                             prev.Score, entry.Score, prev.Rank, entry.Rank,
                             entry.Accuracy, entry.IsFullCombo, entry.Stars,
-                            entry.Percentile, entry.Season, entry.EndTime);
+                            entry.Percentile, entry.Season, entry.EndTime,
+                            allTimeRank: entry.Rank);
                         changesDetected++;
                         changedAccountIds.Add(entry.AccountId);
                     }
@@ -145,7 +146,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                         result.SongId, result.Instrument, entry.AccountId,
                         null, entry.Score, null, entry.Rank,
                         entry.Accuracy, entry.IsFullCombo, entry.Stars,
-                        entry.Percentile, entry.Season, entry.EndTime);
+                        entry.Percentile, entry.Season, entry.EndTime,
+                        allTimeRank: entry.Rank);
                     changesDetected++;
                     changedAccountIds.Add(entry.AccountId);
                 }
@@ -362,6 +364,38 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// </summary>
     public IReadOnlyList<string> GetInstrumentKeys()
         => _instrumentDbs.Keys.ToList();
+
+    /// <summary>
+    /// Get the minimum Season value for a song across all instrument DBs.
+    /// Returns null if no instrument has any entry for this song.
+    /// </summary>
+    public int? GetMinSeasonAcrossInstruments(string songId)
+    {
+        int? globalMin = null;
+        foreach (var (_, db) in _instrumentDbs)
+        {
+            var min = db.GetMinSeason(songId);
+            if (min.HasValue && (!globalMin.HasValue || min.Value < globalMin.Value))
+                globalMin = min.Value;
+        }
+        return globalMin;
+    }
+
+    /// <summary>
+    /// Get the maximum season number across all instrument databases.
+    /// Returns null only if all DBs are empty.
+    /// </summary>
+    public int? GetMaxSeasonAcrossInstruments()
+    {
+        int? globalMax = null;
+        foreach (var (_, db) in _instrumentDbs)
+        {
+            var max = db.GetMaxSeason();
+            if (max.HasValue && (!globalMax.HasValue || max.Value > globalMax.Value))
+                globalMax = max.Value;
+        }
+        return globalMax;
+    }
 
     public void Dispose()
     {

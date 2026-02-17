@@ -21,6 +21,7 @@ public sealed class InstrumentDatabase : IDisposable
     /// <summary>Long-lived connection used for all write operations.</summary>
     private SqliteConnection? _persistentConn;
     private readonly object _connLock = new();
+    private readonly object _writeLock = new();
 
     public string Instrument => _instrument;
 
@@ -97,6 +98,8 @@ public sealed class InstrumentDatabase : IDisposable
     {
         if (entries.Count == 0) return 0;
 
+        lock (_writeLock)
+        {
         var now = DateTime.UtcNow.ToString("o");
         int affected = 0;
 
@@ -153,6 +156,7 @@ public sealed class InstrumentDatabase : IDisposable
 
         tx.Commit();
         return affected;
+        } // lock
     }
 
     /// <summary>
@@ -185,6 +189,29 @@ public sealed class InstrumentDatabase : IDisposable
             Percentile   = reader.IsDBNull(5) ? 0 : reader.GetDouble(5),
             EndTime      = reader.IsDBNull(6) ? null : reader.GetString(6),
         };
+    }
+
+    /// <summary>
+    /// Get the minimum Season value across all entries for a given song, or null if no entries exist.
+    /// </summary>
+    public int? GetMinSeason(string songId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT MIN(Season) FROM LeaderboardEntries WHERE SongId = @songId AND Season > 0;";
+        cmd.Parameters.AddWithValue("@songId", songId);
+        var result = cmd.ExecuteScalar();
+        return result is long val ? (int)val : null;
+    }
+
+    /// <summary>Get the maximum season number stored in this instrument DB, or null if empty.</summary>
+    public int? GetMaxSeason()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT MAX(Season) FROM LeaderboardEntries WHERE Season > 0;";
+        var result = cmd.ExecuteScalar();
+        return result is long val ? (int)val : null;
     }
 
     /// <summary>Total row count across all songs (for status/reporting).</summary>

@@ -257,9 +257,9 @@ public class ScraperOptionsAndModelsTests
         var req = new FSTService.Api.RegisterRequest
         {
             DeviceId = "dev1",
-            AccountId = "acct1",
+            Username = "TestUser",
         };
         Assert.Equal("dev1", req.DeviceId);
-        Assert.Equal("acct1", req.AccountId);
+        Assert.Equal("TestUser", req.Username);
     }
 }

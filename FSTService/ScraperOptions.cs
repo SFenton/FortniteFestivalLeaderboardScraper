@@ -13,6 +13,12 @@ public sealed class ScraperOptions
     public TimeSpan ScrapeInterval { get; set; } = TimeSpan.FromHours(4);
 
     /// <summary>
+    /// How often to re-sync the song catalog from Epic in the background,
+    /// aligned to clock boundaries (default: 15 minutes → :00, :15, :30, :45).
+    /// </summary>
+    public TimeSpan SongSyncInterval { get; set; } = TimeSpan.FromMinutes(15);
+
+    /// <summary>
     /// Max concurrent leaderboard requests per scrape pass.
     /// </summary>
     public int DegreeOfParallelism { get; set; } = 16;

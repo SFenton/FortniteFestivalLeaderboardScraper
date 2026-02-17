@@ -30,6 +30,7 @@ public sealed class ScraperWorker : BackgroundService
     private readonly BackfillQueue _backfillQueue;
     private readonly PostScrapeRefresher _refresher;
     private readonly HistoryReconstructor _historyReconstructor;
+    private readonly FirstSeenSeasonCalculator _firstSeenCalculator;
     private readonly ScrapeProgressTracker _progress;
     private readonly IOptions<ScraperOptions> _options;
     private readonly IHostApplicationLifetime _lifetime;
@@ -45,6 +46,7 @@ public sealed class ScraperWorker : BackgroundService
         BackfillQueue backfillQueue,
         PostScrapeRefresher refresher,
         HistoryReconstructor historyReconstructor,
+        FirstSeenSeasonCalculator firstSeenCalculator,
         ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
         IHostApplicationLifetime lifetime,
@@ -59,6 +61,7 @@ public sealed class ScraperWorker : BackgroundService
         _backfillQueue = backfillQueue;
         _refresher = refresher;
         _historyReconstructor = historyReconstructor;
+        _firstSeenCalculator = firstSeenCalculator;
         _progress = progress;
         _options = options;
         _lifetime = lifetime;
@@ -148,6 +151,11 @@ public sealed class ScraperWorker : BackgroundService
             return;
         }
 
+        // Start background song catalog refresh (every 15 minutes)
+        // This runs independently of scraping — new songs get added to the DB
+        // but won't be included in an already-running scrape pass.
+        _ = BackgroundSongSyncLoopAsync(service, opts.SongSyncInterval, stoppingToken);
+
         // Main scrape loop
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -174,6 +182,50 @@ public sealed class ScraperWorker : BackgroundService
     }
 
     // ─── Auth helpers ───────────────────────────────────────────
+
+    /// <summary>
+    /// Periodically re-syncs the song catalog from Epic on clock-aligned
+    /// 15-minute boundaries (:00, :15, :30, :45).
+    /// Runs as a fire-and-forget background task. New songs are persisted but do
+    /// not affect any scrape pass that is already in progress.
+    /// </summary>
+    private async Task BackgroundSongSyncLoopAsync(
+        FestivalService service, TimeSpan interval, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            // Sleep until the next clock-aligned boundary
+            var now = DateTime.UtcNow;
+            var intervalTicks = interval.Ticks;
+            var nextTick = new DateTime((now.Ticks / intervalTicks + 1) * intervalTicks, DateTimeKind.Utc);
+            var delay = nextTick - now;
+
+            try
+            {
+                await Task.Delay(delay, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            try
+            {
+                var before = service.Songs.Count;
+                await service.SyncSongsAsync();
+                var after = service.Songs.Count;
+                if (after > before)
+                    _log.LogInformation("Background song sync: {NewCount} new song(s) discovered ({Total} total).",
+                        after - before, after);
+                else
+                    _log.LogDebug("Background song sync complete. {Total} songs (no changes).", after);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "Background song sync failed. Will retry at next quarter-hour.");
+            }
+        }
+    }
 
     private async Task<bool> EnsureAuthenticatedAsync(CancellationToken ct)
     {
@@ -347,6 +399,29 @@ public sealed class ScraperWorker : BackgroundService
         foreach (var (instrument, count) in counts)
             _log.LogInformation("  {Instrument}: {Count:N0} entries", instrument, count);
 
+        // ── Post-pass: calculate FirstSeenSeason for new songs ──
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.CalculatingFirstSeen);
+        try
+        {
+            var firstSeenToken = await _tokenManager.GetAccessTokenAsync(ct);
+            if (firstSeenToken is not null)
+            {
+                var firstSeenCount = await _firstSeenCalculator.CalculateAsync(
+                    service, firstSeenToken, _tokenManager.AccountId!,
+                    opts.DegreeOfParallelism, ct);
+                if (firstSeenCount > 0)
+                    _log.LogInformation("Calculated FirstSeenSeason for {Count} song(s).", firstSeenCount);
+            }
+            else
+            {
+                _log.LogWarning("No access token for FirstSeenSeason calculation. Will retry next pass.");
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "FirstSeenSeason calculation failed. Will retry next pass.");
+        }
+
         // ── Post-pass: resolve display names for new accounts ──
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ResolvingNames);
         try
@@ -390,7 +465,8 @@ public sealed class ScraperWorker : BackgroundService
                 {
                     var refreshed = await _refresher.RefreshAllAsync(
                         registeredIds, seenSet, chartedSongIds,
-                        refreshToken, _tokenManager.AccountId!, ct);
+                        refreshToken, _tokenManager.AccountId!,
+                        opts.DegreeOfParallelism, ct);
                     if (refreshed > 0)
                         _log.LogInformation("Post-scrape refresh updated {Count} entries for registered users.", refreshed);
                 }
@@ -466,7 +542,8 @@ public sealed class ScraperWorker : BackgroundService
             try
             {
                 var found = await _backfiller.BackfillAccountAsync(
-                    accountId, service, accessToken, callerAccountId, ct);
+                    accountId, service, accessToken, callerAccountId,
+                    _options.Value.DegreeOfParallelism, ct);
 
                 // Rebuild personal DB for this user if we found new entries
                 if (found > 0)
@@ -547,13 +624,30 @@ public sealed class ScraperWorker : BackgroundService
             return;
         }
 
-        foreach (var accountId in accountsToReconstruct)
+        // Create a shared adaptive concurrency limiter so all users share the same
+        // API call budget. This prevents overwhelming Epic's API when multiple users
+        // are being reconstructed simultaneously.
+        var dop = _options.Value.DegreeOfParallelism;
+        int initialDop = Math.Max(1, dop / 2);
+        int maxDop = dop * 2;
+        using var sharedLimiter = new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: maxDop, _log);
+        _progress.SetAdaptiveLimiter(sharedLimiter);
+
+        _log.LogInformation(
+            "Reconstructing history for {Count} account(s) in parallel with shared limiter (initial DOP={InitialDop}, max={MaxDop}).",
+            accountsToReconstruct.Count, initialDop, maxDop);
+
+        // Process all users in parallel. The shared AdaptiveConcurrencyLimiter
+        // controls total API concurrency across all users, so there's no need
+        // to limit how many users run concurrently at the task level.
+        var userTasks = accountsToReconstruct.Select(accountId => Task.Run(async () =>
         {
             ct.ThrowIfCancellationRequested();
             try
             {
                 var entries = await _historyReconstructor.ReconstructAccountAsync(
-                    accountId, seasonWindows, accessToken, callerAccountId, ct);
+                    accountId, seasonWindows, accessToken, callerAccountId,
+                    dop, sharedLimiter, ct);
 
                 if (entries > 0)
                 {
@@ -574,13 +668,15 @@ public sealed class ScraperWorker : BackgroundService
                     }
                 }
             }
-            catch (OperationCanceledException) { throw; }
+            catch (OperationCanceledException) { /* propagated via WhenAll */ }
             catch (Exception ex)
             {
                 _log.LogError(ex, "History reconstruction failed for {AccountId}. Will retry next pass.", accountId);
                 _persistence.Meta.FailHistoryRecon(accountId, ex.Message);
             }
-        }
+        }, ct)).ToList();
+
+        await Task.WhenAll(userTasks);
     }
 
     // ─── Cached page estimate ───────────────────────────────────

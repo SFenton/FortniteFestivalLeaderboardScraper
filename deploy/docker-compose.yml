@@ -24,4 +24,5 @@ services:
       # - Scraper__ApiOnly=true
       # Override scraper settings via environment variables if needed:
       # - Scraper__ScrapeInterval=04:00:00
+      # - Scraper__SongSyncInterval=00:15:00
       # - Scraper__DegreeOfParallelism=16

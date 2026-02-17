@@ -16,7 +16,7 @@ public class GlobalLeaderboardScraperTests
     {
         var handler = new MockHttpMessageHandler();
         var http = new HttpClient(handler);
-        var scraper = new GlobalLeaderboardScraper(http, _progress, _log);
+        var scraper = new GlobalLeaderboardScraper(http, _progress, _log, maxLookupRetries: 0);
         return (scraper, handler);
     }
 
@@ -94,30 +94,27 @@ public class GlobalLeaderboardScraperTests
     {
         var (scraper, handler) = CreateScraper();
 
+        // V2 response format: flat JSON array
         var json = """
-        {
-            "page": 0,
-            "totalPages": 1,
-            "entries": [
-                {
-                    "teamId": "target_acct",
-                    "rank": 42,
-                    "percentile": 0.95,
-                    "sessionHistory": [
-                        {
-                            "endTime": "2025-01-01T00:00:00Z",
-                            "trackedStats": {
-                                "SCORE": 999000,
-                                "ACCURACY": 100,
-                                "FULL_COMBO": 1,
-                                "STARS_EARNED": 5,
-                                "SEASON": 3
-                            }
+        [
+            {
+                "teamId": "target_acct",
+                "rank": 42,
+                "percentile": 0.95,
+                "sessionHistory": [
+                    {
+                        "endTime": "2025-01-01T00:00:00Z",
+                        "trackedStats": {
+                            "SCORE": 999000,
+                            "ACCURACY": 100,
+                            "FULL_COMBO": 1,
+                            "STARS_EARNED": 5,
+                            "SEASON": 3
                         }
-                    ]
-                }
-            ]
-        }
+                    }
+                ]
+            }
+        ]
         """;
         handler.EnqueueJsonOk(json);
 
@@ -139,7 +136,8 @@ public class GlobalLeaderboardScraperTests
     {
         var (scraper, handler) = CreateScraper();
 
-        handler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
+        // V2 response: empty array
+        handler.EnqueueJsonOk("[]");
 
         var entry = await scraper.LookupAccountAsync(
             "song1", "Solo_Guitar", "target_acct", "token", "caller_acct");
@@ -148,11 +146,26 @@ public class GlobalLeaderboardScraperTests
     }
 
     [Fact]
-    public async Task LookupAccountAsync_HttpError_ReturnsNull()
+    public async Task LookupAccountAsync_HttpError_Throws()
     {
         var (scraper, handler) = CreateScraper();
 
         handler.EnqueueError(HttpStatusCode.Forbidden, "Forbidden");
+
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            scraper.LookupAccountAsync(
+                "song1", "Solo_Guitar", "target_acct", "token", "caller_acct"));
+    }
+
+    [Fact]
+    public async Task LookupAccountAsync_NoScoreFound_ReturnsNull()
+    {
+        var (scraper, handler) = CreateScraper();
+
+        // Epic returns 404 with no_score_found when the leaderboard exists but
+        // the player has no entry — this should return null, not throw.
+        handler.EnqueueError(HttpStatusCode.NotFound,
+            """{"errorCode":"com.epicgames.events.no_score_found","errorMessage":"No score found."}""");
 
         var entry = await scraper.LookupAccountAsync(
             "song1", "Solo_Guitar", "target_acct", "token", "caller_acct");
@@ -165,7 +178,7 @@ public class GlobalLeaderboardScraperTests
     {
         var (scraper, handler) = CreateScraper();
 
-        handler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
+        handler.EnqueueJsonOk("[]");
 
         await scraper.LookupAccountAsync("s1", "Solo_Guitar", "t1", "my_token", "caller");
 
@@ -175,17 +188,19 @@ public class GlobalLeaderboardScraperTests
     }
 
     [Fact]
-    public async Task LookupAccountAsync_UrlContainsTeamAccountIds()
+    public async Task LookupAccountAsync_UrlContainsV2Format()
     {
         var (scraper, handler) = CreateScraper();
 
-        handler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
+        handler.EnqueueJsonOk("[]");
 
         await scraper.LookupAccountAsync("song1", "Solo_Guitar", "target_acct", "token", "caller_acct");
 
-        var url = handler.Requests[0].RequestUri!.ToString();
-        Assert.Contains("teamAccountIds=target_acct", url);
-        Assert.Contains("alltime_song1_Solo_Guitar", url);
+        var req = handler.Requests[0];
+        var url = req.RequestUri!.ToString();
+        Assert.Equal(HttpMethod.Post, req.Method);
+        Assert.Contains("/api/v2/games/FNFestival/leaderboards/alltime_song1_Solo_Guitar/alltime/scores", url);
+        Assert.Contains("accountId=caller_acct", url);
     }
 
     // ─── LookupSeasonalAsync ────────────────────────────
@@ -195,13 +210,15 @@ public class GlobalLeaderboardScraperTests
     {
         var (scraper, handler) = CreateScraper();
 
-        handler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
+        handler.EnqueueJsonOk("[]");
 
         await scraper.LookupSeasonalAsync(
             "song1", "Solo_Guitar", "S5Window1", "target", "token", "caller");
 
         var url = handler.Requests[0].RequestUri!.ToString();
-        Assert.Contains("/S5Window1/", url);
+        // V2 seasonal: eventId = S5Window1_song1, windowId = song1_Solo_Guitar
+        Assert.Contains("S5Window1_song1", url);
+        Assert.Contains("song1_Solo_Guitar", url);
     }
 
     // ─── LookupAccountAllInstrumentsAsync ───────────────
@@ -211,18 +228,17 @@ public class GlobalLeaderboardScraperTests
     {
         var (scraper, handler) = CreateScraper();
 
-        // Guitar = found
+        // Guitar = found (V2 flat array)
         var foundJson = """
-        {
-            "page": 0, "totalPages": 1,
-            "entries": [{
+        [
+            {
                 "teamId": "t1", "rank": 1, "percentile": 1.0,
                 "sessionHistory": [{ "trackedStats": { "SCORE": 100 } }]
-            }]
-        }
+            }
+        ]
         """;
-        // Bass = empty
-        var emptyJson = """{"page":0,"totalPages":0,"entries":[]}""";
+        // Bass = empty (V2 empty array)
+        var emptyJson = "[]";
 
         // Enqueue for 2 instruments
         handler.EnqueueJsonOk(foundJson);
@@ -324,17 +340,16 @@ public class GlobalLeaderboardScraperTests
         var (scraper, handler) = CreateScraper();
 
         handler.EnqueueJsonOk("""
-        {
-            "page": 0, "totalPages": 1,
-            "entries": [{
+        [
+            {
                 "teamId": "t1", "rank": 1, "percentile": 1.0,
                 "sessionHistory": [
                     { "trackedStats": { "SCORE": 100, "ACCURACY": 80, "STARS_EARNED": 3 } },
                     { "trackedStats": { "SCORE": 500, "ACCURACY": 95, "STARS_EARNED": 5 } },
                     { "trackedStats": { "SCORE": 300, "ACCURACY": 90, "STARS_EARNED": 4 } }
                 ]
-            }]
-        }
+            }
+        ]
         """);
 
         var entry = await scraper.LookupAccountAsync("s", "Solo_Guitar", "t1", "tok", "c");
@@ -353,13 +368,12 @@ public class GlobalLeaderboardScraperTests
         var (scraper, handler) = CreateScraper();
 
         handler.EnqueueJsonOk("""
-        {
-            "page": 0, "totalPages": 1,
-            "entries": [{
+        [
+            {
                 "team_id": "t1", "rank": 1, "percentile": 1.0,
                 "sessionHistory": [{ "trackedStats": { "SCORE": 1 } }]
-            }]
-        }
+            }
+        ]
         """);
 
         var entry = await scraper.LookupAccountAsync("s", "Solo_Guitar", "t1", "tok", "c");
@@ -378,16 +392,15 @@ public class GlobalLeaderboardScraperTests
         // First session has no trackedStats → should be skipped
         // Second session has valid data → should be used
         handler.EnqueueJsonOk("""
-        {
-            "page": 0, "totalPages": 1,
-            "entries": [{
+        [
+            {
                 "teamId": "t1", "rank": 1, "percentile": 1.0,
                 "sessionHistory": [
                     { "endTime": "2024-01-01T00:00:00Z" },
                     { "trackedStats": { "SCORE": 500 }, "endTime": "2024-06-01T00:00:00Z" }
                 ]
-            }]
-        }
+            }
+        ]
         """);
 
         var entry = await scraper.LookupAccountAsync("s", "Solo_Guitar", "t1", "tok", "c");
@@ -623,5 +636,218 @@ public class GlobalLeaderboardScraperTests
 
         await Assert.ThrowsAsync<HttpRequestException>(() =>
             scraper.ScrapeLeaderboardAsync("song1", "Solo_Guitar", "token", "acct"));
+    }
+
+    // ─── ParseAllSessionsFromEntry ─────────────────────
+
+    [Fact]
+    public void ParseAllSessionsFromEntry_MultipleSessions_ReturnsAll()
+    {
+        var json = """
+        {
+            "teamId": "acct1",
+            "rank": 42,
+            "percentile": 0.95,
+            "sessionHistory": [
+                {
+                    "endTime": "2025-01-01T00:00:00Z",
+                    "trackedStats": { "SCORE": 100000, "ACCURACY": 800000, "FULL_COMBO": 0, "STARS_EARNED": 3, "SEASON": 7 }
+                },
+                {
+                    "endTime": "2025-01-15T00:00:00Z",
+                    "trackedStats": { "SCORE": 300000, "ACCURACY": 900000, "FULL_COMBO": 0, "STARS_EARNED": 4, "SEASON": 7 }
+                },
+                {
+                    "endTime": "2025-02-01T00:00:00Z",
+                    "trackedStats": { "SCORE": 500000, "ACCURACY": 950000, "FULL_COMBO": 1, "STARS_EARNED": 5, "SEASON": 7 }
+                }
+            ]
+        }
+        """;
+
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var sessions = GlobalLeaderboardScraper.ParseAllSessionsFromEntry(
+            doc.RootElement, "acct1", 42, 0.95);
+
+        Assert.Equal(3, sessions.Count);
+
+        Assert.Equal(100000, sessions[0].Score);
+        Assert.Equal(800000, sessions[0].Accuracy);
+        Assert.False(sessions[0].IsFullCombo);
+        Assert.Equal(3, sessions[0].Stars);
+        Assert.Equal("2025-01-01T00:00:00Z", sessions[0].EndTime);
+        Assert.Equal("acct1", sessions[0].AccountId);
+        Assert.Equal(42, sessions[0].Rank);
+
+        Assert.Equal(300000, sessions[1].Score);
+        Assert.Equal(900000, sessions[1].Accuracy);
+
+        Assert.Equal(500000, sessions[2].Score);
+        Assert.True(sessions[2].IsFullCombo);
+        Assert.Equal(5, sessions[2].Stars);
+    }
+
+    [Fact]
+    public void ParseAllSessionsFromEntry_NoSessionHistory_ReturnsEmpty()
+    {
+        var json = """{ "teamId": "acct1", "rank": 1, "percentile": 1.0 }""";
+
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var sessions = GlobalLeaderboardScraper.ParseAllSessionsFromEntry(
+            doc.RootElement, "acct1", 1, 1.0);
+
+        Assert.Empty(sessions);
+    }
+
+    [Fact]
+    public void ParseAllSessionsFromEntry_SingleSession_ReturnsList()
+    {
+        var json = """
+        {
+            "teamId": "acct1",
+            "rank": 10,
+            "percentile": 0.5,
+            "sessionHistory": [
+                {
+                    "endTime": "2025-03-01T12:00:00Z",
+                    "trackedStats": { "SCORE": 750000, "ACCURACY": 990000, "FULL_COMBO": 1, "STARS_EARNED": 6, "SEASON": 9 }
+                }
+            ]
+        }
+        """;
+
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var sessions = GlobalLeaderboardScraper.ParseAllSessionsFromEntry(
+            doc.RootElement, "acct1", 10, 0.5);
+
+        Assert.Single(sessions);
+        Assert.Equal(750000, sessions[0].Score);
+        Assert.Equal(9, sessions[0].Season);
+    }
+
+    // ─── ParseV2AllSessionsResponseAsync ────────────────
+
+    [Fact]
+    public async Task ParseV2AllSessionsResponseAsync_MultipleSessionsInResponse_ReturnsAll()
+    {
+        var json = """
+        [
+            {
+                "teamId": "target_acct",
+                "rank": 5,
+                "percentile": 0.99,
+                "sessionHistory": [
+                    { "endTime": "2025-01-01T00:00:00Z", "trackedStats": { "SCORE": 200000, "ACCURACY": 850000 } },
+                    { "endTime": "2025-01-10T00:00:00Z", "trackedStats": { "SCORE": 400000, "ACCURACY": 920000 } },
+                    { "endTime": "2025-01-20T00:00:00Z", "trackedStats": { "SCORE": 600000, "ACCURACY": 980000, "FULL_COMBO": 1 } }
+                ]
+            }
+        ]
+        """;
+
+        using var stream = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+        var sessions = await GlobalLeaderboardScraper.ParseV2AllSessionsResponseAsync(
+            stream, "target_acct", CancellationToken.None);
+
+        Assert.NotNull(sessions);
+        Assert.Equal(3, sessions!.Count);
+        Assert.Equal(200000, sessions[0].Score);
+        Assert.Equal(400000, sessions[1].Score);
+        Assert.Equal(600000, sessions[2].Score);
+        Assert.True(sessions[2].IsFullCombo);
+        // Rank and percentile are shared across all sessions from the same entry
+        Assert.All(sessions, s => Assert.Equal(5, s.Rank));
+        Assert.All(sessions, s => Assert.Equal(0.99, s.Percentile));
+    }
+
+    [Fact]
+    public async Task ParseV2AllSessionsResponseAsync_TargetNotFound_ReturnsNull()
+    {
+        var json = """
+        [
+            {
+                "teamId": "other_acct",
+                "rank": 1,
+                "sessionHistory": [
+                    { "trackedStats": { "SCORE": 100000 } }
+                ]
+            }
+        ]
+        """;
+
+        using var stream = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+        var sessions = await GlobalLeaderboardScraper.ParseV2AllSessionsResponseAsync(
+            stream, "target_acct", CancellationToken.None);
+
+        Assert.Null(sessions);
+    }
+
+    [Fact]
+    public async Task ParseV2AllSessionsResponseAsync_EmptyArray_ReturnsNull()
+    {
+        using var stream = new System.IO.MemoryStream(System.Text.Encoding.UTF8.GetBytes("[]"));
+        var sessions = await GlobalLeaderboardScraper.ParseV2AllSessionsResponseAsync(
+            stream, "target_acct", CancellationToken.None);
+
+        Assert.Null(sessions);
+    }
+
+    // ─── LookupSeasonalSessionsAsync (integration via MockHttp) ─
+
+    [Fact]
+    public async Task LookupSeasonalSessionsAsync_ReturnsAllSessions()
+    {
+        var (scraper, handler) = CreateScraper();
+
+        var json = """
+        [
+            {
+                "teamId": "target_acct",
+                "rank": 84,
+                "percentile": 0.5,
+                "sessionHistory": [
+                    { "endTime": "2025-03-15T00:00:00Z", "trackedStats": { "SCORE": 412000, "ACCURACY": 850000, "STARS_EARNED": 4, "SEASON": 7 } },
+                    { "endTime": "2025-03-20T00:00:00Z", "trackedStats": { "SCORE": 550000, "ACCURACY": 920000, "STARS_EARNED": 5, "SEASON": 7 } },
+                    { "endTime": "2025-04-06T00:00:00Z", "trackedStats": { "SCORE": 668157, "ACCURACY": 990000, "FULL_COMBO": 0, "STARS_EARNED": 6, "SEASON": 7 } }
+                ]
+            }
+        ]
+        """;
+        handler.EnqueueJsonOk(json);
+
+        var sessions = await scraper.LookupSeasonalSessionsAsync(
+            "song1", "Solo_Guitar", "evergreen", "target_acct", "token", "caller_acct");
+
+        Assert.NotNull(sessions);
+        Assert.Equal(3, sessions!.Count);
+        Assert.Equal(412000, sessions[0].Score);
+        Assert.Equal(550000, sessions[1].Score);
+        Assert.Equal(668157, sessions[2].Score);
+    }
+
+    [Fact]
+    public async Task LookupSeasonalSessionsAsync_NoScoreFound_ReturnsNull()
+    {
+        var (scraper, handler) = CreateScraper();
+
+        handler.EnqueueError(HttpStatusCode.NotFound,
+            """{"errorCode":"com.epicgames.events.no_score_found","errorMessage":"No score found."}""");
+
+        var sessions = await scraper.LookupSeasonalSessionsAsync(
+            "song1", "Solo_Guitar", "evergreen", "target_acct", "token", "caller_acct");
+
+        Assert.Null(sessions);
+    }
+
+    [Fact]
+    public async Task LookupSeasonalSessionsAsync_HttpError_Throws()
+    {
+        var (scraper, handler) = CreateScraper();
+
+        handler.EnqueueError(HttpStatusCode.Forbidden, "Forbidden");
+
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            scraper.LookupSeasonalSessionsAsync(
+                "song1", "Solo_Guitar", "evergreen", "target_acct", "token", "caller_acct"));
     }
 }

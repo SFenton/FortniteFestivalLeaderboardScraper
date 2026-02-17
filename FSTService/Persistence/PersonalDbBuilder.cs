@@ -10,13 +10,14 @@ namespace FSTService.Persistence;
 /// the React Native app's <c>SqliteFestivalPersistence</c> (Songs + Scores tables)
 /// so the mobile app can consume them directly.
 ///
-/// Personal DBs are stored under <c>data/personal/{deviceId}.db</c> and shipped
+/// Personal DBs are stored under <c>data/personal/{accountId}/{deviceId}.db</c> and shipped
 /// whole (not deltas) since the file size is trivial.
 /// </summary>
 public class PersonalDbBuilder
 {
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly FestivalService _festivalService;
+    private readonly MetaDatabase _metaDb;
     private readonly string _personalDir;
     private readonly ILogger<PersonalDbBuilder> _log;
 
@@ -36,11 +37,13 @@ public class PersonalDbBuilder
     public PersonalDbBuilder(
         GlobalLeaderboardPersistence persistence,
         FestivalService festivalService,
+        MetaDatabase metaDb,
         string dataDir,
         ILogger<PersonalDbBuilder> log)
     {
         _persistence = persistence;
         _festivalService = festivalService;
+        _metaDb = metaDb;
         _personalDir = Path.Combine(dataDir, "personal");
         _log = log;
 
@@ -51,8 +54,13 @@ public class PersonalDbBuilder
     /// <summary>
     /// Get the path where a device's personal DB would live.
     /// </summary>
-    public string GetPersonalDbPath(string deviceId)
-        => Path.Combine(_personalDir, $"{deviceId}.db");
+    public string GetPersonalDbPath(string accountId, string deviceId)
+    {
+        var accountDir = Path.Combine(_personalDir, accountId);
+        if (!Directory.Exists(accountDir))
+            Directory.CreateDirectory(accountDir);
+        return Path.Combine(accountDir, $"{deviceId}.db");
+    }
 
     /// <summary>
     /// Build (or rebuild) the personal DB for a device + account pair.
@@ -68,7 +76,7 @@ public class PersonalDbBuilder
             return null;
         }
 
-        var outputPath = GetPersonalDbPath(deviceId);
+        var outputPath = GetPersonalDbPath(accountId, deviceId);
         var tempPath = outputPath + ".tmp";
 
         try
@@ -105,23 +113,57 @@ public class PersonalDbBuilder
 
     /// <summary>
     /// Build personal DBs for all devices registered to any of the given account IDs.
-    /// Returns the number of DBs rebuilt.
+    /// Since all devices for an account receive the same content, the DB is built once
+    /// per account and then copied to each device path.
+    /// Returns the number of device DBs written.
     /// </summary>
     public virtual int RebuildForAccounts(IReadOnlySet<string> changedAccountIds, MetaDatabase metaDb)
     {
         if (changedAccountIds.Count == 0) return 0;
 
         var deviceMappings = metaDb.GetDeviceAccountMappings();
-        int rebuilt = 0;
 
+        // Group devices by account so we build once per account
+        var accountDevices = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var (deviceId, accountId) in deviceMappings)
         {
             if (!changedAccountIds.Contains(accountId))
                 continue;
 
-            var result = Build(deviceId, accountId);
-            if (result is not null)
-                rebuilt++;
+            if (!accountDevices.TryGetValue(accountId, out var devices))
+            {
+                devices = new List<string>();
+                accountDevices[accountId] = devices;
+            }
+            devices.Add(deviceId);
+        }
+
+        int rebuilt = 0;
+
+        foreach (var (accountId, devices) in accountDevices)
+        {
+            // Build for the first device
+            var firstDevice = devices[0];
+            var result = Build(firstDevice, accountId);
+            if (result is null)
+                continue;
+
+            rebuilt++;
+
+            // Copy to remaining devices
+            for (int i = 1; i < devices.Count; i++)
+            {
+                var destPath = GetPersonalDbPath(accountId, devices[i]);
+                try
+                {
+                    File.Copy(result, destPath, overwrite: true);
+                    rebuilt++;
+                }
+                catch (Exception ex)
+                {
+                    _log.LogError(ex, "Failed to copy personal DB for device {DeviceId}.", devices[i]);
+                }
+            }
         }
 
         return rebuilt;
@@ -131,9 +173,9 @@ public class PersonalDbBuilder
     /// Check whether a personal DB exists for a device and return its last-modified
     /// time as a version string (ISO 8601), or null if not yet built.
     /// </summary>
-    public (string? version, long? sizeBytes) GetVersion(string deviceId)
+    public (string? version, long? sizeBytes) GetVersion(string accountId, string deviceId)
     {
-        var path = GetPersonalDbPath(deviceId);
+        var path = GetPersonalDbPath(accountId, deviceId);
         if (!File.Exists(path))
             return (null, null);
 
@@ -161,6 +203,7 @@ public class PersonalDbBuilder
         CreateSchema(conn);
         PopulateSongs(conn, songs);
         PopulateScores(conn, accountId, songs);
+        PopulateScoreHistory(conn, accountId);
     }
 
     private static void CreateSchema(SqliteConnection conn)
@@ -187,6 +230,27 @@ public class PersonalDbBuilder
                 PlasticDrumsDiff INTEGER,
                 ProVocalsDiff INTEGER
             );
+
+            CREATE TABLE IF NOT EXISTS ScoreHistory (
+                Id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                SongId      TEXT    NOT NULL,
+                Instrument  TEXT    NOT NULL,
+                OldScore    INTEGER,
+                NewScore    INTEGER,
+                OldRank     INTEGER,
+                NewRank     INTEGER,
+                Accuracy    INTEGER,
+                IsFullCombo INTEGER,
+                Stars       INTEGER,
+                Percentile  REAL,
+                Season      INTEGER,
+                ScoreAchievedAt TEXT,
+                SeasonRank  INTEGER,
+                AllTimeRank INTEGER,
+                ChangedAt   TEXT    NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_ScoreHist_Song ON ScoreHistory (SongId, Instrument);
 
             CREATE TABLE IF NOT EXISTS Scores (
                 SongId TEXT PRIMARY KEY,
@@ -394,6 +458,72 @@ public class PersonalDbBuilder
 
         tx.Commit();
         _log.LogDebug("Populated {Count} Score rows for account {AccountId}.", songsWithScores, accountId);
+    }
+
+    private void PopulateScoreHistory(SqliteConnection conn, string accountId)
+    {
+        var history = _metaDb.GetScoreHistory(accountId, int.MaxValue);
+        if (history.Count == 0) return;
+
+        // GetScoreHistory returns newest-first; reverse for chronological insertion
+        // so personal DB Ids match chronological order.
+        history.Reverse();
+
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            INSERT INTO ScoreHistory
+                (SongId, Instrument, OldScore, NewScore, OldRank, NewRank,
+                 Accuracy, IsFullCombo, Stars, Percentile, Season, ScoreAchievedAt,
+                 SeasonRank, AllTimeRank, ChangedAt)
+            VALUES
+                (@songId, @instrument, @oldScore, @newScore, @oldRank, @newRank,
+                 @accuracy, @isFullCombo, @stars, @percentile, @season, @scoreAchievedAt,
+                 @seasonRank, @allTimeRank, @changedAt);
+            """;
+
+        var pSongId      = cmd.Parameters.Add("@songId", SqliteType.Text);
+        var pInstrument  = cmd.Parameters.Add("@instrument", SqliteType.Text);
+        var pOldScore    = cmd.Parameters.Add("@oldScore", SqliteType.Integer);
+        var pNewScore    = cmd.Parameters.Add("@newScore", SqliteType.Integer);
+        var pOldRank     = cmd.Parameters.Add("@oldRank", SqliteType.Integer);
+        var pNewRank     = cmd.Parameters.Add("@newRank", SqliteType.Integer);
+        var pAccuracy    = cmd.Parameters.Add("@accuracy", SqliteType.Integer);
+        var pIsFullCombo = cmd.Parameters.Add("@isFullCombo", SqliteType.Integer);
+        var pStars       = cmd.Parameters.Add("@stars", SqliteType.Integer);
+        var pPercentile  = cmd.Parameters.Add("@percentile", SqliteType.Real);
+        var pSeason      = cmd.Parameters.Add("@season", SqliteType.Integer);
+        var pScoreAt     = cmd.Parameters.Add("@scoreAchievedAt", SqliteType.Text);
+        var pSeasonRank  = cmd.Parameters.Add("@seasonRank", SqliteType.Integer);
+        var pAllTimeRank = cmd.Parameters.Add("@allTimeRank", SqliteType.Integer);
+        var pChangedAt   = cmd.Parameters.Add("@changedAt", SqliteType.Text);
+        cmd.Prepare();
+
+        foreach (var entry in history)
+        {
+            pSongId.Value      = entry.SongId;
+            pInstrument.Value  = entry.Instrument;
+            pOldScore.Value    = (object?)entry.OldScore ?? DBNull.Value;
+            pNewScore.Value    = entry.NewScore;
+            pOldRank.Value     = (object?)entry.OldRank ?? DBNull.Value;
+            pNewRank.Value     = entry.NewRank;
+            pAccuracy.Value    = (object?)entry.Accuracy ?? DBNull.Value;
+            pIsFullCombo.Value = entry.IsFullCombo.HasValue ? (entry.IsFullCombo.Value ? 1 : 0) : DBNull.Value;
+            pStars.Value       = (object?)entry.Stars ?? DBNull.Value;
+            pPercentile.Value  = (object?)entry.Percentile ?? DBNull.Value;
+            pSeason.Value      = (object?)entry.Season ?? DBNull.Value;
+            pScoreAt.Value     = (object?)entry.ScoreAchievedAt ?? DBNull.Value;
+            pSeasonRank.Value  = (object?)entry.SeasonRank ?? DBNull.Value;
+            pAllTimeRank.Value = (object?)entry.AllTimeRank ?? DBNull.Value;
+            pChangedAt.Value   = entry.ChangedAt;
+
+            cmd.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+        _log.LogDebug("Populated {Count} ScoreHistory rows for account {AccountId}.",
+            history.Count, accountId);
     }
 
     private static int GetDifficultyForInstrument(Song song, string instrumentKey)

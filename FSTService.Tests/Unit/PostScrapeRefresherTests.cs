@@ -43,7 +43,7 @@ public class PostScrapeRefresherTests : IDisposable
         var http = new HttpClient(handler);
         var progress = new ScrapeProgressTracker();
         var scraperLog = Substitute.For<ILogger<GlobalLeaderboardScraper>>();
-        var scraper = new GlobalLeaderboardScraper(http, progress, scraperLog);
+        var scraper = new GlobalLeaderboardScraper(http, progress, scraperLog, maxLookupRetries: 0);
         var refresher = new PostScrapeRefresher(scraper, _persistence, _log);
         return (refresher, handler);
     }
@@ -103,13 +103,10 @@ public class PostScrapeRefresherTests : IDisposable
 
         // API returns entry for Solo_Guitar
         handler.EnqueueJsonOk("""
-        {
-            "page": 0, "totalPages": 1,
-            "entries": [{
-                "teamId": "acct1", "rank": 500, "percentile": 0.3,
-                "sessionHistory": [{ "trackedStats": { "SCORE": 10000 } }]
-            }]
-        }
+        [{
+            "teamId": "acct1", "rank": 500, "percentile": 0.3,
+            "sessionHistory": [{ "trackedStats": { "SCORE": 10000 } }]
+        }]
         """);
 
         var result = await refresher.RefreshAllAsync(
@@ -145,13 +142,10 @@ public class PostScrapeRefresherTests : IDisposable
 
         // API returns updated score
         handler.EnqueueJsonOk("""
-        {
-            "page": 0, "totalPages": 1,
-            "entries": [{
-                "teamId": "acct1", "rank": 800, "percentile": 0.4,
-                "sessionHistory": [{ "trackedStats": { "SCORE": 15000 } }]
-            }]
-        }
+        [{
+            "teamId": "acct1", "rank": 800, "percentile": 0.4,
+            "sessionHistory": [{ "trackedStats": { "SCORE": 15000 } }]
+        }]
         """);
 
         var result = await refresher.RefreshAllAsync(
@@ -257,13 +251,10 @@ public class PostScrapeRefresherTests : IDisposable
 
         // API returns the same score — no change
         handler.EnqueueJsonOk("""
-        {
-            "page": 0, "totalPages": 1,
-            "entries": [{
-                "teamId": "acct1", "rank": 50, "percentile": 0.5,
-                "sessionHistory": [{ "trackedStats": { "SCORE": 12000 } }]
-            }]
-        }
+        [{
+            "teamId": "acct1", "rank": 50, "percentile": 0.5,
+            "sessionHistory": [{ "trackedStats": { "SCORE": 12000 } }]
+        }]
         """);
 
         var result = await refresher.RefreshAllAsync(

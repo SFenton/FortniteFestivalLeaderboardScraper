@@ -22,6 +22,20 @@ public class HistoryReconstructorTests
         Assert.Equal(expected, HistoryReconstructor.ExtractSeasonNumber(input));
     }
 
+    // ═══ GetSeasonPrefix ════════════════════════════════════════
+
+    [Theory]
+    [InlineData(1, "evergreen")]
+    [InlineData(2, "season002")]
+    [InlineData(3, "season003")]
+    [InlineData(9, "season009")]
+    [InlineData(10, "season010")]
+    [InlineData(15, "season015")]
+    public void GetSeasonPrefix_returns_correct_format(int season, string expected)
+    {
+        Assert.Equal(expected, HistoryReconstructor.GetSeasonPrefix(season));
+    }
+
     [Theory]
     [InlineData("Season1", 1)]
     [InlineData("Season10", 10)]

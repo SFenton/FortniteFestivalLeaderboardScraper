@@ -18,9 +18,6 @@ public class ScoreBackfiller
     private readonly MetaDatabase _metaDb;
     private readonly ILogger<ScoreBackfiller> _log;
 
-    /// <summary>Number of concurrent API lookups per user.</summary>
-    private const int DegreeOfParallelism = 2;
-
     /// <summary>Save progress counters to the DB every N songs checked.</summary>
     private const int ProgressFlushInterval = 25;
 
@@ -46,6 +43,7 @@ public class ScoreBackfiller
         FestivalService festivalService,
         string accessToken,
         string callerAccountId,
+        int degreeOfParallelism = 16,
         CancellationToken ct = default)
     {
         // Gather the set of all charted songs
@@ -100,44 +98,43 @@ public class ScoreBackfiller
 
         try
         {
-            // Process in batches with limited concurrency
-            using var semaphore = new SemaphoreSlim(DegreeOfParallelism);
-            var batchSize = 50;
+            int initialDop = Math.Max(1, degreeOfParallelism / 2);
+            int maxDop = degreeOfParallelism * 2;
+            using var limiter = new AdaptiveConcurrencyLimiter(
+                initialDop, minDop: 2, maxDop: maxDop, _log);
 
-            for (int i = 0; i < workItems.Count; i += batchSize)
+            _log.LogInformation(
+                "Backfill using adaptive concurrency: initial DOP={InitialDop}, max={MaxDop}.",
+                initialDop, maxDop);
+
+            var tasks = workItems.Select(async item =>
             {
-                ct.ThrowIfCancellationRequested();
-
-                var batch = workItems.Skip(i).Take(batchSize).ToList();
-                var tasks = batch.Select(async item =>
+                await limiter.WaitAsync(ct);
+                try
                 {
-                    await semaphore.WaitAsync(ct);
-                    try
-                    {
-                        return await ProcessSingleLookupAsync(
-                            accountId, item.SongId, item.Instrument,
-                            accessToken, callerAccountId, ct);
-                    }
-                    finally
-                    {
-                        semaphore.Release();
-                    }
-                }).ToList();
-
-                var results = await Task.WhenAll(tasks);
-
-                foreach (var found in results)
+                    return await ProcessSingleLookupAsync(
+                        accountId, item.SongId, item.Instrument,
+                        accessToken, callerAccountId, limiter, ct);
+                }
+                finally
                 {
-                    songsChecked++;
-                    if (found)
-                    {
-                        entriesFound++;
-                        newEntriesThisRun++;
-                    }
+                    limiter.Release();
+                }
+            }).ToList();
+
+            var results = await Task.WhenAll(tasks);
+
+            foreach (var found in results)
+            {
+                songsChecked++;
+                if (found)
+                {
+                    entriesFound++;
+                    newEntriesThisRun++;
                 }
 
                 // Flush progress periodically
-                if (songsChecked % ProgressFlushInterval == 0 || i + batchSize >= workItems.Count)
+                if (songsChecked % ProgressFlushInterval == 0)
                 {
                     _metaDb.UpdateBackfillProgress(accountId, songsChecked, entriesFound);
                 }
@@ -179,6 +176,7 @@ public class ScoreBackfiller
         string instrument,
         string accessToken,
         string callerAccountId,
+        AdaptiveConcurrencyLimiter limiter,
         CancellationToken ct)
     {
         // Check if we already have an entry in the instrument DB
@@ -197,7 +195,7 @@ public class ScoreBackfiller
         try
         {
             entry = await _scraper.LookupAccountAsync(
-                songId, instrument, accountId, accessToken, callerAccountId, ct);
+                songId, instrument, accountId, accessToken, callerAccountId, limiter, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -227,7 +225,8 @@ public class ScoreBackfiller
             stars: entry.Stars,
             percentile: entry.Percentile,
             season: entry.Season,
-            scoreAchievedAt: entry.EndTime);
+            scoreAchievedAt: entry.EndTime,
+            allTimeRank: entry.Rank);
 
         _metaDb.MarkBackfillSongChecked(accountId, songId, instrument, entryFound: true);
 

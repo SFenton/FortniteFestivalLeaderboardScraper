@@ -3,6 +3,7 @@ using FortniteFestival.Core.Services;
 using FSTService.Auth;
 using FSTService.Persistence;
 using FSTService.Scraping;
+using Microsoft.Extensions.Options;
 
 namespace FSTService.Api;
 
@@ -133,26 +134,73 @@ public static class ApiEndpoints
             PersonalDbBuilder personalDbBuilder) =>
         {
             if (string.IsNullOrWhiteSpace(request.DeviceId) ||
-                string.IsNullOrWhiteSpace(request.AccountId))
+                string.IsNullOrWhiteSpace(request.Username))
             {
-                return Results.BadRequest(new { error = "deviceId and accountId are required." });
+                return Results.BadRequest(new { error = "deviceId and username are required." });
             }
 
-            var isNew = metaDb.RegisterUser(request.DeviceId, request.AccountId);
+            // Look up the Epic account ID by display name (case-insensitive)
+            var accountId = metaDb.GetAccountIdForUsername(request.Username.Trim());
+            if (accountId is null)
+            {
+                return Results.Ok(new
+                {
+                    registered = false,
+                    error = "no_account_found",
+                    description = "No Epic Games account was found for that name. Please check spelling and try again.",
+                });
+            }
+
+            var displayName = metaDb.GetDisplayName(accountId);
+            var isNew = metaDb.RegisterUser(request.DeviceId, accountId);
 
             // Build the personal DB immediately on registration
             string? dbPath = null;
             if (isNew)
             {
-                dbPath = personalDbBuilder.Build(request.DeviceId, request.AccountId);
+                dbPath = personalDbBuilder.Build(request.DeviceId, accountId);
             }
 
             return Results.Ok(new
             {
                 registered = isNew,
                 deviceId = request.DeviceId,
-                accountId = request.AccountId,
+                accountId,
+                displayName,
                 personalDbReady = dbPath is not null,
+            });
+        })
+        .WithTags("Registration")
+        .RequireAuthorization()
+        .RequireRateLimiting("protected");
+
+        app.MapDelete("/api/register", (
+            string deviceId,
+            string accountId,
+            MetaDatabase metaDb,
+            PersonalDbBuilder personalDbBuilder) =>
+        {
+            if (string.IsNullOrWhiteSpace(deviceId) ||
+                string.IsNullOrWhiteSpace(accountId))
+            {
+                return Results.BadRequest(new { error = "deviceId and accountId query parameters are required." });
+            }
+
+            var removed = metaDb.UnregisterUser(deviceId, accountId);
+
+            // Clean up the personal DB file if it exists
+            if (removed)
+            {
+                var dbPath = personalDbBuilder.GetPersonalDbPath(accountId, deviceId);
+                if (File.Exists(dbPath))
+                    File.Delete(dbPath);
+            }
+
+            return Results.Ok(new
+            {
+                unregistered = removed,
+                deviceId,
+                accountId,
             });
         })
         .WithTags("Registration")
@@ -186,6 +234,59 @@ public static class ApiEndpoints
         .RequireAuthorization()
         .RequireRateLimiting("protected");
 
+        // ─── FirstSeenSeason endpoints ────────────────────
+
+        app.MapGet("/api/firstseen", (MetaDatabase metaDb) =>
+        {
+            var all = metaDb.GetAllFirstSeenSeasons();
+            var songs = all.Select(kvp => new
+            {
+                songId = kvp.Key,
+                firstSeenSeason = kvp.Value.FirstSeenSeason,
+                estimatedSeason = kvp.Value.EstimatedSeason,
+            }).ToList();
+            return Results.Ok(new { count = songs.Count, songs });
+        })
+        .WithTags("FirstSeenSeason")
+        .RequireRateLimiting("public");
+
+        app.MapPost("/api/firstseen/calculate", async (
+            FirstSeenSeasonCalculator calculator,
+            FestivalService festivalService,
+            TokenManager tokenManager,
+            IOptions<ScraperOptions> scraperOptions,
+            CancellationToken ct) =>
+        {
+            var dop = scraperOptions.Value.DegreeOfParallelism;
+
+            var accessToken = await tokenManager.GetAccessTokenAsync(ct);
+            if (accessToken is null)
+                return Results.Problem("No access token available. Service may need re-authentication.");
+
+            var callerAccountId = tokenManager.AccountId!;
+
+            if (festivalService.Songs.Count == 0)
+            {
+                await festivalService.InitializeAsync();
+                if (festivalService.Songs.Count == 0)
+                    return Results.Problem("Song catalog is empty.");
+            }
+
+            var calculated = await calculator.CalculateAsync(
+                festivalService, accessToken, callerAccountId, dop, ct);
+
+            return Results.Ok(new
+            {
+                songsCalculated = calculated,
+                message = calculated > 0
+                    ? $"Calculated FirstSeenSeason for {calculated} song(s)."
+                    : "All songs already have FirstSeenSeason set."
+            });
+        })
+        .WithTags("FirstSeenSeason")
+        .RequireAuthorization()
+        .RequireRateLimiting("protected");
+
         app.MapGet("/api/backfill/{accountId}/status", (
             string accountId,
             MetaDatabase metaDb) =>
@@ -210,6 +311,81 @@ public static class ApiEndpoints
         .RequireAuthorization()
         .RequireRateLimiting("protected");
 
+        app.MapPost("/api/backfill/{accountId}", async (
+            string accountId,
+            ScoreBackfiller backfiller,
+            HistoryReconstructor historyReconstructor,
+            PersonalDbBuilder personalDbBuilder,
+            FestivalService festivalService,
+            TokenManager tokenManager,
+            MetaDatabase metaDb,
+            IOptions<ScraperOptions> scraperOptions,
+            CancellationToken ct) =>
+        {
+            var dop = scraperOptions.Value.DegreeOfParallelism;
+            // Verify the account is registered
+            var registeredIds = metaDb.GetRegisteredAccountIds();
+            if (!registeredIds.Contains(accountId))
+            {
+                return Results.NotFound(new { error = "Account is not registered." });
+            }
+
+            // Need a valid access token to call Epic's API
+            var accessToken = await tokenManager.GetAccessTokenAsync(ct);
+            if (accessToken is null)
+                return Results.Problem("No access token available. Service may need re-authentication.");
+
+            var callerAccountId = tokenManager.AccountId!;
+
+            // Ensure song catalog is loaded
+            if (festivalService.Songs.Count == 0)
+            {
+                await festivalService.InitializeAsync();
+                if (festivalService.Songs.Count == 0)
+                    return Results.Problem("Song catalog is empty. Cannot run backfill.");
+            }
+
+            // ── Step 1: Backfill missing scores ──
+            var found = await backfiller.BackfillAccountAsync(
+                accountId, festivalService, accessToken, callerAccountId, dop, ct);
+
+            var status = metaDb.GetBackfillStatus(accountId);
+
+            // ── Step 2: Reconstruct score history (if not already done) ──
+            int historyEntries = 0;
+            var reconStatus = metaDb.GetHistoryReconStatus(accountId);
+            if (reconStatus?.Status != "complete")
+            {
+                var seasonWindows = await historyReconstructor.DiscoverSeasonWindowsAsync(
+                    accessToken, callerAccountId, ct);
+
+                if (seasonWindows.Count > 0)
+                {
+                    historyEntries = await historyReconstructor.ReconstructAccountAsync(
+                        accountId, seasonWindows, accessToken, callerAccountId, dop, ct: ct);
+                }
+            }
+
+            // ── Step 3: Rebuild personal DB ──
+            var accountSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { accountId };
+            var personalDbsRebuilt = personalDbBuilder.RebuildForAccounts(accountSet, metaDb);
+
+            return Results.Ok(new
+            {
+                accountId,
+                newEntriesFound = found,
+                status = status?.Status,
+                songsChecked = status?.SongsChecked,
+                totalSongsToCheck = status?.TotalSongsToCheck,
+                entriesFound = status?.EntriesFound,
+                historyEntriesCreated = historyEntries,
+                personalDbsRebuilt,
+            });
+        })
+        .WithTags("Backfill")
+        .RequireAuthorization()
+        .RequireRateLimiting("protected");
+
         // ─── Sync endpoints (protected, require API key) ────
 
         app.MapGet("/api/sync/{deviceId}/version", (
@@ -220,7 +396,11 @@ public static class ApiEndpoints
             if (!metaDb.IsDeviceRegistered(deviceId))
                 return Results.NotFound(new { error = "Device not registered." });
 
-            var (version, sizeBytes) = personalDbBuilder.GetVersion(deviceId);
+            var accountId = metaDb.GetAccountForDevice(deviceId);
+            if (accountId is null)
+                return Results.NotFound(new { error = "No account registered for this device." });
+
+            var (version, sizeBytes) = personalDbBuilder.GetVersion(accountId, deviceId);
             return Results.Ok(new
             {
                 deviceId,
@@ -245,7 +425,7 @@ public static class ApiEndpoints
             if (accountId is null)
                 return Results.NotFound(new { error = "No account registered for this device." });
 
-            var dbPath = personalDbBuilder.GetPersonalDbPath(deviceId);
+            var dbPath = personalDbBuilder.GetPersonalDbPath(accountId, deviceId);
             if (!File.Exists(dbPath))
             {
                 // Build on demand if not yet generated
@@ -306,7 +486,8 @@ public static class ApiEndpoints
             int? fromIndex,
             string? findTeams,
             int? page,
-            int? rank) =>
+            int? rank,
+            string? teamAccountIds) =>
         {
             gameId ??= "FNFestival";
             var accessToken = await tokenManager.GetAccessTokenAsync();
@@ -328,7 +509,10 @@ public static class ApiEndpoints
 
                 var qsStr = string.Join("&", qs);
                 var url = $"https://events-public-service-live.ol.epicgames.com/api/v2/games/{gameId}/leaderboards/{eventId}/{windowId}/scores?{qsStr}";
-                var body = new System.Net.Http.StringContent("{\"teams\":[]}", System.Text.Encoding.UTF8, "application/json");
+                var teamsJson = string.IsNullOrEmpty(teamAccountIds)
+                    ? "{\"teams\":[]}"
+                    : $"{{\"teams\":[[\"{teamAccountIds}\"]]}}";
+                var body = new System.Net.Http.StringContent(teamsJson, System.Text.Encoding.UTF8, "application/json");
                 var req = new HttpRequestMessage(HttpMethod.Post, url);
                 req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
                 req.Content = body;
@@ -340,7 +524,8 @@ public static class ApiEndpoints
             {
                 var p = page ?? 0;
                 var r = rank ?? 0;
-                var url = $"https://events-public-service-live.ol.epicgames.com/api/v1/leaderboards/{gameId}/{eventId}/{windowId}/{accountId}?page={p}&rank={r}&appId=Fortnite&showLiveSessions=false";
+                var teamPart = string.IsNullOrEmpty(teamAccountIds) ? "" : $"&teamAccountIds={teamAccountIds}";
+                var url = $"https://events-public-service-live.ol.epicgames.com/api/v1/leaderboards/{gameId}/{eventId}/{windowId}/{accountId}?page={p}&rank={r}{teamPart}&appId=Fortnite&showLiveSessions=false";
                 var req = new HttpRequestMessage(HttpMethod.Get, url);
                 req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
                 var res = await http.SendAsync(req);
@@ -359,5 +544,5 @@ public static class ApiEndpoints
 public sealed class RegisterRequest
 {
     public string DeviceId { get; set; } = "";
-    public string AccountId { get; set; } = "";
+    public string Username { get; set; } = "";
 }

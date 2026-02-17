@@ -43,7 +43,7 @@ public sealed class UserAuthServiceTests : IDisposable
         var festivalService = new FortniteFestival.Core.Services.FestivalService();
 
         _personalDbBuilder = new PersonalDbBuilder(
-            glp, festivalService, _dataDir,
+            glp, festivalService, _metaFixture.Db, _dataDir,
             NullLogger<PersonalDbBuilder>.Instance);
     }
 

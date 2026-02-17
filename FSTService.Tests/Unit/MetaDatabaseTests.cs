@@ -164,6 +164,8 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.False(entry.IsFullCombo);
         Assert.Equal(5, entry.Stars);
         Assert.Equal(3, entry.Season);
+        Assert.Null(entry.SeasonRank);
+        Assert.Null(entry.AllTimeRank);
     }
 
     [Fact]
@@ -174,6 +176,22 @@ public sealed class MetaDatabaseTests : IDisposable
 
         var history = Db.GetScoreHistory("acct_1", limit: 3);
         Assert.Equal(3, history.Count);
+    }
+
+    [Fact]
+    public void InsertScoreChange_roundtrips_SeasonRank_and_AllTimeRank()
+    {
+        Db.InsertScoreChange("song_1", "Solo_Guitar", "acct_1", null, 200_000, null, 50,
+            accuracy: 90, isFullCombo: true, stars: 5, percentile: 98.0, season: 10,
+            scoreAchievedAt: "2025-06-01T00:00:00Z",
+            seasonRank: 742, allTimeRank: 9989);
+
+        var history = Db.GetScoreHistory("acct_1");
+        Assert.Single(history);
+
+        var entry = history[0];
+        Assert.Equal(742, entry.SeasonRank);
+        Assert.Equal(9989, entry.AllTimeRank);
     }
 
     // ═══ UserSessions ═══════════════════════════════════════════

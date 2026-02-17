@@ -53,12 +53,20 @@ public class GlobalLeaderboardScraper
     private readonly HttpClient _http;
     private readonly ILogger<GlobalLeaderboardScraper> _log;
     private readonly ScrapeProgressTracker _progress;
+    private readonly ResilientHttpExecutor _executor;
+    private readonly int _maxLookupRetries;
 
-    public GlobalLeaderboardScraper(HttpClient http, ScrapeProgressTracker progress, ILogger<GlobalLeaderboardScraper> log)
+    public GlobalLeaderboardScraper(
+        HttpClient http,
+        ScrapeProgressTracker progress,
+        ILogger<GlobalLeaderboardScraper> log,
+        int maxLookupRetries = ResilientHttpExecutor.DefaultMaxRetries)
     {
         _http = http;
         _progress = progress;
         _log = log;
+        _maxLookupRetries = maxLookupRetries;
+        _executor = new ResilientHttpExecutor(http, log);
     }
 
     /// <summary>
@@ -78,9 +86,8 @@ public class GlobalLeaderboardScraper
 
     /// <summary>
     /// Fetch a specific player's leaderboard entry for one song + instrument
-    /// by including <c>teamAccountIds</c> in the request. This jumps directly
-    /// to the page containing that player — a single HTTP request regardless
-    /// of leaderboard size.  Returns null if the player has no entry.
+    /// using the V2 POST API with <c>teams</c> body. Returns the player's entry
+    /// or null if the player has no score. Throws on API errors.
     /// </summary>
     public async Task<LeaderboardEntry?> LookupAccountAsync(
         string songId,
@@ -88,11 +95,12 @@ public class GlobalLeaderboardScraper
         string targetAccountId,
         string accessToken,
         string callerAccountId,
+        AdaptiveConcurrencyLimiter? limiter = null,
         CancellationToken ct = default)
     {
         return await LookupAccountInWindowAsync(
             songId, instrument, "alltime", targetAccountId,
-            accessToken, callerAccountId, ct);
+            accessToken, callerAccountId, limiter, ct);
     }
 
     /// <summary>
@@ -107,15 +115,39 @@ public class GlobalLeaderboardScraper
         string targetAccountId,
         string accessToken,
         string callerAccountId,
+        AdaptiveConcurrencyLimiter? limiter = null,
         CancellationToken ct = default)
     {
         return await LookupAccountInWindowAsync(
             songId, instrument, windowId, targetAccountId,
-            accessToken, callerAccountId, ct);
+            accessToken, callerAccountId, limiter, ct);
     }
 
     /// <summary>
-    /// Internal helper: fetch a player's entry in a specific window (alltime or seasonal).
+    /// Fetch ALL sessions from a player's <c>sessionHistory</c> for one song + instrument
+    /// in a specific seasonal window. Returns every individual run/play, not just the best.
+    /// Returns null if the player has no entry in that season.
+    /// </summary>
+    public async Task<List<SessionHistoryEntry>?> LookupSeasonalSessionsAsync(
+        string songId,
+        string instrument,
+        string windowId,
+        string targetAccountId,
+        string accessToken,
+        string callerAccountId,
+        AdaptiveConcurrencyLimiter? limiter = null,
+        CancellationToken ct = default)
+    {
+        return await LookupAllSessionsInWindowAsync(
+            songId, instrument, windowId, targetAccountId,
+            accessToken, callerAccountId, limiter, ct);
+    }
+
+    /// <summary>
+    /// Internal helper: fetch a player's entry in a specific window (alltime or seasonal)
+    /// using the V2 POST API with <c>teams</c> body to jump directly to the player's entry.
+    /// Uses <see cref="ResilientHttpExecutor"/> for automatic retry on transient failures.
+    /// Returns null only when the player genuinely has no entry.
     /// </summary>
     private async Task<LeaderboardEntry?> LookupAccountInWindowAsync(
         string songId,
@@ -124,30 +156,203 @@ public class GlobalLeaderboardScraper
         string targetAccountId,
         string accessToken,
         string callerAccountId,
+        AdaptiveConcurrencyLimiter? limiter,
         CancellationToken ct)
     {
-        var url = $"{EventsBase}/api/v1/leaderboards/FNFestival/alltime_{songId}_{instrument}" +
-                  $"/{windowId}/{callerAccountId}?page=0&rank=0" +
-                  $"&teamAccountIds={targetAccountId}&appId=Fortnite&showLiveSessions=false";
+        using var res = await SendV2LookupWithRetryAsync(
+            songId, instrument, windowId, targetAccountId,
+            accessToken, callerAccountId, limiter, ct);
 
-        var req = new HttpRequestMessage(HttpMethod.Get, url);
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-
-        var res = await _http.SendAsync(req, ct);
-        if (!res.IsSuccessStatusCode)
-        {
-            _log.LogWarning("Account lookup failed for {Account} on {Song}/{Instrument}: {Status}",
-                targetAccountId, songId, instrument, res.StatusCode);
-            return null;
-        }
+        if (res is null) return null; // no_score_found
 
         await using var stream = await res.Content.ReadAsStreamAsync(ct);
-        var parsed = await ParsePageAsync(stream, ct);
-        if (parsed is null) return null;
+        var entries = await ParseV2ResponseAsync(stream, ct);
+        if (entries is null || entries.Count == 0) return null;
 
-        // Find the specific account in the returned page
-        return parsed.Entries.FirstOrDefault(e =>
+        // Find the specific account in the returned entries
+        return entries.FirstOrDefault(e =>
             e.AccountId.Equals(targetAccountId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Internal helper: fetch ALL sessions from a player's <c>sessionHistory</c>
+    /// in a specific window. Same HTTP call as <see cref="LookupAccountInWindowAsync"/>
+    /// but returns every session, not just the best.
+    /// Uses <see cref="ResilientHttpExecutor"/> for automatic retry on transient failures.
+    /// </summary>
+    private async Task<List<SessionHistoryEntry>?> LookupAllSessionsInWindowAsync(
+        string songId,
+        string instrument,
+        string windowId,
+        string targetAccountId,
+        string accessToken,
+        string callerAccountId,
+        AdaptiveConcurrencyLimiter? limiter,
+        CancellationToken ct)
+    {
+        using var res = await SendV2LookupWithRetryAsync(
+            songId, instrument, windowId, targetAccountId,
+            accessToken, callerAccountId, limiter, ct);
+
+        if (res is null) return null; // no_score_found
+
+        await using var stream = await res.Content.ReadAsStreamAsync(ct);
+        return await ParseV2AllSessionsResponseAsync(stream, targetAccountId, ct);
+    }
+
+    /// <summary>
+    /// Shared V2 lookup: builds URL, sends POST with retry, handles no_score_found.
+    /// Returns the <see cref="HttpResponseMessage"/> on success, null on no_score_found,
+    /// or throws on non-retryable errors after retries are exhausted.
+    /// </summary>
+    private async Task<HttpResponseMessage?> SendV2LookupWithRetryAsync(
+        string songId,
+        string instrument,
+        string windowId,
+        string targetAccountId,
+        string accessToken,
+        string callerAccountId,
+        AdaptiveConcurrencyLimiter? limiter,
+        CancellationToken ct)
+    {
+        // V2 URL format: /api/v2/games/{gameId}/leaderboards/{eventId}/{windowId}/scores
+        var eventId = windowId == "alltime"
+            ? $"alltime_{songId}_{instrument}"        // alltime event format
+            : $"{windowId}_{songId}";                  // seasonal: "season_N_{su}"
+        var v2WindowId = windowId == "alltime"
+            ? "alltime"                                // alltime window is just "alltime"
+            : $"{songId}_{instrument}";                // seasonal: "{su}_{type}"
+
+        var url = $"{EventsBase}/api/v2/games/FNFestival/leaderboards/{eventId}/{v2WindowId}/scores" +
+                  $"?accountId={callerAccountId}&fromIndex=0";
+
+        var teamsJson = $"{{\"teams\":[[\"{targetAccountId}\"]]}}";
+        var label = $"{songId}/{instrument}/{windowId}";
+
+        HttpRequestMessage CreateRequest()
+        {
+            var req = new HttpRequestMessage(HttpMethod.Post, url);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            req.Content = new StringContent(teamsJson, System.Text.Encoding.UTF8, "application/json");
+            return req;
+        }
+
+        var res = await _executor.SendAsync(CreateRequest, limiter, label, _maxLookupRetries, ct);
+
+        if (!res.IsSuccessStatusCode)
+        {
+            var body = await res.Content.ReadAsStringAsync(ct);
+
+            // "no_score_found" means the leaderboard exists but the player has
+            // no entry — that's a valid "not found" result, not an error.
+            if (body.Contains("no_score_found", StringComparison.Ordinal))
+            {
+                _log.LogDebug("No score for {Account} on {Song}/{Instrument} (no_score_found).",
+                    targetAccountId, songId, instrument);
+                res.Dispose();
+                return null;
+            }
+
+            _log.LogWarning("Account lookup failed for {Account} on {Song}/{Instrument}: {Status} {Body}",
+                targetAccountId, songId, instrument, res.StatusCode, body);
+            res.Dispose();
+            throw new HttpRequestException(
+                $"Account lookup returned {res.StatusCode} for {songId}/{instrument}",
+                null, res.StatusCode);
+        }
+
+        return res;
+    }
+
+    /// <summary>
+    /// Parse a V2 response and extract ALL individual sessions from the target account's
+    /// <c>sessionHistory</c> array. Each session becomes a separate <see cref="SessionHistoryEntry"/>.
+    /// </summary>
+    internal static async Task<List<SessionHistoryEntry>?> ParseV2AllSessionsResponseAsync(
+        Stream stream, string targetAccountId, CancellationToken ct)
+    {
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            var root = doc.RootElement;
+
+            if (root.ValueKind != JsonValueKind.Array)
+                return null;
+
+            foreach (var e in root.EnumerateArray())
+            {
+                // Find the target account
+                string accountId = "";
+                if (e.TryGetProperty("teamId", out var tid) && tid.ValueKind == JsonValueKind.String)
+                    accountId = tid.GetString()!;
+                else if (e.TryGetProperty("team_id", out var tid2) && tid2.ValueKind == JsonValueKind.String)
+                    accountId = tid2.GetString()!;
+
+                if (!accountId.Equals(targetAccountId, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                int rank = 0;
+                double percentile = 0;
+                if (e.TryGetProperty("rank", out var rk) && rk.ValueKind == JsonValueKind.Number)
+                    rank = rk.GetInt32();
+                if (e.TryGetProperty("percentile", out var pct) && pct.ValueKind == JsonValueKind.Number)
+                    percentile = pct.GetDouble();
+
+                return ParseAllSessionsFromEntry(e, accountId, rank, percentile);
+            }
+
+            return null; // target account not found
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Extract every session from a single entry's <c>sessionHistory</c> array.
+    /// </summary>
+    internal static List<SessionHistoryEntry> ParseAllSessionsFromEntry(
+        JsonElement entry, string accountId, int rank, double percentile)
+    {
+        var sessions = new List<SessionHistoryEntry>();
+
+        if (!entry.TryGetProperty("sessionHistory", out var sh) || sh.ValueKind != JsonValueKind.Array)
+            return sessions;
+
+        foreach (var session in sh.EnumerateArray())
+        {
+            if (!session.TryGetProperty("trackedStats", out var ts) || ts.ValueKind != JsonValueKind.Object)
+                continue;
+
+            int score = ts.TryGetProperty("SCORE", out var sc) && sc.ValueKind == JsonValueKind.Number
+                ? sc.GetInt32() : 0;
+            int accuracy = ts.TryGetProperty("ACCURACY", out var ac) && ac.ValueKind == JsonValueKind.Number
+                ? ac.GetInt32() : 0;
+            int fullCombo = ts.TryGetProperty("FULL_COMBO", out var fc) && fc.ValueKind == JsonValueKind.Number
+                ? fc.GetInt32() : 0;
+            int stars = ts.TryGetProperty("STARS_EARNED", out var se) && se.ValueKind == JsonValueKind.Number
+                ? se.GetInt32() : 0;
+            int season = ts.TryGetProperty("SEASON", out var sn) && sn.ValueKind == JsonValueKind.Number
+                ? sn.GetInt32() : 0;
+            string? endTime = session.TryGetProperty("endTime", out var et) && et.ValueKind == JsonValueKind.String
+                ? et.GetString() : null;
+
+            sessions.Add(new SessionHistoryEntry
+            {
+                AccountId = accountId,
+                Rank = rank,
+                Percentile = percentile,
+                Score = score,
+                Accuracy = accuracy,
+                IsFullCombo = fullCombo == 1,
+                Stars = stars,
+                Season = season,
+                EndTime = endTime,
+            });
+        }
+
+        return sessions;
     }
 
     /// <summary>
@@ -167,7 +372,7 @@ public class GlobalLeaderboardScraper
         var tasks = instList.Select(async inst =>
         {
             var entry = await LookupAccountAsync(
-                songId, inst, targetAccountId, accessToken, callerAccountId, ct);
+                songId, inst, targetAccountId, accessToken, callerAccountId, ct: ct);
             return (Instrument: inst, Entry: entry);
         }).ToList();
 
@@ -532,62 +737,7 @@ public class GlobalLeaderboardScraper
             {
                 foreach (var e in entArr.EnumerateArray())
                 {
-                    var entry = new LeaderboardEntry();
-
-                    // Account ID (team_id or teamId)
-                    if (e.TryGetProperty("teamId", out var tid) && tid.ValueKind == JsonValueKind.String)
-                        entry.AccountId = tid.GetString()!;
-                    else if (e.TryGetProperty("team_id", out var tid2) && tid2.ValueKind == JsonValueKind.String)
-                        entry.AccountId = tid2.GetString()!;
-
-                    if (e.TryGetProperty("rank", out var rk) && rk.ValueKind == JsonValueKind.Number)
-                        entry.Rank = rk.GetInt32();
-                    if (e.TryGetProperty("percentile", out var pct) && pct.ValueKind == JsonValueKind.Number)
-                        entry.Percentile = pct.GetDouble();
-
-                    // Parse sessionHistory → trackedStats for the best score
-                    if (e.TryGetProperty("sessionHistory", out var sh) && sh.ValueKind == JsonValueKind.Array)
-                    {
-                        int bestScore = 0;
-                        int bestAccuracy = 0;
-                        int bestFullCombo = 0;
-                        int bestStars = 0;
-                        int bestSeason = 0;
-                        string? bestEndTime = null;
-
-                        foreach (var session in sh.EnumerateArray())
-                        {
-                            if (!session.TryGetProperty("trackedStats", out var ts) || ts.ValueKind != JsonValueKind.Object)
-                                continue;
-
-                            int score = ts.TryGetProperty("SCORE", out var sc) && sc.ValueKind == JsonValueKind.Number
-                                ? sc.GetInt32() : 0;
-
-                            if (score > bestScore)
-                            {
-                                bestScore = score;
-                                bestAccuracy = ts.TryGetProperty("ACCURACY", out var ac) && ac.ValueKind == JsonValueKind.Number
-                                    ? ac.GetInt32() : 0;
-                                bestFullCombo = ts.TryGetProperty("FULL_COMBO", out var fc) && fc.ValueKind == JsonValueKind.Number
-                                    ? fc.GetInt32() : 0;
-                                bestStars = ts.TryGetProperty("STARS_EARNED", out var se) && se.ValueKind == JsonValueKind.Number
-                                    ? se.GetInt32() : 0;
-                                bestSeason = ts.TryGetProperty("SEASON", out var sn) && sn.ValueKind == JsonValueKind.Number
-                                    ? sn.GetInt32() : 0;
-                                bestEndTime = session.TryGetProperty("endTime", out var et) && et.ValueKind == JsonValueKind.String
-                                    ? et.GetString() : null;
-                            }
-                        }
-
-                        entry.Score = bestScore;
-                        entry.Accuracy = bestAccuracy;
-                        entry.IsFullCombo = bestFullCombo == 1;
-                        entry.Stars = bestStars;
-                        entry.Season = bestSeason;
-                        entry.EndTime = bestEndTime;
-                    }
-
-                    entries.Add(entry);
+                    entries.Add(ParseEntryElement(e));
                 }
             }
 
@@ -607,6 +757,95 @@ public class GlobalLeaderboardScraper
         public List<LeaderboardEntry> Entries { get; init; } = [];
         public int EstimatedBytes { get; init; }
     }
+
+    /// <summary>
+    /// Parse a V2 leaderboard response, which is a flat JSON array of entry objects
+    /// (unlike V1 which wraps entries in <c>{"entries": [...]}</c>).
+    /// </summary>
+    private static async Task<List<LeaderboardEntry>?> ParseV2ResponseAsync(Stream stream, CancellationToken ct)
+    {
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            var root = doc.RootElement;
+
+            if (root.ValueKind != JsonValueKind.Array)
+                return null;
+
+            var entries = new List<LeaderboardEntry>();
+            foreach (var e in root.EnumerateArray())
+            {
+                var entry = ParseEntryElement(e);
+                entries.Add(entry);
+            }
+            return entries;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Parse a single leaderboard entry JSON element (shared between V1 and V2 parsers).
+    /// </summary>
+    private static LeaderboardEntry ParseEntryElement(JsonElement e)
+    {
+        var entry = new LeaderboardEntry();
+
+        if (e.TryGetProperty("teamId", out var tid) && tid.ValueKind == JsonValueKind.String)
+            entry.AccountId = tid.GetString()!;
+        else if (e.TryGetProperty("team_id", out var tid2) && tid2.ValueKind == JsonValueKind.String)
+            entry.AccountId = tid2.GetString()!;
+
+        if (e.TryGetProperty("rank", out var rk) && rk.ValueKind == JsonValueKind.Number)
+            entry.Rank = rk.GetInt32();
+        if (e.TryGetProperty("percentile", out var pct) && pct.ValueKind == JsonValueKind.Number)
+            entry.Percentile = pct.GetDouble();
+
+        if (e.TryGetProperty("sessionHistory", out var sh) && sh.ValueKind == JsonValueKind.Array)
+        {
+            int bestScore = 0;
+            int bestAccuracy = 0;
+            int bestFullCombo = 0;
+            int bestStars = 0;
+            int bestSeason = 0;
+            string? bestEndTime = null;
+
+            foreach (var session in sh.EnumerateArray())
+            {
+                if (!session.TryGetProperty("trackedStats", out var ts) || ts.ValueKind != JsonValueKind.Object)
+                    continue;
+
+                int score = ts.TryGetProperty("SCORE", out var sc) && sc.ValueKind == JsonValueKind.Number
+                    ? sc.GetInt32() : 0;
+
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestAccuracy = ts.TryGetProperty("ACCURACY", out var ac) && ac.ValueKind == JsonValueKind.Number
+                        ? ac.GetInt32() : 0;
+                    bestFullCombo = ts.TryGetProperty("FULL_COMBO", out var fc) && fc.ValueKind == JsonValueKind.Number
+                        ? fc.GetInt32() : 0;
+                    bestStars = ts.TryGetProperty("STARS_EARNED", out var se) && se.ValueKind == JsonValueKind.Number
+                        ? se.GetInt32() : 0;
+                    bestSeason = ts.TryGetProperty("SEASON", out var sn) && sn.ValueKind == JsonValueKind.Number
+                        ? sn.GetInt32() : 0;
+                    bestEndTime = session.TryGetProperty("endTime", out var et) && et.ValueKind == JsonValueKind.String
+                        ? et.GetString() : null;
+                }
+            }
+
+            entry.Score = bestScore;
+            entry.Accuracy = bestAccuracy;
+            entry.IsFullCombo = bestFullCombo == 1;
+            entry.Stars = bestStars;
+            entry.Season = bestSeason;
+            entry.EndTime = bestEndTime;
+        }
+
+        return entry;
+    }
 }
 
 // ─── Models ──────────────────────────────────────
@@ -625,6 +864,24 @@ public sealed class LeaderboardEntry
     public int Stars { get; set; }
     public int Season { get; set; }
     /// <summary>ISO 8601 timestamp when the best session ended (from API's endTime field). Null when not available.</summary>
+    public string? EndTime { get; set; }
+}
+
+/// <summary>
+/// A single session from a player's <c>sessionHistory</c> array.
+/// Each session represents one play/run of the song in that leaderboard window.
+/// </summary>
+public sealed class SessionHistoryEntry
+{
+    public string AccountId { get; set; } = "";
+    public int Rank { get; set; }
+    public double Percentile { get; set; }
+    public int Score { get; set; }
+    public int Accuracy { get; set; }
+    public bool IsFullCombo { get; set; }
+    public int Stars { get; set; }
+    public int Season { get; set; }
+    /// <summary>ISO 8601 timestamp when the session ended.</summary>
     public string? EndTime { get; set; }
 }
 

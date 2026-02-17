@@ -57,6 +57,10 @@ public sealed class ScoreHistoryEntry
     public int? Season { get; init; }
     /// <summary>ISO 8601 timestamp when the session ended (from Epic API). Null for legacy or live-detected entries.</summary>
     public string? ScoreAchievedAt { get; init; }
+    /// <summary>Player's rank on the seasonal leaderboard at the time of this score. Populated for history-reconstructed entries.</summary>
+    public int? SeasonRank { get; init; }
+    /// <summary>Player's rank on the all-time leaderboard at the time of this score. Populated for live-detected and backfill entries.</summary>
+    public int? AllTimeRank { get; init; }
     public string ChangedAt { get; init; } = "";
 }
 

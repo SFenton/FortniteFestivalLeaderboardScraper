@@ -46,7 +46,7 @@ public class ScoreBackfillerTests : IDisposable
         var http = new HttpClient(handler);
         var progress = new ScrapeProgressTracker();
         var scraperLog = Substitute.For<ILogger<GlobalLeaderboardScraper>>();
-        var scraper = new GlobalLeaderboardScraper(http, progress, scraperLog);
+        var scraper = new GlobalLeaderboardScraper(http, progress, scraperLog, maxLookupRetries: 0);
         var backfiller = new ScoreBackfiller(scraper, _persistence, _log);
         return (backfiller, handler);
     }
@@ -108,15 +108,12 @@ public class ScoreBackfillerTests : IDisposable
         // For each of the 6 instruments, the scraper will do a lookup.
         // Make guitar return a score, everything else empty.
         var scoreJson = """
-        {
-            "page": 0, "totalPages": 1,
-            "entries": [{
-                "teamId": "acct1", "rank": 100, "percentile": 0.5,
-                "sessionHistory": [{ "trackedStats": { "SCORE": 50000, "ACCURACY": 90, "STARS_EARNED": 4, "FULL_COMBO": 0, "SEASON": 2 } }]
-            }]
-        }
+        [{
+            "teamId": "acct1", "rank": 100, "percentile": 0.5,
+            "sessionHistory": [{ "trackedStats": { "SCORE": 50000, "ACCURACY": 90, "STARS_EARNED": 4, "FULL_COMBO": 0, "SEASON": 2 } }]
+        }]
         """;
-        var emptyJson = """{"page":0,"totalPages":0,"entries":[]}""";
+        var emptyJson = """[]""";    
 
         // Queue responses for 6 instruments
         handler.EnqueueJsonOk(scoreJson);  // Solo_Guitar

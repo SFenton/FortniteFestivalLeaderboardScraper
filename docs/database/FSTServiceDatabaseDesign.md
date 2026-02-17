@@ -48,7 +48,7 @@ A single 10–20 GB SQLite file works in theory, but bulk UPSERTs across tens of
 |---|---|---|
 | File count | 1 | 6–9 (one per instrument) |
 | File size | 10–20 GB | ~1.5–3 GB each |
-| Parallel writes during scrape | No (single writer lock) | Yes (no cross-file contention) |
+| Parallel writes during scrape | No (single writer lock) | Yes (no cross-file contention; `_writeLock` per DB prevents nested transactions) |
 | Adding new instruments | Schema migration | Create a new file |
 | Cross-song queries (within instrument) | Simple | Simple (same DB) |
 | Cross-instrument queries | Simple | ATTACH (SQLite supports up to 10 attached DBs) |
@@ -58,14 +58,20 @@ A single 10–20 GB SQLite file works in theory, but bulk UPSERTs across tens of
 
 ```
 data/
-  fst-meta.db                       ← Small: ScrapeLog, ScoreHistory, AccountNames, RegisteredUsers
+  fst-meta.db                       ← ScrapeLog, ScoreHistory, AccountNames, RegisteredUsers,
+                                      UserSessions, BackfillStatus, BackfillProgress,
+                                      HistoryReconStatus, HistoryReconProgress,
+                                      SeasonWindows, SongFirstSeenSeason
   fst-Solo_Guitar.db                ← LeaderboardEntries for Guitar
   fst-Solo_Bass.db                  ← LeaderboardEntries for Bass
   fst-Solo_Drums.db                 ← LeaderboardEntries for Drums
   fst-Solo_Vocals.db                ← LeaderboardEntries for Vocals
   fst-Solo_PeripheralGuitar.db      ← LeaderboardEntries for ProGuitar
   fst-Solo_PeripheralBass.db        ← LeaderboardEntries for ProBass
-  fst-service.db                    ← Existing Core persistence (Songs catalog, personal scores)
+  fst-service.db                    ← Core persistence (Songs catalog, personal Scores)
+  personal/                         ← Per-user personal DBs for mobile sync
+    {accountId}/
+      {deviceId}.db                 ← Songs, Scores, ScoreHistory for one user/device
 ```
 
 New instruments (7/8/9) simply add new `fst-Solo_*.db` files with the same schema. No migrations needed on existing files.
@@ -86,45 +92,45 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE LeaderboardEntries (
     SongId        TEXT    NOT NULL,
     AccountId     TEXT    NOT NULL,
-    Rank          INTEGER NOT NULL,
     Score         INTEGER NOT NULL,
     Accuracy      INTEGER,
     IsFullCombo   INTEGER,       -- 0/1
     Stars         INTEGER,
     Season        INTEGER,
     Percentile    REAL,
-    PointsEarned  INTEGER,
+    EndTime       TEXT,           -- ISO 8601, when the score was set (from Epic API)
     FirstSeenAt   TEXT    NOT NULL,  -- ISO 8601, set on INSERT
     LastUpdatedAt TEXT    NOT NULL,  -- ISO 8601, updated on every UPSERT
     PRIMARY KEY (SongId, AccountId)
 );
 
--- Leaderboard view: all entries for a song, ordered by rank
-CREATE INDEX IX_Song ON LeaderboardEntries (SongId, Rank);
+-- Leaderboard view: all entries for a song, ordered by score
+CREATE INDEX IX_Song ON LeaderboardEntries (SongId, Score DESC);
 
 -- Player profile: all of a player's entries across songs
 CREATE INDEX IX_Account ON LeaderboardEntries (AccountId);
 ```
 
+**Concurrency**: Each `InstrumentDatabase` holds a `_writeLock` object. The `UpsertEntries` method wraps its transaction in `lock (_writeLock)` to prevent nested SQLite transactions when parallel backfill tasks write to the same instrument DB.
+
 **UPSERT pattern:**
 ```sql
-INSERT INTO LeaderboardEntries (SongId, AccountId, Rank, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, PointsEarned, FirstSeenAt, LastUpdatedAt)
-VALUES (@songId, @accountId, @rank, @score, @accuracy, @fc, @stars, @season, @pct, @points, @now, @now)
+INSERT INTO LeaderboardEntries (SongId, AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime, FirstSeenAt, LastUpdatedAt)
+VALUES (@songId, @accountId, @score, @accuracy, @fc, @stars, @season, @pct, @endTime, @now, @now)
 ON CONFLICT(SongId, AccountId) DO UPDATE SET
-    Rank = excluded.Rank,
     Score = excluded.Score,
     Accuracy = excluded.Accuracy,
     IsFullCombo = excluded.IsFullCombo,
     Stars = excluded.Stars,
     Season = excluded.Season,
     Percentile = excluded.Percentile,
-    PointsEarned = excluded.PointsEarned,
+    EndTime = excluded.EndTime,
     LastUpdatedAt = excluded.LastUpdatedAt;
 ```
 
 ### Meta DB (`fst-meta.db`)
 
-Central small database for cross-cutting concerns.
+Central database for cross-cutting concerns. Contains 11 tables.
 
 ```sql
 PRAGMA journal_mode = WAL;
@@ -146,19 +152,45 @@ CREATE TABLE ScrapeLog (
 -- ─── Score change history (all instruments) ─────────
 
 CREATE TABLE ScoreHistory (
-    Id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    SongId      TEXT    NOT NULL,
-    Instrument  TEXT    NOT NULL,  -- e.g. "Solo_Guitar"
-    AccountId   TEXT    NOT NULL,
-    OldScore    INTEGER,
-    NewScore    INTEGER,
-    OldRank     INTEGER,
-    NewRank     INTEGER,
-    ChangedAt   TEXT    NOT NULL   -- ISO 8601
+    Id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    SongId          TEXT    NOT NULL,
+    Instrument      TEXT    NOT NULL,  -- e.g. "Solo_Guitar"
+    AccountId       TEXT    NOT NULL,
+    OldScore        INTEGER,
+    NewScore        INTEGER,
+    OldRank         INTEGER,
+    NewRank         INTEGER,
+    ChangedAt       TEXT    NOT NULL,  -- ISO 8601 (when the row was written)
+    Accuracy        INTEGER,          -- accuracy × 100 (e.g. 9700 = 97.00%)
+    IsFullCombo     INTEGER,          -- 0 or 1
+    Stars           INTEGER,
+    Percentile      REAL,
+    Season          INTEGER,          -- estimated season number
+    ScoreAchievedAt TEXT,             -- ISO 8601 (endTime from Epic API — when the score was set)
+    SeasonRank      INTEGER,          -- rank from seasonal leaderboard (populated by HistoryReconstructor)
+    AllTimeRank     INTEGER           -- rank from alltime leaderboard (populated by ScoreBackfiller/PostScrapeRefresher/GlobalLeaderboardPersistence)
 );
 
 CREATE INDEX IX_ScoreHist_Account ON ScoreHistory (AccountId);
 CREATE INDEX IX_ScoreHist_Song    ON ScoreHistory (SongId, Instrument);
+
+-- Deduplication: same score on the same song/instrument at the same time is one event,
+-- even if discovered by multiple sources (HistoryReconstructor vs ScoreBackfiller).
+-- The UPSERT merges rank columns from different sources via COALESCE.
+CREATE UNIQUE INDEX IX_ScoreHist_Dedup ON ScoreHistory
+    (AccountId, SongId, Instrument, NewScore, ScoreAchievedAt);
+
+-- INSERT uses ON CONFLICT(AccountId, SongId, Instrument, NewScore, ScoreAchievedAt) DO UPDATE SET
+--   SeasonRank  = COALESCE(excluded.SeasonRank,  ScoreHistory.SeasonRank),
+--   AllTimeRank = COALESCE(excluded.AllTimeRank, ScoreHistory.AllTimeRank),
+--   OldScore    = COALESCE(excluded.OldScore,    ScoreHistory.OldScore),
+--   OldRank     = COALESCE(excluded.OldRank,     ScoreHistory.OldRank),
+--   ChangedAt   = excluded.ChangedAt
+
+-- Rank semantics:
+--   SeasonRank  — Final rank on the seasonal leaderboard. Note: Epic returns one rank per
+--                 player per season, so all entries within a season show the same (final) rank.
+--   AllTimeRank — Rank on the alltime leaderboard at the time of lookup. Point-in-time.
 
 -- ─── Display name cache ─────────────────────────────
 
@@ -175,15 +207,220 @@ CREATE TABLE RegisteredUsers (
     AccountId    TEXT NOT NULL,
     RegisteredAt TEXT NOT NULL,    -- ISO 8601
     LastSyncAt   TEXT,             -- ISO 8601, NULL until first sync
+    DisplayName  TEXT,             -- cached Epic display name (migrated)
+    Platform     TEXT,             -- e.g. "ios", "android", "windows" (migrated)
+    LastLoginAt  TEXT,             -- ISO 8601 (migrated)
     PRIMARY KEY (DeviceId, AccountId)
 );
 
 CREATE INDEX IX_Reg_Account ON RegisteredUsers (AccountId);
+
+-- ─── User authentication sessions ───────────────────
+
+CREATE TABLE UserSessions (
+    Id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    Username         TEXT    NOT NULL,
+    DeviceId         TEXT    NOT NULL,
+    RefreshTokenHash TEXT    NOT NULL UNIQUE,
+    Platform         TEXT,
+    IssuedAt         TEXT    NOT NULL,   -- ISO 8601
+    ExpiresAt        TEXT    NOT NULL,   -- ISO 8601
+    LastRefreshedAt  TEXT,               -- ISO 8601
+    RevokedAt        TEXT                -- ISO 8601, NULL if active
+);
+
+CREATE INDEX IX_Sessions_Username ON UserSessions (Username);
+CREATE INDEX IX_Sessions_Token    ON UserSessions (RefreshTokenHash) WHERE RevokedAt IS NULL;
+
+-- ─── Score backfill tracking ────────────────────────
+
+CREATE TABLE BackfillStatus (
+    AccountId         TEXT    PRIMARY KEY,
+    Status            TEXT    NOT NULL DEFAULT 'pending',  -- pending/in_progress/complete/failed
+    SongsChecked      INTEGER NOT NULL DEFAULT 0,
+    EntriesFound      INTEGER NOT NULL DEFAULT 0,
+    TotalSongsToCheck INTEGER NOT NULL DEFAULT 0,
+    StartedAt         TEXT,
+    CompletedAt       TEXT,
+    LastResumedAt     TEXT,
+    ErrorMessage      TEXT
+);
+
+CREATE TABLE BackfillProgress (
+    AccountId   TEXT    NOT NULL,
+    SongId      TEXT    NOT NULL,
+    Instrument  TEXT    NOT NULL,
+    Checked     INTEGER NOT NULL DEFAULT 0,  -- 0/1
+    EntryFound  INTEGER NOT NULL DEFAULT 0,  -- 0/1
+    CheckedAt   TEXT,
+    PRIMARY KEY (AccountId, SongId, Instrument)
+);
+
+CREATE INDEX IX_BfProgress_Account ON BackfillProgress (AccountId);
+
+-- ─── History reconstruction tracking ────────────────
+
+CREATE TABLE HistoryReconStatus (
+    AccountId             TEXT    PRIMARY KEY,
+    Status                TEXT    NOT NULL DEFAULT 'pending',  -- pending/in_progress/complete/failed
+    SongsProcessed        INTEGER NOT NULL DEFAULT 0,
+    TotalSongsToProcess   INTEGER NOT NULL DEFAULT 0,
+    SeasonsQueried        INTEGER NOT NULL DEFAULT 0,
+    HistoryEntriesFound   INTEGER NOT NULL DEFAULT 0,
+    StartedAt             TEXT,
+    CompletedAt           TEXT,
+    ErrorMessage          TEXT
+);
+
+CREATE TABLE HistoryReconProgress (
+    AccountId   TEXT    NOT NULL,
+    SongId      TEXT    NOT NULL,
+    Instrument  TEXT    NOT NULL,
+    Processed   INTEGER NOT NULL DEFAULT 0,  -- 0/1
+    ProcessedAt TEXT,
+    PRIMARY KEY (AccountId, SongId, Instrument)
+);
+
+CREATE INDEX IX_HrProgress_Account ON HistoryReconProgress (AccountId);
+
+-- ─── Season window cache ────────────────────────────
+
+CREATE TABLE SeasonWindows (
+    SeasonNumber INTEGER PRIMARY KEY,
+    EventId      TEXT    NOT NULL,
+    WindowId     TEXT    NOT NULL,
+    DiscoveredAt TEXT    NOT NULL   -- ISO 8601
+);
+
+-- ─── Song first-seen season tracking ────────────────
+
+CREATE TABLE SongFirstSeenSeason (
+    SongId           TEXT    PRIMARY KEY,
+    FirstSeenSeason  INTEGER,           -- exact season if known
+    MinObservedSeason INTEGER,          -- earliest season with leaderboard data
+    EstimatedSeason  INTEGER NOT NULL,  -- best estimate (may be computed)
+    ProbeResult      TEXT,              -- raw probe result for debugging
+    CalculatedAt     TEXT    NOT NULL   -- ISO 8601
+);
 ```
 
-### Existing Core DB (`fst-service.db`)
+### Core Song Database (`fst-service.db`)
 
-Unchanged. Contains the `Songs` catalog and personal `Scores` table used by `FestivalService`. The scraper continues to use this for song catalog sync and initialization.
+Managed by `FortniteFestival.Core/Persistence/SqlitePersistence.cs`. Contains the song catalog synced from Epic's calendar API and personal scores from the legacy MAUI app flow.
+
+```sql
+CREATE TABLE Songs (
+    SongId           TEXT PRIMARY KEY,
+    Title            TEXT,
+    Artist           TEXT,
+    ActiveDate       TEXT,
+    LastModified     TEXT,
+    ImagePath        TEXT,
+    LeadDiff         INTEGER,
+    BassDiff         INTEGER,
+    VocalsDiff       INTEGER,
+    DrumsDiff        INTEGER,
+    ProLeadDiff      INTEGER,
+    ProBassDiff      INTEGER,
+    ReleaseYear      INTEGER,
+    Tempo            INTEGER,
+    PlasticGuitarDiff INTEGER,
+    PlasticBassDiff  INTEGER,
+    PlasticDrumsDiff INTEGER,
+    ProVocalsDiff    INTEGER
+);
+
+CREATE TABLE Scores (
+    SongId TEXT PRIMARY KEY,
+    -- Per-instrument columns (×6 instruments: Guitar, Drums, Bass, Vocals, ProGuitar, ProBass):
+    {Inst}Score      INTEGER,   -- highest score
+    {Inst}Diff       INTEGER,   -- song difficulty for this instrument
+    {Inst}Stars      INTEGER,   -- star rating achieved
+    {Inst}FC         INTEGER,   -- full combo (0/1)
+    {Inst}Pct        INTEGER,   -- accuracy percentage
+    {Inst}Season     INTEGER,   -- season the score was set
+    {Inst}Rank       INTEGER,   -- leaderboard rank
+    {Inst}Total      INTEGER,   -- total entries on leaderboard
+    {Inst}Percentile INTEGER,   -- percentile ranking
+    -- Aggregate columns:
+    {Inst}RawPct     REAL,      -- raw accuracy (×6)
+    {Inst}CalcTotal  INTEGER,   -- calculated total (×6)
+    FOREIGN KEY (SongId) REFERENCES Songs(SongId)
+);
+```
+
+The `Scores` table has 66 columns total (9 per instrument × 6 instruments + 12 aggregate columns).
+
+### Personal Databases (`data/personal/{accountId}/{deviceId}.db`)
+
+Per-user/device SQLite databases built by `PersonalDbBuilder.cs` for mobile app sync. Contains three tables:
+
+```sql
+-- Song catalog (identical to Core DB)
+CREATE TABLE Songs (
+    SongId           TEXT PRIMARY KEY,
+    Title            TEXT,
+    Artist           TEXT,
+    ActiveDate       TEXT,
+    LastModified     TEXT,
+    ImagePath        TEXT,
+    LeadDiff         INTEGER,
+    BassDiff         INTEGER,
+    VocalsDiff       INTEGER,
+    DrumsDiff        INTEGER,
+    ProLeadDiff      INTEGER,
+    ProBassDiff      INTEGER,
+    ReleaseYear      INTEGER,
+    Tempo            INTEGER,
+    PlasticGuitarDiff INTEGER,
+    PlasticBassDiff  INTEGER,
+    PlasticDrumsDiff INTEGER,
+    ProVocalsDiff    INTEGER
+);
+
+-- User's score change history (subset of meta DB ScoreHistory, without AccountId)
+CREATE TABLE ScoreHistory (
+    Id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    SongId      TEXT    NOT NULL,
+    Instrument  TEXT    NOT NULL,
+    OldScore    INTEGER,
+    NewScore    INTEGER,
+    OldRank     INTEGER,
+    NewRank     INTEGER,
+    Accuracy    INTEGER,
+    IsFullCombo INTEGER,
+    Stars       INTEGER,
+    Percentile  REAL,
+    Season      INTEGER,
+    ScoreAchievedAt TEXT,
+    SeasonRank  INTEGER,
+    AllTimeRank INTEGER,
+    ChangedAt   TEXT    NOT NULL
+);
+
+CREATE INDEX IX_ScoreHist_Song ON ScoreHistory (SongId, Instrument);
+
+-- User's best scores per song/instrument
+CREATE TABLE Scores (
+    SongId TEXT PRIMARY KEY,
+    -- Per-instrument columns (×6 instruments: Guitar, Drums, Bass, Vocals, ProGuitar, ProBass):
+    {Inst}Score    INTEGER,   -- highest score
+    {Inst}Diff     INTEGER,   -- song difficulty
+    {Inst}Stars    INTEGER,   -- star rating
+    {Inst}FC       INTEGER,   -- full combo (0/1)
+    {Inst}Pct      INTEGER,   -- accuracy percentage
+    {Inst}Season   INTEGER,   -- season the score was set
+    {Inst}Rank     INTEGER,   -- leaderboard rank
+    {Inst}GameDiff INTEGER,   -- game difficulty rating
+    -- Aggregate columns:
+    {Inst}Total    INTEGER,   -- total entries on leaderboard (×6)
+    {Inst}RawPct   REAL,      -- raw accuracy (×6)
+    {Inst}CalcTotal INTEGER,  -- calculated total (×6)
+    FOREIGN KEY (SongId) REFERENCES Songs(SongId)
+);
+```
+
+The Personal DB `Scores` table has 66 columns total (8 per instrument × 6 + 18 aggregate). Note: uses `{Inst}GameDiff` instead of Core DB's `{Inst}Percentile`.
 
 ---
 
@@ -280,7 +517,12 @@ Epic Login → account_id
 
 ### Personal DB
 
-A small (~1–2 MB) SQLite file containing only the registered user's scores across all songs/instruments — structurally similar to what the current MAUI app builds via direct API calls. Shipped whole (not deltas) since the file size is trivial.
+A small (~1–2 MB) SQLite file at `data/personal/{accountId}/{deviceId}.db` containing the registered user's data. Built by `PersonalDbBuilder.cs`. Shipped whole (not deltas) since the file size is trivial.
+
+Contains three tables:
+- **Songs** — Full song catalog (copied from `fst-service.db`)
+- **Scores** — User's best scores per song/instrument (from instrument DBs)
+- **ScoreHistory** — Full score change history (from `ScoreHistory` in meta DB), including `SeasonRank`, `AllTimeRank`, `Accuracy`, `IsFullCombo`, `Stars`, `Season`, `ScoreAchievedAt`
 
 ### API Endpoints (Future)
 
@@ -300,7 +542,7 @@ Polling is likely sufficient given the 4-hour scrape interval. The mobile app ch
 
 - [x] **Account name resolution strategy**: ~~Epic's display name API is rate-limited. Resolve during scrape? Batch job? On-demand for registered users only?~~ **DECIDED** — Post-pass batch. Collect all AccountIds during scrape, deduplicate, resolve new ones via Epic bulk lookup (100/request) after all UPSERTs complete. See Decisions section.
 - [x] **ScoreHistory retention**: ~~Prune after N days, or keep forever?~~ **DECIDED** — Keep forever. Only tracked for registered users, so volume is negligible. Even worst-case all-account tracking would be ~2–12 GB/year (decaying due to score ceilings). No pruning needed.
-- [ ] **Personal DB schema**: Match the existing MAUI `SqlitePersistence` schema exactly (Songs + Scores tables), or design a new optimized format?
+- [x] **Personal DB schema**: ~~Match the existing MAUI `SqlitePersistence` schema exactly (Songs + Scores tables), or design a new optimized format?~~ **DECIDED** — Three tables: Songs (full catalog), Scores (user's best per song/instrument), and ScoreHistory (full history with SeasonRank/AllTimeRank). Built by `PersonalDbBuilder.cs`.
 - [ ] **New instrument identifiers**: What will the API keys be for instruments 7/8/9? (Need to discover when they appear in the catalog.)
 - [x] **UPSERT batching**: ~~Use SQLite transactions wrapping N rows at a time for write performance? What batch size?~~ **DECIDED** — One transaction per song/instrument (up to 60K rows). See Decisions section.
 - [x] **ScoreHistory scope**: ~~Track all accounts, registered only, or skip?~~ **DECIDED** — Registered users only, score changes only, keep forever. No triggers/staging tables in instrument DBs. App code queries registered AccountIds after each UPSERT commit. See Decisions section.

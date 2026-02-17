@@ -44,7 +44,7 @@ public sealed class AuthFlowIntegrationTests : IDisposable
 
         var festivalService = new FortniteFestival.Core.Services.FestivalService();
         var personalDbBuilder = new PersonalDbBuilder(
-            glp, festivalService, _dataDir,
+            glp, festivalService, MetaDb, _dataDir,
             NullLogger<PersonalDbBuilder>.Instance);
 
         _authService = new UserAuthService(

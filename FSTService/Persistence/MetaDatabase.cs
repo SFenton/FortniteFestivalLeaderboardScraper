@@ -58,11 +58,14 @@ public sealed class MetaDatabase : IDisposable
                 Percentile  REAL,
                 Season      INTEGER,
                 ScoreAchievedAt TEXT,
+                SeasonRank  INTEGER,
+                AllTimeRank INTEGER,
                 ChangedAt   TEXT    NOT NULL
             );
 
             CREATE INDEX IF NOT EXISTS IX_ScoreHist_Account ON ScoreHistory (AccountId);
             CREATE INDEX IF NOT EXISTS IX_ScoreHist_Song    ON ScoreHistory (SongId, Instrument);
+            CREATE UNIQUE INDEX IF NOT EXISTS IX_ScoreHist_Dedup  ON ScoreHistory (AccountId, SongId, Instrument, NewScore, ScoreAchievedAt);
 
             CREATE TABLE IF NOT EXISTS AccountNames (
                 AccountId    TEXT PRIMARY KEY,
@@ -149,16 +152,47 @@ public sealed class MetaDatabase : IDisposable
                 DiscoveredAt TEXT    NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS SongFirstSeenSeason (
+                SongId           TEXT    PRIMARY KEY,
+                FirstSeenSeason  INTEGER,
+                MinObservedSeason INTEGER,
+                EstimatedSeason  INTEGER NOT NULL,
+                ProbeResult      TEXT,
+                CalculatedAt     TEXT    NOT NULL
+            );
+
             """;
         cmd.ExecuteNonQuery();
 
         // ── Migrations: add snapshot columns to ScoreHistory (existing DBs) ──
         MigrateAddColumn(conn, "ScoreHistory", "Accuracy", "INTEGER");
         MigrateAddColumn(conn, "ScoreHistory", "IsFullCombo", "INTEGER");
+
+        // SongFirstSeenSeason: allow NULL FirstSeenSeason/MinObservedSeason + add EstimatedSeason
+        MigrateAddColumn(conn, "SongFirstSeenSeason", "EstimatedSeason", "INTEGER");
+        MigrateSongFirstSeenSeasonSchema(conn);
         MigrateAddColumn(conn, "ScoreHistory", "Stars", "INTEGER");
         MigrateAddColumn(conn, "ScoreHistory", "Percentile", "REAL");
         MigrateAddColumn(conn, "ScoreHistory", "Season", "INTEGER");
         MigrateAddColumn(conn, "ScoreHistory", "ScoreAchievedAt", "TEXT");
+        MigrateAddColumn(conn, "ScoreHistory", "SeasonRank", "INTEGER");
+        MigrateAddColumn(conn, "ScoreHistory", "AllTimeRank", "INTEGER");
+
+        // ── Migration: dedup index on ScoreHistory ──
+        using (var idxCmd = conn.CreateCommand())
+        {
+            // Remove any pre-existing duplicates before creating the unique index
+            idxCmd.CommandText = """
+                DELETE FROM ScoreHistory
+                WHERE Id NOT IN (
+                    SELECT MIN(Id) FROM ScoreHistory
+                    GROUP BY AccountId, SongId, Instrument, NewScore, ScoreAchievedAt
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS IX_ScoreHist_Dedup
+                    ON ScoreHistory (AccountId, SongId, Instrument, NewScore, ScoreAchievedAt);
+                """;
+            idxCmd.ExecuteNonQuery();
+        }
 
         // ── Migrations: add columns to RegisteredUsers (existing DBs) ──
         MigrateAddColumn(conn, "RegisteredUsers", "DisplayName", "TEXT");
@@ -254,16 +288,25 @@ public sealed class MetaDatabase : IDisposable
                                   int? oldScore, int newScore, int? oldRank, int newRank,
                                   int? accuracy = null, bool? isFullCombo = null,
                                   int? stars = null, double? percentile = null,
-                                  int? season = null, string? scoreAchievedAt = null)
+                                  int? season = null, string? scoreAchievedAt = null,
+                                  int? seasonRank = null, int? allTimeRank = null)
     {
         var now = DateTime.UtcNow.ToString("o");
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             INSERT INTO ScoreHistory (SongId, Instrument, AccountId, OldScore, NewScore, OldRank, NewRank,
-                                     Accuracy, IsFullCombo, Stars, Percentile, Season, ScoreAchievedAt, ChangedAt)
+                                     Accuracy, IsFullCombo, Stars, Percentile, Season, ScoreAchievedAt,
+                                     SeasonRank, AllTimeRank, ChangedAt)
             VALUES (@songId, @instrument, @accountId, @oldScore, @newScore, @oldRank, @newRank,
-                    @accuracy, @fc, @stars, @percentile, @season, @scoreAchievedAt, @now);
+                    @accuracy, @fc, @stars, @percentile, @season, @scoreAchievedAt,
+                    @seasonRank, @allTimeRank, @now)
+            ON CONFLICT(AccountId, SongId, Instrument, NewScore, ScoreAchievedAt) DO UPDATE SET
+                SeasonRank  = COALESCE(excluded.SeasonRank,  ScoreHistory.SeasonRank),
+                AllTimeRank = COALESCE(excluded.AllTimeRank, ScoreHistory.AllTimeRank),
+                OldScore    = COALESCE(excluded.OldScore,    ScoreHistory.OldScore),
+                OldRank     = COALESCE(excluded.OldRank,     ScoreHistory.OldRank),
+                ChangedAt   = excluded.ChangedAt;
             """;
         cmd.Parameters.AddWithValue("@songId", songId);
         cmd.Parameters.AddWithValue("@instrument", instrument);
@@ -278,6 +321,8 @@ public sealed class MetaDatabase : IDisposable
         cmd.Parameters.AddWithValue("@percentile", percentile.HasValue ? percentile.Value : DBNull.Value);
         cmd.Parameters.AddWithValue("@season", season.HasValue ? season.Value : DBNull.Value);
         cmd.Parameters.AddWithValue("@scoreAchievedAt", (object?)scoreAchievedAt ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@seasonRank", seasonRank.HasValue ? seasonRank.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("@allTimeRank", allTimeRank.HasValue ? allTimeRank.Value : DBNull.Value);
         cmd.Parameters.AddWithValue("@now", now);
         cmd.ExecuteNonQuery();
     }
@@ -440,6 +485,22 @@ public sealed class MetaDatabase : IDisposable
     }
 
     /// <summary>
+    /// Unregister a device + account pair. Returns true if a row was deleted.
+    /// </summary>
+    public bool UnregisterUser(string deviceId, string accountId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            DELETE FROM RegisteredUsers
+            WHERE DeviceId = @deviceId AND AccountId = @accountId;
+            """;
+        cmd.Parameters.AddWithValue("@deviceId", deviceId);
+        cmd.Parameters.AddWithValue("@accountId", accountId);
+        return cmd.ExecuteNonQuery() > 0;
+    }
+
+    /// <summary>
     /// Get score history for an account, newest first.
     /// </summary>
     public List<ScoreHistoryEntry> GetScoreHistory(string accountId, int limit = 100)
@@ -448,7 +509,8 @@ public sealed class MetaDatabase : IDisposable
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT SongId, Instrument, OldScore, NewScore, OldRank, NewRank,
-                   Accuracy, IsFullCombo, Stars, Percentile, Season, ScoreAchievedAt, ChangedAt
+                   Accuracy, IsFullCombo, Stars, Percentile, Season, ScoreAchievedAt, ChangedAt,
+                   SeasonRank, AllTimeRank
             FROM ScoreHistory
             WHERE AccountId = @accountId
             ORDER BY Id DESC
@@ -476,6 +538,8 @@ public sealed class MetaDatabase : IDisposable
                 Season      = reader.IsDBNull(10) ? null : reader.GetInt32(10),
                 ScoreAchievedAt = reader.IsDBNull(11) ? null : reader.GetString(11),
                 ChangedAt   = reader.GetString(12),
+                SeasonRank  = reader.IsDBNull(13) ? null : reader.GetInt32(13),
+                AllTimeRank = reader.IsDBNull(14) ? null : reader.GetInt32(14),
             });
         }
         return entries;
@@ -1244,6 +1308,118 @@ public sealed class MetaDatabase : IDisposable
     public void Dispose()
     {
         // No persistent connections to clean up.
+    }
+
+    // ─── SongFirstSeenSeason ────────────────────────────────────
+
+    /// <summary>
+    /// Get the set of song IDs that already have a calculated FirstSeenSeason.
+    /// </summary>
+    public HashSet<string> GetSongsWithFirstSeenSeason()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT SongId FROM SongFirstSeenSeason;";
+
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            set.Add(reader.GetString(0));
+        return set;
+    }
+
+    /// <summary>
+    /// Get the FirstSeenSeason for a specific song, or null if not yet calculated.
+    /// </summary>
+    public int? GetFirstSeenSeason(string songId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT FirstSeenSeason FROM SongFirstSeenSeason WHERE SongId = @songId;";
+        cmd.Parameters.AddWithValue("@songId", songId);
+        var result = cmd.ExecuteScalar();
+        return result is long val ? (int)val : null;
+    }
+
+    /// <summary>
+    /// Store the calculated FirstSeenSeason for a song.
+    /// </summary>
+    public void UpsertFirstSeenSeason(string songId, int? firstSeenSeason, int? minObservedSeason, int estimatedSeason, string? probeResult)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO SongFirstSeenSeason (SongId, FirstSeenSeason, MinObservedSeason, EstimatedSeason, ProbeResult, CalculatedAt)
+            VALUES (@songId, @firstSeen, @minObserved, @estimated, @probeResult, @calculatedAt)
+            ON CONFLICT(SongId) DO UPDATE SET
+                FirstSeenSeason   = excluded.FirstSeenSeason,
+                MinObservedSeason = excluded.MinObservedSeason,
+                EstimatedSeason   = excluded.EstimatedSeason,
+                ProbeResult       = excluded.ProbeResult,
+                CalculatedAt      = excluded.CalculatedAt;
+            """;
+        cmd.Parameters.AddWithValue("@songId", songId);
+        cmd.Parameters.AddWithValue("@firstSeen", (object?)firstSeenSeason ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@minObserved", (object?)minObservedSeason ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@estimated", estimatedSeason);
+        cmd.Parameters.AddWithValue("@probeResult", (object?)probeResult ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@calculatedAt", DateTime.UtcNow.ToString("o"));
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Get all FirstSeenSeason values as a dictionary for bulk lookups.
+    /// </summary>
+    public Dictionary<string, (int? FirstSeenSeason, int EstimatedSeason)> GetAllFirstSeenSeasons()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT SongId, FirstSeenSeason, EstimatedSeason FROM SongFirstSeenSeason;";
+
+        var dict = new Dictionary<string, (int? FirstSeenSeason, int EstimatedSeason)>(StringComparer.OrdinalIgnoreCase);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var songId = reader.GetString(0);
+            int? firstSeen = reader.IsDBNull(1) ? null : reader.GetInt32(1);
+            int estimated = reader.GetInt32(2);
+            dict[songId] = (firstSeen, estimated);
+        }
+        return dict;
+    }
+
+    /// <summary>
+    /// Migrate SongFirstSeenSeason: if the old schema has NOT NULL on FirstSeenSeason,
+    /// recreate the table with nullable columns. Idempotent — checks column nullability first.
+    /// </summary>
+    private void MigrateSongFirstSeenSeasonSchema(SqliteConnection conn)
+    {
+        // Check if FirstSeenSeason column is NOT NULL (notnull=1 in pragma_table_info)
+        using var check = conn.CreateCommand();
+        check.CommandText = "SELECT \"notnull\" FROM pragma_table_info('SongFirstSeenSeason') WHERE name = 'FirstSeenSeason';";
+        var notnull = check.ExecuteScalar();
+        if (notnull is not long nn || nn == 0)
+            return; // Already nullable or table doesn't exist
+
+        _log.LogInformation("Migrating SongFirstSeenSeason: relaxing NOT NULL constraints + adding EstimatedSeason.");
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS SongFirstSeenSeason_new (
+                SongId           TEXT    PRIMARY KEY,
+                FirstSeenSeason  INTEGER,
+                MinObservedSeason INTEGER,
+                EstimatedSeason  INTEGER NOT NULL DEFAULT 0,
+                ProbeResult      TEXT,
+                CalculatedAt     TEXT    NOT NULL
+            );
+            INSERT OR IGNORE INTO SongFirstSeenSeason_new (SongId, FirstSeenSeason, MinObservedSeason, EstimatedSeason, ProbeResult, CalculatedAt)
+                SELECT SongId, FirstSeenSeason, MinObservedSeason, COALESCE(EstimatedSeason, FirstSeenSeason), ProbeResult, CalculatedAt
+                FROM SongFirstSeenSeason;
+            DROP TABLE SongFirstSeenSeason;
+            ALTER TABLE SongFirstSeenSeason_new RENAME TO SongFirstSeenSeason;
+            """;
+        cmd.ExecuteNonQuery();
     }
 
     /// <summary>

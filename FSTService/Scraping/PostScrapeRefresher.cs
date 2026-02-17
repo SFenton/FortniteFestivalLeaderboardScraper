@@ -24,9 +24,6 @@ public class PostScrapeRefresher
     private readonly MetaDatabase _metaDb;
     private readonly ILogger<PostScrapeRefresher> _log;
 
-    /// <summary>Max concurrent API lookups during post-scrape refresh.</summary>
-    private const int DegreeOfParallelism = 2;
-
     public PostScrapeRefresher(
         GlobalLeaderboardScraper scraper,
         GlobalLeaderboardPersistence persistence,
@@ -54,12 +51,22 @@ public class PostScrapeRefresher
         IReadOnlyList<string> chartedSongIds,
         string accessToken,
         string callerAccountId,
+        int degreeOfParallelism = 16,
         CancellationToken ct = default)
     {
         if (registeredAccountIds.Count == 0) return 0;
 
         var instruments = GlobalLeaderboardScraper.AllInstruments;
         int totalUpdated = 0;
+
+        int initialDop = Math.Max(1, degreeOfParallelism / 2);
+        int maxDop = degreeOfParallelism * 2;
+        using var limiter = new AdaptiveConcurrencyLimiter(
+            initialDop, minDop: 2, maxDop: maxDop, _log);
+
+        _log.LogInformation(
+            "Post-scrape refresh using adaptive concurrency: initial DOP={InitialDop}, max={MaxDop}.",
+            initialDop, maxDop);
 
         foreach (var accountId in registeredAccountIds)
         {
@@ -69,7 +76,7 @@ public class PostScrapeRefresher
             {
                 var updated = await RefreshAccountAsync(
                     accountId, seenEntries, chartedSongIds, instruments,
-                    accessToken, callerAccountId, ct);
+                    accessToken, callerAccountId, limiter, ct);
                 totalUpdated += updated;
             }
             catch (OperationCanceledException) { throw; }
@@ -92,6 +99,7 @@ public class PostScrapeRefresher
         IReadOnlyList<string> instruments,
         string accessToken,
         string callerAccountId,
+        AdaptiveConcurrencyLimiter limiter,
         CancellationToken ct)
     {
         // Build the work list: pairs that are either missing or stale
@@ -132,33 +140,24 @@ public class PostScrapeRefresher
             workItems.Count(w => !w.IsStale));
 
         int updated = 0;
-        using var semaphore = new SemaphoreSlim(DegreeOfParallelism);
 
-        // Process in batches
-        var batchSize = 50;
-        for (int i = 0; i < workItems.Count; i += batchSize)
+        var tasks = workItems.Select(async item =>
         {
-            ct.ThrowIfCancellationRequested();
-
-            var batch = workItems.Skip(i).Take(batchSize).ToList();
-            var tasks = batch.Select(async item =>
+            await limiter.WaitAsync(ct);
+            try
             {
-                await semaphore.WaitAsync(ct);
-                try
-                {
-                    return await RefreshSingleEntryAsync(
-                        accountId, item.SongId, item.Instrument, item.IsStale,
-                        accessToken, callerAccountId, ct);
-                }
-                finally
-                {
-                    semaphore.Release();
-                }
-            }).ToList();
+                return await RefreshSingleEntryAsync(
+                    accountId, item.SongId, item.Instrument, item.IsStale,
+                    accessToken, callerAccountId, limiter, ct);
+            }
+            finally
+            {
+                limiter.Release();
+            }
+        }).ToList();
 
-            var results = await Task.WhenAll(tasks);
-            updated += results.Count(r => r);
-        }
+        var results = await Task.WhenAll(tasks);
+        updated += results.Count(r => r);
 
         if (updated > 0)
         {
@@ -181,13 +180,14 @@ public class PostScrapeRefresher
         bool isStale,
         string accessToken,
         string callerAccountId,
+        AdaptiveConcurrencyLimiter limiter,
         CancellationToken ct)
     {
         LeaderboardEntry? entry;
         try
         {
             entry = await _scraper.LookupAccountAsync(
-                songId, instrument, accountId, accessToken, callerAccountId, ct);
+                songId, instrument, accountId, accessToken, callerAccountId, limiter, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -222,7 +222,8 @@ public class PostScrapeRefresher
                     songId, instrument, accountId,
                     existing.Score, entry.Score, existing.Rank, entry.Rank,
                     entry.Accuracy, entry.IsFullCombo, entry.Stars,
-                    entry.Percentile, entry.Season, entry.EndTime);
+                    entry.Percentile, entry.Season, entry.EndTime,
+                    allTimeRank: entry.Rank);
             }
         }
         else
@@ -232,7 +233,8 @@ public class PostScrapeRefresher
                 songId, instrument, accountId,
                 null, entry.Score, null, entry.Rank,
                 entry.Accuracy, entry.IsFullCombo, entry.Stars,
-                entry.Percentile, entry.Season, entry.EndTime);
+                entry.Percentile, entry.Season, entry.EndTime,
+                allTimeRank: entry.Rank);
         }
 
         // UPSERT the entry
