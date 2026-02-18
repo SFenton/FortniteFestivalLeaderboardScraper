@@ -259,9 +259,16 @@ app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 
+// Serve static files (wwwroot/) and fall back to index.html for non-API routes
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 // Map API endpoints
 app.MapApiEndpoints();
 app.MapAuthEndpoints();
+
+// Fallback: serve index.html for any non-API GET request (SPA support)
+app.MapFallbackToFile("index.html");
 
 app.Run();
 
