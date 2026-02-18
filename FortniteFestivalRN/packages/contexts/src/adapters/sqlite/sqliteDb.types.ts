@@ -16,4 +16,5 @@ export interface SqliteTransaction {
 export interface SqliteDatabase {
   executeSql<T = any>(sql: string, params?: unknown[]): Promise<SqliteResultSet<T>>;
   transaction?(fn: (tx: SqliteTransaction) => Promise<void>): Promise<void>;
+  close?(): void;
 }

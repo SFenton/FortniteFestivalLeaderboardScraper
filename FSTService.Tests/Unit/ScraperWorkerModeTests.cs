@@ -1,6 +1,7 @@
 using System.Reflection;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
+using FSTService.Api;
 using FSTService.Auth;
 using FSTService.Persistence;
 using FSTService.Scraping;
@@ -32,6 +33,8 @@ public class ScraperWorkerModeTests : IDisposable
     private readonly PostScrapeRefresher _refresher;
     private readonly HistoryReconstructor _historyReconstructor;
     private readonly FirstSeenSeasonCalculator _firstSeenCalculator;
+    private readonly FestivalService _festivalService;
+    private readonly TokenVault _tokenVault;
     private readonly ScrapeProgressTracker _progress;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<ScraperWorker> _log;
@@ -101,6 +104,13 @@ public class ScraperWorkerModeTests : IDisposable
             _scraper, _persistence, _progress,
             Substitute.For<ILogger<FirstSeenSeasonCalculator>>());
 
+        _festivalService = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+
+        _tokenVault = new TokenVault(
+            _metaDb, epicAuth,
+            Options.Create(new EpicOAuthSettings()),
+            Substitute.For<ILogger<TokenVault>>());
+
         _lifetime = Substitute.For<IHostApplicationLifetime>();
         _log = Substitute.For<ILogger<ScraperWorker>>();
     }
@@ -124,7 +134,10 @@ public class ScraperWorkerModeTests : IDisposable
         return new ScraperWorker(
             _tokenManager, _scraper, _persistence, _nameResolver,
             _personalDbBuilder, _backfiller, _backfillQueue, _refresher,
-            _historyReconstructor, _firstSeenCalculator, _progress, options, _lifetime, _log);
+            _historyReconstructor, _firstSeenCalculator, _festivalService,
+            new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()),
+            _tokenVault,
+            _progress, options, _lifetime, _log);
     }
 
     /// <summary>Invoke a private async method on ScraperWorker via reflection.</summary>

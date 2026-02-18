@@ -20,7 +20,7 @@ namespace FSTService.Auth;
 ///   3. Subsequent runs: refresh_token → new access + new refresh token → persist
 ///   4. If refresh fails (offline >8 h): re-run --setup
 /// </summary>
-public sealed class EpicAuthService
+public class EpicAuthService
 {
     // Switch client — supports device_code and refresh_token
     private const string ClientId = "98f7e42c2e3a4f86a74eb43fbb41ed39";
@@ -128,8 +128,84 @@ public sealed class EpicAuthService
     }
 
     // ──────────────────────────────────────────────
+    //  Authorization Code exchange (user-facing OAuth)
+    // ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Exchange an authorization code obtained by the mobile app for an Epic
+    /// access token. Uses the <em>EOS registered application</em> credentials
+    /// (separate from the Switch client used for scraping).
+    /// </summary>
+    /// <param name="code">Authorization code from Epic's redirect.</param>
+    /// <param name="clientId">EOS application client ID.</param>
+    /// <param name="clientSecret">EOS application client secret.</param>
+    /// <param name="redirectUri">The redirect URI that was used in the authorize request.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>
+    /// An <see cref="EpicTokenResponse"/> containing the user's account ID,
+    /// display name, access token, and refresh token.
+    /// </returns>
+    public virtual async Task<EpicTokenResponse> ExchangeAuthorizationCodeAsync(
+        string code, string clientId, string clientSecret, string redirectUri,
+        CancellationToken ct = default)
+    {
+        var creds = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
+
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{AccountBase}/account/api/oauth/token");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Basic", creds);
+        req.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["grant_type"] = "authorization_code",
+            ["code"] = code,
+            ["redirect_uri"] = redirectUri,
+        });
+
+        var res = await _http.SendAsync(req, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+
+        if (!res.IsSuccessStatusCode)
+        {
+            _log.LogWarning("Authorization code exchange failed ({Status}): {Body}", res.StatusCode, body);
+            throw new InvalidOperationException($"Authorization code exchange failed ({res.StatusCode}): {body}");
+        }
+
+        return ParseTokenResponse(body);
+    }
+
+    // ──────────────────────────────────────────────
     //  Token verification
     // ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Refresh a user's Epic token using arbitrary client credentials (e.g. the
+    /// EOS application client, not the Switch client). Used by <see cref="TokenVault"/>
+    /// to transparently refresh stored user tokens.
+    /// </summary>
+    public virtual async Task<EpicTokenResponse> RefreshUserTokenAsync(
+        string refreshToken, string clientId, string clientSecret,
+        CancellationToken ct = default)
+    {
+        var creds = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
+
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{AccountBase}/account/api/oauth/token");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Basic", creds);
+        req.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["grant_type"] = "refresh_token",
+            ["refresh_token"] = refreshToken,
+        });
+
+        var res = await _http.SendAsync(req, ct);
+        var body = await res.Content.ReadAsStringAsync(ct);
+
+        if (!res.IsSuccessStatusCode)
+        {
+            _log.LogWarning("User token refresh failed ({Status}): {Body}", res.StatusCode, body);
+            throw new InvalidOperationException($"User token refresh failed ({res.StatusCode}): {body}");
+        }
+
+        return ParseTokenResponse(body);
+    }
 
     /// <summary>
     /// Verify that an access token is still valid.

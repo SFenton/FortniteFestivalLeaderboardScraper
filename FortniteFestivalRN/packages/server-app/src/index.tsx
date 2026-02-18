@@ -1,14 +1,20 @@
 import React from 'react';
+import {ServiceSyncProvider} from '@festival/contexts';
 import {AppNavigator} from './navigation/AppNavigator';
 
 /**
  * Root component for the server-enabled mode of the app.
  *
- * Initially identical to LocalApp. Will diverge as server-specific
- * features land (Opps, Rankings, server-driven navigation, etc.).
+ * Wraps navigation in <ServiceSyncProvider> which manages the WebSocket
+ * connection to the FST service and handles personal DB download/sync.
+ *
  * Must be rendered inside <FestivalProvider> and <AuthProvider>
  * from @festival/contexts.
  */
 export function ServerApp() {
-  return <AppNavigator />;
+  return (
+    <ServiceSyncProvider>
+      <AppNavigator />
+    </ServiceSyncProvider>
+  );
 }

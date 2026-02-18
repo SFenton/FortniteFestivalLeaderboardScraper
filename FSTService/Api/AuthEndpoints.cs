@@ -1,33 +1,60 @@
 using FSTService.Auth;
 using FSTService.Persistence;
+using Microsoft.Extensions.Options;
 
 namespace FSTService.Api;
 
 /// <summary>
-/// Maps authentication endpoints: login, refresh, logout, and current-user info.
+/// Maps authentication endpoints: login, refresh, logout, current-user info,
+/// and the Epic OAuth callback redirect.
 /// </summary>
 public static class AuthEndpoints
 {
     public static void MapAuthEndpoints(this WebApplication app)
     {
+        // ─── GET /api/auth/epiccallback ─────────────────────
+        // Epic redirects here after the user authorizes. We 302-redirect
+        // to the mobile app's deep link, passing the authorization code.
+
+        app.MapGet("/api/auth/epiccallback", (HttpContext context, IOptions<EpicOAuthSettings> settings) =>
+        {
+            var code = context.Request.Query["code"].FirstOrDefault();
+            if (string.IsNullOrEmpty(code))
+                return Results.BadRequest(new { error = "Missing 'code' query parameter." });
+
+            var deepLink = settings.Value.AppDeepLink.TrimEnd('/');
+            var redirectUrl = $"{deepLink}?code={Uri.EscapeDataString(code)}";
+            return Results.Redirect(redirectUrl);
+        })
+        .WithTags("Auth")
+        .RequireRateLimiting("auth");
+
         // ─── POST /api/auth/login ───────────────────────────
 
-        app.MapPost("/api/auth/login", (LoginRequest request, UserAuthService auth) =>
+        app.MapPost("/api/auth/login", async (LoginRequest request, UserAuthService auth) =>
         {
-            if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.DeviceId))
-                return Results.BadRequest(new { error = "username and deviceId are required." });
+            if (string.IsNullOrWhiteSpace(request.Code) || string.IsNullOrWhiteSpace(request.DeviceId))
+                return Results.BadRequest(new { error = "code and deviceId are required." });
 
-            var result = auth.Login(request.Username.Trim(), request.DeviceId.Trim(), request.Platform?.Trim());
-
-            return Results.Ok(new
+            try
             {
-                accessToken     = result.AccessToken,
-                refreshToken    = result.RefreshToken,
-                expiresIn       = result.ExpiresIn,
-                accountId       = result.AccountId,
-                displayName     = result.DisplayName,
-                personalDbReady = result.PersonalDbReady,
-            });
+                var result = await auth.LoginAsync(
+                    request.Code.Trim(), request.DeviceId.Trim(), request.Platform?.Trim());
+
+                return Results.Ok(new
+                {
+                    accessToken     = result.AccessToken,
+                    refreshToken    = result.RefreshToken,
+                    expiresIn       = result.ExpiresIn,
+                    accountId       = result.AccountId,
+                    displayName     = result.DisplayName,
+                    personalDbReady = result.PersonalDbReady,
+                });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
         })
         .WithTags("Auth")
         .RequireRateLimiting("auth");
@@ -99,6 +126,6 @@ public static class AuthEndpoints
 
 // ─── Request DTOs ───────────────────────────────────────────
 
-public sealed record LoginRequest(string? Username, string? DeviceId, string? Platform);
+public sealed record LoginRequest(string? Code, string? DeviceId, string? Platform);
 public sealed record RefreshRequest(string? RefreshToken);
 public sealed record LogoutRequest(string? RefreshToken);

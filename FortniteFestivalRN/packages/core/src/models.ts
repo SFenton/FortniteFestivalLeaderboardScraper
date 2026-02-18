@@ -127,3 +127,26 @@ export type LeaderboardData = {
   dirty?: boolean;
   correlatedV1Pages?: Partial<Record<InstrumentKey, V1LeaderboardPage>>;
 };
+
+/**
+ * A single row from the ScoreHistory table — represents one score change event.
+ * Matches the personal DB schema produced by FSTService's PersonalDbBuilder.
+ */
+export type ScoreHistoryEntry = {
+  id?: number;
+  songId: string;
+  instrument: string; // e.g. 'Solo_Guitar', 'Solo_Bass', etc.
+  oldScore?: number;
+  newScore?: number;
+  oldRank?: number;
+  newRank?: number;
+  accuracy?: number;
+  isFullCombo?: boolean;
+  stars?: number;
+  percentile?: number;
+  season?: number;
+  scoreAchievedAt?: string; // ISO 8601 timestamp
+  seasonRank?: number;
+  allTimeRank?: number;
+  changedAt: string; // ISO 8601 timestamp
+};

@@ -1,8 +1,27 @@
 import type {FestivalPersistence} from '@festival/core';
 import {ScoreTracker} from '@festival/core';
-import type {LeaderboardData, Song} from '@festival/core';
+import type {LeaderboardData, ScoreHistoryEntry, Song} from '@festival/core';
 import type {InstrumentKey} from '@festival/core';
 import type {SqliteDatabase, SqliteTransaction} from './sqliteDb.types';
+
+type DbScoreHistoryRow = {
+  Id?: number | null;
+  SongId: string;
+  Instrument: string;
+  OldScore?: number | null;
+  NewScore?: number | null;
+  OldRank?: number | null;
+  NewRank?: number | null;
+  Accuracy?: number | null;
+  IsFullCombo?: number | null;
+  Stars?: number | null;
+  Percentile?: number | null;
+  Season?: number | null;
+  ScoreAchievedAt?: string | null;
+  SeasonRank?: number | null;
+  AllTimeRank?: number | null;
+  ChangedAt: string;
+};
 
 type DbSongRow = {
   SongId: string;
@@ -214,6 +233,31 @@ export class SqliteFestivalPersistence implements FestivalPersistence {
           GuitarCalcTotal INTEGER, DrumsCalcTotal INTEGER, BassCalcTotal INTEGER, VocalsCalcTotal INTEGER, ProGuitarCalcTotal INTEGER, ProBassCalcTotal INTEGER,
           FOREIGN KEY (SongId) REFERENCES Songs(SongId)
         );`,
+      );
+
+      await this.db.executeSql(
+        `CREATE TABLE IF NOT EXISTS ScoreHistory (
+          Id              INTEGER PRIMARY KEY AUTOINCREMENT,
+          SongId          TEXT    NOT NULL,
+          Instrument      TEXT    NOT NULL,
+          OldScore        INTEGER,
+          NewScore        INTEGER,
+          OldRank         INTEGER,
+          NewRank         INTEGER,
+          Accuracy        INTEGER,
+          IsFullCombo     INTEGER,
+          Stars           INTEGER,
+          Percentile      REAL,
+          Season          INTEGER,
+          ScoreAchievedAt TEXT,
+          SeasonRank      INTEGER,
+          AllTimeRank     INTEGER,
+          ChangedAt       TEXT    NOT NULL
+        );`,
+      );
+
+      await this.db.executeSql(
+        'CREATE INDEX IF NOT EXISTS IX_ScoreHist_Song ON ScoreHistory (SongId, Instrument);',
       );
 
       // Best-effort migrations (ignore errors if columns already exist)
@@ -529,7 +573,115 @@ export class SqliteFestivalPersistence implements FestivalPersistence {
 
     await run(this.db);
   }
+  async loadScoreHistory(
+    songId?: string,
+    instrument?: string,
+  ): Promise<ScoreHistoryEntry[]> {
+    await this.ensureSchema();
 
+    let sql =
+      'SELECT Id, SongId, Instrument, OldScore, NewScore, OldRank, NewRank, Accuracy, IsFullCombo, Stars, Percentile, Season, ScoreAchievedAt, SeasonRank, AllTimeRank, ChangedAt FROM ScoreHistory';
+    const params: unknown[] = [];
+    const clauses: string[] = [];
+
+    if (songId) {
+      clauses.push('SongId = ?');
+      params.push(songId);
+    }
+    if (instrument) {
+      clauses.push('Instrument = ?');
+      params.push(instrument);
+    }
+    if (clauses.length > 0) {
+      sql += ' WHERE ' + clauses.join(' AND ');
+    }
+    sql += ' ORDER BY ChangedAt ASC';
+
+    const res = await this.db.executeSql<DbScoreHistoryRow>(sql, params);
+    const list: ScoreHistoryEntry[] = [];
+
+    for (let i = 0; i < res.rows.length; i++) {
+      const row = res.rows.item(i);
+      list.push({
+        id: row.Id ?? undefined,
+        songId: safeStr(row.SongId),
+        instrument: safeStr(row.Instrument),
+        oldScore: row.OldScore ?? undefined,
+        newScore: row.NewScore ?? undefined,
+        oldRank: row.OldRank ?? undefined,
+        newRank: row.NewRank ?? undefined,
+        accuracy: row.Accuracy ?? undefined,
+        isFullCombo:
+          row.IsFullCombo != null ? row.IsFullCombo === 1 : undefined,
+        stars: row.Stars ?? undefined,
+        percentile: row.Percentile ?? undefined,
+        season: row.Season ?? undefined,
+        scoreAchievedAt: row.ScoreAchievedAt ?? undefined,
+        seasonRank: row.SeasonRank ?? undefined,
+        allTimeRank: row.AllTimeRank ?? undefined,
+        changedAt: safeStr(row.ChangedAt),
+      });
+    }
+
+    return list;
+  }
+
+  async saveScoreHistory(entries: ScoreHistoryEntry[]): Promise<void> {
+    await this.ensureSchema();
+
+    const run = async (tx: SqliteTransaction): Promise<void> => {
+      const sql = `INSERT INTO ScoreHistory
+        (SongId, Instrument, OldScore, NewScore, OldRank, NewRank, Accuracy, IsFullCombo, Stars, Percentile, Season, ScoreAchievedAt, SeasonRank, AllTimeRank, ChangedAt)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+
+      for (const e of entries) {
+        await tx.executeSql(sql, [
+          e.songId,
+          e.instrument,
+          e.oldScore ?? null,
+          e.newScore ?? null,
+          e.oldRank ?? null,
+          e.newRank ?? null,
+          e.accuracy ?? null,
+          e.isFullCombo != null ? (e.isFullCombo ? 1 : 0) : null,
+          e.stars ?? null,
+          e.percentile ?? null,
+          e.season ?? null,
+          e.scoreAchievedAt ?? null,
+          e.seasonRank ?? null,
+          e.allTimeRank ?? null,
+          e.changedAt,
+        ]);
+      }
+    };
+
+    if (this.db.transaction) {
+      await this.db.transaction(async tx => {
+        await run(tx);
+      });
+      return;
+    }
+
+    await run(this.db);
+  }
+
+  async clearScoresAndHistory(): Promise<void> {
+    await this.ensureSchema();
+
+    const run = async (tx: SqliteTransaction): Promise<void> => {
+      await tx.executeSql('DELETE FROM Scores', []);
+      await tx.executeSql('DELETE FROM ScoreHistory', []);
+    };
+
+    if (this.db.transaction) {
+      await this.db.transaction(async tx => {
+        await run(tx);
+      });
+      return;
+    }
+
+    await run(this.db);
+  }
   // Convenience helper mirroring the “prioritized song” filtering keys.
   // Not used by the persistence interface, but handy for callers.
   static getSongKey(songId: string): string {

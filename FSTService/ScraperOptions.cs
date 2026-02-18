@@ -77,6 +77,14 @@ public sealed class ScraperOptions
     public bool ResolveOnly { get; set; }
 
     /// <summary>
+    /// When true, skip scraping and only run the backfill enrichment
+    /// phase for registered users (fetches rank/percentile from Epic API
+    /// for existing entries). Then exit.
+    /// Set via <c>--backfill-only</c> CLI argument.
+    /// </summary>
+    public bool BackfillOnly { get; set; }
+
+    /// <summary>
     /// When set, fetch scores for a single matching song and exit.
     /// The value is matched case-insensitively against song titles.
     /// Set via <c>--test "song name"</c> CLI argument.

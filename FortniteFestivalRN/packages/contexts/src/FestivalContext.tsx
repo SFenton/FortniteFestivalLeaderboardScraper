@@ -36,6 +36,8 @@ type FestivalActions = {
   clearImageCache: () => Promise<void>;
   deleteAllScores: () => Promise<void>;
   clearEverything: () => Promise<void>;
+  /** Clear scores + score history only (keeps songs, images, settings). */
+  clearLocalData: () => Promise<void>;
 };
 
 type FestivalContextValue = {
@@ -291,6 +293,13 @@ export function FestivalProvider(props: {children: React.ReactNode}) {
     await ensureInitializedAsync({force: true});
   }, [service, ensureInitializedAsync]);
 
+  const clearLocalData = useCallback(async () => {
+    if (process.env.JEST_WORKER_ID) return;
+    await service.clearScoresAndHistory();
+    setScoresIndex({});
+    logBufferRef.current.enqueue('Local scores cleared for service sync.');
+  }, [service]);
+
   // Without a dedicated Sync screen, initialize on app start so the Songs tab
   // can show data immediately.
   useEffect(() => {
@@ -357,8 +366,9 @@ export function FestivalProvider(props: {children: React.ReactNode}) {
       clearImageCache,
       deleteAllScores,
       clearEverything,
+      clearLocalData,
     }),
-    [setSettingsPersisted, ensureInitializedAsync, startFetchAsync, clearLog, logUi, clearImageCache, deleteAllScores, clearEverything],
+    [setSettingsPersisted, ensureInitializedAsync, startFetchAsync, clearLog, logUi, clearImageCache, deleteAllScores, clearEverything, clearLocalData],
   );
 
   const state = useMemo(

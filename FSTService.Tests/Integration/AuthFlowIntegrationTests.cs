@@ -4,12 +4,14 @@ using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using NSubstitute;
 
 namespace FSTService.Tests.Integration;
 
 /// <summary>
 /// End-to-end integration tests for the authentication flow, using real SQLite databases
-/// and real JWT token generation/validation.
+/// and real JWT token generation/validation. Uses a mock EpicAuthService to simulate
+/// Epic's authorization code exchange.
 /// </summary>
 public sealed class AuthFlowIntegrationTests : IDisposable
 {
@@ -25,9 +27,35 @@ public sealed class AuthFlowIntegrationTests : IDisposable
         RefreshTokenLifetimeDays = 30,
     };
 
+    private static readonly EpicOAuthSettings TestOAuthSettings = new()
+    {
+        ClientId = "test-client-id",
+        ClientSecret = "test-client-secret",
+        RedirectUri = "https://example.com/api/auth/epiccallback",
+        AppDeepLink = "festscoretracker://auth/callback",
+    };
+
     private readonly JwtTokenService _jwt;
     private readonly BackfillQueue _backfillQueue = new();
     private readonly UserAuthService _authService;
+
+    /// <summary>
+    /// Creates a mock <see cref="EpicAuthService"/> that returns the given
+    /// account ID and display name when <c>ExchangeAuthorizationCodeAsync</c> is called.
+    /// </summary>
+    private static EpicAuthService CreateMockEpic(string accountId = "epic_acct_123", string displayName = "TestPlayer")
+    {
+        var mock = Substitute.For<EpicAuthService>(new HttpClient(), NullLogger<EpicAuthService>.Instance);
+        mock.ExchangeAuthorizationCodeAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new EpicTokenResponse
+            {
+                AccountId = accountId,
+                DisplayName = displayName,
+                AccessToken = "epic_access_token",
+            }));
+        return mock;
+    }
 
     public AuthFlowIntegrationTests()
     {
@@ -47,8 +75,17 @@ public sealed class AuthFlowIntegrationTests : IDisposable
             glp, festivalService, MetaDb, _dataDir,
             NullLogger<PersonalDbBuilder>.Instance);
 
+        var mockEpic = CreateMockEpic();
+        var tokenVault = new TokenVault(
+            MetaDb, mockEpic,
+            Options.Create(TestOAuthSettings),
+            NullLogger<TokenVault>.Instance);
+
         _authService = new UserAuthService(
             _jwt, MetaDb, personalDbBuilder, _backfillQueue,
+            mockEpic,
+            Options.Create(TestOAuthSettings),
+            tokenVault,
             NullLogger<UserAuthService>.Instance);
     }
 
@@ -66,7 +103,7 @@ public sealed class AuthFlowIntegrationTests : IDisposable
     public async Task Full_auth_lifecycle()
     {
         // ── Login ──
-        var login = _authService.Login("TestPlayer", "device_1", "iOS");
+        var login = await _authService.LoginAsync("fake_code", "device_1", "iOS");
         Assert.NotEmpty(login.AccessToken);
         Assert.NotEmpty(login.RefreshToken);
         Assert.True(login.ExpiresIn > 0);
@@ -108,10 +145,10 @@ public sealed class AuthFlowIntegrationTests : IDisposable
     /// Multiple devices can be logged in simultaneously for the same user.
     /// </summary>
     [Fact]
-    public void Multi_device_concurrent_sessions()
+    public async Task Multi_device_concurrent_sessions()
     {
-        var login1 = _authService.Login("TestPlayer", "device_1", "iOS");
-        var login2 = _authService.Login("TestPlayer", "device_2", "Android");
+        var login1 = await _authService.LoginAsync("fake_code", "device_1", "iOS");
+        var login2 = await _authService.LoginAsync("fake_code", "device_2", "Android");
 
         // Both sessions should work independently
         var refresh1 = _authService.Refresh(login1.RefreshToken);
@@ -128,29 +165,28 @@ public sealed class AuthFlowIntegrationTests : IDisposable
     }
 
     /// <summary>
-    /// When a known player logs in, backfill is enqueued and registration tracks their account ID.
+    /// When a player logs in via Epic OAuth, backfill is enqueued and registration
+    /// tracks their account ID.
     /// </summary>
     [Fact]
-    public void Known_player_gets_backfill_and_registration()
+    public async Task Login_gets_backfill_and_registration()
     {
-        MetaDb.InsertAccountNames([("epic_acct_abc", "KnownPlayer")]);
+        var login = await _authService.LoginAsync("fake_code", "device_1", null);
 
-        var login = _authService.Login("KnownPlayer", "device_1", null);
-
-        Assert.Equal("epic_acct_abc", login.AccountId);
+        Assert.Equal("epic_acct_123", login.AccountId);
         Assert.True(_backfillQueue.HasPending);
 
         var registered = MetaDb.GetRegisteredAccountIds();
-        Assert.Contains("epic_acct_abc", registered);
+        Assert.Contains("epic_acct_123", registered);
     }
 
     /// <summary>
     /// Session cleanup removes expired sessions without affecting active ones.
     /// </summary>
     [Fact]
-    public void Session_cleanup_preserves_active_sessions()
+    public async Task Session_cleanup_preserves_active_sessions()
     {
-        var login = _authService.Login("TestPlayer", "device_1", null);
+        var login = await _authService.LoginAsync("fake_code", "device_1", null);
 
         // Active session should survive cleanup
         var cleaned = MetaDb.CleanupExpiredSessions(DateTime.UtcNow);
@@ -159,17 +195,5 @@ public sealed class AuthFlowIntegrationTests : IDisposable
         // Session should still work
         var refresh = _authService.Refresh(login.RefreshToken);
         Assert.NotNull(refresh);
-    }
-
-    /// <summary>
-    /// Login creates a user registration even when the player is unknown.
-    /// </summary>
-    [Fact]
-    public void Unknown_player_is_registered_with_username()
-    {
-        var login = _authService.Login("NewPlayer", "device_1", "iOS");
-
-        Assert.Null(login.AccountId);
-        Assert.True(MetaDb.IsDeviceRegistered("device_1"));
     }
 }

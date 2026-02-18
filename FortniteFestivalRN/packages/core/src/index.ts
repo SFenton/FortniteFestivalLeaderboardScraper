@@ -13,6 +13,7 @@ export * from './auth/authTypes';
 export * from './auth/tokenParsing';
 export * from './auth/exchangeCode.types';
 export * from './auth/fstAuthClient';
+export * from './auth/fstServiceClient';
 export * from './io/jsonSerializer';
 export * from './epic/contentParsing';
 export * from './epic/leaderboardV1';

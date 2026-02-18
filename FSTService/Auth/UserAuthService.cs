@@ -1,5 +1,6 @@
 using FSTService.Persistence;
 using FSTService.Scraping;
+using Microsoft.Extensions.Options;
 
 namespace FSTService.Auth;
 
@@ -12,6 +13,9 @@ public sealed class UserAuthService
     private readonly MetaDatabase _metaDb;
     private readonly PersonalDbBuilder _personalDbBuilder;
     private readonly BackfillQueue _backfillQueue;
+    private readonly EpicAuthService _epic;
+    private readonly EpicOAuthSettings _epicOAuth;
+    private readonly TokenVault _tokenVault;
     private readonly ILogger<UserAuthService> _log;
 
     public UserAuthService(
@@ -19,60 +23,81 @@ public sealed class UserAuthService
         MetaDatabase metaDb,
         PersonalDbBuilder personalDbBuilder,
         BackfillQueue backfillQueue,
+        EpicAuthService epic,
+        IOptions<EpicOAuthSettings> epicOAuth,
+        TokenVault tokenVault,
         ILogger<UserAuthService> log)
     {
         _jwt = jwt;
         _metaDb = metaDb;
         _personalDbBuilder = personalDbBuilder;
         _backfillQueue = backfillQueue;
+        _epic = epic;
+        _epicOAuth = epicOAuth.Value;
+        _tokenVault = tokenVault;
         _log = log;
     }
 
     /// <summary>
-    /// Authenticate a user by username + deviceId. Creates/updates registration,
-    /// generates tokens, and builds a personal DB if possible.
+    /// Authenticate a user by exchanging an Epic authorization code.
+    /// Exchanges the code server-side for an Epic token, extracts the
+    /// account ID and display name, then registers the user and issues JWT tokens.
     /// </summary>
-    public LoginResult Login(string username, string deviceId, string? platform)
+    public async Task<LoginResult> LoginAsync(string code, string deviceId, string? platform)
     {
-        // 1. Look up the Epic account ID for this username
-        var accountId = _metaDb.GetAccountIdForUsername(username);
+        // 1. Exchange the authorization code with Epic for an access token
+        var epicToken = await _epic.ExchangeAuthorizationCodeAsync(
+            code, _epicOAuth.ClientId, _epicOAuth.ClientSecret, _epicOAuth.RedirectUri);
 
-        // 2. The identifier stored in RegisteredUsers — use the Epic account ID if
-        //    known, otherwise store the username as a placeholder.
-        var registrationId = accountId ?? username;
+        var accountId = epicToken.AccountId;
+        var displayName = epicToken.DisplayName;
 
-        // 3. Register/update the user+device pair
-        var isNew = _metaDb.RegisterOrUpdateUser(deviceId, registrationId, username, platform);
+        if (string.IsNullOrEmpty(accountId))
+            throw new InvalidOperationException("Epic token exchange did not return an account ID.");
 
-        // 4. Build personal DB if account ID is known
+        // Fallback display name to the account ID if Epic didn't return one
+        if (string.IsNullOrEmpty(displayName))
+            displayName = accountId;
+
+        _log.LogInformation(
+            "Epic code exchange succeeded: accountId={AccountId}, displayName={DisplayName}",
+            accountId, displayName);
+
+        // 2. Store Epic tokens in the vault (encrypted at rest) for later API calls
+        _tokenVault.Store(accountId, epicToken);
+
+        // 3. Store/update the display name in AccountNames so the scraper knows this user
+        _metaDb.InsertAccountNames([(accountId, displayName)]);
+
+        // 4. Register/update the user+device pair
+        var isNew = _metaDb.RegisterOrUpdateUser(deviceId, accountId, displayName, platform);
+
+        // 5. Build personal DB
         string? dbPath = null;
-        if (accountId is not null)
+        try
         {
-            try
-            {
-                dbPath = _personalDbBuilder.Build(deviceId, accountId);
-            }
-            catch (Exception ex)
-            {
-                _log.LogWarning(ex, "Failed to build personal DB for {Username} on login.", username);
-            }
-
-            // 5. Enqueue a backfill to fill in scores below the top 60K
-            _backfillQueue.Enqueue(new BackfillRequest(accountId));
+            dbPath = _personalDbBuilder.Build(deviceId, accountId);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to build personal DB for {AccountId} on login.", accountId);
         }
 
-        // 5. Generate tokens
-        var accessToken = _jwt.GenerateAccessToken(username, deviceId);
+        // 6. Enqueue a backfill to fill in scores below the top 60K
+        _backfillQueue.Enqueue(new BackfillRequest(accountId));
+
+        // 7. Generate JWT tokens (displayName as subject for session continuity)
+        var accessToken = _jwt.GenerateAccessToken(displayName, deviceId);
         var refreshToken = _jwt.GenerateRefreshToken();
         var refreshHash = JwtTokenService.HashRefreshToken(refreshToken);
 
-        // 6. Create session
+        // 8. Create session
         var expiresAt = _jwt.RefreshTokenExpiry;
-        _metaDb.InsertSession(username, deviceId, refreshHash, platform, expiresAt);
+        _metaDb.InsertSession(displayName, deviceId, refreshHash, platform, expiresAt);
 
         _log.LogInformation(
-            "User {Username} logged in from device {DeviceId} (platform={Platform}, accountId={AccountId}, isNew={IsNew})",
-            username, deviceId, platform ?? "unknown", accountId ?? "pending", isNew);
+            "User {DisplayName} logged in from device {DeviceId} (platform={Platform}, accountId={AccountId}, isNew={IsNew})",
+            displayName, deviceId, platform ?? "unknown", accountId, isNew);
 
         return new LoginResult
         {
@@ -80,7 +105,7 @@ public sealed class UserAuthService
             RefreshToken = refreshToken,
             ExpiresIn = _jwt.AccessTokenLifetimeSeconds,
             AccountId = accountId,
-            DisplayName = username,
+            DisplayName = displayName,
             PersonalDbReady = dbPath is not null,
         };
     }
@@ -123,11 +148,22 @@ public sealed class UserAuthService
     }
 
     /// <summary>
-    /// Log out by revoking the refresh token. Best-effort — does not fail if token not found.
+    /// Log out by revoking the refresh token and deleting stored Epic tokens.
+    /// Best-effort — does not fail if token not found.
     /// </summary>
     public void Logout(string refreshToken)
     {
         var hash = JwtTokenService.HashRefreshToken(refreshToken);
+
+        // Look up the session to find the account for token revocation
+        var session = _metaDb.GetActiveSession(hash);
+        if (session is not null)
+        {
+            var accountId = _metaDb.GetAccountIdForUsername(session.Username);
+            if (accountId is not null)
+                _tokenVault.Revoke(accountId);
+        }
+
         _metaDb.RevokeSession(hash);
         _log.LogDebug("Logout: revoked session for refresh token.");
     }

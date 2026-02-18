@@ -383,6 +383,73 @@ public class GlobalLeaderboardScraper
             .ToDictionary(r => r.Instrument, r => r.Entry!);
     }
 
+    // ─── V1 lookup with teamAccountIds ──────────────
+
+    /// <summary>
+    /// Fetch a specific player's leaderboard entry for one song + instrument
+    /// using the V1 GET API with <c>teamAccountIds</c> parameter.
+    /// Unlike the V2 POST API, V1 with teamAccountIds returns the player's
+    /// <b>real percentile</b> (a fraction in (0,1]) in addition to rank.
+    /// Returns the player's entry or null if the player has no score.
+    /// </summary>
+    public async Task<LeaderboardEntry?> LookupAccountV1Async(
+        string songId,
+        string instrument,
+        string targetAccountId,
+        string accessToken,
+        string callerAccountId,
+        AdaptiveConcurrencyLimiter? limiter = null,
+        CancellationToken ct = default)
+    {
+        // V1 API requires the path account ID to match teamAccountIds.
+        // Use the target account in both so the API jumps to the page
+        // containing their entry and returns their real percentile.
+        var url = $"{EventsBase}/api/v1/leaderboards/FNFestival/alltime_{songId}_{instrument}" +
+                  $"/alltime/{targetAccountId}?page=0&rank=0" +
+                  $"&teamAccountIds={targetAccountId}&appId=Fortnite&showLiveSessions=false";
+
+        HttpRequestMessage CreateRequest()
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            return req;
+        }
+
+        var label = $"V1/{songId}/{instrument}";
+
+        HttpResponseMessage res;
+        try
+        {
+            res = await _executor.SendAsync(CreateRequest, limiter, label, _maxLookupRetries, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogDebug(ex, "V1 lookup failed for {Account} on {Song}/{Instrument}.",
+                targetAccountId, songId, instrument);
+            throw;
+        }
+
+        if (!res.IsSuccessStatusCode)
+        {
+            var body = await res.Content.ReadAsStringAsync(ct);
+            _log.LogDebug("V1 lookup non-success for {Account} on {Song}/{Instrument}: {Status} {Body}",
+                targetAccountId, songId, instrument, res.StatusCode, body);
+            res.Dispose();
+            return null;
+        }
+
+        await using var stream = await res.Content.ReadAsStreamAsync(ct);
+        var page = await ParsePageAsync(stream, ct);
+        res.Dispose();
+
+        if (page is null || page.Entries.Count == 0)
+            return null;
+
+        // Find the target account's entry on the returned page
+        return page.Entries.FirstOrDefault(e =>
+            e.AccountId.Equals(targetAccountId, StringComparison.OrdinalIgnoreCase));
+    }
+
     // ─── Single page fetch (with retry) ─────────────
 
     /// <summary>Max retries for transient HTTP failures (429, 5xx, timeouts).</summary>

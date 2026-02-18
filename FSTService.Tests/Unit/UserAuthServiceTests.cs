@@ -5,6 +5,7 @@ using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using NSubstitute;
 
 namespace FSTService.Tests.Unit;
 
@@ -26,6 +27,14 @@ public sealed class UserAuthServiceTests : IDisposable
 
     private readonly PersonalDbBuilder _personalDbBuilder;
     private readonly BackfillQueue _backfillQueue = new();
+
+    private static readonly EpicOAuthSettings TestOAuthSettings = new()
+    {
+        ClientId = "test-client-id",
+        ClientSecret = "test-client-secret",
+        RedirectUri = "https://example.com/api/auth/epiccallback",
+        AppDeepLink = "festscoretracker://auth/callback",
+    };
 
     public UserAuthServiceTests()
     {
@@ -53,20 +62,43 @@ public sealed class UserAuthServiceTests : IDisposable
         try { Directory.Delete(_dataDir, recursive: true); } catch { }
     }
 
-    private UserAuthService CreateService(JwtTokenService? jwt = null) =>
+    /// <summary>
+    /// Creates a mock <see cref="EpicAuthService"/> that returns the given
+    /// account ID and display name when <c>ExchangeAuthorizationCodeAsync</c> is called.
+    /// </summary>
+    private static EpicAuthService CreateMockEpic(string accountId = "epic_acct_123", string displayName = "TestPlayer")
+    {
+        var mock = Substitute.For<EpicAuthService>(new HttpClient(), NullLogger<EpicAuthService>.Instance);
+        mock.ExchangeAuthorizationCodeAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(new EpicTokenResponse
+            {
+                AccountId = accountId,
+                DisplayName = displayName,
+                AccessToken = "epic_access_token",
+            }));
+        return mock;
+    }
+
+    private TokenVault CreateTestVault(EpicAuthService? epic = null) =>
+        new(MetaDb, epic ?? CreateMockEpic(),
+            Options.Create(TestOAuthSettings),
+            NullLogger<TokenVault>.Instance);
+
+    private UserAuthService CreateService(JwtTokenService? jwt = null, EpicAuthService? epic = null) =>
         new(jwt ?? CreateJwt(), MetaDb, _personalDbBuilder, _backfillQueue,
+            epic ?? CreateMockEpic(),
+            Options.Create(TestOAuthSettings),
+            CreateTestVault(epic),
             NullLogger<UserAuthService>.Instance);
 
     // ═══ Login ══════════════════════════════════════════════════
 
     [Fact]
-    public void Login_known_user_returns_tokens_and_accountId()
+    public async Task Login_returns_tokens_and_accountId()
     {
-        // Pre-register the username → accountId mapping
-        MetaDb.InsertAccountNames([("epic_acct_123", "TestPlayer")]);
-
         var svc = CreateService();
-        var result = svc.Login("TestPlayer", "device_1", "iOS");
+        var result = await svc.LoginAsync("fake_code", "device_1", "iOS");
 
         Assert.False(string.IsNullOrEmpty(result.AccessToken));
         Assert.False(string.IsNullOrEmpty(result.RefreshToken));
@@ -76,32 +108,19 @@ public sealed class UserAuthServiceTests : IDisposable
     }
 
     [Fact]
-    public void Login_unknown_user_returns_null_accountId()
+    public async Task Login_creates_user_registration()
     {
         var svc = CreateService();
-        var result = svc.Login("UnknownPlayer", "device_1", null);
-
-        Assert.Null(result.AccountId);
-        Assert.Equal("UnknownPlayer", result.DisplayName);
-        Assert.False(string.IsNullOrEmpty(result.AccessToken));
-    }
-
-    [Fact]
-    public void Login_creates_user_registration()
-    {
-        var svc = CreateService();
-        svc.Login("TestPlayer", "device_1", "Android");
+        await svc.LoginAsync("fake_code", "device_1", "Android");
 
         Assert.True(MetaDb.IsDeviceRegistered("device_1"));
     }
 
     [Fact]
-    public void Login_enqueues_backfill_for_known_user()
+    public async Task Login_enqueues_backfill()
     {
-        MetaDb.InsertAccountNames([("epic_acct_123", "TestPlayer")]);
-
         var svc = CreateService();
-        svc.Login("TestPlayer", "device_1", null);
+        await svc.LoginAsync("fake_code", "device_1", null);
 
         Assert.True(_backfillQueue.HasPending);
         var items = _backfillQueue.DrainAll();
@@ -110,20 +129,11 @@ public sealed class UserAuthServiceTests : IDisposable
     }
 
     [Fact]
-    public void Login_does_not_enqueue_backfill_for_unknown_user()
-    {
-        var svc = CreateService();
-        svc.Login("UnknownPlayer", "device_1", null);
-
-        Assert.False(_backfillQueue.HasPending);
-    }
-
-    [Fact]
-    public void Login_creates_session()
+    public async Task Login_creates_session()
     {
         var jwt = CreateJwt();
         var svc = CreateService(jwt);
-        var result = svc.Login("TestPlayer", "device_1", null);
+        var result = await svc.LoginAsync("fake_code", "device_1", null);
 
         var hash = JwtTokenService.HashRefreshToken(result.RefreshToken);
         var session = MetaDb.GetActiveSession(hash);
@@ -132,14 +142,25 @@ public sealed class UserAuthServiceTests : IDisposable
         Assert.Equal("device_1", session.DeviceId);
     }
 
+    [Fact]
+    public async Task Login_stores_display_name_in_AccountNames()
+    {
+        var svc = CreateService();
+        await svc.LoginAsync("fake_code", "device_1", null);
+
+        // The account name should be stored in AccountNames
+        var accountId = MetaDb.GetAccountIdForUsername("TestPlayer");
+        Assert.Equal("epic_acct_123", accountId);
+    }
+
     // ═══ Refresh ════════════════════════════════════════════════
 
     [Fact]
-    public void Refresh_with_valid_token_returns_new_tokens()
+    public async Task Refresh_with_valid_token_returns_new_tokens()
     {
         var jwt = CreateJwt();
         var svc = CreateService(jwt);
-        var login = svc.Login("TestPlayer", "device_1", null);
+        var login = await svc.LoginAsync("fake_code", "device_1", null);
 
         var refresh = svc.Refresh(login.RefreshToken);
 
@@ -151,11 +172,11 @@ public sealed class UserAuthServiceTests : IDisposable
     }
 
     [Fact]
-    public void Refresh_revokes_old_session()
+    public async Task Refresh_revokes_old_session()
     {
         var jwt = CreateJwt();
         var svc = CreateService(jwt);
-        var login = svc.Login("TestPlayer", "device_1", null);
+        var login = await svc.LoginAsync("fake_code", "device_1", null);
 
         var oldHash = JwtTokenService.HashRefreshToken(login.RefreshToken);
         svc.Refresh(login.RefreshToken);
@@ -165,11 +186,11 @@ public sealed class UserAuthServiceTests : IDisposable
     }
 
     [Fact]
-    public void Refresh_creates_new_session()
+    public async Task Refresh_creates_new_session()
     {
         var jwt = CreateJwt();
         var svc = CreateService(jwt);
-        var login = svc.Login("TestPlayer", "device_1", null);
+        var login = await svc.LoginAsync("fake_code", "device_1", null);
 
         var refresh = svc.Refresh(login.RefreshToken);
 
@@ -188,11 +209,11 @@ public sealed class UserAuthServiceTests : IDisposable
     }
 
     [Fact]
-    public void Refresh_returns_null_for_already_used_token()
+    public async Task Refresh_returns_null_for_already_used_token()
     {
         var jwt = CreateJwt();
         var svc = CreateService(jwt);
-        var login = svc.Login("TestPlayer", "device_1", null);
+        var login = await svc.LoginAsync("fake_code", "device_1", null);
 
         // First refresh succeeds
         svc.Refresh(login.RefreshToken);
@@ -205,11 +226,11 @@ public sealed class UserAuthServiceTests : IDisposable
     // ═══ Logout ═════════════════════════════════════════════════
 
     [Fact]
-    public void Logout_revokes_session()
+    public async Task Logout_revokes_session()
     {
         var jwt = CreateJwt();
         var svc = CreateService(jwt);
-        var login = svc.Login("TestPlayer", "device_1", null);
+        var login = await svc.LoginAsync("fake_code", "device_1", null);
 
         svc.Logout(login.RefreshToken);
 

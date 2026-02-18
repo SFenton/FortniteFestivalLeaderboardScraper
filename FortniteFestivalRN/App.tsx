@@ -65,7 +65,7 @@ type TransitionPhase =
  * Must live inside <AuthProvider> + <FestivalProvider> so it can read both.
  */
 function TransitionManager() {
-  const {state} = useFestival();
+  const {state, actions: festivalActions} = useFestival();
   const {isReady} = state;
   const {auth} = useAuth();
 
@@ -75,6 +75,10 @@ function TransitionManager() {
   const [spinnerFullyVisible, setSpinnerFullyVisible] = useState(false);
   /** True when onboarding was skipped (returning user) — drives the fast-path. */
   const skippedOnboarding = useRef(false);
+  /** Track the previous auth mode to detect mid-session mode switches. */
+  const prevAuthModeRef = useRef<string | null>(null);
+  /** Whether the main navigator has been mounted (for spinner → slide-in). */
+  const [navMounted, setNavMounted] = useState(false);
 
   // ── Check onboarding flag on mount ────────────────────────────────
   useEffect(() => {
@@ -126,6 +130,37 @@ function TransitionManager() {
   // RNW native-driver transforms are unreliable (see WindowsFlyout comment);
   // keep all transition animations JS-driven on Windows.
   const nativeDriver = Platform.OS !== 'windows';
+
+  // ── Detect mode switch while app is fully loaded (e.g. Settings → Connect) ─
+  useEffect(() => {
+    const currentMode = auth.mode;
+
+    // Only act when the app is fully loaded and we have a previous mode to compare
+    if (phase !== 'done' || prevAuthModeRef.current === null) {
+      prevAuthModeRef.current = currentMode;
+      return;
+    }
+
+    // Mode changed (local → service, service → local, etc.)
+    if (currentMode !== prevAuthModeRef.current) {
+      console.log(`[TransitionManager] Mode switch detected: ${prevAuthModeRef.current} → ${currentMode}`);
+      prevAuthModeRef.current = currentMode;
+
+      // Clear local scores/history (keep images + songs) when switching to service mode
+      if (currentMode === 'service') {
+        void festivalActions.clearLocalData();
+      }
+
+      // Reset animation state and unmount the navigator
+      setNavMounted(false);
+      setSpinnerFullyVisible(false);
+      spinnerOpacity.setValue(0);
+      navTranslateX.setValue(SCREEN_WIDTH);
+
+      // Return to spinner with animated background
+      setPhase('spinner');
+    }
+  }, [phase, auth.mode, festivalActions, spinnerOpacity, navTranslateX]);
 
   // ── Intro entrance: fade in the intro spinner ─────────────────────
   useEffect(() => {
@@ -235,7 +270,6 @@ function TransitionManager() {
   }, []);
 
   // ── Outro: spinner stays up until sync finishes, then mount + slide nav ──
-  const [navMounted, setNavMounted] = useState(false);
 
   // Wait for spinner to be fully visible AND isReady before mounting navigator
   useEffect(() => {

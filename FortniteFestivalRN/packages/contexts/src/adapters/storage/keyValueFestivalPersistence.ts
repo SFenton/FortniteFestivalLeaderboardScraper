@@ -1,5 +1,5 @@
 import type {FestivalPersistence} from '@festival/core';
-import type {LeaderboardData, Song} from '@festival/core';
+import type {LeaderboardData, ScoreHistoryEntry, Song} from '@festival/core';
 import {ScoreTracker} from '@festival/core';
 import {parseJson, savePretty} from '@festival/core';
 import type {KeyValueStore} from './keyValueStore.types';
@@ -7,6 +7,7 @@ import type {KeyValueStore} from './keyValueStore.types';
 export type KeyValueFestivalPersistenceKeys = {
   songsKey: string;
   scoresKey: string;
+  scoreHistoryKey: string;
 };
 
 function safeArray<T>(value: unknown): T[] {
@@ -83,6 +84,42 @@ export class KeyValueFestivalPersistence implements FestivalPersistence {
       const json = savePretty(songs);
       if (!json) return;
       await this.store.setItem(this.keys.songsKey, json);
+    } catch {
+      // swallow
+    }
+  }
+
+  async loadScoreHistory(
+    songId?: string,
+    instrument?: string,
+  ): Promise<ScoreHistoryEntry[]> {
+    try {
+      const raw = await this.store.getItem(this.keys.scoreHistoryKey);
+      if (!raw) return [];
+      const parsed = parseJson(raw);
+      let entries = safeArray<ScoreHistoryEntry>(parsed);
+      if (songId) entries = entries.filter(e => e.songId === songId);
+      if (instrument) entries = entries.filter(e => e.instrument === instrument);
+      return entries;
+    } catch {
+      return [];
+    }
+  }
+
+  async saveScoreHistory(entries: ScoreHistoryEntry[]): Promise<void> {
+    try {
+      const json = savePretty(entries);
+      if (!json) return;
+      await this.store.setItem(this.keys.scoreHistoryKey, json);
+    } catch {
+      // swallow
+    }
+  }
+
+  async clearScoresAndHistory(): Promise<void> {
+    try {
+      await this.store.setItem(this.keys.scoresKey, '[]');
+      await this.store.setItem(this.keys.scoreHistoryKey, '[]');
     } catch {
       // swallow
     }

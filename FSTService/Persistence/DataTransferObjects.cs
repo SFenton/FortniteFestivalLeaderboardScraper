@@ -30,6 +30,8 @@ public sealed class PlayerScoreDto
     public int Stars { get; init; }
     public int Season { get; init; }
     public double Percentile { get; init; }
+    /// <summary>All-time rank from Epic API (0 = not yet enriched).</summary>
+    public int Rank { get; init; }
     /// <summary>ISO 8601 timestamp when the session ended (from Epic API). Null for legacy data.</summary>
     public string? EndTime { get; init; }
 }

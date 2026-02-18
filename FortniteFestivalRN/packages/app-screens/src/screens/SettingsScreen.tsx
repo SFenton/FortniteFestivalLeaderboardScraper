@@ -23,8 +23,7 @@ export function SettingsScreen() {
   const {height: tabBarHeight, marginBottom: tabBarMargin} = useTabBarLayout();
   const {state, actions} = useFestival();
   const {auth, authActions} = useAuth();
-  const [settingsServiceEndpoint, setSettingsServiceEndpoint] = useState('');
-  const [settingsEpicUsername, setSettingsEpicUsername] = useState('');
+  const [settingsServiceEndpoint, setSettingsServiceEndpoint] = useState('https://festivalscoretracker.com');
 
   const generateExchangeCodeUrl =
     'https://www.epicgames.com/id/api/redirect?clientId=ec684b8c687f479fadea3cb2ad83f5c6&responseType=code';
@@ -269,12 +268,12 @@ export function SettingsScreen() {
             <View style={[modalStyles.orderRow, styles.orderRowFirst, {flexDirection: 'column', alignItems: 'stretch'}]}>
               <Text style={modalStyles.orderName}>Service Endpoint</Text>
               <Text style={styles.descriptorText}>
-                Enter the endpoint of the Festival Score Tracker service you want to connect to.
+                Change only for local testing.
               </Text>
               <FrostedSurface style={[styles.exchangeCodeSurface, {marginTop: 8}]} tint="dark" intensity={18}>
                 <FestivalTextInput
                   style={styles.exchangeCodeInput}
-                  placeholder="https://example.com"
+                  placeholder="https://festivalscoretracker.com"
                   placeholderTextColor={Colors.textPlaceholder}
                   value={settingsServiceEndpoint}
                   onChangeText={setSettingsServiceEndpoint}
@@ -284,27 +283,10 @@ export function SettingsScreen() {
               </FrostedSurface>
             </View>
             <View style={[modalStyles.orderRow, styles.orderRowSeparator, {flexDirection: 'column', alignItems: 'stretch'}]}>
-              <Text style={modalStyles.orderName}>Epic Games Username</Text>
-              <Text style={styles.descriptorText}>
-                Enter your Epic Games username here.
-              </Text>
-              <FrostedSurface style={[styles.exchangeCodeSurface, {marginTop: 8}]} tint="dark" intensity={18}>
-                <FestivalTextInput
-                  style={styles.exchangeCodeInput}
-                  placeholder="Username"
-                  placeholderTextColor={Colors.textPlaceholder}
-                  value={settingsEpicUsername}
-                  onChangeText={setSettingsEpicUsername}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-              </FrostedSurface>
-            </View>
-            <View style={[modalStyles.orderRow, styles.orderRowSeparator, {flexDirection: 'column', alignItems: 'stretch'}]}>
               <Pressable
-                onPress={() => authActions.signInWithService(settingsServiceEndpoint, settingsEpicUsername)}
+                onPress={() => authActions.signInWithService(settingsServiceEndpoint)}
                 style={({pressed}) => [buttonStyles.buttonPurple, pressed && buttonStyles.buttonPressed]}>
-                <Text style={buttonStyles.buttonText}>Sign In</Text>
+                <Text style={buttonStyles.buttonText}>Sign In with Epic Games</Text>
               </Pressable>
             </View>
         </FrostedSurface>

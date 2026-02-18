@@ -73,11 +73,13 @@ public sealed class InstrumentDatabase : IDisposable
         dropOldIdx.ExecuteNonQuery();
 
         // ── Migration: drop deprecated columns from existing DBs ──
-        MigrateDropColumn(conn, "Rank");
         MigrateDropColumn(conn, "PointsEarned");
 
         // ── Migration: add EndTime column to existing DBs ──
         MigrateAddColumn(conn, "EndTime", "TEXT");
+
+        // ── Migration: re-add Rank column (was dropped, now needed for V2 API enrichment) ──
+        MigrateAddColumn(conn, "Rank", "INTEGER DEFAULT 0");
 
         // ── Recreate IX_Song with Score DESC ──
         using var createNewIdx = conn.CreateCommand();
@@ -110,19 +112,29 @@ public sealed class InstrumentDatabase : IDisposable
         cmd.Transaction = tx;
         cmd.CommandText = """
             INSERT INTO LeaderboardEntries
-                (SongId, AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime, FirstSeenAt, LastUpdatedAt)
+                (SongId, AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, Rank, EndTime, FirstSeenAt, LastUpdatedAt)
             VALUES
-                (@songId, @accountId, @score, @accuracy, @fc, @stars, @season, @pct, @endTime, @now, @now)
+                (@songId, @accountId, @score, @accuracy, @fc, @stars, @season, @pct, @rank, @endTime, @now, @now)
             ON CONFLICT(SongId, AccountId) DO UPDATE SET
                 Score         = excluded.Score,
                 Accuracy      = excluded.Accuracy,
                 IsFullCombo   = excluded.IsFullCombo,
                 Stars         = excluded.Stars,
                 Season        = excluded.Season,
-                Percentile    = excluded.Percentile,
+                Percentile    = CASE
+                                  WHEN excluded.Score != LeaderboardEntries.Score THEN excluded.Percentile
+                                  WHEN excluded.Percentile > 0 AND LeaderboardEntries.Percentile <= 0 THEN excluded.Percentile
+                                  ELSE LeaderboardEntries.Percentile
+                                END,
+                Rank          = CASE
+                                  WHEN excluded.Rank > 0 THEN excluded.Rank
+                                  ELSE LeaderboardEntries.Rank
+                                END,
                 EndTime       = excluded.EndTime,
                 LastUpdatedAt = excluded.LastUpdatedAt
-            WHERE Score != excluded.Score;
+            WHERE Score != excluded.Score
+               OR (excluded.Rank > 0 AND (LeaderboardEntries.Rank IS NULL OR LeaderboardEntries.Rank = 0))
+               OR (excluded.Percentile > 0 AND LeaderboardEntries.Percentile <= 0);
             """;
 
         var pSongId    = cmd.Parameters.Add("@songId", SqliteType.Text);
@@ -133,6 +145,7 @@ public sealed class InstrumentDatabase : IDisposable
         var pStars     = cmd.Parameters.Add("@stars", SqliteType.Integer);
         var pSeason    = cmd.Parameters.Add("@season", SqliteType.Integer);
         var pPct       = cmd.Parameters.Add("@pct", SqliteType.Real);
+        var pRank      = cmd.Parameters.Add("@rank", SqliteType.Integer);
         var pEndTime   = cmd.Parameters.Add("@endTime", SqliteType.Text);
         var pNow       = cmd.Parameters.Add("@now", SqliteType.Text);
 
@@ -148,6 +161,7 @@ public sealed class InstrumentDatabase : IDisposable
             pStars.Value     = entry.Stars;
             pSeason.Value    = entry.Season;
             pPct.Value       = entry.Percentile;
+            pRank.Value      = entry.Rank;
             pEndTime.Value   = (object?)entry.EndTime ?? DBNull.Value;
             pNow.Value       = now;
 
@@ -168,7 +182,7 @@ public sealed class InstrumentDatabase : IDisposable
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime
+            SELECT Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime, Rank
             FROM LeaderboardEntries
             WHERE SongId = @songId AND AccountId = @accountId;
             """;
@@ -188,6 +202,7 @@ public sealed class InstrumentDatabase : IDisposable
             Season       = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
             Percentile   = reader.IsDBNull(5) ? 0 : reader.GetDouble(5),
             EndTime      = reader.IsDBNull(6) ? null : reader.GetString(6),
+            Rank         = reader.IsDBNull(7) ? 0 : reader.GetInt32(7),
         };
     }
 
@@ -263,7 +278,7 @@ public sealed class InstrumentDatabase : IDisposable
     {
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT SongId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime FROM LeaderboardEntries WHERE AccountId = @accountId ORDER BY SongId;";
+        cmd.CommandText = "SELECT SongId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime, Rank FROM LeaderboardEntries WHERE AccountId = @accountId ORDER BY SongId;";
         cmd.Parameters.AddWithValue("@accountId", accountId);
 
         var scores = new List<PlayerScoreDto>();
@@ -281,9 +296,41 @@ public sealed class InstrumentDatabase : IDisposable
                 Season       = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
                 Percentile   = reader.IsDBNull(6) ? 0 : reader.GetDouble(6),
                 EndTime      = reader.IsDBNull(7) ? null : reader.GetString(7),
+                Rank         = reader.IsDBNull(8) ? 0 : reader.GetInt32(8),
             });
         }
         return scores;
+    }
+
+    /// <summary>
+    /// For each song where the given account has a score, compute
+    /// (rank, totalEntries) from the leaderboard. Rank is 1-based.
+    /// </summary>
+    public Dictionary<string, (int Rank, int Total)> GetPlayerRankings(string accountId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT
+                le.SongId,
+                (SELECT COUNT(*) + 1 FROM LeaderboardEntries x
+                 WHERE x.SongId = le.SongId AND x.Score > le.Score) AS Rank,
+                (SELECT COUNT(*) FROM LeaderboardEntries x
+                 WHERE x.SongId = le.SongId) AS TotalEntries
+            FROM LeaderboardEntries le
+            WHERE le.AccountId = @accountId;";
+        cmd.Parameters.AddWithValue("@accountId", accountId);
+
+        var result = new Dictionary<string, (int, int)>(StringComparer.OrdinalIgnoreCase);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var songId = reader.GetString(0);
+            var rank = reader.GetInt32(1);
+            var total = reader.GetInt32(2);
+            result[songId] = (rank, total);
+        }
+        return result;
     }
 
     private static LeaderboardEntryDto ReadEntryDto(SqliteDataReader reader)

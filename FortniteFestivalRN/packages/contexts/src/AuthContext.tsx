@@ -8,6 +8,8 @@ import {
   SERVICE_ENDPOINT_KEY,
 } from '@festival/core';
 import {FstAuthClient, FstAuthError} from '@festival/core';
+import {FstServiceClient, FstServiceError} from '@festival/core';
+import {authorizeWithEpic, EpicAuthCancelledError} from '../../../../src/platform/epicOAuth';
 
 // ── Auth state machine ──────────────────────────────────────────────
 export type AuthStatus =
@@ -35,13 +37,20 @@ type AuthActions = {
 
   /**
    * User chose to connect to a Festival Score Tracker service.
-   * Sends the username to the FST service at the given endpoint
-   * and stores the resulting tokens.
+   * Checks the service is reachable, opens the Epic Games OAuth login
+   * page in an in-app browser, retrieves the authorization code, and
+   * sends it to the FST service to complete registration/login.
    *
    * @param serviceEndpoint  The FST service URL entered by the user.
-   * @param username         The user's Epic Games display name.
    */
-  signInWithService: (serviceEndpoint: string, username: string) => void;
+  signInWithService: (serviceEndpoint: string) => void;
+
+  /**
+   * Refresh the access token using the stored refresh token.
+   * Updates auth state + persistence. Returns the new access token.
+   * Throws if refresh fails (caller should handle sign-out).
+   */
+  refreshAccessToken: () => Promise<string>;
 
   /** Reset back to the sign-in screen (wipes persisted mode + tokens). */
   signOut: () => Promise<void>;
@@ -232,32 +241,68 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
     }
   }, [confirmLocal]);
 
-  const signInWithService = useCallback((serviceEndpoint: string, username: string) => {
+  const signInWithService = useCallback((serviceEndpoint: string) => {
     const endpoint = serviceEndpoint.trim();
-    const name = username.trim();
     if (!endpoint) {
       Alert.alert('Missing Endpoint', 'Please enter the Festival Score Tracker service endpoint.');
-      return;
-    }
-    if (!name) {
-      Alert.alert('Missing Username', 'Please enter your Epic Games username.');
       return;
     }
 
     (async () => {
       try {
-        // 1. Generate a device identifier
+        // 1. Health check — verify the service is reachable
+        try {
+          const healthRes = await fetch(`${endpoint.replace(/\/+$/, '')}/healthz`, {
+            method: 'GET',
+            // Short timeout — don't hang forever
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!healthRes.ok) {
+            Alert.alert(
+              'Service Unavailable',
+              `Festival Score Tracker at ${endpoint} returned HTTP ${healthRes.status}. ` +
+                'Please check the URL and try again.',
+            );
+            return;
+          }
+        } catch (err: any) {
+          Alert.alert(
+            'Connection Failed',
+            `Could not reach the Festival Score Tracker service at ${endpoint}. ` +
+              'Please check the URL and your internet connection.',
+          );
+          return;
+        }
+
+        // 2. Open Epic Games sign-in in the in-app browser
+        let authorizationCode: string;
+        try {
+          const epicResult = await authorizeWithEpic(endpoint);
+          authorizationCode = epicResult.authorizationCode;
+        } catch (err: any) {
+          if (err instanceof EpicAuthCancelledError) {
+            // User cancelled — just return silently
+            return;
+          }
+          Alert.alert(
+            'Epic Login Failed',
+            err?.message ?? 'An error occurred during Epic Games sign-in.',
+          );
+          return;
+        }
+
+        // 3. Generate a device identifier
         const deviceId = await getDeviceId();
 
-        // 2. Send the username to the FST service to register/login
+        // 4. Send the authorization code to the FST service
         const client = new FstAuthClient(endpoint);
         const loginResult = await client.login(
-          name,
+          authorizationCode,
           deviceId,
           Platform.OS as 'ios' | 'android' | 'windows',
         );
 
-        // 3. Build session and persist everything
+        // 5. Build session and persist everything
         const session: AuthSession = {
           accessToken: loginResult.accessToken,
           refreshToken: loginResult.refreshToken,
@@ -274,7 +319,7 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
           persistEndpoint(endpoint),
         ]);
 
-        // 4. Transition to authenticated
+        // 6. Transition to authenticated
         setAuth({
           status: 'authenticated',
           mode: 'service',
@@ -286,12 +331,11 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
           Alert.alert(
             'Sign-In Failed',
             `The Festival Score Tracker service returned an error (HTTP ${error.statusCode}). ` +
-              'Please check the endpoint URL and try again.',
+              'Please try again.',
           );
           return;
         }
 
-        // Generic error
         Alert.alert(
           'Sign-In Failed',
           error?.message ?? 'An unexpected error occurred during sign-in.',
@@ -299,6 +343,29 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
       }
     })();
   }, []);
+
+  const refreshAccessToken = useCallback(async (): Promise<string> => {
+    if (!auth.session || !auth.serviceEndpoint) {
+      throw new Error('Cannot refresh: no active session');
+    }
+
+    const client = new FstAuthClient(auth.serviceEndpoint);
+    const result = await client.refresh(auth.session.refreshToken);
+
+    const newSession: AuthSession = {
+      ...auth.session,
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+      expiresAt: new Date(
+        Date.now() + result.expiresIn * 1000,
+      ).toISOString(),
+    };
+
+    await persistSession(newSession);
+    setAuth(prev => ({...prev, session: newSession}));
+
+    return result.accessToken;
+  }, [auth.session, auth.serviceEndpoint]);
 
   const signOut = useCallback(async () => {
     // Best-effort: revoke the session on the server
@@ -318,9 +385,9 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
   const value = useMemo<AuthContextValue>(
     () => ({
       auth,
-      authActions: {confirmLocal, promptLocal, signInWithService, signOut},
+      authActions: {confirmLocal, promptLocal, signInWithService, refreshAccessToken, signOut},
     }),
-    [auth, confirmLocal, promptLocal, signInWithService, signOut],
+    [auth, confirmLocal, promptLocal, signInWithService, refreshAccessToken, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

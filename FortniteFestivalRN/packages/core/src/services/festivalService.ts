@@ -78,7 +78,7 @@ export class FestivalService {
   public isFetching = false;
 
   private readonly http: HttpClient;
-  private readonly persistence?: FestivalPersistence;
+  private readonly _persistence?: FestivalPersistence;
   private readonly imageCache?: ImageCache;
   private readonly events: FestivalServiceEvents;
 
@@ -106,9 +106,14 @@ export class FestivalService {
     events?: FestivalServiceEvents;
   }) {
     this.http = deps.http;
-    this.persistence = deps.persistence;
+    this._persistence = deps.persistence;
     this.imageCache = deps.imageCache;
     this.events = deps.events ?? {};
+  }
+
+  /** The underlying persistence layer. */
+  get persistence(): FestivalPersistence | undefined {
+    return this._persistence;
   }
 
   get songs(): Song[] {
@@ -149,9 +154,9 @@ export class FestivalService {
 
   async initialize(opts?: {signal?: AbortSignal}): Promise<void> {
     // Load persisted state first
-    if (this.persistence) {
+    if (this._persistence) {
       try {
-        const loadedScores = await this.persistence.loadScores();
+        const loadedScores = await this._persistence.loadScores();
         for (const ld of loadedScores) {
           if (!ld?.songId) continue;
           if (!hasAnyInitializedScore(ld)) continue;
@@ -169,7 +174,7 @@ export class FestivalService {
       }
 
       try {
-        const loadedSongs = await this.persistence.loadSongs();
+        const loadedSongs = await this._persistence.loadSongs();
         for (const s of loadedSongs ?? []) {
           if (s?.track?.su) this.songsById.set(s.track.su, s);
         }
@@ -215,9 +220,9 @@ export class FestivalService {
         }
       }
 
-      if (this.persistence) {
+      if (this._persistence) {
         try {
-          await this.persistence.saveSongs(this.songs);
+          await this._persistence.saveSongs(this.songs);
         } catch {
           // swallow
         }
@@ -235,9 +240,27 @@ export class FestivalService {
 
     this.scoresBySongId = {};
 
-    if (this.persistence) {
+    if (this._persistence) {
       try {
-        await this.persistence.saveScores([]);
+        await this._persistence.saveScores([]);
+      } catch {
+        // swallow
+      }
+    }
+  }
+
+  /**
+   * Clear all scores and score history from memory and persistence.
+   * Keeps songs and cached images intact.
+   */
+  async clearScoresAndHistory(): Promise<void> {
+    console.log('[FestivalService] Clearing scores and score history');
+
+    this.scoresBySongId = {};
+
+    if (this._persistence) {
+      try {
+        await this._persistence.clearScoresAndHistory();
       } catch {
         // swallow
       }
@@ -264,9 +287,9 @@ export class FestivalService {
     this.imagesSyncComplete = false;
     
     // Persist the cleared state
-    if (this.persistence) {
+    if (this._persistence) {
       try {
-        await this.persistence.saveSongs(this.songs);
+        await this._persistence.saveSongs(this.songs);
       } catch {
         // swallow
       }
@@ -310,9 +333,9 @@ export class FestivalService {
 
     await Promise.all(queue.map(s => limiter.schedule(() => runOne(s))));
 
-    if (this.persistence) {
+    if (this._persistence) {
       try {
-        await this.persistence.saveSongs(this.songs);
+        await this._persistence.saveSongs(this.songs);
       } catch {
         // swallow
       }
@@ -456,9 +479,9 @@ export class FestivalService {
       await Promise.all(workers);
 
       // Persist once at end (portable); platform adapters can do incremental upsert.
-      if (this.persistence) {
+      if (this._persistence) {
         try {
-          await this.persistence.saveScores(Object.values(this.scoresBySongId));
+          await this._persistence.saveScores(Object.values(this.scoresBySongId));
         } catch {
           // swallow
         }

@@ -1,6 +1,6 @@
 import {SqliteFestivalPersistence} from '../sqliteFestivalPersistence';
 import type {SqliteDatabase, SqliteResultSet, SqliteRowList} from '../sqliteDb.types';
-import type {LeaderboardData, Song} from '@festival/core';
+import type {LeaderboardData, ScoreHistoryEntry, Song} from '@festival/core';
 import {ScoreTracker} from '@festival/core';
 
 function rowsOf<T>(items: T[]): SqliteRowList<T> {
@@ -29,6 +29,8 @@ describe('SqliteFestivalPersistence (adapter)', () => {
     const calls = executeSql.mock.calls.map(c => c[0]);
     expect(calls.some((s: string) => s.includes('CREATE TABLE IF NOT EXISTS Songs'))).toBe(true);
     expect(calls.some((s: string) => s.includes('CREATE TABLE IF NOT EXISTS Scores'))).toBe(true);
+    expect(calls.some((s: string) => s.includes('CREATE TABLE IF NOT EXISTS ScoreHistory'))).toBe(true);
+    expect(calls.some((s: string) => s.includes('IX_ScoreHist_Song'))).toBe(true);
   });
 
   test('loadSongs maps db rows to Song', async () => {
@@ -162,5 +164,100 @@ describe('SqliteFestivalPersistence (adapter)', () => {
     const sqls = executeSql.mock.calls.map(c => c[0]);
     expect(sqls.some((s: string) => s.includes('INSERT INTO Songs'))).toBe(true);
     expect(sqls.some((s: string) => s.includes('INSERT INTO Scores'))).toBe(true);
+  });
+
+  test('loadScoreHistory maps db rows to ScoreHistoryEntry', async () => {
+    const executeSql = jest.fn(async (sql: string) => {
+      if (typeof sql === 'string' && sql.includes('FROM ScoreHistory')) {
+        return resultOf([
+          {
+            Id: 1,
+            SongId: 'song1',
+            Instrument: 'Solo_Guitar',
+            OldScore: 100,
+            NewScore: 200,
+            OldRank: 50,
+            NewRank: 30,
+            Accuracy: 987600,
+            IsFullCombo: 1,
+            Stars: 5,
+            Percentile: 0.05,
+            Season: 12,
+            ScoreAchievedAt: '2025-06-01T00:00:00Z',
+            SeasonRank: 15,
+            AllTimeRank: 42,
+            ChangedAt: '2025-06-01T12:00:00Z',
+          },
+        ]);
+      }
+      return resultOf([]);
+    });
+
+    const p = new SqliteFestivalPersistence({executeSql});
+    const entries = await p.loadScoreHistory();
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0].songId).toBe('song1');
+    expect(entries[0].instrument).toBe('Solo_Guitar');
+    expect(entries[0].oldScore).toBe(100);
+    expect(entries[0].newScore).toBe(200);
+    expect(entries[0].isFullCombo).toBe(true);
+    expect(entries[0].seasonRank).toBe(15);
+    expect(entries[0].allTimeRank).toBe(42);
+    expect(entries[0].changedAt).toBe('2025-06-01T12:00:00Z');
+  });
+
+  test('loadScoreHistory filters by songId and instrument', async () => {
+    const executeSql = jest.fn(async (sql: string) => {
+      if (typeof sql === 'string' && sql.includes('FROM ScoreHistory')) {
+        // Verify the query includes WHERE clauses
+        expect(sql).toContain('WHERE');
+        expect(sql).toContain('SongId = ?');
+        expect(sql).toContain('Instrument = ?');
+        return resultOf([]);
+      }
+      return resultOf([]);
+    });
+
+    const p = new SqliteFestivalPersistence({executeSql});
+    await p.loadScoreHistory('song1', 'Solo_Guitar');
+
+    // Verify params were passed
+    const historyCall = executeSql.mock.calls.find(
+      (c: any[]) => typeof c[0] === 'string' && c[0].includes('FROM ScoreHistory'),
+    );
+    expect(historyCall).toBeDefined();
+    expect(historyCall![1]).toEqual(['song1', 'Solo_Guitar']);
+  });
+
+  test('saveScoreHistory inserts entries', async () => {
+    const executeSql = jest.fn(async () => resultOf([]));
+    const p = new SqliteFestivalPersistence({executeSql});
+
+    const entries: ScoreHistoryEntry[] = [
+      {
+        songId: 's1',
+        instrument: 'Solo_Guitar',
+        oldScore: 100,
+        newScore: 200,
+        isFullCombo: true,
+        stars: 5,
+        changedAt: '2025-06-01T00:00:00Z',
+      },
+    ];
+
+    await p.saveScoreHistory(entries);
+
+    const sqls = executeSql.mock.calls.map((c: any[]) => c[0]);
+    expect(sqls.some((s: string) => s.includes('INSERT INTO ScoreHistory'))).toBe(true);
+
+    const insertCall = executeSql.mock.calls.find(
+      (c: any[]) => typeof c[0] === 'string' && c[0].includes('INSERT INTO ScoreHistory'),
+    );
+    expect(insertCall).toBeDefined();
+    const params = insertCall![1] as unknown[];
+    expect(params[0]).toBe('s1');           // songId
+    expect(params[1]).toBe('Solo_Guitar');  // instrument
+    expect(params[7]).toBe(1);             // isFullCombo -> 1
   });
 });

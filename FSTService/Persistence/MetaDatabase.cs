@@ -161,6 +161,16 @@ public sealed class MetaDatabase : IDisposable
                 CalculatedAt     TEXT    NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS EpicUserTokens (
+                AccountId              TEXT PRIMARY KEY,
+                EncryptedAccessToken   BLOB NOT NULL,
+                EncryptedRefreshToken  BLOB NOT NULL,
+                TokenExpiresAt         TEXT NOT NULL,
+                RefreshExpiresAt       TEXT NOT NULL,
+                Nonce                  BLOB NOT NULL,
+                UpdatedAt              TEXT NOT NULL
+            );
+
             """;
         cmd.ExecuteNonQuery();
 
@@ -498,6 +508,71 @@ public sealed class MetaDatabase : IDisposable
         cmd.Parameters.AddWithValue("@deviceId", deviceId);
         cmd.Parameters.AddWithValue("@accountId", accountId);
         return cmd.ExecuteNonQuery() > 0;
+    }
+
+    /// <summary>
+    /// Unregister ALL device registrations for an account.
+    /// Returns the list of device IDs that were removed (for personal DB cleanup).
+    /// </summary>
+    public List<string> UnregisterAccount(string accountId)
+    {
+        using var conn = OpenConnection();
+
+        // First, collect the device IDs so the caller can clean up personal DBs.
+        using var selectCmd = conn.CreateCommand();
+        selectCmd.CommandText = "SELECT DeviceId FROM RegisteredUsers WHERE AccountId = @accountId;";
+        selectCmd.Parameters.AddWithValue("@accountId", accountId);
+
+        var deviceIds = new List<string>();
+        using (var reader = selectCmd.ExecuteReader())
+        {
+            while (reader.Read())
+                deviceIds.Add(reader.GetString(0));
+        }
+
+        if (deviceIds.Count == 0) return deviceIds;
+
+        // Delete all registrations for this account.
+        using var deleteCmd = conn.CreateCommand();
+        deleteCmd.CommandText = "DELETE FROM RegisteredUsers WHERE AccountId = @accountId;";
+        deleteCmd.Parameters.AddWithValue("@accountId", accountId);
+        deleteCmd.ExecuteNonQuery();
+
+        return deviceIds;
+    }
+
+    /// <summary>
+    /// Find registered accounts that have no active (non-revoked, non-expired) sessions.
+    /// These accounts' refresh tokens have all expired — they're no longer using the app.
+    /// Only returns accounts that previously had at least one session (safety guard).
+    /// </summary>
+    public List<string> GetOrphanedRegisteredAccounts()
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT DISTINCT ru.AccountId
+            FROM RegisteredUsers ru
+            JOIN AccountNames an ON an.AccountId = ru.AccountId
+            WHERE NOT EXISTS (
+                SELECT 1 FROM UserSessions us
+                WHERE us.Username = an.DisplayName
+                  AND us.RevokedAt IS NULL
+                  AND us.ExpiresAt > @now
+            )
+            AND EXISTS (
+                SELECT 1 FROM UserSessions us
+                WHERE us.Username = an.DisplayName
+            );
+            """;
+        cmd.Parameters.AddWithValue("@now", now);
+
+        var accounts = new List<string>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            accounts.Add(reader.GetString(0));
+        return accounts;
     }
 
     /// <summary>
@@ -1289,6 +1364,89 @@ public sealed class MetaDatabase : IDisposable
         };
     }
 
+    // ─── EpicUserTokens ────────────────────────────────────────
+
+    /// <summary>
+    /// Store (or update) an encrypted Epic token pair for a user.
+    /// Both the access and refresh tokens are encrypted with AES-256-GCM
+    /// before being passed to this method.
+    /// </summary>
+    public void UpsertEpicUserToken(
+        string accountId,
+        byte[] encryptedAccessToken,
+        byte[] encryptedRefreshToken,
+        DateTimeOffset tokenExpiresAt,
+        DateTimeOffset refreshExpiresAt,
+        byte[] nonce)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO EpicUserTokens (AccountId, EncryptedAccessToken, EncryptedRefreshToken,
+                                        TokenExpiresAt, RefreshExpiresAt, Nonce, UpdatedAt)
+            VALUES (@accountId, @accessToken, @refreshToken, @tokenExp, @refreshExp, @nonce, @now)
+            ON CONFLICT(AccountId) DO UPDATE SET
+                EncryptedAccessToken  = excluded.EncryptedAccessToken,
+                EncryptedRefreshToken = excluded.EncryptedRefreshToken,
+                TokenExpiresAt        = excluded.TokenExpiresAt,
+                RefreshExpiresAt      = excluded.RefreshExpiresAt,
+                Nonce                 = excluded.Nonce,
+                UpdatedAt             = excluded.UpdatedAt;
+            """;
+        cmd.Parameters.AddWithValue("@accountId", accountId);
+        cmd.Parameters.AddWithValue("@accessToken", encryptedAccessToken);
+        cmd.Parameters.AddWithValue("@refreshToken", encryptedRefreshToken);
+        cmd.Parameters.AddWithValue("@tokenExp", tokenExpiresAt.ToString("o"));
+        cmd.Parameters.AddWithValue("@refreshExp", refreshExpiresAt.ToString("o"));
+        cmd.Parameters.AddWithValue("@nonce", nonce);
+        cmd.Parameters.AddWithValue("@now", now);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Retrieve the encrypted token data for a user.
+    /// Returns null if no tokens are stored for this account.
+    /// </summary>
+    public StoredEpicUserToken? GetEpicUserToken(string accountId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT EncryptedAccessToken, EncryptedRefreshToken, TokenExpiresAt,
+                   RefreshExpiresAt, Nonce, UpdatedAt
+            FROM EpicUserTokens
+            WHERE AccountId = @accountId;
+            """;
+        cmd.Parameters.AddWithValue("@accountId", accountId);
+
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read()) return null;
+
+        return new StoredEpicUserToken
+        {
+            AccountId = accountId,
+            EncryptedAccessToken = (byte[])reader["EncryptedAccessToken"],
+            EncryptedRefreshToken = (byte[])reader["EncryptedRefreshToken"],
+            TokenExpiresAt = DateTimeOffset.Parse((string)reader["TokenExpiresAt"]),
+            RefreshExpiresAt = DateTimeOffset.Parse((string)reader["RefreshExpiresAt"]),
+            Nonce = (byte[])reader["Nonce"],
+            UpdatedAt = (string)reader["UpdatedAt"],
+        };
+    }
+
+    /// <summary>
+    /// Delete all stored Epic tokens for a user (e.g. on logout or revocation).
+    /// </summary>
+    public void DeleteEpicUserToken(string accountId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM EpicUserTokens WHERE AccountId = @accountId;";
+        cmd.Parameters.AddWithValue("@accountId", accountId);
+        cmd.ExecuteNonQuery();
+    }
+
     // ─── Helpers ────────────────────────────────────────────────
 
     private readonly object _writeLock = new();
@@ -1452,4 +1610,20 @@ public sealed class ScrapeRunInfo
     public long TotalEntries { get; init; }
     public int TotalRequests { get; init; }
     public long TotalBytes { get; init; }
+}
+
+/// <summary>
+/// Encrypted Epic Games user token pair retrieved from the <c>EpicUserTokens</c> table.
+/// The access and refresh token fields contain AES-256-GCM ciphertext that must be
+/// decrypted with the <see cref="FSTService.Auth.TokenVault"/> before use.
+/// </summary>
+public sealed class StoredEpicUserToken
+{
+    public required string AccountId { get; init; }
+    public required byte[] EncryptedAccessToken { get; init; }
+    public required byte[] EncryptedRefreshToken { get; init; }
+    public required DateTimeOffset TokenExpiresAt { get; init; }
+    public required DateTimeOffset RefreshExpiresAt { get; init; }
+    public required byte[] Nonce { get; init; }
+    public required string UpdatedAt { get; init; }
 }

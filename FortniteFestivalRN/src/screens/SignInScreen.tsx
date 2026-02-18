@@ -1,5 +1,6 @@
 import React, {useCallback, useRef, useState} from 'react';
 import {
+  ActivityIndicator,
   Platform,
   Pressable,
   StyleSheet,
@@ -21,31 +22,41 @@ const COLORS = {
   epicButtonBorder: '#9D4EDD',
   localButton: '#223047',
   localButtonBorder: '#2B3B55',
+  disabledButton: 'rgba(123,47,190,0.4)',
 };
+
+const DEFAULT_ENDPOINT = 'https://festivalscoretracker.com';
 
 /**
  * Full-screen sign-in screen shown after the intro carousel (or on
  * re-launch when no persisted auth mode exists).
  *
  * Two options:
- *   • Enter Epic Games Username  (primary, purple)
+ *   • Sign In with Epic Games  (primary, purple — health check → OAuth → login)
  *   • Use Locally              (secondary, dark — shows warning alert)
  *
  * The transparent background lets the SlidingRowsBackground shine through.
  */
 export function SignInScreen({onContinue}: {onContinue: () => void}) {
   const {authActions} = useAuth();
-  const [serviceEndpoint, setServiceEndpoint] = useState('');
-  const [epicUsername, setEpicUsername] = useState('');
+  const [serviceEndpoint, setServiceEndpoint] = useState(DEFAULT_ENDPOINT);
+  const [isSigningIn, setIsSigningIn] = useState(false);
   const inputRef = useRef<TextInput>(null);
 
   const handleSignIn = useCallback(() => {
-    authActions.signInWithService(serviceEndpoint, epicUsername);
-  }, [authActions, serviceEndpoint, epicUsername]);
+    setIsSigningIn(true);
+    // signInWithService is fire-and-forget (async inside); we reset state
+    // when the flow completes or errors (auth state change or alert dismiss).
+    // Use a microtask to ensure the spinner renders before the OAuth browser opens.
+    setTimeout(() => {
+      authActions.signInWithService(serviceEndpoint);
+      // Reset after a short delay — if the user cancels the browser or an
+      // alert fires, we want the button re-enabled.
+      setTimeout(() => setIsSigningIn(false), 2000);
+    }, 100);
+  }, [authActions, serviceEndpoint]);
 
   const handleLocal = () => {
-    // Show the warning alert; if the user confirms, persist local mode
-    // and then proceed to the spinner → main app transition.
     authActions.promptLocal();
   };
 
@@ -67,15 +78,14 @@ export function SignInScreen({onContinue}: {onContinue: () => void}) {
         <Text style={styles.cardBody}>
           Sync your scores automatically, see friends, rankings, score history, and more.
         </Text>
-        <View style={styles.exchangeCodeContainer}>
+        <View style={styles.inputContainer}>
           <Text style={styles.cardBody}>
-            Enter the endpoint of the Festival Score Tracker service you want
-            to connect to.
+            Service endpoint (change only for local testing):
           </Text>
           <FestivalTextInput
             ref={inputRef}
-            style={styles.exchangeCodeInput}
-            placeholder="https://example.com"
+            style={styles.endpointInput}
+            placeholder="https://festivalscoretracker.com"
             placeholderTextColor="rgba(255,255,255,0.4)"
             value={serviceEndpoint}
             onChangeText={setServiceEndpoint}
@@ -84,24 +94,16 @@ export function SignInScreen({onContinue}: {onContinue: () => void}) {
             selectionColor={COLORS.epicButtonBorder}
           />
         </View>
-        <View style={styles.exchangeCodeContainer}>
-          <Text style={styles.cardBody}>
-            Enter your Epic Games username here.
-          </Text>
-          <FestivalTextInput
-            style={styles.exchangeCodeInput}
-            placeholder="Username"
-            placeholderTextColor="rgba(255,255,255,0.4)"
-            value={epicUsername}
-            onChangeText={setEpicUsername}
-            autoCapitalize="none"
-            autoCorrect={false}
-            selectionColor={COLORS.epicButtonBorder}
-          />
-        </View>
-        <Pressable onPress={handleSignIn} style={({pressed}) => pressed && styles.pressed}>
-          <View style={styles.epicButton}>
-            <Text style={styles.epicButtonText}>Sign In</Text>
+        <Pressable
+          onPress={handleSignIn}
+          disabled={isSigningIn}
+          style={({pressed}) => pressed && !isSigningIn && styles.pressed}>
+          <View style={[styles.epicButton, isSigningIn && styles.epicButtonDisabled]}>
+            {isSigningIn ? (
+              <ActivityIndicator color={COLORS.textPrimary} size="small" />
+            ) : (
+              <Text style={styles.epicButtonText}>Sign In with Epic Games</Text>
+            )}
           </View>
         </Pressable>
 
@@ -170,7 +172,20 @@ const styles = StyleSheet.create({
   exchangeCodeContainer: {
     marginTop: 12,
   },
+  inputContainer: {
+    marginTop: 12,
+  },
   exchangeCodeInput: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderColor: COLORS.epicButtonBorder,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    fontSize: 16,
+    color: COLORS.textPrimary,
+  },
+  endpointInput: {
     backgroundColor: 'rgba(255,255,255,0.08)',
     borderColor: COLORS.epicButtonBorder,
     borderWidth: 1,
@@ -188,6 +203,9 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     alignItems: 'center',
     marginTop: 4,
+  },
+  epicButtonDisabled: {
+    backgroundColor: COLORS.disabledButton,
   },
   epicButtonText: {
     fontSize: 16,

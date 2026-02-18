@@ -143,6 +143,69 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.True(Db.IsDeviceRegistered("dev_1"));
     }
 
+    [Fact]
+    public void UnregisterAccount_removes_all_devices_and_returns_ids()
+    {
+        Db.RegisterOrUpdateUser("dev_1", "acct_1", "P1", null);
+        Db.RegisterOrUpdateUser("dev_2", "acct_1", "P1", null);
+        Db.RegisterOrUpdateUser("dev_3", "acct_2", "P2", null);
+
+        var removed = Db.UnregisterAccount("acct_1");
+        Assert.Equal(2, removed.Count);
+        Assert.Contains("dev_1", removed);
+        Assert.Contains("dev_2", removed);
+
+        // acct_2 should be unaffected
+        Assert.True(Db.IsDeviceRegistered("dev_3"));
+        Assert.False(Db.IsDeviceRegistered("dev_1"));
+    }
+
+    [Fact]
+    public void UnregisterAccount_returns_empty_for_unknown_account()
+    {
+        var removed = Db.UnregisterAccount("nonexistent");
+        Assert.Empty(removed);
+    }
+
+    [Fact]
+    public void GetOrphanedRegisteredAccounts_finds_accounts_with_expired_sessions()
+    {
+        // Register two accounts and give them sessions
+        Db.RegisterOrUpdateUser("dev_1", "acct_1", "Player1", null);
+        Db.RegisterOrUpdateUser("dev_2", "acct_2", "Player2", null);
+
+        // acct_1's session is expired, acct_2's is active
+        Db.InsertAccountNames([("acct_1", "Player1"), ("acct_2", "Player2")]);
+        Db.InsertSession("Player1", "dev_1", "hash_1", null, DateTime.UtcNow.AddDays(-5)); // expired
+        Db.InsertSession("Player2", "dev_2", "hash_2", null, DateTime.UtcNow.AddDays(30)); // active
+
+        var orphaned = Db.GetOrphanedRegisteredAccounts();
+        Assert.Single(orphaned);
+        Assert.Equal("acct_1", orphaned[0]);
+    }
+
+    [Fact]
+    public void GetOrphanedRegisteredAccounts_excludes_accounts_that_never_had_sessions()
+    {
+        // Register an account but never create a session for it
+        Db.RegisterOrUpdateUser("dev_1", "acct_1", "Player1", null);
+        Db.InsertAccountNames([("acct_1", "Player1")]);
+
+        var orphaned = Db.GetOrphanedRegisteredAccounts();
+        Assert.Empty(orphaned);
+    }
+
+    [Fact]
+    public void GetOrphanedRegisteredAccounts_returns_empty_when_all_sessions_active()
+    {
+        Db.RegisterOrUpdateUser("dev_1", "acct_1", "Player1", null);
+        Db.InsertAccountNames([("acct_1", "Player1")]);
+        Db.InsertSession("Player1", "dev_1", "hash_1", null, DateTime.UtcNow.AddDays(30));
+
+        var orphaned = Db.GetOrphanedRegisteredAccounts();
+        Assert.Empty(orphaned);
+    }
+
     // ═══ ScoreHistory ═══════════════════════════════════════════
 
     [Fact]

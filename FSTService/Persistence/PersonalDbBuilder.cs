@@ -542,4 +542,179 @@ public class PersonalDbBuilder
             _ => 0,
         };
     }
+
+    // ─── Paged JSON sync support ──────────────────────────────────
+
+    /// <summary>
+    /// Returns a page of songs for the JSON sync endpoint.
+    /// </summary>
+    public PagedResult? GetSongsAsJson(int page, int pageSize)
+    {
+        var songs = _festivalService.Songs;
+        if (songs.Count == 0) return null;
+
+        var allRows = new List<Dictionary<string, object?>>(songs.Count);
+        foreach (var song in songs)
+        {
+            if (song.track?.su is null) continue;
+            allRows.Add(new Dictionary<string, object?>
+            {
+                ["SongId"]       = song.track.su,
+                ["Title"]        = song.track.tt,
+                ["Artist"]       = song.track.an,
+                ["ActiveDate"]   = song._activeDate != default ? song._activeDate.ToString("o") : null,
+                ["LastModified"] = song.lastModified != default ? song.lastModified.ToString("o") : null,
+                ["ImagePath"]    = null,
+                ["LeadDiff"]     = song.track.@in?.gr ?? 0,
+                ["BassDiff"]     = song.track.@in?.ba ?? 0,
+                ["VocalsDiff"]   = song.track.@in?.vl ?? 0,
+                ["DrumsDiff"]    = song.track.@in?.ds ?? 0,
+                ["ProLeadDiff"]  = song.track.@in?.pg ?? 0,
+                ["ProBassDiff"]  = song.track.@in?.pb ?? 0,
+                ["ReleaseYear"]  = song.track.ry,
+                ["Tempo"]        = song.track.mt,
+            });
+        }
+
+        return PagedResult.FromAll(allRows, page, pageSize);
+    }
+
+    /// <summary>
+    /// Returns a page of scores for the given account.
+    /// </summary>
+    public PagedResult? GetScoresAsJson(string accountId, int page, int pageSize)
+    {
+        var songs = _festivalService.Songs;
+        if (songs.Count == 0) return null;
+
+        // Gather scores per instrument (includes Rank and Percentile from DB)
+        var scoresByInstrument = new Dictionary<string, Dictionary<string, PlayerScoreDto>>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var instrumentKey in _persistence.GetInstrumentKeys())
+        {
+            var db = _persistence.GetOrCreateInstrumentDb(instrumentKey);
+            var playerScores = db.GetPlayerScores(accountId);
+            var bySong = new Dictionary<string, PlayerScoreDto>(StringComparer.OrdinalIgnoreCase);
+            foreach (var score in playerScores)
+                bySong[score.SongId] = score;
+            scoresByInstrument[instrumentKey] = bySong;
+        }
+
+        var allRows = new List<Dictionary<string, object?>>();
+        foreach (var song in songs)
+        {
+            if (song.track?.su is null) continue;
+            var songId = song.track.su;
+
+            bool hasAny = false;
+            foreach (var (_, bySong) in scoresByInstrument)
+            {
+                if (bySong.ContainsKey(songId)) { hasAny = true; break; }
+            }
+            if (!hasAny) continue;
+
+            var row = new Dictionary<string, object?> { ["SongId"] = songId, ["Title"] = song.track.tt, ["Artist"] = song.track.an };
+
+            foreach (var (instrumentKey, prefix) in InstrumentPrefixes)
+            {
+                if (scoresByInstrument.TryGetValue(instrumentKey, out var bySong) && bySong.TryGetValue(songId, out var score))
+                {
+                    var diff = GetDifficultyForInstrument(song, instrumentKey);
+
+                    // Rank from API enrichment (stored in instrument DB). 0 = not yet enriched.
+                    int rank = score.Rank;
+                    // Percentile from V1 API with teamAccountIds (real fraction in (0,1]).
+                    // -1 or 0 means not yet enriched.
+                    double rawPct = score.Percentile > 0 ? score.Percentile : 0;
+                    // Reverse-calculate total entries: total = rank / percentile
+                    // This matches the client's local calculation from leaderboardV1.ts
+                    int calcTotal = 0;
+                    if (rank > 0 && rawPct > 1e-9)
+                    {
+                        calcTotal = (int)Math.Round(rank / rawPct);
+                        if (calcTotal < rank) calcTotal = rank; // floor at rank
+                        if (calcTotal > 10_000_000) calcTotal = 10_000_000; // sanity cap
+                    }
+
+                    row[$"{prefix}Score"]    = score.Score;
+                    row[$"{prefix}Diff"]     = diff;
+                    row[$"{prefix}Stars"]    = score.Stars;
+                    row[$"{prefix}FC"]       = score.IsFullCombo ? 1 : 0;
+                    row[$"{prefix}Pct"]      = score.Accuracy;
+                    row[$"{prefix}Season"]   = score.Season;
+                    row[$"{prefix}Rank"]     = rank;
+                    row[$"{prefix}GameDiff"] = -1;
+                    row[$"{prefix}Total"]    = calcTotal;
+                    row[$"{prefix}RawPct"]   = rawPct;
+                    row[$"{prefix}CalcTotal"]= calcTotal;
+                }
+            }
+
+            allRows.Add(row);
+        }
+
+        return PagedResult.FromAll(allRows, page, pageSize);
+    }
+
+    /// <summary>
+    /// Returns a page of score history entries for the given account.
+    /// </summary>
+    public PagedResult? GetHistoryAsJson(string accountId, int page, int pageSize)
+    {
+        var history = _metaDb.GetScoreHistory(accountId, int.MaxValue);
+        history.Reverse(); // newest-first → chronological
+
+        var allRows = new List<Dictionary<string, object?>>(history.Count);
+        foreach (var e in history)
+        {
+            allRows.Add(new Dictionary<string, object?>
+            {
+                ["SongId"]         = e.SongId,
+                ["Instrument"]     = e.Instrument,
+                ["OldScore"]       = e.OldScore,
+                ["NewScore"]       = e.NewScore,
+                ["OldRank"]        = e.OldRank,
+                ["NewRank"]        = e.NewRank,
+                ["Accuracy"]       = e.Accuracy,
+                ["IsFullCombo"]    = e.IsFullCombo.HasValue ? (e.IsFullCombo.Value ? 1 : 0) : null,
+                ["Stars"]          = e.Stars,
+                ["Percentile"]     = e.Percentile,
+                ["Season"]         = e.Season,
+                ["ScoreAchievedAt"]= e.ScoreAchievedAt,
+                ["SeasonRank"]     = e.SeasonRank,
+                ["AllTimeRank"]    = e.AllTimeRank,
+                ["ChangedAt"]      = e.ChangedAt,
+            });
+        }
+
+        return PagedResult.FromAll(allRows, page, pageSize);
+    }
+}
+
+/// <summary>
+/// A single page of JSON sync results.
+/// </summary>
+public class PagedResult
+{
+    public int Page { get; init; }
+    public int PageSize { get; init; }
+    public int TotalItems { get; init; }
+    public int TotalPages { get; init; }
+    public List<Dictionary<string, object?>> Items { get; init; } = new();
+
+    public static PagedResult FromAll(List<Dictionary<string, object?>> all, int page, int pageSize)
+    {
+        var totalItems = all.Count;
+        var totalPages = (int)Math.Ceiling((double)totalItems / pageSize);
+        var items = all.Skip(page * pageSize).Take(pageSize).ToList();
+
+        return new PagedResult
+        {
+            Page = page,
+            PageSize = pageSize,
+            TotalItems = totalItems,
+            TotalPages = totalPages,
+            Items = items,
+        };
+    }
 }

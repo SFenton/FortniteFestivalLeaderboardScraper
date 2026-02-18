@@ -231,8 +231,8 @@ public class ScraperOptionsAndModelsTests
     [Fact]
     public void LoginRequest_Record()
     {
-        var req = new FSTService.Api.LoginRequest("user1", "device1", "ios");
-        Assert.Equal("user1", req.Username);
+        var req = new FSTService.Api.LoginRequest("fake_code_123", "device1", "ios");
+        Assert.Equal("fake_code_123", req.Code);
         Assert.Equal("device1", req.DeviceId);
         Assert.Equal("ios", req.Platform);
     }

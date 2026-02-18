@@ -183,14 +183,15 @@ public class ScoreBackfiller
         var instrumentDb = _persistence.GetOrCreateInstrumentDb(instrument);
         var existing = instrumentDb.GetEntry(songId, accountId);
 
-        if (existing is not null)
+        if (existing is not null && existing.Rank > 0 && existing.Percentile > 0)
         {
-            // Already have an entry — mark as checked, no need to query API
+            // Already have an entry with valid rank AND percentile — no need to re-query
             _metaDb.MarkBackfillSongChecked(accountId, songId, instrument, entryFound: true);
             return false; // Not a "new" entry
         }
 
-        // No entry — query the API
+        // No entry, or existing entry lacks rank/percentile — query the V1 API
+        // (V1 with teamAccountIds returns real rank AND real percentile)
         LeaderboardEntry? entry;
         try
         {
@@ -199,37 +200,47 @@ public class ScoreBackfiller
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _log.LogDebug(ex, "Lookup failed for {Account}/{Song}/{Instrument}. Skipping.",
+            _log.LogDebug(ex, "V1 lookup failed for {Account}/{Song}/{Instrument}. Skipping.",
                 accountId, songId, instrument);
             // Don't mark as checked so it retries next run
             return false;
         }
 
+        if (entry is not null)
+        {
+            _log.LogDebug("V2 lookup result for {Account}/{Song}/{Instrument}: Rank={Rank}, Percentile={Percentile}, Score={Score}",
+                accountId, songId, instrument, entry.Rank, entry.Percentile, entry.Score);
+        }
+
         if (entry is null)
         {
             // User has no score on this song/instrument
-            _metaDb.MarkBackfillSongChecked(accountId, songId, instrument, entryFound: false);
+            _metaDb.MarkBackfillSongChecked(accountId, songId, instrument, entryFound: existing is null ? false : true);
             return false;
         }
 
-        // UPSERT the entry
+        // UPSERT the entry (will also update Rank for existing entries
+        // thanks to the Rank-enrichment clause in UpsertEntries)
         instrumentDb.UpsertEntries(songId, [entry]);
 
-        // Record as a new score in ScoreHistory
-        _metaDb.InsertScoreChange(
-            songId, instrument, accountId,
-            oldScore: null, newScore: entry.Score,
-            oldRank: null, newRank: entry.Rank,
-            accuracy: entry.Accuracy,
-            isFullCombo: entry.IsFullCombo,
-            stars: entry.Stars,
-            percentile: entry.Percentile,
-            season: entry.Season,
-            scoreAchievedAt: entry.EndTime,
-            allTimeRank: entry.Rank);
+        if (existing is null)
+        {
+            // Truly new entry — record in ScoreHistory
+            _metaDb.InsertScoreChange(
+                songId, instrument, accountId,
+                oldScore: null, newScore: entry.Score,
+                oldRank: null, newRank: entry.Rank,
+                accuracy: entry.Accuracy,
+                isFullCombo: entry.IsFullCombo,
+                stars: entry.Stars,
+                percentile: entry.Percentile,
+                season: entry.Season,
+                scoreAchievedAt: entry.EndTime,
+                allTimeRank: entry.Rank);
+        }
 
         _metaDb.MarkBackfillSongChecked(accountId, songId, instrument, entryFound: true);
 
-        return true;
+        return existing is null; // Only count truly new entries
     }
 }

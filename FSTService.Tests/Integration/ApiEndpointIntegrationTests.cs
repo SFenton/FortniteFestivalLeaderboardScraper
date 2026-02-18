@@ -225,7 +225,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     [Fact]
     public async Task AuthLogin_ValidCredentials_ReturnsTokens()
     {
-        var content = JsonContent.Create(new { username = "testUser", deviceId = "testDev1" });
+        var content = JsonContent.Create(new { code = "testCode1", deviceId = "testDev1" });
         var response = await _client.PostAsync("/api/auth/login", content);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -236,7 +236,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     [Fact]
     public async Task AuthLogin_MissingFields_ReturnsBadRequest()
     {
-        var content = JsonContent.Create(new { username = "", deviceId = "" });
+        var content = JsonContent.Create(new { code = "", deviceId = "" });
         var response = await _client.PostAsync("/api/auth/login", content);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -295,7 +295,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     [Fact]
     public async Task AuthLogin_ValidRequest_ReturnsTokens()
     {
-        var content = JsonContent.Create(new { username = "loginUser", deviceId = "loginDev" });
+        var content = JsonContent.Create(new { code = "loginCode", deviceId = "loginDev" });
         var response = await _client.PostAsync("/api/auth/login", content);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -308,7 +308,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     public async Task AuthRefresh_ValidToken_ReturnsNewTokens()
     {
         // Login first to get a refresh token
-        var loginContent = JsonContent.Create(new { username = "refreshUser", deviceId = "refreshDev" });
+        var loginContent = JsonContent.Create(new { code = "refreshCode", deviceId = "refreshDev" });
         var loginResponse = await _client.PostAsync("/api/auth/login", loginContent);
         Assert.Equal(HttpStatusCode.OK, loginResponse.StatusCode);
         var loginJson = await loginResponse.Content.ReadFromJsonAsync<JsonElement>();
@@ -327,7 +327,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     public async Task AuthMe_ValidBearer_ReturnsUserInfo()
     {
         // Login first to get an access token
-        var loginContent = JsonContent.Create(new { username = "meUser", deviceId = "meDev" });
+        var loginContent = JsonContent.Create(new { code = "meCode", deviceId = "meDev" });
         var loginResponse = await _client.PostAsync("/api/auth/login", loginContent);
         Assert.Equal(HttpStatusCode.OK, loginResponse.StatusCode);
         var loginJson = await loginResponse.Content.ReadFromJsonAsync<JsonElement>();
@@ -450,6 +450,11 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                     ["Jwt:Audience"] = "FSTService.Tests",
                     ["Jwt:AccessTokenExpirationMinutes"] = "60",
                     ["Jwt:RefreshTokenExpirationDays"] = "7",
+                    ["EpicOAuth:ClientId"] = "test-client-id",
+                    ["EpicOAuth:ClientSecret"] = "test-client-secret",
+                    ["EpicOAuth:RedirectUri"] = "https://example.com/api/auth/epiccallback",
+                    ["EpicOAuth:AppDeepLink"] = "festscoretracker://auth/callback",
+                    ["EpicOAuth:TokenEncryptionKey"] = Convert.ToBase64String(new byte[32]),
                 });
             });
 
@@ -465,15 +470,29 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 // Replace TokenManager with a real one backed by mocked auth
                 // (no credentials → GetAccessTokenAsync returns null)
                 services.RemoveAll<TokenManager>();
+                services.RemoveAll<EpicAuthService>();
+
+                var mockHandler = new HttpMessageHandler_NoOp();
+                var mockHttp = new HttpClient(mockHandler);
+                var mockEpic = Substitute.For<EpicAuthService>(mockHttp, Substitute.For<ILogger<EpicAuthService>>());
+
+                // Mock ExchangeAuthorizationCodeAsync to return a fake Epic token
+                mockEpic.ExchangeAuthorizationCodeAsync(
+                        Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+                        Arg.Any<string>(), Arg.Any<CancellationToken>())
+                    .Returns(callInfo => Task.FromResult(new EpicTokenResponse
+                    {
+                        AccountId = $"acct_{callInfo.ArgAt<string>(0).GetHashCode():x8}",
+                        DisplayName = $"Player_{callInfo.ArgAt<string>(0)}",
+                        AccessToken = "mock_epic_access_token",
+                    }));
+                services.AddSingleton(mockEpic);
+
+                var store = Substitute.For<ICredentialStore>();
+                store.LoadAsync().Returns(Task.FromResult<StoredCredentials?>(null));
                 services.AddSingleton<TokenManager>(sp =>
-                {
-                    var mockHandler = new HttpMessageHandler_NoOp();
-                    var mockHttp = new HttpClient(mockHandler);
-                    var auth = new EpicAuthService(mockHttp, Substitute.For<ILogger<EpicAuthService>>());
-                    var store = Substitute.For<ICredentialStore>();
-                    store.LoadAsync().Returns(Task.FromResult<StoredCredentials?>(null));
-                    return new TokenManager(auth, store, Substitute.For<ILogger<TokenManager>>());
-                });
+                    new TokenManager(mockEpic, store, Substitute.For<ILogger<TokenManager>>()));
+
 
                 // Replace FestivalService with one that has test songs pre-loaded
                 services.RemoveAll<FestivalService>();

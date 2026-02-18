@@ -48,6 +48,10 @@ builder.Services.PostConfigure<ScraperOptions>(opts =>
         {
             opts.ApiOnly = true;
         }
+        else if (args[i].Equals("--backfill-only", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.BackfillOnly = true;
+        }
         else if (args[i].Equals("--test", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
         {
             opts.TestSongQuery = args[++i];
@@ -83,6 +87,7 @@ builder.Services.AddHttpClient<AccountNameResolver>()
     });
 
 // ─── Auth (Epic device auth) ────────────────────────────────
+builder.Services.Configure<EpicOAuthSettings>(builder.Configuration.GetSection(EpicOAuthSettings.Section));
 builder.Services.AddSingleton<FSTService.Scraping.ScrapeProgressTracker>();
 builder.Services.AddSingleton<ICredentialStore>(sp =>
 {
@@ -138,9 +143,11 @@ var jwtSettings = builder.Configuration
 builder.Services.AddSingleton<JwtTokenService>();
 
 builder.Services.AddSingleton<BackfillQueue>();
+builder.Services.AddSingleton<TokenVault>();
 builder.Services.AddSingleton<ScoreBackfiller>();
 builder.Services.AddSingleton<PostScrapeRefresher>();
 builder.Services.AddSingleton<FirstSeenSeasonCalculator>();
+builder.Services.AddSingleton<FSTService.Api.NotificationService>();
 
 builder.Services.AddHttpClient<HistoryReconstructor>()
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
@@ -242,6 +249,7 @@ app.Services.GetRequiredService<GlobalLeaderboardPersistence>().Initialize();
 // Security: block path traversal attempts first
 app.UseMiddleware<PathTraversalGuardMiddleware>();
 
+app.UseWebSockets();
 app.UseCors();
 app.UseRateLimiter();
 app.UseAuthentication();

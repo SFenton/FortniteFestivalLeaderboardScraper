@@ -1,6 +1,7 @@
 using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
 using FortniteFestival.Core.Persistence;
+using FSTService.Api;
 using FSTService.Auth;
 using FSTService.Persistence;
 using FSTService.Scraping;
@@ -31,6 +32,9 @@ public sealed class ScraperWorker : BackgroundService
     private readonly PostScrapeRefresher _refresher;
     private readonly HistoryReconstructor _historyReconstructor;
     private readonly FirstSeenSeasonCalculator _firstSeenCalculator;
+    private readonly FestivalService _festivalService;
+    private readonly NotificationService _notifications;
+    private readonly TokenVault _tokenVault;
     private readonly ScrapeProgressTracker _progress;
     private readonly IOptions<ScraperOptions> _options;
     private readonly IHostApplicationLifetime _lifetime;
@@ -47,6 +51,9 @@ public sealed class ScraperWorker : BackgroundService
         PostScrapeRefresher refresher,
         HistoryReconstructor historyReconstructor,
         FirstSeenSeasonCalculator firstSeenCalculator,
+        FestivalService festivalService,
+        NotificationService notifications,
+        TokenVault tokenVault,
         ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
         IHostApplicationLifetime lifetime,
@@ -62,6 +69,9 @@ public sealed class ScraperWorker : BackgroundService
         _refresher = refresher;
         _historyReconstructor = historyReconstructor;
         _firstSeenCalculator = firstSeenCalculator;
+        _festivalService = festivalService;
+        _notifications = notifications;
+        _tokenVault = tokenVault;
         _progress = progress;
         _options = options;
         _lifetime = lifetime;
@@ -95,7 +105,10 @@ public sealed class ScraperWorker : BackgroundService
         // --api-only mode: skip all background work, let the API serve requests
         if (opts.ApiOnly)
         {
-            _log.LogInformation("Running in --api-only mode. Background scraping disabled. API is active.");
+            // Load the song catalog from the local DB so sync endpoints work
+            await _festivalService.InitializeAsync();
+            _log.LogInformation("Running in --api-only mode. Background scraping disabled. API is active. {SongCount} songs loaded.",
+                _festivalService.Songs.Count);
             // Keep the worker alive (but idle) so the host doesn't shut down
             try { await Task.Delay(Timeout.Infinite, stoppingToken); }
             catch (OperationCanceledException) { /* normal shutdown */ }
@@ -148,6 +161,36 @@ public sealed class ScraperWorker : BackgroundService
         if (opts.ResolveOnly)
         {
             await RunResolveOnlyAsync(stoppingToken);
+            return;
+        }
+
+        // --backfill-only mode: skip scraping, just run backfill enrichment for registered users
+        if (opts.BackfillOnly)
+        {
+            _log.LogInformation("Running in --backfill-only mode. Enriching existing entries with rank/percentile.");
+
+            // ── DIAGNOSTIC: V2 lookup for #1 player to check if percentile is returned ──
+            var diagToken = await _tokenManager.GetAccessTokenAsync(stoppingToken);
+            var diagCaller = _tokenManager.AccountId!;
+            if (diagToken is not null)
+            {
+                try
+                {
+                    // #1 Guitar player for song 092c2537 (popular song)
+                    var diagEntry = await _globalScraper.LookupAccountAsync(
+                        "092c2537-54ed-4963-9f91-873219ad5e74", "Solo_Guitar",
+                        "e408c4613c8f4da5907090b390bda80c", diagToken, diagCaller, ct: stoppingToken);
+                    if (diagEntry is not null)
+                        _log.LogWarning("DIAG: #1 player V2 → Rank={Rank}, Percentile={Percentile}, Score={Score}",
+                            diagEntry.Rank, diagEntry.Percentile, diagEntry.Score);
+                    else
+                        _log.LogWarning("DIAG: #1 player V2 → null (no entry)");
+                }
+                catch (Exception ex) { _log.LogWarning(ex, "DIAG: V2 lookup failed"); }
+            }
+
+            await RunBackfillPhaseAsync(service, stoppingToken);
+            _log.LogInformation("Backfill enrichment complete.");
             return;
         }
 
@@ -442,7 +485,16 @@ public sealed class ScraperWorker : BackgroundService
                 var changedIds = new HashSet<string>(aggregates.ChangedAccountIds, StringComparer.OrdinalIgnoreCase);
                 var rebuilt = _personalDbBuilder.RebuildForAccounts(changedIds, _persistence.Meta);
                 if (rebuilt > 0)
+                {
                     _log.LogInformation("Rebuilt {Count} personal DB(s) for users with score changes.", rebuilt);
+
+                    // Notify connected clients their personal DBs have been updated
+                    foreach (var changedId in changedIds)
+                    {
+                        try { await _notifications.NotifyPersonalDbReadyAsync(changedId); }
+                        catch { /* best effort */ }
+                    }
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -493,6 +545,29 @@ public sealed class ScraperWorker : BackgroundService
             var cleaned = _persistence.Meta.CleanupExpiredSessions(DateTime.UtcNow.AddDays(-7));
             if (cleaned > 0)
                 _log.LogInformation("Cleaned up {Count} expired/revoked auth session(s).", cleaned);
+
+            // Auto-unregister accounts whose sessions have all expired.
+            // This stops backfill, personal DB builds, and post-scrape refreshes
+            // for users who haven't opened the app since their refresh token expired.
+            // They'll re-register automatically on their next login.
+            var orphaned = _persistence.Meta.GetOrphanedRegisteredAccounts();
+            foreach (var orphanedAccountId in orphaned)
+            {
+                var deviceIds = _persistence.Meta.UnregisterAccount(orphanedAccountId);
+                foreach (var deviceId in deviceIds)
+                {
+                    var dbPath = _personalDbBuilder.GetPersonalDbPath(orphanedAccountId, deviceId);
+                    if (File.Exists(dbPath))
+                        File.Delete(dbPath);
+                }
+
+                _tokenVault.Revoke(orphanedAccountId);
+
+                var displayName = _persistence.Meta.GetDisplayName(orphanedAccountId);
+                _log.LogInformation(
+                    "Auto-unregistered {DisplayName} ({AccountId}) — all sessions expired ({DeviceCount} device(s) removed).",
+                    displayName ?? orphanedAccountId, orphanedAccountId, deviceIds.Count);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -553,6 +628,10 @@ public sealed class ScraperWorker : BackgroundService
                         _personalDbBuilder.RebuildForAccounts(
                             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { accountId },
                             _persistence.Meta);
+
+                        // Notify connected clients that their personal DB is ready
+                        await _notifications.NotifyBackfillCompleteAsync(accountId);
+                        await _notifications.NotifyPersonalDbReadyAsync(accountId);
                     }
                     catch (Exception ex)
                     {
@@ -661,6 +740,10 @@ public sealed class ScraperWorker : BackgroundService
                         _personalDbBuilder.RebuildForAccounts(
                             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { accountId },
                             _persistence.Meta);
+
+                        // Notify connected clients that history recon is done and DB is ready
+                        await _notifications.NotifyHistoryReconCompleteAsync(accountId);
+                        await _notifications.NotifyPersonalDbReadyAsync(accountId);
                     }
                     catch (Exception ex)
                     {

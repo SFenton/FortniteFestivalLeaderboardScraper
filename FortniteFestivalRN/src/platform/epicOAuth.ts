@@ -57,8 +57,10 @@ function buildEpicAuthConfig(serviceEndpoint: string) {
       authorizationEndpoint: 'https://www.epicgames.com/id/authorize',
       tokenEndpoint: 'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token',
     },
-    // We only need the authorization code — token exchange is done server-side
-    usePKCE: true,
+    // We only need the authorization code — token exchange is done server-side.
+    // PKCE is disabled because the server exchanges the code using the
+    // confidential client_secret, which is sufficient protection.
+    usePKCE: false,
     skipCodeExchange: true,
   };
 }

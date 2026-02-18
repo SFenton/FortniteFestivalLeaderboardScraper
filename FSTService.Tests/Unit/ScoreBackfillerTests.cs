@@ -105,8 +105,9 @@ public class ScoreBackfillerTests : IDisposable
         };
         var service = CreateServiceWithSongs(songs);
 
-        // For each of the 6 instruments, the scraper will do a lookup.
+        // For each of the 6 instruments, the scraper will do a V2 lookup.
         // Make guitar return a score, everything else empty.
+        // V2 API returns a JSON array of entries at the root level.
         var scoreJson = """
         [{
             "teamId": "acct1", "rank": 100, "percentile": 0.5,
@@ -173,11 +174,11 @@ public class ScoreBackfillerTests : IDisposable
         };
         var service = CreateServiceWithSongs(songs);
 
-        // Pre-populate an existing entry in the guitar DB
+        // Pre-populate an existing entry in the guitar DB (with valid Percentile)
         var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
         guitarDb.UpsertEntries("songA", [new LeaderboardEntry
         {
-            AccountId = "acct1", Score = 100, Rank = 1
+            AccountId = "acct1", Score = 100, Rank = 1, Percentile = 0.05
         }]);
 
         // Remaining 5 instruments will need API calls (all empty)

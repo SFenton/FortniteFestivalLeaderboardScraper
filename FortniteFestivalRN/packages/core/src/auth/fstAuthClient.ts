@@ -2,7 +2,7 @@
  * HTTP client for the Festival Score Tracker service's auth endpoints.
  *
  * Endpoints (designed in EpicLoginDesign.md, implemented in FSTService):
- *   POST /api/auth/login   — register/login with Epic username
+ *   POST /api/auth/login   — exchange Epic authorization code for FST tokens
  *   POST /api/auth/refresh — refresh an expired access token
  *   POST /api/auth/logout  — revoke a refresh token session
  *   GET  /api/auth/me      — get authenticated user profile
@@ -23,18 +23,19 @@ export class FstAuthClient {
   /**
    * Exchange an Epic authorization code for FST access + refresh tokens.
    *
-   * The service looks up the user by Epic display name, auto-registers
-   * them if needed, and returns its own JWT + opaque refresh token.
+   * The service exchanges the code with Epic to obtain the user's
+   * account ID and display name, auto-registers them, and returns
+   * its own JWT + opaque refresh token.
    */
   async login(
-    username: string,
+    code: string,
     deviceId: string,
     platform: 'ios' | 'android' | 'windows',
   ): Promise<AuthLoginResponse> {
     const res = await fetch(`${this.baseUrl}/api/auth/login`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({username, deviceId, platform}),
+      body: JSON.stringify({code, deviceId, platform}),
     });
 
     if (!res.ok) {

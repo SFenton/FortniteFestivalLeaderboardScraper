@@ -53,18 +53,21 @@ function toResultSet<T>(res: NitroQueryResult): SqliteResultSet<T> {
 
 export type NitroSqliteOpenOptions = {
   name: string;
+  /** Optional directory to open the DB from (for opening files at a specific path). */
+  location?: string;
 };
 
 export function openNitroSqliteDatabase(opts: NitroSqliteOpenOptions): SqliteDatabase {
+  const cacheKey = opts.location ? `${opts.location}/${opts.name}` : opts.name;
   const cache = getGlobalNitroDbCache();
-  const existing = cache[opts.name];
+  const existing = cache[cacheKey];
   if (existing) return existing;
 
   // Lazy require to avoid Jest/native module crashes.
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const {open} = require('react-native-nitro-sqlite') as typeof import('react-native-nitro-sqlite');
 
-  const db = open({name: opts.name}) as NitroDb;
+  const db = open({name: opts.name, ...(opts.location ? {location: opts.location} : {})}) as NitroDb;
 
   const wrapped: SqliteDatabase = {
     executeSql: async <T = any>(sql: string, params: unknown[] = []) => {
@@ -84,8 +87,13 @@ export function openNitroSqliteDatabase(opts: NitroSqliteOpenOptions): SqliteDat
         await fn(tx);
       });
     },
+
+    close: () => {
+      db.close?.();
+      delete cache[cacheKey];
+    },
   };
 
-  cache[opts.name] = wrapped;
+  cache[cacheKey] = wrapped;
   return wrapped;
 }
