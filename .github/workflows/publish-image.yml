@@ -48,7 +48,7 @@ jobs:
           --logger trx --results-directory TestResults
           --collect:"XPlat Code Coverage"
           -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
-             DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Include="[FSTService]*"
+          DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Include="[FSTService]*"
 
       - name: Enforce 95% line coverage for FSTService
         shell: bash
