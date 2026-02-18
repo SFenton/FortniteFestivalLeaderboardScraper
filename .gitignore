@@ -367,3 +367,6 @@ FodyWeavers.xsd
 
 # FSTService runtime data (credentials, databases)
 FSTService/data/
+
+# Local environment secrets (never commit real credentials)
+.env

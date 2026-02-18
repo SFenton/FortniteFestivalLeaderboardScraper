@@ -27,11 +27,13 @@ import {NativeModules, Platform} from 'react-native';
 /**
  * Epic Games OAuth client configuration.
  *
- * This is a PUBLIC client (no client secret on-device).
+ * This is a PUBLIC client identifier (no client secret on-device).
  * The actual token exchange happens server-side in FSTService,
- * which holds the confidential Switch client credentials.
+ * which holds the confidential client credentials.
  *
- * We use a dedicated registered client for the mobile app.
+ * Must match the EpicOAuth:ClientId value on the server
+ * (appsettings.json / .env).  This value is NOT secret — it is
+ * visible in the browser URL bar during the OAuth flow.
  */
 const EPIC_CLIENT_ID = 'xyza7891QHDwTpqKnAkLEQU3nC1dmEI4';
 

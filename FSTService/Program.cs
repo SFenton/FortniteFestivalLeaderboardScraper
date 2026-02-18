@@ -10,6 +10,27 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 
+// ─── Load .env file (local development secrets) ────────────
+
+var envPath = Path.Combine(Directory.GetCurrentDirectory(), ".env");
+if (File.Exists(envPath))
+{
+    foreach (var line in File.ReadAllLines(envPath))
+    {
+        var trimmed = line.Trim();
+        if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith('#'))
+            continue;
+
+        var eq = trimmed.IndexOf('=');
+        if (eq <= 0)
+            continue;
+
+        var key = trimmed[..eq].Trim();
+        var value = trimmed[(eq + 1)..].Trim().Trim('"');
+        Environment.SetEnvironmentVariable(key, value);
+    }
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 // ─── JSON options ───────────────────────────────────────────
