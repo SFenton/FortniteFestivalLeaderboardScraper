@@ -857,6 +857,75 @@ public sealed class MetaDatabaseTests : IDisposable
     // ═══ GetAllFirstSeenSeasons ═════════════════════════════════
 
     [Fact]
+    public void EnsureSchema_migrates_ScoreHistory_without_ScoreAchievedAt()
+    {
+        // Simulates the production crash: old DB has ScoreHistory without
+        // ScoreAchievedAt, so the dedup index (which references that column)
+        // must not run until after the migration adds it.
+        var dbPath = Path.Combine(Path.GetTempPath(), $"fst_scorehist_mig_{Guid.NewGuid():N}.db");
+        try
+        {
+            var connStr = new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString();
+            using (var conn = new SqliteConnection(connStr))
+            {
+                conn.Open();
+                using var cmd = conn.CreateCommand();
+                // Old schema: ScoreHistory without ScoreAchievedAt, SeasonRank, AllTimeRank, Stars, Percentile, Season
+                cmd.CommandText = """
+                    CREATE TABLE ScoreHistory (
+                        Id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        SongId      TEXT    NOT NULL,
+                        Instrument  TEXT    NOT NULL,
+                        AccountId   TEXT    NOT NULL,
+                        OldScore    INTEGER,
+                        NewScore    INTEGER,
+                        OldRank     INTEGER,
+                        NewRank     INTEGER,
+                        ChangedAt   TEXT    NOT NULL
+                    );
+                    CREATE INDEX IX_ScoreHist_Account ON ScoreHistory (AccountId);
+                    CREATE INDEX IX_ScoreHist_Song    ON ScoreHistory (SongId, Instrument);
+
+                    INSERT INTO ScoreHistory (SongId, Instrument, AccountId, OldScore, NewScore, OldRank, NewRank, ChangedAt)
+                    VALUES ('song1', 'Solo_Guitar', 'acct1', 0, 50000, 0, 100, '2025-01-01T00:00:00Z');
+                    """;
+                cmd.ExecuteNonQuery();
+            }
+
+            // EnsureSchema should NOT crash — it must add ScoreAchievedAt before
+            // creating the dedup index that references it.
+            var logger = Substitute.For<ILogger<Persistence.MetaDatabase>>();
+            using var db = new Persistence.MetaDatabase(dbPath, logger);
+            db.EnsureSchema();
+
+            // Verify ScoreAchievedAt column was added successfully
+            using (var conn = new SqliteConnection(connStr))
+            {
+                conn.Open();
+                using var check = conn.CreateCommand();
+                check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('ScoreHistory') WHERE name = 'ScoreAchievedAt';";
+                Assert.Equal(1L, (long)(check.ExecuteScalar() ?? 0));
+
+                // Verify the unique dedup index exists
+                using var idxCheck = conn.CreateCommand();
+                idxCheck.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'IX_ScoreHist_Dedup';";
+                Assert.Equal(1L, (long)(idxCheck.ExecuteScalar() ?? 0));
+
+                // Verify existing data was preserved
+                using var data = conn.CreateCommand();
+                data.CommandText = "SELECT NewScore FROM ScoreHistory WHERE AccountId = 'acct1';";
+                Assert.Equal(50000L, (long)(data.ExecuteScalar() ?? 0));
+            }
+        }
+        finally
+        {
+            try { File.Delete(dbPath); } catch { }
+            try { File.Delete(dbPath + "-wal"); } catch { }
+            try { File.Delete(dbPath + "-shm"); } catch { }
+        }
+    }
+
+    [Fact]
     public void GetAllFirstSeenSeasons_returns_all_entries()
     {
         Db.UpsertFirstSeenSeason("song_a", 3, 2, 3, "found");

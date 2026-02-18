@@ -65,7 +65,6 @@ public sealed class MetaDatabase : IDisposable
 
             CREATE INDEX IF NOT EXISTS IX_ScoreHist_Account ON ScoreHistory (AccountId);
             CREATE INDEX IF NOT EXISTS IX_ScoreHist_Song    ON ScoreHistory (SongId, Instrument);
-            CREATE UNIQUE INDEX IF NOT EXISTS IX_ScoreHist_Dedup  ON ScoreHistory (AccountId, SongId, Instrument, NewScore, ScoreAchievedAt);
 
             CREATE TABLE IF NOT EXISTS AccountNames (
                 AccountId    TEXT PRIMARY KEY,
