@@ -144,7 +144,7 @@ Managed by `FortniteFestival.Core/Persistence/SqlitePersistence.cs`. Song catalo
 ## Testing
 
 - **Framework**: xUnit + NSubstitute (mocking) + FluentAssertions-style assertions
-- **Coverage**: 443 tests (25 unit test files, 3 integration test files)
+- **Coverage**: 446 tests (25 unit test files, 3 integration test files)
 - **Test project**: `FSTService.Tests/`
 - **Run**: `dotnet test FSTService.Tests\FSTService.Tests.csproj`
 - **Visibility**: FSTService exposes internals via `InternalsVisibleTo`
@@ -154,6 +154,20 @@ When writing tests:
 - Integration tests use `WebApplicationFactory<Program>` with in-memory databases
 - Test files mirror source structure: `MetaDatabaseTests.cs` tests `MetaDatabase.cs`, etc.
 - Prefer testing through public API surface; use internal access only when needed
+
+## CI / CD
+
+The GitHub Actions workflow lives at `.github/workflows/publish-image.yml` and runs on pushes/PRs to `master` when FSTService, Core, or test files change.
+
+**Pipeline stages:**
+1. **Test** — Restore → Build (Release) → `dotnet test` with `XPlat Code Coverage` (Cobertura format)
+2. **Coverage gate** — Parses the Cobertura XML for the `FSTService` package's `line-rate` and fails the build if coverage drops below the threshold (currently **85%**). The threshold is set via the `COVERAGE_THRESHOLD` env var in the workflow.
+3. **Build & push Docker image** — Only on `master` pushes (not PRs). Builds `FSTService/Dockerfile` and pushes to `ghcr.io`.
+
+**Coverage notes:**
+- Coverage is collected only for `[FSTService]*` (excludes `FortniteFestival.Core` and test assemblies).
+- The coverage report is uploaded as a workflow artifact (`test-results`).
+- When adding new code, ensure tests maintain coverage above the threshold. If the threshold needs adjusting, update the `COVERAGE_THRESHOLD` env var in the workflow file.
 
 ## API
 

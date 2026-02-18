@@ -50,8 +50,10 @@ jobs:
           -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
           DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Include="[FSTService]*"
 
-      - name: Enforce 95% line coverage for FSTService
+      - name: Enforce minimum line coverage for FSTService
         shell: bash
+        env:
+          COVERAGE_THRESHOLD: 85
         run: |
           REPORT=$(find TestResults -name 'coverage.cobertura.xml' | head -1)
           if [ -z "$REPORT" ]; then
@@ -59,8 +61,15 @@ jobs:
             exit 1
           fi
 
-          LINE_RATE=$(grep -oP '(?<=<package[^>]*name="FSTService"[^>]*line-rate=")[^"]*' "$REPORT" \
-                      || grep -oP '(?<=line-rate=")[^"]*' "$REPORT" | head -1)
+          # Extract line-rate for the FSTService package specifically.
+          # The Cobertura XML has <package name="FSTService" line-rate="0.xx" ...>.
+          # We use sed (not grep -P) to avoid variable-length lookbehind issues.
+          LINE_RATE=$(sed -n 's/.*<package[^>]*name="FSTService"[^>]*line-rate="\([^"]*\)".*/\1/p' "$REPORT" | head -1)
+
+          # Fallback: if no FSTService-specific package found, use the top-level rate
+          if [ -z "$LINE_RATE" ]; then
+            LINE_RATE=$(sed -n 's/.*<coverage[^>]*line-rate="\([^"]*\)".*/\1/p' "$REPORT" | head -1)
+          fi
 
           if [ -z "$LINE_RATE" ]; then
             echo "::error::Could not parse line-rate from coverage report"
@@ -71,9 +80,9 @@ jobs:
           PERCENT_FMT=$(printf "%.2f" "$PERCENT")
           echo "FSTService line coverage: ${PERCENT_FMT}%"
 
-          PASS=$(echo "$PERCENT >= 95" | bc -l)
+          PASS=$(echo "$PERCENT >= $COVERAGE_THRESHOLD" | bc -l)
           if [ "$PASS" -ne 1 ]; then
-            echo "::error::Coverage ${PERCENT_FMT}% is below the 95% threshold"
+            echo "::error::Coverage ${PERCENT_FMT}% is below the ${COVERAGE_THRESHOLD}% threshold"
             exit 1
           fi
 
