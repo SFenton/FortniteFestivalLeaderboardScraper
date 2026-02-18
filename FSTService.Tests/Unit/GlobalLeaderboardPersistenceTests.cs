@@ -277,4 +277,165 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
 
         Assert.Equal(3, agg.ChangedAccountIds.Count);
     }
+
+    // ═══ Initialize ═════════════════════════════════════════════
+
+    [Fact]
+    public void Initialize_creates_all_instrument_dbs()
+    {
+        using var glp = CreatePersistence();
+        var keys = glp.GetInstrumentKeys();
+        Assert.True(keys.Count >= 6, "Should have at least 6 instrument databases");
+        Assert.Contains("Solo_Guitar", keys);
+        Assert.Contains("Solo_Bass", keys);
+        Assert.Contains("Solo_Drums", keys);
+        Assert.Contains("Solo_Vocals", keys);
+    }
+
+    // ═══ GetEntryCounts ═════════════════════════════════════════
+
+    [Fact]
+    public void GetEntryCounts_returns_zeros_when_empty()
+    {
+        using var glp = CreatePersistence();
+        var counts = glp.GetEntryCounts();
+        Assert.True(counts.Count >= 6);
+        Assert.All(counts.Values, c => Assert.Equal(0, c));
+    }
+
+    [Fact]
+    public void GetEntryCounts_reflects_persisted_data()
+    {
+        using var glp = CreatePersistence();
+        glp.PersistResult(MakeResult("song_1", "Solo_Guitar", ("acct_1", 100_000)));
+        glp.PersistResult(MakeResult("song_1", "Solo_Bass", ("acct_1", 90_000), ("acct_2", 80_000)));
+
+        var counts = glp.GetEntryCounts();
+        Assert.Equal(1, counts["Solo_Guitar"]);
+        Assert.Equal(2, counts["Solo_Bass"]);
+    }
+
+    // ═══ GetInstrumentKeys ══════════════════════════════════════
+
+    [Fact]
+    public void GetInstrumentKeys_returns_all_known_instruments()
+    {
+        using var glp = CreatePersistence();
+        var keys = glp.GetInstrumentKeys();
+        Assert.Contains("Solo_Guitar", keys);
+        Assert.Contains("Solo_Bass", keys);
+        Assert.Contains("Solo_Drums", keys);
+        Assert.Contains("Solo_Vocals", keys);
+        Assert.Contains("Solo_PeripheralGuitar", keys);
+        Assert.Contains("Solo_PeripheralBass", keys);
+    }
+
+    // ═══ GetMinSeasonAcrossInstruments ═══════════════════════════
+
+    [Fact]
+    public void GetMinSeasonAcrossInstruments_returns_null_when_empty()
+    {
+        using var glp = CreatePersistence();
+        Assert.Null(glp.GetMinSeasonAcrossInstruments("song_1"));
+    }
+
+    [Fact]
+    public void GetMinSeasonAcrossInstruments_finds_min_across_dbs()
+    {
+        using var glp = CreatePersistence();
+        // Guitar has season 3, Bass has season 1
+        var guitarResult = new GlobalLeaderboardResult
+        {
+            SongId = "song_1",
+            Instrument = "Solo_Guitar",
+            Entries = [new LeaderboardEntry { AccountId = "a", Score = 100, Season = 3 }],
+        };
+        var bassResult = new GlobalLeaderboardResult
+        {
+            SongId = "song_1",
+            Instrument = "Solo_Bass",
+            Entries = [new LeaderboardEntry { AccountId = "b", Score = 90, Season = 1 }],
+        };
+        glp.PersistResult(guitarResult);
+        glp.PersistResult(bassResult);
+
+        Assert.Equal(1, glp.GetMinSeasonAcrossInstruments("song_1"));
+    }
+
+    // ═══ GetMaxSeasonAcrossInstruments ═══════════════════════════
+
+    [Fact]
+    public void GetMaxSeasonAcrossInstruments_returns_null_when_empty()
+    {
+        using var glp = CreatePersistence();
+        Assert.Null(glp.GetMaxSeasonAcrossInstruments());
+    }
+
+    [Fact]
+    public void GetMaxSeasonAcrossInstruments_finds_max_across_dbs()
+    {
+        using var glp = CreatePersistence();
+        var guitarResult = new GlobalLeaderboardResult
+        {
+            SongId = "song_1",
+            Instrument = "Solo_Guitar",
+            Entries = [new LeaderboardEntry { AccountId = "a", Score = 100, Season = 3 }],
+        };
+        var bassResult = new GlobalLeaderboardResult
+        {
+            SongId = "song_2",
+            Instrument = "Solo_Bass",
+            Entries = [new LeaderboardEntry { AccountId = "b", Score = 90, Season = 7 }],
+        };
+        glp.PersistResult(guitarResult);
+        glp.PersistResult(bassResult);
+
+        Assert.Equal(7, glp.GetMaxSeasonAcrossInstruments());
+    }
+
+    // ═══ Pipeline StartWriters + DrainWriters ═══════════════════
+
+    [Fact]
+    public async Task StartWriters_and_DrainWriters_process_items()
+    {
+        using var glp = CreatePersistence();
+        var agg = glp.StartWriters();
+
+        await glp.EnqueueResultAsync(
+            MakeResult("song_1", "Solo_Guitar", ("acct_1", 100_000)),
+            registeredAccountIds: null);
+
+        await glp.DrainWritersAsync();
+
+        Assert.True(agg.TotalEntries > 0);
+        Assert.Equal(1, glp.GetEntryCounts()["Solo_Guitar"]);
+    }
+
+    [Fact]
+    public async Task EnqueueResultAsync_throws_if_writers_not_started()
+    {
+        using var glp = CreatePersistence();
+        // Don't call StartWriters
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            glp.EnqueueResultAsync(
+                MakeResult("song_1", "Solo_Guitar", ("acct_1", 100_000)),
+                registeredAccountIds: null).AsTask());
+    }
+
+    [Fact]
+    public async Task EnqueueResultAsync_unknown_instrument_drops_result()
+    {
+        using var glp = CreatePersistence();
+        glp.StartWriters();
+
+        // Enqueue a result with an instrument that has no writer channel
+        await glp.EnqueueResultAsync(
+            MakeResult("song_1", "UnknownInstrument", ("acct_1", 100_000)),
+            registeredAccountIds: null);
+
+        await glp.DrainWritersAsync();
+
+        // The result should be silently dropped — no entries persisted
+        Assert.False(glp.GetEntryCounts().ContainsKey("UnknownInstrument"));
+    }
 }

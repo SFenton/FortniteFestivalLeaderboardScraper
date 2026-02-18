@@ -189,38 +189,42 @@ builder.Services.AddAuthorization();
 
 // ─── Rate limiting ──────────────────────────────────────────
 
+var isTesting = builder.Environment.IsEnvironment("Testing");
+
 builder.Services.AddRateLimiter(opts =>
 {
     opts.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
     opts.AddFixedWindowLimiter("public", window =>
     {
-        window.PermitLimit = 60;
+        window.PermitLimit = isTesting ? 100_000 : 60;
         window.Window = TimeSpan.FromMinutes(1);
         window.QueueLimit = 0;
     });
 
     opts.AddFixedWindowLimiter("auth", window =>
     {
-        window.PermitLimit = 10;
+        window.PermitLimit = isTesting ? 100_000 : 10;
         window.Window = TimeSpan.FromMinutes(1);
         window.QueueLimit = 0;
     });
 
     opts.AddFixedWindowLimiter("protected", window =>
     {
-        window.PermitLimit = 30;
+        window.PermitLimit = isTesting ? 100_000 : 30;
         window.Window = TimeSpan.FromMinutes(1);
         window.QueueLimit = 0;
     });
 
     opts.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
-        RateLimitPartition.GetFixedWindowLimiter("global", _ => new FixedWindowRateLimiterOptions
-        {
-            PermitLimit = 200,
-            Window = TimeSpan.FromMinutes(1),
-            QueueLimit = 0,
-        }));
+        isTesting
+            ? RateLimitPartition.GetNoLimiter("global")
+            : RateLimitPartition.GetFixedWindowLimiter("global", _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 200,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
 });
 
 // ─── CORS ───────────────────────────────────────────────────

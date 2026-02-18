@@ -245,4 +245,29 @@ public sealed class UserAuthServiceTests : IDisposable
         var exception = Record.Exception(() => svc.Logout("bogus_token"));
         Assert.Null(exception);
     }
+
+    // ═══ Login edge cases ═══════════════════════════════════════
+
+    [Fact]
+    public async Task Login_throws_when_accountId_is_empty()
+    {
+        var epic = CreateMockEpic(accountId: "", displayName: "SomePlayer");
+        var svc = CreateService(epic: epic);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => svc.LoginAsync("code", "device_1", "iOS"));
+    }
+
+    [Fact]
+    public async Task Login_uses_accountId_as_displayName_when_displayName_is_empty()
+    {
+        var epic = CreateMockEpic(accountId: "epic_acct_456", displayName: "");
+        var svc = CreateService(epic: epic);
+
+        var result = await svc.LoginAsync("code", "device_1", "iOS");
+
+        // When displayName is empty, it should fall back to accountId
+        Assert.Equal("epic_acct_456", result.DisplayName);
+        Assert.Equal("epic_acct_456", result.AccountId);
+    }
 }

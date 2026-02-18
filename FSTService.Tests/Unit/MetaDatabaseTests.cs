@@ -1,4 +1,7 @@
 using FSTService.Tests.Helpers;
+using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
+using NSubstitute;
 
 namespace FSTService.Tests.Unit;
 
@@ -506,5 +509,424 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Contains("acct_1", ids);
         Assert.Contains("acct_2", ids);
         Assert.Contains("acct_3", ids);
+    }
+
+    // ═══ EpicUserTokens ════════════════════════════════════════
+
+    [Fact]
+    public void UpsertEpicUserToken_and_GetEpicUserToken_roundtrip()
+    {
+        var nonce = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 };
+        var encAccess = new byte[] { 0xAA, 0xBB, 0xCC };
+        var encRefresh = new byte[] { 0xDD, 0xEE, 0xFF };
+        var tokenExp = DateTimeOffset.UtcNow.AddHours(2);
+        var refreshExp = DateTimeOffset.UtcNow.AddDays(7);
+
+        Db.UpsertEpicUserToken("acct_1", encAccess, encRefresh, tokenExp, refreshExp, nonce);
+
+        var stored = Db.GetEpicUserToken("acct_1");
+        Assert.NotNull(stored);
+        Assert.Equal("acct_1", stored.AccountId);
+        Assert.Equal(encAccess, stored.EncryptedAccessToken);
+        Assert.Equal(encRefresh, stored.EncryptedRefreshToken);
+        Assert.Equal(nonce, stored.Nonce);
+        Assert.NotNull(stored.UpdatedAt);
+    }
+
+    [Fact]
+    public void GetEpicUserToken_returns_null_for_unknown()
+    {
+        var stored = Db.GetEpicUserToken("nonexistent");
+        Assert.Null(stored);
+    }
+
+    [Fact]
+    public void UpsertEpicUserToken_updates_existing()
+    {
+        var nonce1 = new byte[12];
+        var nonce2 = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 };
+        var enc1 = new byte[] { 0x01 };
+        var enc2 = new byte[] { 0x02 };
+        var now = DateTimeOffset.UtcNow;
+
+        Db.UpsertEpicUserToken("acct_1", enc1, enc1, now.AddHours(1), now.AddDays(1), nonce1);
+        Db.UpsertEpicUserToken("acct_1", enc2, enc2, now.AddHours(2), now.AddDays(2), nonce2);
+
+        var stored = Db.GetEpicUserToken("acct_1");
+        Assert.NotNull(stored);
+        Assert.Equal(enc2, stored.EncryptedAccessToken);
+        Assert.Equal(nonce2, stored.Nonce);
+    }
+
+    [Fact]
+    public void DeleteEpicUserToken_removes_stored_token()
+    {
+        var nonce = new byte[12];
+        Db.UpsertEpicUserToken("acct_1", [0x01], [0x02],
+            DateTimeOffset.UtcNow.AddHours(1), DateTimeOffset.UtcNow.AddDays(1), nonce);
+
+        Db.DeleteEpicUserToken("acct_1");
+
+        Assert.Null(Db.GetEpicUserToken("acct_1"));
+    }
+
+    [Fact]
+    public void DeleteEpicUserToken_noop_for_nonexistent()
+    {
+        // Should not throw
+        Db.DeleteEpicUserToken("nonexistent");
+    }
+
+    // ═══ SongFirstSeenSeason ════════════════════════════════════
+
+    [Fact]
+    public void UpsertFirstSeenSeason_and_GetFirstSeenSeason_roundtrip()
+    {
+        Db.UpsertFirstSeenSeason("song_1", 5, 4, 5, "found_at_season_5");
+        var result = Db.GetFirstSeenSeason("song_1");
+        Assert.Equal(5, result);
+    }
+
+    [Fact]
+    public void GetFirstSeenSeason_returns_null_for_unknown()
+    {
+        var result = Db.GetFirstSeenSeason("unknown_song");
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void GetSongsWithFirstSeenSeason_returns_set()
+    {
+        Db.UpsertFirstSeenSeason("song_1", 5, 4, 5, null);
+        Db.UpsertFirstSeenSeason("song_2", null, 3, 3, "not_found");
+
+        var set = Db.GetSongsWithFirstSeenSeason();
+        Assert.Equal(2, set.Count);
+        Assert.Contains("song_1", set);
+        Assert.Contains("song_2", set);
+    }
+
+    [Fact]
+    public void GetAllFirstSeenSeasons_returns_dictionary()
+    {
+        Db.UpsertFirstSeenSeason("song_1", 5, 4, 5, null);
+        Db.UpsertFirstSeenSeason("song_2", null, 3, 3, null);
+
+        var dict = Db.GetAllFirstSeenSeasons();
+        Assert.Equal(2, dict.Count);
+        Assert.Equal(5, dict["song_1"].FirstSeenSeason);
+        Assert.Equal(5, dict["song_1"].EstimatedSeason);
+        Assert.Null(dict["song_2"].FirstSeenSeason);
+        Assert.Equal(3, dict["song_2"].EstimatedSeason);
+    }
+
+    [Fact]
+    public void UpsertFirstSeenSeason_updates_existing()
+    {
+        Db.UpsertFirstSeenSeason("song_1", 5, 4, 5, "initial");
+        Db.UpsertFirstSeenSeason("song_1", 3, 2, 3, "updated");
+
+        var result = Db.GetFirstSeenSeason("song_1");
+        Assert.Equal(3, result);
+
+        var dict = Db.GetAllFirstSeenSeasons();
+        Assert.Equal(3, dict["song_1"].EstimatedSeason);
+    }
+
+    [Fact]
+    public void UpsertFirstSeenSeason_nullable_firstSeen()
+    {
+        Db.UpsertFirstSeenSeason("song_1", null, 3, 3, null);
+        var result = Db.GetFirstSeenSeason("song_1");
+        Assert.Null(result);
+
+        var dict = Db.GetAllFirstSeenSeasons();
+        Assert.Null(dict["song_1"].FirstSeenSeason);
+        Assert.Equal(3, dict["song_1"].EstimatedSeason);
+    }
+
+    // ═══ RegisterUser / UnregisterUser ══════════════════════════
+
+    [Fact]
+    public void RegisterUser_returns_true_for_new()
+    {
+        var isNew = Db.RegisterUser("dev1", "acct1");
+        Assert.True(isNew);
+    }
+
+    [Fact]
+    public void RegisterUser_returns_false_for_duplicate()
+    {
+        Db.RegisterUser("dev1", "acct1");
+        var isNew = Db.RegisterUser("dev1", "acct1");
+        Assert.False(isNew);
+    }
+
+    [Fact]
+    public void UnregisterUser_returns_true_when_removed()
+    {
+        Db.RegisterUser("dev1", "acct1");
+        var removed = Db.UnregisterUser("dev1", "acct1");
+        Assert.True(removed);
+    }
+
+    [Fact]
+    public void UnregisterUser_returns_false_when_not_found()
+    {
+        var removed = Db.UnregisterUser("dev1", "acct1");
+        Assert.False(removed);
+    }
+
+    // ═══ GetDeviceAccountMappings ═══════════════════════════════
+
+    [Fact]
+    public void GetDeviceAccountMappings_returns_empty_initially()
+    {
+        Assert.Empty(Db.GetDeviceAccountMappings());
+    }
+
+    [Fact]
+    public void GetDeviceAccountMappings_returns_registered_pairs()
+    {
+        Db.RegisterUser("dev1", "acct1");
+        Db.RegisterUser("dev2", "acct2");
+        var mappings = Db.GetDeviceAccountMappings();
+        Assert.Equal(2, mappings.Count);
+        Assert.Contains(mappings, m => m.DeviceId == "dev1" && m.AccountId == "acct1");
+        Assert.Contains(mappings, m => m.DeviceId == "dev2" && m.AccountId == "acct2");
+    }
+
+    // ═══ GetAccountForDevice ════════════════════════════════════
+
+    [Fact]
+    public void GetAccountForDevice_returns_null_when_not_registered()
+    {
+        Assert.Null(Db.GetAccountForDevice("dev1"));
+    }
+
+    [Fact]
+    public void GetAccountForDevice_returns_account()
+    {
+        Db.RegisterUser("dev1", "acct1");
+        Assert.Equal("acct1", Db.GetAccountForDevice("dev1"));
+    }
+
+    // ═══ UpdateLastSync ═════════════════════════════════════════
+
+    [Fact]
+    public void UpdateLastSync_does_not_throw()
+    {
+        Db.RegisterUser("dev1", "acct1");
+        Db.UpdateLastSync("dev1", "acct1");
+        // No exception = success. The sync timestamp is updated.
+    }
+
+    // ═══ IsDeviceRegistered ═════════════════════════════════════
+
+    [Fact]
+    public void IsDeviceRegistered_false_when_empty()
+    {
+        Assert.False(Db.IsDeviceRegistered("dev1"));
+    }
+
+    [Fact]
+    public void IsDeviceRegistered_true_after_register()
+    {
+        Db.RegisterUser("dev1", "acct1");
+        Assert.True(Db.IsDeviceRegistered("dev1"));
+    }
+
+    // ═══ UnregisterAccount ══════════════════════════════════════
+
+    [Fact]
+    public void UnregisterAccount_removes_all_devices()
+    {
+        Db.RegisterUser("devA", "acct1");
+        Db.RegisterUser("devB", "acct1");
+        var removed = Db.UnregisterAccount("acct1");
+        Assert.Equal(2, removed.Count);
+        Assert.Contains("devA", removed);
+        Assert.Contains("devB", removed);
+        Assert.False(Db.IsDeviceRegistered("devA"));
+        Assert.False(Db.IsDeviceRegistered("devB"));
+    }
+
+    [Fact]
+    public void UnregisterAccount_returns_empty_for_unknown()
+    {
+        var removed = Db.UnregisterAccount("nobody");
+        Assert.Empty(removed);
+    }
+
+    // ═══ GetOrphanedRegisteredAccounts ══════════════════════════
+
+    [Fact]
+    public void GetOrphanedRegisteredAccounts_returns_empty_when_no_sessions()
+    {
+        Db.RegisterUser("dev1", "acct1");
+        // No sessions at all → not orphaned (safety guard requires at least 1 session)
+        var orphans = Db.GetOrphanedRegisteredAccounts();
+        Assert.Empty(orphans);
+    }
+
+    // ═══ Constructor / Directory Creation ═══════════════════════
+
+    [Fact]
+    public void Constructor_creates_directory_if_not_exists()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"fst_test_dir_{Guid.NewGuid():N}", "nested");
+        var dbPath = Path.Combine(dir, "test.db");
+        try
+        {
+            var logger = Substitute.For<ILogger<Persistence.MetaDatabase>>();
+            using var db = new Persistence.MetaDatabase(dbPath, logger);
+            Assert.True(Directory.Exists(dir));
+        }
+        finally
+        {
+            try { Directory.Delete(Path.GetDirectoryName(dir)!, true); } catch { }
+        }
+    }
+
+    // ═══ Migration: SongFirstSeenSeason NOT NULL → nullable ════
+
+    [Fact]
+    public void EnsureSchema_migrates_SongFirstSeenSeason_from_old_NOTNULL_schema()
+    {
+        // Create a temp DB with the OLD schema (NOT NULL on FirstSeenSeason)
+        var dbPath = Path.Combine(Path.GetTempPath(), $"fst_migration_{Guid.NewGuid():N}.db");
+        try
+        {
+            // Step 1: Create old-style SongFirstSeenSeason with NOT NULL
+            var connStr = new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString();
+            using (var conn = new SqliteConnection(connStr))
+            {
+                conn.Open();
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = """
+                    CREATE TABLE SongFirstSeenSeason (
+                        SongId            TEXT    PRIMARY KEY,
+                        FirstSeenSeason   INTEGER NOT NULL,
+                        MinObservedSeason INTEGER NOT NULL,
+                        ProbeResult       TEXT,
+                        CalculatedAt      TEXT    NOT NULL
+                    );
+                    INSERT INTO SongFirstSeenSeason (SongId, FirstSeenSeason, MinObservedSeason, ProbeResult, CalculatedAt)
+                    VALUES ('song1', 3, 2, 'found', '2024-01-01T00:00:00Z');
+                    """;
+                cmd.ExecuteNonQuery();
+            }
+
+            // Step 2: Create MetaDatabase on the same file → EnsureSchema should migrate
+            var logger = Substitute.For<ILogger<Persistence.MetaDatabase>>();
+            using var db = new Persistence.MetaDatabase(dbPath, logger);
+            db.EnsureSchema();
+
+            // Step 3: Verify migration: FirstSeenSeason should now be nullable (notnull=0)
+            using (var conn = new SqliteConnection(connStr))
+            {
+                conn.Open();
+                using var check = conn.CreateCommand();
+                check.CommandText = "SELECT \"notnull\" FROM pragma_table_info('SongFirstSeenSeason') WHERE name = 'FirstSeenSeason';";
+                var notnull = (long)(check.ExecuteScalar() ?? 1);
+                Assert.Equal(0, notnull); // Should now be nullable
+
+                // Verify EstimatedSeason column was added
+                using var estCheck = conn.CreateCommand();
+                estCheck.CommandText = "SELECT COUNT(*) FROM pragma_table_info('SongFirstSeenSeason') WHERE name = 'EstimatedSeason';";
+                var exists = (long)(estCheck.ExecuteScalar() ?? 0);
+                Assert.Equal(1, exists);
+
+                // Verify existing data was preserved
+                using var dataCheck = conn.CreateCommand();
+                dataCheck.CommandText = "SELECT FirstSeenSeason, EstimatedSeason FROM SongFirstSeenSeason WHERE SongId = 'song1';";
+                using var reader = dataCheck.ExecuteReader();
+                Assert.True(reader.Read());
+                Assert.Equal(3, reader.GetInt32(0)); // FirstSeenSeason preserved
+                Assert.Equal(3, reader.GetInt32(1)); // EstimatedSeason = COALESCE(EstimatedSeason, FirstSeenSeason)
+            }
+        }
+        finally
+        {
+            try { File.Delete(dbPath); } catch { }
+            try { File.Delete(dbPath + "-wal"); } catch { }
+            try { File.Delete(dbPath + "-shm"); } catch { }
+        }
+    }
+
+    // ═══ GetAllFirstSeenSeasons ═════════════════════════════════
+
+    [Fact]
+    public void GetAllFirstSeenSeasons_returns_all_entries()
+    {
+        Db.UpsertFirstSeenSeason("song_a", 3, 2, 3, "found");
+        Db.UpsertFirstSeenSeason("song_b", null, null, 5, "estimated");
+
+        var all = Db.GetAllFirstSeenSeasons();
+        Assert.Equal(2, all.Count);
+        Assert.Equal(3, all["song_a"].FirstSeenSeason);
+        Assert.Null(all["song_b"].FirstSeenSeason);
+        Assert.Equal(5, all["song_b"].EstimatedSeason);
+    }
+
+    // ═══ GetRegistrationInfo ════════════════════════════════════
+
+    [Fact]
+    public void GetRegistrationInfo_returns_info_for_registered_user()
+    {
+        Db.RegisterOrUpdateUser("dev_info", "acct_info", "TestPlayer", "iOS");
+        var info = Db.GetRegistrationInfo("acct_info", "dev_info");
+        Assert.NotNull(info);
+        Assert.Equal("acct_info", info.AccountId);
+        Assert.Equal("TestPlayer", info.DisplayName);
+        Assert.NotNull(info.RegisteredAt);
+        Assert.NotNull(info.LastLoginAt);
+    }
+
+    [Fact]
+    public void GetRegistrationInfo_returns_null_for_unknown()
+    {
+        var info = Db.GetRegistrationInfo("nobody", "nodev");
+        Assert.Null(info);
+    }
+
+    // ═══ InsertScoreChange with full params ═════════════════════
+
+    [Fact]
+    public void InsertScoreChange_with_all_optional_params()
+    {
+        Db.InsertScoreChange("song1", "Solo_Guitar", "acct1",
+            oldScore: 50000, newScore: 100000, oldRank: 100, newRank: 50,
+            accuracy: 95, isFullCombo: true, stars: 5, percentile: 99.5,
+            season: 3, scoreAchievedAt: "2025-01-15T12:00:00Z",
+            seasonRank: 10, allTimeRank: 25);
+
+        var history = Db.GetScoreHistory("acct1", limit: 10);
+        Assert.Single(history);
+        var entry = history[0];
+        Assert.Equal(50000, entry.OldScore);
+        Assert.Equal(100000, entry.NewScore);
+        Assert.Equal(95, entry.Accuracy);
+        Assert.True(entry.IsFullCombo);
+        Assert.Equal(5, entry.Stars);
+        Assert.Equal(99.5, entry.Percentile);
+        Assert.Equal(3, entry.Season);
+        Assert.Equal(10, entry.SeasonRank);
+        Assert.Equal(25, entry.AllTimeRank);
+    }
+
+    // ═══ GetDisplayName ═════════════════════════════════════════
+
+    [Fact]
+    public void GetDisplayName_returns_resolved_name()
+    {
+        Db.InsertAccountNames([("acct_dn", "DisplayUser")]);
+        Assert.Equal("DisplayUser", Db.GetDisplayName("acct_dn"));
+    }
+
+    [Fact]
+    public void GetDisplayName_returns_null_for_unknown()
+    {
+        Assert.Null(Db.GetDisplayName("nobody"));
     }
 }

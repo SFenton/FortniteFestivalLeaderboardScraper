@@ -161,7 +161,7 @@ The GitHub Actions workflow lives at `.github/workflows/publish-image.yml` and r
 
 **Pipeline stages:**
 1. **Test** — Restore → Build (Release) → `dotnet test` with `XPlat Code Coverage` (Cobertura format)
-2. **Coverage gate** — Parses the Cobertura XML for the `FSTService` package's `line-rate` and fails the build if coverage drops below the threshold (currently **85%**). The threshold is set via the `COVERAGE_THRESHOLD` env var in the workflow.
+2. **Coverage gate** — Parses the Cobertura XML for the `FSTService` package's `line-rate` and fails the build if coverage drops below the threshold (currently **95%**). The threshold is set via the `COVERAGE_THRESHOLD` env var in the workflow.
 3. **Build & push Docker image** — Only on `master` pushes (not PRs). Builds `FSTService/Dockerfile` and pushes to `ghcr.io`.
 
 **Coverage notes:**

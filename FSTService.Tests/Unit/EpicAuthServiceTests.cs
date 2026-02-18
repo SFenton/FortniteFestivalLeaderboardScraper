@@ -221,4 +221,100 @@ public class EpicAuthServiceTests
             throw new HttpRequestException("Connection refused");
         }
     }
+
+    // ─── ExchangeAuthorizationCodeAsync ─────────────────
+
+    [Fact]
+    public async Task ExchangeAuthorizationCodeAsync_Success_ReturnsToken()
+    {
+        var (service, handler) = CreateService();
+
+        handler.EnqueueJsonOk("""
+        {
+            "access_token": "user_at",
+            "expires_in": 7200,
+            "expires_at": "2099-12-31T23:59:59.000Z",
+            "token_type": "bearer",
+            "refresh_token": "user_rt",
+            "refresh_expires": 28800,
+            "refresh_expires_at": "2099-12-31T23:59:59.000Z",
+            "account_id": "user_acct_123",
+            "client_id": "eos_client",
+            "displayName": "EpicPlayer"
+        }
+        """);
+
+        var result = await service.ExchangeAuthorizationCodeAsync(
+            "auth_code_xyz", "eos_client", "eos_secret", "https://example.com/callback");
+
+        Assert.Equal("user_at", result.AccessToken);
+        Assert.Equal("user_rt", result.RefreshToken);
+        Assert.Equal("user_acct_123", result.AccountId);
+        Assert.Equal("EpicPlayer", result.DisplayName);
+        Assert.Equal("eos_client", result.ClientId);
+
+        // Verify the request used the correct auth header
+        Assert.Single(handler.Requests);
+        var req = handler.Requests[0];
+        Assert.Equal("Basic", req.Headers.Authorization?.Scheme);
+    }
+
+    [Fact]
+    public async Task ExchangeAuthorizationCodeAsync_Failure_Throws()
+    {
+        var (service, handler) = CreateService();
+
+        handler.EnqueueError(HttpStatusCode.BadRequest,
+            """{"error":"invalid_grant","error_description":"Authorization code expired"}""");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.ExchangeAuthorizationCodeAsync(
+                "expired_code", "client", "secret", "https://example.com/cb"));
+    }
+
+    // ─── RefreshUserTokenAsync ──────────────────────────
+
+    [Fact]
+    public async Task RefreshUserTokenAsync_Success_ReturnsToken()
+    {
+        var (service, handler) = CreateService();
+
+        handler.EnqueueJsonOk("""
+        {
+            "access_token": "refreshed_at",
+            "expires_in": 3600,
+            "expires_at": "2099-12-31T23:59:59.000Z",
+            "token_type": "bearer",
+            "refresh_token": "new_rt",
+            "refresh_expires": 28800,
+            "refresh_expires_at": "2099-12-31T23:59:59.000Z",
+            "account_id": "user_acct",
+            "displayName": "Player"
+        }
+        """);
+
+        var result = await service.RefreshUserTokenAsync(
+            "old_rt", "client_id", "client_secret");
+
+        Assert.Equal("refreshed_at", result.AccessToken);
+        Assert.Equal("new_rt", result.RefreshToken);
+        Assert.Equal("user_acct", result.AccountId);
+
+        // Verify correct auth header
+        Assert.Single(handler.Requests);
+        var req = handler.Requests[0];
+        Assert.Equal("Basic", req.Headers.Authorization?.Scheme);
+    }
+
+    [Fact]
+    public async Task RefreshUserTokenAsync_Failure_Throws()
+    {
+        var (service, handler) = CreateService();
+
+        handler.EnqueueError(HttpStatusCode.BadRequest,
+            """{"error":"invalid_grant","error_description":"Refresh token expired"}""");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.RefreshUserTokenAsync("bad_rt", "client", "secret"));
+    }
 }

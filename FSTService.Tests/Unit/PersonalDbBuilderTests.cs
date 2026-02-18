@@ -518,4 +518,293 @@ public class PersonalDbBuilderTests : IDisposable
         Assert.Contains("personal", path);
         Assert.Contains(Path.Combine("my_acct", "my_device.db"), path);
     }
+
+    // ─── PagedResult.FromAll ────────────────────────────────────
+
+    [Fact]
+    public void PagedResult_FromAll_FirstPage()
+    {
+        var items = Enumerable.Range(0, 25)
+            .Select(i => new Dictionary<string, object?> { ["id"] = i })
+            .ToList();
+
+        var result = PagedResult.FromAll(items, page: 0, pageSize: 10);
+
+        Assert.Equal(0, result.Page);
+        Assert.Equal(10, result.PageSize);
+        Assert.Equal(25, result.TotalItems);
+        Assert.Equal(3, result.TotalPages);
+        Assert.Equal(10, result.Items.Count);
+        Assert.Equal(0, result.Items[0]["id"]);
+    }
+
+    [Fact]
+    public void PagedResult_FromAll_LastPage()
+    {
+        var items = Enumerable.Range(0, 25)
+            .Select(i => new Dictionary<string, object?> { ["id"] = i })
+            .ToList();
+
+        var result = PagedResult.FromAll(items, page: 2, pageSize: 10);
+
+        Assert.Equal(2, result.Page);
+        Assert.Equal(5, result.Items.Count);
+        Assert.Equal(20, result.Items[0]["id"]);
+    }
+
+    [Fact]
+    public void PagedResult_FromAll_EmptyList()
+    {
+        var result = PagedResult.FromAll([], page: 0, pageSize: 10);
+
+        Assert.Equal(0, result.TotalItems);
+        Assert.Equal(0, result.TotalPages);
+        Assert.Empty(result.Items);
+    }
+
+    [Fact]
+    public void PagedResult_FromAll_BeyondLastPage()
+    {
+        var items = Enumerable.Range(0, 5)
+            .Select(i => new Dictionary<string, object?> { ["id"] = i })
+            .ToList();
+
+        var result = PagedResult.FromAll(items, page: 10, pageSize: 10);
+
+        Assert.Empty(result.Items);
+        Assert.Equal(5, result.TotalItems);
+        Assert.Equal(1, result.TotalPages);
+    }
+
+    // ─── GetSongsAsJson ─────────────────────────────────────────
+
+    [Fact]
+    public void GetSongsAsJson_ReturnsSongs()
+    {
+        var builder = CreateBuilder();
+
+        var result = builder.GetSongsAsJson(0, 100);
+
+        Assert.NotNull(result);
+        Assert.Equal(2, result.TotalItems);
+        Assert.Equal(2, result.Items.Count);
+        Assert.Equal("song1", result.Items[0]["SongId"]);
+        Assert.Equal("Test Song 1", result.Items[0]["Title"]);
+        Assert.Equal("Artist A", result.Items[0]["Artist"]);
+        Assert.Equal(5, result.Items[0]["LeadDiff"]);
+    }
+
+    [Fact]
+    public void GetSongsAsJson_EmptyService_ReturnsNull()
+    {
+        var emptyService = CreateServiceWithSongs(Array.Empty<Song>());
+        var builder = new PersonalDbBuilder(_persistence, emptyService, _metaDb.Db, _dataDir, _log);
+
+        var result = builder.GetSongsAsJson(0, 100);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void GetSongsAsJson_Paging()
+    {
+        var builder = CreateBuilder();
+
+        var page0 = builder.GetSongsAsJson(0, 1);
+        var page1 = builder.GetSongsAsJson(1, 1);
+
+        Assert.NotNull(page0);
+        Assert.NotNull(page1);
+        Assert.Single(page0.Items);
+        Assert.Single(page1.Items);
+        Assert.Equal(2, page0.TotalPages);
+        Assert.NotEqual(page0.Items[0]["SongId"], page1.Items[0]["SongId"]);
+    }
+
+    // ─── GetScoresAsJson ────────────────────────────────────────
+
+    [Fact]
+    public void GetScoresAsJson_WithScores_ReturnsData()
+    {
+        var builder = CreateBuilder();
+
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song1", [new LeaderboardEntry
+        {
+            AccountId = "acct1", Score = 50000, Rank = 42,
+            Accuracy = 95, Stars = 5, IsFullCombo = true, Season = 3,
+            Percentile = 0.85,
+        }]);
+
+        var result = builder.GetScoresAsJson("acct1", 0, 100);
+
+        Assert.NotNull(result);
+        Assert.Equal(1, result.TotalItems);
+        Assert.Equal("song1", result.Items[0]["SongId"]);
+        Assert.Equal(50000, result.Items[0]["GuitarScore"]);
+        Assert.Equal(5, result.Items[0]["GuitarStars"]);
+    }
+
+    [Fact]
+    public void GetScoresAsJson_NoScores_ReturnsEmpty()
+    {
+        var builder = CreateBuilder();
+
+        var result = builder.GetScoresAsJson("acct1", 0, 100);
+
+        Assert.NotNull(result);
+        Assert.Equal(0, result.TotalItems);
+        Assert.Empty(result.Items);
+    }
+
+    [Fact]
+    public void GetScoresAsJson_EmptyService_ReturnsNull()
+    {
+        var emptyService = CreateServiceWithSongs(Array.Empty<Song>());
+        var builder = new PersonalDbBuilder(_persistence, emptyService, _metaDb.Db, _dataDir, _log);
+
+        var result = builder.GetScoresAsJson("acct1", 0, 100);
+        Assert.Null(result);
+    }
+
+    // ─── GetHistoryAsJson ───────────────────────────────────────
+
+    [Fact]
+    public void GetHistoryAsJson_WithHistory_ReturnsData()
+    {
+        var builder = CreateBuilder();
+
+        _metaDb.Db.InsertScoreChange("song1", "Solo_Guitar", "acct1",
+            null, 50000, null, 10, accuracy: 95, isFullCombo: true, stars: 5, season: 3,
+            scoreAchievedAt: "2025-01-15T12:00:00Z");
+
+        var result = builder.GetHistoryAsJson("acct1", 0, 100);
+
+        Assert.NotNull(result);
+        Assert.Equal(1, result.TotalItems);
+        Assert.Equal("song1", result.Items[0]["SongId"]);
+        Assert.Equal("Solo_Guitar", result.Items[0]["Instrument"]);
+        Assert.Equal(50000, result.Items[0]["NewScore"]);
+    }
+
+    [Fact]
+    public void GetHistoryAsJson_NoHistory_ReturnsEmpty()
+    {
+        var builder = CreateBuilder();
+
+        var result = builder.GetHistoryAsJson("acct1", 0, 100);
+
+        Assert.NotNull(result);
+        Assert.Equal(0, result.TotalItems);
+        Assert.Empty(result.Items);
+    }
+
+    [Fact]
+    public void GetHistoryAsJson_Paging()
+    {
+        var builder = CreateBuilder();
+
+        for (int i = 0; i < 5; i++)
+        {
+            _metaDb.Db.InsertScoreChange("song1", "Solo_Guitar", "acct1",
+                null, (i + 1) * 10000, null, i + 1, season: i + 1,
+                scoreAchievedAt: $"2025-0{i + 1}-01T00:00:00Z");
+        }
+
+        var page0 = builder.GetHistoryAsJson("acct1", 0, 2);
+        var page1 = builder.GetHistoryAsJson("acct1", 1, 2);
+
+        Assert.NotNull(page0);
+        Assert.NotNull(page1);
+        Assert.Equal(2, page0.Items.Count);
+        Assert.Equal(2, page1.Items.Count);
+        Assert.Equal(5, page0.TotalItems);
+        Assert.Equal(3, page0.TotalPages);
+    }
+
+    // ─── RebuildForAccounts ─────────────────────────────────────
+
+    [Fact]
+    public void RebuildForAccounts_builds_and_copies_for_multiple_devices()
+    {
+        var builder = CreateBuilder();
+
+        // Register two devices for the same account
+        _metaDb.Db.RegisterUser("devA", "acct1");
+        _metaDb.Db.RegisterUser("devB", "acct1");
+
+        var changedAccounts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "acct1" };
+        var rebuilt = builder.RebuildForAccounts(changedAccounts, _metaDb.Db);
+
+        Assert.Equal(2, rebuilt); // 1 build + 1 copy
+        Assert.True(File.Exists(builder.GetPersonalDbPath("acct1", "devA")));
+        Assert.True(File.Exists(builder.GetPersonalDbPath("acct1", "devB")));
+    }
+
+    [Fact]
+    public void RebuildForAccounts_no_changed_accounts_returns_zero()
+    {
+        var builder = CreateBuilder();
+        var changedAccounts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var rebuilt = builder.RebuildForAccounts(changedAccounts, _metaDb.Db);
+        Assert.Equal(0, rebuilt);
+    }
+
+    // ─── GetVersion ─────────────────────────────────────────────
+
+    [Fact]
+    public void GetVersion_returns_version_after_build()
+    {
+        var builder = CreateBuilder();
+        var path = builder.Build("devVersion", "acctVersion");
+        Assert.NotNull(path);
+
+        var (version, sizeBytes) = builder.GetVersion("acctVersion", "devVersion");
+        Assert.NotNull(version);
+        Assert.True(sizeBytes > 0);
+    }
+
+    [Fact]
+    public void GetVersion_returns_null_when_not_built()
+    {
+        var builder = CreateBuilder();
+        var (version, sizeBytes) = builder.GetVersion("nobody", "nodev");
+        Assert.Null(version);
+        Assert.Null(sizeBytes);
+    }
+
+    // ─── All instruments difficulty coverage ─────────────────────
+
+    [Fact]
+    public void Build_AllInstruments_PopulatesDifficulty()
+    {
+        var builder = CreateBuilder();
+
+        // Insert scores for ALL 6 instruments on song1 so every switch arm is hit
+        foreach (var instrument in new[] { "Solo_Guitar", "Solo_Bass", "Solo_Vocals", "Solo_Drums", "Solo_PeripheralGuitar", "Solo_PeripheralBass" })
+        {
+            var db = _persistence.GetOrCreateInstrumentDb(instrument);
+            db.UpsertEntries("song1", [new LeaderboardEntry
+            {
+                AccountId = "acct_allInst", Score = 10000, Rank = 1,
+                Accuracy = 90, Stars = 4, IsFullCombo = false, Season = 1,
+            }]);
+        }
+
+        var result = builder.Build("devAllInst", "acct_allInst");
+        Assert.NotNull(result);
+
+        // Verify each instrument's difficulty is populated from the song's In data
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={result}");
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT GuitarDiff, BassDiff, VocalsDiff, DrumsDiff, ProGuitarDiff, ProBassDiff FROM Scores WHERE SongId = 'song1'";
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(5, reader.GetInt32(0)); // Guitar diff from song1.track.in.gr
+        Assert.Equal(3, reader.GetInt32(1)); // Bass diff from song1.track.in.ba
+        Assert.Equal(4, reader.GetInt32(2)); // Vocals diff from song1.track.in.vl
+        Assert.Equal(2, reader.GetInt32(3)); // Drums diff from song1.track.in.ds
+        Assert.Equal(1, reader.GetInt32(4)); // ProGuitar diff from song1.track.in.pg
+        Assert.Equal(2, reader.GetInt32(5)); // ProBass diff from song1.track.in.pb
+    }
 }
