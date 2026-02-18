@@ -102,6 +102,7 @@
   <PropertyGroup Label="UserMacros" />
   <ItemGroup>
     <ClInclude Include="FortniteFestivalRN.h" />
+    <ClInclude Include="OAuthLoopbackModule.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="AutolinkedNativeModules.g.h" />
     <ClInclude Include="pch.h" />
@@ -109,6 +110,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="FortniteFestivalRN.cpp" />
+    <ClCompile Include="OAuthLoopbackModule.cpp" />
     <ClCompile Include="AutolinkedNativeModules.g.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>

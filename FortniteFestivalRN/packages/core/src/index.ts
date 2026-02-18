@@ -14,6 +14,7 @@ export * from './auth/tokenParsing';
 export * from './auth/exchangeCode.types';
 export * from './auth/fstAuthClient';
 export * from './auth/fstServiceClient';
+export * from './auth/epicOAuth';
 export * from './io/jsonSerializer';
 export * from './epic/contentParsing';
 export * from './epic/leaderboardV1';

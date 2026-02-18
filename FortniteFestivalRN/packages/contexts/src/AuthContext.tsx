@@ -9,7 +9,7 @@ import {
 } from '@festival/core';
 import {FstAuthClient, FstAuthError} from '@festival/core';
 import {FstServiceClient, FstServiceError} from '@festival/core';
-import {authorizeWithEpic, EpicAuthCancelledError} from '../../../../src/platform/epicOAuth';
+import {authorizeWithEpic, EpicAuthCancelledError} from '@festival/core';
 
 // ── Auth state machine ──────────────────────────────────────────────
 export type AuthStatus =
@@ -252,11 +252,13 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
       try {
         // 1. Health check — verify the service is reachable
         try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 10_000);
           const healthRes = await fetch(`${endpoint.replace(/\/+$/, '')}/healthz`, {
             method: 'GET',
-            // Short timeout — don't hang forever
-            signal: AbortSignal.timeout(10_000),
+            signal: controller.signal,
           });
+          clearTimeout(timeoutId);
           if (!healthRes.ok) {
             Alert.alert(
               'Service Unavailable',
@@ -266,10 +268,11 @@ export function AuthProvider({children}: {children: React.ReactNode}) {
             return;
           }
         } catch (err: any) {
+          const detail = err?.message ?? String(err);
+          console.error('[AuthContext] Health check failed:', detail, err);
           Alert.alert(
             'Connection Failed',
-            `Could not reach the Festival Score Tracker service at ${endpoint}. ` +
-              'Please check the URL and your internet connection.',
+            `Could not reach the Festival Score Tracker service at ${endpoint}.\n\n${detail}`,
           );
           return;
         }

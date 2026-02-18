@@ -811,6 +811,63 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    [Fact]
+    public async Task EpicCallback_WithLoopbackState_RedirectsToLocalhost()
+    {
+        using var noRedirectClient = _factory.CreateClient(
+            new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        // Encode a loopback return URL in the state parameter (base64 JSON).
+        var stateJson = "{\"return_to\":\"http://localhost:8400/auth/callback\"}";
+        var stateB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(stateJson));
+
+        var response = await noRedirectClient.GetAsync(
+            $"/api/auth/epiccallback?code=windowsCode789&state={Uri.EscapeDataString(stateB64)}");
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        var location = response.Headers.Location?.ToString();
+        Assert.NotNull(location);
+        Assert.StartsWith("http://localhost:8400/auth/callback", location);
+        Assert.Contains("code=windowsCode789", location);
+    }
+
+    [Fact]
+    public async Task EpicCallback_WithNonLocalhostState_FallsBackToDeepLink()
+    {
+        using var noRedirectClient = _factory.CreateClient(
+            new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        // Attacker tries to redirect to an external host — should be rejected.
+        var stateJson = "{\"return_to\":\"https://evil.com/steal\"}";
+        var stateB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(stateJson));
+
+        var response = await noRedirectClient.GetAsync(
+            $"/api/auth/epiccallback?code=safeCode&state={Uri.EscapeDataString(stateB64)}");
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        var location = response.Headers.Location?.ToString();
+        Assert.NotNull(location);
+        // Should fall back to the deep link, NOT redirect to evil.com.
+        Assert.StartsWith("festscoretracker://auth/callback", location);
+        Assert.Contains("code=safeCode", location);
+    }
+
+    [Fact]
+    public async Task EpicCallback_WithMalformedState_FallsBackToDeepLink()
+    {
+        using var noRedirectClient = _factory.CreateClient(
+            new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var response = await noRedirectClient.GetAsync(
+            "/api/auth/epiccallback?code=testCode&state=not-valid-base64!!!");
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        var location = response.Headers.Location?.ToString();
+        Assert.NotNull(location);
+        Assert.StartsWith("festscoretracker://auth/callback", location);
+        Assert.Contains("code=testCode", location);
+    }
+
     // ─── AuthMe with fully registered user ──────────────────
 
     [Fact]
