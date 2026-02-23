@@ -998,4 +998,98 @@ public sealed class MetaDatabaseTests : IDisposable
     {
         Assert.Null(Db.GetDisplayName("nobody"));
     }
+
+    // ═══ LeaderboardPopulation ══════════════════════════════════
+
+    [Fact]
+    public void UpsertLeaderboardPopulation_inserts_and_queries()
+    {
+        var items = new List<(string, string, long)>
+        {
+            ("song1", "Solo_Guitar", 100_000),
+            ("song2", "Solo_Drums", 50_000),
+        };
+
+        Db.UpsertLeaderboardPopulation(items);
+
+        Assert.Equal(100_000, Db.GetLeaderboardPopulation("song1", "Solo_Guitar"));
+        Assert.Equal(50_000, Db.GetLeaderboardPopulation("song2", "Solo_Drums"));
+    }
+
+    [Fact]
+    public void GetLeaderboardPopulation_returns_minus1_when_not_found()
+    {
+        Assert.Equal(-1, Db.GetLeaderboardPopulation("missing", "Solo_Guitar"));
+    }
+
+    [Fact]
+    public void UpsertLeaderboardPopulation_updates_existing()
+    {
+        Db.UpsertLeaderboardPopulation([("song1", "Solo_Guitar", 100_000)]);
+        Db.UpsertLeaderboardPopulation([("song1", "Solo_Guitar", 200_000)]);
+
+        Assert.Equal(200_000, Db.GetLeaderboardPopulation("song1", "Solo_Guitar"));
+    }
+
+    [Fact]
+    public void GetAllLeaderboardPopulation_returns_all_entries()
+    {
+        var items = new List<(string, string, long)>
+        {
+            ("songA", "Solo_Guitar", 10),
+            ("songA", "Solo_Bass", 20),
+            ("songB", "Solo_Guitar", 30),
+        };
+
+        Db.UpsertLeaderboardPopulation(items);
+        var all = Db.GetAllLeaderboardPopulation();
+
+        Assert.Equal(3, all.Count);
+        Assert.Equal(10, all[("songA", "Solo_Guitar")]);
+        Assert.Equal(20, all[("songA", "Solo_Bass")]);
+        Assert.Equal(30, all[("songB", "Solo_Guitar")]);
+    }
+
+    [Fact]
+    public void UpsertLeaderboardPopulation_empty_list_no_op()
+    {
+        Db.UpsertLeaderboardPopulation([]); // should not throw
+        var all = Db.GetAllLeaderboardPopulation();
+        Assert.Empty(all);
+    }
+
+    // ═══ RaiseLeaderboardPopulationFloor ════════════════════════
+
+    [Fact]
+    public void RaisePopulationFloor_inserts_when_no_existing_data()
+    {
+        Db.RaiseLeaderboardPopulationFloor("song1", "Solo_Guitar", 150_000);
+        Assert.Equal(150_000, Db.GetLeaderboardPopulation("song1", "Solo_Guitar"));
+    }
+
+    [Fact]
+    public void RaisePopulationFloor_raises_when_higher()
+    {
+        Db.UpsertLeaderboardPopulation([("song1", "Solo_Guitar", 100_000)]);
+        Db.RaiseLeaderboardPopulationFloor("song1", "Solo_Guitar", 200_000);
+        Assert.Equal(200_000, Db.GetLeaderboardPopulation("song1", "Solo_Guitar"));
+    }
+
+    [Fact]
+    public void RaisePopulationFloor_does_not_lower_existing()
+    {
+        Db.UpsertLeaderboardPopulation([("song1", "Solo_Guitar", 300_000)]);
+        Db.RaiseLeaderboardPopulationFloor("song1", "Solo_Guitar", 100_000);
+        Assert.Equal(300_000, Db.GetLeaderboardPopulation("song1", "Solo_Guitar"));
+    }
+
+    [Fact]
+    public void RaisePopulationFloor_ignores_zero_and_negative()
+    {
+        Db.RaiseLeaderboardPopulationFloor("song1", "Solo_Guitar", 0);
+        Assert.Equal(-1, Db.GetLeaderboardPopulation("song1", "Solo_Guitar"));
+
+        Db.RaiseLeaderboardPopulationFloor("song1", "Solo_Guitar", -5);
+        Assert.Equal(-1, Db.GetLeaderboardPopulation("song1", "Solo_Guitar"));
+    }
 }

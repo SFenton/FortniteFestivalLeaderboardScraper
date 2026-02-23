@@ -208,6 +208,34 @@ public class PersonalDbBuilderTests : IDisposable
     }
 
     [Fact]
+    public void Build_RemovesStaleTempFile()
+    {
+        var builder = CreateBuilder();
+
+        // Pre-create a stale temp file at the expected path
+        var outputPath = builder.GetPersonalDbPath("acct_tmp", "device_tmp");
+        var tempPath = outputPath + ".tmp";
+        var dir = Path.GetDirectoryName(outputPath)!;
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(tempPath, "stale-temp-content");
+        Assert.True(File.Exists(tempPath));
+
+        // Add a score so Build succeeds
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song1", [new LeaderboardEntry
+        {
+            AccountId = "acct_tmp", Score = 1000, Rank = 1
+        }]);
+
+        var result = builder.Build("device_tmp", "acct_tmp");
+        Assert.NotNull(result);
+
+        // The stale temp file should have been removed and the final file created
+        Assert.False(File.Exists(tempPath));
+        Assert.True(File.Exists(outputPath));
+    }
+
+    [Fact]
     public void Build_NoSongsLoaded_ReturnsNull()
     {
         var emptyService = CreateServiceWithSongs(Array.Empty<Song>());
@@ -383,6 +411,38 @@ public class PersonalDbBuilderTests : IDisposable
             cmd.CommandText = "SELECT GuitarScore FROM Scores WHERE SongId = 'song1'";
             Assert.Equal(5000L, (long)cmd.ExecuteScalar()!);
         }
+    }
+
+    [Fact]
+    public void RebuildForAccounts_SkipsAccount_WhenBuildReturnsNull()
+    {
+        // Use an empty FestivalService so Build returns null (no songs)
+        var emptyService = CreateServiceWithSongs(Array.Empty<Song>());
+        var builder = new PersonalDbBuilder(_persistence, emptyService, _metaDb.Db, _dataDir, _log);
+
+        _metaDb.Db.RegisterUser("deviceNull", "acctNull");
+
+        var changedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "acctNull" };
+        var rebuilt = builder.RebuildForAccounts(changedIds, _metaDb.Db);
+
+        // Build returns null → skipped → 0 rebuilt
+        Assert.Equal(0, rebuilt);
+    }
+
+    [Fact]
+    public void Build_CatchBlock_ReturnsNull_WhenBuildDatabaseFails()
+    {
+        var builder = CreateBuilder();
+
+        // Use a path with an invalid directory name character to force SQLite to fail
+        // when BuildDatabase tries to create the connection.
+        // We pass a deviceId containing characters that make the path invalid on Windows.
+        var badDeviceId = "dev\0fail"; // null char in path
+
+        var result = builder.Build(badDeviceId, "acctFail");
+
+        // Build should catch the exception and return null
+        Assert.Null(result);
     }
 
     // ─── ScoreHistory ─────────────────────────────────────────────
@@ -806,5 +866,203 @@ public class PersonalDbBuilderTests : IDisposable
         Assert.Equal(2, reader.GetInt32(3)); // Drums diff from song1.track.in.ds
         Assert.Equal(1, reader.GetInt32(4)); // ProGuitar diff from song1.track.in.pg
         Assert.Equal(2, reader.GetInt32(5)); // ProBass diff from song1.track.in.pb
+    }
+
+    [Fact]
+    public void Build_SongWithNullInstrumentDifficulties_DefaultsToZero()
+    {
+        // Create a song with no @in data (null difficulties)
+        var songNoIn = new Song
+        {
+            track = new Track
+            {
+                su = "songNoIn",
+                tt = "No Difficulty",
+                an = "Artist",
+                @in = null, // null instrument difficulties
+                ry = 2024,
+                mt = 130,
+            }
+        };
+        var svc = CreateServiceWithSongs(new[] { songNoIn });
+        var builder = new PersonalDbBuilder(_persistence, svc, _metaDb.Db, _dataDir, _log);
+
+        // Insert a score for this song
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("songNoIn", [new LeaderboardEntry
+        {
+            AccountId = "acct_noIn", Score = 5000, Rank = 1
+        }]);
+
+        var result = builder.Build("devNoIn", "acct_noIn");
+        Assert.NotNull(result);
+
+        using var conn = new SqliteConnection($"Data Source={result}");
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT GuitarDiff FROM Scores WHERE SongId = 'songNoIn'";
+        var diff = (long)cmd.ExecuteScalar()!;
+        Assert.Equal(0, diff); // Defaults to 0 when @in is null
+    }
+
+    // ─── Leaderboard population in personal DB ──────────────────
+
+    [Fact]
+    public void Build_Total_UsesRealPopulation_WhenAvailable()
+    {
+        var builder = CreateBuilder();
+
+        // Seed a real population value from PercentileService
+        _metaDb.Db.UpsertLeaderboardPopulation([("song1", "Solo_Guitar", 250_000L)]);
+
+        // Insert a score
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song1", [new LeaderboardEntry
+        {
+            AccountId = "acct1", Score = 50000, Rank = 42,
+            Accuracy = 95, Stars = 5, IsFullCombo = true, Season = 3,
+            Percentile = 0.85,
+        }]);
+
+        var result = builder.Build("device1", "acct1");
+        Assert.NotNull(result);
+
+        using var conn = new SqliteConnection($"Data Source={result}");
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT GuitarTotal, GuitarRank FROM Scores WHERE SongId = 'song1'";
+        using var reader = cmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal(250_000L, reader.GetInt64(0)); // Real population from PercentileService
+        Assert.Equal(42, reader.GetInt32(1));        // Rank from V2 API enrichment
+    }
+
+    [Fact]
+    public void Build_Total_FallsBackToLocalDbCount_WhenNoPopulation()
+    {
+        var builder = CreateBuilder();
+
+        // No population data in MetaDatabase — fallback to local count
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        // Insert multiple entries so there's a meaningful "total" count
+        guitarDb.UpsertEntries("song1", [
+            new LeaderboardEntry { AccountId = "acct1", Score = 50000, Rank = 1 },
+            new LeaderboardEntry { AccountId = "acct2", Score = 40000, Rank = 2 },
+            new LeaderboardEntry { AccountId = "acct3", Score = 30000, Rank = 3 },
+        ]);
+
+        var result = builder.Build("device1", "acct1");
+        Assert.NotNull(result);
+
+        using var conn = new SqliteConnection($"Data Source={result}");
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT GuitarTotal FROM Scores WHERE SongId = 'song1'";
+        var total = (long)cmd.ExecuteScalar()!;
+        Assert.Equal(3, total); // 3 entries in local DB
+    }
+
+    [Fact]
+    public void Build_CalcTotal_ReverseCalculatedFromRankAndPercentile()
+    {
+        var builder = CreateBuilder();
+
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song1", [new LeaderboardEntry
+        {
+            AccountId = "acct1", Score = 50000, Rank = 100,
+            Percentile = 0.01, // rank 100 / 0.01 = 10,000
+        }]);
+
+        var result = builder.Build("device1", "acct1");
+        Assert.NotNull(result);
+
+        using var conn = new SqliteConnection($"Data Source={result}");
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT GuitarCalcTotal FROM Scores WHERE SongId = 'song1'";
+        var calcTotal = (long)cmd.ExecuteScalar()!;
+        Assert.Equal(10_000, calcTotal); // 100 / 0.01
+    }
+
+    [Fact]
+    public void Build_Rank_FallsBackToLocalRank_WhenV2RankIsZero()
+    {
+        var builder = CreateBuilder();
+
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        // Rank = 0 means V2 API hasn't enriched yet
+        guitarDb.UpsertEntries("song1", [
+            new LeaderboardEntry { AccountId = "acct1", Score = 50000, Rank = 0 },
+            new LeaderboardEntry { AccountId = "acct2", Score = 60000, Rank = 0 },
+        ]);
+
+        var result = builder.Build("device1", "acct1");
+        Assert.NotNull(result);
+
+        using var conn = new SqliteConnection($"Data Source={result}");
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT GuitarRank FROM Scores WHERE SongId = 'song1'";
+        var rank = (long)cmd.ExecuteScalar()!;
+        Assert.Equal(2, rank); // acct2 has higher score, so acct1 is rank 2
+    }
+
+    [Fact]
+    public void GetScoresAsJson_Total_UsesRealPopulation_WhenAvailable()
+    {
+        var builder = CreateBuilder();
+
+        _metaDb.Db.UpsertLeaderboardPopulation([("song1", "Solo_Guitar", 123_456L)]);
+
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song1", [new LeaderboardEntry
+        {
+            AccountId = "acct1", Score = 50000, Rank = 42,
+            Accuracy = 95, Stars = 5, Season = 3,
+            Percentile = 0.85,
+        }]);
+
+        var result = builder.GetScoresAsJson("acct1", 0, 100);
+
+        Assert.NotNull(result);
+        Assert.Equal(1, result.TotalItems);
+        Assert.Equal(123_456L, result.Items[0]["GuitarTotal"]);
+    }
+
+    [Fact]
+    public void GetScoresAsJson_Total_FallsBackToLocalCount_WhenNoPopulation()
+    {
+        var builder = CreateBuilder();
+
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song1", [
+            new LeaderboardEntry { AccountId = "acct1", Score = 50000, Rank = 1 },
+            new LeaderboardEntry { AccountId = "acct2", Score = 40000, Rank = 2 },
+        ]);
+
+        var result = builder.GetScoresAsJson("acct1", 0, 100);
+
+        Assert.NotNull(result);
+        Assert.Equal(1, result.TotalItems);
+        Assert.Equal(2L, result.Items[0]["GuitarTotal"]);
+    }
+
+    [Fact]
+    public void GetScoresAsJson_Rank_UsesLocalRank_WhenV2IsZero()
+    {
+        var builder = CreateBuilder();
+
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song1", [
+            new LeaderboardEntry { AccountId = "acct1", Score = 50000, Rank = 0 },
+            new LeaderboardEntry { AccountId = "other", Score = 70000, Rank = 0 },
+        ]);
+
+        var result = builder.GetScoresAsJson("acct1", 0, 100);
+
+        Assert.NotNull(result);
+        // acct1 is rank 2 (other has higher score)
+        Assert.Equal(2, result.Items[0]["GuitarRank"]);
     }
 }

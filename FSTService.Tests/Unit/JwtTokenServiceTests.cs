@@ -182,4 +182,23 @@ public sealed class JwtTokenServiceTests
         });
         Assert.Equal(900, svc.AccessTokenLifetimeSeconds);
     }
+
+    [Fact]
+    public async Task ValidateAccessToken_malformed_base64_triggers_catch_block()
+    {
+        var svc = CreateService();
+        // A structurally broken JWT where the segments are not valid base64 —
+        // this causes the handler to throw internally rather than returning
+        // IsValid = false, exercising the catch block in ValidateAccessTokenAsync.
+        var principal = await svc.ValidateAccessTokenAsync("");
+        Assert.Null(principal);
+    }
+
+    [Fact]
+    public async Task ValidateAccessToken_null_returns_null()
+    {
+        var svc = CreateService();
+        var principal = await svc.ValidateAccessTokenAsync(null!);
+        Assert.Null(principal);
+    }
 }

@@ -200,6 +200,41 @@ public class TokenManagerTests
             Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task PerformDeviceCodeSetupAsync_Timeout_ReturnsFalse()
+    {
+        var handler = new Helpers.MockHttpMessageHandler();
+
+        // 1. client_credentials token
+        handler.EnqueueJsonOk("""
+        {
+            "access_token": "cc_token",
+            "expires_in": 3600,
+            "token_type": "bearer"
+        }
+        """);
+
+        // 2. device authorization with expires_in=0 so the poll loop never enters
+        handler.EnqueueJsonOk("""
+        {
+            "user_code": "X",
+            "device_code": "dc",
+            "verification_uri": "https://e.com",
+            "verification_uri_complete": "https://e.com?code=X",
+            "expires_in": 0,
+            "interval": 0
+        }
+        """);
+
+        var http = new HttpClient(handler);
+        var auth = new EpicAuthService(http, Substitute.For<ILogger<EpicAuthService>>());
+        var mgr = new TokenManager(auth, _store, _log);
+
+        var ok = await mgr.PerformDeviceCodeSetupAsync();
+
+        Assert.False(ok);
+    }
+
     // ─── DeviceCodeLoginRequired event ──────────────────
 
     [Fact]
@@ -225,6 +260,141 @@ public class TokenManagerTests
         await mgr.PerformDeviceCodeSetupAsync();
 
         Assert.Equal("https://e.com?code=X", firedUrl);
+    }
+
+    // ─── StartDeviceCodeFlowAsync / CompletePollAsync ───
+
+    [Fact]
+    public async Task StartDeviceCodeFlowAsync_ReturnsDeviceAuthorizationResponse()
+    {
+        var handler = new Helpers.MockHttpMessageHandler();
+        handler.EnqueueJsonOk("""{"access_token":"cc","expires_in":3600,"token_type":"bearer"}""");
+        handler.EnqueueJsonOk("""
+        {
+            "user_code":"ABC",
+            "device_code":"dc_test",
+            "verification_uri":"https://epic.com/activate",
+            "verification_uri_complete":"https://epic.com/activate?code=ABC",
+            "expires_in":600,
+            "interval":5
+        }
+        """);
+
+        var http = new HttpClient(handler);
+        var auth = new EpicAuthService(http, Substitute.For<ILogger<EpicAuthService>>());
+        var mgr = new TokenManager(auth, _store, _log);
+
+        var result = await mgr.StartDeviceCodeFlowAsync();
+
+        Assert.Equal("ABC", result.UserCode);
+        Assert.Equal("dc_test", result.DeviceCode);
+        Assert.Equal("https://epic.com/activate", result.VerificationUri);
+        Assert.Equal("https://epic.com/activate?code=ABC", result.VerificationUriComplete);
+        Assert.Equal(600, result.ExpiresIn);
+        Assert.Equal(5, result.Interval);
+    }
+
+    [Fact]
+    public async Task StartDeviceCodeFlowAsync_FiresEvent()
+    {
+        var handler = new Helpers.MockHttpMessageHandler();
+        handler.EnqueueJsonOk("""{"access_token":"cc","expires_in":3600,"token_type":"bearer"}""");
+        handler.EnqueueJsonOk("""
+        {
+            "user_code":"X","device_code":"dc","verification_uri":"https://e.com",
+            "verification_uri_complete":"https://e.com?code=X","expires_in":600,"interval":0
+        }
+        """);
+
+        var http = new HttpClient(handler);
+        var auth = new EpicAuthService(http, Substitute.For<ILogger<EpicAuthService>>());
+        var mgr = new TokenManager(auth, _store, _log);
+
+        string? firedUrl = null;
+        mgr.DeviceCodeLoginRequired += url => firedUrl = url;
+
+        await mgr.StartDeviceCodeFlowAsync();
+
+        Assert.Equal("https://e.com?code=X", firedUrl);
+    }
+
+    [Fact]
+    public async Task CompletePollAsync_Success_PersistsToken()
+    {
+        var handler = new Helpers.MockHttpMessageHandler();
+        // Poll success immediately
+        handler.EnqueueJsonOk(MakeTokenJson("at_poll", "rt_poll", "user1", hoursFromNow: 2));
+
+        var http = new HttpClient(handler);
+        var auth = new EpicAuthService(http, Substitute.For<ILogger<EpicAuthService>>());
+        var mgr = new TokenManager(auth, _store, _log);
+
+        var deviceAuth = new DeviceAuthorizationResponse
+        {
+            UserCode = "X",
+            DeviceCode = "dc",
+            VerificationUri = "https://e.com",
+            VerificationUriComplete = "https://e.com?code=X",
+            ExpiresIn = 600,
+            Interval = 0,
+        };
+
+        var ok = await mgr.CompletePollAsync(deviceAuth);
+
+        Assert.True(ok);
+        Assert.Equal("user1", mgr.AccountId);
+        await _store.Received(1).SaveAsync(
+            Arg.Is<StoredCredentials>(c => c.AccountId == "user1" && c.RefreshToken == "rt_poll"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task CompletePollAsync_Timeout_ReturnsFalse()
+    {
+        var handler = new Helpers.MockHttpMessageHandler();
+        // No responses enqueued — but expires_in=0 means poll loop never enters
+
+        var http = new HttpClient(handler);
+        var auth = new EpicAuthService(http, Substitute.For<ILogger<EpicAuthService>>());
+        var mgr = new TokenManager(auth, _store, _log);
+
+        var deviceAuth = new DeviceAuthorizationResponse
+        {
+            UserCode = "X",
+            DeviceCode = "dc",
+            VerificationUri = "https://e.com",
+            VerificationUriComplete = "https://e.com?code=X",
+            ExpiresIn = 0,
+            Interval = 0,
+        };
+
+        var ok = await mgr.CompletePollAsync(deviceAuth);
+
+        Assert.False(ok);
+    }
+
+    [Fact]
+    public async Task PerformDeviceCodeSetupAsync_delegates_to_start_and_poll()
+    {
+        // Verify the existing PerformDeviceCodeSetupAsync still works after refactor
+        var handler = new Helpers.MockHttpMessageHandler();
+        handler.EnqueueJsonOk("""{"access_token":"cc","expires_in":3600,"token_type":"bearer"}""");
+        handler.EnqueueJsonOk("""
+        {
+            "user_code":"Y","device_code":"dc2","verification_uri":"https://e.com",
+            "verification_uri_complete":"https://e.com?code=Y","expires_in":600,"interval":0
+        }
+        """);
+        handler.EnqueueJsonOk(MakeTokenJson("at2", "rt2", "user2", hoursFromNow: 2));
+
+        var http = new HttpClient(handler);
+        var auth = new EpicAuthService(http, Substitute.For<ILogger<EpicAuthService>>());
+        var mgr = new TokenManager(auth, _store, _log);
+
+        var ok = await mgr.PerformDeviceCodeSetupAsync();
+
+        Assert.True(ok);
+        Assert.Equal("user2", mgr.AccountId);
     }
 
     // ─── PersistRefreshTokenAsync: skips empty refresh token ──

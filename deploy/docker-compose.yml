@@ -32,3 +32,21 @@ services:
       # - Scraper__ScrapeInterval=04:00:00
       # - Scraper__SongSyncInterval=00:15:00
       # - Scraper__DegreeOfParallelism=16
+
+  percentileservice:
+    image: ghcr.io/sfenton/percentileservice:latest
+    container_name: percentileservice
+    restart: unless-stopped
+    volumes:
+      - ./percentile-data:/app/data
+    environment:
+      - DOTNET_ENVIRONMENT=Production
+      - Percentile__FstBaseUrl=http://fstservice:8080
+      - Percentile__FstApiKey=${API_KEY:?Set API_KEY in .env}
+      - Percentile__AccountId=${PERCENTILE_ACCOUNT_ID:-195e93ef108143b2975ee46662d4d0e1}
+      # Override schedule if needed:
+      # - Percentile__ScrapeTimeOfDay=03:30
+      # - Percentile__ScrapeTimeZone=America/Los_Angeles
+      # - Percentile__DegreeOfParallelism=8
+    depends_on:
+      - fstservice

@@ -82,13 +82,13 @@ public class TokenManager
     }
 
     /// <summary>
-    /// Perform the interactive device code setup flow.
-    /// Blocks until the user completes login in their browser.
+    /// Start the device code flow and return the authorization details
+    /// so the caller can direct the user to the verification URL.
+    /// Call <see cref="CompletePollAsync"/> afterward to poll until login completes.
     /// </summary>
-    public virtual async Task<bool> PerformDeviceCodeSetupAsync(CancellationToken ct = default)
+    public virtual async Task<DeviceAuthorizationResponse> StartDeviceCodeFlowAsync(CancellationToken ct = default)
     {
         _log.LogInformation("Starting device code login flow...");
-
         var deviceAuth = await _auth.StartDeviceCodeFlowAsync(ct);
 
         _log.LogInformation("=== DEVICE CODE LOGIN ===");
@@ -98,9 +98,16 @@ public class TokenManager
             deviceAuth.VerificationUri, deviceAuth.UserCode);
         _log.LogInformation("Waiting for login (expires in {Seconds}s)...", deviceAuth.ExpiresIn);
 
-        // Notify any listeners
         DeviceCodeLoginRequired?.Invoke(deviceAuth.VerificationUriComplete);
 
+        return deviceAuth;
+    }
+
+    /// <summary>
+    /// Poll for device code completion, apply the token, and persist credentials.
+    /// </summary>
+    public virtual async Task<bool> CompletePollAsync(DeviceAuthorizationResponse deviceAuth, CancellationToken ct = default)
+    {
         try
         {
             var token = await _auth.PollDeviceCodeAsync(deviceAuth, ct);
@@ -108,7 +115,6 @@ public class TokenManager
 
             _log.LogInformation("Login successful! Welcome, {DisplayName}.", token.DisplayName);
 
-            // Persist the refresh token for future unattended use
             await PersistRefreshTokenAsync(token, ct);
             _log.LogInformation("Credentials saved. Future logins will be automatic (refresh within ~8 h).");
 
@@ -119,6 +125,16 @@ public class TokenManager
             _log.LogError("Device code login timed out.");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Perform the interactive device code setup flow.
+    /// Blocks until the user completes login in their browser.
+    /// </summary>
+    public virtual async Task<bool> PerformDeviceCodeSetupAsync(CancellationToken ct = default)
+    {
+        var deviceAuth = await StartDeviceCodeFlowAsync(ct);
+        return await CompletePollAsync(deviceAuth, ct);
     }
 
     // ─── Helpers ──────────────────────────────────

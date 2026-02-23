@@ -336,4 +336,25 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         }
         """;
     }
+
+    // ─── Probe throws non-HttpRequestException → catch block fallback ──
+
+    [Fact]
+    public async Task CalculateAsync_ProbeThrowsNonHttp_CatchFallsBackToMin()
+    {
+        var (calculator, handler) = CreateCalculator();
+        var service = CreateServiceWithSongs(new[] { MakeSong("song1") });
+
+        SeedEntries("Solo_Guitar", "song1", season: 3, count: 1);
+
+        // Enqueue an unexpected exception (not HttpRequestException) to trigger
+        // the catch (Exception ex) block in the CalculateAsync lambda.
+        handler.EnqueueException(new InvalidOperationException("unexpected internal error"));
+
+        var result = await calculator.CalculateAsync(service, "token", "caller");
+
+        Assert.Equal(1, result);
+        // Falls back to observed MIN season
+        Assert.Equal(3, _metaDb.Db.GetFirstSeenSeason("song1"));
+    }
 }

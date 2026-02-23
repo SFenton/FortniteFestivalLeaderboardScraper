@@ -111,4 +111,23 @@ public class AuthEndpointsTests
 
         Assert.Null(AuthEndpoints.TryExtractLoopbackReturnTo(state));
     }
+
+    [Fact]
+    public void TryExtractLoopbackReturnTo_InvalidUri_ReturnsNull()
+    {
+        // A return_to value that is not a valid absolute URI
+        var json = "{\"return_to\":\"not-a-valid-uri\"}";
+        var state = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json));
+
+        Assert.Null(AuthEndpoints.TryExtractLoopbackReturnTo(state));
+    }
+
+    [Fact]
+    public void TryExtractLoopbackReturnTo_RelativeUri_ReturnsNull()
+    {
+        var json = "{\"return_to\":\"/relative/path\"}";
+        var state = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json));
+
+        Assert.Null(AuthEndpoints.TryExtractLoopbackReturnTo(state));
+    }
 }

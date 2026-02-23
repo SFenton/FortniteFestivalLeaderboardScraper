@@ -223,6 +223,11 @@ public class ScoreBackfiller
         // thanks to the Rank-enrichment clause in UpsertEntries)
         instrumentDb.UpsertEntries(songId, [entry]);
 
+        // Rank is a guaranteed population floor — if the user is ranked N,
+        // there are at least N entries on this leaderboard.
+        if (entry.Rank > 0)
+            _metaDb.RaiseLeaderboardPopulationFloor(songId, instrument, entry.Rank);
+
         if (existing is null)
         {
             // Truly new entry — record in ScoreHistory

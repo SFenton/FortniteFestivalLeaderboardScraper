@@ -369,4 +369,53 @@ public class ScrapeProgressTrackerTests
         Assert.False(p.DiscoveryComplete);
         Assert.Equal(0, p.LeaderboardsDiscovered);
     }
+
+    // ─── CalculatingFirstSeen ───────────────────────────
+
+    [Fact]
+    public void CalculatingFirstSeen_Phase_ReturnsSnapshot()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.CalculatingFirstSeen);
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal("CalculatingFirstSeen", progress.Current?.Operation);
+    }
+
+    // ─── RefreshingRegisteredUsers ──────────────────────
+
+    [Fact]
+    public void RefreshingRegisteredUsers_Phase_ReturnsSnapshot()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.RefreshingRegisteredUsers);
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal("RefreshingRegisteredUsers", progress.Current?.Operation);
+    }
+
+    // ─── ReconstructingHistory ──────────────────────────
+
+    [Fact]
+    public void ReconstructingHistory_Phase_ReturnsSnapshot()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.ReconstructingHistory);
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal("ReconstructingHistory", progress.Current?.Operation);
+    }
+
+    // ─── Default / unknown phase ────────────────────────
+
+    [Fact]
+    public void UnknownPhase_ReturnsNullSnapshot()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        // Force an undefined enum value to exercise the default switch arm
+        _tracker.SetPhase((ScrapeProgressTracker.ScrapePhase)99);
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Null(progress.Current);
+    }
 }

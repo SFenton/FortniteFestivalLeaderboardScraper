@@ -114,6 +114,55 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal("testAcct1", json.GetProperty("accountId").GetString());
     }
 
+    // ─── Device Code Auth ───────────────────────────────────────
+
+    [Fact]
+    public async Task DeviceCode_NoAuth_ReturnsUnauthorized()
+    {
+        var response = await _client.PostAsync("/api/auth/device-code", null);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeviceCode_WithApiKey_ReturnsDeviceCodeInfo()
+    {
+        // Configure the mock TokenManager to return a device auth response
+        var tokenManager = _factory.Services.GetRequiredService<TokenManager>();
+        tokenManager.StartDeviceCodeFlowAsync(Arg.Any<CancellationToken>())
+            .Returns(new DeviceAuthorizationResponse
+            {
+                UserCode = "TEST123",
+                DeviceCode = "dc_integ",
+                VerificationUri = "https://epicgames.com/activate",
+                VerificationUriComplete = "https://epicgames.com/activate?code=TEST123",
+                ExpiresIn = 600,
+                Interval = 5,
+            });
+        tokenManager.CompletePollAsync(Arg.Any<DeviceAuthorizationResponse>(), Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        var response = await _authedClient.PostAsync("/api/auth/device-code", null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("TEST123", json.GetProperty("userCode").GetString());
+        Assert.Equal("https://epicgames.com/activate", json.GetProperty("verificationUri").GetString());
+        Assert.Equal("https://epicgames.com/activate?code=TEST123",
+            json.GetProperty("verificationUriComplete").GetString());
+        Assert.Equal(600, json.GetProperty("expiresIn").GetInt32());
+    }
+
+    [Fact]
+    public async Task DeviceCode_WhenStartFails_Returns502()
+    {
+        var tokenManager = _factory.Services.GetRequiredService<TokenManager>();
+        tokenManager.StartDeviceCodeFlowAsync(Arg.Any<CancellationToken>())
+            .Throws(new InvalidOperationException("Epic is down"));
+
+        var response = await _authedClient.PostAsync("/api/auth/device-code", null);
+        Assert.Equal((HttpStatusCode)502, response.StatusCode);
+    }
+
     // ─── Protected endpoints (require API key) ──────────────────
 
     [Fact]
@@ -203,6 +252,152 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     {
         var response = await _authedClient.GetAsync("/api/backfill/unknown/status");
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    // ─── Leaderboard population ─────────────────────────────────
+
+    [Fact]
+    public async Task PostLeaderboardPopulation_RequiresAuth()
+    {
+        var content = JsonContent.Create(new[]
+        {
+            new { songId = "song1", instrument = "Solo_Guitar", totalEntries = 50000L },
+        });
+        var response = await _client.PostAsync("/api/leaderboard-population", content);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PostLeaderboardPopulation_EmptyArray_ReturnsBadRequest()
+    {
+        var content = JsonContent.Create(Array.Empty<object>());
+        var response = await _authedClient.PostAsync("/api/leaderboard-population", content);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task PostLeaderboardPopulation_UpsertsAndGetReturnsData()
+    {
+        var items = new[]
+        {
+            new { songId = "testSong1", instrument = "Solo_Guitar", totalEntries = 123456L },
+            new { songId = "testSong2", instrument = "Solo_Drums", totalEntries = 78901L },
+        };
+        var postResp = await _authedClient.PostAsync("/api/leaderboard-population", JsonContent.Create(items));
+        Assert.Equal(HttpStatusCode.OK, postResp.StatusCode);
+
+        var postJson = await postResp.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(2, postJson.GetProperty("upserted").GetInt32());
+
+        // Verify GET returns the data
+        var getResp = await _authedClient.GetAsync("/api/leaderboard-population");
+        Assert.Equal(HttpStatusCode.OK, getResp.StatusCode);
+
+        var getJson = await getResp.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(getJson.GetArrayLength() >= 2);
+    }
+
+    [Fact]
+    public async Task PostLeaderboardPopulation_UpdatesExistingEntries()
+    {
+        var items1 = new[] { new { songId = "updateSong", instrument = "Solo_Bass", totalEntries = 1000L } };
+        await _authedClient.PostAsync("/api/leaderboard-population", JsonContent.Create(items1));
+
+        var items2 = new[] { new { songId = "updateSong", instrument = "Solo_Bass", totalEntries = 2000L } };
+        var resp = await _authedClient.PostAsync("/api/leaderboard-population", JsonContent.Create(items2));
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+
+        var json = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(1, json.GetProperty("upserted").GetInt32());
+    }
+
+    [Fact]
+    public async Task PostLeaderboardPopulation_ResponseIncludesRefreshFields()
+    {
+        var items = new[]
+        {
+            new { songId = "popFields", instrument = "Solo_Guitar", totalEntries = 42000L },
+        };
+        var resp = await _authedClient.PostAsync("/api/leaderboard-population", JsonContent.Create(items));
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+
+        var json = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(1, json.GetProperty("upserted").GetInt32());
+        // New fields are always present regardless of whether a refresh occurred
+        Assert.True(json.TryGetProperty("refreshTriggered", out var rt));
+        Assert.Equal(JsonValueKind.True, rt.ValueKind == JsonValueKind.True ? JsonValueKind.True : JsonValueKind.False);
+        Assert.True(json.TryGetProperty("personalDbsRebuilt", out var pd));
+        Assert.Equal(JsonValueKind.Number, pd.ValueKind);
+    }
+
+    [Fact]
+    public async Task PostLeaderboardPopulation_WhenIdle_WithRegisteredUsers_TriggersRefresh()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var accountId = "pop-refresh-test-account";
+        var deviceId = "pop-refresh-test-device";
+
+        // Register a user so the refresh path fires
+        metaDb.RegisterUser(deviceId, accountId);
+
+        try
+        {
+            var items = new[]
+            {
+                new { songId = "popRefresh", instrument = "Solo_Guitar", totalEntries = 99000L },
+            };
+            var resp = await _authedClient.PostAsync("/api/leaderboard-population", JsonContent.Create(items));
+            Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+
+            var json = await resp.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.True(json.GetProperty("refreshTriggered").GetBoolean());
+            Assert.True(json.GetProperty("personalDbsRebuilt").GetInt32() >= 1);
+        }
+        finally
+        {
+            metaDb.UnregisterAccount(accountId);
+        }
+    }
+
+    [Fact]
+    public async Task PostLeaderboardPopulation_WhenScraping_DoesNotTriggerRefresh()
+    {
+        var progress = _factory.Services.GetRequiredService<ScrapeProgressTracker>();
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var accountId = "pop-noscrape-test-account";
+        var deviceId = "pop-noscrape-test-device";
+
+        metaDb.RegisterUser(deviceId, accountId);
+
+        // Simulate a scrape in progress
+        progress.BeginPass(1, 1, 0);
+
+        try
+        {
+            var items = new[]
+            {
+                new { songId = "popScraping", instrument = "Solo_Drums", totalEntries = 55000L },
+            };
+            var resp = await _authedClient.PostAsync("/api/leaderboard-population", JsonContent.Create(items));
+            Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+
+            var json = await resp.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(1, json.GetProperty("upserted").GetInt32());
+            Assert.False(json.GetProperty("refreshTriggered").GetBoolean());
+            Assert.Equal(0, json.GetProperty("personalDbsRebuilt").GetInt32());
+        }
+        finally
+        {
+            progress.EndPass();
+            metaDb.UnregisterAccount(accountId);
+        }
+    }
+
+    [Fact]
+    public async Task GetLeaderboardPopulation_RequiresAuth()
+    {
+        var response = await _client.GetAsync("/api/leaderboard-population");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     // ─── Sync endpoints ─────────────────────────────────────────
@@ -781,6 +976,161 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             $"Unexpected: {response.StatusCode}");
     }
 
+    // ─── Bearer-auth: NotFound paths (unknown account via JWT) ────
+
+    /// <summary>
+    /// Create a bearer client whose JWT has valid claims but points to a
+    /// username that doesn't exist in the AccountNames table.
+    /// </summary>
+    private HttpClient CreateBearerClientForUnknownUser()
+    {
+        var jwt = _factory.Services.GetRequiredService<JwtTokenService>();
+        var token = jwt.GenerateAccessToken("NonExistentUser_" + Guid.NewGuid().ToString("N"), "unknownDevice");
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", token);
+        return client;
+    }
+
+    [Fact]
+    public async Task MeSync_UnknownAccount_ReturnsNotFound()
+    {
+        using var client = CreateBearerClientForUnknownUser();
+        var response = await client.GetAsync("/api/me/sync");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task MeSyncVersion_UnknownAccount_ReturnsNotFound()
+    {
+        using var client = CreateBearerClientForUnknownUser();
+        var response = await client.GetAsync("/api/me/sync/version");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task MeBackfillStatus_UnknownAccount_ReturnsNotFound()
+    {
+        using var client = CreateBearerClientForUnknownUser();
+        var response = await client.GetAsync("/api/me/backfill/status");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task MeSyncJsonScores_UnknownAccount_ReturnsNotFound()
+    {
+        using var client = CreateBearerClientForUnknownUser();
+        var response = await client.GetAsync("/api/me/sync/json/scores");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task MeSyncJsonHistory_UnknownAccount_ReturnsNotFound()
+    {
+        using var client = CreateBearerClientForUnknownUser();
+        var response = await client.GetAsync("/api/me/sync/json/history");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    // ─── WebSocket endpoint (non-WS request) ─────────────────────
+
+    [Fact]
+    public async Task WebSocket_NonWsRequest_ReturnsBadRequest()
+    {
+        // A regular HTTP GET to the WS endpoint should fail
+        var response = await _client.GetAsync("/api/ws");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task WebSocket_NonWsRequest_WithToken_StillReturnsBadRequest()
+    {
+        var response = await _client.GetAsync("/api/ws?token=sometoken");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    // ─── Bearer-auth: Unauthorized paths (JWT missing claims) ──
+
+    /// <summary>
+    /// Create a bearer client whose JWT has a valid signature but is missing
+    /// the <c>deviceId</c> claim. This triggers the <c>Unauthorized</c> path
+    /// in all bearer endpoints that require both <c>sub</c> and <c>deviceId</c>.
+    /// </summary>
+    private HttpClient CreateBearerClientWithMissingDeviceId()
+    {
+        var jwt = _factory.Services.GetRequiredService<JwtTokenService>();
+        // GenerateAccessToken always adds both claims.
+        // Create a token manually with only the sub claim using the signing key.
+        var settings = _factory.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<JwtSettings>>().Value;
+        var key = new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(
+            System.Text.Encoding.UTF8.GetBytes(settings.Secret));
+        var handler = new Microsoft.IdentityModel.JsonWebTokens.JsonWebTokenHandler();
+        var descriptor = new Microsoft.IdentityModel.Tokens.SecurityTokenDescriptor
+        {
+            Subject = new System.Security.Claims.ClaimsIdentity(
+                [new System.Security.Claims.Claim("sub", "SomeValidUser")]),
+            Issuer = settings.Issuer,
+            Expires = DateTime.UtcNow.AddMinutes(60),
+            SigningCredentials = new Microsoft.IdentityModel.Tokens.SigningCredentials(
+                key, Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256Signature),
+        };
+        var token = handler.CreateToken(descriptor);
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", token);
+        return client;
+    }
+
+    [Fact]
+    public async Task MeSync_MissingDeviceIdClaim_ReturnsUnauthorized()
+    {
+        using var client = CreateBearerClientWithMissingDeviceId();
+        var response = await client.GetAsync("/api/me/sync");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task MeSyncJsonSongs_MissingDeviceIdClaim_ReturnsUnauthorized()
+    {
+        using var client = CreateBearerClientWithMissingDeviceId();
+        var response = await client.GetAsync("/api/me/sync/json/songs");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task MeSyncJsonScores_MissingDeviceIdClaim_ReturnsUnauthorized()
+    {
+        using var client = CreateBearerClientWithMissingDeviceId();
+        var response = await client.GetAsync("/api/me/sync/json/scores");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task MeSyncJsonHistory_MissingDeviceIdClaim_ReturnsUnauthorized()
+    {
+        using var client = CreateBearerClientWithMissingDeviceId();
+        var response = await client.GetAsync("/api/me/sync/json/history");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task MeSyncVersion_MissingDeviceIdClaim_ReturnsUnauthorized()
+    {
+        using var client = CreateBearerClientWithMissingDeviceId();
+        var response = await client.GetAsync("/api/me/sync/version");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task MeBackfillStatus_MissingDeviceIdClaim_ReturnsNotFound()
+    {
+        // The /api/me/backfill/status endpoint only requires username (sub),
+        // not deviceId. With a valid sub but unknown account→ NotFound.
+        using var client = CreateBearerClientWithMissingDeviceId();
+        var response = await client.GetAsync("/api/me/backfill/status");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     // ─── Epic OAuth callback ────────────────────────────────────
 
     [Fact]
@@ -1264,6 +1614,151 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         }
 
         var response = await _client.GetAsync("/api/firstseen");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    // ─── Diagnostic endpoints: no access token → Problem ───
+
+    [Fact]
+    public async Task DiagEvents_NoAccessToken_ReturnsProblem()
+    {
+        // Temporarily mock TokenManager to return null
+        var tokenManager = _factory.Services.GetRequiredService<TokenManager>();
+        tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns((string?)null);
+        try
+        {
+            var response = await _client.GetAsync("/api/diag/events");
+            Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        }
+        finally
+        {
+            tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+                .Returns("mock_access_token_for_testing");
+        }
+    }
+
+    [Fact]
+    public async Task DiagLeaderboard_NoAccessToken_ReturnsProblem()
+    {
+        var tokenManager = _factory.Services.GetRequiredService<TokenManager>();
+        tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns((string?)null);
+        try
+        {
+            var response = await _client.GetAsync(
+                "/api/diag/leaderboard?eventId=test&windowId=test");
+            Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        }
+        finally
+        {
+            tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+                .Returns("mock_access_token_for_testing");
+        }
+    }
+
+    [Fact]
+    public async Task FirstSeenCalculate_NoAccessToken_ReturnsProblem()
+    {
+        var tokenManager = _factory.Services.GetRequiredService<TokenManager>();
+        tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns((string?)null);
+        try
+        {
+            var response = await _authedClient.PostAsync("/api/firstseen/calculate", null);
+            Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        }
+        finally
+        {
+            tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+                .Returns("mock_access_token_for_testing");
+        }
+    }
+
+    [Fact]
+    public async Task BackfillPost_NoAccessToken_ReturnsProblem()
+    {
+        // First register a user so we pass the "account is not registered" check
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            metaDb.InsertAccountNames([("acctNoToken", (string?)"TokenTestUser")]);
+            metaDb.RegisterUser("devNoToken", "acctNoToken");
+        }
+
+        var tokenManager = _factory.Services.GetRequiredService<TokenManager>();
+        tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns((string?)null);
+        try
+        {
+            var response = await _authedClient.PostAsync("/api/backfill/acctNoToken", null);
+            Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        }
+        finally
+        {
+            tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+                .Returns("mock_access_token_for_testing");
+        }
+    }
+
+    // ─── Bearer me/sync: on-demand build after file deletion ──
+
+    [Fact]
+    public async Task MeSync_OnDemandBuild_WhenPersonalDbDeleted()
+    {
+        // Login to create a personal DB
+        var code = "onDemandBuildCode";
+        var deviceId = "onDemandBuildDev";
+        var loginContent = JsonContent.Create(new { code, deviceId });
+        var loginResponse = await _client.PostAsync("/api/auth/login", loginContent);
+        Assert.Equal(HttpStatusCode.OK, loginResponse.StatusCode);
+        var loginJson = await loginResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var accessToken = loginJson.GetProperty("accessToken").GetString()!;
+
+        // Delete the personal DB file to force on-demand rebuild
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var builder = scope.ServiceProvider.GetRequiredService<PersonalDbBuilder>();
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            var displayName = $"Player_{code}";
+            var accountId = metaDb.GetAccountIdForUsername(displayName);
+            Assert.NotNull(accountId);
+
+            var dbPath = builder.GetPersonalDbPath(accountId, deviceId);
+            if (File.Exists(dbPath))
+                File.Delete(dbPath);
+        }
+
+        using var bearerClient = _factory.CreateClient();
+        bearerClient.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", accessToken);
+
+        var response = await bearerClient.GetAsync("/api/me/sync");
+        // Should succeed — Build rebuilds the file on demand
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    // ─── API-key sync/{deviceId}: on-demand build ──────────────
+
+    [Fact]
+    public async Task SyncDevice_OnDemandBuild_WhenFileNotExists()
+    {
+        // Register a device and seed its account
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            metaDb.InsertAccountNames([("acctSync", (string?)"SyncUser")]);
+            metaDb.RegisterUser("devSync", "acctSync");
+
+            // Delete the personal DB file if it was created during registration
+            var builder = scope.ServiceProvider.GetRequiredService<PersonalDbBuilder>();
+            var dbPath = builder.GetPersonalDbPath("acctSync", "devSync");
+            if (File.Exists(dbPath))
+                File.Delete(dbPath);
+        }
+
+        var response = await _authedClient.GetAsync("/api/sync/devSync");
+        // Should succeed — Build creates the file on demand
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 

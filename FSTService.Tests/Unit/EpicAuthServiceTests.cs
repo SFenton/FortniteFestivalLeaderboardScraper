@@ -187,6 +187,39 @@ public class EpicAuthServiceTests
             () => service.StartDeviceCodeFlowAsync());
     }
 
+    [Fact]
+    public async Task StartDeviceCodeFlowAsync_DeviceAuthFail_Throws()
+    {
+        var (service, handler) = CreateService();
+
+        // First call: client_credentials succeeds
+        handler.EnqueueJsonOk("""
+        {
+            "access_token": "cc_token",
+            "expires_in": 3600,
+            "token_type": "bearer"
+        }
+        """);
+
+        // Second call: device authorization fails
+        handler.EnqueueError(HttpStatusCode.Forbidden, "Device authorization denied");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.StartDeviceCodeFlowAsync());
+    }
+
+    [Fact]
+    public async Task StartDeviceCodeFlowAsync_ClientCredsAuthPending_Throws()
+    {
+        var (service, handler) = CreateService();
+
+        // client_credentials returns authorization_pending (edge case → null → throw)
+        handler.EnqueueError(HttpStatusCode.BadRequest, """{"errorCode":"authorization_pending"}""");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.StartDeviceCodeFlowAsync());
+    }
+
     // ─── ParseTokenResponse (tested via RefreshTokenAsync) ──
 
     [Fact]

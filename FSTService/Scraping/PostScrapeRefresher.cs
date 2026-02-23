@@ -240,6 +240,11 @@ public class PostScrapeRefresher
         // UPSERT the entry
         instrumentDb.UpsertEntries(songId, [entry]);
 
+        // Rank is a guaranteed population floor — if the user is ranked N,
+        // there are at least N entries on this leaderboard.
+        if (entry.Rank > 0)
+            _metaDb.RaiseLeaderboardPopulationFloor(songId, instrument, entry.Rank);
+
         return true;
     }
 }

@@ -8,6 +8,9 @@ on:
       - "FortniteFestival.Core/**"
       - "FSTService.Tests/**"
       - "FSTService/Dockerfile"
+      - "PercentileService/**"
+      - "PercentileService.Tests/**"
+      - "PercentileService/Dockerfile"
       - ".github/workflows/publish-image.yml"
   pull_request:
     branches: [master]
@@ -15,12 +18,15 @@ on:
       - "FSTService/**"
       - "FortniteFestival.Core/**"
       - "FSTService.Tests/**"
+      - "PercentileService/**"
+      - "PercentileService.Tests/**"
       - ".github/workflows/publish-image.yml"
   workflow_dispatch: # Allow manual trigger
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/fstservice
+  FST_IMAGE_NAME: ${{ github.repository_owner }}/fstservice
+  PERCENTILE_IMAGE_NAME: ${{ github.repository_owner }}/percentileservice
 
 jobs:
   test:
@@ -95,9 +101,78 @@ jobs:
             TestResults/*.trx
             TestResults/**/coverage.cobertura.xml
 
+  test-percentile:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore PercentileService.Tests/PercentileService.Tests.csproj
+
+      - name: Build
+        run: dotnet build PercentileService.Tests/PercentileService.Tests.csproj -c Release --no-restore
+
+      - name: Run tests with coverage
+        run: >
+          dotnet test PercentileService.Tests/PercentileService.Tests.csproj
+          -c Release --no-build
+          --logger trx --results-directory TestResults-Percentile
+          --collect:"XPlat Code Coverage"
+          -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
+          DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Include="[PercentileService]*"
+          DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Exclude="[PercentileService.Tests]*"
+
+      - name: Enforce minimum line coverage for PercentileService
+        shell: bash
+        env:
+          COVERAGE_THRESHOLD: 95
+        run: |
+          REPORT=$(find TestResults-Percentile -name 'coverage.cobertura.xml' | head -1)
+          if [ -z "$REPORT" ]; then
+            echo "::error::No coverage report found"
+            exit 1
+          fi
+
+          LINE_RATE=$(sed -n 's/.*<package[^>]*name="PercentileService"[^>]*line-rate="\([^"]*\)".*/\1/p' "$REPORT" | head -1)
+
+          if [ -z "$LINE_RATE" ]; then
+            LINE_RATE=$(sed -n 's/.*<coverage[^>]*line-rate="\([^"]*\)".*/\1/p' "$REPORT" | head -1)
+          fi
+
+          if [ -z "$LINE_RATE" ]; then
+            echo "::error::Could not parse line-rate from coverage report"
+            exit 1
+          fi
+
+          PERCENT=$(echo "$LINE_RATE * 100" | bc -l)
+          PERCENT_FMT=$(printf "%.2f" "$PERCENT")
+          echo "PercentileService line coverage: ${PERCENT_FMT}%"
+
+          PASS=$(echo "$PERCENT >= $COVERAGE_THRESHOLD" | bc -l)
+          if [ "$PASS" -ne 1 ]; then
+            echo "::error::Coverage ${PERCENT_FMT}% is below the ${COVERAGE_THRESHOLD}% threshold"
+            exit 1
+          fi
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-percentile
+          path: |
+            TestResults-Percentile/*.trx
+            TestResults-Percentile/**/coverage.cobertura.xml
+
   build-and-push:
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, test-percentile]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
     permissions:
@@ -115,20 +190,38 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels)
-        id: meta
+      - name: Extract FSTService metadata
+        id: meta-fst
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ env.FST_IMAGE_NAME }}
           tags: |
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push
+      - name: Build and push FSTService
         uses: docker/build-push-action@v6
         with:
           context: .
           file: FSTService/Dockerfile
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta-fst.outputs.tags }}
+          labels: ${{ steps.meta-fst.outputs.labels }}
+
+      - name: Extract PercentileService metadata
+        id: meta-percentile
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.PERCENTILE_IMAGE_NAME }}
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push PercentileService
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: PercentileService/Dockerfile
+          push: true
+          tags: ${{ steps.meta-percentile.outputs.tags }}
+          labels: ${{ steps.meta-percentile.outputs.labels }}

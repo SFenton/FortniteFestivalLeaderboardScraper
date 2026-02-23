@@ -438,4 +438,20 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         // The result should be silently dropped — no entries persisted
         Assert.False(glp.GetEntryCounts().ContainsKey("UnknownInstrument"));
     }
+
+    [Fact]
+    public void Constructor_creates_directory_if_not_exists()
+    {
+        var subDir = Path.Combine(_dataDir, "subdir_" + Guid.NewGuid().ToString("N"));
+        Assert.False(Directory.Exists(subDir));
+
+        var loggerFactory = new NullLoggerFactory();
+        using var glp = new GlobalLeaderboardPersistence(
+            subDir,
+            _metaFixture.Db,
+            loggerFactory,
+            NullLogger<GlobalLeaderboardPersistence>.Instance);
+
+        Assert.True(Directory.Exists(subDir));
+    }
 }

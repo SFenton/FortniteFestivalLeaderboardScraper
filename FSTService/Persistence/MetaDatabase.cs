@@ -170,6 +170,14 @@ public sealed class MetaDatabase : IDisposable
                 UpdatedAt              TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS LeaderboardPopulation (
+                SongId       TEXT    NOT NULL,
+                Instrument   TEXT    NOT NULL,
+                TotalEntries INTEGER NOT NULL DEFAULT -1,
+                UpdatedAt    TEXT    NOT NULL,
+                PRIMARY KEY (SongId, Instrument)
+            );
+
             """;
         cmd.ExecuteNonQuery();
 
@@ -1541,6 +1549,108 @@ public sealed class MetaDatabase : IDisposable
             int? firstSeen = reader.IsDBNull(1) ? null : reader.GetInt32(1);
             int estimated = reader.GetInt32(2);
             dict[songId] = (firstSeen, estimated);
+        }
+        return dict;
+    }
+
+    // ─── LeaderboardPopulation ──────────────────────────────────
+
+    /// <summary>
+    /// Raise the leaderboard population floor for a song/instrument.
+    /// A user's rank is a guaranteed minimum — if they're ranked N, there are at least N entries.
+    /// Only updates when the new value is higher than the existing value (one-way ratchet).
+    /// </summary>
+    public void RaiseLeaderboardPopulationFloor(string songId, string instrument, long floor)
+    {
+        if (floor <= 0) return;
+
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO LeaderboardPopulation (SongId, Instrument, TotalEntries, UpdatedAt)
+            VALUES (@songId, @instrument, @floor, @now)
+            ON CONFLICT (SongId, Instrument) DO UPDATE SET
+                TotalEntries = MAX(TotalEntries, excluded.TotalEntries),
+                UpdatedAt    = CASE WHEN excluded.TotalEntries > TotalEntries
+                                    THEN excluded.UpdatedAt ELSE UpdatedAt END;
+            """;
+        cmd.Parameters.AddWithValue("@songId", songId);
+        cmd.Parameters.AddWithValue("@instrument", instrument);
+        cmd.Parameters.AddWithValue("@floor", floor);
+        cmd.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("o"));
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Upsert leaderboard population entries (total entries per song/instrument).
+    /// </summary>
+    public void UpsertLeaderboardPopulation(IReadOnlyList<(string SongId, string Instrument, long TotalEntries)> items)
+    {
+        if (items.Count == 0) return;
+
+        using var conn = OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+
+        cmd.CommandText = """
+            INSERT INTO LeaderboardPopulation (SongId, Instrument, TotalEntries, UpdatedAt)
+            VALUES (@songId, @instrument, @totalEntries, @now)
+            ON CONFLICT (SongId, Instrument) DO UPDATE SET
+                TotalEntries = @totalEntries,
+                UpdatedAt    = @now;
+            """;
+
+        var pSongId = cmd.Parameters.Add("@songId", SqliteType.Text);
+        var pInstrument = cmd.Parameters.Add("@instrument", SqliteType.Text);
+        var pTotal = cmd.Parameters.Add("@totalEntries", SqliteType.Integer);
+        var pNow = cmd.Parameters.Add("@now", SqliteType.Text);
+
+        var now = DateTime.UtcNow.ToString("o");
+
+        foreach (var (songId, instrument, totalEntries) in items)
+        {
+            pSongId.Value = songId;
+            pInstrument.Value = instrument;
+            pTotal.Value = totalEntries;
+            pNow.Value = now;
+            cmd.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+        _log.LogDebug("Upserted {Count} LeaderboardPopulation entries.", items.Count);
+    }
+
+    /// <summary>
+    /// Get the total leaderboard entries for a specific song/instrument. Returns -1 if not yet populated.
+    /// </summary>
+    public long GetLeaderboardPopulation(string songId, string instrument)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT TotalEntries FROM LeaderboardPopulation WHERE SongId = @s AND Instrument = @i;";
+        cmd.Parameters.AddWithValue("@s", songId);
+        cmd.Parameters.AddWithValue("@i", instrument);
+        var result = cmd.ExecuteScalar();
+        return result is long l ? l : -1;
+    }
+
+    /// <summary>
+    /// Get all leaderboard population data.
+    /// </summary>
+    public Dictionary<(string SongId, string Instrument), long> GetAllLeaderboardPopulation()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT SongId, Instrument, TotalEntries FROM LeaderboardPopulation;";
+        using var reader = cmd.ExecuteReader();
+        var dict = new Dictionary<(string, string), long>();
+        while (reader.Read())
+        {
+            var songId = reader.GetString(0);
+            var instrument = reader.GetString(1);
+            var total = reader.GetInt64(2);
+            dict[(songId, instrument)] = total;
         }
         return dict;
     }

@@ -370,3 +370,4 @@ FSTService/data/
 
 # Local environment secrets (never commit real credentials)
 .env
+PercentileService/data/

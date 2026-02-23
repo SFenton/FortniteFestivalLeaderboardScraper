@@ -67,7 +67,7 @@ public class PersonalDbBuilder
     /// Creates a temp file, populates it, then atomically replaces the output.
     /// Returns the output file path, or null if no songs are available.
     /// </summary>
-    public string? Build(string deviceId, string accountId)
+    public virtual string? Build(string deviceId, string accountId)
     {
         var songs = _festivalService.Songs;
         if (songs.Count == 0)
@@ -342,6 +342,10 @@ public class PersonalDbBuilder
         var scoresByInstrument = new Dictionary<string, Dictionary<string, PlayerScoreDto>>(
             StringComparer.OrdinalIgnoreCase);
 
+        // Also gather per-song rankings (local rank + total count in our DB)
+        var rankingsByInstrument = new Dictionary<string, Dictionary<string, (int Rank, int Total)>>(
+            StringComparer.OrdinalIgnoreCase);
+
         foreach (var instrumentKey in _persistence.GetInstrumentKeys())
         {
             var db = _persistence.GetOrCreateInstrumentDb(instrumentKey);
@@ -352,10 +356,14 @@ public class PersonalDbBuilder
                 bySong[score.SongId] = score;
 
             scoresByInstrument[instrumentKey] = bySong;
+            rankingsByInstrument[instrumentKey] = db.GetPlayerRankings(accountId);
         }
 
+        // Load real leaderboard population from PercentileService
+        var population = _metaDb.GetAllLeaderboardPopulation();
+
         // Build INSERT statement matching the RN schema column order:
-        //   Per-instrument inline: Score, Diff, Stars, FC, Pct, Season, GameDiff
+        //   Per-instrument inline: Score, Diff, Stars, FC, Pct, Season, Rank, GameDiff
         //   Then grouped:          {Inst}Total, {Inst}RawPct, {Inst}CalcTotal
         var prefixes = new[] { "Guitar", "Drums", "Bass", "Vocals", "ProGuitar", "ProBass" };
 
@@ -364,7 +372,7 @@ public class PersonalDbBuilder
 
         foreach (var prefix in prefixes)
         {
-            foreach (var suffix in new[] { "Score", "Diff", "Stars", "FC", "Pct", "Season", "GameDiff" })
+            foreach (var suffix in new[] { "Score", "Diff", "Stars", "FC", "Pct", "Season", "Rank", "GameDiff" })
             {
                 columns.Add($"{prefix}{suffix}");
                 parameters.Add($"@{prefix}{suffix}");
@@ -440,16 +448,48 @@ public class PersonalDbBuilder
 
                 var diff = GetDifficultyForInstrument(song, instrumentKey);
 
+                // Rank from V2 API enrichment (stored in instrument DB), or from local count
+                int rank = score.Rank;
+                if (rank <= 0 && rankingsByInstrument.TryGetValue(instrumentKey, out var rankings)
+                    && rankings.TryGetValue(songId, out var rk))
+                {
+                    rank = rk.Rank;
+                }
+
+                // Total entries: prefer real population from PercentileService,
+                // fall back to local DB entry count
+                long total = 0;
+                if (population.TryGetValue((songId, instrumentKey), out var realPop) && realPop > 0)
+                {
+                    total = realPop;
+                }
+                else if (rankingsByInstrument.TryGetValue(instrumentKey, out var fallbackRankings)
+                    && fallbackRankings.TryGetValue(songId, out var fallbackRk))
+                {
+                    total = fallbackRk.Total;
+                }
+
+                // Reverse-calculate total from rank/percentile for CalcTotal
+                double rawPct = score.Percentile > 0 ? score.Percentile : 0;
+                long calcTotal = 0;
+                if (rank > 0 && rawPct > 1e-9)
+                {
+                    calcTotal = (long)Math.Round(rank / rawPct);
+                    if (calcTotal < rank) calcTotal = rank;
+                    if (calcTotal > 10_000_000) calcTotal = 10_000_000;
+                }
+
                 paramMap[$"@{prefix}Score"].Value    = score.Score;
                 paramMap[$"@{prefix}Diff"].Value     = diff;
                 paramMap[$"@{prefix}Stars"].Value    = score.Stars;
                 paramMap[$"@{prefix}FC"].Value       = score.IsFullCombo ? 1 : 0;
                 paramMap[$"@{prefix}Pct"].Value      = score.Accuracy;
                 paramMap[$"@{prefix}Season"].Value   = score.Season;
-                paramMap[$"@{prefix}GameDiff"].Value = -1; // Not available from leaderboard data
-                paramMap[$"@{prefix}Total"].Value    = 0;  // Total entry count not stored per-song
-                paramMap[$"@{prefix}RawPct"].Value   = score.Percentile;
-                paramMap[$"@{prefix}CalcTotal"].Value = 0;
+                paramMap[$"@{prefix}Rank"].Value     = rank;
+                paramMap[$"@{prefix}GameDiff"].Value = -1;
+                paramMap[$"@{prefix}Total"].Value    = total;
+                paramMap[$"@{prefix}RawPct"].Value   = rawPct;
+                paramMap[$"@{prefix}CalcTotal"].Value = calcTotal;
             }
 
             cmd.ExecuteNonQuery();
@@ -590,6 +630,8 @@ public class PersonalDbBuilder
         // Gather scores per instrument (includes Rank and Percentile from DB)
         var scoresByInstrument = new Dictionary<string, Dictionary<string, PlayerScoreDto>>(
             StringComparer.OrdinalIgnoreCase);
+        var rankingsByInstrument = new Dictionary<string, Dictionary<string, (int Rank, int Total)>>(
+            StringComparer.OrdinalIgnoreCase);
         foreach (var instrumentKey in _persistence.GetInstrumentKeys())
         {
             var db = _persistence.GetOrCreateInstrumentDb(instrumentKey);
@@ -598,7 +640,11 @@ public class PersonalDbBuilder
             foreach (var score in playerScores)
                 bySong[score.SongId] = score;
             scoresByInstrument[instrumentKey] = bySong;
+            rankingsByInstrument[instrumentKey] = db.GetPlayerRankings(accountId);
         }
+
+        // Load real leaderboard population from PercentileService
+        var population = _metaDb.GetAllLeaderboardPopulation();
 
         var allRows = new List<Dictionary<string, object?>>();
         foreach (var song in songs)
@@ -623,17 +669,35 @@ public class PersonalDbBuilder
 
                     // Rank from API enrichment (stored in instrument DB). 0 = not yet enriched.
                     int rank = score.Rank;
+                    if (rank <= 0 && rankingsByInstrument.TryGetValue(instrumentKey, out var rankings)
+                        && rankings.TryGetValue(songId, out var rk))
+                    {
+                        rank = rk.Rank;
+                    }
+
                     // Percentile from V1 API with teamAccountIds (real fraction in (0,1]).
-                    // -1 or 0 means not yet enriched.
                     double rawPct = score.Percentile > 0 ? score.Percentile : 0;
-                    // Reverse-calculate total entries: total = rank / percentile
-                    // This matches the client's local calculation from leaderboardV1.ts
+
+                    // Total entries: prefer real population from PercentileService,
+                    // fall back to local DB entry count
+                    long total = 0;
+                    if (population.TryGetValue((songId, instrumentKey), out var realPop) && realPop > 0)
+                    {
+                        total = realPop;
+                    }
+                    else if (rankingsByInstrument.TryGetValue(instrumentKey, out var fallbackRankings)
+                        && fallbackRankings.TryGetValue(songId, out var fallbackRk))
+                    {
+                        total = fallbackRk.Total;
+                    }
+
+                    // Reverse-calculate total entries from rank/percentile
                     int calcTotal = 0;
                     if (rank > 0 && rawPct > 1e-9)
                     {
                         calcTotal = (int)Math.Round(rank / rawPct);
-                        if (calcTotal < rank) calcTotal = rank; // floor at rank
-                        if (calcTotal > 10_000_000) calcTotal = 10_000_000; // sanity cap
+                        if (calcTotal < rank) calcTotal = rank;
+                        if (calcTotal > 10_000_000) calcTotal = 10_000_000;
                     }
 
                     row[$"{prefix}Score"]    = score.Score;
@@ -644,7 +708,7 @@ public class PersonalDbBuilder
                     row[$"{prefix}Season"]   = score.Season;
                     row[$"{prefix}Rank"]     = rank;
                     row[$"{prefix}GameDiff"] = -1;
-                    row[$"{prefix}Total"]    = calcTotal;
+                    row[$"{prefix}Total"]    = total;
                     row[$"{prefix}RawPct"]   = rawPct;
                     row[$"{prefix}CalcTotal"]= calcTotal;
                 }

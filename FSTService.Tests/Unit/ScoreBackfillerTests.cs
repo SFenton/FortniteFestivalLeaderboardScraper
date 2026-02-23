@@ -131,6 +131,10 @@ public class ScoreBackfillerTests : IDisposable
         var entry = db.GetEntry("songA", "acct1");
         Assert.NotNull(entry);
         Assert.Equal(50000, entry!.Score);
+
+        // Verify the rank was stored as a leaderboard population floor
+        var pop = _metaDb.Db.GetLeaderboardPopulation("songA", "Solo_Guitar");
+        Assert.Equal(100, pop);
     }
 
     // ─── Backfill already complete → does nothing ───────

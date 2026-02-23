@@ -262,4 +262,18 @@ public class ScraperOptionsAndModelsTests
         Assert.Equal("dev1", req.DeviceId);
         Assert.Equal("TestUser", req.Username);
     }
+
+    [Fact]
+    public void LeaderboardEntryDto_DisplayName_CanBeSet()
+    {
+        var dto = new FSTService.Persistence.LeaderboardEntryDto
+        {
+            AccountId = "acct1",
+            DisplayName = "PlayerOne",
+            Score = 100000,
+        };
+        Assert.Equal("PlayerOne", dto.DisplayName);
+        Assert.Equal("acct1", dto.AccountId);
+        Assert.Equal(100000, dto.Score);
+    }
 }

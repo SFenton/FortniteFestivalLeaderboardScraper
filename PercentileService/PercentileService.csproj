@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <RootNamespace>PercentileService</RootNamespace>
+    <AssemblyName>PercentileService</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PercentileService.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FortniteFestival.Core\FortniteFestival.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="FortniteFestival.Core.Scraping" />
+  </ItemGroup>
+
+</Project>

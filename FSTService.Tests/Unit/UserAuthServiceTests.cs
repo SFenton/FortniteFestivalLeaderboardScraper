@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
+using NSubstitute.ExceptionExtensions;
 
 namespace FSTService.Tests.Unit;
 
@@ -269,5 +270,50 @@ public sealed class UserAuthServiceTests : IDisposable
         // When displayName is empty, it should fall back to accountId
         Assert.Equal("epic_acct_456", result.DisplayName);
         Assert.Equal("epic_acct_456", result.AccountId);
+    }
+
+    [Fact]
+    public async Task Login_succeeds_even_when_personal_db_build_throws()
+    {
+        var epic = CreateMockEpic();
+        var glp = new GlobalLeaderboardPersistence(
+            _dataDir, _metaFixture.Db, new NullLoggerFactory(),
+            NullLogger<GlobalLeaderboardPersistence>.Instance);
+
+        var throwingBuilder = new ThrowingPersonalDbBuilder(
+            glp,
+            new FortniteFestival.Core.Services.FestivalService(),
+            _metaFixture.Db,
+            _dataDir,
+            NullLogger<PersonalDbBuilder>.Instance);
+
+        var svc = new UserAuthService(
+            CreateJwt(), MetaDb, throwingBuilder, _backfillQueue,
+            epic, Options.Create(TestOAuthSettings),
+            CreateTestVault(epic),
+            NullLogger<UserAuthService>.Instance);
+
+        // Login should succeed despite the personal DB build failure
+        var result = await svc.LoginAsync("code", "device_x", "iOS");
+
+        Assert.False(string.IsNullOrEmpty(result.AccessToken));
+        Assert.Equal("epic_acct_123", result.AccountId);
+    }
+
+    /// <summary>
+    /// A PersonalDbBuilder subclass that throws from Build() to test error handling.
+    /// </summary>
+    private sealed class ThrowingPersonalDbBuilder : PersonalDbBuilder
+    {
+        public ThrowingPersonalDbBuilder(
+            GlobalLeaderboardPersistence persistence,
+            FortniteFestival.Core.Services.FestivalService festivalService,
+            MetaDatabase metaDb,
+            string dataDir,
+            ILogger<PersonalDbBuilder> log)
+            : base(persistence, festivalService, metaDb, dataDir, log) { }
+
+        public override string? Build(string deviceId, string accountId)
+            => throw new InvalidOperationException("Simulated build failure");
     }
 }

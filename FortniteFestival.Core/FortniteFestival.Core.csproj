@@ -5,6 +5,18 @@
     <RootNamespace>FortniteFestival.Core</RootNamespace>
     <LangVersion>7.3</LangVersion>
   </PropertyGroup>
+
+  <!-- net9.0: use latest C# for Scraping/ code and add logging abstractions -->
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net9.0'">
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(TargetFramework)' != 'net9.0'">
+    <Compile Remove="Scraping\**" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.0" />

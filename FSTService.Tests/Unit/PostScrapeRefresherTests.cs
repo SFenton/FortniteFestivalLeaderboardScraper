@@ -119,6 +119,10 @@ public class PostScrapeRefresherTests : IDisposable
         var entry = db.GetEntry("songA", "acct1");
         Assert.NotNull(entry);
         Assert.Equal(10000, entry!.Score);
+
+        // Verify rank was stored as leaderboard population floor
+        var pop = _metaDb.Db.GetLeaderboardPopulation("songA", "Solo_Guitar");
+        Assert.Equal(500, pop);
     }
 
     // ─── Stale entry with score change → updated + history recorded ──
@@ -290,5 +294,28 @@ public class PostScrapeRefresherTests : IDisposable
 
         // Neither account has updated entries
         Assert.Equal(0, result);
+    }
+
+    // ─── Cancellation rethrown from per-account catch ──────
+
+    [Fact]
+    public async Task RefreshAllAsync_CancellationDuringRefresh_ThrowsOperationCanceled()
+    {
+        var (refresher, handler) = CreateRefresher();
+
+        var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "acctCancel" };
+        var seen = new HashSet<(string, string, string)>();
+        // Leave all instruments unseen — gives 6 work items
+
+        // First request succeeds, second throws OperationCanceledException
+        // (simulating cancellation during async processing)
+        handler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
+        handler.EnqueueException(new OperationCanceledException("Cancelled"));
+        for (int i = 0; i < 4; i++)
+            handler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            refresher.RefreshAllAsync(
+                registered, seen, ["songA"], "token", "caller"));
     }
 }
