@@ -352,11 +352,22 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// <summary>
     /// Get the leaderboard for a specific song + instrument.
     /// </summary>
-    public List<LeaderboardEntryDto>? GetLeaderboard(string songId, string instrument, int? top = null)
+    public List<LeaderboardEntryDto>? GetLeaderboard(string songId, string instrument, int? top = null, int offset = 0)
     {
         if (!_instrumentDbs.TryGetValue(instrument, out var db))
             return null;
-        return db.GetLeaderboard(songId, top);
+        return db.GetLeaderboard(songId, top, offset);
+    }
+
+    /// <summary>
+    /// Get the total number of leaderboard entries for a song on a specific instrument.
+    /// Returns null if the instrument is unknown.
+    /// </summary>
+    public int? GetLeaderboardCount(string songId, string instrument)
+    {
+        if (!_instrumentDbs.TryGetValue(instrument, out var db))
+            return null;
+        return db.GetLeaderboardCount(songId);
     }
 
     /// <summary>

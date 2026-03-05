@@ -251,16 +251,22 @@ public sealed class InstrumentDatabase : IDisposable
     /// Get the leaderboard for a song, ordered by rank.
     /// Optionally limit to top N entries.
     /// </summary>
-    public List<LeaderboardEntryDto> GetLeaderboard(string songId, int? top = null)
+    public List<LeaderboardEntryDto> GetLeaderboard(string songId, int? top = null, int offset = 0)
     {
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = top.HasValue
-            ? "SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime FROM LeaderboardEntries WHERE SongId = @songId ORDER BY Score DESC LIMIT @top;"
-            : "SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime FROM LeaderboardEntries WHERE SongId = @songId ORDER BY Score DESC;";
-        cmd.Parameters.AddWithValue("@songId", songId);
+
         if (top.HasValue)
+        {
+            cmd.CommandText = "SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime FROM LeaderboardEntries WHERE SongId = @songId ORDER BY Score DESC LIMIT @top OFFSET @offset;";
             cmd.Parameters.AddWithValue("@top", top.Value);
+            cmd.Parameters.AddWithValue("@offset", offset);
+        }
+        else
+        {
+            cmd.CommandText = "SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime FROM LeaderboardEntries WHERE SongId = @songId ORDER BY Score DESC;";
+        }
+        cmd.Parameters.AddWithValue("@songId", songId);
 
         var entries = new List<LeaderboardEntryDto>();
         using var reader = cmd.ExecuteReader();
@@ -269,6 +275,18 @@ public sealed class InstrumentDatabase : IDisposable
             entries.Add(ReadEntryDto(reader));
         }
         return entries;
+    }
+
+    /// <summary>
+    /// Get the total number of leaderboard entries for a song.
+    /// </summary>
+    public int GetLeaderboardCount(string songId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM LeaderboardEntries WHERE SongId = @songId;";
+        cmd.Parameters.AddWithValue("@songId", songId);
+        return Convert.ToInt32(cmd.ExecuteScalar());
     }
 
     /// <summary>

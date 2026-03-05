@@ -640,6 +640,42 @@ public sealed class MetaDatabase : IDisposable
     }
 
     /// <summary>
+    /// Bulk-resolve display names for a set of account IDs.
+    /// Returns a dictionary mapping AccountId → DisplayName (only for accounts with a known name).
+    /// </summary>
+    public Dictionary<string, string> GetDisplayNames(IEnumerable<string> accountIds)
+    {
+        var ids = accountIds.ToList();
+        if (ids.Count == 0) return new Dictionary<string, string>();
+
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        using var conn = OpenConnection();
+
+        // Process in batches to stay within SQLite variable limits
+        const int batchSize = 500;
+        for (int i = 0; i < ids.Count; i += batchSize)
+        {
+            var batch = ids.Skip(i).Take(batchSize).ToList();
+            using var cmd = conn.CreateCommand();
+            var paramNames = new List<string>(batch.Count);
+            for (int j = 0; j < batch.Count; j++)
+            {
+                var pName = $"@id{j}";
+                paramNames.Add(pName);
+                cmd.Parameters.AddWithValue(pName, batch[j]);
+            }
+            cmd.CommandText = $"SELECT AccountId, DisplayName FROM AccountNames WHERE DisplayName IS NOT NULL AND AccountId IN ({string.Join(",", paramNames)});";
+
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                result[reader.GetString(0)] = reader.GetString(1);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Get all (DeviceId, AccountId) pairs from RegisteredUsers.
     /// Used by PersonalDbBuilder to determine which devices to rebuild.
     /// </summary>

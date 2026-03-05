@@ -58,6 +58,7 @@ public static class ApiEndpoints
                     album      = s.track.ab,
                     year       = s.track.ry,
                     tempo      = s.track.mt,
+                    albumArt   = s.track.au,
                     genres     = s.track.ge,
                     difficulty = s.track.@in is null ? null : new
                     {
@@ -80,18 +81,36 @@ public static class ApiEndpoints
             string songId,
             string instrument,
             int? top,
-            GlobalLeaderboardPersistence persistence) =>
+            int? offset,
+            GlobalLeaderboardPersistence persistence,
+            MetaDatabase metaDb) =>
         {
-            var entries = persistence.GetLeaderboard(songId, instrument, top);
+            var entries = persistence.GetLeaderboard(songId, instrument, top, offset ?? 0);
             if (entries is null)
                 return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
+
+            var totalEntries = persistence.GetLeaderboardCount(songId, instrument) ?? 0;
+            var names = metaDb.GetDisplayNames(entries.Select(e => e.AccountId));
+            var enriched = entries.Select(e => new
+            {
+                e.AccountId,
+                DisplayName = names.GetValueOrDefault(e.AccountId),
+                e.Score,
+                e.Accuracy,
+                e.IsFullCombo,
+                e.Stars,
+                e.Season,
+                e.Percentile,
+                e.EndTime,
+            }).ToList();
 
             return Results.Ok(new
             {
                 songId,
                 instrument,
-                count = entries.Count,
-                entries
+                count = enriched.Count,
+                totalEntries,
+                entries = enriched
             });
         })
         .WithTags("Leaderboards")
