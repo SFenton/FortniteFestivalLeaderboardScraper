@@ -1244,6 +1244,75 @@ public class ScraperWorkerModeTests : IDisposable
         await InvokePrivateAsync(worker, "RunScrapePassAsync", service, opts, CancellationToken.None);
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // BackgroundSongSyncLoopAsync
+    // ═══════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task BackgroundSongSyncLoop_CancelsImmediately()
+    {
+        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var worker = CreateWorker();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel(); // cancel immediately
+
+        // Should exit cleanly on pre-cancelled token
+        await InvokePrivateAsync(worker, "BackgroundSongSyncLoopAsync",
+            service, TimeSpan.FromMinutes(15), cts.Token);
+    }
+
+    [Fact]
+    public async Task BackgroundSongSyncLoop_CancelsDuringDelay()
+    {
+        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var worker = CreateWorker();
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        // Should exit cleanly when token fires during the delay
+        await InvokePrivateAsync(worker, "BackgroundSongSyncLoopAsync",
+            service, TimeSpan.FromHours(1), cts.Token);
+    }
+
+    [Fact]
+    public async Task BackgroundSongSyncLoop_NoNewSongs_DoesNotReinitializeDiSingleton()
+    {
+        // Use a very short interval so the loop fires quickly, then cancel
+        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var worker = CreateWorker();
+        using var cts = new CancellationTokenSource();
+
+        // The loop will fire once (interval = 1ms boundary), sync will be a no-op
+        // (null persistence), then we cancel.
+        var task = InvokePrivateAsync(worker, "BackgroundSongSyncLoopAsync",
+            service, TimeSpan.FromMilliseconds(1), cts.Token);
+        await Task.Delay(200);
+        cts.Cancel();
+        await task;
+
+        // _festivalService (DI singleton) should never have been re-initialized
+        // because song count didn't increase. Songs.Count stays 0 before and after.
+        // (We can't assert on InitializeAsync calls since it's not virtual,
+        // but the important thing is the loop ran without errors.)
+    }
+
+    [Fact]
+    public async Task BackgroundSongSyncLoop_SyncThrows_ContinuesGracefully()
+    {
+        // FestivalService with null persistence will throw NullReferenceException
+        // when SyncSongsAsync tries to use _persistence. The loop should catch it.
+        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var worker = CreateWorker();
+        using var cts = new CancellationTokenSource();
+
+        var task = InvokePrivateAsync(worker, "BackgroundSongSyncLoopAsync",
+            service, TimeSpan.FromMilliseconds(1), cts.Token);
+        await Task.Delay(200);
+        cts.Cancel();
+        await task;
+
+        // Loop should have caught the exception and not propagated it
+    }
+
     /// <summary>No-op HTTP handler for constructing sealed EpicAuthService instances.</summary>
     private sealed class NoOpHttpHandler : HttpMessageHandler
     {

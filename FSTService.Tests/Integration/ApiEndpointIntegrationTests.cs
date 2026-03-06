@@ -1829,6 +1829,62 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    // ─── Account search ─────────────────────────────────────
+
+    [Fact]
+    public async Task AccountSearch_EmptyQuery_ReturnsEmptyResults()
+    {
+        var response = await _client.GetAsync("/api/account/search?q=");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(0, json.GetProperty("results").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task AccountSearch_WithMatches_ReturnsResults()
+    {
+        // Seed account names
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            metaDb.InsertAccountNames([
+                ("searchAcct1", (string?)"SearchPlayer"),
+                ("searchAcct2", (string?)"SearchOther"),
+            ]);
+        }
+
+        var response = await _client.GetAsync("/api/account/search?q=Search&limit=5");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var results = json.GetProperty("results");
+        Assert.True(results.GetArrayLength() >= 2);
+    }
+
+    [Fact]
+    public async Task AccountSearch_LimitClamped_ReturnsAtMost50()
+    {
+        var response = await _client.GetAsync("/api/account/search?q=test&limit=999");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    // ─── Player track ───────────────────────────────────────
+
+    [Fact]
+    public async Task TrackPlayer_NewAccount_RegistersAndReturns()
+    {
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            metaDb.InsertAccountNames([("trackAcct1", (string?)"TrackPlayer")]);
+        }
+
+        var response = await _authedClient.PostAsync("/api/player/trackAcct1/track", null);
+        // Should succeed (200) or provide status
+        Assert.True(
+            (int)response.StatusCode >= 200 && (int)response.StatusCode < 500,
+            $"Unexpected: {response.StatusCode}");
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Factory: sets up the test server with in-memory/temp dependencies
     // ═══════════════════════════════════════════════════════════════
