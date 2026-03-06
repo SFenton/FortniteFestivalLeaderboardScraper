@@ -112,9 +112,12 @@ export default function LeaderboardPage() {
               {entries.map((e, i) => (
                 <div key={e.accountId} style={styles.tableRow}>
                   <span style={styles.colRank}>#{startRank + i + 1}</span>
-                  <span style={styles.colName}>
+                  <Link
+                    to={`/player/${e.accountId}`}
+                    style={{ ...styles.colName, textDecoration: 'none', color: 'inherit' }}
+                  >
                     {e.displayName ?? e.accountId.slice(0, 12)}
-                  </span>
+                  </Link>
                   <span style={styles.colScore}>
                     {e.score.toLocaleString()}
                   </span>

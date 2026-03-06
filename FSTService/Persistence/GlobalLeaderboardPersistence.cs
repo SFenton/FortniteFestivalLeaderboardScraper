@@ -350,6 +350,36 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>
+    /// Get song entry counts for all instruments relevant to a player's scores.
+    /// Returns a dictionary keyed by "SongId:Instrument" with total entry counts.
+    /// </summary>
+    public Dictionary<(string SongId, string Instrument), int> GetSongCountsForInstruments()
+    {
+        var result = new Dictionary<(string, string), int>();
+        foreach (var (instrument, db) in _instrumentDbs)
+        {
+            foreach (var (songId, count) in db.GetAllSongCounts())
+                result[(songId, instrument)] = count;
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Compute (rank, totalEntries) for every song a player has across all instruments.
+    /// Uses DB-computed rank (position by score) rather than stored Rank column.
+    /// </summary>
+    public Dictionary<(string SongId, string Instrument), (int Rank, int Total)> GetPlayerRankings(string accountId)
+    {
+        var result = new Dictionary<(string, string), (int, int)>();
+        foreach (var (instrument, db) in _instrumentDbs)
+        {
+            foreach (var (songId, (rank, total)) in db.GetPlayerRankings(accountId))
+                result[(songId, instrument)] = (rank, total);
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Get the leaderboard for a specific song + instrument.
     /// </summary>
     public List<LeaderboardEntryDto>? GetLeaderboard(string songId, string instrument, int? top = null, int offset = 0)

@@ -80,6 +80,9 @@ export type PlayerScore = {
   accuracy?: number;
   isFullCombo?: boolean;
   stars?: number;
+  season?: number;
+  endTime?: string;
+  totalEntries?: number;
 };
 
 export type PlayerResponse = {
@@ -93,6 +96,15 @@ export type AccountCheckResponse = {
   exists: boolean;
   accountId: string | null;
   displayName: string | null;
+};
+
+export type AccountSearchResult = {
+  accountId: string;
+  displayName: string;
+};
+
+export type AccountSearchResponse = {
+  results: AccountSearchResult[];
 };
 
 export type ScrapeProgress = {
@@ -118,4 +130,24 @@ export type LeaderboardPopulationEntry = {
   songId: string;
   instrument: string;
   totalEntries: number;
+};
+
+export type TrackPlayerResponse = {
+  accountId: string;
+  displayName: string;
+  trackingStarted: boolean;
+  backfillStatus: string;
+};
+
+export type SyncStatusResponse = {
+  accountId: string;
+  isTracked: boolean;
+  backfill: {
+    status: string;
+    songsChecked: number;
+    totalSongsToCheck: number;
+    entriesFound: number;
+    startedAt: string | null;
+    completedAt: string | null;
+  } | null;
 };

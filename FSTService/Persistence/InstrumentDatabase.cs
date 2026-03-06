@@ -290,6 +290,24 @@ public sealed class InstrumentDatabase : IDisposable
     }
 
     /// <summary>
+    /// Get the total entry count per song on this instrument.
+    /// </summary>
+    public Dictionary<string, int> GetAllSongCounts()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT SongId, COUNT(*) FROM LeaderboardEntries GROUP BY SongId;";
+
+        var result = new Dictionary<string, int>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            result[reader.GetString(0)] = reader.GetInt32(1);
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Get all entries for a player across all songs on this instrument.
     /// </summary>
     public List<PlayerScoreDto> GetPlayerScores(string accountId)

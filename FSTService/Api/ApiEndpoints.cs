@@ -39,6 +39,25 @@ public static class ApiEndpoints
         .WithTags("Account")
         .RequireRateLimiting("public");
 
+        // Search account display names (autocomplete)
+        app.MapGet("/api/account/search", (string q, int? limit, MetaDatabase metaDb) =>
+        {
+            if (string.IsNullOrWhiteSpace(q))
+                return Results.Ok(new { results = Array.Empty<object>() });
+
+            var matches = metaDb.SearchAccountNames(q.Trim(), Math.Min(limit ?? 10, 50));
+            return Results.Ok(new
+            {
+                results = matches.Select(m => new
+                {
+                    accountId = m.AccountId,
+                    displayName = m.DisplayName,
+                }).ToList()
+            });
+        })
+        .WithTags("Account")
+        .RequireRateLimiting("public");
+
         app.MapGet("/api/progress", (ScrapeProgressTracker tracker) =>
         {
             return Results.Ok(tracker.GetProgressResponse());
@@ -123,13 +142,101 @@ public static class ApiEndpoints
         {
             var scores = persistence.GetPlayerProfile(accountId);
             var displayName = metaDb.GetDisplayName(accountId);
+            var rankings = persistence.GetPlayerRankings(accountId);
+
+            var enriched = scores.Select(s =>
+            {
+                var key = (s.SongId, s.Instrument);
+                var (computedRank, totalEntries) = rankings.GetValueOrDefault(key, (0, 0));
+                // Use stored rank if available, otherwise use DB-computed rank
+                var rank = s.Rank > 0 ? s.Rank : computedRank;
+                return new
+                {
+                    s.SongId,
+                    s.Instrument,
+                    s.Score,
+                    s.Accuracy,
+                    s.IsFullCombo,
+                    s.Stars,
+                    s.Season,
+                    s.Percentile,
+                    Rank = rank,
+                    s.EndTime,
+                    TotalEntries = totalEntries,
+                };
+            }).ToList();
 
             return Results.Ok(new
             {
                 accountId,
                 displayName,
-                totalScores = scores.Count,
-                scores
+                totalScores = enriched.Count,
+                scores = enriched
+            });
+        })
+        .WithTags("Players")
+        .RequireRateLimiting("public");
+
+        // ─── Web tracking: register + backfill for web-viewed players ────
+
+        app.MapPost("/api/player/{accountId}/track", (
+            string accountId,
+            MetaDatabase metaDb,
+            FestivalService festivalService,
+            BackfillQueue backfillQueue) =>
+        {
+            if (string.IsNullOrWhiteSpace(accountId))
+                return Results.BadRequest(new { error = "accountId is required." });
+
+            // Verify the account exists in our DB
+            var displayName = metaDb.GetDisplayName(accountId);
+            if (displayName is null)
+                return Results.NotFound(new { error = "Unknown account." });
+
+            // Register with a synthetic device ID for web tracking
+            const string webDeviceId = "web-tracker";
+            metaDb.RegisterUser(webDeviceId, accountId);
+
+            // Enqueue for backfill if not already completed
+            var existingStatus = metaDb.GetBackfillStatus(accountId);
+            if (existingStatus is null || existingStatus.Status == "error")
+            {
+                var songCount = Math.Max(festivalService.Songs.Count, 200);
+                metaDb.EnqueueBackfill(accountId, songCount * 6); // songs × instruments
+            }
+
+            var status = metaDb.GetBackfillStatus(accountId);
+            return Results.Ok(new
+            {
+                accountId,
+                displayName,
+                trackingStarted = true,
+                backfillStatus = status?.Status ?? "pending",
+            });
+        })
+        .WithTags("Players")
+        .RequireRateLimiting("public");
+
+        app.MapGet("/api/player/{accountId}/sync-status", (
+            string accountId,
+            MetaDatabase metaDb) =>
+        {
+            var backfill = metaDb.GetBackfillStatus(accountId);
+            var isRegistered = metaDb.GetRegisteredAccountIds().Contains(accountId);
+
+            return Results.Ok(new
+            {
+                accountId,
+                isTracked = isRegistered,
+                backfill = backfill is null ? null : new
+                {
+                    status = backfill.Status,
+                    songsChecked = backfill.SongsChecked,
+                    totalSongsToCheck = backfill.TotalSongsToCheck,
+                    entriesFound = backfill.EntriesFound,
+                    startedAt = backfill.StartedAt,
+                    completedAt = backfill.CompletedAt,
+                },
             });
         })
         .WithTags("Players")

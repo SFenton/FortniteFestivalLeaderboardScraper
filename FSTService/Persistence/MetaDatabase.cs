@@ -640,6 +640,39 @@ public sealed class MetaDatabase : IDisposable
     }
 
     /// <summary>
+    /// Search for account display names matching a query string.
+    /// Results are ordered: prefix matches first, then substring matches, alphabetically within each group.
+    /// </summary>
+    public List<(string AccountId, string DisplayName)> SearchAccountNames(string query, int limit = 10)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return new List<(string, string)>();
+
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT AccountId, DisplayName
+            FROM AccountNames
+            WHERE DisplayName IS NOT NULL AND DisplayName LIKE @pattern
+            ORDER BY
+                CASE WHEN DisplayName LIKE @prefix THEN 0 ELSE 1 END,
+                LENGTH(DisplayName),
+                DisplayName COLLATE NOCASE
+            LIMIT @limit;
+        ";
+        cmd.Parameters.AddWithValue("@pattern", $"%{query}%");
+        cmd.Parameters.AddWithValue("@prefix", $"{query}%");
+        cmd.Parameters.AddWithValue("@limit", limit);
+
+        var results = new List<(string, string)>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            results.Add((reader.GetString(0), reader.GetString(1)));
+        }
+        return results;
+    }
+
+    /// <summary>
     /// Bulk-resolve display names for a set of account IDs.
     /// Returns a dictionary mapping AccountId → DisplayName (only for accounts with a known name).
     /// </summary>

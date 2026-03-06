@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
 import { api } from '../api/client';
 import {
@@ -121,10 +121,12 @@ function InstrumentCard({
     };
   }, [songId, instrument]);
 
+  const navigate = useNavigate();
+
   return (
-    <Link
-      to={`/songs/${songId}/${instrument}`}
-      style={{ ...styles.card, textDecoration: 'none', color: 'inherit', cursor: 'pointer' }}
+    <div
+      style={{ ...styles.card, cursor: 'pointer' }}
+      onClick={() => navigate(`/songs/${songId}/${instrument}`)}
     >
       <div style={styles.cardHeader}>
         <span style={styles.cardTitle}>{INSTRUMENT_LABELS[instrument]}</span>
@@ -143,9 +145,13 @@ function InstrumentCard({
           entries.map((e, i) => (
             <div key={e.accountId} style={styles.entryRow}>
               <span style={styles.entryRank}>#{i + 1}</span>
-              <span style={styles.entryName}>
+              <Link
+                to={`/player/${e.accountId}`}
+                style={styles.entryName}
+                onClick={(ev) => ev.stopPropagation()}
+              >
                 {e.displayName ?? e.accountId.slice(0, 8)}
-              </span>
+              </Link>
               <span style={styles.entryScore}>
                 {e.score.toLocaleString()}
               </span>
@@ -156,7 +162,7 @@ function InstrumentCard({
           <div style={styles.viewAll}>View full leaderboard →</div>
         )}
       </div>
-    </Link>
+    </div>
   );
 }
 
@@ -306,6 +312,8 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap' as const,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
+    textDecoration: 'none',
+    color: 'inherit',
   },
   entryScore: {
     fontSize: Font.md,

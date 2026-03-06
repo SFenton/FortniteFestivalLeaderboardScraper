@@ -40,3 +40,8 @@ a {
 ::-webkit-scrollbar-thumb:hover {
   background: #3B4B65;
 }
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
