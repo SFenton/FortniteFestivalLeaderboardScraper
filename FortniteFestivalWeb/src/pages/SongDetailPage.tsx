@@ -12,6 +12,7 @@ import {
   type PlayerScore,
 } from '../models';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth } from '../theme';
+import ScoreHistoryChart from '../components/ScoreHistoryChart';
 
 export default function SongDetailPage() {
   const { songId } = useParams<{ songId: string }>();
@@ -29,9 +30,9 @@ export default function SongDetailPage() {
       return;
     }
     let cancelled = false;
-    api.getPlayer(player.accountId).then((res) => {
+    api.getPlayer(player.accountId, songId).then((res) => {
       if (!cancelled) {
-        setPlayerScores(res.scores.filter((s) => s.songId === songId));
+        setPlayerScores(res.scores);
       }
     }).catch(() => {
       if (!cancelled) setPlayerScores([]);
@@ -50,6 +51,13 @@ export default function SongDetailPage() {
           ← Back to Songs
         </Link>
         <SongHeader song={song} songId={songId} />
+        {player && (
+          <ScoreHistoryChart
+            songId={songId}
+            accountId={player.accountId}
+            playerName={player.displayName}
+          />
+        )}
         <div style={styles.instrumentGrid}>
           {INSTRUMENT_KEYS.map((inst) => (
             <InstrumentCard

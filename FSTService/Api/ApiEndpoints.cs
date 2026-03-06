@@ -139,12 +139,13 @@ public static class ApiEndpoints
 
         app.MapGet("/api/player/{accountId}", (
             string accountId,
+            string? songId,
             GlobalLeaderboardPersistence persistence,
             MetaDatabase metaDb) =>
         {
-            var scores = persistence.GetPlayerProfile(accountId);
+            var scores = persistence.GetPlayerProfile(accountId, songId);
             var displayName = metaDb.GetDisplayName(accountId);
-            var rankings = persistence.GetPlayerRankings(accountId);
+            var rankings = persistence.GetPlayerRankings(accountId, songId);
             var population = metaDb.GetAllLeaderboardPopulation();
 
             var enriched = scores.Select(s =>
@@ -461,6 +462,7 @@ public static class ApiEndpoints
         app.MapGet("/api/player/{accountId}/history", (
             string accountId,
             int? limit,
+            string? songId,
             MetaDatabase metaDb) =>
         {
             // Check if the account is a registered user
@@ -473,7 +475,7 @@ public static class ApiEndpoints
                 });
             }
 
-            var history = metaDb.GetScoreHistory(accountId, limit ?? 100);
+            var history = metaDb.GetScoreHistory(accountId, limit ?? 50000, songId);
             return Results.Ok(new
             {
                 accountId,

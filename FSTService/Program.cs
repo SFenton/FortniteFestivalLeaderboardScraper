@@ -218,7 +218,7 @@ builder.Services.AddRateLimiter(opts =>
 
     opts.AddFixedWindowLimiter("public", window =>
     {
-        window.PermitLimit = isTesting ? 100_000 : 60;
+        window.PermitLimit = isTesting ? 100_000 : 300;
         window.Window = TimeSpan.FromMinutes(1);
         window.QueueLimit = 0;
     });
@@ -242,7 +242,7 @@ builder.Services.AddRateLimiter(opts =>
             ? RateLimitPartition.GetNoLimiter("global")
             : RateLimitPartition.GetFixedWindowLimiter("global", _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 200,
+                PermitLimit = 600,
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
             }));

@@ -310,12 +310,17 @@ public sealed class InstrumentDatabase : IDisposable
     /// <summary>
     /// Get all entries for a player across all songs on this instrument.
     /// </summary>
-    public List<PlayerScoreDto> GetPlayerScores(string accountId)
+    public List<PlayerScoreDto> GetPlayerScores(string accountId, string? songId = null)
     {
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT SongId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime, Rank FROM LeaderboardEntries WHERE AccountId = @accountId ORDER BY SongId;";
+        var where = "AccountId = @accountId";
+        if (songId is not null)
+            where += " AND SongId = @songId";
+        cmd.CommandText = $"SELECT SongId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime, Rank FROM LeaderboardEntries WHERE {where} ORDER BY SongId;";
         cmd.Parameters.AddWithValue("@accountId", accountId);
+        if (songId is not null)
+            cmd.Parameters.AddWithValue("@songId", songId);
 
         var scores = new List<PlayerScoreDto>();
         using var reader = cmd.ExecuteReader();
@@ -342,11 +347,14 @@ public sealed class InstrumentDatabase : IDisposable
     /// For each song where the given account has a score, compute
     /// (rank, totalEntries) from the leaderboard. Rank is 1-based.
     /// </summary>
-    public Dictionary<string, (int Rank, int Total)> GetPlayerRankings(string accountId)
+    public Dictionary<string, (int Rank, int Total)> GetPlayerRankings(string accountId, string? songId = null)
     {
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
+        var where = "le.AccountId = @accountId";
+        if (songId is not null)
+            where += " AND le.SongId = @songId";
+        cmd.CommandText = $@"
             SELECT
                 le.SongId,
                 (SELECT COUNT(*) + 1 FROM LeaderboardEntries x
@@ -354,17 +362,19 @@ public sealed class InstrumentDatabase : IDisposable
                 (SELECT COUNT(*) FROM LeaderboardEntries x
                  WHERE x.SongId = le.SongId) AS TotalEntries
             FROM LeaderboardEntries le
-            WHERE le.AccountId = @accountId;";
+            WHERE {where};";
         cmd.Parameters.AddWithValue("@accountId", accountId);
+        if (songId is not null)
+            cmd.Parameters.AddWithValue("@songId", songId);
 
         var result = new Dictionary<string, (int, int)>(StringComparer.OrdinalIgnoreCase);
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
         {
-            var songId = reader.GetString(0);
+            var sid = reader.GetString(0);
             var rank = reader.GetInt32(1);
             var total = reader.GetInt32(2);
-            result[songId] = (rank, total);
+            result[sid] = (rank, total);
         }
         return result;
     }

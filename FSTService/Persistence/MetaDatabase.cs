@@ -585,21 +585,27 @@ public sealed class MetaDatabase : IDisposable
     /// <summary>
     /// Get score history for an account, newest first.
     /// </summary>
-    public List<ScoreHistoryEntry> GetScoreHistory(string accountId, int limit = 100)
+    public List<ScoreHistoryEntry> GetScoreHistory(string accountId, int limit = 100, string? songId = null)
     {
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        var where = "AccountId = @accountId";
+        if (songId is not null)
+            where += " AND SongId = @songId";
+
+        cmd.CommandText = $"""
             SELECT SongId, Instrument, OldScore, NewScore, OldRank, NewRank,
                    Accuracy, IsFullCombo, Stars, Percentile, Season, ScoreAchievedAt, ChangedAt,
                    SeasonRank, AllTimeRank
             FROM ScoreHistory
-            WHERE AccountId = @accountId
+            WHERE {where}
             ORDER BY Id DESC
             LIMIT @limit;
             """;
         cmd.Parameters.AddWithValue("@accountId", accountId);
         cmd.Parameters.AddWithValue("@limit", limit);
+        if (songId is not null)
+            cmd.Parameters.AddWithValue("@songId", songId);
 
         var entries = new List<ScoreHistoryEntry>();
         using var reader = cmd.ExecuteReader();

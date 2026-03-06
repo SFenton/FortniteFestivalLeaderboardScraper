@@ -245,6 +245,27 @@ public sealed class MetaDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void GetScoreHistory_filters_by_songId()
+    {
+        Db.InsertScoreChange("song_1", "Solo_Guitar", "acct_1", null, 100_000, null, 1);
+        Db.InsertScoreChange("song_2", "Solo_Guitar", "acct_1", null, 90_000, null, 2);
+        Db.InsertScoreChange("song_1", "Solo_Bass", "acct_1", null, 80_000, null, 3);
+
+        var history = Db.GetScoreHistory("acct_1", songId: "song_1");
+        Assert.Equal(2, history.Count);
+        Assert.All(history, h => Assert.Equal("song_1", h.SongId));
+    }
+
+    [Fact]
+    public void GetScoreHistory_songId_filter_returns_empty_when_no_match()
+    {
+        Db.InsertScoreChange("song_1", "Solo_Guitar", "acct_1", null, 100_000, null, 1);
+
+        var history = Db.GetScoreHistory("acct_1", songId: "song_nonexistent");
+        Assert.Empty(history);
+    }
+
+    [Fact]
     public void InsertScoreChange_roundtrips_SeasonRank_and_AllTimeRank()
     {
         Db.InsertScoreChange("song_1", "Solo_Guitar", "acct_1", null, 200_000, null, 50,

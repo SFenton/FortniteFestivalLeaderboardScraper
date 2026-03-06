@@ -2,13 +2,10 @@ import type {
   SongsResponse,
   LeaderboardResponse,
   PlayerResponse,
-  AccountCheckResponse,
   AccountSearchResponse,
-  ScrapeProgress,
-  FirstSeenResponse,
-  LeaderboardPopulationEntry,
   TrackPlayerResponse,
   SyncStatusResponse,
+  PlayerHistoryResponse,
   InstrumentKey,
 } from '../models';
 
@@ -41,12 +38,9 @@ export const api = {
       `/api/leaderboard/${encodeURIComponent(songId)}/${encodeURIComponent(instrument)}?top=${top}&offset=${offset}`,
     ),
 
-  getPlayer: (accountId: string) =>
-    get<PlayerResponse>(`/api/player/${encodeURIComponent(accountId)}`),
-
-  checkAccount: (username: string) =>
-    get<AccountCheckResponse>(
-      `/api/account/check?username=${encodeURIComponent(username)}`,
+  getPlayer: (accountId: string, songId?: string) =>
+    get<PlayerResponse>(
+      `/api/player/${encodeURIComponent(accountId)}${songId ? `?songId=${encodeURIComponent(songId)}` : ''}`,
     ),
 
   searchAccounts: (q: string, limit = 10) =>
@@ -54,16 +48,14 @@ export const api = {
       `/api/account/search?q=${encodeURIComponent(q)}&limit=${limit}`,
     ),
 
-  getProgress: () => get<ScrapeProgress>('/api/progress'),
-
-  getFirstSeen: () => get<FirstSeenResponse>('/api/firstseen'),
-
-  getLeaderboardPopulation: () =>
-    get<LeaderboardPopulationEntry[]>('/api/leaderboard-population'),
-
   trackPlayer: (accountId: string) =>
     post<TrackPlayerResponse>(`/api/player/${encodeURIComponent(accountId)}/track`),
 
   getSyncStatus: (accountId: string) =>
     get<SyncStatusResponse>(`/api/player/${encodeURIComponent(accountId)}/sync-status`),
+
+  getPlayerHistory: (accountId: string, songId?: string) =>
+    get<PlayerHistoryResponse>(
+      `/api/player/${encodeURIComponent(accountId)}/history${songId ? `?songId=${encodeURIComponent(songId)}` : ''}`,
+    ),
 };

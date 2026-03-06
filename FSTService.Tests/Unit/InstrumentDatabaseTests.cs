@@ -156,6 +156,26 @@ public sealed class InstrumentDatabaseTests : IDisposable
         Assert.Empty(scores);
     }
 
+    [Fact]
+    public void GetPlayerScores_filters_by_songId()
+    {
+        Db.UpsertEntries("song_A", [MakeEntry("acct_1", 100_000)]);
+        Db.UpsertEntries("song_B", [MakeEntry("acct_1", 90_000)]);
+
+        var scores = Db.GetPlayerScores("acct_1", songId: "song_A");
+        Assert.Single(scores);
+        Assert.Equal("song_A", scores[0].SongId);
+    }
+
+    [Fact]
+    public void GetPlayerScores_songId_filter_returns_empty_when_no_match()
+    {
+        Db.UpsertEntries("song_A", [MakeEntry("acct_1", 100_000)]);
+
+        var scores = Db.GetPlayerScores("acct_1", songId: "song_nonexistent");
+        Assert.Empty(scores);
+    }
+
     // ═══ GetAnySongId ═══════════════════════════════════════════
 
     [Fact]
@@ -312,6 +332,36 @@ public sealed class InstrumentDatabaseTests : IDisposable
         // Song B: acct_2 has 90k, 0 above → rank 1 of 3
         Assert.Equal(1, rankings["song_B"].Rank);
         Assert.Equal(3, rankings["song_B"].Total);
+    }
+
+    [Fact]
+    public void GetPlayerRankings_filters_by_songId()
+    {
+        Db.UpsertEntries("song_A",
+        [
+            MakeEntry("acct_1", 100_000),
+            MakeEntry("acct_2",  80_000),
+        ]);
+        Db.UpsertEntries("song_B",
+        [
+            MakeEntry("acct_1",  60_000),
+            MakeEntry("acct_2",  90_000),
+        ]);
+
+        var rankings = Db.GetPlayerRankings("acct_2", songId: "song_B");
+        Assert.Single(rankings);
+        Assert.True(rankings.ContainsKey("song_B"));
+        Assert.Equal(1, rankings["song_B"].Rank);
+        Assert.Equal(2, rankings["song_B"].Total);
+    }
+
+    [Fact]
+    public void GetPlayerRankings_songId_filter_returns_empty_when_no_match()
+    {
+        Db.UpsertEntries("song_A", [MakeEntry("acct_1", 100_000)]);
+
+        var rankings = Db.GetPlayerRankings("acct_1", songId: "song_nonexistent");
+        Assert.Empty(rankings);
     }
 
     // ═══ Upsert edge cases ══════════════════════════════════════
