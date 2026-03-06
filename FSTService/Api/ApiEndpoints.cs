@@ -190,6 +190,13 @@ public static class ApiEndpoints
             string accountId,
             MetaDatabase metaDb,
             FestivalService festivalService,
+            ScoreBackfiller backfiller,
+            HistoryReconstructor historyReconstructor,
+            PersonalDbBuilder personalDbBuilder,
+            NotificationService notifications,
+            TokenManager tokenManager,
+            IOptions<ScraperOptions> scraperOptions,
+            ILoggerFactory loggerFactory,
             BackfillQueue backfillQueue) =>
         {
             if (string.IsNullOrWhiteSpace(accountId))
@@ -206,10 +213,61 @@ public static class ApiEndpoints
 
             // Enqueue for backfill if not already completed
             var existingStatus = metaDb.GetBackfillStatus(accountId);
+            bool backfillKicked = false;
             if (existingStatus is null || existingStatus.Status == "error")
             {
                 var songCount = Math.Max(festivalService.Songs.Count, 200);
                 metaDb.EnqueueBackfill(accountId, songCount * 6); // songs × instruments
+                backfillKicked = true;
+
+                // Fire-and-forget: run backfill + history recon + personal DB rebuild
+                _ = Task.Run(async () =>
+                {
+                    var log = loggerFactory.CreateLogger("FSTService.Api.TrackBackfill");
+                    try
+                    {
+                        var dop = scraperOptions.Value.DegreeOfParallelism;
+                        var accessToken = await tokenManager.GetAccessTokenAsync(CancellationToken.None);
+                        if (accessToken is null)
+                        {
+                            log.LogWarning("Track-triggered backfill for {AccountId}: no access token available.", accountId);
+                            return;
+                        }
+                        var callerAccountId = tokenManager.AccountId!;
+
+                        if (festivalService.Songs.Count == 0)
+                            await festivalService.InitializeAsync();
+
+                        await backfiller.BackfillAccountAsync(
+                            accountId, festivalService, accessToken, callerAccountId, dop, CancellationToken.None);
+
+                        // Reconstruct score history
+                        var reconStatus = metaDb.GetHistoryReconStatus(accountId);
+                        if (reconStatus?.Status != "complete")
+                        {
+                            var seasonWindows = await historyReconstructor.DiscoverSeasonWindowsAsync(
+                                accessToken, callerAccountId, CancellationToken.None);
+                            if (seasonWindows.Count > 0)
+                            {
+                                await historyReconstructor.ReconstructAccountAsync(
+                                    accountId, seasonWindows, accessToken, callerAccountId, dop,
+                                    ct: CancellationToken.None);
+                            }
+                        }
+
+                        // Rebuild personal DB and notify
+                        var accountSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { accountId };
+                        personalDbBuilder.RebuildForAccounts(accountSet, metaDb);
+                        try { await notifications.NotifyPersonalDbReadyAsync(accountId); }
+                        catch { /* best effort */ }
+
+                        log.LogInformation("Track-triggered backfill for {AccountId} completed.", accountId);
+                    }
+                    catch (Exception ex)
+                    {
+                        log.LogWarning(ex, "Track-triggered backfill for {AccountId} failed.", accountId);
+                    }
+                });
             }
 
             var status = metaDb.GetBackfillStatus(accountId);
@@ -219,6 +277,7 @@ public static class ApiEndpoints
                 displayName,
                 trackingStarted = true,
                 backfillStatus = status?.Status ?? "pending",
+                backfillKicked,
             });
         })
         .WithTags("Players")

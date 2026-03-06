@@ -4,16 +4,15 @@ import { useFestival } from '../contexts/FestivalContext';
 import { api } from '../api/client';
 import type { Song, PlayerScore, PlayerResponse, InstrumentKey } from '../models';
 import { INSTRUMENT_KEYS, INSTRUMENT_LABELS } from '../models';
-import type { TrackedPlayer } from '../hooks/useTrackedPlayer';
 import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth } from '../theme';
 
 type SortMode = 'title' | 'artist';
 
 type Props = {
-  player?: TrackedPlayer | null;
+  accountId?: string;
 };
 
-export default function SongsPage({ player }: Props) {
+export default function SongsPage({ accountId }: Props) {
   const {
     state: { songs, isLoading, error },
   } = useFestival();
@@ -36,12 +35,12 @@ export default function SongsPage({ player }: Props) {
   }, []);
 
   useEffect(() => {
-    if (player?.accountId) {
-      void fetchPlayer(player.accountId);
+    if (accountId) {
+      void fetchPlayer(accountId);
     } else {
       setPlayerData(null);
     }
-  }, [player?.accountId, fetchPlayer]);
+  }, [accountId, fetchPlayer]);
 
   // Build lookup: songId → PlayerScore for the selected instrument
   const scoreMap = useMemo(() => {

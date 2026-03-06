@@ -1879,10 +1879,45 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         }
 
         var response = await _authedClient.PostAsync("/api/player/trackAcct1/track", null);
-        // Should succeed (200) or provide status
-        Assert.True(
-            (int)response.StatusCode >= 200 && (int)response.StatusCode < 500,
-            $"Unexpected: {response.StatusCode}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.GetProperty("trackingStarted").GetBoolean());
+        Assert.True(json.GetProperty("backfillKicked").GetBoolean());
+        Assert.Equal("TrackPlayer", json.GetProperty("displayName").GetString());
+    }
+
+    [Fact]
+    public async Task TrackPlayer_UnknownAccount_ReturnsNotFound()
+    {
+        var response = await _authedClient.PostAsync("/api/player/nonexistent999/track", null);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task TrackPlayer_AlreadyComplete_DoesNotReKickBackfill()
+    {
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            metaDb.InsertAccountNames([("trackAcct2", (string?)"TrackPlayer2")]);
+            metaDb.RegisterUser("web-tracker", "trackAcct2");
+            metaDb.EnqueueBackfill("trackAcct2", 100);
+            metaDb.StartBackfill("trackAcct2");
+            metaDb.CompleteBackfill("trackAcct2");
+        }
+
+        var response = await _authedClient.PostAsync("/api/player/trackAcct2/track", null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(json.GetProperty("backfillKicked").GetBoolean());
+        Assert.Equal("complete", json.GetProperty("backfillStatus").GetString());
+    }
+
+    [Fact]
+    public async Task TrackPlayer_EmptyAccountId_ReturnsBadRequest()
+    {
+        var response = await _authedClient.PostAsync("/api/player/%20/track", null);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     // ═══════════════════════════════════════════════════════════════
