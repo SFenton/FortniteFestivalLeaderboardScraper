@@ -7,6 +7,10 @@
     "skipLibCheck": true,
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
+    "paths": {
+      "@festival/core": ["../packages/core/src"],
+      "@festival/core/*": ["../packages/core/src/*"]
+    },
     "isolatedModules": true,
     "moduleDetection": "force",
     "noEmit": true,

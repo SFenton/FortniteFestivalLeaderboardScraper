@@ -10,7 +10,7 @@ const rnPath = fs.realpathSync(
 );
 
 // Workspace packages that Metro needs to watch and resolve
-const corePackagePath = path.resolve(__dirname, 'packages/core');
+const corePackagePath = path.resolve(__dirname, '../packages/core');
 const uiPackagePath = path.resolve(__dirname, 'packages/ui');
 const contextsPackagePath = path.resolve(__dirname, 'packages/contexts');
 const appScreensPackagePath = path.resolve(__dirname, 'packages/app-screens');

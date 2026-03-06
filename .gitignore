@@ -203,6 +203,9 @@ PublishScripts/
 # React Native workspace packages must NOT be ignored
 !FortniteFestivalRN/packages/
 !FortniteFestivalRN/packages/**
+# Shared packages at repo root must NOT be ignored
+!/packages/
+!/packages/**
 # Uncomment if necessary however generally it will be regenerated when needed
 #!**/[Pp]ackages/repositories.config
 # NuGet v3's project.json files produces more ignorable files

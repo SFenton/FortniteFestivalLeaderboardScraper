@@ -1633,10 +1633,10 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@festival/core@workspace:packages/core":
+"@festival/core@portal:../packages/core::locator=FortniteFestivalRN%40workspace%3A.":
   version: 0.0.0-use.local
-  resolution: "@festival/core@workspace:packages/core"
-  languageName: unknown
+  resolution: "@festival/core@portal:../packages/core::locator=FortniteFestivalRN%40workspace%3A."
+  languageName: node
   linkType: soft
 
 "@festival/local-app@workspace:packages/local-app":
@@ -3614,6 +3614,7 @@ __metadata:
     "@babel/runtime": "npm:^7.25.0"
     "@bottom-tabs/react-navigation": "npm:^1.1.0"
     "@callstack/liquid-glass": "npm:^0.7.0"
+    "@festival/core": "portal:../packages/core"
     "@react-native-async-storage/async-storage": "npm:^2.2.0"
     "@react-native-community/blur": "npm:^4.4.1"
     "@react-native-community/cli": "npm:20.0.0"

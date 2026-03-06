@@ -1,10 +1,14 @@
 module.exports = {
   preset: 'react-native',
   watchman: false,
+  resolver: '<rootDir>/jest-resolver.js',
+  roots: ['<rootDir>', '<rootDir>/../packages'],
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
+  // Allow out-of-tree core package files to find node_modules from the RN project
+  moduleDirectories: ['node_modules', '<rootDir>/node_modules'],
   moduleNameMapper: {
-    '^@festival/core$': '<rootDir>/packages/core/src',
-    '^@festival/core/(.*)$': '<rootDir>/packages/core/src/$1',
+    '^@festival/core$': '<rootDir>/../packages/core/src',
+    '^@festival/core/(.*)$': '<rootDir>/../packages/core/src/$1',
     '^@festival/ui$': '<rootDir>/packages/ui/src',
     '^@festival/ui/(.*)$': '<rootDir>/packages/ui/src/$1',
     '^@festival/contexts$': '<rootDir>/packages/contexts/src',
@@ -19,12 +23,12 @@ module.exports = {
   ],
   collectCoverage: true,
   collectCoverageFrom: [
-    'packages/core/src/**/*.{ts,tsx}',
-    '!packages/core/src/**/__tests__/**',
-    '!packages/core/src/**/index.{ts,tsx}',
-    '!packages/core/src/**/types.{ts,tsx}',
-    '!packages/core/src/**/*.types.{ts,tsx}',
-    '!packages/core/src/**/*.d.ts',
+    '../packages/core/src/**/*.{ts,tsx}',
+    '!../packages/core/src/**/__tests__/**',
+    '!../packages/core/src/**/index.{ts,tsx}',
+    '!../packages/core/src/**/types.{ts,tsx}',
+    '!../packages/core/src/**/*.types.{ts,tsx}',
+    '!../packages/core/src/**/*.d.ts',
   ],
   coveragePathIgnorePatterns: ['/node_modules/', '/android/', '/ios/', '/windows/', '/macos/'],
   coverageThreshold: {
