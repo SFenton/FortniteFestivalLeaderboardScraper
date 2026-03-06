@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
+import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
 import { api } from '../api/client';
 import {
   INSTRUMENT_KEYS,
@@ -8,6 +9,7 @@ import {
   type Song,
   type InstrumentKey,
   type LeaderboardEntry,
+  type PlayerScore,
 } from '../models';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth } from '../theme';
 
@@ -16,8 +18,26 @@ export default function SongDetailPage() {
   const {
     state: { songs },
   } = useFestival();
+  const { player } = useTrackedPlayer();
+  const [playerScores, setPlayerScores] = useState<PlayerScore[]>([]);
 
   const song = songs.find((s) => s.songId === songId);
+
+  useEffect(() => {
+    if (!player || !songId) {
+      setPlayerScores([]);
+      return;
+    }
+    let cancelled = false;
+    api.getPlayer(player.accountId).then((res) => {
+      if (!cancelled) {
+        setPlayerScores(res.scores.filter((s) => s.songId === songId));
+      }
+    }).catch(() => {
+      if (!cancelled) setPlayerScores([]);
+    });
+    return () => { cancelled = true; };
+  }, [player, songId]);
 
   if (!songId) {
     return <div style={styles.center}>Song not found</div>;
@@ -37,6 +57,8 @@ export default function SongDetailPage() {
               songId={songId}
               instrument={inst}
               difficulty={getDifficulty(song, inst)}
+              playerScore={playerScores.find((s) => s.instrument === inst)}
+              playerName={player?.displayName}
             />
           ))}
         </div>
@@ -92,10 +114,14 @@ function InstrumentCard({
   songId,
   instrument,
   difficulty,
+  playerScore,
+  playerName,
 }: {
   songId: string;
   instrument: InstrumentKey;
   difficulty: number | undefined;
+  playerScore?: PlayerScore;
+  playerName?: string;
 }) {
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -160,6 +186,34 @@ function InstrumentCard({
           ))}
         {!loading && !error && entries.length > 0 && (
           <div style={styles.viewAll}>View full leaderboard →</div>
+        )}
+        {playerName && (
+          <div style={styles.playerScoreSection}>
+            <div style={styles.playerScoreLabel}>{playerName}</div>
+            {playerScore ? (
+              <div style={styles.playerScoreRow}>
+                <span style={styles.playerRank}>#{playerScore.rank.toLocaleString()}</span>
+                <span style={styles.playerScoreValue}>
+                  {playerScore.score.toLocaleString()}
+                </span>
+                {playerScore.isFullCombo && <span style={styles.fcBadge}>FC</span>}
+                {playerScore.accuracy != null && playerScore.accuracy > 0 && (
+                  <span style={styles.playerAccuracy}>
+                    {(playerScore.accuracy / 10000).toFixed(2)}%
+                  </span>
+                )}
+                {playerScore.stars != null && (
+                  <span style={styles.playerStars}>
+                    {'★'.repeat(playerScore.stars)}
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div style={styles.playerScoreRow}>
+                <span style={styles.notPlayed}>Not played</span>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -267,6 +321,9 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid ${Colors.borderSubtle}`,
     borderRadius: Radius.lg,
     overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    height: '100%',
   },
   cardHeader: {
     display: 'flex',
@@ -284,6 +341,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column' as const,
     gap: Gap.sm,
+    flex: 1,
   },
   cardMuted: {
     fontSize: Font.sm,
@@ -337,6 +395,52 @@ const styles: Record<string, React.CSSProperties> = {
     paddingTop: Gap.md,
     marginTop: Gap.sm,
     borderTop: `1px solid ${Colors.borderSubtle}`,
+  },
+  playerScoreSection: {
+    marginTop: 'auto',
+    padding: Gap.md,
+    backgroundColor: Colors.accentPurpleDark,
+    borderRadius: Radius.xs,
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: Gap.sm,
+  },
+  playerScoreLabel: {
+    fontSize: Font.xs,
+    fontWeight: 600,
+    color: Colors.accentPurple,
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.5,
+  },
+  playerScoreRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.md,
+  },
+  playerRank: {
+    fontSize: Font.sm,
+    color: Colors.textTertiary,
+    width: 56,
+    flexShrink: 0,
+  },
+  playerScoreValue: {
+    fontSize: Font.lg,
+    fontWeight: 700,
+    color: Colors.accentBlueBright,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  playerAccuracy: {
+    fontSize: Font.sm,
+    color: Colors.textSecondary,
+  },
+  playerStars: {
+    fontSize: Font.sm,
+    color: Colors.gold,
+  },
+  notPlayed: {
+    fontSize: Font.lg,
+    color: Colors.textMuted,
+    fontStyle: 'italic' as const,
   },
   center: {
     display: 'flex',
