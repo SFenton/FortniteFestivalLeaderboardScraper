@@ -23,6 +23,7 @@ type Props = {
   songId: string;
   accountId: string;
   playerName: string;
+  defaultInstrument?: InstrumentKey;
 };
 
 type ChartPoint = {
@@ -44,9 +45,10 @@ export default function ScoreHistoryChart({
   songId,
   accountId,
   playerName,
+  defaultInstrument,
 }: Props) {
   const cacheKey = `${accountId}:${songId}`;
-  const [selected, setSelected] = useState<InstrumentKey>('Solo_Guitar');
+  const [selected, setSelected] = useState<InstrumentKey>(defaultInstrument ?? 'Solo_Guitar');
   const [songHistory, setSongHistory] = useState<ScoreHistoryEntry[]>(
     () => historyCache.get(cacheKey) ?? [],
   );
@@ -93,21 +95,22 @@ export default function ScoreHistoryChart({
         new Date(a.scoreAchievedAt ?? a.changedAt).getTime() -
         new Date(b.scoreAchievedAt ?? b.changedAt).getTime(),
     );
-    // Build date labels, appending time when multiple entries share a day
-    const dayCount = new Map<string, number>();
+    // Build concise date labels: "Jun 5", "Jul 11", etc.
+    // When multiple entries share a day, append index: "Jul 11 (2)"
+    const daySeen = new Map<string, number>();
+    const dayTotal = new Map<string, number>();
     for (const h of sorted) {
       const d = new Date(h.scoreAchievedAt ?? h.changedAt);
-      const dayKey = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
-      dayCount.set(dayKey, (dayCount.get(dayKey) ?? 0) + 1);
+      const dayKey = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      dayTotal.set(dayKey, (dayTotal.get(dayKey) ?? 0) + 1);
     }
     return sorted.map((h) => {
       const d = new Date(h.scoreAchievedAt ?? h.changedAt);
-      const dayKey = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
-      const needsTime = (dayCount.get(dayKey) ?? 0) > 1;
-      const dateLabel = needsTime
-        ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
-          ' ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-        : dayKey;
+      const dayKey = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const total = dayTotal.get(dayKey) ?? 1;
+      const idx = (daySeen.get(dayKey) ?? 0) + 1;
+      daySeen.set(dayKey, idx);
+      const dateLabel = total > 1 ? `${dayKey} (${idx})` : dayKey;
       return {
         date: d.toISOString(),
         dateLabel,
@@ -179,10 +182,13 @@ export default function ScoreHistoryChart({
           </div>
         )}
         {!loading && chartData.length > 0 && (
-          <ResponsiveContainer width="100%" height={300}>
+          <ResponsiveContainer
+            width="100%"
+            height={320}
+          >
             <ComposedChart
               data={chartData}
-              margin={{ top: 8, right: 16, bottom: 4, left: 8 }}
+              margin={{ top: 16, right: 16, bottom: 16, left: 16 }}
             >
               <CartesianGrid
                 strokeDasharray="3 3"
@@ -190,9 +196,11 @@ export default function ScoreHistoryChart({
               />
               <XAxis
                 dataKey="dateLabel"
-                tick={{ fill: Colors.textMuted, fontSize: Font.xs }}
+                tick={{ fill: Colors.textMuted, fontSize: Font.xs, dy: 8 }}
                 stroke={Colors.borderSubtle}
-                label={{ value: 'Date', position: 'insideBottom', offset: -2, fill: Colors.textMuted, fontSize: Font.xs }}
+                angle={-35}
+                textAnchor="end"
+                interval="preserveStartEnd"
               />
               <YAxis
                 yAxisId="score"
@@ -396,16 +404,17 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: Colors.backgroundCard,
     border: `1px solid ${Colors.borderSubtle}`,
     borderRadius: Radius.lg,
-    padding: Gap.xl,
-    minHeight: 300,
+    padding: `${Gap.sm}px ${Gap.xl}px`,
     display: 'flex',
-    alignItems: 'center',
     justifyContent: 'center',
   },
   placeholder: {
     color: Colors.textMuted,
     fontSize: Font.md,
     fontStyle: 'italic',
+    textAlign: 'center' as const,
+    padding: `${Gap.section}px 0`,
+    width: '100%',
   },
   tooltip: {
     backgroundColor: Colors.surfaceFrosted,
@@ -445,7 +454,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: Gap.xl,
     fontSize: Font.sm,
     color: Colors.textSecondary,
-    paddingTop: Gap.md,
+    paddingTop: 16,
   },
   legendItem: {
     display: 'inline-flex',

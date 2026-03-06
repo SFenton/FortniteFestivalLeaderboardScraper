@@ -360,7 +360,7 @@ function TopSongsCard({
           return (
             <Link
               key={s.songId}
-              to={`/songs/${s.songId}`}
+              to={`/songs/${s.songId}?instrument=${encodeURIComponent(instrument)}`}
               style={styles.topSongRow}
             >
               {song?.albumArt ? (

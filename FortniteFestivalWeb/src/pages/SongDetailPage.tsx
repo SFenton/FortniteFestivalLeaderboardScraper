@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
 import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
 import { api } from '../api/client';
@@ -16,6 +16,8 @@ import ScoreHistoryChart from '../components/ScoreHistoryChart';
 
 export default function SongDetailPage() {
   const { songId } = useParams<{ songId: string }>();
+  const [searchParams] = useSearchParams();
+  const defaultInstrument = (searchParams.get('instrument') as InstrumentKey) || undefined;
   const {
     state: { songs },
   } = useFestival();
@@ -56,6 +58,7 @@ export default function SongDetailPage() {
             songId={songId}
             accountId={player.accountId}
             playerName={player.displayName}
+            defaultInstrument={defaultInstrument}
           />
         )}
         <div style={styles.instrumentGrid}>

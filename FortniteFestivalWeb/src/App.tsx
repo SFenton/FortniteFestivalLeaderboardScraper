@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { useEffect } from 'react';
 import { FestivalProvider } from './contexts/FestivalContext';
 import PlayerSearch from './components/PlayerSearch';
 import { useTrackedPlayer, type TrackedPlayer } from './hooks/useTrackedPlayer';
@@ -31,6 +32,7 @@ function AppShell() {
 
   return (
     <>
+      <ScrollToTop />
       <nav style={styles.nav}>
         <span style={styles.brand}>Festival Score Tracker</span>
         <div style={styles.navLinks}>
@@ -61,6 +63,14 @@ function AppShell() {
       </Routes>
     </>
   );
+}
+
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+  return null;
 }
 
 const styles: Record<string, React.CSSProperties> = {
