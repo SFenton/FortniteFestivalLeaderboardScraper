@@ -102,13 +102,15 @@ public sealed class ScraperWorker : BackgroundService
     {
         var opts = _options.Value;
 
+        // Always initialize the DI singleton so /api/songs works immediately
+        await _festivalService.InitializeAsync();
+        _log.LogInformation("Song catalog loaded. {SongCount} songs available for API.",
+            _festivalService.Songs.Count);
+
         // --api-only mode: skip all background work, let the API serve requests
         if (opts.ApiOnly)
         {
-            // Load the song catalog from the local DB so sync endpoints work
-            await _festivalService.InitializeAsync();
-            _log.LogInformation("Running in --api-only mode. Background scraping disabled. API is active. {SongCount} songs loaded.",
-                _festivalService.Songs.Count);
+            _log.LogInformation("Running in --api-only mode. Background scraping disabled. API is active.");
             // Keep the worker alive (but idle) so the host doesn't shut down
             try { await Task.Delay(Timeout.Infinite, stoppingToken); }
             catch (OperationCanceledException) { /* normal shutdown */ }
@@ -258,8 +260,13 @@ public sealed class ScraperWorker : BackgroundService
                 await service.SyncSongsAsync();
                 var after = service.Songs.Count;
                 if (after > before)
+                {
                     _log.LogInformation("Background song sync: {NewCount} new song(s) discovered ({Total} total).",
                         after - before, after);
+
+                    // Keep the DI singleton (used by API) in sync
+                    await _festivalService.InitializeAsync();
+                }
                 else
                     _log.LogDebug("Background song sync complete. {Total} songs (no changes).", after);
             }

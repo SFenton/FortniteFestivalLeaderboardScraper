@@ -54,7 +54,7 @@ function AppShell() {
       </nav>
       <Routes>
         <Route path="/" element={<Navigate to="/songs" replace />} />
-        <Route path="/songs" element={<SongsPage />} />
+        <Route path="/songs" element={<SongsPage player={player} />} />
         <Route path="/songs/:songId" element={<SongDetailPage />} />
         <Route path="/songs/:songId/:instrument" element={<LeaderboardPage />} />
         <Route path="/player/:accountId" element={<PlayerPage />} />
