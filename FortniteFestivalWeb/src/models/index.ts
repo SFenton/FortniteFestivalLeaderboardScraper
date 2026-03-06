@@ -150,4 +150,13 @@ export type SyncStatusResponse = {
     startedAt: string | null;
     completedAt: string | null;
   } | null;
+  historyRecon: {
+    status: string;
+    songsProcessed: number;
+    totalSongsToProcess: number;
+    seasonsQueried: number;
+    historyEntriesFound: number;
+    startedAt: string | null;
+    completedAt: string | null;
+  } | null;
 };

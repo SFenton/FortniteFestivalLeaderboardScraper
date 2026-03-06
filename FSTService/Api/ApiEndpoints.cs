@@ -288,6 +288,7 @@ public static class ApiEndpoints
             MetaDatabase metaDb) =>
         {
             var backfill = metaDb.GetBackfillStatus(accountId);
+            var historyRecon = metaDb.GetHistoryReconStatus(accountId);
             var isRegistered = metaDb.GetRegisteredAccountIds().Contains(accountId);
 
             return Results.Ok(new
@@ -302,6 +303,16 @@ public static class ApiEndpoints
                     entriesFound = backfill.EntriesFound,
                     startedAt = backfill.StartedAt,
                     completedAt = backfill.CompletedAt,
+                },
+                historyRecon = historyRecon is null ? null : new
+                {
+                    status = historyRecon.Status,
+                    songsProcessed = historyRecon.SongsProcessed,
+                    totalSongsToProcess = historyRecon.TotalSongsToProcess,
+                    seasonsQueried = historyRecon.SeasonsQueried,
+                    historyEntriesFound = historyRecon.HistoryEntriesFound,
+                    startedAt = historyRecon.StartedAt,
+                    completedAt = historyRecon.CompletedAt,
                 },
             });
         })

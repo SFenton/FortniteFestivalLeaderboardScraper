@@ -2,13 +2,21 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../api/client';
 import type { SyncStatusResponse } from '../models';
 
+export type SyncPhase = 'idle' | 'backfill' | 'history' | 'complete' | 'error';
+
 type SyncState = {
-  /** Whether we're actively syncing (backfill pending or in_progress) */
+  /** Whether we're actively syncing (any phase in progress) */
   isSyncing: boolean;
-  /** Current backfill status string */
-  status: string | null;
-  /** Progress fraction 0..1 */
-  progress: number;
+  /** Current phase: backfill, history, complete, idle */
+  phase: SyncPhase;
+  /** Backfill status string */
+  backfillStatus: string | null;
+  /** Backfill progress 0..1 */
+  backfillProgress: number;
+  /** History recon status string */
+  historyStatus: string | null;
+  /** History recon progress 0..1 */
+  historyProgress: number;
   /** Number of new entries found */
   entriesFound: number;
 };
@@ -18,34 +26,66 @@ const POLL_INTERVAL = 3000;
 export function useSyncStatus(accountId: string | undefined) {
   const [syncState, setSyncState] = useState<SyncState>({
     isSyncing: false,
-    status: null,
-    progress: 0,
+    phase: 'idle',
+    backfillStatus: null,
+    backfillProgress: 0,
+    historyStatus: null,
+    historyProgress: 0,
     entriesFound: 0,
   });
   const [justCompleted, setJustCompleted] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval>>(null);
   const trackedRef = useRef(false);
+  const wasSyncingRef = useRef(false);
 
   const checkStatus = useCallback(async () => {
     if (!accountId) return;
     try {
       const res: SyncStatusResponse = await api.getSyncStatus(accountId);
-      if (!res.backfill) {
-        setSyncState({ isSyncing: false, status: null, progress: 0, entriesFound: 0 });
-        return;
-      }
-      const { status, songsChecked, totalSongsToCheck, entriesFound } = res.backfill;
-      const isSyncing = status === 'pending' || status === 'in_progress';
-      const progress = totalSongsToCheck > 0 ? songsChecked / totalSongsToCheck : 0;
-      setSyncState({ isSyncing, status, progress, entriesFound });
 
-      if (!isSyncing && (status === 'complete' || status === 'error')) {
-        // Stop polling
+      const bf = res.backfill;
+      const hr = res.historyRecon;
+
+      const bfStatus = bf?.status ?? null;
+      const bfActive = bfStatus === 'pending' || bfStatus === 'in_progress';
+      const bfProgress = bf && bf.totalSongsToCheck > 0
+        ? bf.songsChecked / bf.totalSongsToCheck : 0;
+
+      const hrStatus = hr?.status ?? null;
+      const hrActive = hrStatus === 'pending' || hrStatus === 'in_progress';
+      const hrProgress = hr && hr.totalSongsToProcess > 0
+        ? hr.songsProcessed / hr.totalSongsToProcess : 0;
+
+      const isSyncing = bfActive || hrActive;
+
+      if (isSyncing) {
+        wasSyncingRef.current = true;
+      }
+
+      let phase: SyncPhase;
+      if (bfActive) phase = 'backfill';
+      else if (hrActive) phase = 'history';
+      else if (bfStatus === 'complete' || hrStatus === 'complete') phase = 'complete';
+      else if (bfStatus === 'error' || hrStatus === 'error') phase = 'error';
+      else phase = 'idle';
+
+      setSyncState({
+        isSyncing,
+        phase,
+        backfillStatus: bfStatus,
+        backfillProgress: bfProgress,
+        historyStatus: hrStatus,
+        historyProgress: hrProgress,
+        entriesFound: bf?.entriesFound ?? 0,
+      });
+
+      if (!isSyncing && (phase === 'complete' || phase === 'error')) {
         if (pollRef.current) {
           clearInterval(pollRef.current);
           pollRef.current = null;
         }
-        if (status === 'complete') {
+        // Only signal completion if we actually observed an active sync
+        if (phase === 'complete' && wasSyncingRef.current) {
           setJustCompleted(true);
         }
       }
@@ -58,6 +98,7 @@ export function useSyncStatus(accountId: string | undefined) {
   useEffect(() => {
     if (!accountId) return;
     trackedRef.current = false;
+    wasSyncingRef.current = false;
     setJustCompleted(false);
 
     const init = async () => {
@@ -89,5 +130,12 @@ export function useSyncStatus(accountId: string | undefined) {
   // Clear justCompleted after consumer reads it
   const clearCompleted = useCallback(() => setJustCompleted(false), []);
 
-  return { ...syncState, justCompleted, clearCompleted };
+  // Backwards-compat: expose combined progress (0..1)
+  const progress = syncState.phase === 'backfill'
+    ? syncState.backfillProgress * 0.5
+    : syncState.phase === 'history'
+      ? 0.5 + syncState.historyProgress * 0.5
+      : syncState.phase === 'complete' ? 1 : 0;
+
+  return { ...syncState, progress, justCompleted, clearCompleted };
 }

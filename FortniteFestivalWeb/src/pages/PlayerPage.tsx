@@ -23,7 +23,7 @@ export default function PlayerPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const { isSyncing, status, progress, justCompleted, clearCompleted } =
+  const { isSyncing, phase, backfillProgress, historyProgress, justCompleted, clearCompleted } =
     useSyncStatus(accountId);
 
   const fetchPlayer = useCallback(async () => {
@@ -72,20 +72,41 @@ export default function PlayerPage() {
         {isSyncing && (
           <div style={styles.syncBanner}>
             <div style={styles.syncSpinner} />
-            <div>
-              <div style={styles.syncTitle}>Syncing Your Data</div>
-              <div style={styles.syncSubtitle}>
-                Once {data.displayName}'s scores have been synced, more data will appear here.
+            <div style={{ flex: 1 }}>
+              <div style={styles.syncTitle}>
+                {phase === 'backfill' ? 'Syncing Data' : 'Building Score History'}
               </div>
-              {status === 'in_progress' && progress > 0 && (
+              <div style={styles.syncSubtitle}>
+                {phase === 'backfill'
+                  ? `Syncing ${data.displayName}'s scores…`
+                  : `Reconstructing ${data.displayName}'s score history across seasons…`}
+              </div>
+              {phase === 'backfill' && backfillProgress > 0 && (
                 <div style={styles.syncProgressOuter}>
                   <div
                     style={{
                       ...styles.syncProgressInner,
-                      width: `${Math.round(progress * 100)}%`,
+                      width: `${Math.round(backfillProgress * 100)}%`,
                     }}
                   />
                 </div>
+              )}
+              {phase === 'history' && (
+                <>
+                  <div style={{ ...styles.syncProgressOuter, marginTop: Gap.sm }}>
+                    <div style={{ ...styles.syncProgressInner, width: '100%' }} />
+                  </div>
+                  {historyProgress > 0 && (
+                    <div style={{ ...styles.syncProgressOuter, marginTop: Gap.sm }}>
+                      <div
+                        style={{
+                          ...styles.syncProgressInner,
+                          width: `${Math.round(historyProgress * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>

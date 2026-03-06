@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
+import { useSyncStatus } from '../hooks/useSyncStatus';
 import { api } from '../api/client';
 import type { Song, PlayerScore, PlayerResponse, InstrumentKey } from '../models';
 import { INSTRUMENT_KEYS, INSTRUMENT_LABELS } from '../models';
@@ -21,6 +22,8 @@ export default function SongsPage({ accountId }: Props) {
   const [instrument, setInstrument] = useState<InstrumentKey>('Solo_Guitar');
   const [playerData, setPlayerData] = useState<PlayerResponse | null>(null);
   const [playerLoading, setPlayerLoading] = useState(false);
+  const { isSyncing, phase, backfillProgress, historyProgress, justCompleted, clearCompleted } =
+    useSyncStatus(accountId);
 
   const fetchPlayer = useCallback(async (accountId: string) => {
     setPlayerLoading(true);
@@ -41,6 +44,14 @@ export default function SongsPage({ accountId }: Props) {
       setPlayerData(null);
     }
   }, [accountId, fetchPlayer]);
+
+  // Auto-reload player data when sync completes
+  useEffect(() => {
+    if (justCompleted && accountId) {
+      clearCompleted();
+      void fetchPlayer(accountId);
+    }
+  }, [justCompleted, clearCompleted, accountId, fetchPlayer]);
 
   // Build lookup: songId → PlayerScore for the selected instrument
   const scoreMap = useMemo(() => {
@@ -121,6 +132,48 @@ export default function SongsPage({ accountId }: Props) {
               </button>
             ))}
             {playerLoading && <span style={styles.loadingDot}>loading…</span>}
+          </div>
+        )}
+        {isSyncing && (
+          <div style={styles.syncBanner}>
+            <div style={styles.syncSpinner} />
+            <div style={{ flex: 1 }}>
+              <div style={styles.syncTitle}>
+                {phase === 'backfill' ? 'Syncing Data' : 'Building Score History'}
+              </div>
+              <div style={styles.syncSubtitle}>
+                {phase === 'backfill'
+                  ? 'Fetching scores from leaderboards…'
+                  : 'Reconstructing score history across seasons…'}
+              </div>
+              {phase === 'backfill' && backfillProgress > 0 && (
+                <div style={styles.syncProgressOuter}>
+                  <div
+                    style={{
+                      ...styles.syncProgressInner,
+                      width: `${Math.round(backfillProgress * 100)}%`,
+                    }}
+                  />
+                </div>
+              )}
+              {phase === 'history' && (
+                <>
+                  <div style={{ ...styles.syncProgressOuter, marginTop: Gap.sm }}>
+                    <div style={{ ...styles.syncProgressInner, width: '100%' }} />
+                  </div>
+                  {historyProgress > 0 && (
+                    <div style={{ ...styles.syncProgressOuter, marginTop: Gap.sm }}>
+                      <div
+                        style={{
+                          ...styles.syncProgressInner,
+                          width: `${Math.round(historyProgress * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         )}
         <div style={styles.count}>
@@ -304,6 +357,48 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: Font.sm,
     color: Colors.textTertiary,
     marginBottom: Gap.md,
+  },
+  syncBanner: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.xl,
+    padding: `${Gap.xl}px ${Gap.section}px`,
+    backgroundColor: Colors.accentPurpleDark,
+    border: `1px solid ${Colors.borderPrimary}`,
+    borderRadius: Radius.lg,
+    marginBottom: Gap.md,
+  },
+  syncSpinner: {
+    width: 24,
+    height: 24,
+    border: '3px solid rgba(255,255,255,0.15)',
+    borderTopColor: Colors.accentPurple,
+    borderRadius: '50%',
+    animation: 'spin 0.8s linear infinite',
+    flexShrink: 0,
+  },
+  syncTitle: {
+    fontSize: Font.lg,
+    fontWeight: 700,
+    color: Colors.textPrimary,
+    marginBottom: Gap.xs,
+  },
+  syncSubtitle: {
+    fontSize: Font.sm,
+    color: Colors.textSecondary,
+  },
+  syncProgressOuter: {
+    marginTop: Gap.md,
+    height: 6,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  syncProgressInner: {
+    height: '100%',
+    backgroundColor: Colors.accentPurple,
+    borderRadius: 3,
+    transition: 'width 0.3s ease',
   },
   list: {
     display: 'flex',
