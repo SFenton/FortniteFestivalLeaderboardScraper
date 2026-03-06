@@ -1474,6 +1474,73 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal("ProfileUser1", json.GetProperty("displayName").GetString());
     }
 
+    // ─── Player profile prefers LeaderboardPopulation totalEntries ──
+
+    [Fact]
+    public async Task ApiPlayer_PrefersLeaderboardPopulation_OverDbRowCount()
+    {
+        const string acct = "popTestAcct";
+        const string song = "popTestSong";
+        const string inst = "Solo_Guitar";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+
+            // Seed an entry in the instrument DB (DB count will be 1)
+            var db = persistence.GetOrCreateInstrumentDb(inst);
+            db.UpsertEntries(song, new[]
+            {
+                new LeaderboardEntry { AccountId = acct, Score = 500000, Rank = 1, Stars = 6, IsFullCombo = true, Accuracy = 10000 }
+            });
+
+            // Seed LeaderboardPopulation with a much larger value
+            metaDb.UpsertLeaderboardPopulation(new[] { (song, inst, (long)75000) });
+            metaDb.InsertAccountNames(new[] { (acct, (string?)"PopTestUser") });
+        }
+
+        var response = await _client.GetAsync($"/api/player/{acct}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var scores = json.GetProperty("scores");
+        Assert.Equal(1, scores.GetArrayLength());
+        // Should use the LeaderboardPopulation value (75000), not the DB row count (1)
+        Assert.Equal(75000, scores[0].GetProperty("totalEntries").GetInt32());
+    }
+
+    // ─── Leaderboard endpoint prefers LeaderboardPopulation ──
+
+    [Fact]
+    public async Task ApiLeaderboard_PrefersLeaderboardPopulation_OverDbRowCount()
+    {
+        const string song = "popLbSong";
+        const string inst = "Solo_Guitar";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+
+            // Seed two entries (DB count will be 2)
+            var db = persistence.GetOrCreateInstrumentDb(inst);
+            db.UpsertEntries(song, new[]
+            {
+                new LeaderboardEntry { AccountId = "lbAcct1", Score = 500000, Rank = 1 },
+                new LeaderboardEntry { AccountId = "lbAcct2", Score = 400000, Rank = 2 },
+            });
+
+            // Seed LeaderboardPopulation with true population
+            metaDb.UpsertLeaderboardPopulation(new[] { (song, inst, (long)120000) });
+        }
+
+        var response = await _client.GetAsync($"/api/leaderboard/{song}/{inst}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        // Should use the LeaderboardPopulation value (120000), not the DB row count (2)
+        Assert.Equal(120000, json.GetProperty("totalEntries").GetInt32());
+    }
+
     // ─── Auth/me with properly registered user ──────────────
 
     [Fact]

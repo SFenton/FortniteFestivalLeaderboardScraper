@@ -108,7 +108,9 @@ public static class ApiEndpoints
             if (entries is null)
                 return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
 
-            var totalEntries = persistence.GetLeaderboardCount(songId, instrument) ?? 0;
+            var dbCount = persistence.GetLeaderboardCount(songId, instrument) ?? 0;
+            var pop = metaDb.GetLeaderboardPopulation(songId, instrument);
+            var totalEntries = pop > 0 ? (int)pop : dbCount;
             var names = metaDb.GetDisplayNames(entries.Select(e => e.AccountId));
             var enriched = entries.Select(e => new
             {
@@ -143,13 +145,18 @@ public static class ApiEndpoints
             var scores = persistence.GetPlayerProfile(accountId);
             var displayName = metaDb.GetDisplayName(accountId);
             var rankings = persistence.GetPlayerRankings(accountId);
+            var population = metaDb.GetAllLeaderboardPopulation();
 
             var enriched = scores.Select(s =>
             {
                 var key = (s.SongId, s.Instrument);
-                var (computedRank, totalEntries) = rankings.GetValueOrDefault(key, (0, 0));
+                var (computedRank, dbTotal) = rankings.GetValueOrDefault(key, (0, 0));
                 // Use stored rank if available, otherwise use DB-computed rank
                 var rank = s.Rank > 0 ? s.Rank : computedRank;
+                // Prefer true leaderboard population from PercentileService; fall back to DB row count
+                var totalEntries = population.TryGetValue(key, out var pop) && pop > 0
+                    ? (int)pop
+                    : dbTotal;
                 return new
                 {
                     s.SongId,
