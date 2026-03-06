@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
 import { useSyncStatus } from '../hooks/useSyncStatus';
@@ -22,17 +22,20 @@ export default function PlayerPage() {
   const [data, setData] = useState<PlayerResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const hasDataRef = useRef(false);
 
   const { isSyncing, phase, backfillProgress, historyProgress, justCompleted, clearCompleted } =
     useSyncStatus(accountId);
 
   const fetchPlayer = useCallback(async () => {
     if (!accountId) return;
-    setLoading(true);
+    // Only show full-page loading on initial load, not on refresh
+    if (!hasDataRef.current) setLoading(true);
     setError(null);
     try {
       const res = await api.getPlayer(accountId);
       setData(res);
+      hasDataRef.current = true;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load player');
     } finally {
@@ -41,6 +44,7 @@ export default function PlayerPage() {
   }, [accountId]);
 
   useEffect(() => {
+    hasDataRef.current = false;
     void fetchPlayer();
   }, [fetchPlayer]);
 
