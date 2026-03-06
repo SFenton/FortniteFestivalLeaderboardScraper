@@ -82,28 +82,46 @@ export default function PlayerPage() {
                   : `Reconstructing ${data.displayName}'s score history across seasons…`}
               </div>
               {phase === 'backfill' && backfillProgress > 0 && (
-                <div style={styles.syncProgressOuter}>
-                  <div
-                    style={{
-                      ...styles.syncProgressInner,
-                      width: `${Math.round(backfillProgress * 100)}%`,
-                    }}
-                  />
+                <div style={{ marginTop: Gap.md }}>
+                  <div style={styles.syncProgressLabel}>
+                    <span>Syncing scores</span>
+                    <span>{(backfillProgress * 100).toFixed(1)}%</span>
+                  </div>
+                  <div style={styles.syncProgressOuter}>
+                    <div
+                      style={{
+                        ...styles.syncProgressInner,
+                        width: `${Math.round(backfillProgress * 100)}%`,
+                      }}
+                    />
+                  </div>
                 </div>
               )}
               {phase === 'history' && (
                 <>
-                  <div style={{ ...styles.syncProgressOuter, marginTop: Gap.sm }}>
-                    <div style={{ ...styles.syncProgressInner, width: '100%' }} />
+                  <div style={{ marginTop: Gap.md }}>
+                    <div style={styles.syncProgressLabel}>
+                      <span>Syncing scores</span>
+                      <span>100.0%</span>
+                    </div>
+                    <div style={styles.syncProgressOuter}>
+                      <div style={{ ...styles.syncProgressInner, width: '100%' }} />
+                    </div>
                   </div>
                   {historyProgress > 0 && (
-                    <div style={{ ...styles.syncProgressOuter, marginTop: Gap.sm }}>
-                      <div
-                        style={{
-                          ...styles.syncProgressInner,
-                          width: `${Math.round(historyProgress * 100)}%`,
-                        }}
-                      />
+                    <div style={{ marginTop: Gap.sm }}>
+                      <div style={styles.syncProgressLabel}>
+                        <span>Building history</span>
+                        <span>{(historyProgress * 100).toFixed(1)}%</span>
+                      </div>
+                      <div style={styles.syncProgressOuter}>
+                        <div
+                          style={{
+                            ...styles.syncProgressInner,
+                            width: `${Math.round(historyProgress * 100)}%`,
+                          }}
+                        />
+                      </div>
                     </div>
                   )}
                 </>
@@ -622,7 +640,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: Colors.textSecondary,
   },
   syncProgressOuter: {
-    marginTop: Gap.md,
+    marginTop: Gap.xs,
     height: 6,
     backgroundColor: 'rgba(255,255,255,0.1)',
     borderRadius: 3,
@@ -633,6 +651,13 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: Colors.accentPurple,
     borderRadius: 3,
     transition: 'width 0.3s ease',
+  },
+  syncProgressLabel: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    fontSize: Font.xs,
+    color: Colors.textSecondary,
+    marginBottom: Gap.xs,
   },
   // Overall summary
   summaryGrid: {
