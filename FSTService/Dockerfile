@@ -3,12 +3,12 @@ FROM node:20-slim AS webapp
 WORKDIR /src
 COPY packages/core/ packages/core/
 COPY FortniteFestivalWeb/package.json FortniteFestivalWeb/yarn.lock FortniteFestivalWeb/
-COPY FortniteFestivalWeb/.yarn/ FortniteFestivalWeb/.yarn/
-COPY FortniteFestivalWeb/.pnp.cjs FortniteFestivalWeb/.pnp.cjs
 WORKDIR /src/FortniteFestivalWeb
-RUN corepack enable && yarn install --immutable
+# Use node-modules linker in Docker (local dev uses PnP with global cache)
+RUN corepack enable && echo 'nodeLinker: node-modules' > .yarnrc.yml && yarn install
 COPY FortniteFestivalWeb/ .
-RUN yarn vite build
+# Overwrite .yarnrc.yml again after COPY brings in project files
+RUN echo 'nodeLinker: node-modules' > .yarnrc.yml && yarn vite build
 
 # ── Stage 2: Build .NET service ──────────────────────────────
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
