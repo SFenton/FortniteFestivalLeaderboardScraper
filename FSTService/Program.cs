@@ -322,15 +322,6 @@ app.UseAuthorization();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-// Explicitly serve wwwroot/app/ at /app path (ensures assets resolve inside Docker)
-app.UseStaticFiles(new StaticFileOptions
-{
-    FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(
-        Path.Combine(builder.Environment.WebRootPath ?? Path.Combine(builder.Environment.ContentRootPath, "wwwroot"), "app")),
-    RequestPath = "/app",
-    ServeUnknownFileTypes = false,
-});
-
 // Map API endpoints
 app.MapApiEndpoints();
 app.MapAuthEndpoints();
