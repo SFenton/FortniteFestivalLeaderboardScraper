@@ -8,7 +8,7 @@ WORKDIR /src/FortniteFestivalWeb
 RUN corepack enable && echo 'nodeLinker: node-modules' > .yarnrc.yml && yarn install
 COPY FortniteFestivalWeb/ .
 # Overwrite .yarnrc.yml again after COPY brings in project files
-RUN echo 'nodeLinker: node-modules' > .yarnrc.yml && yarn vite build
+RUN echo 'nodeLinker: node-modules' > .yarnrc.yml && yarn vite build --outDir /webapp-dist
 
 # ── Stage 2: Build .NET service ──────────────────────────────
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
@@ -24,7 +24,7 @@ COPY FortniteFestival.Core/ FortniteFestival.Core/
 COPY FSTService/ FSTService/
 
 # Copy built React app into wwwroot/app before publish
-COPY --from=webapp /src/FSTService/wwwroot/app/ FSTService/wwwroot/app/
+COPY --from=webapp /webapp-dist/ FSTService/wwwroot/app/
 
 RUN dotnet publish FSTService/FSTService.csproj -c Release --no-restore -o /app
 
