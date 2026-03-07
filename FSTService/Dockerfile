@@ -2,7 +2,7 @@
 FROM node:20-slim AS webapp
 WORKDIR /src
 COPY packages/core/ packages/core/
-COPY FortniteFestivalWeb/package.json FortniteFestivalWeb/yarn.lock FortniteFestivalWeb/.yarnrc.yml FortniteFestivalWeb/
+COPY FortniteFestivalWeb/package.json FortniteFestivalWeb/yarn.lock FortniteFestivalWeb/
 COPY FortniteFestivalWeb/.yarn/ FortniteFestivalWeb/.yarn/
 COPY FortniteFestivalWeb/.pnp.cjs FortniteFestivalWeb/.pnp.cjs
 WORKDIR /src/FortniteFestivalWeb
