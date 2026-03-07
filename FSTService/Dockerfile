@@ -23,10 +23,10 @@ RUN dotnet restore FSTService/FSTService.csproj
 COPY FortniteFestival.Core/ FortniteFestival.Core/
 COPY FSTService/ FSTService/
 
-# Copy built React app into wwwroot/app before publish
-COPY --from=webapp /webapp-dist/ FSTService/wwwroot/app/
-
 RUN dotnet publish FSTService/FSTService.csproj -c Release --no-restore -o /app
+
+# Copy built React app into published wwwroot/app
+COPY --from=webapp /webapp-dist/ /app/wwwroot/app/
 
 # ── Stage 2: Runtime ─────────────────────────────────────────
 # Using aspnet base image to support the future HTTP API layer.
