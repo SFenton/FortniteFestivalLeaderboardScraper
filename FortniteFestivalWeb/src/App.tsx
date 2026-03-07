@@ -8,6 +8,7 @@ import SongsPage from './pages/SongsPage';
 import SongDetailPage from './pages/SongDetailPage';
 import LeaderboardPage from './pages/LeaderboardPage';
 import PlayerPage from './pages/PlayerPage';
+import SuggestionsPage from './pages/SuggestionsPage';
 import { Colors, Font, Gap, Radius } from './theme';
 
 export default function App() {
@@ -45,6 +46,17 @@ function AppShell() {
           >
             Songs
           </NavLink>
+          {player && (
+            <NavLink
+              to="/suggestions"
+              style={({ isActive }) => ({
+                ...styles.navLink,
+                ...(isActive ? styles.navLinkActive : {}),
+              })}
+            >
+              Suggestions
+            </NavLink>
+          )}
         </div>
         <div style={styles.spacer} />
         <PlayerSearch
@@ -60,6 +72,9 @@ function AppShell() {
         <Route path="/songs/:songId" element={<SongDetailPage />} />
         <Route path="/songs/:songId/:instrument" element={<LeaderboardPage />} />
         <Route path="/player/:accountId" element={<PlayerPage />} />
+        {player && (
+          <Route path="/suggestions" element={<SuggestionsPage accountId={player.accountId} />} />
+        )}
       </Routes>
     </>
   );
@@ -68,6 +83,12 @@ function AppShell() {
 function ScrollToTop() {
   const { pathname } = useLocation();
   useEffect(() => {
+    if ('scrollRestoration' in history) {
+      history.scrollRestoration = 'manual';
+    }
+  }, []);
+  useEffect(() => {
+    if (pathname === '/suggestions') return;
     window.scrollTo(0, 0);
   }, [pathname]);
   return null;

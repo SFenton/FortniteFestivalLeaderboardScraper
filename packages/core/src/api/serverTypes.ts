@@ -73,6 +73,7 @@ export type LeaderboardResponse = {
   instrument: string;
   count: number;
   totalEntries: number;
+  localEntries: number;
   entries: LeaderboardEntry[];
 };
 

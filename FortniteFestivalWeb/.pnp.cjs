@@ -28,6 +28,7 @@ const RAW_RUNTIME_STATE =
       [null, {\
         "packageLocation": "./",\
         "packageDependencies": [\
+          ["@festival/core", "portal:../packages/core::locator=fortnite-festival-web%40workspace%3A."],\
           ["@types/react", "npm:19.2.14"],\
           ["@types/react-dom", "virtual:54188cb7ece5e10fa148427c9b019d1d26cb36e6961f8e795c43ac77bd8c0f4fbd9d23dce2843ea12bc3ded9463ed19b25df8494cba2a36b2a6be60b28413845#npm:19.2.3"],\
           ["@types/react-is", "npm:19.2.0"],\
@@ -35,6 +36,8 @@ const RAW_RUNTIME_STATE =
           ["fortnite-festival-web", "workspace:."],\
           ["react", "npm:19.2.4"],\
           ["react-dom", "virtual:54188cb7ece5e10fa148427c9b019d1d26cb36e6961f8e795c43ac77bd8c0f4fbd9d23dce2843ea12bc3ded9463ed19b25df8494cba2a36b2a6be60b28413845#npm:19.2.4"],\
+          ["react-icons", "virtual:54188cb7ece5e10fa148427c9b019d1d26cb36e6961f8e795c43ac77bd8c0f4fbd9d23dce2843ea12bc3ded9463ed19b25df8494cba2a36b2a6be60b28413845#npm:5.6.0"],\
+          ["react-infinite-scroll-component", "virtual:54188cb7ece5e10fa148427c9b019d1d26cb36e6961f8e795c43ac77bd8c0f4fbd9d23dce2843ea12bc3ded9463ed19b25df8494cba2a36b2a6be60b28413845#npm:6.1.1"],\
           ["react-is", "npm:19.2.4"],\
           ["react-router-dom", "virtual:54188cb7ece5e10fa148427c9b019d1d26cb36e6961f8e795c43ac77bd8c0f4fbd9d23dce2843ea12bc3ded9463ed19b25df8494cba2a36b2a6be60b28413845#npm:7.13.1"],\
           ["recharts", "virtual:54188cb7ece5e10fa148427c9b019d1d26cb36e6961f8e795c43ac77bd8c0f4fbd9d23dce2843ea12bc3ded9463ed19b25df8494cba2a36b2a6be60b28413845#npm:3.7.0"],\
@@ -536,6 +539,15 @@ const RAW_RUNTIME_STATE =
           ["@esbuild/win32-x64", "npm:0.25.12"]\
         ],\
         "linkType": "HARD"\
+      }]\
+    ]],\
+    ["@festival/core", [\
+      ["portal:../packages/core::locator=fortnite-festival-web%40workspace%3A.", {\
+        "packageLocation": "../packages/core/",\
+        "packageDependencies": [\
+          ["@festival/core", "portal:../packages/core::locator=fortnite-festival-web%40workspace%3A."]\
+        ],\
+        "linkType": "SOFT"\
       }]\
     ]],\
     ["@gar/promise-retry", [\
@@ -1522,6 +1534,7 @@ const RAW_RUNTIME_STATE =
       ["workspace:.", {\
         "packageLocation": "./",\
         "packageDependencies": [\
+          ["@festival/core", "portal:../packages/core::locator=fortnite-festival-web%40workspace%3A."],\
           ["@types/react", "npm:19.2.14"],\
           ["@types/react-dom", "virtual:54188cb7ece5e10fa148427c9b019d1d26cb36e6961f8e795c43ac77bd8c0f4fbd9d23dce2843ea12bc3ded9463ed19b25df8494cba2a36b2a6be60b28413845#npm:19.2.3"],\
           ["@types/react-is", "npm:19.2.0"],\
@@ -1529,6 +1542,8 @@ const RAW_RUNTIME_STATE =
           ["fortnite-festival-web", "workspace:."],\
           ["react", "npm:19.2.4"],\
           ["react-dom", "virtual:54188cb7ece5e10fa148427c9b019d1d26cb36e6961f8e795c43ac77bd8c0f4fbd9d23dce2843ea12bc3ded9463ed19b25df8494cba2a36b2a6be60b28413845#npm:19.2.4"],\
+          ["react-icons", "virtual:54188cb7ece5e10fa148427c9b019d1d26cb36e6961f8e795c43ac77bd8c0f4fbd9d23dce2843ea12bc3ded9463ed19b25df8494cba2a36b2a6be60b28413845#npm:5.6.0"],\
+          ["react-infinite-scroll-component", "virtual:54188cb7ece5e10fa148427c9b019d1d26cb36e6961f8e795c43ac77bd8c0f4fbd9d23dce2843ea12bc3ded9463ed19b25df8494cba2a36b2a6be60b28413845#npm:6.1.1"],\
           ["react-is", "npm:19.2.4"],\
           ["react-router-dom", "virtual:54188cb7ece5e10fa148427c9b019d1d26cb36e6961f8e795c43ac77bd8c0f4fbd9d23dce2843ea12bc3ded9463ed19b25df8494cba2a36b2a6be60b28413845#npm:7.13.1"],\
           ["recharts", "virtual:54188cb7ece5e10fa148427c9b019d1d26cb36e6961f8e795c43ac77bd8c0f4fbd9d23dce2843ea12bc3ded9463ed19b25df8494cba2a36b2a6be60b28413845#npm:3.7.0"],\
@@ -1991,6 +2006,51 @@ const RAW_RUNTIME_STATE =
         "linkType": "HARD"\
       }]\
     ]],\
+    ["react-icons", [\
+      ["npm:5.6.0", {\
+        "packageLocation": "../../../../AppData/Local/Yarn/Berry/cache/react-icons-npm-5.6.0-797edf502d-10c0.zip/node_modules/react-icons/",\
+        "packageDependencies": [\
+          ["react-icons", "npm:5.6.0"]\
+        ],\
+        "linkType": "SOFT"\
+      }],\
+      ["virtual:54188cb7ece5e10fa148427c9b019d1d26cb36e6961f8e795c43ac77bd8c0f4fbd9d23dce2843ea12bc3ded9463ed19b25df8494cba2a36b2a6be60b28413845#npm:5.6.0", {\
+        "packageLocation": "./.yarn/__virtual__/react-icons-virtual-0a38219078/5/AppData/Local/Yarn/Berry/cache/react-icons-npm-5.6.0-797edf502d-10c0.zip/node_modules/react-icons/",\
+        "packageDependencies": [\
+          ["@types/react", "npm:19.2.14"],\
+          ["react", "npm:19.2.4"],\
+          ["react-icons", "virtual:54188cb7ece5e10fa148427c9b019d1d26cb36e6961f8e795c43ac77bd8c0f4fbd9d23dce2843ea12bc3ded9463ed19b25df8494cba2a36b2a6be60b28413845#npm:5.6.0"]\
+        ],\
+        "packagePeers": [\
+          "@types/react",\
+          "react"\
+        ],\
+        "linkType": "HARD"\
+      }]\
+    ]],\
+    ["react-infinite-scroll-component", [\
+      ["npm:6.1.1", {\
+        "packageLocation": "../../../../AppData/Local/Yarn/Berry/cache/react-infinite-scroll-component-npm-6.1.1-0cbb8aa7ed-10c0.zip/node_modules/react-infinite-scroll-component/",\
+        "packageDependencies": [\
+          ["react-infinite-scroll-component", "npm:6.1.1"]\
+        ],\
+        "linkType": "SOFT"\
+      }],\
+      ["virtual:54188cb7ece5e10fa148427c9b019d1d26cb36e6961f8e795c43ac77bd8c0f4fbd9d23dce2843ea12bc3ded9463ed19b25df8494cba2a36b2a6be60b28413845#npm:6.1.1", {\
+        "packageLocation": "./.yarn/__virtual__/react-infinite-scroll-component-virtual-c6f425c58b/5/AppData/Local/Yarn/Berry/cache/react-infinite-scroll-component-npm-6.1.1-0cbb8aa7ed-10c0.zip/node_modules/react-infinite-scroll-component/",\
+        "packageDependencies": [\
+          ["@types/react", "npm:19.2.14"],\
+          ["react", "npm:19.2.4"],\
+          ["react-infinite-scroll-component", "virtual:54188cb7ece5e10fa148427c9b019d1d26cb36e6961f8e795c43ac77bd8c0f4fbd9d23dce2843ea12bc3ded9463ed19b25df8494cba2a36b2a6be60b28413845#npm:6.1.1"],\
+          ["throttle-debounce", "npm:2.3.0"]\
+        ],\
+        "packagePeers": [\
+          "@types/react",\
+          "react"\
+        ],\
+        "linkType": "HARD"\
+      }]\
+    ]],\
     ["react-is", [\
       ["npm:19.2.4", {\
         "packageLocation": "../../../../AppData/Local/Yarn/Berry/cache/react-is-npm-19.2.4-9fb594121c-10c0.zip/node_modules/react-is/",\
@@ -2322,6 +2382,15 @@ const RAW_RUNTIME_STATE =
           ["minizlib", "npm:3.1.0"],\
           ["tar", "npm:7.5.10"],\
           ["yallist", "npm:5.0.0"]\
+        ],\
+        "linkType": "HARD"\
+      }]\
+    ]],\
+    ["throttle-debounce", [\
+      ["npm:2.3.0", {\
+        "packageLocation": "../../../../AppData/Local/Yarn/Berry/cache/throttle-debounce-npm-2.3.0-0e354dff02-10c0.zip/node_modules/throttle-debounce/",\
+        "packageDependencies": [\
+          ["throttle-debounce", "npm:2.3.0"]\
         ],\
         "linkType": "HARD"\
       }]\

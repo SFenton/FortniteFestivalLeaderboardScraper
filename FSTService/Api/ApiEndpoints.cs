@@ -131,6 +131,7 @@ public static class ApiEndpoints
                 instrument,
                 count = enriched.Count,
                 totalEntries,
+                localEntries = dbCount,
                 entries = enriched
             });
         })

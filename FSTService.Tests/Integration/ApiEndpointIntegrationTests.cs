@@ -1456,6 +1456,74 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    [Fact]
+    public async Task ApiLeaderboard_ReturnsLocalEntries()
+    {
+        const string song = "localEntriesSong";
+        const string inst = "Solo_Guitar";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var db = persistence.GetOrCreateInstrumentDb(inst);
+            db.UpsertEntries(song, new[]
+            {
+                new LeaderboardEntry { AccountId = "leAcct1", Score = 500000, Rank = 1 },
+                new LeaderboardEntry { AccountId = "leAcct2", Score = 400000, Rank = 2 },
+                new LeaderboardEntry { AccountId = "leAcct3", Score = 300000, Rank = 3 },
+            });
+        }
+
+        var response = await _client.GetAsync($"/api/leaderboard/{song}/{inst}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        // Without LeaderboardPopulation, localEntries == totalEntries == dbCount
+        Assert.Equal(3, json.GetProperty("localEntries").GetInt32());
+        Assert.Equal(3, json.GetProperty("totalEntries").GetInt32());
+    }
+
+    // ─── Sync status ────────────────────────────────────────
+
+    [Fact]
+    public async Task SyncStatus_UnknownAccount_ReturnsUntrackedNulls()
+    {
+        var response = await _client.GetAsync("/api/player/unknownSyncAcct/sync-status");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("unknownSyncAcct", json.GetProperty("accountId").GetString());
+        Assert.False(json.GetProperty("isTracked").GetBoolean());
+        // backfill and historyRecon may be null (omitted) or JsonValueKind.Null
+        if (json.TryGetProperty("backfill", out var bf))
+            Assert.Equal(JsonValueKind.Null, bf.ValueKind);
+        if (json.TryGetProperty("historyRecon", out var hr))
+            Assert.Equal(JsonValueKind.Null, hr.ValueKind);
+    }
+
+    [Fact]
+    public async Task SyncStatus_RegisteredAccount_ReturnsTrackedWithStatus()
+    {
+        const string acct = "syncStatusAcct";
+        const string device = "syncStatusDev";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            metaDb.RegisterUser(device, acct);
+            metaDb.EnqueueBackfill(acct, 100);
+        }
+
+        var response = await _client.GetAsync($"/api/player/{acct}/sync-status");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(acct, json.GetProperty("accountId").GetString());
+        Assert.True(json.GetProperty("isTracked").GetBoolean());
+
+        var backfill = json.GetProperty("backfill");
+        Assert.NotEqual(JsonValueKind.Null, backfill.ValueKind);
+        Assert.Equal("pending", backfill.GetProperty("status").GetString());
+        Assert.Equal(100, backfill.GetProperty("totalSongsToCheck").GetInt32());
+    }
+
     // ─── Player profile with display name ───────────────────
 
     [Fact]
@@ -1539,6 +1607,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         // Should use the LeaderboardPopulation value (120000), not the DB row count (2)
         Assert.Equal(120000, json.GetProperty("totalEntries").GetInt32());
+        // localEntries should reflect the actual DB row count
+        Assert.Equal(2, json.GetProperty("localEntries").GetInt32());
     }
 
     // ─── Auth/me with properly registered user ──────────────

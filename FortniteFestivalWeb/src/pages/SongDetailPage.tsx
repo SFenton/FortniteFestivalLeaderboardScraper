@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
 import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
@@ -70,6 +70,7 @@ export default function SongDetailPage() {
               difficulty={getDifficulty(song, inst)}
               playerScore={playerScores.find((s) => s.instrument === inst)}
               playerName={player?.displayName}
+              highlight={inst === defaultInstrument}
             />
           ))}
         </div>
@@ -127,16 +128,25 @@ function InstrumentCard({
   difficulty,
   playerScore,
   playerName,
+  highlight,
 }: {
   songId: string;
   instrument: InstrumentKey;
   difficulty: number | undefined;
   playerScore?: PlayerScore;
   playerName?: string;
+  highlight?: boolean;
 }) {
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (highlight && cardRef.current) {
+      cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [highlight]);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,7 +172,12 @@ function InstrumentCard({
 
   return (
     <div
-      style={{ ...styles.card, cursor: 'pointer' }}
+      ref={cardRef}
+      style={{
+        ...styles.card,
+        cursor: 'pointer',
+        ...(highlight ? { borderColor: Colors.accentPurple, boxShadow: `0 0 0 1px ${Colors.accentPurple}` } : {}),
+      }}
       onClick={() => navigate(`/songs/${songId}/${instrument}`)}
     >
       <div style={styles.cardHeader}>

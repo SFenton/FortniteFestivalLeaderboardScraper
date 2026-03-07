@@ -1,0 +1,467 @@
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Link } from 'react-router-dom';
+import InfiniteScroll from 'react-infinite-scroll-component';
+import { useFestival } from '../contexts/FestivalContext';
+import { useSyncStatus } from '../hooks/useSyncStatus';
+import { useSuggestions } from '../hooks/useSuggestions';
+import { api } from '../api/client';
+import { serverSongToCore, buildScoresIndex } from '../utils/suggestionAdapter';
+import { InstrumentIcon, getInstrumentStatusVisual } from '../components/InstrumentIcons';
+import { InstrumentKeys } from '@festival/core/instruments';
+import type { LeaderboardData } from '@festival/core/models';
+import type { PlayerResponse } from '../models';
+import type { SuggestionCategory, SuggestionSongItem } from '@festival/core/suggestions/types';
+import type { InstrumentKey } from '@festival/core/instruments';
+import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size } from '../theme';
+import type { InstrumentKey as ServerInstrumentKey } from '../models';
+
+const CORE_TO_SERVER_INSTRUMENT: Record<InstrumentKey, ServerInstrumentKey> = {
+  guitar: 'Solo_Guitar',
+  bass: 'Solo_Bass',
+  drums: 'Solo_Drums',
+  vocals: 'Solo_Vocals',
+  pro_guitar: 'Solo_PeripheralGuitar',
+  pro_bass: 'Solo_PeripheralBass',
+};
+
+type Props = { accountId: string };
+
+export default function SuggestionsPage({ accountId }: Props) {
+  const {
+    state: { songs, isLoading },
+  } = useFestival();
+
+  const [playerData, setPlayerData] = useState<PlayerResponse | null>(null);
+  const [playerLoading, setPlayerLoading] = useState(true);
+  const { justCompleted, clearCompleted } = useSyncStatus(accountId);
+
+  const fetchPlayer = useCallback(async () => {
+    setPlayerLoading(true);
+    try {
+      setPlayerData(await api.getPlayer(accountId));
+    } catch {
+      setPlayerData(null);
+    } finally {
+      setPlayerLoading(false);
+    }
+  }, [accountId]);
+
+  useEffect(() => {
+    void fetchPlayer();
+  }, [fetchPlayer]);
+
+  useEffect(() => {
+    if (justCompleted) {
+      clearCompleted();
+      void fetchPlayer();
+    }
+  }, [justCompleted, clearCompleted, fetchPlayer]);
+
+  const coreSongs = useMemo(
+    () => (playerData ? songs.map(serverSongToCore) : []),
+    [songs, playerData],
+  );
+  const scoresIndex = useMemo(
+    () => (playerData ? buildScoresIndex(playerData.scores) : {}),
+    [playerData],
+  );
+
+  const albumArtMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of songs) {
+      if (s.albumArt) m.set(s.songId, s.albumArt);
+    }
+    return m;
+  }, [songs]);
+
+  const { categories, loadMore, hasMore } = useSuggestions(accountId, coreSongs, scoresIndex);
+
+  // Show loading only if we have no cached categories to display
+  if ((isLoading || playerLoading) && categories.length === 0) {
+    return <div style={styles.center}>Loading suggestions…</div>;
+  }
+
+  if (!playerData && categories.length === 0) {
+    return <div style={styles.center}>Could not load player data.</div>;
+  }
+
+  if (categories.length === 0 && !hasMore) {
+    return (
+      <div style={styles.page}>
+        <div style={styles.container}>
+          <h1 style={styles.heading}>Suggestions</h1>
+          <p style={styles.empty}>
+            No suggestions available. Play some songs first!
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={styles.page}>
+      <div style={styles.container}>
+        <h1 style={styles.heading}>Suggestions</h1>
+        <InfiniteScroll
+          dataLength={categories.length}
+          next={loadMore}
+          hasMore={hasMore}
+          loader={<div style={styles.loader}>Loading more…</div>}
+          scrollThreshold="600px"
+          style={{ overflow: 'visible' }}
+        >
+          {categories.map((cat, idx) => (
+            <CategoryCard key={`${idx}-${cat.key}`} category={cat} albumArtMap={albumArtMap} scoresIndex={scoresIndex} />
+          ))}
+        </InfiniteScroll>
+      </div>
+    </div>
+  );
+}
+
+function CategoryCard({
+  category,
+  albumArtMap,
+  scoresIndex,
+}: {
+  category: SuggestionCategory;
+  albumArtMap: Map<string, string>;
+  scoresIndex: Record<string, LeaderboardData>;
+}) {
+  const catInstrument = getCatInstrument(category.key);
+  return (
+    <div style={styles.card}>
+      <div style={styles.cardHeader}>
+        <div style={styles.cardHeaderRow}>
+          <div>
+            <span style={styles.cardTitle}>{category.title}</span>
+            <span style={styles.cardDesc}>{category.description}</span>
+          </div>
+          {catInstrument && (
+            <InstrumentIcon instrument={catInstrument} size={36} />
+          )}
+        </div>
+      </div>
+      <div style={styles.songList}>
+        {category.songs.map((song) => (
+          <SongRow
+            key={`${song.songId}-${song.instrumentKey ?? 'any'}`}
+            song={song}
+            categoryKey={category.key}
+            albumArt={albumArtMap.get(song.songId)}
+            leaderboardData={scoresIndex[song.songId]}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Category-key classification helpers (mirrors mobile SuggestionSongRow logic)
+// ---------------------------------------------------------------------------
+
+function getCatInstrument(key: string): InstrumentKey | null {
+  const prefixes = ['unfc_', 'unplayed_', 'almost_elite_', 'pct_push_'];
+  let remainder: string | null = null;
+  for (const p of prefixes) {
+    if (key.startsWith(p)) {
+      remainder = key.substring(p.length);
+      break;
+    }
+  }
+  if (!remainder) return null;
+  const known: InstrumentKey[] = ['pro_guitar', 'pro_bass', 'guitar', 'bass', 'drums', 'vocals'];
+  for (const k of known) {
+    if (remainder === k || remainder.startsWith(`${k}_`)) return k;
+  }
+  return null;
+}
+
+type RowLayout =
+  | 'instrumentChips'   // default: 6 colored instrument status circles
+  | 'singleInstrument'  // FC/near-FC/gold-push/star-gains: single instrument icon
+  | 'percentile'        // almost_elite/pct_push: percentile pill + instrument icon
+  | 'unfcAccuracy'      // unfc_*: bold accuracy %
+  | 'hidden';           // variety/artist/samename_title/unplayed_any: nothing
+
+function getRowLayout(categoryKey: string): RowLayout {
+  const k = categoryKey.toLowerCase();
+  if (k.startsWith('variety_pack') || k.startsWith('artist_sampler_') || k.startsWith('artist_unplayed_')
+    || k.startsWith('unplayed_')
+    || (k.startsWith('samename_') && !k.startsWith('samename_nearfc_'))) return 'hidden';
+  if (k.startsWith('unfc_')) return 'unfcAccuracy';
+  if (k.startsWith('almost_elite') || k.startsWith('pct_push')) return 'percentile';
+  if (k.startsWith('near_fc') || k.startsWith('almost_six_star') || k.startsWith('more_stars')
+    || k.startsWith('first_plays_mixed') || k.startsWith('star_gains')
+    || k.startsWith('samename_nearfc_')) return 'singleInstrument';
+  return 'instrumentChips';
+}
+
+function SongRow({
+  song,
+  categoryKey,
+  albumArt,
+  leaderboardData,
+}: {
+  song: SuggestionSongItem;
+  categoryKey: string;
+  albumArt?: string;
+  leaderboardData?: LeaderboardData;
+}) {
+  const layout = getRowLayout(categoryKey);
+  const starCount = song.stars ?? 0;
+  const isGold = starCount >= 6;
+  const displayStars = isGold ? 5 : starCount;
+
+  // Instrument from the song item, or inferred from the category key
+  const instrument = song.instrumentKey ?? getCatInstrument(categoryKey);
+  const songUrl = instrument
+    ? `/songs/${song.songId}?instrument=${CORE_TO_SERVER_INSTRUMENT[instrument]}`
+    : `/songs/${song.songId}`;
+
+  return (
+    <Link to={songUrl} style={styles.row}>
+      {albumArt ? (
+        <img src={albumArt} alt="" style={styles.thumb} loading="lazy" />
+      ) : (
+        <div style={{ ...styles.thumb, ...styles.thumbPlaceholder }} />
+      )}
+      <div style={styles.rowText}>
+        <span style={styles.rowTitle}>{song.title}</span>
+        <span style={styles.rowArtist}>{song.artist}</span>
+        {/* Star gains: show stars + score beneath title */}
+        {layout === 'singleInstrument' && categoryKey.startsWith('star_gains') && starCount > 0 && (
+          <span style={{ ...styles.starRow, ...(isGold ? { color: Colors.gold } : {}) }}>
+            {'★'.repeat(displayStars)}
+          </span>
+        )}
+      </div>
+      <RightContent song={song} layout={layout} leaderboardData={leaderboardData} />
+    </Link>
+  );
+}
+
+function RightContent({
+  song,
+  layout,
+  leaderboardData,
+}: {
+  song: SuggestionSongItem;
+  layout: RowLayout;
+  leaderboardData?: LeaderboardData;
+}) {
+  if (layout === 'hidden') return null;
+
+  if (layout === 'unfcAccuracy') {
+    const pct = song.percent;
+    const display = typeof pct === 'number' && pct > 0
+      ? `${Math.max(0, Math.min(99, Math.floor(pct)))}%`
+      : null;
+    return display ? <span style={styles.unfcPct}>{display}</span> : null;
+  }
+
+  if (layout === 'percentile') {
+    const display = song.percentileDisplay;
+    const isTop5 = display === 'Top 1%' || display === 'Top 2%' || display === 'Top 3%' || display === 'Top 4%' || display === 'Top 5%';
+    return (
+      <div style={styles.badges}>
+        {display && (
+          <span style={{ ...styles.percentilePill, ...(isTop5 ? styles.percentilePillGold : {}) }}>
+            {display}
+          </span>
+        )}
+        {song.instrumentKey && (
+          <InstrumentIcon instrument={song.instrumentKey} size={28} />
+        )}
+      </div>
+    );
+  }
+
+  if (layout === 'singleInstrument') {
+    return song.instrumentKey ? (
+      <div style={styles.badges}>
+        <InstrumentIcon instrument={song.instrumentKey} size={28} />
+      </div>
+    ) : null;
+  }
+
+  // instrumentChips: show 6 colored circles
+  return (
+    <div style={styles.instrumentChipsRow}>
+      {InstrumentKeys.map((ins) => {
+        const tr = leaderboardData ? (leaderboardData as Record<string, unknown>)[ins] as { numStars?: number; isFullCombo?: boolean } | undefined : undefined;
+        const hasScore = !!tr && (tr.numStars ?? 0) > 0;
+        const isFC = !!tr?.isFullCombo;
+        const { fill, stroke } = getInstrumentStatusVisual(hasScore, isFC);
+        return (
+          <div
+            key={ins}
+            style={{
+              ...styles.instrumentChip,
+              backgroundColor: fill,
+              borderColor: stroke,
+            }}
+          >
+            <InstrumentIcon instrument={ins} size={20} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  page: {
+    minHeight: '100vh',
+    backgroundColor: Colors.backgroundApp,
+    color: Colors.textPrimary,
+    fontFamily:
+      "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+  },
+  container: {
+    maxWidth: MaxWidth.card,
+    margin: '0 auto',
+    padding: `${Layout.paddingTop}px ${Layout.paddingHorizontal}px`,
+  },
+  center: {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: '60vh',
+    color: Colors.textTertiary,
+    fontSize: Font.lg,
+  },
+  heading: {
+    fontSize: Font.title,
+    fontWeight: 700,
+    marginBottom: Gap.xl,
+  },
+  empty: {
+    color: Colors.textTertiary,
+    fontSize: Font.md,
+  },
+  loader: {
+    textAlign: 'center' as const,
+    color: Colors.textTertiary,
+    fontSize: Font.sm,
+    padding: `${Gap.section}px 0`,
+  },
+  card: {
+    backgroundColor: Colors.backgroundCard,
+    border: `1px solid ${Colors.borderCard}`,
+    borderRadius: Radius.lg,
+    marginBottom: Gap.section,
+    overflow: 'hidden',
+  },
+  cardHeader: {
+    padding: `${Gap.xl}px ${Gap.section}px`,
+    borderBottom: `1px solid ${Colors.borderSubtle}`,
+  },
+  cardHeaderRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Gap.xl,
+  },
+  cardTitle: {
+    display: 'block',
+    fontSize: Font.lg,
+    fontWeight: 700,
+    color: Colors.textPrimary,
+    marginBottom: Gap.xs,
+  },
+  cardDesc: {
+    display: 'block',
+    fontSize: Font.sm,
+    color: Colors.textTertiary,
+  },
+  songList: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+  },
+  row: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.xl,
+    padding: `${Gap.lg}px ${Gap.section}px`,
+    borderBottom: `1px solid ${Colors.borderSubtle}`,
+    textDecoration: 'none',
+    color: 'inherit',
+    transition: 'background-color 0.12s',
+  },
+  rowText: {
+    flex: 1,
+    minWidth: 0,
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: Gap.xs,
+  },
+  rowTitle: {
+    fontSize: Font.md,
+    fontWeight: 600,
+    color: Colors.textPrimary,
+    whiteSpace: 'nowrap' as const,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  rowArtist: {
+    fontSize: Font.sm,
+    color: Colors.textTertiary,
+  },
+  badges: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.md,
+    flexShrink: 0,
+  },
+  instrumentChipsRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 0,
+  },
+  instrumentChip: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    border: '2px solid',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  unfcPct: {
+    fontSize: Font.lg,
+    fontWeight: 800,
+    color: Colors.textPrimary,
+    minWidth: 48,
+    textAlign: 'center' as const,
+    flexShrink: 0,
+  },
+  starRow: {
+    fontSize: Font.xs,
+    color: Colors.textTertiary,
+    marginTop: Gap.xs,
+  },
+  percentilePill: {
+    fontSize: Font.xs,
+    padding: `${Gap.xs}px ${Gap.md}px`,
+    borderRadius: Radius.xs,
+    backgroundColor: Colors.surfaceSubtle,
+    color: Colors.textMuted,
+  },
+  percentilePillGold: {
+    backgroundColor: Colors.goldBg,
+    color: Colors.gold,
+  },
+  thumb: {
+    width: Size.thumb,
+    height: Size.thumb,
+    borderRadius: Radius.xs,
+    objectFit: 'cover' as const,
+    flexShrink: 0,
+  },
+  thumbPlaceholder: {
+    backgroundColor: Colors.purplePlaceholder,
+  },
+};

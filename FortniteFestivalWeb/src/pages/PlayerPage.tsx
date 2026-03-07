@@ -12,6 +12,7 @@ import {
   type Song,
 } from '../models';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth } from '../theme';
+import { InstrumentIcon } from '../components/InstrumentIcons';
 
 export default function PlayerPage() {
   const { accountId } = useParams<{ accountId: string }>();
@@ -231,34 +232,35 @@ function InstrumentStatsCard({
   const stats = computeInstrumentStats(scores, totalSongs);
 
   return (
-    <div style={styles.instCard}>
+    <div>
       <div style={styles.instCardHeader}>
+        <InstrumentIcon instrument={instrument} size={48} />
         <span style={styles.instCardTitle}>
           {INSTRUMENT_LABELS[instrument]}
         </span>
-        <span style={styles.instCardSubtitle}>
-          {stats.songsPlayed} of {totalSongs} songs played ({stats.completionPercent}%)
-        </span>
       </div>
-      <div style={styles.instCardBody}>
-        {/* Stats grid — matches mobile's 9 stats exactly */}
-        <div style={styles.statsGrid}>
-          <MiniStat label="FCs" value={`${stats.fcCount} (${stats.fcPercent}%)`} />
-          <MiniStat label="Gold Stars" value={stats.goldStarCount.toString()} />
-          <MiniStat label="5 Stars" value={stats.fiveStarCount.toString()} />
-          <MiniStat label="4 Stars" value={stats.fourStarCount.toString()} />
-          <MiniStat label="Average Accuracy" value={formatAccuracy(stats.avgAccuracy)} />
-          <MiniStat label="Best Accuracy" value={formatAccuracy(stats.bestAccuracy)} />
-          <MiniStat label="Average Stars" value={stats.averageStars > 0 ? stats.averageStars.toFixed(2) : '—'} />
-          <MiniStat label="Best Rank" value={stats.bestRank > 0 ? `#${stats.bestRank.toLocaleString()}` : '—'} />
-          <MiniStat label="Percentile" value={stats.overallPercentile} />
-          <MiniStat label="Percentile (Songs Played)" value={stats.avgPercentile} />
-        </div>
+      <div style={styles.instCard}>
+        <div style={styles.instCardBody}>
+          {/* Stats grid — matches mobile's 9 stats exactly */}
+          <div style={styles.statsGrid}>
+            <MiniStat label="Songs Played" value={`${stats.songsPlayed} / ${totalSongs} (${stats.completionPercent}%)`} />
+            <MiniStat label="FCs" value={`${stats.fcCount} (${stats.fcPercent}%)`} />
+            <MiniStat label="Gold Stars" value={stats.goldStarCount.toString()} />
+            <MiniStat label="5 Stars" value={stats.fiveStarCount.toString()} />
+            <MiniStat label="4 Stars" value={stats.fourStarCount.toString()} />
+            <MiniStat label="Average Accuracy" value={formatAccuracy(stats.avgAccuracy)} />
+            <MiniStat label="Best Accuracy" value={formatAccuracy(stats.bestAccuracy)} />
+            <MiniStat label="Average Stars" value={stats.averageStars > 0 ? stats.averageStars.toFixed(2) : '—'} />
+            <MiniStat label="Best Rank" value={stats.bestRank > 0 ? `#${stats.bestRank.toLocaleString()}` : '—'} />
+            <MiniStat label="Percentile" value={stats.overallPercentile} />
+            <MiniStat label="Percentile (Songs Played)" value={stats.avgPercentile} />
+          </div>
 
-        {/* Percentile distribution */}
-        {stats.songsPlayed > 0 && (
-          <PercentileBar stats={stats} />
-        )}
+          {/* Percentile distribution */}
+          {stats.songsPlayed > 0 && (
+            <PercentileBar stats={stats} />
+          )}
+        </div>
       </div>
     </div>
   );
@@ -335,22 +337,17 @@ function TopSongsCard({
   songMap: Map<string, Song>;
 }) {
   return (
-    <div style={styles.instCard}>
+    <div>
       <div style={styles.instCardHeader}>
-        <div>
-          <span style={styles.instCardTitle}>
-            {title}
-          </span>
-          <div style={styles.catDesc}>
-            {description}
-          </div>
+        <InstrumentIcon instrument={instrument} size={48} />
+        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: 48 }}>
+          <span style={styles.instCardTitle}>{title}</span>
+          <span style={{ ...styles.sectionDesc, margin: 0, fontSize: Font.md }}>{description}</span>
         </div>
-        <span style={styles.instCardSubtitle}>
-          {INSTRUMENT_LABELS[instrument]}
-        </span>
       </div>
-      <div style={styles.instCardBody}>
-        {scores.map((s) => {
+      <div style={styles.instCard}>
+        <div style={styles.instCardBody}>
+          {scores.map((s) => {
           const song = songMap.get(s.songId);
           const pct =
             s.rank > 0 && (s.totalEntries ?? 0) > 0
@@ -401,6 +398,7 @@ function TopSongsCard({
             </Link>
           );
         })}
+        </div>
       </div>
     </div>
   );
@@ -695,7 +693,7 @@ const styles: Record<string, React.CSSProperties> = {
   instrumentGrid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))',
-    gap: Gap.xl,
+    gap: Gap.section,
   },
   instCard: {
     backgroundColor: Colors.backgroundCard,
@@ -706,12 +704,11 @@ const styles: Record<string, React.CSSProperties> = {
   instCardHeader: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: `${Gap.md}px ${Gap.xl}px`,
-    backgroundColor: Colors.accentPurpleDark,
+    gap: Gap.md,
+    paddingBottom: Gap.sm,
   },
   instCardTitle: {
-    fontSize: Font.lg,
+    fontSize: Font.xl,
     fontWeight: 600,
   },
   instCardSubtitle: {

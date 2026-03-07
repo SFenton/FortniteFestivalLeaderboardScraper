@@ -135,6 +135,27 @@ public sealed class InstrumentDatabaseTests : IDisposable
         Assert.Empty(board);
     }
 
+    // ═══ GetAllSongCounts ═══════════════════════════════════════
+
+    [Fact]
+    public void GetAllSongCounts_returns_counts_per_song()
+    {
+        Db.UpsertEntries("song_A", [MakeEntry("acct_1", 100_000), MakeEntry("acct_2", 90_000)]);
+        Db.UpsertEntries("song_B", [MakeEntry("acct_1", 80_000)]);
+
+        var counts = Db.GetAllSongCounts();
+        Assert.Equal(2, counts.Count);
+        Assert.Equal(2, counts["song_A"]);
+        Assert.Equal(1, counts["song_B"]);
+    }
+
+    [Fact]
+    public void GetAllSongCounts_returns_empty_when_no_entries()
+    {
+        var counts = Db.GetAllSongCounts();
+        Assert.Empty(counts);
+    }
+
     // ═══ GetPlayerScores ════════════════════════════════════════
 
     [Fact]

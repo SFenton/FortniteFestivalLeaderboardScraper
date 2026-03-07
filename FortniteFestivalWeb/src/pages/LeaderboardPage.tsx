@@ -26,11 +26,12 @@ export default function LeaderboardPage() {
 
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [totalEntries, setTotalEntries] = useState(0);
+  const [localEntries, setLocalEntries] = useState(0);
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const totalPages = Math.max(1, Math.ceil(totalEntries / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(localEntries / PAGE_SIZE));
 
   const fetchPage = useCallback(
     async (pageNum: number) => {
@@ -46,6 +47,7 @@ export default function LeaderboardPage() {
         );
         setEntries(res.entries);
         setTotalEntries(res.totalEntries);
+        setLocalEntries(res.localEntries ?? res.totalEntries);
         setPage(pageNum);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load leaderboard');

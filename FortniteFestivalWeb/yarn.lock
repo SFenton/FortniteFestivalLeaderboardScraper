@@ -391,6 +391,12 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@festival/core@portal:../packages/core::locator=fortnite-festival-web%40workspace%3A.":
+  version: 0.0.0-use.local
+  resolution: "@festival/core@portal:../packages/core::locator=fortnite-festival-web%40workspace%3A."
+  languageName: node
+  linkType: soft
+
 "@gar/promise-retry@npm:^1.0.0":
   version: 1.0.2
   resolution: "@gar/promise-retry@npm:1.0.2"
@@ -1239,12 +1245,15 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "fortnite-festival-web@workspace:."
   dependencies:
+    "@festival/core": "portal:../packages/core"
     "@types/react": "npm:^19.0.0"
     "@types/react-dom": "npm:^19.0.0"
     "@types/react-is": "npm:^19"
     "@vitejs/plugin-react": "npm:^4.3.0"
     react: "npm:^19.0.0"
     react-dom: "npm:^19.0.0"
+    react-icons: "npm:^5.6.0"
+    react-infinite-scroll-component: "npm:^6.1.1"
     react-is: "npm:^19.2.4"
     react-router-dom: "npm:^7.1.0"
     recharts: "npm:^3.7.0"
@@ -1650,6 +1659,26 @@ __metadata:
   languageName: node
   linkType: hard
 
+"react-icons@npm:^5.6.0":
+  version: 5.6.0
+  resolution: "react-icons@npm:5.6.0"
+  peerDependencies:
+    react: "*"
+  checksum: 10c0/addba1ebfd45cdf7f69291d0c93df64fca1271cfdb66df657abd223e3451c73356b035f50e75858627dd182b02129596c79eaaaa45d32eb52658e443a992645c
+  languageName: node
+  linkType: hard
+
+"react-infinite-scroll-component@npm:^6.1.1":
+  version: 6.1.1
+  resolution: "react-infinite-scroll-component@npm:6.1.1"
+  dependencies:
+    throttle-debounce: "npm:^2.1.0"
+  peerDependencies:
+    react: ">=16.0.0"
+  checksum: 10c0/d05c52012238ed29a3fbd687a323614a688c6d26cacb92557ebf056ee6bb91ce9b31aa0775f74e1f79db66f177edafc377017d2cd87f6374ffbc092a4f28a130
+  languageName: node
+  linkType: hard
+
 "react-is@npm:^19.2.4":
   version: 19.2.4
   resolution: "react-is@npm:19.2.4"
@@ -1954,6 +1983,13 @@ __metadata:
     minizlib: "npm:^3.1.0"
     yallist: "npm:^5.0.0"
   checksum: 10c0/ed905e4b33886377df6e9206e5d1bd34458c21666e27943f946799416f86348c938590d573d6a69312cb29c583b122647a64ec92782f2b7e24e68d985dd72531
+  languageName: node
+  linkType: hard
+
+"throttle-debounce@npm:^2.1.0":
+  version: 2.3.0
+  resolution: "throttle-debounce@npm:2.3.0"
+  checksum: 10c0/41648e4cf46f935818af32ecac34f9876c618f24e300551cbe3a0ca2c5828cb8d2f9b73e6e1e2f8c64237f70fbc8c541f9b5c9114da70b33b1ed10ba4cc6b15f
   languageName: node
   linkType: hard
 
