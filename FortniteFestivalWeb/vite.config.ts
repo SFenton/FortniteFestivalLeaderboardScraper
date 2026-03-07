@@ -7,11 +7,16 @@ export default defineConfig(({ mode }) => {
   const apiTarget = env.VITE_API_BASE || 'http://localhost:8080';
 
   return {
+    base: '/app/',
     plugins: [react()],
     resolve: {
       alias: {
         '@festival/core': path.resolve(__dirname, '../packages/core/src'),
       },
+    },
+    build: {
+      outDir: path.resolve(__dirname, '../FSTService/wwwroot/app'),
+      emptyOutDir: true,
     },
     server: {
       port: 3000,

@@ -19,6 +19,8 @@ services:
       - EpicOAuth__ClientSecret=${EPIC_CLIENT_SECRET:?Set EPIC_CLIENT_SECRET in .env}
       - EpicOAuth__TokenEncryptionKey=${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
       - Api__ApiKey=${API_KEY:?Set API_KEY in .env}
+      - WebApp__Username=${WEBAPP_USERNAME:-admin}
+      - WebApp__Password=${WEBAPP_PASSWORD:-changeme}
       # Override scraper settings via environment variables if needed:
       # - Scraper__ScrapeInterval=04:00:00
       # - Scraper__SongSyncInterval=00:15:00

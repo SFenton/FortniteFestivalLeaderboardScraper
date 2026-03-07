@@ -1,4 +1,16 @@
-# ── Stage 1: Build ────────────────────────────────────────────
+# ── Stage 1: Build React web app ──────────────────────────────
+FROM node:20-slim AS webapp
+WORKDIR /src
+COPY packages/core/ packages/core/
+COPY FortniteFestivalWeb/package.json FortniteFestivalWeb/yarn.lock FortniteFestivalWeb/.yarnrc.yml FortniteFestivalWeb/
+COPY FortniteFestivalWeb/.yarn/ FortniteFestivalWeb/.yarn/
+COPY FortniteFestivalWeb/.pnp.cjs FortniteFestivalWeb/.pnp.cjs
+WORKDIR /src/FortniteFestivalWeb
+RUN corepack enable && yarn install --immutable
+COPY FortniteFestivalWeb/ .
+RUN yarn vite build
+
+# ── Stage 2: Build .NET service ──────────────────────────────
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 
@@ -10,6 +22,10 @@ RUN dotnet restore FSTService/FSTService.csproj
 # Copy source and publish
 COPY FortniteFestival.Core/ FortniteFestival.Core/
 COPY FSTService/ FSTService/
+
+# Copy built React app into wwwroot/app before publish
+COPY --from=webapp /src/FSTService/wwwroot/app/ FSTService/wwwroot/app/
+
 RUN dotnet publish FSTService/FSTService.csproj -c Release --no-restore -o /app
 
 # ── Stage 2: Runtime ─────────────────────────────────────────
