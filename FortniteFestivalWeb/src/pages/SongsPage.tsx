@@ -1,10 +1,10 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, Fragment } from 'react';
 import { Link } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
 import { useSyncStatus } from '../hooks/useSyncStatus';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { api } from '../api/client';
 import type { Song, PlayerScore, PlayerResponse, InstrumentKey } from '../models';
-import { INSTRUMENT_KEYS, INSTRUMENT_LABELS } from '../models';
 import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth } from '../theme';
 import SortModal from '../components/SortModal';
 import type { SortDraft } from '../components/SortModal';
@@ -28,6 +28,7 @@ export default function SongsPage({ accountId }: Props) {
   const {
     state: { songs, isLoading, error },
   } = useFestival();
+  const isMobile = useIsMobile();
   const [search, setSearch] = useState('');
   const [settings, setSettings] = useState<SongSettings>(loadSongSettings);
   const [instrument, setInstrument] = useState<InstrumentKey>('Solo_Guitar');
@@ -391,6 +392,10 @@ export default function SongsPage({ accountId }: Props) {
                 key={song.songId}
                 song={song}
                 score={hasPlayer ? scoreMap.get(song.songId) : undefined}
+                instrument={instrument}
+                metadataOrder={settings.metadataOrder}
+                sortMode={settings.sortMode}
+                isMobile={isMobile}
               />
             ))}
           </div>
@@ -419,58 +424,77 @@ export default function SongsPage({ accountId }: Props) {
   );
 }
 
-function SongRow({ song, score }: { song: Song; score?: PlayerScore }) {
+/** SVG parallelogram difficulty bars matching mobile DifficultyBars. */
+function DifficultyBars({ raw }: { raw: number }) {
+  const display = Math.max(0, Math.min(6, Math.trunc(raw))) + 1;
+  const barW = 8;
+  const barH = 20;
+  const offset = Math.min(Math.max(Math.round(barW * 0.26), 1), Math.floor(barW * 0.45));
   return (
-    <Link to={`/songs/${song.songId}`} style={styles.row}>
-      {song.albumArt ? (
-        <img src={song.albumArt} alt="" style={styles.thumb} loading="lazy" />
-      ) : (
-        <div style={{ ...styles.thumb, ...styles.thumbPlaceholder }} />
-      )}
-      <div style={styles.rowText}>
-        <span style={styles.rowTitle}>{song.title}</span>
-        <span style={styles.rowArtist}>{song.artist}</span>
-      </div>
-      {score ? (
-        <ScoreMetadata score={score} />
-      ) : null}
-    </Link>
+    <svg
+      width={barW * 7 + 6}
+      height={barH}
+      style={{ display: 'inline-block', verticalAlign: 'middle' }}
+      aria-label={`Difficulty ${display} of 7`}
+    >
+      {Array.from({ length: 7 }).map((_, i) => {
+        const filled = i + 1 <= display;
+        const x = i * (barW + 1);
+        return (
+          <polygon
+            key={i}
+            points={`${x + offset},0 ${x + barW},0 ${x + barW - offset},${barH} ${x},${barH}`}
+            fill={filled ? '#FFFFFF' : '#666666'}
+          />
+        );
+      })}
+    </svg>
   );
 }
 
-function ScoreMetadata({ score }: { score: PlayerScore }) {
-  const pct =
-    score.rank > 0 && (score.totalEntries ?? 0) > 0
-      ? Math.min((score.rank / score.totalEntries!) * 100, 100)
-      : undefined;
-  const isTop5 = pct != null && pct <= 5;
+/** Star images matching mobile MiniStars component. */
+function MiniStars({ starsCount, isFullCombo }: { starsCount: number; isFullCombo: boolean }) {
+  const allGold = starsCount >= 6;
+  const displayCount = allGold ? 5 : Math.max(1, starsCount);
+  const src = allGold ? '/app/star_gold.png' : '/app/star_white.png';
+  const outline = isFullCombo ? Colors.gold : 'transparent';
+  return (
+    <span style={styles.miniStarRow}>
+      {Array.from({ length: displayCount }).map((_, i) => (
+        <span key={i} style={{ ...styles.miniStarCircle, borderColor: outline }}>
+          <img src={src} alt="★" style={styles.miniStarIcon} />
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** Render a single metadata element for the given key. Mirrors mobile renderMetadataElement. */
+function renderMetadataElement(
+  key: string,
+  score: PlayerScore,
+  allKeys: string[],
+  songIntensityRaw?: number,
+): React.ReactNode | null {
   const rawAcc = score.accuracy ?? 0;
   const accuracy = rawAcc > 0 ? (rawAcc / 10000).toFixed(2) + '%' : undefined;
   const is100FC = score.isFullCombo && accuracy === '100.00%';
   const stars = score.stars ?? 0;
-  const isGoldStars = stars >= 6;
 
-  return (
-    <div style={styles.scoreMeta}>
-      {/* Score */}
-      <span style={styles.scoreValue}>{score.score.toLocaleString()}</span>
+  switch (key) {
+    case 'score':
+      return score.score > 0 ? (
+        <span style={styles.scoreValue}>{score.score.toLocaleString()}</span>
+      ) : null;
 
-      {/* Stars */}
-      {stars > 0 && (
-        <span
-          style={{
-            ...styles.starsPill,
-            ...(isGoldStars ? styles.starsPillGold : {}),
-          }}
-        >
-          {isGoldStars ? '★'.repeat(5) : '★'.repeat(stars)}
-        </span>
-      )}
-
-      {/* Accuracy / FC */}
-      {is100FC ? (
-        <span style={styles.fcBadge}>FC</span>
-      ) : accuracy ? (
+    case 'percentage':
+      if (is100FC) {
+        const pctIdx = allKeys.indexOf('percentage');
+        const fcIdx = allKeys.indexOf('isfc');
+        if (fcIdx !== -1 && fcIdx < pctIdx) return null;
+        return <span style={styles.fcBadge}>FC</span>;
+      }
+      return accuracy ? (
         <span
           style={{
             ...styles.accuracyPill,
@@ -479,15 +503,37 @@ function ScoreMetadata({ score }: { score: PlayerScore }) {
         >
           {accuracy}
         </span>
-      ) : null}
+      ) : null;
 
-      {/* FC badge (when not 100%) */}
-      {!is100FC && score.isFullCombo && (
+    case 'isfc':
+      if (is100FC) {
+        const pctIdx = allKeys.indexOf('percentage');
+        const fcIdx = allKeys.indexOf('isfc');
+        if (pctIdx !== -1 && pctIdx < fcIdx) return null;
+        return <span style={styles.fcBadge}>FC</span>;
+      }
+      return score.isFullCombo ? (
         <span style={styles.fcBadge}>FC</span>
-      )}
+      ) : null;
 
-      {/* Percentile */}
-      {pct != null && (
+    case 'stars':
+      return stars > 0 ? (
+        <MiniStars starsCount={stars} isFullCombo={!!score.isFullCombo} />
+      ) : null;
+
+    case 'seasonachieved':
+      return score.season != null && score.season > 0 ? (
+        <span style={styles.seasonPill}>S{score.season}</span>
+      ) : null;
+
+    case 'percentile': {
+      const pct =
+        score.rank > 0 && (score.totalEntries ?? 0) > 0
+          ? Math.min((score.rank / score.totalEntries!) * 100, 100)
+          : undefined;
+      if (pct == null) return null;
+      const isTop5 = pct <= 5;
+      return (
         <span
           style={{
             ...styles.percentilePill,
@@ -496,8 +542,160 @@ function ScoreMetadata({ score }: { score: PlayerScore }) {
         >
           Top {Math.max(0.01, pct).toFixed(2)}%
         </span>
-      )}
+      );
+    }
+
+    case 'intensity':
+      return songIntensityRaw != null ? <DifficultyBars raw={songIntensityRaw} /> : null;
+
+    default:
+      return null;
+  }
+}
+
+type MetadataEntry = { key: string; el: React.ReactNode };
+
+/** Bottom metadata grid matching mobile MetadataBottomRow layout rules. */
+function MetadataBottomRow({ entries, isMobile }: { entries: MetadataEntry[]; isMobile: boolean }) {
+  const n = entries.length;
+  if (n === 0) return null;
+
+  // Helper: render a row of cells, centering when ≤2 items
+  const renderRow = (items: MetadataEntry[]) => (
+    <div style={styles.metadataGridRow}>
+      {items.length <= 2
+        ? items.map(e => <div key={e.key} style={styles.metadataCellAuto}>{e.el}</div>)
+        : items.map(e => <div key={e.key} style={styles.metadataCell}>{e.el}</div>)}
     </div>
+  );
+
+  // 5+ items on mobile: split into rows of 3
+  if (isMobile && n >= 5) {
+    const top = entries.slice(0, 3);
+    const bottom = entries.slice(3);
+    return (
+      <div style={styles.metadataGrid}>
+        {renderRow(top)}
+        {renderRow(bottom)}
+      </div>
+    );
+  }
+
+  // 4 items on mobile: 2×2 grid
+  if (isMobile && n === 4) {
+    return (
+      <div style={styles.metadataGrid}>
+        {renderRow(entries.slice(0, 2))}
+        {renderRow(entries.slice(2))}
+      </div>
+    );
+  }
+
+  // 2 items on mobile: centered side by side
+  if (isMobile && n === 2) {
+    return (
+      <div style={styles.metadataGridRow}>
+        {entries.map(e => <div key={e.key} style={styles.metadataCellAuto}>{e.el}</div>)}
+      </div>
+    );
+  }
+
+  // Default: single centered row
+  return (
+    <div style={styles.metadataBottomRow}>
+      {entries.map(e => <div key={e.key} style={styles.metadataCell}>{e.el}</div>)}
+    </div>
+  );
+}
+
+const INSTRUMENT_DIFFICULTY_KEY: Record<string, keyof import('../models').SongDifficulty> = {
+  Solo_Guitar: 'guitar',
+  Solo_Bass: 'bass',
+  Solo_Drums: 'drums',
+  Solo_Vocals: 'vocals',
+  Solo_PeripheralGuitar: 'proGuitar',
+  Solo_PeripheralBass: 'proBass',
+};
+
+function SongRow({
+  song,
+  score,
+  instrument,
+  metadataOrder,
+  sortMode,
+  isMobile,
+}: {
+  song: Song;
+  score?: PlayerScore;
+  instrument: InstrumentKey;
+  metadataOrder: string[];
+  sortMode: SongSortMode;
+  isMobile: boolean;
+}) {
+  // Promote current sort mode to position 0 for inline display (matches mobile)
+  const displayOrder = useMemo(() => {
+    const order = [...metadataOrder];
+    const generalModes = ['title', 'artist', 'year', 'hasfc'];
+    if (!generalModes.includes(sortMode) && order.includes(sortMode)) {
+      return [sortMode, ...order.filter(k => k !== sortMode)];
+    }
+    return order;
+  }, [metadataOrder, sortMode]);
+
+  const diffKey = INSTRUMENT_DIFFICULTY_KEY[instrument];
+  const songIntensityRaw = diffKey != null ? song.difficulty?.[diffKey] : undefined;
+
+  const entries = useMemo(() => {
+    if (!score) return [];
+    const result: { key: string; el: React.ReactNode }[] = [];
+    for (const key of displayOrder) {
+      const el = renderMetadataElement(key, score, displayOrder, songIntensityRaw);
+      if (el) result.push({ key, el });
+    }
+    return result;
+  }, [score, displayOrder, songIntensityRaw]);
+
+  const thumb = song.albumArt ? (
+    <img src={song.albumArt} alt="" style={styles.thumb} loading="lazy" />
+  ) : (
+    <div style={{ ...styles.thumb, ...styles.thumbPlaceholder }} />
+  );
+
+  if (isMobile && entries.length > 0) {
+    const topEntry = entries[0]!;
+    const bottomEntries = entries.slice(1);
+    return (
+      <Link to={`/songs/${song.songId}`} style={styles.rowMobile}>
+        <div style={styles.mobileTopRow}>
+          {thumb}
+          <div style={styles.rowText}>
+            <span style={styles.rowTitle}>{song.title}</span>
+            <span style={styles.rowArtist}>{song.artist}</span>
+          </div>
+          <div style={styles.detailStrip}>
+            {topEntry.el}
+          </div>
+        </div>
+        {bottomEntries.length > 0 && (
+          <MetadataBottomRow entries={bottomEntries} isMobile={true} />
+        )}
+      </Link>
+    );
+  }
+
+  return (
+    <Link to={`/songs/${song.songId}`} style={styles.row}>
+      {thumb}
+      <div style={styles.rowText}>
+        <span style={styles.rowTitle}>{song.title}</span>
+        <span style={styles.rowArtist}>{song.artist}</span>
+      </div>
+      {entries.length > 0 && (
+        <div style={styles.scoreMeta}>
+          {entries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}
+        </div>
+      )}
+    </Link>
   );
 }
 
@@ -681,6 +879,60 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'inherit',
     transition: 'background-color 0.15s',
   },
+  rowMobile: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: Gap.md,
+    padding: `${Gap.lg}px ${Gap.xl}px`,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.backgroundCard,
+    border: `1px solid ${Colors.borderSubtle}`,
+    textDecoration: 'none',
+    color: 'inherit',
+    transition: 'background-color 0.15s',
+  },
+  mobileTopRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.xl,
+  },
+  detailStrip: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.md,
+    flexShrink: 0,
+    marginLeft: 'auto',
+  },
+  metadataBottomRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Gap.md,
+    paddingBottom: Gap.xs,
+  },
+  metadataGrid: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: Gap.md,
+    paddingBottom: Gap.xs,
+  },
+  metadataGridRow: {
+    display: 'flex',
+    justifyContent: 'center',
+    gap: Gap.md,
+  },
+  metadataCell: {
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 0,
+  },
+  metadataCellAuto: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   thumb: {
     width: Size.thumb,
     height: Size.thumb,
@@ -755,13 +1007,25 @@ const styles: Record<string, React.CSSProperties> = {
     color: Colors.textPrimary,
     fontVariantNumeric: 'tabular-nums',
   },
-  starsPill: {
-    fontSize: Font.sm,
-    color: Colors.textSecondary,
-    letterSpacing: -1,
+  miniStarRow: {
+    display: 'inline-flex',
+    gap: 3,
+    alignItems: 'center',
   },
-  starsPillGold: {
-    color: Colors.gold,
+  miniStarCircle: {
+    width: Size.iconSm,
+    height: Size.iconSm,
+    borderRadius: '50%',
+    border: '1.5px solid transparent',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  miniStarIcon: {
+    width: 20,
+    height: 20,
+    objectFit: 'contain' as const,
   },
   accuracyPill: {
     fontSize: Font.xs,
@@ -797,6 +1061,15 @@ const styles: Record<string, React.CSSProperties> = {
     color: Colors.gold,
     backgroundColor: Colors.goldBg,
     border: `1px solid ${Colors.goldStroke}`,
+  },
+  seasonPill: {
+    fontSize: Font.xs,
+    fontWeight: 700,
+    color: Colors.textPrimary,
+    backgroundColor: '#1D3A71',
+    padding: `${Gap.xs}px ${Gap.md}px`,
+    borderRadius: Radius.xs,
+    whiteSpace: 'nowrap' as const,
   },
   center: {
     display: 'flex',
