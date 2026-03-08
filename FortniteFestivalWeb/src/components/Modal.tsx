@@ -1,4 +1,22 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { Colors, Radius, Font, Gap } from '../theme';
 
@@ -239,9 +257,17 @@ export function ChoicePill({ label, selected, onSelect }: { label: string; selec
   );
 }
 
-export function ToggleRow({ label, description, checked, onToggle }: { label: React.ReactNode; description?: string; checked: boolean; onToggle: () => void }) {
+export function ToggleRow({ label, description, checked, onToggle, disabled, icon }: { label: React.ReactNode; description?: string; checked: boolean; onToggle: () => void; disabled?: boolean; icon?: React.ReactNode }) {
   return (
-    <button style={toggleStyles.row} onClick={onToggle}>
+    <button
+      style={{
+        ...toggleStyles.row,
+        ...(disabled ? toggleStyles.rowDisabled : {}),
+      }}
+      onClick={disabled ? undefined : onToggle}
+      disabled={disabled}
+    >
+      {icon && <div style={toggleStyles.icon}>{icon}</div>}
       <div style={{ flex: 1 }}>
         <div style={toggleStyles.label}>{label}</div>
         {description && <div style={toggleStyles.desc}>{description}</div>}
@@ -250,6 +276,7 @@ export function ToggleRow({ label, description, checked, onToggle }: { label: Re
         style={{
           ...toggleStyles.track,
           ...(checked ? toggleStyles.trackOn : {}),
+          ...(disabled ? toggleStyles.trackDisabled : {}),
         }}
       >
         <div
@@ -264,55 +291,59 @@ export function ToggleRow({ label, description, checked, onToggle }: { label: Re
 }
 
 export function ReorderList({ items, onReorder }: { items: { key: string; label: string }[]; onReorder: (items: { key: string; label: string }[]) => void }) {
-  const moveUp = (idx: number) => {
-    if (idx <= 0) return;
-    const next = [...items];
-    const tmp = next[idx - 1]!;
-    next[idx - 1] = next[idx]!;
-    next[idx] = tmp;
-    onReorder(next);
-  };
-  const moveDown = (idx: number) => {
-    if (idx >= items.length - 1) return;
-    const next = [...items];
-    const tmp = next[idx]!;
-    next[idx] = next[idx + 1]!;
-    next[idx + 1] = tmp;
-    onReorder(next);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = items.findIndex(i => i.key === active.id);
+    const newIndex = items.findIndex(i => i.key === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    onReorder(arrayMove(items, oldIndex, newIndex));
   };
 
   return (
-    <div style={reorderStyles.list}>
-      {items.map((item, idx) => (
-        <div key={item.key} style={reorderStyles.row}>
-          <span style={reorderStyles.rank}>{idx + 1}</span>
-          <span style={reorderStyles.label}>{item.label}</span>
-          <div style={reorderStyles.arrows}>
-            <button
-              style={{
-                ...reorderStyles.arrowBtn,
-                ...(idx === 0 ? reorderStyles.arrowBtnDisabled : {}),
-              }}
-              onClick={() => moveUp(idx)}
-              disabled={idx === 0}
-              aria-label={`Move ${item.label} up`}
-            >
-              ▲
-            </button>
-            <button
-              style={{
-                ...reorderStyles.arrowBtn,
-                ...(idx === items.length - 1 ? reorderStyles.arrowBtnDisabled : {}),
-              }}
-              onClick={() => moveDown(idx)}
-              disabled={idx === items.length - 1}
-              aria-label={`Move ${item.label} down`}
-            >
-              ▼
-            </button>
-          </div>
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={items.map(i => i.key)} strategy={verticalListSortingStrategy}>
+        <div style={reorderStyles.list}>
+          {items.map((item) => (
+            <SortableRow key={item.key} item={item} />
+          ))}
         </div>
-      ))}
+      </SortableContext>
+    </DndContext>
+  );
+}
+
+function SortableRow({ item }: { item: { key: string; label: string } }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: item.key });
+
+  const style: React.CSSProperties = {
+    ...reorderStyles.row,
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 10 : undefined,
+    opacity: isDragging ? 0.85 : 1,
+    boxShadow: isDragging ? '0 4px 16px rgba(0,0,0,0.4)' : undefined,
+    cursor: isDragging ? 'grabbing' : 'grab',
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      {/* Drag handle icon (visual indicator only) */}
+      <span style={reorderStyles.dragHandle}>⠿</span>
+      <span style={reorderStyles.label}>{item.label}</span>
     </div>
   );
 }
@@ -440,6 +471,15 @@ const toggleStyles: Record<string, React.CSSProperties> = {
     textAlign: 'left' as const,
     color: Colors.textPrimary,
   },
+  rowDisabled: {
+    opacity: 0.5,
+    cursor: 'default',
+  },
+  icon: {
+    flexShrink: 0,
+    display: 'flex',
+    alignItems: 'center',
+  },
   label: {
     fontSize: Font.sm,
     fontWeight: 600,
@@ -461,6 +501,9 @@ const toggleStyles: Record<string, React.CSSProperties> = {
   trackOn: {
     backgroundColor: Colors.accentBlue,
   },
+  trackDisabled: {
+    opacity: 0.4,
+  },
   thumb: {
     width: 16,
     height: 16,
@@ -480,46 +523,31 @@ const reorderStyles: Record<string, React.CSSProperties> = {
   list: {
     display: 'flex',
     flexDirection: 'column',
-    gap: Gap.xs,
+    border: `1px solid ${Colors.borderSubtle}`,
+    borderRadius: Radius.xs,
+    overflow: 'hidden',
   },
   row: {
     display: 'flex',
     alignItems: 'center',
-    gap: Gap.md,
-    padding: `${Gap.sm}px ${Gap.xl}px`,
-    border: `1px solid ${Colors.borderSubtle}`,
-    borderRadius: Radius.xs,
+    gap: Gap.xl,
+    padding: `${Gap.xl}px ${Gap.xl}px`,
     backgroundColor: Colors.surfaceSubtle,
+    borderBottom: `1px solid ${Colors.borderSubtle}`,
+    touchAction: 'none',
   },
-  rank: {
-    fontSize: Font.xs,
+  dragHandle: {
     color: Colors.textMuted,
-    width: 18,
-    textAlign: 'center' as const,
+    fontSize: Font.lg,
     flexShrink: 0,
+    userSelect: 'none' as const,
+    lineHeight: 1,
   },
   label: {
     flex: 1,
-    fontSize: Font.sm,
+    fontSize: Font.md,
+    fontWeight: 500,
     color: Colors.textPrimary,
-  },
-  arrows: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 2,
-  },
-  arrowBtn: {
-    background: 'none',
-    border: 'none',
-    color: Colors.textSecondary,
-    fontSize: 10,
-    cursor: 'pointer',
-    padding: '0 4px',
-    lineHeight: 1,
-  },
-  arrowBtnDisabled: {
-    color: Colors.textDisabled,
-    cursor: 'default',
   },
 };
 

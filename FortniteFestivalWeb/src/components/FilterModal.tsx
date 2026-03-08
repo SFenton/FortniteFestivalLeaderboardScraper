@@ -3,6 +3,7 @@ import { InstrumentIcon } from './InstrumentIcons';
 import type { InstrumentKey } from '../models';
 import { INSTRUMENT_KEYS, INSTRUMENT_LABELS } from '../models';
 import type { SongFilters } from './songSettings';
+import { useSettings, isInstrumentVisible } from '../contexts/SettingsContext';
 import { Colors, Gap, Radius } from '../theme';
 
 export type FilterDraft = SongFilters & {
@@ -22,6 +23,9 @@ type Props = {
 const PERCENTILE_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100] as const;
 
 export default function FilterModal({ visible, draft, availableSeasons, onChange, onCancel, onReset, onApply }: Props) {
+  const { settings: appSettings } = useSettings();
+  const visibleKeys = INSTRUMENT_KEYS.filter(k => isInstrumentVisible(appSettings, k));
+
   const toggle = (key: keyof SongFilters) => {
     const val = draft[key];
     if (typeof val === 'boolean') {
@@ -44,7 +48,7 @@ export default function FilterModal({ visible, draft, availableSeasons, onChange
       {/* Instrument selector */}
       <ModalSection title="Instrument" hint="Select an instrument to only show its metadata on each song row. When none is selected, all instruments are shown.">
         <div style={localStyles.instrumentRow}>
-          {INSTRUMENT_KEYS.map(key => {
+          {visibleKeys.map(key => {
             const selected = draft.instrumentFilter === key;
             return (
               <button

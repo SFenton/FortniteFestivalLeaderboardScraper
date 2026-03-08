@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { FestivalProvider } from './contexts/FestivalContext';
+import { SettingsProvider } from './contexts/SettingsContext';
 import PlayerSearch from './components/PlayerSearch';
 import { useTrackedPlayer, type TrackedPlayer } from './hooks/useTrackedPlayer';
 import { useSyncStatus } from './hooks/useSyncStatus';
@@ -15,11 +16,13 @@ import { Colors, Font, Gap, Radius, Size } from './theme';
 
 export default function App() {
   return (
-    <FestivalProvider>
-      <BrowserRouter basename="/app">
-        <AppShell />
-      </BrowserRouter>
-    </FestivalProvider>
+    <SettingsProvider>
+      <FestivalProvider>
+        <BrowserRouter basename="/app">
+          <AppShell />
+        </BrowserRouter>
+      </FestivalProvider>
+    </SettingsProvider>
   );
 }
 
