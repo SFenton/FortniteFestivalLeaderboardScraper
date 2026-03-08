@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import InfiniteScroll from 'react-infinite-scroll-component';
 import { useFestival } from '../contexts/FestivalContext';
@@ -7,11 +7,16 @@ import { useSuggestions } from '../hooks/useSuggestions';
 import { api } from '../api/client';
 import { serverSongToCore, buildScoresIndex } from '../utils/suggestionAdapter';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../components/InstrumentIcons';
+import SuggestionsFilterModal from '../components/SuggestionsFilterModal';
+import type { SuggestionsFilterDraft } from '../components/SuggestionsFilterModal';
+import { defaultSuggestionsFilterDraft, isSuggestionsFilterActive } from '../components/SuggestionsFilterModal';
 import { InstrumentKeys } from '@festival/core/instruments';
 import type { LeaderboardData } from '@festival/core/models';
 import type { PlayerResponse } from '../models';
 import type { SuggestionCategory, SuggestionSongItem } from '@festival/core/suggestions/types';
 import type { InstrumentKey } from '@festival/core/instruments';
+import { shouldShowCategory, filterCategoryForInstruments } from '@festival/core/instrumentFilters';
+import { globalKeyFor, getCategoryTypeId, getCategoryInstrument, perInstrumentKeyFor } from '@festival/core/suggestions/suggestionFilterConfig';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size } from '../theme';
 import type { InstrumentKey as ServerInstrumentKey } from '../models';
 
@@ -23,6 +28,70 @@ const CORE_TO_SERVER_INSTRUMENT: Record<InstrumentKey, ServerInstrumentKey> = {
   pro_guitar: 'Solo_PeripheralGuitar',
   pro_bass: 'Solo_PeripheralBass',
 };
+
+const FILTER_STORAGE_KEY = 'fst-suggestions-filter';
+
+function loadSuggestionsFilter(): SuggestionsFilterDraft {
+  try {
+    const raw = localStorage.getItem(FILTER_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return { ...defaultSuggestionsFilterDraft(), ...parsed };
+    }
+  } catch { /* ignore */ }
+  return defaultSuggestionsFilterDraft();
+}
+
+function saveSuggestionsFilter(draft: SuggestionsFilterDraft) {
+  localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(draft));
+}
+
+type InstrumentShowSettings = {
+  showLead: boolean;
+  showBass: boolean;
+  showDrums: boolean;
+  showVocals: boolean;
+  showProLead: boolean;
+  showProBass: boolean;
+};
+
+function buildEffectiveInstrumentSettings(filter: SuggestionsFilterDraft): InstrumentShowSettings {
+  return {
+    showLead: filter.suggestionsLeadFilter,
+    showBass: filter.suggestionsBassFilter,
+    showDrums: filter.suggestionsDrumsFilter,
+    showVocals: filter.suggestionsVocalsFilter,
+    showProLead: filter.suggestionsProLeadFilter,
+    showProBass: filter.suggestionsProBassFilter,
+  };
+}
+
+function shouldShowCategoryType(categoryKey: string, filter: SuggestionsFilterDraft): boolean {
+  const typeId = getCategoryTypeId(categoryKey);
+  if (!typeId) return true;
+  return filter[globalKeyFor(typeId)] ?? true;
+}
+
+function filterCategoryForInstrumentTypes(
+  cat: SuggestionCategory,
+  filter: SuggestionsFilterDraft,
+): SuggestionCategory | null {
+  const typeId = getCategoryTypeId(cat.key);
+  if (!typeId) return cat;
+  const catInstrument = getCategoryInstrument(cat.key);
+  if (catInstrument) {
+    const pk = perInstrumentKeyFor(catInstrument, typeId);
+    return (filter[pk] ?? true) ? cat : null;
+  }
+  const filtered = cat.songs.filter(s => {
+    if (!s.instrumentKey) return true;
+    const pk = perInstrumentKeyFor(s.instrumentKey, typeId);
+    return filter[pk] ?? true;
+  });
+  if (filtered.length === 0) return null;
+  if (filtered.length === cat.songs.length) return cat;
+  return { ...cat, songs: filtered };
+}
 
 type Props = { accountId: string };
 
@@ -76,6 +145,100 @@ export default function SuggestionsPage({ accountId }: Props) {
 
   const { categories, loadMore, hasMore } = useSuggestions(accountId, coreSongs, scoresIndex);
 
+  // Suggestions filter state
+  const [filterSettings, setFilterSettings] = useState<SuggestionsFilterDraft>(loadSuggestionsFilter);
+  const [showFilter, setShowFilter] = useState(false);
+  const [filterDraft, setFilterDraft] = useState<SuggestionsFilterDraft>(() => ({ ...filterSettings }));
+
+  useEffect(() => { saveSuggestionsFilter(filterSettings); }, [filterSettings]);
+
+  const openFilter = () => {
+    setFilterDraft({ ...filterSettings });
+    setShowFilter(true);
+  };
+  const applyFilter = () => {
+    setFilterSettings(filterDraft);
+    setShowFilter(false);
+  };
+  const resetFilter = () => {
+    const defaults = defaultSuggestionsFilterDraft();
+    setFilterDraft(defaults);
+    setFilterSettings(defaults);
+    setShowFilter(false);
+  };
+
+  const filtersActive = isSuggestionsFilterActive(filterSettings);
+
+  const visibleCategories = useMemo(() => {
+    const instSettings = buildEffectiveInstrumentSettings(filterSettings);
+    return categories
+      .filter(c => shouldShowCategory(c.key, instSettings))
+      .filter(c => shouldShowCategoryType(c.key, filterSettings))
+      .map(c => filterCategoryForInstruments(c, instSettings))
+      .filter((c): c is SuggestionCategory => c !== null)
+      .map(c => filterCategoryForInstrumentTypes(c, filterSettings))
+      .filter((c): c is SuggestionCategory => c !== null);
+  }, [categories, filterSettings]);
+
+  // When filters hide most generated content, InfiniteScroll fires loadMore
+  // once, the new categories all get filtered out, visible-count and scroll
+  // height don't change, so InfiniteScroll never fires again — "Loading more"
+  // gets stuck.
+  //
+  // Solution: track consecutive batches that produce zero new visible
+  // categories.  After each render where raw categories grew but visible
+  // didn't, schedule another loadMore.  Stop after MAX_STALE consecutive
+  // empty batches and hide the loader.
+  const [filterExhausted, setFilterExhausted] = useState(false);
+  const prevRawRef = useRef(categories.length);
+  const prevVisibleRef = useRef(visibleCategories.length);
+  const staleCountRef = useRef(0);
+  const MAX_STALE = 15;
+  const MIN_VISIBLE = 4;
+
+  useEffect(() => {
+    setFilterExhausted(false);
+    staleCountRef.current = 0;
+    prevRawRef.current = categories.length;
+    prevVisibleRef.current = 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterSettings]);
+
+  useEffect(() => {
+    if (!hasMore || filterExhausted || categories.length === 0) return;
+
+    const rawGrew = categories.length > prevRawRef.current;
+    const visibleGrew = visibleCategories.length > prevVisibleRef.current;
+    prevRawRef.current = categories.length;
+
+    if (visibleGrew) {
+      staleCountRef.current = 0;
+      prevVisibleRef.current = visibleCategories.length;
+      // If we have enough visible content, let InfiniteScroll take over
+      if (visibleCategories.length >= MIN_VISIBLE) return;
+    } else if (rawGrew) {
+      staleCountRef.current++;
+      if (staleCountRef.current >= MAX_STALE) {
+        setFilterExhausted(true);
+        return;
+      }
+    } else {
+      return; // nothing changed
+    }
+
+    // Either visible is still too sparse OR raw grew with nothing new visible.
+    // Schedule another loadMore so the user isn't stuck.
+    const id = requestAnimationFrame(() => loadMore());
+    return () => cancelAnimationFrame(id);
+  }, [categories.length, visibleCategories.length, hasMore, filterExhausted, loadMore]);
+
+  const effectiveHasMore = hasMore && !filterExhausted;
+
+  const filteredLoadMore = useCallback(() => {
+    if (filterExhausted) return;
+    loadMore();
+  }, [loadMore, filterExhausted]);
+
   // Show loading only if we have no cached categories to display
   if ((isLoading || playerLoading) && categories.length === 0) {
     return <div style={styles.center}>Loading suggestions…</div>;
@@ -90,10 +253,21 @@ export default function SuggestionsPage({ accountId }: Props) {
       <div style={styles.page}>
         <div style={styles.container}>
           <h1 style={styles.heading}>Suggestions</h1>
-          <p style={styles.empty}>
-            No suggestions available. Play some songs first!
-          </p>
+          <div style={styles.emptyState}>
+            <div style={styles.emptyTitle}>No Suggestions Available</div>
+            <div style={styles.emptySubtitle}>
+              The service may be down unexpectedly. Please refresh to try again.
+            </div>
+          </div>
         </div>
+        <SuggestionsFilterModal
+          visible={showFilter}
+          draft={filterDraft}
+          onChange={setFilterDraft}
+          onCancel={() => setShowFilter(false)}
+          onReset={resetFilter}
+          onApply={applyFilter}
+        />
       </div>
     );
   }
@@ -102,24 +276,54 @@ export default function SuggestionsPage({ accountId }: Props) {
     <div style={styles.page}>
       <div style={styles.stickyHeader}>
         <div style={styles.container}>
-          <h1 style={styles.heading}>Suggestions</h1>
+          <div style={styles.headerRow}>
+            <h1 style={styles.heading}>Suggestions</h1>
+            <button
+              style={{ ...styles.iconBtn, ...(filtersActive ? styles.iconBtnActive : {}) }}
+              onClick={openFilter}
+              title="Filter"
+              aria-label="Filter suggestions"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" /></svg>
+              {filtersActive && <span style={styles.filterDot} />}
+            </button>
+          </div>
         </div>
       </div>
       <div style={styles.container}>
-        <InfiniteScroll
-          dataLength={categories.length}
-          next={loadMore}
-          hasMore={hasMore}
-          loader={<div style={styles.loader}>Loading more…</div>}
-          scrollThreshold="600px"
-          scrollableTarget="main-content"
-          style={{ overflow: 'visible' }}
-        >
-          {categories.map((cat, idx) => (
-            <CategoryCard key={`${idx}-${cat.key}`} category={cat} albumArtMap={albumArtMap} scoresIndex={scoresIndex} />
-          ))}
-        </InfiniteScroll>
+        {visibleCategories.length === 0 && (categories.length > 0 || !effectiveHasMore) ? (
+          <div style={styles.emptyState}>
+            <div style={styles.emptyTitle}>No Suggestions Available</div>
+            <div style={styles.emptySubtitle}>
+              {filtersActive
+                ? 'Try changing your filters to see more suggestions.'
+                : 'Play some songs first!'}
+            </div>
+          </div>
+        ) : (
+          <InfiniteScroll
+            dataLength={visibleCategories.length}
+            next={filteredLoadMore}
+            hasMore={effectiveHasMore}
+            loader={<div style={styles.loader}>Loading more…</div>}
+            scrollThreshold="600px"
+            scrollableTarget="main-content"
+            style={{ overflow: 'visible' }}
+          >
+            {visibleCategories.map((cat, idx) => (
+              <CategoryCard key={`${idx}-${cat.key}`} category={cat} albumArtMap={albumArtMap} scoresIndex={scoresIndex} />
+            ))}
+          </InfiniteScroll>
+        )}
       </div>
+      <SuggestionsFilterModal
+        visible={showFilter}
+        draft={filterDraft}
+        onChange={setFilterDraft}
+        onCancel={() => setShowFilter(false)}
+        onReset={resetFilter}
+        onApply={applyFilter}
+      />
     </div>
   );
 }
@@ -347,11 +551,62 @@ const styles: Record<string, React.CSSProperties> = {
   heading: {
     fontSize: Font.title,
     fontWeight: 700,
+    marginBottom: 0,
+  },
+  headerRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: Gap.xl,
+  },
+  iconBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative' as const,
+    width: Size.control,
+    height: Size.control,
+    borderRadius: Radius.xs,
+    border: `1px solid ${Colors.borderPrimary}`,
+    backgroundColor: Colors.transparent,
+    color: Colors.textTertiary,
+    cursor: 'pointer',
+  },
+  iconBtnActive: {
+    borderColor: Colors.accentBlue,
+    color: Colors.accentBlue,
+    backgroundColor: Colors.chipSelectedBgSubtle,
+  },
+  filterDot: {
+    position: 'absolute' as const,
+    top: 4,
+    right: 4,
+    width: 6,
+    height: 6,
+    borderRadius: '50%',
+    backgroundColor: Colors.accentBlue,
   },
   empty: {
     color: Colors.textTertiary,
     fontSize: Font.md,
+  },
+  emptyState: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 'calc(100dvh - 250px)',
+    textAlign: 'center' as const,
+  },
+  emptyTitle: {
+    fontSize: Font.xl,
+    fontWeight: 700,
+    color: Colors.textPrimary,
+    marginBottom: Gap.md,
+  },
+  emptySubtitle: {
+    fontSize: Font.md,
+    color: Colors.textMuted,
   },
   loader: {
     textAlign: 'center' as const,
