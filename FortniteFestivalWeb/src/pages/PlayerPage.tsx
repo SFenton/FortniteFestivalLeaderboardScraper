@@ -574,7 +574,6 @@ function formatAccuracy(val: number): string {
 const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: '100vh',
-    backgroundColor: Colors.backgroundApp,
     color: Colors.textPrimary,
     fontFamily:
       "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",

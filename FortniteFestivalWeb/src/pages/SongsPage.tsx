@@ -737,7 +737,6 @@ function compareByMode(mode: SongSortMode, a?: PlayerScore, b?: PlayerScore): nu
 const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: '100%',
-    backgroundColor: Colors.backgroundApp,
     color: Colors.textPrimary,
     fontFamily:
       "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
@@ -745,7 +744,7 @@ const styles: Record<string, React.CSSProperties> = {
   stickyHeader: {
     position: 'sticky' as const,
     top: 0,
-    backgroundColor: Colors.backgroundApp,
+    backgroundColor: 'rgba(26, 8, 48, 0)',
     zIndex: 10,
     paddingBottom: Gap.md,
   },

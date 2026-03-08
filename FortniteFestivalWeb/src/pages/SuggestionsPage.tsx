@@ -523,7 +523,6 @@ function RightContent({
 const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: '100%',
-    backgroundColor: Colors.backgroundApp,
     color: Colors.textPrimary,
     fontFamily:
       "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
@@ -531,7 +530,6 @@ const styles: Record<string, React.CSSProperties> = {
   stickyHeader: {
     position: 'sticky' as const,
     top: 0,
-    backgroundColor: Colors.backgroundApp,
     zIndex: 10,
     paddingBottom: Gap.md,
   },

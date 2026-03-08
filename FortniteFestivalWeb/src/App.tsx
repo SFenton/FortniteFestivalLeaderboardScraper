@@ -1,8 +1,9 @@
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { FestivalProvider } from './contexts/FestivalContext';
+import { FestivalProvider, useFestival } from './contexts/FestivalContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import PlayerSearch from './components/PlayerSearch';
+import { AnimatedBackground } from './components/AnimatedBackground';
 import { useTrackedPlayer, type TrackedPlayer } from './hooks/useTrackedPlayer';
 import { useSyncStatus } from './hooks/useSyncStatus';
 import { useIsMobile } from './hooks/useIsMobile';
@@ -26,10 +27,17 @@ export default function App() {
   );
 }
 
+const ANIMATED_BG_ROUTES = new Set(['/', '/songs', '/suggestions', '/settings']);
+function isAnimatedBgRoute(pathname: string) {
+  return ANIMATED_BG_ROUTES.has(pathname) || pathname.startsWith('/player/');
+}
+
 function AppShell() {
   const { player, setPlayer, clearPlayer } = useTrackedPlayer();
   const { isSyncing } = useSyncStatus(player?.accountId);
+  const { state: { songs } } = useFestival();
   const navigate = useNavigate();
+  const location = useLocation();
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -38,9 +46,12 @@ function AppShell() {
     navigate(`/player/${p.accountId}`);
   };
 
+  const showAnimatedBg = isAnimatedBgRoute(location.pathname);
+
   return (
     <div style={styles.shell}>
       <ScrollToTop />
+      {showAnimatedBg && <AnimatedBackground songs={songs} />}
       <nav style={styles.nav}>
         {!isMobile && (
           <button
@@ -249,14 +260,19 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: Gap.xl,
     padding: `${Gap.md}px ${Gap.section}px`,
-    backgroundColor: Colors.backgroundBlack,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    backdropFilter: 'blur(16px)',
+    WebkitBackdropFilter: 'blur(16px)',
     borderBottom: `1px solid ${Colors.borderSubtle}`,
     flexShrink: 0,
     zIndex: 100,
+    position: 'relative' as const,
   },
   content: {
     flex: 1,
     overflowY: 'auto' as const,
+    position: 'relative' as const,
+    zIndex: 1,
   },
   hamburger: {
     display: 'flex',
@@ -339,10 +355,13 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     justifyContent: 'space-around',
     alignItems: 'center',
-    backgroundColor: Colors.backgroundBlack,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    backdropFilter: 'blur(16px)',
+    WebkitBackdropFilter: 'blur(16px)',
     borderTop: `1px solid ${Colors.borderSubtle}`,
     flexShrink: 0,
     zIndex: 100,
+    position: 'relative' as const,
     padding: `${Gap.sm}px 0 ${Gap.md}px`,
   },
   bottomTab: {
