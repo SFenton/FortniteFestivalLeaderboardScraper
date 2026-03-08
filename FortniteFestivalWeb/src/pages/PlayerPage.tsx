@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { formatPercentile } from '../utils/formatPercentile';
 import { useFestival } from '../contexts/FestivalContext';
 import { useSyncStatus } from '../hooks/useSyncStatus';
 import { api } from '../api/client';
@@ -391,7 +392,7 @@ function TopSongsCard({
                       ...(isTop5 ? styles.percentilePillGold : {}),
                     }}
                   >
-                    Top {Math.max(0.01, pct).toFixed(2)}%
+                    {formatPercentile(pct)}
                   </span>
                 )}
               </div>
@@ -473,13 +474,13 @@ function computeInstrumentStats(
   if (percentiled.length > 0) {
     // Songs Played: simple average across songs with data
     const avgPlayed = (percentiled.reduce((a, v) => a + v.pct, 0) / percentiled.length) * 100;
-    avgPercentile = `Top ${Math.max(0.01, Math.min(100, avgPlayed)).toFixed(0)}%`;
+    avgPercentile = formatPercentile(avgPlayed);
 
     // Overall: unplayed songs count as 100% (worst)
     const unplayedCount = totalSongs - n;
     const totalPct = percentiled.reduce((a, v) => a + v.pct, 0) + unplayedCount; // unplayed × 1.0
     const overall = (totalPct / totalSongs) * 100;
-    overallPercentile = `Top ${Math.max(0.01, Math.min(100, overall)).toFixed(0)}%`;
+    overallPercentile = formatPercentile(overall);
   }
 
   // Percentile distribution buckets

@@ -134,11 +134,15 @@ export default function ScoreHistoryChart({
     return counts;
   }, [songHistory]);
 
-  // Auto-select first instrument with data if current selection has none
+  // Auto-select: prefer Lead, then first instrument with data, if current has none
   useEffect(() => {
     if ((instrumentCounts[selected] ?? 0) === 0) {
-      const first = INSTRUMENT_KEYS.find((k) => (instrumentCounts[k] ?? 0) > 0);
-      if (first) setSelected(first);
+      if ((instrumentCounts['Solo_Guitar'] ?? 0) > 0) {
+        setSelected('Solo_Guitar');
+      } else {
+        const first = INSTRUMENT_KEYS.find((k) => (instrumentCounts[k] ?? 0) > 0);
+        if (first) setSelected(first);
+      }
     }
   }, [instrumentCounts, selected]);
 

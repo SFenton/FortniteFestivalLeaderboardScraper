@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, Fragment } from 'react';
 import { Link } from 'react-router-dom';
+import { formatPercentile } from '../utils/formatPercentile';
 import { useFestival } from '../contexts/FestivalContext';
 import { useSyncStatus } from '../hooks/useSyncStatus';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -532,6 +533,7 @@ function renderMetadataElement(
           ? Math.min((score.rank / score.totalEntries!) * 100, 100)
           : undefined;
       if (pct == null) return null;
+      const display = formatPercentile(pct);
       const isTop5 = pct <= 5;
       return (
         <span
@@ -540,7 +542,7 @@ function renderMetadataElement(
             ...(isTop5 ? styles.percentilePillGold : {}),
           }}
         >
-          Top {Math.max(0.01, pct).toFixed(2)}%
+          {display}
         </span>
       );
     }
@@ -665,7 +667,7 @@ function SongRow({
     const topEntry = entries[0]!;
     const bottomEntries = entries.slice(1);
     return (
-      <Link to={`/songs/${song.songId}`} style={styles.rowMobile}>
+      <Link to={`/songs/${song.songId}?instrument=${encodeURIComponent(instrument)}`} style={styles.rowMobile}>
         <div style={styles.mobileTopRow}>
           {thumb}
           <div style={styles.rowText}>
@@ -684,7 +686,7 @@ function SongRow({
   }
 
   return (
-    <Link to={`/songs/${song.songId}`} style={styles.row}>
+    <Link to={`/songs/${song.songId}?instrument=${encodeURIComponent(instrument)}`} style={styles.row}>
       {thumb}
       <div style={styles.rowText}>
         <span style={styles.rowTitle}>{song.title}</span>
