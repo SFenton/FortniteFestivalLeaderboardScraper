@@ -908,7 +908,7 @@ const styles: Record<string, React.CSSProperties> = {
   metadataBottomRow: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'space-evenly',
     gap: Gap.md,
     paddingBottom: Gap.xs,
   },
@@ -920,7 +920,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   metadataGridRow: {
     display: 'flex',
-    justifyContent: 'center',
+    justifyContent: 'space-evenly',
     gap: Gap.md,
   },
   metadataCell: {
@@ -1008,11 +1008,16 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     color: Colors.textPrimary,
     fontVariantNumeric: 'tabular-nums',
+    width: 78,
+    textAlign: 'center' as const,
+    display: 'inline-block',
   },
   miniStarRow: {
     display: 'inline-flex',
     gap: 3,
     alignItems: 'center',
+    justifyContent: 'flex-end' as const,
+    width: 132,
   },
   miniStarCircle: {
     width: Size.iconSm,
@@ -1036,6 +1041,9 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: 'rgba(255,255,255,0.1)',
     padding: `${Gap.xs}px ${Gap.md}px`,
     borderRadius: Radius.xs,
+    minWidth: 52,
+    textAlign: 'center' as const,
+    display: 'inline-block',
   },
   accuracyPillGold: {
     color: Colors.gold,
@@ -1050,6 +1058,9 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid ${Colors.goldStroke}`,
     padding: `${Gap.xs}px ${Gap.md}px`,
     borderRadius: Radius.xs,
+    minWidth: 52,
+    textAlign: 'center' as const,
+    display: 'inline-block',
   },
   percentilePill: {
     fontSize: Font.xs,
@@ -1058,6 +1069,9 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: 'rgba(255,255,255,0.1)',
     padding: `${Gap.xs}px ${Gap.md}px`,
     borderRadius: Radius.xs,
+    minWidth: 70,
+    textAlign: 'center' as const,
+    display: 'inline-block',
   },
   percentilePillGold: {
     color: Colors.gold,
@@ -1072,6 +1086,9 @@ const styles: Record<string, React.CSSProperties> = {
     padding: `${Gap.xs}px ${Gap.md}px`,
     borderRadius: Radius.xs,
     whiteSpace: 'nowrap' as const,
+    minWidth: 38,
+    textAlign: 'center' as const,
+    display: 'inline-block',
   },
   center: {
     display: 'flex',
