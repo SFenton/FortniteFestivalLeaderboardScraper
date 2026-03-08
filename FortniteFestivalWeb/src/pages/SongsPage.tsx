@@ -284,7 +284,7 @@ export default function SongsPage({ accountId }: Props) {
 
   return (
     <div style={styles.page}>
-      <div style={styles.stickyHeader}>
+      <div style={styles.header}>
         <div style={styles.container}>
           <h1 style={styles.heading}>Songs</h1>
           <div style={styles.toolbar}>
@@ -316,7 +316,8 @@ export default function SongsPage({ accountId }: Props) {
           )}
         </div>
       </div>
-      <div style={styles.container}>
+      <div style={styles.scrollArea}>
+        <div style={styles.container}>
         {isSyncing && (
           <div style={styles.syncBanner}>
             <div style={styles.syncSpinner} />
@@ -401,6 +402,7 @@ export default function SongsPage({ accountId }: Props) {
             ))}
           </div>
         )}
+        </div>
       </div>
 
       <SortModal
@@ -736,17 +738,21 @@ function compareByMode(mode: SongSortMode, a?: PlayerScore, b?: PlayerScore): nu
 
 const styles: Record<string, React.CSSProperties> = {
   page: {
-    minHeight: '100%',
+    height: '100%',
+    display: 'flex',
+    flexDirection: 'column' as const,
     color: Colors.textPrimary,
     fontFamily:
       "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
   },
-  stickyHeader: {
-    position: 'sticky' as const,
-    top: 0,
-    backgroundColor: 'rgba(26, 8, 48, 0)',
+  header: {
+    flexShrink: 0,
     zIndex: 10,
     paddingBottom: Gap.md,
+  },
+  scrollArea: {
+    flex: 1,
+    overflowY: 'auto' as const,
   },
   container: {
     width: '100%',

@@ -274,7 +274,7 @@ export default function SuggestionsPage({ accountId }: Props) {
 
   return (
     <div style={styles.page}>
-      <div style={styles.stickyHeader}>
+      <div style={styles.header}>
         <div style={styles.container}>
           <div style={styles.headerRow}>
             <h1 style={styles.heading}>Suggestions</h1>
@@ -290,6 +290,7 @@ export default function SuggestionsPage({ accountId }: Props) {
           </div>
         </div>
       </div>
+      <div id="suggestions-scroll" style={styles.scrollArea}>
       <div style={styles.container}>
         {visibleCategories.length === 0 && (categories.length > 0 || !effectiveHasMore) ? (
           <div style={styles.emptyState}>
@@ -307,7 +308,7 @@ export default function SuggestionsPage({ accountId }: Props) {
             hasMore={effectiveHasMore}
             loader={<div style={styles.loader}>Loading more…</div>}
             scrollThreshold="600px"
-            scrollableTarget="main-content"
+            scrollableTarget="suggestions-scroll"
             style={{ overflow: 'visible' }}
           >
             {visibleCategories.map((cat, idx) => (
@@ -315,6 +316,7 @@ export default function SuggestionsPage({ accountId }: Props) {
             ))}
           </InfiniteScroll>
         )}
+      </div>
       </div>
       <SuggestionsFilterModal
         visible={showFilter}
@@ -522,16 +524,21 @@ function RightContent({
 
 const styles: Record<string, React.CSSProperties> = {
   page: {
-    minHeight: '100%',
+    height: '100%',
+    display: 'flex',
+    flexDirection: 'column' as const,
     color: Colors.textPrimary,
     fontFamily:
       "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
   },
-  stickyHeader: {
-    position: 'sticky' as const,
-    top: 0,
+  header: {
+    flexShrink: 0,
     zIndex: 10,
     paddingBottom: Gap.md,
+  },
+  scrollArea: {
+    flex: 1,
+    overflowY: 'auto' as const,
   },
   container: {
     maxWidth: MaxWidth.card,
