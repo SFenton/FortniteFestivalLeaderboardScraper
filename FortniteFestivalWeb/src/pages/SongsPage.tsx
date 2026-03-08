@@ -6,8 +6,19 @@ import { api } from '../api/client';
 import type { Song, PlayerScore, PlayerResponse, InstrumentKey } from '../models';
 import { INSTRUMENT_KEYS, INSTRUMENT_LABELS } from '../models';
 import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth } from '../theme';
-
-type SortMode = 'title' | 'artist';
+import SortModal from '../components/SortModal';
+import type { SortDraft } from '../components/SortModal';
+import FilterModal from '../components/FilterModal';
+import type { FilterDraft } from '../components/FilterModal';
+import {
+  type SongSortMode,
+  type SongSettings,
+  defaultSongSettings,
+  defaultSongFilters,
+  loadSongSettings,
+  saveSongSettings,
+  isFilterActive,
+} from '../components/songSettings';
 
 type Props = {
   accountId?: string;
@@ -18,8 +29,59 @@ export default function SongsPage({ accountId }: Props) {
     state: { songs, isLoading, error },
   } = useFestival();
   const [search, setSearch] = useState('');
-  const [sort, setSort] = useState<SortMode>('title');
+  const [settings, setSettings] = useState<SongSettings>(loadSongSettings);
   const [instrument, setInstrument] = useState<InstrumentKey>('Solo_Guitar');
+
+  // Sort/Filter modal visibility + drafts
+  const [showSort, setShowSort] = useState(false);
+  const [showFilter, setShowFilter] = useState(false);
+  const [sortDraft, setSortDraft] = useState<SortDraft>(() => ({
+    sortMode: settings.sortMode,
+    sortAscending: settings.sortAscending,
+    metadataOrder: settings.metadataOrder,
+    instrumentOrder: settings.instrumentOrder,
+  }));
+  const [filterDraft, setFilterDraft] = useState<FilterDraft>(() => ({
+    ...settings.filters,
+    instrumentFilter: null,
+  }));
+
+  // Persist settings on change
+  useEffect(() => { saveSongSettings(settings); }, [settings]);
+
+  const openSort = () => {
+    setSortDraft({
+      sortMode: settings.sortMode,
+      sortAscending: settings.sortAscending,
+      metadataOrder: settings.metadataOrder,
+      instrumentOrder: settings.instrumentOrder,
+    });
+    setShowSort(true);
+  };
+  const applySort = () => {
+    setSettings(s => ({ ...s, ...sortDraft }));
+    setShowSort(false);
+  };
+  const resetSort = () => {
+    const d = defaultSongSettings();
+    setSortDraft({ sortMode: d.sortMode, sortAscending: d.sortAscending, metadataOrder: d.metadataOrder, instrumentOrder: d.instrumentOrder });
+  };
+
+  const openFilter = () => {
+    setFilterDraft({ ...settings.filters, instrumentFilter: instrument });
+    setShowFilter(true);
+  };
+  const applyFilter = () => {
+    const { instrumentFilter, ...filters } = filterDraft;
+    if (instrumentFilter) setInstrument(instrumentFilter);
+    setSettings(s => ({ ...s, filters }));
+    setShowFilter(false);
+  };
+  const resetFilter = () => {
+    setFilterDraft({ ...defaultSongFilters(), instrumentFilter: null });
+  };
+
+  const filtersActive = isFilterActive(settings.filters);
   const [playerData, setPlayerData] = useState<PlayerResponse | null>(null);
   const [playerLoading, setPlayerLoading] = useState(false);
   const { isSyncing, phase, backfillProgress, historyProgress, justCompleted, clearCompleted } =
@@ -65,6 +127,24 @@ export default function SongsPage({ accountId }: Props) {
     return map;
   }, [playerData, instrument]);
 
+  // Build a per-song, per-instrument lookup for filter logic
+  const allScoreMap = useMemo(() => {
+    if (!playerData) return new Map<string, Map<string, PlayerScore>>();
+    const map = new Map<string, Map<string, PlayerScore>>();
+    for (const s of playerData.scores) {
+      let byInst = map.get(s.songId);
+      if (!byInst) {
+        byInst = new Map();
+        map.set(s.songId, byInst);
+      }
+      byInst.set(s.instrument, s);
+    }
+    return map;
+  }, [playerData]);
+
+  const PAD_INSTRUMENTS: InstrumentKey[] = ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals'];
+  const PRO_INSTRUMENTS: InstrumentKey[] = ['Solo_PeripheralGuitar', 'Solo_PeripheralBass'];
+
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     let list = songs;
@@ -75,15 +155,122 @@ export default function SongsPage({ accountId }: Props) {
           s.artist.toLowerCase().includes(q),
       );
     }
-    return list.slice().sort((a, b) => {
-      if (sort === 'title') {
-        return a.title.localeCompare(b.title);
+
+    // Apply missing-score/FC filters (only when player data is loaded)
+    const f = settings.filters;
+    if (allScoreMap.size > 0) {
+      if (f.missingPadScores) {
+        list = list.filter(s => {
+          const byInst = allScoreMap.get(s.songId);
+          return PAD_INSTRUMENTS.some(inst => !byInst?.get(inst)?.score);
+        });
       }
-      return a.artist.localeCompare(b.artist);
+      if (f.missingPadFCs) {
+        list = list.filter(s => {
+          const byInst = allScoreMap.get(s.songId);
+          return PAD_INSTRUMENTS.some(inst => !byInst?.get(inst)?.isFullCombo);
+        });
+      }
+      if (f.missingProScores) {
+        list = list.filter(s => {
+          const byInst = allScoreMap.get(s.songId);
+          return PRO_INSTRUMENTS.some(inst => !byInst?.get(inst)?.score);
+        });
+      }
+      if (f.missingProFCs) {
+        list = list.filter(s => {
+          const byInst = allScoreMap.get(s.songId);
+          return PRO_INSTRUMENTS.some(inst => !byInst?.get(inst)?.isFullCombo);
+        });
+      }
+
+      // Season filter — only include songs where the score's season is enabled
+      const seasonKeys = Object.keys(f.seasonFilter);
+      if (seasonKeys.length > 0 && seasonKeys.some(k => f.seasonFilter[Number(k)] === false)) {
+        list = list.filter(s => {
+          const score = scoreMap.get(s.songId);
+          const season = score?.season ?? 0;
+          return f.seasonFilter[season] !== false;
+        });
+      }
+
+      // Percentile filter — only include songs whose percentile falls in an enabled bracket
+      const pctKeys = Object.keys(f.percentileFilter);
+      if (pctKeys.length > 0 && pctKeys.some(k => f.percentileFilter[Number(k)] === false)) {
+        list = list.filter(s => {
+          const score = scoreMap.get(s.songId);
+          if (!score) return f.percentileFilter[0] !== false;
+          // Compute percentile from rank/totalEntries, same as the display
+          const pct = score.rank > 0 && (score.totalEntries ?? 0) > 0
+            ? Math.min((score.rank / score.totalEntries!) * 100, 100)
+            : undefined;
+          if (pct == null) return f.percentileFilter[0] !== false;
+          // Find the smallest threshold >= pct
+          const thresholds = [1,2,3,4,5,10,15,20,25,30,40,50,60,70,80,90,100];
+          const bracket = thresholds.find(t => pct <= t) ?? 100;
+          return f.percentileFilter[bracket] !== false;
+        });
+      }
+
+      // Stars filter
+      const starKeys = Object.keys(f.starsFilter);
+      if (starKeys.length > 0 && starKeys.some(k => f.starsFilter[Number(k)] === false)) {
+        list = list.filter(s => {
+          const score = scoreMap.get(s.songId);
+          const stars = score?.stars ?? 0;
+          return f.starsFilter[stars] !== false;
+        });
+      }
+
+      // Difficulty filter
+      const diffKeys = Object.keys(f.difficultyFilter);
+      if (diffKeys.length > 0 && diffKeys.some(k => f.difficultyFilter[Number(k)] === false)) {
+        list = list.filter(s => {
+          const diff = (s as any).difficulty ?? 0;
+          return f.difficultyFilter[diff] !== false;
+        });
+      }
+    }
+
+    const dir = settings.sortAscending ? 1 : -1;
+    return list.slice().sort((a, b) => {
+      const mode = settings.sortMode;
+      let cmp = 0;
+      switch (mode) {
+        case 'title':
+          cmp = a.title.localeCompare(b.title);
+          break;
+        case 'artist':
+          cmp = a.artist.localeCompare(b.artist);
+          break;
+        case 'year':
+          cmp = (a.year ?? 0) - (b.year ?? 0);
+          break;
+        default:
+          // For instrument-specific modes we need player data
+          if (scoreMap.size > 0) {
+            const sa = scoreMap.get(a.songId);
+            const sb = scoreMap.get(b.songId);
+            cmp = compareByMode(mode, sa, sb);
+          } else {
+            cmp = a.title.localeCompare(b.title);
+          }
+      }
+      return cmp === 0 ? a.title.localeCompare(b.title) * dir : cmp * dir;
     });
-  }, [songs, search, sort]);
+  }, [songs, search, settings.sortMode, settings.sortAscending, settings.filters, scoreMap, allScoreMap]);
 
   const hasPlayer = !!playerData;
+
+  // Derive available seasons from player scores
+  const availableSeasons = useMemo(() => {
+    if (!playerData) return [];
+    const set = new Set<number>();
+    for (const s of playerData.scores) {
+      if (s.season != null) set.add(s.season);
+    }
+    return Array.from(set).sort((a, b) => a - b);
+  }, [playerData]);
 
   if (isLoading) {
     return <div style={styles.center}>Loading songs…</div>;
@@ -106,38 +293,28 @@ export default function SongsPage({ accountId }: Props) {
               onChange={(e) => setSearch(e.target.value)}
             />
             <div style={styles.sortGroup}>
-              <SortButton
-                label="Title"
-                active={sort === 'title'}
-                onClick={() => setSort('title')}
-              />
-              <SortButton
-                label="Artist"
-                active={sort === 'artist'}
-                onClick={() => setSort('artist')}
-              />
+              <button style={styles.iconBtn} onClick={openSort} title="Sort" aria-label="Sort songs">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 5h10M11 9h7M11 13h4M3 17l4 4 4-4M7 3v18" /></svg>
+              </button>
+              {hasPlayer && (
+                <button
+                  style={{ ...styles.iconBtn, ...(filtersActive ? styles.iconBtnActive : {}) }}
+                  onClick={openFilter}
+                  title="Filter"
+                  aria-label="Filter songs"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" /></svg>
+                  {filtersActive && <span style={styles.filterDot} />}
+                </button>
+              )}
             </div>
           </div>
+          {filtersActive && filtered.length !== songs.length && (
+            <div style={styles.count}>{filtered.length} of {songs.length} songs</div>
+          )}
         </div>
       </div>
       <div style={styles.container}>
-        {hasPlayer && (
-          <div style={styles.instrumentBar}>
-            {INSTRUMENT_KEYS.map((key) => (
-              <button
-                key={key}
-                onClick={() => setInstrument(key)}
-                style={{
-                  ...styles.instrumentChip,
-                  ...(instrument === key ? styles.instrumentChipActive : {}),
-                }}
-              >
-                {INSTRUMENT_LABELS[key]}
-              </button>
-            ))}
-            {playerLoading && <span style={styles.loadingDot}>loading…</span>}
-          </div>
-        )}
         {isSyncing && (
           <div style={styles.syncBanner}>
             <div style={styles.syncSpinner} />
@@ -198,16 +375,46 @@ export default function SongsPage({ accountId }: Props) {
             </div>
           </div>
         )}
-        <div style={styles.list}>
-          {filtered.map((song) => (
-            <SongRow
-              key={song.songId}
-              song={song}
-              score={hasPlayer ? scoreMap.get(song.songId) : undefined}
-            />
-          ))}
-        </div>
+        {filtered.length === 0 ? (
+          <div style={styles.emptyState}>
+            <div style={styles.emptyTitle}>No Songs Found</div>
+            <div style={styles.emptySubtitle}>
+              {filtersActive
+                ? 'Try changing your filters to see more songs.'
+                : 'The service may be down unexpectedly. Please refresh to try again.'}
+            </div>
+          </div>
+        ) : (
+          <div style={styles.list}>
+            {filtered.map((song) => (
+              <SongRow
+                key={song.songId}
+                song={song}
+                score={hasPlayer ? scoreMap.get(song.songId) : undefined}
+              />
+            ))}
+          </div>
+        )}
       </div>
+
+      <SortModal
+        visible={showSort}
+        draft={sortDraft}
+        instrumentFilter={filterDraft.instrumentFilter}
+        onChange={setSortDraft}
+        onCancel={() => setShowSort(false)}
+        onReset={resetSort}
+        onApply={applySort}
+      />
+      <FilterModal
+        visible={showFilter}
+        draft={filterDraft}
+        availableSeasons={availableSeasons}
+        onChange={setFilterDraft}
+        onCancel={() => setShowFilter(false)}
+        onReset={resetFilter}
+        onApply={applyFilter}
+      />
     </div>
   );
 }
@@ -294,26 +501,37 @@ function ScoreMetadata({ score }: { score: PlayerScore }) {
   );
 }
 
-function SortButton({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        ...styles.sortButton,
-        ...(active ? styles.sortButtonActive : {}),
-      }}
-    >
-      {label}
-    </button>
-  );
+/** Compare two PlayerScores by a given sort mode; undefined scores sort last. */
+function compareByMode(mode: SongSortMode, a?: PlayerScore, b?: PlayerScore): number {
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+
+  switch (mode) {
+    case 'score':
+      return a.score - b.score;
+    case 'percentage': {
+      const pa = a.accuracy ?? 0;
+      const pb = b.accuracy ?? 0;
+      return pa - pb;
+    }
+    case 'percentile': {
+      // Lower percentile rank = better, so invert for natural ascending
+      const pa = a.percentile ?? Infinity;
+      const pb = b.percentile ?? Infinity;
+      return pa - pb;
+    }
+    case 'isfc':
+      return (a.isFullCombo ? 1 : 0) - (b.isFullCombo ? 1 : 0);
+    case 'stars':
+      return (a.stars ?? 0) - (b.stars ?? 0);
+    case 'seasonachieved':
+      return (a.season ?? 0) - (b.season ?? 0);
+    case 'hasfc':
+      return (a.isFullCombo ? 1 : 0) - (b.isFullCombo ? 1 : 0);
+    default:
+      return 0;
+  }
 }
 
 const styles: Record<string, React.CSSProperties> = {
@@ -332,9 +550,11 @@ const styles: Record<string, React.CSSProperties> = {
     paddingBottom: Gap.md,
   },
   container: {
+    width: '100%',
     maxWidth: MaxWidth.card,
     margin: '0 auto',
     padding: `${Layout.paddingTop}px ${Layout.paddingHorizontal}px`,
+    boxSizing: 'border-box' as const,
   },
   heading: {
     fontSize: Font.title,
@@ -363,19 +583,32 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     gap: Gap.sm,
   },
-  sortButton: {
-    padding: `${Gap.sm}px ${Gap.xl}px`,
+  iconBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative' as const,
+    width: Size.control,
+    height: Size.control,
     borderRadius: Radius.xs,
     border: `1px solid ${Colors.borderPrimary}`,
     backgroundColor: Colors.transparent,
     color: Colors.textTertiary,
-    fontSize: Font.sm,
     cursor: 'pointer',
   },
-  sortButtonActive: {
-    backgroundColor: Colors.chipSelectedBg,
-    color: Colors.accentBlue,
+  iconBtnActive: {
     borderColor: Colors.accentBlue,
+    color: Colors.accentBlue,
+    backgroundColor: Colors.chipSelectedBgSubtle,
+  },
+  filterDot: {
+    position: 'absolute' as const,
+    top: 4,
+    right: 4,
+    width: 6,
+    height: 6,
+    borderRadius: '50%',
+    backgroundColor: Colors.accentBlue,
   },
   count: {
     fontSize: Font.sm,
@@ -573,5 +806,23 @@ const styles: Record<string, React.CSSProperties> = {
     color: Colors.textSecondary,
     backgroundColor: Colors.backgroundApp,
     fontSize: Font.lg,
+  },
+  emptyState: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 'calc(100dvh - 250px)',
+    textAlign: 'center' as const,
+  },
+  emptyTitle: {
+    fontSize: Font.xl,
+    fontWeight: 700,
+    color: Colors.textPrimary,
+    marginBottom: Gap.md,
+  },
+  emptySubtitle: {
+    fontSize: Font.md,
+    color: Colors.textMuted,
   },
 };

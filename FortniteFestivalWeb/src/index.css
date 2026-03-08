@@ -24,6 +24,14 @@ a {
   text-decoration: none;
 }
 
+button {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  color-scheme: normal;
+  -webkit-tap-highlight-color: transparent;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
 }
