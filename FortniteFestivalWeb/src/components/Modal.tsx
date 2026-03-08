@@ -76,7 +76,7 @@ export default function Modal({ visible, title, onClose, onApply, onReset, child
     bottom: 0,
     left: 0,
     right: 0,
-    maxHeight: '80vh',
+    height: '80vh',
     borderTopLeftRadius: Radius.lg,
     borderTopRightRadius: Radius.lg,
     transform: animIn ? 'translateY(0)' : 'translateY(100%)',
