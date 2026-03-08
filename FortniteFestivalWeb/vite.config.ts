@@ -14,6 +14,11 @@ export default defineConfig(({ mode }) => {
         '@festival/core': path.resolve(__dirname, '../packages/core/src'),
       },
     },
+    test: {
+      environment: 'jsdom',
+      globals: true,
+      setupFiles: ['./src/test/setup.ts'],
+    },
     build: {
       outDir: path.resolve(__dirname, '../FSTService/wwwroot/app'),
       emptyOutDir: true,

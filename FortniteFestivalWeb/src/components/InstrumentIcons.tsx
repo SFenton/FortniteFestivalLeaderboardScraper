@@ -7,19 +7,21 @@ import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
 
 type AnyInstrumentKey = InstrumentKey | ServerInstrumentKey;
 
+const BASE = import.meta.env.BASE_URL;
+
 const ICON_PATHS: Record<AnyInstrumentKey, string> = {
-  guitar: '/instruments/guitar.png',
-  bass: '/instruments/bass.png',
-  drums: '/instruments/drums.png',
-  vocals: '/instruments/vocals.png',
-  pro_guitar: '/instruments/pro_guitar.png',
-  pro_bass: '/instruments/pro_bass.png',
-  Solo_Guitar: '/instruments/guitar.png',
-  Solo_Bass: '/instruments/bass.png',
-  Solo_Drums: '/instruments/drums.png',
-  Solo_Vocals: '/instruments/vocals.png',
-  Solo_PeripheralGuitar: '/instruments/pro_guitar.png',
-  Solo_PeripheralBass: '/instruments/pro_bass.png',
+  guitar: `${BASE}instruments/guitar.png`,
+  bass: `${BASE}instruments/bass.png`,
+  drums: `${BASE}instruments/drums.png`,
+  vocals: `${BASE}instruments/vocals.png`,
+  pro_guitar: `${BASE}instruments/pro_guitar.png`,
+  pro_bass: `${BASE}instruments/pro_bass.png`,
+  Solo_Guitar: `${BASE}instruments/guitar.png`,
+  Solo_Bass: `${BASE}instruments/bass.png`,
+  Solo_Drums: `${BASE}instruments/drums.png`,
+  Solo_Vocals: `${BASE}instruments/vocals.png`,
+  Solo_PeripheralGuitar: `${BASE}instruments/pro_guitar.png`,
+  Solo_PeripheralBass: `${BASE}instruments/pro_bass.png`,
 };
 
 type IconProps = { size?: number; style?: React.CSSProperties };

@@ -95,28 +95,32 @@ export default function SongsPage({ accountId }: Props) {
 
   return (
     <div style={styles.page}>
-      <div style={styles.container}>
-        <h1 style={styles.heading}>Songs</h1>
-        <div style={styles.toolbar}>
-          <input
-            style={styles.searchInput}
-            placeholder="Search songs or artists…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          <div style={styles.sortGroup}>
-            <SortButton
-              label="Title"
-              active={sort === 'title'}
-              onClick={() => setSort('title')}
+      <div style={styles.stickyHeader}>
+        <div style={styles.container}>
+          <h1 style={styles.heading}>Songs</h1>
+          <div style={styles.toolbar}>
+            <input
+              style={styles.searchInput}
+              placeholder="Search songs or artists…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
             />
-            <SortButton
-              label="Artist"
-              active={sort === 'artist'}
-              onClick={() => setSort('artist')}
-            />
+            <div style={styles.sortGroup}>
+              <SortButton
+                label="Title"
+                active={sort === 'title'}
+                onClick={() => setSort('title')}
+              />
+              <SortButton
+                label="Artist"
+                active={sort === 'artist'}
+                onClick={() => setSort('artist')}
+              />
+            </div>
           </div>
         </div>
+      </div>
+      <div style={styles.container}>
         {hasPlayer && (
           <div style={styles.instrumentBar}>
             {INSTRUMENT_KEYS.map((key) => (
@@ -194,9 +198,6 @@ export default function SongsPage({ accountId }: Props) {
             </div>
           </div>
         )}
-        <div style={styles.count}>
-          {filtered.length} song{filtered.length !== 1 ? 's' : ''}
-        </div>
         <div style={styles.list}>
           {filtered.map((song) => (
             <SongRow
@@ -225,8 +226,6 @@ function SongRow({ song, score }: { song: Song; score?: PlayerScore }) {
       </div>
       {score ? (
         <ScoreMetadata score={score} />
-      ) : song.tempo ? (
-        <span style={styles.rowBpm}>{song.tempo} BPM</span>
       ) : null}
     </Link>
   );
@@ -319,11 +318,18 @@ function SortButton({
 
 const styles: Record<string, React.CSSProperties> = {
   page: {
-    minHeight: '100vh',
+    minHeight: '100%',
     backgroundColor: Colors.backgroundApp,
     color: Colors.textPrimary,
     fontFamily:
       "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+  },
+  stickyHeader: {
+    position: 'sticky' as const,
+    top: 0,
+    backgroundColor: Colors.backgroundApp,
+    zIndex: 10,
+    paddingBottom: Gap.md,
   },
   container: {
     maxWidth: MaxWidth.card,

@@ -100,14 +100,19 @@ export default function SuggestionsPage({ accountId }: Props) {
 
   return (
     <div style={styles.page}>
+      <div style={styles.stickyHeader}>
+        <div style={styles.container}>
+          <h1 style={styles.heading}>Suggestions</h1>
+        </div>
+      </div>
       <div style={styles.container}>
-        <h1 style={styles.heading}>Suggestions</h1>
         <InfiniteScroll
           dataLength={categories.length}
           next={loadMore}
           hasMore={hasMore}
           loader={<div style={styles.loader}>Loading more…</div>}
           scrollThreshold="600px"
+          scrollableTarget="main-content"
           style={{ overflow: 'visible' }}
         >
           {categories.map((cat, idx) => (
@@ -313,11 +318,18 @@ function RightContent({
 
 const styles: Record<string, React.CSSProperties> = {
   page: {
-    minHeight: '100vh',
+    minHeight: '100%',
     backgroundColor: Colors.backgroundApp,
     color: Colors.textPrimary,
     fontFamily:
       "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+  },
+  stickyHeader: {
+    position: 'sticky' as const,
+    top: 0,
+    backgroundColor: Colors.backgroundApp,
+    zIndex: 10,
+    paddingBottom: Gap.md,
   },
   container: {
     maxWidth: MaxWidth.card,
