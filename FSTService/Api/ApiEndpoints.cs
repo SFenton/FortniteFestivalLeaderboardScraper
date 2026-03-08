@@ -485,8 +485,7 @@ public static class ApiEndpoints
             });
         })
         .WithTags("Players")
-        .RequireAuthorization()
-        .RequireRateLimiting("protected");
+        .RequireRateLimiting("public");
 
         // ─── FirstSeenSeason endpoints ────────────────────
 
