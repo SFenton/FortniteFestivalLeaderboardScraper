@@ -24,6 +24,8 @@ type Props = {
   accountId: string;
   playerName: string;
   defaultInstrument?: InstrumentKey;
+  /** Pre-fetched history entries. When provided, skips internal fetch. */
+  history?: ScoreHistoryEntry[];
 };
 
 type ChartPoint = {
@@ -46,15 +48,23 @@ export default function ScoreHistoryChart({
   accountId,
   playerName,
   defaultInstrument,
+  history: historyProp,
 }: Props) {
   const cacheKey = `${accountId}:${songId}`;
   const [selected, setSelected] = useState<InstrumentKey>(defaultInstrument ?? 'Solo_Guitar');
   const [songHistory, setSongHistory] = useState<ScoreHistoryEntry[]>(
-    () => historyCache.get(cacheKey) ?? [],
+    () => historyProp ?? historyCache.get(cacheKey) ?? [],
   );
-  const [loading, setLoading] = useState(!historyCache.has(cacheKey));
+  const [loading, setLoading] = useState(!historyProp && !historyCache.has(cacheKey));
 
   useEffect(() => {
+    // If pre-fetched data was provided, use it directly
+    if (historyProp) {
+      setSongHistory(historyProp);
+      historyCache.set(cacheKey, historyProp);
+      setLoading(false);
+      return;
+    }
     if (historyCache.has(cacheKey)) {
       setSongHistory(historyCache.get(cacheKey)!);
       setLoading(false);
@@ -79,7 +89,7 @@ export default function ScoreHistoryChart({
     return () => {
       cancelled = true;
     };
-  }, [accountId, songId, cacheKey]);
+  }, [accountId, songId, cacheKey, historyProp]);
 
   const filtered = useMemo(
     () =>

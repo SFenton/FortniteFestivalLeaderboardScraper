@@ -70,6 +70,15 @@ export default function LeaderboardPage() {
 
   return (
     <div style={styles.page}>
+      {song?.albumArt && (
+        <div
+          style={{
+            ...styles.bgImage,
+            backgroundImage: `url(${song.albumArt})`,
+          }}
+        />
+      )}
+      <div style={styles.bgDim} />
       <div style={styles.container}>
         <Link to={`/songs/${songId}`} style={styles.backLink}>
           ← Back to {song?.title ?? 'Song'}
@@ -212,8 +221,26 @@ const styles: Record<string, React.CSSProperties> = {
     color: Colors.textPrimary,
     fontFamily:
       "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+    position: 'relative' as const,
+    overflow: 'hidden' as const,
+  },
+  bgImage: {
+    position: 'fixed' as const,
+    inset: 0,
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+    opacity: 0.9,
+    pointerEvents: 'none' as const,
+  },
+  bgDim: {
+    position: 'fixed' as const,
+    inset: 0,
+    backgroundColor: Colors.overlayDark,
+    pointerEvents: 'none' as const,
   },
   container: {
+    position: 'relative' as const,
+    zIndex: 1,
     maxWidth: MaxWidth.card,
     margin: '0 auto',
     padding: `${Layout.paddingTop}px ${Layout.paddingHorizontal}px`,
