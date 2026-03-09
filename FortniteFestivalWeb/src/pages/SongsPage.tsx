@@ -1,13 +1,12 @@
-import { useState, useMemo, useEffect, useCallback, Fragment } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback, Fragment } from 'react';
 import { IoSwapVerticalSharp, IoFunnel } from 'react-icons/io5';
 import { Link } from 'react-router-dom';
 import { formatPercentile } from '../utils/formatPercentile';
 import { useFestival } from '../contexts/FestivalContext';
+import { usePlayerData } from '../contexts/PlayerDataContext';
 import { useSettings } from '../contexts/SettingsContext';
-import { useSyncStatus } from '../hooks/useSyncStatus';
 import { useIsMobile } from '../hooks/useIsMobile';
-import { api } from '../api/client';
-import type { Song, PlayerScore, PlayerResponse, InstrumentKey } from '../models';
+import type { Song, PlayerScore, InstrumentKey } from '../models';
 import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth } from '../theme';
 import SortModal from '../components/SortModal';
 import type { SortDraft } from '../components/SortModal';
@@ -23,16 +22,30 @@ import {
   isFilterActive,
 } from '../components/songSettings';
 
-type Props = {
-  accountId?: string;
-};
+let _savedScrollTop = 0;
 
-export default function SongsPage({ accountId }: Props) {
+export default function SongsPage() {
   const {
     state: { songs, isLoading, error },
   } = useFestival();
   const { settings: appSettings } = useSettings();
   const isMobile = useIsMobile();
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Restore scroll position on mount
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el && _savedScrollTop > 0) {
+      el.scrollTop = _savedScrollTop;
+    }
+  }, []);
+
+  // Save scroll position continuously
+  const handleScroll = useCallback(() => {
+    if (scrollRef.current) {
+      _savedScrollTop = scrollRef.current.scrollTop;
+    }
+  }, []);
   const [search, setSearch] = useState('');
   const [settings, setSettings] = useState<SongSettings>(loadSongSettings);
   const [instrument, setInstrument] = useState<InstrumentKey>(
@@ -89,38 +102,7 @@ export default function SongsPage({ accountId }: Props) {
   };
 
   const filtersActive = isFilterActive(settings.filters) || settings.instrument != null;
-  const [playerData, setPlayerData] = useState<PlayerResponse | null>(null);
-  const [playerLoading, setPlayerLoading] = useState(false);
-  const { isSyncing, phase, backfillProgress, historyProgress, justCompleted, clearCompleted } =
-    useSyncStatus(accountId);
-
-  const fetchPlayer = useCallback(async (accountId: string) => {
-    setPlayerLoading(true);
-    try {
-      const res = await api.getPlayer(accountId);
-      setPlayerData(res);
-    } catch {
-      setPlayerData(null);
-    } finally {
-      setPlayerLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (accountId) {
-      void fetchPlayer(accountId);
-    } else {
-      setPlayerData(null);
-    }
-  }, [accountId, fetchPlayer]);
-
-  // Auto-reload player data when sync completes
-  useEffect(() => {
-    if (justCompleted && accountId) {
-      clearCompleted();
-      void fetchPlayer(accountId);
-    }
-  }, [justCompleted, clearCompleted, accountId, fetchPlayer]);
+  const { playerData, isSyncing, syncPhase: phase, backfillProgress, historyProgress } = usePlayerData();
 
   // Build lookup: songId → PlayerScore for the selected instrument
   const scoreMap = useMemo(() => {
@@ -350,7 +332,7 @@ export default function SongsPage({ accountId }: Props) {
           )}
         </div>
       </div>
-      <div style={styles.scrollArea}>
+      <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
         <div style={styles.container}>
         {isSyncing && (
           <div style={styles.syncBanner}>

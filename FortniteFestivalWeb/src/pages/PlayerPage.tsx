@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef, type CSSProperties } from 're
 import { useParams, Link } from 'react-router-dom';
 import { formatPercentile } from '../utils/formatPercentile';
 import { useFestival } from '../contexts/FestivalContext';
+import { usePlayerData } from '../contexts/PlayerDataContext';
 import { useSyncStatus } from '../hooks/useSyncStatus';
 import { api } from '../api/client';
 import {
@@ -45,42 +46,55 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
     state: { songs },
   } = useFestival();
 
-  const [data, setData] = useState<PlayerResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Use cached context data when viewing the tracked player (statistics tab)
+  const ctx = usePlayerData();
+  const isTrackedPlayer = !!propAccountId && ctx.playerData?.accountId === propAccountId;
+
+  // Local state for when viewing an arbitrary player via URL
+  const [localData, setLocalData] = useState<PlayerResponse | null>(null);
+  const [localLoading, setLocalLoading] = useState(!isTrackedPlayer);
+  const [localError, setLocalError] = useState<string | null>(null);
   const hasDataRef = useRef(false);
 
-  const { isSyncing, phase, backfillProgress, historyProgress, justCompleted, clearCompleted } =
-    useSyncStatus(accountId);
+  const { isSyncing: localSyncing, phase: localPhase, backfillProgress: localBfProg, historyProgress: localHrProg, justCompleted, clearCompleted } =
+    useSyncStatus(!isTrackedPlayer ? accountId : undefined);
 
   const fetchPlayer = useCallback(async () => {
-    if (!accountId) return;
-    // Only show full-page loading on initial load, not on refresh
-    if (!hasDataRef.current) setLoading(true);
-    setError(null);
+    if (!accountId || isTrackedPlayer) return;
+    if (!hasDataRef.current) setLocalLoading(true);
+    setLocalError(null);
     try {
       const res = await api.getPlayer(accountId);
-      setData(res);
+      setLocalData(res);
       hasDataRef.current = true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load player');
+      setLocalError(e instanceof Error ? e.message : 'Failed to load player');
     } finally {
-      setLoading(false);
+      setLocalLoading(false);
     }
-  }, [accountId]);
+  }, [accountId, isTrackedPlayer]);
 
   useEffect(() => {
+    if (isTrackedPlayer) return;
     hasDataRef.current = false;
     void fetchPlayer();
-  }, [fetchPlayer]);
+  }, [fetchPlayer, isTrackedPlayer]);
 
-  // Auto-reload when sync completes
   useEffect(() => {
     if (justCompleted) {
       clearCompleted();
       void fetchPlayer();
     }
   }, [justCompleted, clearCompleted, fetchPlayer]);
+
+  // Resolve effective values: context for tracked player, local for others
+  const data = isTrackedPlayer ? ctx.playerData : localData;
+  const loading = isTrackedPlayer ? ctx.playerLoading : localLoading;
+  const error = isTrackedPlayer ? ctx.playerError : localError;
+  const isSyncing = isTrackedPlayer ? ctx.isSyncing : localSyncing;
+  const phase = isTrackedPlayer ? ctx.syncPhase : localPhase;
+  const backfillProgress = isTrackedPlayer ? ctx.backfillProgress : localBfProg;
+  const historyProgress = isTrackedPlayer ? ctx.historyProgress : localHrProg;
 
   if (loading) return <div style={styles.center}><div style={styles.arcSpinner} /></div>;
   if (error) return <div style={styles.centerError}>{error}</div>;

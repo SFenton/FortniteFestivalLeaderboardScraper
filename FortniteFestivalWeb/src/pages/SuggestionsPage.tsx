@@ -3,9 +3,8 @@ import { IoFunnel } from 'react-icons/io5';
 import { Link } from 'react-router-dom';
 import InfiniteScroll from 'react-infinite-scroll-component';
 import { useFestival } from '../contexts/FestivalContext';
-import { useSyncStatus } from '../hooks/useSyncStatus';
+import { usePlayerData } from '../contexts/PlayerDataContext';
 import { useSuggestions } from '../hooks/useSuggestions';
-import { api } from '../api/client';
 import { serverSongToCore, buildScoresIndex } from '../utils/suggestionAdapter';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../components/InstrumentIcons';
 import SuggestionsFilterModal from '../components/SuggestionsFilterModal';
@@ -13,7 +12,6 @@ import type { SuggestionsFilterDraft } from '../components/SuggestionsFilterModa
 import { defaultSuggestionsFilterDraft, isSuggestionsFilterActive } from '../components/SuggestionsFilterModal';
 import { InstrumentKeys } from '@festival/core/instruments';
 import type { LeaderboardData } from '@festival/core/models';
-import type { PlayerResponse } from '../models';
 import type { SuggestionCategory, SuggestionSongItem } from '@festival/core/suggestions/types';
 import type { InstrumentKey } from '@festival/core/instruments';
 import { shouldShowCategory, filterCategoryForInstruments } from '@festival/core/instrumentFilters';
@@ -126,32 +124,8 @@ export default function SuggestionsPage({ accountId }: Props) {
     state: { songs, isLoading },
   } = useFestival();
 
-  const [playerData, setPlayerData] = useState<PlayerResponse | null>(null);
-  const [playerLoading, setPlayerLoading] = useState(true);
-  const { justCompleted, clearCompleted } = useSyncStatus(accountId);
+  const { playerData, playerLoading } = usePlayerData();
   const isMobile = useIsMobile();
-
-  const fetchPlayer = useCallback(async () => {
-    setPlayerLoading(true);
-    try {
-      setPlayerData(await api.getPlayer(accountId));
-    } catch {
-      setPlayerData(null);
-    } finally {
-      setPlayerLoading(false);
-    }
-  }, [accountId]);
-
-  useEffect(() => {
-    void fetchPlayer();
-  }, [fetchPlayer]);
-
-  useEffect(() => {
-    if (justCompleted) {
-      clearCompleted();
-      void fetchPlayer();
-    }
-  }, [justCompleted, clearCompleted, fetchPlayer]);
 
   const coreSongs = useMemo(
     () => (playerData ? songs.map(serverSongToCore) : []),

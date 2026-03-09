@@ -6,7 +6,7 @@ import { SettingsProvider } from './contexts/SettingsContext';
 import PlayerSearch from './components/PlayerSearch';
 import { AnimatedBackground } from './components/AnimatedBackground';
 import { useTrackedPlayer, type TrackedPlayer } from './hooks/useTrackedPlayer';
-import { useSyncStatus } from './hooks/useSyncStatus';
+import { PlayerDataProvider, usePlayerData } from './contexts/PlayerDataContext';
 import { api } from './api/client';
 import type { AccountSearchResult } from './models';
 import { useIsMobile } from './hooks/useIsMobile';
@@ -53,7 +53,6 @@ function isAnimatedBgRoute(pathname: string) {
 
 function AppShell() {
   const { player, setPlayer, clearPlayer } = useTrackedPlayer();
-  const { isSyncing } = useSyncStatus(player?.accountId);
   const { state: { songs } } = useFestival();
   const location = useLocation();
   const isMobile = useIsMobile();
@@ -70,6 +69,7 @@ function AppShell() {
   const showNav = !isMobile && !isDetailRoute(location.pathname);
 
   return (
+    <PlayerDataProvider accountId={player?.accountId}>
     <div style={styles.shell}>
       <ScrollToTop />
       {showAnimatedBg && <AnimatedBackground songs={songs} />}
@@ -86,11 +86,10 @@ function AppShell() {
           </button>
           {navTitle && <span style={styles.navTitle}>{navTitle}</span>}
           <div style={styles.spacer} />
-          <PlayerSearch
+          <NavPlayerSearch
             player={player}
             onSelect={handleSelect}
             onClear={clearPlayer}
-            isSyncing={isSyncing}
           />
         </nav>
       )}
@@ -108,7 +107,7 @@ function AppShell() {
       <div id="main-content" key={player?.accountId ?? 'none'} style={styles.content}>
         <Routes>
           <Route path="/" element={<Navigate to="/songs" replace />} />
-          <Route path="/songs" element={<SongsPage accountId={player?.accountId} />} />
+          <Route path="/songs" element={<SongsPage />} />
           <Route path="/songs/:songId" element={<SongDetailPage />} />
           <Route path="/songs/:songId/:instrument" element={<LeaderboardPage />} />
           <Route path="/player/:accountId" element={<PlayerPage />} />
@@ -137,6 +136,27 @@ function AppShell() {
         />
       )}
     </div>
+    </PlayerDataProvider>
+  );
+}
+
+function NavPlayerSearch({
+  player,
+  onSelect,
+  onClear,
+}: {
+  player: TrackedPlayer | null;
+  onSelect: (p: TrackedPlayer) => void;
+  onClear: () => void;
+}) {
+  const { isSyncing } = usePlayerData();
+  return (
+    <PlayerSearch
+      player={player}
+      onSelect={onSelect}
+      onClear={onClear}
+      isSyncing={isSyncing}
+    />
   );
 }
 
@@ -719,7 +739,7 @@ function ScrollToTop() {
     }
   }, []);
   useEffect(() => {
-    if (pathname === '/suggestions') return;
+    if (pathname === '/suggestions' || pathname === '/songs') return;
     document.getElementById('main-content')?.scrollTo(0, 0);
   }, [pathname]);
   return null;
