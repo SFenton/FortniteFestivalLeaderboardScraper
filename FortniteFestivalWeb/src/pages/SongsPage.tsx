@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef, useCallback, Fragment } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback, Fragment, type CSSProperties } from 'react';
 import { IoSwapVerticalSharp, IoFunnel } from 'react-icons/io5';
 import { Link } from 'react-router-dom';
 import { formatPercentile } from '../utils/formatPercentile';
@@ -102,7 +102,7 @@ export default function SongsPage() {
   };
 
   const filtersActive = isFilterActive(settings.filters) || settings.instrument != null;
-  const { playerData, isSyncing, syncPhase: phase, backfillProgress, historyProgress } = usePlayerData();
+  const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress } = usePlayerData();
 
   // Build lookup: songId → PlayerScore for the selected instrument
   const scoreMap = useMemo(() => {
@@ -290,9 +290,47 @@ export default function SongsPage() {
     return Array.from(set).sort((a, b) => a - b);
   }, [playerData]);
 
-  if (isLoading) {
-    return <div style={styles.center}>Loading songs…</div>;
-  }
+  // ── Spinner → staggered-content transition ──
+  const dataReady = !isLoading && songs.length > 0 && !playerLoading;
+  const [loadPhase, setLoadPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>(
+    dataReady ? 'contentIn' : 'loading',
+  );
+
+  // Track whether the toolbar has been shown at least once (initial load complete)
+  const toolbarShownRef = useRef(false);
+  if (loadPhase === 'contentIn') toolbarShownRef.current = true;
+
+  // Fingerprint of sort/filter settings — when it changes, re-stagger the list
+  const settingsKey = `${settings.sortMode}|${settings.sortAscending}|${instrument}|${JSON.stringify(settings.filters)}`;
+  const prevSettingsKeyRef = useRef(settingsKey);
+
+  useEffect(() => {
+    if (prevSettingsKeyRef.current === settingsKey) return;
+    prevSettingsKeyRef.current = settingsKey;
+    // Only re-stagger if we were already showing content
+    if (loadPhase === 'contentIn') {
+      setLoadPhase('spinnerOut');
+    }
+  }, [settingsKey, loadPhase]);
+
+  useEffect(() => {
+    if (!dataReady || loadPhase !== 'loading') return;
+    setLoadPhase('spinnerOut');
+  }, [dataReady, loadPhase]);
+
+  useEffect(() => {
+    if (loadPhase !== 'spinnerOut') return;
+    const id = setTimeout(() => setLoadPhase('contentIn'), 500);
+    return () => clearTimeout(id);
+  }, [loadPhase]);
+
+  // Scroll to top when content transitions in after a settings change
+  useEffect(() => {
+    if (loadPhase === 'contentIn' && scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
+      _savedScrollTop = 0;
+    }
+  }, [loadPhase]);
 
   if (error) {
     return <div style={styles.center}>{error}</div>;
@@ -300,9 +338,24 @@ export default function SongsPage() {
 
   return (
     <div style={styles.page}>
+      {/* Spinner overlay — visible during loading & spinnerOut */}
+      {loadPhase !== 'contentIn' && (
+        <div
+          style={{
+            ...styles.spinnerOverlay,
+            ...(loadPhase === 'spinnerOut'
+              ? { animation: 'fadeOut 500ms ease-out forwards' }
+              : {}),
+          }}
+        >
+          <div style={styles.arcSpinner} />
+        </div>
+      )}
       <div style={styles.header}>
         <div style={styles.container}>
           {isMobile && <h1 style={styles.heading}>Songs</h1>}
+          {(toolbarShownRef.current || loadPhase === 'contentIn') && (
+          <>
           <div style={styles.toolbar}>
             <input
               style={styles.searchInput}
@@ -330,6 +383,8 @@ export default function SongsPage() {
           {filtersActive && filtered.length !== songs.length && (
             <div style={styles.count}>{filtered.length} of {songs.length} songs</div>
           )}
+          </>
+          )}
         </div>
       </div>
       <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
@@ -339,14 +394,14 @@ export default function SongsPage() {
             <div style={styles.syncSpinner} />
             <div style={{ flex: 1 }}>
               <div style={styles.syncTitle}>
-                {phase === 'backfill' ? 'Syncing Data' : 'Building Score History'}
+                {syncPhase === 'backfill' ? 'Syncing Data' : 'Building Score History'}
               </div>
               <div style={styles.syncSubtitle}>
-                {phase === 'backfill'
+                {syncPhase === 'backfill'
                   ? 'Fetching scores from leaderboards…'
                   : 'Reconstructing score history across seasons…'}
               </div>
-              {phase === 'backfill' && backfillProgress > 0 && (
+              {syncPhase === 'backfill' && backfillProgress > 0 && (
                 <div style={{ marginTop: Gap.md }}>
                   <div style={styles.syncProgressLabel}>
                     <span>Syncing scores</span>
@@ -362,7 +417,7 @@ export default function SongsPage() {
                   </div>
                 </div>
               )}
-              {phase === 'history' && (
+              {syncPhase === 'history' && (
                 <>
                   <div style={{ marginTop: Gap.md }}>
                     <div style={styles.syncProgressLabel}>
@@ -394,7 +449,7 @@ export default function SongsPage() {
             </div>
           </div>
         )}
-        {filtered.length === 0 ? (
+        {loadPhase === 'contentIn' && filtered.length === 0 ? (
           <div style={styles.emptyState}>
             <div style={styles.emptyTitle}>No Songs Found</div>
             <div style={styles.emptySubtitle}>
@@ -405,16 +460,17 @@ export default function SongsPage() {
           </div>
         ) : (
           <div style={styles.list}>
-            {filtered.map((song) => (
-              <SongRow
-                key={song.songId}
-                song={song}
-                score={hasPlayer ? scoreMap.get(song.songId) : undefined}
-                instrument={instrument}
-                metadataOrder={visibleMetadataOrder}
-                sortMode={settings.sortMode}
-                isMobile={isMobile}
-              />
+            {loadPhase === 'contentIn' && filtered.map((song, i) => (
+                <SongRow
+                  key={song.songId}
+                  song={song}
+                  score={hasPlayer ? scoreMap.get(song.songId) : undefined}
+                  instrument={instrument}
+                  metadataOrder={visibleMetadataOrder}
+                  sortMode={settings.sortMode}
+                  isMobile={isMobile}
+                  staggerDelay={(i + 1) * 125}
+                />
             ))}
           </div>
         )}
@@ -662,6 +718,7 @@ function SongRow({
   metadataOrder,
   sortMode,
   isMobile,
+  staggerDelay,
 }: {
   song: Song;
   score?: PlayerScore;
@@ -669,7 +726,18 @@ function SongRow({
   metadataOrder: string[];
   sortMode: SongSortMode;
   isMobile: boolean;
+  staggerDelay?: number;
 }) {
+  const linkRef = useRef<HTMLAnchorElement>(null);
+  const handleAnimEnd = useCallback(() => {
+    const el = linkRef.current;
+    if (!el) return;
+    el.style.opacity = '';
+    el.style.animation = '';
+  }, []);
+  const animStyle: CSSProperties | undefined = staggerDelay != null
+    ? { opacity: 0, animation: `fadeInUp 400ms ease-out ${staggerDelay}ms forwards` }
+    : undefined;
   // Promote current sort mode to position 0 for inline display (matches mobile)
   const displayOrder = useMemo(() => {
     const order = [...metadataOrder];
@@ -703,7 +771,7 @@ function SongRow({
     const topEntry = entries[0]!;
     const bottomEntries = entries.slice(1);
     return (
-      <Link to={`/songs/${song.songId}?instrument=${encodeURIComponent(instrument)}`} style={styles.rowMobile}>
+      <Link ref={linkRef} to={`/songs/${song.songId}?instrument=${encodeURIComponent(instrument)}`} style={{ ...styles.rowMobile, ...animStyle }} onAnimationEnd={handleAnimEnd}>
         <div style={styles.mobileTopRow}>
           {thumb}
           <div style={styles.rowText}>
@@ -722,7 +790,7 @@ function SongRow({
   }
 
   return (
-    <Link to={`/songs/${song.songId}?instrument=${encodeURIComponent(instrument)}`} style={styles.row}>
+    <Link ref={linkRef} to={`/songs/${song.songId}?instrument=${encodeURIComponent(instrument)}`} style={{ ...styles.row, ...animStyle }} onAnimationEnd={handleAnimEnd}>
       {thumb}
       <div style={styles.rowText}>
         <span style={styles.rowTitle}>{song.title}</span>
@@ -1145,6 +1213,22 @@ const styles: Record<string, React.CSSProperties> = {
     color: Colors.textSecondary,
     backgroundColor: Colors.backgroundApp,
     fontSize: Font.lg,
+  },
+  arcSpinner: {
+    width: 48,
+    height: 48,
+    border: '4px solid rgba(255,255,255,0.10)',
+    borderTopColor: Colors.accentPurple,
+    borderRadius: '50%',
+    animation: 'spin 0.8s linear infinite',
+  },
+  spinnerOverlay: {
+    position: 'fixed' as const,
+    inset: 0,
+    zIndex: 2,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyState: {
     display: 'flex',

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
 import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
@@ -133,6 +133,11 @@ export default function SongDetailPage() {
     opacity: 0,
     animation: `fadeInUp 400ms ease-out ${delayMs}ms forwards`,
   });
+  const clearAnim = useCallback((e: React.AnimationEvent<HTMLElement>) => {
+    const el = e.currentTarget;
+    el.style.opacity = '';
+    el.style.animation = '';
+  }, []);
 
   return (
     <div style={styles.page}>
@@ -159,16 +164,16 @@ export default function SongDetailPage() {
       )}
       {phase === 'contentIn' && (
         <div style={styles.container}>
-          <div style={stagger(0)}>
+          <div style={stagger(0)} onAnimationEnd={clearAnim}>
             <Link to="/songs" style={styles.backLink}>
               ← Back to Songs
             </Link>
           </div>
-          <div style={stagger(150)}>
+          <div style={stagger(150)} onAnimationEnd={clearAnim}>
             <SongHeader song={song} songId={songId} />
           </div>
           {player && (
-            <div style={stagger(300)}>
+            <div style={stagger(300)} onAnimationEnd={clearAnim}>
               <ScoreHistoryChart
                 songId={songId}
                 accountId={player.accountId}
@@ -178,7 +183,7 @@ export default function SongDetailPage() {
               />
             </div>
           )}
-          <div style={{ ...styles.instrumentGrid, ...stagger(450) }}>
+          <div style={{ ...styles.instrumentGrid, ...stagger(450) }} onAnimationEnd={clearAnim}>
             {INSTRUMENT_KEYS.slice(0, 3).map((inst) => (
               <InstrumentCard
                 key={inst}
@@ -192,7 +197,7 @@ export default function SongDetailPage() {
               />
             ))}
           </div>
-          <div style={{ ...styles.instrumentGrid, ...stagger(600) }}>
+          <div style={{ ...styles.instrumentGrid, ...stagger(600) }} onAnimationEnd={clearAnim}>
             {INSTRUMENT_KEYS.slice(3).map((inst) => (
               <InstrumentCard
                 key={inst}
