@@ -204,8 +204,10 @@ const styles: Record<string, React.CSSProperties> = {
     paddingBottom: Gap.section * 2,
   },
   card: {
-    backgroundColor: Colors.backgroundCard,
-    border: `1px solid ${Colors.borderCard}`,
+    backgroundColor: Colors.glassCard,
+    backdropFilter: 'blur(20px)',
+    WebkitBackdropFilter: 'blur(20px)',
+    border: `1px solid ${Colors.glassBorder}`,
     borderRadius: Radius.md,
     padding: 16,
     display: 'flex',

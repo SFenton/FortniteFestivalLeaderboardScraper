@@ -298,9 +298,12 @@ const styles: Record<string, React.CSSProperties> = {
   table: {
     display: 'flex',
     flexDirection: 'column' as const,
-    border: `1px solid ${Colors.borderSubtle}`,
+    border: `1px solid ${Colors.glassBorder}`,
     borderRadius: Radius.lg,
     overflow: 'hidden',
+    backgroundColor: Colors.glassCard,
+    backdropFilter: 'blur(20px)',
+    WebkitBackdropFilter: 'blur(20px)',
   },
   tableHeader: {
     display: 'flex',
@@ -315,15 +318,13 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     padding: `${Gap.sm + 2}px ${Gap.xl}px`,
-    borderBottom: `1px solid ${Colors.borderSubtle}`,
-    backgroundColor: Colors.backgroundCard,
+    borderBottom: `1px solid ${Colors.glassBorder}`,
     fontSize: Font.md,
   },
   emptyRow: {
     padding: `${Gap.xl}px`,
     textAlign: 'center' as const,
     color: Colors.textMuted,
-    backgroundColor: Colors.backgroundCard,
   },
   colRank: {
     width: 64,
@@ -386,8 +387,10 @@ const styles: Record<string, React.CSSProperties> = {
   pageButton: {
     padding: `${Gap.md}px ${Gap.xl}px`,
     borderRadius: Radius.sm,
-    border: `1px solid ${Colors.borderPrimary}`,
-    backgroundColor: Colors.backgroundCard,
+    border: `1px solid ${Colors.glassBorder}`,
+    backgroundColor: Colors.glassCard,
+    backdropFilter: 'blur(20px)',
+    WebkitBackdropFilter: 'blur(20px)',
     color: Colors.textPrimary,
     fontSize: Font.sm,
     cursor: 'pointer',

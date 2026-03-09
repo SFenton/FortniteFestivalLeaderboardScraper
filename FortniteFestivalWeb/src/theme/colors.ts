@@ -14,6 +14,11 @@ export const Colors = {
   surfacePressed: '#101826',
   surfaceMuted: '#223047',
 
+  // Frosted glass
+  glassCard: 'rgba(11,18,32,0.35)',
+  glassBorder: 'rgba(255,255,255,0.08)',
+  glassNav: 'rgba(11,3,24,0.40)',
+
   // Overlays
   overlayModal: 'rgba(0,0,0,0.55)',
   overlayScrim: 'rgba(0,0,0,0.35)',
