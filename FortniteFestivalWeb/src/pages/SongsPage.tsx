@@ -286,7 +286,7 @@ export default function SongsPage({ accountId }: Props) {
     <div style={styles.page}>
       <div style={styles.header}>
         <div style={styles.container}>
-          <h1 style={styles.heading}>Songs</h1>
+          {isMobile && <h1 style={styles.heading}>Songs</h1>}
           <div style={styles.toolbar}>
             <input
               style={styles.searchInput}

@@ -15,8 +15,9 @@ import {
 import { Colors, Font, Gap, Radius, Layout, MaxWidth } from '../theme';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 
-export default function PlayerPage() {
-  const { accountId } = useParams<{ accountId: string }>();
+export default function PlayerPage({ accountId: propAccountId }: { accountId?: string } = {}) {
+  const params = useParams<{ accountId: string }>();
+  const accountId = propAccountId ?? params.accountId;
   const {
     state: { songs },
   } = useFestival();

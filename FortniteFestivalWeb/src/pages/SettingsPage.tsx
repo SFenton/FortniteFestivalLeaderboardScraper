@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { useSettings } from '../contexts/SettingsContext';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { ToggleRow, ReorderList } from '../components/Modal';
 import { METADATA_SORT_DISPLAY } from '../components/songSettings';
 import { InstrumentIcon } from '../components/InstrumentIcons';
@@ -40,6 +41,7 @@ const METADATA_TOGGLES: { key: MetadataKey; label: string }[] = [
 
 export default function SettingsPage() {
   const { settings, updateSettings, resetSettings } = useSettings();
+  const isMobile = useIsMobile();
 
   const showActiveCount = INSTRUMENT_SHOW_MAP.filter(i => settings[i.showKey]).length;
 
@@ -68,11 +70,13 @@ export default function SettingsPage() {
 
   return (
     <div style={styles.page}>
-      <div style={styles.header}>
-        <div style={styles.container}>
-          <h1 style={styles.heading}>Settings</h1>
+      {isMobile && (
+        <div style={styles.header}>
+          <div style={styles.container}>
+            <h1 style={styles.heading}>Settings</h1>
+          </div>
         </div>
-      </div>
+      )}
       <div style={styles.scrollArea}>
       <div style={styles.container}>
         <div style={styles.cardColumn}>
@@ -178,7 +182,6 @@ const styles: Record<string, React.CSSProperties> = {
   header: {
     flexShrink: 0,
     zIndex: 10,
-    paddingBottom: Gap.md,
   },
   scrollArea: {
     flex: 1,
@@ -192,14 +195,12 @@ const styles: Record<string, React.CSSProperties> = {
   heading: {
     fontSize: Font.title,
     fontWeight: 700,
-    marginBottom: Gap.xl,
+    margin: 0,
   },
   cardColumn: {
     display: 'flex',
     flexDirection: 'column' as const,
     gap: Gap.section,
-    maxWidth: 600,
-    margin: '0 auto',
     paddingBottom: Gap.section * 2,
   },
   card: {

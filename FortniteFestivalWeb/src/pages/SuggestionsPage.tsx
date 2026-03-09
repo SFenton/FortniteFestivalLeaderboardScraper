@@ -18,6 +18,7 @@ import type { InstrumentKey } from '@festival/core/instruments';
 import { shouldShowCategory, filterCategoryForInstruments } from '@festival/core/instrumentFilters';
 import { globalKeyFor, getCategoryTypeId, getCategoryInstrument, perInstrumentKeyFor } from '@festival/core/suggestions/suggestionFilterConfig';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size } from '../theme';
+import { useIsMobile } from '../hooks/useIsMobile';
 import type { InstrumentKey as ServerInstrumentKey } from '../models';
 
 const CORE_TO_SERVER_INSTRUMENT: Record<InstrumentKey, ServerInstrumentKey> = {
@@ -103,6 +104,7 @@ export default function SuggestionsPage({ accountId }: Props) {
   const [playerData, setPlayerData] = useState<PlayerResponse | null>(null);
   const [playerLoading, setPlayerLoading] = useState(true);
   const { justCompleted, clearCompleted } = useSyncStatus(accountId);
+  const isMobile = useIsMobile();
 
   const fetchPlayer = useCallback(async () => {
     setPlayerLoading(true);
@@ -252,7 +254,7 @@ export default function SuggestionsPage({ accountId }: Props) {
     return (
       <div style={styles.page}>
         <div style={styles.container}>
-          <h1 style={styles.heading}>Suggestions</h1>
+          {isMobile && <h1 style={styles.heading}>Suggestions</h1>}
           <div style={styles.emptyState}>
             <div style={styles.emptyTitle}>No Suggestions Available</div>
             <div style={styles.emptySubtitle}>
@@ -277,7 +279,7 @@ export default function SuggestionsPage({ accountId }: Props) {
       <div style={styles.header}>
         <div style={styles.container}>
           <div style={styles.headerRow}>
-            <h1 style={styles.heading}>Suggestions</h1>
+            {isMobile && <h1 style={styles.heading}>Suggestions</h1>}
             <button
               style={{ ...styles.iconBtn, ...(filtersActive ? styles.iconBtnActive : {}) }}
               onClick={openFilter}
@@ -534,7 +536,6 @@ const styles: Record<string, React.CSSProperties> = {
   header: {
     flexShrink: 0,
     zIndex: 10,
-    paddingBottom: Gap.md,
   },
   scrollArea: {
     flex: 1,
@@ -556,13 +557,12 @@ const styles: Record<string, React.CSSProperties> = {
   heading: {
     fontSize: Font.title,
     fontWeight: 700,
-    marginBottom: 0,
+    margin: 0,
   },
   headerRow: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: Gap.xl,
   },
   iconBtn: {
     display: 'flex',
