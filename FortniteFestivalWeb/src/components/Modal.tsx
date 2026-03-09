@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
 import {
   DndContext,
   closestCenter,
@@ -44,13 +44,18 @@ export default function Modal({ visible, title, onClose, onApply, onReset, child
   useEffect(() => {
     if (visible) {
       setMounted(true);
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => setAnimIn(true));
-      });
     } else {
       setAnimIn(false);
     }
   }, [visible]);
+
+  useLayoutEffect(() => {
+    if (mounted && visible) {
+      panelRef.current?.getBoundingClientRect();
+      const id = requestAnimationFrame(() => setAnimIn(true));
+      return () => cancelAnimationFrame(id);
+    }
+  }, [mounted, visible]);
 
   const handleTransitionEnd = useCallback(() => {
     if (!animIn) setMounted(false);

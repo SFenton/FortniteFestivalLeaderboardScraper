@@ -93,6 +93,7 @@ export type SongSettings = {
   metadataOrder: string[];
   instrumentOrder: InstrumentKey[];
   filters: SongFilters;
+  instrument: InstrumentKey | null;
 };
 
 export const defaultSongSettings = (): SongSettings => ({
@@ -101,6 +102,7 @@ export const defaultSongSettings = (): SongSettings => ({
   metadataOrder: [...DEFAULT_METADATA_ORDER],
   instrumentOrder: [...INSTRUMENT_KEYS],
   filters: defaultSongFilters(),
+  instrument: null,
 });
 
 export function loadSongSettings(): SongSettings {
@@ -119,6 +121,7 @@ export function loadSongSettings(): SongSettings {
         ...defaults.filters,
         ...(parsed.filters ?? {}),
       },
+      instrument: parsed.instrument ?? defaults.instrument,
     };
   } catch {
     return defaultSongSettings();

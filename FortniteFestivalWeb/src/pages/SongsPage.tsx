@@ -34,7 +34,9 @@ export default function SongsPage({ accountId }: Props) {
   const isMobile = useIsMobile();
   const [search, setSearch] = useState('');
   const [settings, setSettings] = useState<SongSettings>(loadSongSettings);
-  const [instrument, setInstrument] = useState<InstrumentKey>('Solo_Guitar');
+  const [instrument, setInstrument] = useState<InstrumentKey>(
+    () => settings.instrument ?? 'Solo_Guitar',
+  );
 
   // Sort/Filter modal visibility + drafts
   const [showSort, setShowSort] = useState(false);
@@ -47,7 +49,7 @@ export default function SongsPage({ accountId }: Props) {
   }));
   const [filterDraft, setFilterDraft] = useState<FilterDraft>(() => ({
     ...settings.filters,
-    instrumentFilter: null,
+    instrumentFilter: settings.instrument,
   }));
 
   // Persist settings on change
@@ -72,20 +74,20 @@ export default function SongsPage({ accountId }: Props) {
   };
 
   const openFilter = () => {
-    setFilterDraft({ ...settings.filters, instrumentFilter: instrument });
+    setFilterDraft({ ...settings.filters, instrumentFilter: settings.instrument });
     setShowFilter(true);
   };
   const applyFilter = () => {
     const { instrumentFilter, ...filters } = filterDraft;
-    if (instrumentFilter) setInstrument(instrumentFilter);
-    setSettings(s => ({ ...s, filters }));
+    setInstrument(instrumentFilter ?? 'Solo_Guitar');
+    setSettings(s => ({ ...s, filters, instrument: instrumentFilter }));
     setShowFilter(false);
   };
   const resetFilter = () => {
     setFilterDraft({ ...defaultSongFilters(), instrumentFilter: null });
   };
 
-  const filtersActive = isFilterActive(settings.filters);
+  const filtersActive = isFilterActive(settings.filters) || settings.instrument != null;
   const [playerData, setPlayerData] = useState<PlayerResponse | null>(null);
   const [playerLoading, setPlayerLoading] = useState(false);
   const { isSyncing, phase, backfillProgress, historyProgress, justCompleted, clearCompleted } =
@@ -439,7 +441,7 @@ export default function SongsPage({ accountId }: Props) {
       <SortModal
         visible={showSort}
         draft={sortDraft}
-        instrumentFilter={filterDraft.instrumentFilter}
+        instrumentFilter={instrument}
         metadataVisibility={{
           score: appSettings.metadataShowScore,
           percentage: appSettings.metadataShowPercentage,
@@ -640,6 +642,15 @@ function MetadataBottomRow({ entries, isMobile }: { entries: MetadataEntry[]; is
     return (
       <div style={styles.metadataGridRow}>
         {entries.map(e => <div key={e.key} style={styles.metadataCellAuto}>{e.el}</div>)}
+      </div>
+    );
+  }
+
+  // 1 item on mobile: right-aligned to match top-row detail strip
+  if (isMobile && n === 1) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'flex-end', paddingBottom: Gap.xs }}>
+        {entries[0]!.el}
       </div>
     );
   }
@@ -1062,7 +1073,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: Colors.textPrimary,
     fontVariantNumeric: 'tabular-nums',
     width: 78,
-    textAlign: 'center' as const,
+    textAlign: 'right' as const,
     display: 'inline-block',
   },
   miniStarRow: {

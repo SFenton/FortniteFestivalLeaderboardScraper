@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, useLocation } from 'react-router-dom';
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useState, useRef, useCallback } from 'react';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import PlayerSearch from './components/PlayerSearch';
@@ -157,14 +157,18 @@ function Sidebar({
   useEffect(() => {
     if (open) {
       setMounted(true);
-      // Force a layout read so the initial transform is applied before transitioning
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => setVisible(true));
-      });
     } else {
       setVisible(false);
     }
   }, [open]);
+
+  useLayoutEffect(() => {
+    if (mounted && open) {
+      sidebarRef.current?.getBoundingClientRect();
+      const id = requestAnimationFrame(() => setVisible(true));
+      return () => cancelAnimationFrame(id);
+    }
+  }, [mounted, open]);
 
   const handleTransitionEnd = useCallback(() => {
     if (!visible) setMounted(false);
@@ -469,14 +473,18 @@ function MobilePlayerSearchModal({
   useEffect(() => {
     if (visible) {
       setMounted(true);
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => setAnimIn(true));
-      });
-      setTimeout(() => inputRef.current?.focus(), MODAL_TRANSITION_MS);
     } else {
       setAnimIn(false);
     }
   }, [visible]);
+
+  useLayoutEffect(() => {
+    if (mounted && visible) {
+      const id = requestAnimationFrame(() => setAnimIn(true));
+      setTimeout(() => inputRef.current?.focus(), MODAL_TRANSITION_MS);
+      return () => cancelAnimationFrame(id);
+    }
+  }, [mounted, visible]);
 
   const handleTransitionEnd = useCallback(() => {
     if (animIn) {
@@ -734,7 +742,6 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     overflowY: 'auto' as const,
     position: 'relative' as const,
-    zIndex: 1,
   },
   hamburger: {
     display: 'flex',
