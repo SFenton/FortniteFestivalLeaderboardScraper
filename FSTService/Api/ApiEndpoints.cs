@@ -153,8 +153,8 @@ public static class ApiEndpoints
             {
                 var key = (s.SongId, s.Instrument);
                 var (computedRank, dbTotal) = rankings.GetValueOrDefault(key, (0, 0));
-                // Use stored rank if available, otherwise use DB-computed rank
-                var rank = s.Rank > 0 ? s.Rank : computedRank;
+                // Always use DB-computed rank for consistency with leaderboard ordering
+                var rank = computedRank > 0 ? computedRank : s.Rank;
                 // Prefer true leaderboard population from PercentileService; fall back to DB row count
                 var totalEntries = population.TryGetValue(key, out var pop) && pop > 0
                     ? (int)pop

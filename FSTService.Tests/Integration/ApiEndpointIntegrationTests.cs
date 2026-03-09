@@ -114,6 +114,120 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal("testAcct1", json.GetProperty("accountId").GetString());
     }
 
+    [Fact]
+    public async Task ApiPlayer_Rank_UsesComputedRank_OverStoredRank()
+    {
+        // Arrange: insert entries where the stored rank (from Epic) is stale
+        // but the DB score ordering tells the truth.
+        //
+        // Player "rankAcct" stored Rank=3, but their score 500 is actually 5th
+        // out of 5 players in the database.
+        const string song = "rankTestSong";
+        const string inst = "Solo_Guitar";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var db = persistence.GetOrCreateInstrumentDb(inst);
+            db.UpsertEntries(song, new[]
+            {
+                new LeaderboardEntry { AccountId = "rankOther1", Score = 900, Rank = 0 },
+                new LeaderboardEntry { AccountId = "rankOther2", Score = 800, Rank = 0 },
+                new LeaderboardEntry { AccountId = "rankOther3", Score = 700, Rank = 0 },
+                new LeaderboardEntry { AccountId = "rankOther4", Score = 600, Rank = 0 },
+                // This player has a stale stored Rank=3, but score puts them at #5
+                new LeaderboardEntry { AccountId = "rankAcct", Score = 500, Rank = 3 },
+            });
+        }
+
+        // Act
+        var response = await _client.GetAsync($"/api/player/rankAcct?songId={song}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        var scores = json.GetProperty("scores");
+        Assert.Equal(1, scores.GetArrayLength());
+
+        var score = scores[0];
+        // The computed rank should be 5 (4 players have higher scores + 1),
+        // NOT the stale stored rank of 3.
+        Assert.Equal(5, score.GetProperty("rank").GetInt32());
+    }
+
+    [Fact]
+    public async Task ApiPlayer_Rank_FallsBackToStoredRank_WhenComputedIsZero()
+    {
+        // If for some reason the computed rank is 0 (shouldn't happen normally),
+        // we fall back to the stored rank.
+        const string song = "rankFallbackSong";
+        const string inst = "Solo_Bass";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var db = persistence.GetOrCreateInstrumentDb(inst);
+            // Single entry — computed rank will be 1, stored rank is 7
+            db.UpsertEntries(song, new[]
+            {
+                new LeaderboardEntry { AccountId = "rankFbAcct", Score = 1000, Rank = 7 },
+            });
+        }
+
+        var response = await _client.GetAsync($"/api/player/rankFbAcct?songId={song}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        var score = json.GetProperty("scores")[0];
+        // Computed rank is 1 (only entry), which is > 0, so we use it instead of stored 7
+        Assert.Equal(1, score.GetProperty("rank").GetInt32());
+    }
+
+    [Fact]
+    public async Task ApiPlayer_Rank_ConsistentWithLeaderboardOrder()
+    {
+        // The rank returned by /api/player should match the position in /api/leaderboard
+        const string song = "rankConsistSong";
+        const string inst = "Solo_Drums";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var db = persistence.GetOrCreateInstrumentDb(inst);
+            db.UpsertEntries(song, new[]
+            {
+                new LeaderboardEntry { AccountId = "rcAcct1", Score = 300000, Rank = 1 },
+                new LeaderboardEntry { AccountId = "rcAcct2", Score = 200000, Rank = 10 }, // stale stored rank
+                new LeaderboardEntry { AccountId = "rcAcct3", Score = 100000, Rank = 50 }, // stale stored rank
+            });
+        }
+
+        // Get player rank from /api/player
+        var playerResponse = await _client.GetAsync($"/api/player/rcAcct2?songId={song}");
+        Assert.Equal(HttpStatusCode.OK, playerResponse.StatusCode);
+        var playerJson = await playerResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var playerRank = playerJson.GetProperty("scores")[0].GetProperty("rank").GetInt32();
+
+        // Get leaderboard order from /api/leaderboard
+        var lbResponse = await _client.GetAsync($"/api/leaderboard/{song}/{inst}");
+        Assert.Equal(HttpStatusCode.OK, lbResponse.StatusCode);
+        var lbJson = await lbResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var entries = lbJson.GetProperty("entries");
+
+        // Find rcAcct2's position in the leaderboard (1-indexed)
+        int lbPosition = -1;
+        for (int i = 0; i < entries.GetArrayLength(); i++)
+        {
+            if (entries[i].GetProperty("accountId").GetString() == "rcAcct2")
+            {
+                lbPosition = i + 1;
+                break;
+            }
+        }
+
+        Assert.Equal(2, lbPosition); // 2nd by score
+        Assert.Equal(lbPosition, playerRank); // must match
+    }
+
     // ─── Device Code Auth ───────────────────────────────────────
 
     [Fact]

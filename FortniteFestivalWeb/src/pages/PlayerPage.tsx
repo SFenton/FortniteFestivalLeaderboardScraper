@@ -201,13 +201,19 @@ function PlayerContent({
   }
 
   // 2: Overall summary
+  const overallAccColor = overallStats.avgAccuracy > 0
+    ? (overallStats.avgAccuracy / 10000 >= 100 && overallStats.fcPercent === '100.0'
+        ? Colors.gold
+        : accuracyColor(overallStats.avgAccuracy / 10000))
+    : undefined;
+  const overallSongsAllPlayed = overallStats.songsPlayed >= songs.length && songs.length > 0;
   sections.push(
     <div key="summary" style={styles.summaryGrid}>
       <StatBox label="Total Score" value={overallStats.totalScore.toLocaleString()} />
-      <StatBox label="Songs Played" value={overallStats.songsPlayed.toLocaleString()} />
+      <StatBox label="Songs Played" value={overallStats.songsPlayed.toLocaleString()} color={overallSongsAllPlayed ? Colors.statusGreen : undefined} />
       <StatBox label="Full Combos" value={`${overallStats.fcCount} (${overallStats.fcPercent}%)`} />
-      <StatBox label="Gold Stars" value={overallStats.goldStarCount.toLocaleString()} />
-      <StatBox label="Avg Accuracy" value={formatAccuracy(overallStats.avgAccuracy)} />
+      <StatBox label="Gold Stars" value={overallStats.goldStarCount.toLocaleString()} color={Colors.gold} />
+      <StatBox label="Avg Accuracy" value={overallStats.avgAccuracy > 0 ? formatClamped(overallStats.avgAccuracy / 10000) + '%' : '—'} color={overallAccColor} />
       <StatBox label="Best Rank" value={overallStats.bestRank > 0 ? `#${overallStats.bestRank.toLocaleString()}` : '—'} />
     </div>,
   );
@@ -320,12 +326,24 @@ function PlayerContent({
   );
 }
 
-function StatBox({ label, value }: { label: string; value: string }) {
-  return (
+function StatBox({ label, value, color, to }: { label: string; value: React.ReactNode; color?: string; to?: string }) {
+  const inner = (
     <div style={styles.statBox}>
-      <span style={styles.statValue}>{value}</span>
+      <span style={{ ...styles.statValue, ...(color ? { color } : {}) }}>{value}</span>
       <span style={styles.statLabel}>{label}</span>
     </div>
+  );
+  if (to) return <Link to={to} style={{ textDecoration: 'none', color: 'inherit' }}>{inner}</Link>;
+  return inner;
+}
+
+function GoldStars() {
+  return (
+    <span style={{ display: 'inline-flex', gap: 2 }}>
+      {Array.from({ length: 5 }, (_, i) => (
+        <img key={i} src="/app/star_gold.png" alt="★" width={18} height={18} />
+      ))}
+    </span>
   );
 }
 
@@ -340,6 +358,25 @@ function InstrumentStatsCard({
 }) {
   const stats = computeInstrumentStats(scores, totalSongs);
 
+  const cards: { label: string; value: React.ReactNode; color?: string; to?: string }[] = [];
+  if (stats.songsPlayed > 0) cards.push({ label: 'Songs Played', value: stats.songsPlayed.toLocaleString(), color: stats.songsPlayed >= totalSongs ? Colors.statusGreen : undefined });
+  if (stats.fcCount > 0) cards.push({ label: 'FCs', value: stats.fcPercent === '100.0' ? stats.fcCount.toLocaleString() : `${stats.fcCount} (${stats.fcPercent}%)`, color: stats.fcPercent === '100.0' ? Colors.gold : undefined });
+  if (stats.goldStarCount > 0) cards.push({ label: 'Gold Stars', value: stats.goldStarCount.toLocaleString(), color: Colors.gold });
+  if (stats.fiveStarCount > 0) cards.push({ label: '5 Stars', value: stats.fiveStarCount.toLocaleString() });
+  if (stats.fourStarCount > 0) cards.push({ label: '4 Stars', value: stats.fourStarCount.toLocaleString() });
+  if (stats.threeStarCount > 0) cards.push({ label: '3 Stars', value: stats.threeStarCount.toLocaleString() });
+  if (stats.twoStarCount > 0) cards.push({ label: '2 Stars', value: stats.twoStarCount.toLocaleString() });
+  if (stats.oneStarCount > 0) cards.push({ label: '1 Star', value: stats.oneStarCount.toLocaleString() });
+  const accPct = stats.avgAccuracy / 10000;
+  const isGoldAcc = accPct >= 100 && stats.fcPercent === '100.0';
+  const accColor = stats.avgAccuracy > 0 ? (isGoldAcc ? Colors.gold : accuracyColor(accPct)) : undefined;
+  cards.push({ label: 'Avg Accuracy', value: stats.avgAccuracy > 0 ? formatClamped(accPct) + '%' : '—', color: accColor });
+  cards.push({ label: 'Avg Stars', value: stats.averageStars === 6 ? <GoldStars /> : (stats.averageStars > 0 ? formatClamped2(stats.averageStars) : '—') });
+  cards.push({ label: 'Best Rank', value: stats.bestRank > 0 ? `#${stats.bestRank.toLocaleString()}` : '—', to: stats.bestRankSongId ? `/songs/${stats.bestRankSongId}?instrument=${encodeURIComponent(instrument)}` : undefined });
+  const pctGold = (v: string) => /^Top [1-5]%$/.test(v) ? Colors.gold : undefined;
+  cards.push({ label: 'Percentile', value: stats.overallPercentile, color: pctGold(stats.overallPercentile) });
+  cards.push({ label: 'Percentile (Songs Played)', value: stats.avgPercentile, color: pctGold(stats.avgPercentile) });
+
   return (
     <div>
       <div style={styles.instCardHeader}>
@@ -348,86 +385,37 @@ function InstrumentStatsCard({
           {INSTRUMENT_LABELS[instrument]}
         </span>
       </div>
-      <div style={styles.instCard}>
-        <div style={styles.instCardBody}>
-          {/* Stats grid — matches mobile's 9 stats exactly */}
-          <div style={styles.statsGrid}>
-            <MiniStat label="Songs Played" value={`${stats.songsPlayed} / ${totalSongs} (${stats.completionPercent}%)`} />
-            <MiniStat label="FCs" value={`${stats.fcCount} (${stats.fcPercent}%)`} />
-            <MiniStat label="Gold Stars" value={stats.goldStarCount.toString()} />
-            <MiniStat label="5 Stars" value={stats.fiveStarCount.toString()} />
-            <MiniStat label="4 Stars" value={stats.fourStarCount.toString()} />
-            <MiniStat label="Average Accuracy" value={formatAccuracy(stats.avgAccuracy)} />
-            <MiniStat label="Best Accuracy" value={formatAccuracy(stats.bestAccuracy)} />
-            <MiniStat label="Average Stars" value={stats.averageStars > 0 ? stats.averageStars.toFixed(2) : '—'} />
-            <MiniStat label="Best Rank" value={stats.bestRank > 0 ? `#${stats.bestRank.toLocaleString()}` : '—'} />
-            <MiniStat label="Percentile" value={stats.overallPercentile} />
-            <MiniStat label="Percentile (Songs Played)" value={stats.avgPercentile} />
-          </div>
-
-          {/* Percentile distribution */}
-          {stats.songsPlayed > 0 && (
-            <PercentileBar stats={stats} />
-          )}
-        </div>
+      <div style={styles.instSummaryGrid}>
+        {cards.map((c) => (
+          <StatBox key={c.label} label={c.label} value={c.value} color={c.color} to={c.to} />
+        ))}
       </div>
+      {stats.percentileBuckets.length > 0 && (
+        <PercentileTable buckets={stats.percentileBuckets} />
+      )}
     </div>
   );
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
+function PercentileTable({ buckets }: { buckets: { pct: number; count: number }[] }) {
   return (
-    <div style={styles.miniStat}>
-      <span style={styles.miniStatLabel}>{label}</span>
-      <span style={styles.miniStatValue}>{value}</span>
-    </div>
-  );
-}
-
-function PercentileBar({ stats }: { stats: InstrumentStats }) {
-  const buckets = [
-    { label: 'Top 1%', count: stats.top1Pct, color: '#27ae60' },
-    { label: 'Top 5%', count: stats.top5Pct, color: '#2ecc71' },
-    { label: 'Top 10%', count: stats.top10Pct, color: '#f1c40f' },
-    { label: 'Top 25%', count: stats.top25Pct, color: '#e67e22' },
-    { label: 'Top 50%', count: stats.top50Pct, color: '#e74c3c' },
-    { label: '>50%', count: stats.below50Pct, color: '#7f8c8d' },
-  ];
-  const total = buckets.reduce((s, b) => s + b.count, 0);
-  if (total === 0) return null;
-
-  return (
-    <div style={styles.percentileSection}>
-      <div style={styles.percentileBar}>
-        {buckets.map(
-          (b) =>
-            b.count > 0 && (
-              <div
-                key={b.label}
-                style={{
-                  flex: b.count,
-                  height: 8,
-                  backgroundColor: b.color,
-                }}
-              />
-            ),
-        )}
-      </div>
-      <div style={styles.percentileLegend}>
-        {buckets
-          .filter((b) => b.count > 0)
-          .map((b) => (
-            <span key={b.label} style={styles.legendItem}>
-              <span
-                style={{
-                  ...styles.legendDot,
-                  backgroundColor: b.color,
-                }}
-              />
-              {b.label}: {b.count}
-            </span>
+    <div style={styles.pctTablePanel}>
+      <table style={styles.pctTable}>
+        <thead>
+          <tr>
+            <th style={styles.pctTh}>Percentile</th>
+            <th style={{ ...styles.pctTh, textAlign: 'right' }}>Songs</th>
+          </tr>
+        </thead>
+        <tbody>
+          {buckets.map((b) => (
+            <tr key={b.pct}>
+              <td style={styles.pctTd}>Top {b.pct}%</td>
+              <td style={{ ...styles.pctTd, textAlign: 'right', fontWeight: 600 }}>{b.count}</td>
+            </tr>
           ))}
-      </div>
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -523,19 +511,18 @@ type InstrumentStats = {
   goldStarCount: number;
   fiveStarCount: number;
   fourStarCount: number;
+  threeStarCount: number;
+  twoStarCount: number;
+  oneStarCount: number;
   averageStars: number;
   avgAccuracy: number;
   bestAccuracy: number;
   avgScore: number;
   bestRank: number;
+  bestRankSongId: string | null;
   overallPercentile: string;
   avgPercentile: string;
-  top1Pct: number;
-  top5Pct: number;
-  top10Pct: number;
-  top25Pct: number;
-  top50Pct: number;
-  below50Pct: number;
+  percentileBuckets: { pct: number; count: number }[];
 };
 
 function computeInstrumentStats(
@@ -547,6 +534,9 @@ function computeInstrumentStats(
   const goldStars = scores.filter((s) => (s.stars ?? 0) >= 6).length;
   const fiveStars = scores.filter((s) => (s.stars ?? 0) === 5).length;
   const fourStars = scores.filter((s) => (s.stars ?? 0) === 4).length;
+  const threeStars = scores.filter((s) => (s.stars ?? 0) === 3).length;
+  const twoStars = scores.filter((s) => (s.stars ?? 0) === 2).length;
+  const oneStars = scores.filter((s) => (s.stars ?? 0) === 1).length;
 
   const starsWithScore = scores.filter((s) => (s.stars ?? 0) > 0);
   const averageStars =
@@ -565,8 +555,9 @@ function computeInstrumentStats(
 
   const avgScore = n > 0 ? scores.reduce((a, b) => a + b.score, 0) / n : 0;
 
-  const ranks = scores.map((s) => s.rank).filter((r) => r > 0);
-  const bestRank = ranks.length > 0 ? Math.min(...ranks) : 0;
+  const rankedScores = scores.filter((s) => s.rank > 0);
+  const bestRank = rankedScores.length > 0 ? Math.min(...rankedScores.map((s) => s.rank)) : 0;
+  const bestRankSongId = bestRank > 0 ? (rankedScores.find((s) => s.rank === bestRank)?.songId ?? null) : null;
 
   // Compute percentile as rank / totalEntries for each score
   const percentiled = scores
@@ -591,21 +582,17 @@ function computeInstrumentStats(
     overallPercentile = formatPercentile(overall);
   }
 
-  // Percentile distribution buckets
-  let top1 = 0,
-    top5 = 0,
-    top10 = 0,
-    top25 = 0,
-    top50 = 0,
-    below50 = 0;
-  for (const { pct } of percentiled) {
-    const pctVal = pct * 100;
-    if (pctVal <= 1) top1++;
-    else if (pctVal <= 5) top5++;
-    else if (pctVal <= 10) top10++;
-    else if (pctVal <= 25) top25++;
-    else if (pctVal <= 50) top50++;
-    else below50++;
+  // Percentile distribution buckets (matching filter thresholds)
+  const pctThresholds = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100];
+  const percentileBuckets: { pct: number; count: number }[] = [];
+  for (const t of pctThresholds) {
+    const prev = pctThresholds[pctThresholds.indexOf(t) - 1] ?? 0;
+    let count = 0;
+    for (const { pct } of percentiled) {
+      const pctVal = pct * 100;
+      if (pctVal > prev && pctVal <= t) count++;
+    }
+    if (count > 0) percentileBuckets.push({ pct: t, count });
   }
 
   return {
@@ -617,19 +604,18 @@ function computeInstrumentStats(
     goldStarCount: goldStars,
     fiveStarCount: fiveStars,
     fourStarCount: fourStars,
+    threeStarCount: threeStars,
+    twoStarCount: twoStars,
+    oneStarCount: oneStars,
     averageStars,
     avgAccuracy: avgAcc,
     bestAccuracy: bestAcc,
     avgScore,
     bestRank,
+    bestRankSongId,
     overallPercentile,
     avgPercentile,
-    top1Pct: top1,
-    top5Pct: top5,
-    top10Pct: top10,
-    top25Pct: top25,
-    top50Pct: top50,
-    below50Pct: below50,
+    percentileBuckets,
   };
 }
 
@@ -672,9 +658,24 @@ function groupByInstrument(scores: PlayerScore[]) {
   return map;
 }
 
-function formatAccuracy(val: number): string {
-  if (val <= 0) return '—';
-  return `${(val / 10000).toFixed(2)}%`;
+function formatClamped(val: number): string {
+  const fixed = val.toFixed(1);
+  return fixed.endsWith('.0') ? Math.round(val).toString() : fixed;
+}
+
+function formatClamped2(val: number): string {
+  const fixed = val.toFixed(2);
+  if (fixed.endsWith('00')) return fixed.slice(0, -3);
+  if (fixed.endsWith('0')) return fixed.slice(0, -1);
+  return fixed;
+}
+
+function accuracyColor(pct: number): string {
+  const t = Math.min(Math.max(pct / 100, 0), 1);
+  const r = Math.round(220 * (1 - t) + 46 * t);
+  const g = Math.round(40 * (1 - t) + 204 * t);
+  const b = Math.round(40 * (1 - t) + 113 * t);
+  return `rgb(${r},${g},${b})`;
 }
 
 // ─── Styles ─────────────────────────────────────────────────
@@ -772,7 +773,7 @@ const styles: Record<string, React.CSSProperties> = {
   // Overall summary
   summaryGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+    gridTemplateColumns: 'repeat(2, 1fr)',
     gap: Gap.md,
     marginBottom: Gap.section * 1.5,
   },
@@ -830,54 +831,42 @@ const styles: Record<string, React.CSSProperties> = {
   instCardBody: {
     padding: Gap.xl,
   },
-  // Stats mini-grid
-  statsGrid: {
+  // Per-instrument stat card grid
+  instSummaryGrid: {
     display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: `${Gap.sm}px ${Gap.xl}px`,
+    gridTemplateColumns: 'repeat(2, 1fr)',
+    gap: Gap.md,
     marginBottom: Gap.xl,
   },
-  miniStat: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    padding: `${Gap.xs}px 0`,
-  },
-  miniStatLabel: {
-    fontSize: Font.sm,
-    color: Colors.textTertiary,
-  },
-  miniStatValue: {
-    fontSize: Font.sm,
-    fontWeight: 600,
-    color: Colors.textPrimary,
-  },
-  // Percentile bar
-  percentileSection: {
-    marginBottom: Gap.xl,
-  },
-  percentileBar: {
-    display: 'flex',
-    borderRadius: 4,
+  // Percentile table
+  pctTablePanel: {
+    backgroundColor: Colors.glassCard,
+    backdropFilter: 'blur(20px)',
+    WebkitBackdropFilter: 'blur(20px)',
+    border: `1px solid ${Colors.glassBorder}`,
+    borderRadius: Radius.lg,
     overflow: 'hidden',
-    marginBottom: Gap.sm,
+    marginBottom: Gap.xl,
   },
-  percentileLegend: {
-    display: 'flex',
-    flexWrap: 'wrap' as const,
-    gap: `${Gap.xs}px ${Gap.xl}px`,
+  pctTable: {
+    width: '100%',
+    borderCollapse: 'collapse' as const,
   },
-  legendItem: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.sm,
+  pctTh: {
+    padding: `${Gap.lg}px ${Gap.xl}px`,
     fontSize: Font.xs,
+    fontWeight: 600,
     color: Colors.textTertiary,
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.5,
+    borderBottom: `1px solid ${Colors.glassBorder}`,
+    textAlign: 'left' as const,
   },
-  legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: '50%',
-    flexShrink: 0,
+  pctTd: {
+    padding: `${Gap.md}px ${Gap.xl}px`,
+    fontSize: Font.sm,
+    color: Colors.textPrimary,
+    borderBottom: `1px solid ${Colors.glassBorder}`,
   },
   // Top songs
   topSongs: {
