@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useCallback, Fragment } from 'react';
 import { Link } from 'react-router-dom';
 import { formatPercentile } from '../utils/formatPercentile';
 import { useFestival } from '../contexts/FestivalContext';
+import { useSettings } from '../contexts/SettingsContext';
 import { useSyncStatus } from '../hooks/useSyncStatus';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { api } from '../api/client';
@@ -29,6 +30,7 @@ export default function SongsPage({ accountId }: Props) {
   const {
     state: { songs, isLoading, error },
   } = useFestival();
+  const { settings: appSettings } = useSettings();
   const isMobile = useIsMobile();
   const [search, setSearch] = useState('');
   const [settings, setSettings] = useState<SongSettings>(loadSongSettings);
@@ -264,6 +266,35 @@ export default function SongsPage({ accountId }: Props) {
 
   const hasPlayer = !!playerData;
 
+  // Filter metadata keys by visibility settings (mirrors mobile visibleMetadataKeys)
+  const visibleMetadataOrder = useMemo(() => {
+    const hidden = new Set<string>();
+    if (!appSettings.metadataShowScore) hidden.add('score');
+    if (!appSettings.metadataShowPercentage) hidden.add('percentage');
+    if (!appSettings.metadataShowPercentile) hidden.add('percentile');
+    if (!appSettings.metadataShowSeasonAchieved) hidden.add('seasonachieved');
+    if (!appSettings.metadataShowDifficulty) hidden.add('intensity');
+    if (!appSettings.metadataShowIsFC) hidden.add('isfc');
+    if (!appSettings.metadataShowStars) hidden.add('stars');
+    if (hidden.size === 0) return settings.metadataOrder;
+
+    if (appSettings.songRowVisualOrderEnabled) {
+      return appSettings.songRowVisualOrder.filter(k => !hidden.has(k));
+    }
+    return settings.metadataOrder.filter(k => !hidden.has(k));
+  }, [
+    settings.metadataOrder,
+    appSettings.songRowVisualOrderEnabled,
+    appSettings.songRowVisualOrder,
+    appSettings.metadataShowScore,
+    appSettings.metadataShowPercentage,
+    appSettings.metadataShowPercentile,
+    appSettings.metadataShowSeasonAchieved,
+    appSettings.metadataShowDifficulty,
+    appSettings.metadataShowIsFC,
+    appSettings.metadataShowStars,
+  ]);
+
   // Derive available seasons from player scores
   const availableSeasons = useMemo(() => {
     if (!playerData) return [];
@@ -395,7 +426,7 @@ export default function SongsPage({ accountId }: Props) {
                 song={song}
                 score={hasPlayer ? scoreMap.get(song.songId) : undefined}
                 instrument={instrument}
-                metadataOrder={settings.metadataOrder}
+                metadataOrder={visibleMetadataOrder}
                 sortMode={settings.sortMode}
                 isMobile={isMobile}
               />
@@ -409,6 +440,15 @@ export default function SongsPage({ accountId }: Props) {
         visible={showSort}
         draft={sortDraft}
         instrumentFilter={filterDraft.instrumentFilter}
+        metadataVisibility={{
+          score: appSettings.metadataShowScore,
+          percentage: appSettings.metadataShowPercentage,
+          percentile: appSettings.metadataShowPercentile,
+          seasonachieved: appSettings.metadataShowSeasonAchieved,
+          intensity: appSettings.metadataShowDifficulty,
+          isfc: appSettings.metadataShowIsFC,
+          stars: appSettings.metadataShowStars,
+        }}
         onChange={setSortDraft}
         onCancel={() => setShowSort(false)}
         onReset={resetSort}

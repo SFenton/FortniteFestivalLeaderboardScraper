@@ -18,7 +18,7 @@ export default function PlayerSearch({ player, onSelect, onClear, isSyncing }: P
       <div style={styles.selectedContainer}>
         {isSyncing && <span style={styles.headerSpinner} />}
         <Link
-          to={`/player/${player.accountId}`}
+          to="/statistics"
           style={styles.selectedName}
         >
           {player.displayName}

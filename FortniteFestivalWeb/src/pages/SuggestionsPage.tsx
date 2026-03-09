@@ -17,6 +17,8 @@ import type { SuggestionCategory, SuggestionSongItem } from '@festival/core/sugg
 import type { InstrumentKey } from '@festival/core/instruments';
 import { shouldShowCategory, filterCategoryForInstruments } from '@festival/core/instrumentFilters';
 import { globalKeyFor, getCategoryTypeId, getCategoryInstrument, perInstrumentKeyFor } from '@festival/core/suggestions/suggestionFilterConfig';
+import { useSettings } from '../contexts/SettingsContext';
+import type { AppSettings } from '../contexts/SettingsContext';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size } from '../theme';
 import { useIsMobile } from '../hooks/useIsMobile';
 import type { InstrumentKey as ServerInstrumentKey } from '../models';
@@ -56,14 +58,14 @@ type InstrumentShowSettings = {
   showProBass: boolean;
 };
 
-function buildEffectiveInstrumentSettings(filter: SuggestionsFilterDraft): InstrumentShowSettings {
+function buildEffectiveInstrumentSettings(filter: SuggestionsFilterDraft, appSettings: AppSettings): InstrumentShowSettings {
   return {
-    showLead: filter.suggestionsLeadFilter,
-    showBass: filter.suggestionsBassFilter,
-    showDrums: filter.suggestionsDrumsFilter,
-    showVocals: filter.suggestionsVocalsFilter,
-    showProLead: filter.suggestionsProLeadFilter,
-    showProBass: filter.suggestionsProBassFilter,
+    showLead: appSettings.showLead && filter.suggestionsLeadFilter,
+    showBass: appSettings.showBass && filter.suggestionsBassFilter,
+    showDrums: appSettings.showDrums && filter.suggestionsDrumsFilter,
+    showVocals: appSettings.showVocals && filter.suggestionsVocalsFilter,
+    showProLead: appSettings.showProLead && filter.suggestionsProLeadFilter,
+    showProBass: appSettings.showProBass && filter.suggestionsProBassFilter,
   };
 }
 
@@ -97,6 +99,7 @@ function filterCategoryForInstrumentTypes(
 type Props = { accountId: string };
 
 export default function SuggestionsPage({ accountId }: Props) {
+  const { settings: appSettings } = useSettings();
   const {
     state: { songs, isLoading },
   } = useFestival();
@@ -171,8 +174,17 @@ export default function SuggestionsPage({ accountId }: Props) {
 
   const filtersActive = isSuggestionsFilterActive(filterSettings);
 
+  const instrumentVisibility = useMemo(() => ({
+    showLead: appSettings.showLead,
+    showBass: appSettings.showBass,
+    showDrums: appSettings.showDrums,
+    showVocals: appSettings.showVocals,
+    showProLead: appSettings.showProLead,
+    showProBass: appSettings.showProBass,
+  }), [appSettings.showLead, appSettings.showBass, appSettings.showDrums, appSettings.showVocals, appSettings.showProLead, appSettings.showProBass]);
+
   const visibleCategories = useMemo(() => {
-    const instSettings = buildEffectiveInstrumentSettings(filterSettings);
+    const instSettings = buildEffectiveInstrumentSettings(filterSettings, appSettings);
     return categories
       .filter(c => shouldShowCategory(c.key, instSettings))
       .filter(c => shouldShowCategoryType(c.key, filterSettings))
@@ -180,7 +192,7 @@ export default function SuggestionsPage({ accountId }: Props) {
       .filter((c): c is SuggestionCategory => c !== null)
       .map(c => filterCategoryForInstrumentTypes(c, filterSettings))
       .filter((c): c is SuggestionCategory => c !== null);
-  }, [categories, filterSettings]);
+  }, [categories, filterSettings, appSettings]);
 
   // When filters hide most generated content, InfiniteScroll fires loadMore
   // once, the new categories all get filtered out, visible-count and scroll
@@ -265,6 +277,7 @@ export default function SuggestionsPage({ accountId }: Props) {
         <SuggestionsFilterModal
           visible={showFilter}
           draft={filterDraft}
+          instrumentVisibility={instrumentVisibility}
           onChange={setFilterDraft}
           onCancel={() => setShowFilter(false)}
           onReset={resetFilter}
@@ -323,6 +336,7 @@ export default function SuggestionsPage({ accountId }: Props) {
       <SuggestionsFilterModal
         visible={showFilter}
         draft={filterDraft}
+        instrumentVisibility={instrumentVisibility}
         onChange={setFilterDraft}
         onCancel={() => setShowFilter(false)}
         onReset={resetFilter}

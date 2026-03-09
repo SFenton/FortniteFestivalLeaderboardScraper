@@ -11,18 +11,51 @@ export type SortDraft = {
   instrumentOrder: InstrumentKey[];
 };
 
+export type MetadataVisibility = {
+  score: boolean;
+  percentage: boolean;
+  percentile: boolean;
+  seasonachieved: boolean;
+  intensity: boolean;
+  isfc: boolean;
+  stars: boolean;
+};
+
 type Props = {
   visible: boolean;
   draft: SortDraft;
   instrumentFilter: InstrumentKey | null;
+  metadataVisibility?: MetadataVisibility;
   onChange: (d: SortDraft) => void;
   onCancel: () => void;
   onReset: () => void;
   onApply: () => void;
 };
 
-export default function SortModal({ visible, draft, instrumentFilter, onChange, onCancel, onReset, onApply }: Props) {
+export default function SortModal({ visible, draft, instrumentFilter, metadataVisibility: mv, onChange, onCancel, onReset, onApply }: Props) {
   const setMode = (sortMode: SongSortMode) => onChange({ ...draft, sortMode });
+
+  const visibleInstrumentSortModes = mv
+    ? INSTRUMENT_SORT_MODES.filter(({ mode }) => {
+        const visMap: Record<string, boolean> = {
+          score: mv.score, percentage: mv.percentage, percentile: mv.percentile,
+          isfc: mv.isfc, stars: mv.stars, seasonachieved: mv.seasonachieved, intensity: mv.intensity,
+        };
+        return visMap[mode] !== false;
+      })
+    : INSTRUMENT_SORT_MODES;
+
+  const visibleMetadataOrder = mv
+    ? draft.metadataOrder.filter(k => {
+        const visMap: Record<string, boolean> = {
+          score: mv.score, percentage: mv.percentage, percentile: mv.percentile,
+          isfc: mv.isfc, stars: mv.stars, seasonachieved: mv.seasonachieved, intensity: mv.intensity,
+        };
+        return visMap[k] !== false;
+      })
+    : draft.metadataOrder;
+
+  const anyMetadataVisible = !mv || (mv.score || mv.percentage || mv.percentile || mv.isfc || mv.stars || mv.seasonachieved || mv.intensity);
 
   return (
     <Modal visible={visible} title="Sort Songs" onClose={onCancel} onApply={onApply} onReset={onReset}>
@@ -35,9 +68,9 @@ export default function SortModal({ visible, draft, instrumentFilter, onChange, 
       </ModalSection>
 
       {/* Instrument-specific sort modes (only when an instrument is selected) */}
-      {instrumentFilter != null && (
+      {instrumentFilter != null && visibleInstrumentSortModes.length > 0 && (
         <ModalSection title="Filtered Instrument Sort Mode" hint="Filtering to a single instrument enables more sort options.">
-          {INSTRUMENT_SORT_MODES.map(({ mode, label }) => (
+          {visibleInstrumentSortModes.map(({ mode, label }) => (
             <RadioRow key={mode} label={label} selected={draft.sortMode === mode} onSelect={() => setMode(mode)} />
           ))}
         </ModalSection>
@@ -52,10 +85,10 @@ export default function SortModal({ visible, draft, instrumentFilter, onChange, 
       </ModalSection>
 
       {/* Metadata sort priority (only when an instrument is selected) */}
-      {instrumentFilter != null && (
+      {instrumentFilter != null && anyMetadataVisible && (
         <ModalSection title="Metadata Sort Priority" hint="When scores are tied, metadata is compared in this order to break the tie.">
           <ReorderList
-            items={draft.metadataOrder.map(k => ({ key: k, label: METADATA_SORT_DISPLAY[k] ?? k }))}
+            items={visibleMetadataOrder.map(k => ({ key: k, label: METADATA_SORT_DISPLAY[k] ?? k }))}
             onReorder={(items) => onChange({ ...draft, metadataOrder: items.map(i => i.key) })}
           />
         </ModalSection>

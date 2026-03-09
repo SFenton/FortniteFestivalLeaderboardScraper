@@ -52,30 +52,44 @@ export function isSuggestionsFilterActive(draft: SuggestionsFilterDraft): boolea
 // Instrument picker config
 // ---------------------------------------------------------------------------
 
-const INSTRUMENTS: { key: InstrumentKey; label: string; filterKey: keyof SuggestionsFilterDraft }[] = [
-  { key: 'guitar',     label: 'Lead',     filterKey: 'suggestionsLeadFilter' },
-  { key: 'bass',       label: 'Bass',     filterKey: 'suggestionsBassFilter' },
-  { key: 'drums',      label: 'Drums',    filterKey: 'suggestionsDrumsFilter' },
-  { key: 'vocals',     label: 'Vocals',   filterKey: 'suggestionsVocalsFilter' },
-  { key: 'pro_guitar', label: 'Pro Lead', filterKey: 'suggestionsProLeadFilter' },
-  { key: 'pro_bass',   label: 'Pro Bass', filterKey: 'suggestionsProBassFilter' },
+const INSTRUMENTS: { key: InstrumentKey; label: string; filterKey: keyof SuggestionsFilterDraft; showKey: string }[] = [
+  { key: 'guitar',     label: 'Lead',     filterKey: 'suggestionsLeadFilter',    showKey: 'showLead' },
+  { key: 'bass',       label: 'Bass',     filterKey: 'suggestionsBassFilter',    showKey: 'showBass' },
+  { key: 'drums',      label: 'Drums',    filterKey: 'suggestionsDrumsFilter',   showKey: 'showDrums' },
+  { key: 'vocals',     label: 'Vocals',   filterKey: 'suggestionsVocalsFilter',  showKey: 'showVocals' },
+  { key: 'pro_guitar', label: 'Pro Lead', filterKey: 'suggestionsProLeadFilter', showKey: 'showProLead' },
+  { key: 'pro_bass',   label: 'Pro Bass', filterKey: 'suggestionsProBassFilter', showKey: 'showProBass' },
 ];
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
+type InstrumentVisibility = {
+  showLead: boolean;
+  showBass: boolean;
+  showDrums: boolean;
+  showVocals: boolean;
+  showProLead: boolean;
+  showProBass: boolean;
+};
+
 type Props = {
   visible: boolean;
   draft: SuggestionsFilterDraft;
+  instrumentVisibility: InstrumentVisibility;
   onChange: (d: SuggestionsFilterDraft) => void;
   onCancel: () => void;
   onReset: () => void;
   onApply: () => void;
 };
 
-export default function SuggestionsFilterModal({ visible, draft, onChange, onCancel, onReset, onApply }: Props) {
+export default function SuggestionsFilterModal({ visible, draft, instrumentVisibility, onChange, onCancel, onReset, onApply }: Props) {
   const [selectedInstrument, setSelectedInstrument] = useState<InstrumentKey | null>(null);
+
+  const visibleInstruments = INSTRUMENTS.filter(i => instrumentVisibility[i.showKey as keyof InstrumentVisibility]);
+  // Clear instrument-specific picker if the selected instrument was hidden in app settings
+  const effectiveSelectedInstrument = selectedInstrument && visibleInstruments.some(i => i.key === selectedInstrument) ? selectedInstrument : null;
 
   const toggle = (key: string) => onChange({ ...draft, [key]: !draft[key] });
 
@@ -83,7 +97,7 @@ export default function SuggestionsFilterModal({ visible, draft, onChange, onCan
     const gk = globalKeyFor(typeId);
     const turningOff = draft[gk];
     const updates: Record<string, boolean> = { [gk]: !turningOff };
-    for (const inst of INSTRUMENTS) {
+    for (const inst of visibleInstruments) {
       updates[perInstrumentKeyFor(inst.key, typeId)] = !turningOff;
     }
     onChange({ ...draft, ...updates });
@@ -97,7 +111,7 @@ export default function SuggestionsFilterModal({ visible, draft, onChange, onCan
     if (turningOn && !draft[gk]) {
       updates[gk] = true;
     } else if (!turningOn) {
-      const allOff = INSTRUMENTS.every(inst => {
+      const allOff = visibleInstruments.every(inst => {
         const pk = perInstrumentKeyFor(inst.key, typeId);
         return pk === key ? true : !draft[pk];
       });
@@ -110,7 +124,7 @@ export default function SuggestionsFilterModal({ visible, draft, onChange, onCan
     <Modal visible={visible} title="Filter Suggestions" onClose={onCancel} onApply={onApply} onReset={onReset}>
       {/* Instruments */}
       <ModalSection title="Instruments" hint="Choose which instruments appear in your suggestions.">
-        {INSTRUMENTS.map(inst => (
+        {visibleInstruments.map(inst => (
           <ToggleRow
             key={inst.key}
             label={
@@ -141,8 +155,8 @@ export default function SuggestionsFilterModal({ visible, draft, onChange, onCan
       {/* Instrument-specific type toggles */}
       <ModalSection title="Instrument-Specific" hint="These filters will filter out suggestions on a per-instrument basis, rather than global.">
         <div style={localStyles.instrumentRow}>
-          {INSTRUMENTS.map(inst => {
-            const isSelected = selectedInstrument === inst.key;
+          {visibleInstruments.map(inst => {
+            const isSelected = effectiveSelectedInstrument === inst.key;
             return (
               <button
                 key={inst.key}
@@ -159,17 +173,17 @@ export default function SuggestionsFilterModal({ visible, draft, onChange, onCan
           })}
         </div>
 
-        {selectedInstrument && (
+        {effectiveSelectedInstrument && (
           <div style={{ marginTop: Gap.lg }}>
             {SUGGESTION_TYPES.map(st => {
-              const key = perInstrumentKeyFor(selectedInstrument, st.id);
+              const key = perInstrumentKeyFor(effectiveSelectedInstrument, st.id);
               return (
                 <ToggleRow
                   key={st.id}
                   label={st.label}
                   description={st.description}
                   checked={!!draft[key]}
-                  onToggle={() => togglePerInstrument(selectedInstrument, st.id)}
+                  onToggle={() => togglePerInstrument(effectiveSelectedInstrument, st.id)}
                 />
               );
             })}
