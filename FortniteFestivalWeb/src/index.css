@@ -64,6 +64,11 @@ button {
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes slideUp {
+  from { transform: translateY(12px); }
+  to { transform: translateY(0); }
+}
+
 @keyframes fadeOutDown {
   from { opacity: 1; transform: translateY(0); }
   to { opacity: 0; transform: translateY(12px); }

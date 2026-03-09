@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, Fragment } from 'react';
+import { IoSwapVerticalSharp, IoFunnel } from 'react-icons/io5';
 import { Link } from 'react-router-dom';
 import { formatPercentile } from '../utils/formatPercentile';
 import { useFestival } from '../contexts/FestivalContext';
@@ -329,7 +330,7 @@ export default function SongsPage({ accountId }: Props) {
             />
             <div style={styles.sortGroup}>
               <button style={styles.iconBtn} onClick={openSort} title="Sort" aria-label="Sort songs">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 5h10M11 9h7M11 13h4M3 17l4 4 4-4M7 3v18" /></svg>
+                <IoSwapVerticalSharp size={18} />
               </button>
               {hasPlayer && (
                 <button
@@ -338,7 +339,7 @@ export default function SongsPage({ accountId }: Props) {
                   title="Filter"
                   aria-label="Filter songs"
                 >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" /></svg>
+                  <IoFunnel size={18} />
                   {filtersActive && <span style={styles.filterDot} />}
                 </button>
               )}

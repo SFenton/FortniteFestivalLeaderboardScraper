@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, type CSSProperties } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { formatPercentile } from '../utils/formatPercentile';
 import { useFestival } from '../contexts/FestivalContext';
@@ -14,6 +14,29 @@ import {
 } from '../models';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth } from '../theme';
 import { InstrumentIcon } from '../components/InstrumentIcons';
+
+/** Wrapper that fades in via CSS animation, then strips the animation styles
+ *  so that `opacity` is no longer set by the animation system.  This prevents
+ *  the browser from keeping a compositing group alive, which would break
+ *  `backdrop-filter: blur()` on child elements. */
+function FadeInDiv({ delay, children, style }: { delay: number; children: React.ReactNode; style?: CSSProperties }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const handleEnd = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.opacity = '';
+    el.style.animation = '';
+  }, []);
+  return (
+    <div
+      ref={ref}
+      style={{ opacity: 0, animation: `fadeInUp 400ms ease-out ${delay}ms forwards`, ...style }}
+      onAnimationEnd={handleEnd}
+    >
+      {children}
+    </div>
+  );
+}
 
 export default function PlayerPage({ accountId: propAccountId }: { accountId?: string } = {}) {
   const params = useParams<{ accountId: string }>();
@@ -59,155 +82,225 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
     }
   }, [justCompleted, clearCompleted, fetchPlayer]);
 
-  if (loading) return <div style={styles.center}>Loading player…</div>;
+  if (loading) return <div style={styles.center}><div style={styles.arcSpinner} /></div>;
   if (error) return <div style={styles.centerError}>{error}</div>;
   if (!data) return <div style={styles.center}>Player not found</div>;
+
+  return <PlayerContent data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} />;
+}
+
+function PlayerContent({
+  data,
+  songs,
+  isSyncing,
+  phase: syncPhase,
+  backfillProgress,
+  historyProgress,
+}: {
+  data: PlayerResponse;
+  songs: Song[];
+  isSyncing: boolean;
+  phase: string | null;
+  backfillProgress: number;
+  historyProgress: number;
+}) {
 
   const songMap = new Map(songs.map((s) => [s.songId, s]));
   const byInstrument = groupByInstrument(data.scores);
   const overallStats = computeOverallStats(data.scores);
 
-  return (
-    <div style={styles.page}>
-      <div style={styles.container}>
-        <h1 style={styles.playerName}>{data.displayName}</h1>
-        <p style={styles.subtitle}>
-          {data.totalScores.toLocaleString()} total scores
-        </p>
+  // Build a flat list of stagger-able sections so we can assign sequential delays
+  const sections: React.ReactNode[] = [];
 
-        {/* Sync banner */}
-        {isSyncing && (
-          <div style={styles.syncBanner}>
-            <div style={styles.syncSpinner} />
-            <div style={{ flex: 1 }}>
-              <div style={styles.syncTitle}>
-                {phase === 'backfill' ? 'Syncing Data' : 'Building Score History'}
+  // 0: Header
+  sections.push(
+    <div key="header">
+      <h1 style={styles.playerName}>{data.displayName}</h1>
+      <p style={styles.subtitle}>
+        {data.totalScores.toLocaleString()} total scores
+      </p>
+    </div>,
+  );
+
+  // 1: Sync banner (if showing)
+  if (isSyncing) {
+    sections.push(
+      <div key="sync" style={styles.syncBanner}>
+        <div style={styles.syncSpinner} />
+        <div style={{ flex: 1 }}>
+          <div style={styles.syncTitle}>
+            {syncPhase === 'backfill' ? 'Syncing Data' : 'Building Score History'}
+          </div>
+          <div style={styles.syncSubtitle}>
+            {syncPhase === 'backfill'
+              ? `Syncing ${data.displayName}'s scores…`
+              : `Reconstructing ${data.displayName}'s score history across seasons…`}
+          </div>
+          {syncPhase === 'backfill' && backfillProgress > 0 && (
+            <div style={{ marginTop: Gap.md }}>
+              <div style={styles.syncProgressLabel}>
+                <span>Syncing scores</span>
+                <span>{(backfillProgress * 100).toFixed(1)}%</span>
               </div>
-              <div style={styles.syncSubtitle}>
-                {phase === 'backfill'
-                  ? `Syncing ${data.displayName}'s scores…`
-                  : `Reconstructing ${data.displayName}'s score history across seasons…`}
+              <div style={styles.syncProgressOuter}>
+                <div
+                  style={{
+                    ...styles.syncProgressInner,
+                    width: `${Math.round(backfillProgress * 100)}%`,
+                  }}
+                />
               </div>
-              {phase === 'backfill' && backfillProgress > 0 && (
-                <div style={{ marginTop: Gap.md }}>
+            </div>
+          )}
+          {syncPhase === 'history' && (
+            <>
+              <div style={{ marginTop: Gap.md }}>
+                <div style={styles.syncProgressLabel}>
+                  <span>Syncing scores</span>
+                  <span>100.0%</span>
+                </div>
+                <div style={styles.syncProgressOuter}>
+                  <div style={{ ...styles.syncProgressInner, width: '100%' }} />
+                </div>
+              </div>
+              {historyProgress > 0 && (
+                <div style={{ marginTop: Gap.sm }}>
                   <div style={styles.syncProgressLabel}>
-                    <span>Syncing scores</span>
-                    <span>{(backfillProgress * 100).toFixed(1)}%</span>
+                    <span>Building history</span>
+                    <span>{(historyProgress * 100).toFixed(1)}%</span>
                   </div>
                   <div style={styles.syncProgressOuter}>
                     <div
                       style={{
                         ...styles.syncProgressInner,
-                        width: `${Math.round(backfillProgress * 100)}%`,
+                        width: `${Math.round(historyProgress * 100)}%`,
                       }}
                     />
                   </div>
                 </div>
               )}
-              {phase === 'history' && (
-                <>
-                  <div style={{ marginTop: Gap.md }}>
-                    <div style={styles.syncProgressLabel}>
-                      <span>Syncing scores</span>
-                      <span>100.0%</span>
-                    </div>
-                    <div style={styles.syncProgressOuter}>
-                      <div style={{ ...styles.syncProgressInner, width: '100%' }} />
-                    </div>
-                  </div>
-                  {historyProgress > 0 && (
-                    <div style={{ marginTop: Gap.sm }}>
-                      <div style={styles.syncProgressLabel}>
-                        <span>Building history</span>
-                        <span>{(historyProgress * 100).toFixed(1)}%</span>
-                      </div>
-                      <div style={styles.syncProgressOuter}>
-                        <div
-                          style={{
-                            ...styles.syncProgressInner,
-                            width: `${Math.round(historyProgress * 100)}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Overall summary */}
-        <div style={styles.summaryGrid}>
-          <StatBox label="Total Score" value={overallStats.totalScore.toLocaleString()} />
-          <StatBox label="Songs Played" value={overallStats.songsPlayed.toLocaleString()} />
-          <StatBox label="Full Combos" value={`${overallStats.fcCount} (${overallStats.fcPercent}%)`} />
-          <StatBox label="Gold Stars" value={overallStats.goldStarCount.toLocaleString()} />
-          <StatBox label="Avg Accuracy" value={formatAccuracy(overallStats.avgAccuracy)} />
-          <StatBox label="Best Rank" value={overallStats.bestRank > 0 ? `#${overallStats.bestRank.toLocaleString()}` : '—'} />
+            </>
+          )}
         </div>
+      </div>,
+    );
+  }
 
-        {/* Per-instrument cards */}
-        <h2 style={styles.sectionTitle}>Instrument Statistics</h2>
-        <p style={styles.sectionDesc}>A quick look at your overall Festival statistics per instrument.</p>
-        <div style={styles.instrumentGrid}>
-          {INSTRUMENT_KEYS.map((inst) => {
-            const scores = byInstrument.get(inst);
-            if (!scores || scores.length === 0) return null;
-            return (
-              <InstrumentStatsCard
-                key={inst}
-                instrument={inst}
-                scores={scores}
-                totalSongs={songs.length}
-              />
-            );
-          })}
-        </div>
+  // 2: Overall summary
+  sections.push(
+    <div key="summary" style={styles.summaryGrid}>
+      <StatBox label="Total Score" value={overallStats.totalScore.toLocaleString()} />
+      <StatBox label="Songs Played" value={overallStats.songsPlayed.toLocaleString()} />
+      <StatBox label="Full Combos" value={`${overallStats.fcCount} (${overallStats.fcPercent}%)`} />
+      <StatBox label="Gold Stars" value={overallStats.goldStarCount.toLocaleString()} />
+      <StatBox label="Avg Accuracy" value={formatAccuracy(overallStats.avgAccuracy)} />
+      <StatBox label="Best Rank" value={overallStats.bestRank > 0 ? `#${overallStats.bestRank.toLocaleString()}` : '—'} />
+    </div>,
+  );
 
-        {/* Top Songs Per Instrument */}
-        <h2 style={{ ...styles.sectionTitle, marginTop: Gap.section * 2 }}>Top Songs Per Instrument</h2>
-        <p style={styles.sectionDesc}>Your best and worst competitive songs per instrument, sorted by percentile.</p>
-        <div style={styles.instrumentGrid}>
-          {INSTRUMENT_KEYS.map((inst) => {
-            const scores = byInstrument.get(inst);
-            if (!scores || scores.length === 0) return null;
-            const withPct = scores.filter(
-              (s) => s.rank > 0 && (s.totalEntries ?? 0) > 0,
-            );
-            if (withPct.length === 0) return null;
-            const sorted = withPct
-              .slice()
-              .sort(
-                (a, b) =>
-                  a.rank / a.totalEntries! - b.rank / b.totalEntries!,
-              );
-            const topScores = sorted.slice(0, 5);
-            const bottomScores = sorted.length > 5
-              ? sorted.slice(-5).reverse()
-              : [];
-            return (
-              <div key={inst} style={{ display: 'contents' }}>
-                <TopSongsCard
-                  instrument={inst}
-                  title="Top Five Songs"
-                  description={`Your best five songs for ${INSTRUMENT_LABELS[inst]}.`}
-                  scores={topScores}
-                  songMap={songMap}
-                />
-                {bottomScores.length > 0 && (
-                  <TopSongsCard
-                    instrument={inst}
-                    title="Bottom Five Songs"
-                    description={`Your worst five songs for ${INSTRUMENT_LABELS[inst]}.`}
-                    scores={bottomScores}
-                    songMap={songMap}
-                  />
-                )}
-              </div>
-            );
-          })}
-        </div>
+  // 3: Instrument Statistics heading
+  sections.push(
+    <div key="inst-heading">
+      <h2 style={styles.sectionTitle}>Instrument Statistics</h2>
+      <p style={styles.sectionDesc}>A quick look at your overall Festival statistics per instrument.</p>
+    </div>,
+  );
+
+  // 4+: Each instrument stats card (inside a grid)
+  const instCards: { inst: InstrumentKey; scores: PlayerScore[] }[] = [];
+  for (const inst of INSTRUMENT_KEYS) {
+    const scores = byInstrument.get(inst);
+    if (!scores || scores.length === 0) continue;
+    instCards.push({ inst, scores });
+  }
+  // Push each card as its own section so it gets its own stagger delay
+  // but wrap them in a grid parent. We use a "grid-start" marker and
+  // "grid-end" marker approach — or simpler: push one grid section containing
+  // all cards, each with an inline stagger using the section index as base.
+  const instGridBaseIndex = sections.length;
+  sections.push(
+    <div key="inst-grid" style={styles.instrumentGrid}>
+      {instCards.map(({ inst, scores }, i) => (
+        <FadeInDiv key={inst} delay={(instGridBaseIndex + i) * 125}>
+          <InstrumentStatsCard
+            instrument={inst}
+            scores={scores}
+            totalSongs={songs.length}
+          />
+        </FadeInDiv>
+      ))}
+    </div>,
+  );
+
+  // Top Songs heading
+  sections.push(
+    <div key="top-heading" style={{ marginTop: Gap.section * 2 }}>
+      <h2 style={styles.sectionTitle}>Top Songs Per Instrument</h2>
+      <p style={styles.sectionDesc}>Your best and worst competitive songs per instrument, sorted by percentile.</p>
+    </div>,
+  );
+
+  // Top/Bottom songs cards per instrument (inside a grid)
+  const topBottomCards: React.ReactNode[] = [];
+  for (const inst of INSTRUMENT_KEYS) {
+    const scores = byInstrument.get(inst);
+    if (!scores || scores.length === 0) continue;
+    const withPct = scores.filter(
+      (s) => s.rank > 0 && (s.totalEntries ?? 0) > 0,
+    );
+    if (withPct.length === 0) continue;
+    const sorted = withPct
+      .slice()
+      .sort(
+        (a, b) =>
+          a.rank / a.totalEntries! - b.rank / b.totalEntries!,
+      );
+    const topScores = sorted.slice(0, 5);
+    const bottomScores = sorted.length > 5
+      ? sorted.slice(-5).reverse()
+      : [];
+    topBottomCards.push(
+      <TopSongsCard
+        key={`top-${inst}`}
+        instrument={inst}
+        title="Top Five Songs"
+        description={`Your best five songs for ${INSTRUMENT_LABELS[inst]}.`}
+        scores={topScores}
+        songMap={songMap}
+      />,
+    );
+    if (bottomScores.length > 0) {
+      topBottomCards.push(
+        <TopSongsCard
+          key={`bottom-${inst}`}
+          instrument={inst}
+          title="Bottom Five Songs"
+          description={`Your worst five songs for ${INSTRUMENT_LABELS[inst]}.`}
+          scores={bottomScores}
+          songMap={songMap}
+        />,
+      );
+    }
+  }
+  const topGridBaseIndex = sections.length;
+  sections.push(
+    <div key="top-grid" style={styles.instrumentGrid}>
+      {topBottomCards.map((card, i) => (
+        <FadeInDiv key={i} delay={(topGridBaseIndex + i) * 125}>
+          {card}
+        </FadeInDiv>
+      ))}
+    </div>,
+  );
+
+  return (
+    <div style={styles.page}>
+      <div style={styles.container}>
+        {sections.map((section, i) => (
+          <FadeInDiv key={i} delay={i * 125}>
+            {section}
+          </FadeInDiv>
+        ))}
       </div>
     </div>
   );
@@ -856,9 +949,14 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: '100vh',
-    color: Colors.textSecondary,
-    backgroundColor: Colors.backgroundApp,
-    fontSize: Font.lg,
+  },
+  arcSpinner: {
+    width: 48,
+    height: 48,
+    border: '4px solid rgba(255,255,255,0.10)',
+    borderTopColor: Colors.accentPurple,
+    borderRadius: '50%',
+    animation: 'spin 0.8s linear infinite',
   },
   centerError: {
     display: 'flex',

@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef, type CSSProperties } from 'react';
 import { useSettings } from '../contexts/SettingsContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { ToggleRow, ReorderList } from '../components/Modal';
@@ -6,6 +6,25 @@ import { METADATA_SORT_DISPLAY } from '../components/songSettings';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import type { InstrumentKey } from '../models';
 import { Colors, Font, Gap, Layout, MaxWidth, Radius } from '../theme';
+
+function FadeInDiv({ delay, children, style }: { delay: number; children: React.ReactNode; style?: CSSProperties }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const handleEnd = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.opacity = '';
+    el.style.animation = '';
+  }, []);
+  return (
+    <div
+      ref={ref}
+      style={{ opacity: 0, animation: `fadeInUp 400ms ease-out ${delay}ms forwards`, ...style }}
+      onAnimationEnd={handleEnd}
+    >
+      {children}
+    </div>
+  );
+}
 
 /* ── Instrument toggle helpers ── */
 
@@ -68,12 +87,16 @@ export default function SettingsPage() {
     [settings.songRowVisualOrder],
   );
 
+  let staggerIndex = 0;
+
   return (
     <div style={styles.page}>
       {isMobile && (
         <div style={styles.header}>
           <div style={styles.container}>
-            <h1 style={styles.heading}>Settings</h1>
+            <FadeInDiv delay={staggerIndex++ * 125}>
+              <h1 style={styles.heading}>Settings</h1>
+            </FadeInDiv>
           </div>
         </div>
       )}
@@ -82,6 +105,7 @@ export default function SettingsPage() {
         <div style={styles.cardColumn}>
 
           {/* ───── App Settings ───── */}
+          <FadeInDiv delay={staggerIndex++ * 125}>
           <Card>
             <div style={styles.sectionTitle}>App Settings</div>
             <div style={styles.sectionHint}>General Festival Score Tracker app settings.</div>
@@ -114,8 +138,10 @@ export default function SettingsPage() {
               </div>
             )}
           </Card>
+          </FadeInDiv>
 
           {/* ───── Show Instruments ───── */}
+          <FadeInDiv delay={staggerIndex++ * 125}>
           <Card>
             <div style={styles.sectionTitle}>Show Instruments</div>
             <div style={styles.sectionHint}>Choose which instruments to display throughout the app.</div>
@@ -130,8 +156,10 @@ export default function SettingsPage() {
               />
             ))}
           </Card>
+          </FadeInDiv>
 
           {/* ───── Show Instrument Metadata ───── */}
+          <FadeInDiv delay={staggerIndex++ * 125}>
           <Card>
             <div style={styles.sectionTitle}>Show Instrument Metadata</div>
             <div style={styles.sectionHint}>
@@ -146,8 +174,10 @@ export default function SettingsPage() {
               />
             ))}
           </Card>
+          </FadeInDiv>
 
           {/* ───── Reset Settings ───── */}
+          <FadeInDiv delay={staggerIndex++ * 125}>
           <Card>
             <div style={styles.sectionTitle}>Reset Settings</div>
             <div style={styles.sectionHint}>Restore all settings to their default values.</div>
@@ -158,6 +188,7 @@ export default function SettingsPage() {
               Reset All Settings
             </button>
           </Card>
+          </FadeInDiv>
 
         </div>
       </div>

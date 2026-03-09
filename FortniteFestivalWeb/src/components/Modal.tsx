@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
+import { IoChevronDown } from 'react-icons/io5';
 import {
   DndContext,
   closestCenter,
@@ -363,7 +364,7 @@ export function Accordion({ title, hint, defaultOpen = false, children }: { titl
           <span style={accordionStyles.title}>{title}</span>
           {hint && <span style={accordionStyles.hint}>{hint}</span>}
         </div>
-        <svg style={{ ...accordionStyles.chevron, transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9" /></svg>
+        <IoChevronDown style={{ ...accordionStyles.chevron, transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }} size={16} />
       </button>
       <div style={{ ...accordionStyles.bodyWrap, gridTemplateRows: open ? '1fr' : '0fr' }}>
         <div style={accordionStyles.bodyInner}>{children}</div>

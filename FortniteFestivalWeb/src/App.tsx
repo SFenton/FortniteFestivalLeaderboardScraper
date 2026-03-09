@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, useLocation } from 'react-router-dom';
+import { IoMusicalNotes, IoSparkles, IoStatsChart, IoPerson, IoSettings } from 'react-icons/io5';
 import { useEffect, useLayoutEffect, useState, useRef, useCallback } from 'react';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
 import { SettingsProvider } from './contexts/SettingsContext';
@@ -111,11 +112,15 @@ function AppShell() {
           <Route path="/songs/:songId" element={<SongDetailPage />} />
           <Route path="/songs/:songId/:instrument" element={<LeaderboardPage />} />
           <Route path="/player/:accountId" element={<PlayerPage />} />
-          {player && (
+          {player ? (
             <Route path="/statistics" element={<PlayerPage accountId={player.accountId} />} />
+          ) : (
+            <Route path="/statistics" element={<Navigate to="/songs" replace />} />
           )}
-          {player && (
+          {player ? (
             <Route path="/suggestions" element={<SuggestionsPage accountId={player.accountId} />} />
+          ) : (
+            <Route path="/suggestions" element={<Navigate to="/songs" replace />} />
           )}
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
@@ -259,7 +264,7 @@ function Sidebar({
                 }}
               >
                 <span style={styles.profileCircle}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+                  <IoPerson size={14} />
                 </span>
                 {player.displayName}
               </Link>
@@ -389,7 +394,7 @@ function SidebarPlayerSearch({ onSelect }: { onSelect: (p: TrackedPlayer) => voi
     <div>
       <button style={styles.selectPlayerBtn} onClick={toggle}>
         <span style={styles.profileCircle}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+          <IoPerson size={14} />
         </span>
         Select Player
         <span style={{
@@ -609,7 +614,7 @@ function MobilePlayerSearchModal({
           {player && (
             <div style={styles.modalPlayerCard}>
               <span style={{ ...styles.profileCircleLg, ...stagger(dismissing ? 450 : 0) }}>
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+                <IoPerson size={32} />
               </span>
               <span style={{ ...styles.modalPlayerName, ...stagger(dismissing ? 300 : 150) }}>{player.displayName}</span>
               <span style={{ ...styles.modalDeselectHint, ...stagger(dismissing ? 150 : 300) }}>Deselecting will hide suggestions, statistics, and per-song scores from the song list.</span>
@@ -667,10 +672,10 @@ function MobilePlayerSearchModal({
 }
 
 function BottomNav({ player, onProfilePress }: { player: TrackedPlayer | null; onProfilePress: () => void }) {
-  const tabs = [
-    { to: '/songs', label: 'Songs', icon: '♫' },
-    ...(player ? [{ to: '/suggestions', label: 'Suggestions', icon: '★' }] : []),
-    ...(player ? [{ to: '/statistics', label: 'Statistics', icon: '📊' }] : []),
+  const tabs: { to: string; label: string; icon: React.ReactNode }[] = [
+    { to: '/songs', label: 'Songs', icon: <IoMusicalNotes size={20} /> },
+    ...(player ? [{ to: '/suggestions', label: 'Suggestions', icon: <IoSparkles size={20} /> }] : []),
+    ...(player ? [{ to: '/statistics', label: 'Statistics', icon: <IoStatsChart size={20} /> }] : []),
   ];
 
   return (
@@ -689,7 +694,7 @@ function BottomNav({ player, onProfilePress }: { player: TrackedPlayer | null; o
         </NavLink>
       ))}
       <button style={styles.bottomTab} onClick={onProfilePress}>
-        <span style={styles.bottomTabIcon}>👤</span>
+        <span style={styles.bottomTabIcon}><IoPerson size={20} /></span>
         Profile
       </button>
       <NavLink
@@ -699,7 +704,7 @@ function BottomNav({ player, onProfilePress }: { player: TrackedPlayer | null; o
           ...(isActive ? styles.bottomTabActive : {}),
         })}
       >
-        <span style={styles.bottomTabIcon}>⚙</span>
+        <span style={styles.bottomTabIcon}><IoSettings size={20} /></span>
         Settings
       </NavLink>
     </nav>

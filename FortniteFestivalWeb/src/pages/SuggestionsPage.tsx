@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react';
+import { IoFunnel } from 'react-icons/io5';
 import { Link } from 'react-router-dom';
 import InfiniteScroll from 'react-infinite-scroll-component';
 import { useFestival } from '../contexts/FestivalContext';
@@ -22,6 +23,27 @@ import type { AppSettings } from '../contexts/SettingsContext';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size } from '../theme';
 import { useIsMobile } from '../hooks/useIsMobile';
 import type { InstrumentKey as ServerInstrumentKey } from '../models';
+
+/** Clears animation styles on completion so backdrop-filter works on children. */
+function FadeInDiv({ delay, hidden, children, style }: { delay: number; hidden?: boolean; children: React.ReactNode; style?: CSSProperties }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const handleEnd = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.opacity = '';
+    el.style.animation = '';
+  }, []);
+  if (hidden) return <div style={{ opacity: 0 }}>{children}</div>;
+  return (
+    <div
+      ref={ref}
+      style={{ opacity: 0, animation: `fadeInUp 400ms ease-out ${delay}ms forwards`, ...style }}
+      onAnimationEnd={handleEnd}
+    >
+      {children}
+    </div>
+  );
+}
 
 const CORE_TO_SERVER_INSTRUMENT: Record<InstrumentKey, ServerInstrumentKey> = {
   guitar: 'Solo_Guitar',
@@ -253,12 +275,42 @@ export default function SuggestionsPage({ accountId }: Props) {
     loadMore();
   }, [loadMore, filterExhausted]);
 
-  // Show loading only if we have no cached categories to display
-  if ((isLoading || playerLoading) && categories.length === 0) {
-    return <div style={styles.center}>Loading suggestions…</div>;
-  }
+  // ── Spinner → staggered-content transition ──
+  const dataReady = !(isLoading || playerLoading) || categories.length > 0;
+  const [phase, setPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>(
+    dataReady ? 'contentIn' : 'loading',
+  );
 
-  if (!playerData && categories.length === 0) {
+  useEffect(() => {
+    if (!dataReady || phase !== 'loading') return;
+    setPhase('spinnerOut');
+  }, [dataReady, phase]);
+
+  useEffect(() => {
+    if (phase !== 'spinnerOut') return;
+    const id = setTimeout(() => setPhase('contentIn'), 500);
+    return () => clearTimeout(id);
+  }, [phase]);
+
+  // Track how many category cards have already been revealed so that newly
+  // loaded batches get their own stagger starting from delay 0.
+  const revealedCountRef = useRef(0);
+
+  const getCardDelay = (index: number): number | null => {
+    if (phase !== 'contentIn') return null;                   // hidden behind spinner
+    if (index < revealedCountRef.current) return -1;          // already visible, no animation
+    const offset = index - revealedCountRef.current;
+    return offset * 125;
+  };
+
+  // After each render, mark all current cards as revealed.
+  useEffect(() => {
+    if (phase === 'contentIn') {
+      revealedCountRef.current = visibleCategories.length;
+    }
+  }, [visibleCategories.length, phase]);
+
+  if (!playerData && !playerLoading && categories.length === 0) {
     return <div style={styles.center}>Could not load player data.</div>;
   }
 
@@ -287,11 +339,28 @@ export default function SuggestionsPage({ accountId }: Props) {
     );
   }
 
+  const headerStagger: React.CSSProperties = phase === 'contentIn'
+    ? { opacity: 0, animation: 'fadeInUp 400ms ease-out forwards' }
+    : { opacity: 0 };
+
   return (
     <div style={styles.page}>
+      {/* Spinner overlay — visible during loading & spinnerOut */}
+      {phase !== 'contentIn' && (
+        <div
+          style={{
+            ...styles.spinnerOverlay,
+            ...(phase === 'spinnerOut'
+              ? { animation: 'fadeOut 500ms ease-out forwards' }
+              : {}),
+          }}
+        >
+          <div style={styles.arcSpinner} />
+        </div>
+      )}
       <div style={styles.header}>
         <div style={styles.container}>
-          <div style={styles.headerRow}>
+          <div style={{ ...styles.headerRow, ...headerStagger }}>
             {isMobile && <h1 style={styles.heading}>Suggestions</h1>}
             <button
               style={{ ...styles.iconBtn, ...(filtersActive ? styles.iconBtnActive : {}) }}
@@ -299,7 +368,7 @@ export default function SuggestionsPage({ accountId }: Props) {
               title="Filter"
               aria-label="Filter suggestions"
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" /></svg>
+              <IoFunnel size={18} />
               {filtersActive && <span style={styles.filterDot} />}
             </button>
           </div>
@@ -321,14 +390,23 @@ export default function SuggestionsPage({ accountId }: Props) {
             dataLength={visibleCategories.length}
             next={filteredLoadMore}
             hasMore={effectiveHasMore}
-            loader={<div style={styles.loader}>Loading more…</div>}
+            loader={<div style={styles.loader}><div style={styles.loaderSpinner} /></div>}
             scrollThreshold="600px"
             scrollableTarget="suggestions-scroll"
             style={{ overflow: 'visible' }}
           >
-            {visibleCategories.map((cat, idx) => (
-              <CategoryCard key={`${idx}-${cat.key}`} category={cat} albumArtMap={albumArtMap} scoresIndex={scoresIndex} />
-            ))}
+            {visibleCategories.map((cat, idx) => {
+              const delay = getCardDelay(idx);
+              if (delay === -1) {
+                // Already visible — render without animation wrapper
+                return <CategoryCard key={`${idx}-${cat.key}`} category={cat} albumArtMap={albumArtMap} scoresIndex={scoresIndex} />;
+              }
+              return (
+                <FadeInDiv key={`${idx}-${cat.key}`} delay={delay ?? 0} hidden={delay === null}>
+                  <CategoryCard category={cat} albumArtMap={albumArtMap} scoresIndex={scoresIndex} />
+                </FadeInDiv>
+              );
+            })}
           </InfiniteScroll>
         )}
       </div>
@@ -564,9 +642,23 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
-    minHeight: '60vh',
-    color: Colors.textTertiary,
-    fontSize: Font.lg,
+    minHeight: '100vh',
+  },
+  arcSpinner: {
+    width: 48,
+    height: 48,
+    border: '4px solid rgba(255,255,255,0.10)',
+    borderTopColor: Colors.accentPurple,
+    borderRadius: '50%',
+    animation: 'spin 0.8s linear infinite',
+  },
+  spinnerOverlay: {
+    position: 'fixed' as const,
+    inset: 0,
+    zIndex: 2,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   heading: {
     fontSize: Font.title,
@@ -630,10 +722,17 @@ const styles: Record<string, React.CSSProperties> = {
     color: Colors.textMuted,
   },
   loader: {
-    textAlign: 'center' as const,
-    color: Colors.textTertiary,
-    fontSize: Font.sm,
+    display: 'flex',
+    justifyContent: 'center',
     padding: `${Gap.section}px 0`,
+  },
+  loaderSpinner: {
+    width: 28,
+    height: 28,
+    border: '3px solid rgba(255,255,255,0.10)',
+    borderTopColor: Colors.accentPurple,
+    borderRadius: '50%',
+    animation: 'spin 0.8s linear infinite',
   },
   card: {
     backgroundColor: Colors.glassCard,
