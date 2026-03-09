@@ -47,6 +47,11 @@ export default function SongsPage() {
     }
   }, []);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(search), 250);
+    return () => clearTimeout(id);
+  }, [search]);
   const [settings, setSettings] = useState<SongSettings>(loadSongSettings);
   const [instrument, setInstrument] = useState<InstrumentKey>(
     () => settings.instrument ?? 'Solo_Guitar',
@@ -135,7 +140,7 @@ export default function SongsPage() {
   const PRO_INSTRUMENTS: InstrumentKey[] = ['Solo_PeripheralGuitar', 'Solo_PeripheralBass'];
 
   const filtered = useMemo(() => {
-    const q = search.toLowerCase();
+    const q = debouncedSearch.toLowerCase();
     let list = songs;
     if (q) {
       list = list.filter(
@@ -247,7 +252,7 @@ export default function SongsPage() {
       }
       return cmp === 0 ? a.title.localeCompare(b.title) * dir : cmp * dir;
     });
-  }, [songs, search, settings.sortMode, settings.sortAscending, settings.filters, scoreMap, allScoreMap]);
+  }, [songs, debouncedSearch, settings.sortMode, settings.sortAscending, settings.filters, scoreMap, allScoreMap]);
 
   const hasPlayer = !!playerData;
 
@@ -300,8 +305,8 @@ export default function SongsPage() {
   const toolbarShownRef = useRef(false);
   if (loadPhase === 'contentIn') toolbarShownRef.current = true;
 
-  // Fingerprint of sort/filter settings — when it changes, re-stagger the list
-  const settingsKey = `${settings.sortMode}|${settings.sortAscending}|${instrument}|${JSON.stringify(settings.filters)}`;
+  // Fingerprint of sort/filter/search settings — when it changes, re-stagger the list
+  const settingsKey = `${settings.sortMode}|${settings.sortAscending}|${instrument}|${JSON.stringify(settings.filters)}|${debouncedSearch}`;
   const prevSettingsKeyRef = useRef(settingsKey);
 
   useEffect(() => {
@@ -351,10 +356,13 @@ export default function SongsPage() {
           <div style={styles.arcSpinner} />
         </div>
       )}
-      <div style={styles.header}>
+      <div style={isMobile ? styles.headerMobile : styles.header}>
         <div style={styles.container}>
           {isMobile && <h1 style={styles.heading}>Songs</h1>}
-          {(toolbarShownRef.current || loadPhase === 'contentIn') && (
+          {isMobile && filtersActive && filtered.length !== songs.length && (
+            <div style={styles.count}>{filtered.length} of {songs.length} songs</div>
+          )}
+          {!isMobile && (toolbarShownRef.current || loadPhase === 'contentIn') && (
           <>
           <div style={styles.toolbar}>
             <input
@@ -476,6 +484,37 @@ export default function SongsPage() {
         )}
         </div>
       </div>
+
+      {isMobile && (toolbarShownRef.current || loadPhase === 'contentIn') && (
+        <div style={styles.bottomToolbar}>
+          <div style={styles.bottomToolbarInner}>
+            <div style={styles.toolbar}>
+              <input
+                style={styles.searchInput}
+                placeholder="Search songs or artists…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <div style={styles.sortGroup}>
+                <button style={styles.iconBtn} onClick={openSort} title="Sort" aria-label="Sort songs">
+                  <IoSwapVerticalSharp size={18} />
+                </button>
+                {hasPlayer && (
+                  <button
+                    style={{ ...styles.iconBtn, ...(filtersActive ? styles.iconBtnActive : {}) }}
+                    onClick={openFilter}
+                    title="Filter"
+                    aria-label="Filter songs"
+                  >
+                    <IoFunnel size={18} />
+                    {filtersActive && <span style={styles.filterDot} />}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <SortModal
         visible={showSort}
@@ -851,6 +890,26 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     zIndex: 10,
     paddingBottom: Gap.md,
+  },
+  headerMobile: {
+    flexShrink: 0,
+    zIndex: 10,
+  },
+  bottomToolbar: {
+    flexShrink: 0,
+    zIndex: 10,
+  },
+  bottomToolbarInner: {
+    width: '100%',
+    maxWidth: MaxWidth.card,
+    margin: '0 auto',
+    padding: `${Gap.md}px ${Layout.paddingHorizontal}px`,
+    boxSizing: 'border-box' as const,
+  },
+  bottomCount: {
+    fontSize: Font.sm,
+    color: Colors.textTertiary,
+    marginBottom: Gap.sm,
   },
   scrollArea: {
     flex: 1,
