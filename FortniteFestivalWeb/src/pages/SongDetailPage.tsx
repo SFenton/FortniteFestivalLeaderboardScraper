@@ -286,7 +286,11 @@ function InstrumentCard({
         ...styles.card,
         cursor: 'pointer',
       }}
-      onClick={() => navigate(`/songs/${songId}/${instrument}`)}
+      onClick={() => {
+        const pageNum = playerScore?.rank ? Math.floor((playerScore.rank - 1) / 25) + 1 : undefined;
+        const search = pageNum ? `?page=${pageNum}&navToPlayer=true` : '';
+        navigate(`/songs/${songId}/${instrument}${search}`);
+      }}
     >
       <div style={styles.cardHeader}>
         <span style={styles.cardTitle}>{INSTRUMENT_LABELS[instrument]}</span>
