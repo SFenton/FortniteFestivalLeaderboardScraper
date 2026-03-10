@@ -34,6 +34,12 @@ export default function SongDetailPage() {
   const { songId } = useParams<{ songId: string }>();
   const [searchParams] = useSearchParams();
   const defaultInstrument = (searchParams.get('instrument') as InstrumentKey) || undefined;
+  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   const {
     state: { songs },
   } = useFestival();
@@ -202,6 +208,7 @@ export default function SongDetailPage() {
                     songId={songId}
                     instrument={inst}
                     baseDelay={baseDelay}
+                    windowWidth={windowWidth}
                     playerScore={playerScores.find((s) => s.instrument === inst)}
                     playerName={player?.displayName}
                     prefetchedEntries={instrumentData[inst].entries}
@@ -260,6 +267,7 @@ function InstrumentCard({
   songId,
   instrument,
   baseDelay,
+  windowWidth,
   playerScore,
   playerName,
   prefetchedEntries,
@@ -268,12 +276,20 @@ function InstrumentCard({
   songId: string;
   instrument: InstrumentKey;
   baseDelay: number;
+  windowWidth: number;
   playerScore?: PlayerScore;
   playerName?: string;
   prefetchedEntries: LeaderboardEntry[];
   prefetchedError: string | null;
 }) {
   const navigate = useNavigate();
+
+  // 2-col grid: each card gets ~half viewport. Thresholds based on card width.
+  const isTwoCol = windowWidth >= 840;
+  const cardWidth = isTwoCol ? windowWidth / 2 : windowWidth;
+  const showAccuracy = cardWidth >= 420;
+  const showSeason = cardWidth >= 520;
+  const isMobile = cardWidth < 360;
 
   const maxScoreLen = Math.max(
     ...prefetchedEntries.map((e) => e.score.toLocaleString().length),
@@ -318,7 +334,7 @@ function InstrumentCard({
             <Link
               key={e.accountId}
               to={`/player/${e.accountId}`}
-              style={{ ...styles.entryRow, ...rowStagger }}
+              style={{ ...styles.entryRow, ...(isMobile ? styles.entryRowMobile : {}), ...rowStagger }}
               onClick={(ev) => ev.stopPropagation()}
               onAnimationEnd={clearAnim}
             >
@@ -327,13 +343,14 @@ function InstrumentCard({
                 {e.displayName ?? e.accountId.slice(0, 8)}
               </span>
               <span style={styles.seasonScoreGroup}>
-                {e.season != null && (
+                {showSeason && e.season != null && (
                   <span style={styles.seasonPill}>S{e.season}</span>
                 )}
                 <span style={{ ...styles.entryScore, width: scoreWidth }}>
                   {e.score.toLocaleString()}
                 </span>
               </span>
+              {showAccuracy && (
               <span style={styles.entryAcc}>
                 {e.accuracy != null
                   ? (() => {
@@ -346,6 +363,7 @@ function InstrumentCard({
                     })()
                   : '—'}
               </span>
+              )}
             </Link>
             );
           })}
@@ -358,20 +376,21 @@ function InstrumentCard({
               const pageNum = Math.floor((playerScore.rank - 1) / 25) + 1;
               return `/songs/${songId}/${instrument}?page=${pageNum}&navToPlayer=true`;
             })()}
-            style={{ ...styles.playerEntryRow, ...playerStagger }}
+            style={{ ...styles.playerEntryRow, ...(isMobile ? styles.entryRowMobile : {}), ...playerStagger }}
             onClick={(ev) => ev.stopPropagation()}
             onAnimationEnd={clearAnim}
           >
             <span style={styles.entryRank}>#{playerScore.rank.toLocaleString()}</span>
             <span style={styles.entryName}>{playerName}</span>
             <span style={styles.seasonScoreGroup}>
-              {playerScore.season != null && (
+              {showSeason && playerScore.season != null && (
                 <span style={styles.seasonPill}>S{playerScore.season}</span>
               )}
               <span style={{ ...styles.entryScore, width: scoreWidth }}>
                 {playerScore.score.toLocaleString()}
               </span>
             </span>
+            {showAccuracy && (
             <span style={styles.entryAcc}>
               {playerScore.accuracy != null && playerScore.accuracy > 0
                 ? (() => {
@@ -384,6 +403,7 @@ function InstrumentCard({
                   })()
                 : '\u2014'}
             </span>
+            )}
           </Link>
           );
         })()}
@@ -516,7 +536,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   instrumentGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(min(420px, 100%), 1fr))',
     gap: `${Gap.section}px ${Gap.md}px`,
   },
   card: {
@@ -567,6 +587,11 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'inherit',
     transition: 'background-color 0.15s',
     fontSize: Font.md,
+  },
+  entryRowMobile: {
+    gap: Gap.md,
+    padding: `0 ${Gap.md}px`,
+    height: 40,
   },
   entryRank: {
     width: 48,

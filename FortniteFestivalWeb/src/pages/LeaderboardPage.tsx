@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
 import { usePlayerData } from '../contexts/PlayerDataContext';
-import { useIsMobile } from '../hooks/useIsMobile';
 import { api } from '../api/client';
 import {
   INSTRUMENT_LABELS,
@@ -35,7 +34,16 @@ export default function LeaderboardPage() {
   const instKey = instrument as InstrumentKey;
   const instLabel = INSTRUMENT_LABELS[instKey] ?? instrument;
 
-  const isMobile = useIsMobile();
+  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const showAccuracy = windowWidth >= 420;
+  const showSeason = windowWidth >= 520;
+  const showStars = windowWidth >= 768;
+  const isMobile = windowWidth < 420;
 
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -219,13 +227,14 @@ export default function LeaderboardPage() {
                     {e.displayName ?? e.accountId.slice(0, 12)}
                   </span>
                   <span style={styles.seasonScoreGroup}>
-                    {e.season != null && (
+                    {showSeason && e.season != null && (
                       <span style={styles.seasonPill}>S{e.season}</span>
                     )}
                     <span style={{ ...styles.colScore, width: scoreWidth }}>
                       {e.score.toLocaleString()}
                     </span>
                   </span>
+                  {showAccuracy && (
                   <span style={styles.colAcc}>
                     {e.accuracy != null
                       ? (() => {
@@ -238,7 +247,8 @@ export default function LeaderboardPage() {
                         })()
                       : '—'}
                   </span>
-                  {!isMobile && (
+                  )}
+                  {showStars && (
                   <span style={styles.colStars}>
                     {e.stars != null && e.stars > 0
                       ? (() => {
@@ -266,7 +276,7 @@ export default function LeaderboardPage() {
       </div>
 
         {loadPhase === 'contentIn' && !error && totalPages > 1 && (
-        <div style={styles.pagination}>
+        <div style={{ ...styles.pagination, ...(isMobile ? { justifyContent: 'space-between', gap: 0 } : {}) }}>
           <button
             style={{
               ...styles.pageButton,
@@ -322,7 +332,15 @@ export default function LeaderboardPage() {
           <div style={{ ...styles.playerFooterRow, cursor: 'pointer', ...(isMobile ? { gap: Gap.md, padding: `0 ${Gap.md}px` } : {}) }}>
             <span style={styles.colRank}>#{playerScore.rank.toLocaleString()}</span>
             <span style={styles.colName}>{playerData.displayName}</span>
-            <span style={styles.colScore}>{playerScore.score.toLocaleString()}</span>
+            <span style={styles.seasonScoreGroup}>
+              {showSeason && playerScore.season != null && (
+                <span style={styles.seasonPill}>S{playerScore.season}</span>
+              )}
+              <span style={{ ...styles.colScore, width: scoreWidth }}>
+                {playerScore.score.toLocaleString()}
+              </span>
+            </span>
+            {showAccuracy && (
             <span style={styles.colAcc}>
               {playerScore.accuracy != null
                 ? (() => {
@@ -335,7 +353,8 @@ export default function LeaderboardPage() {
                   })()
                 : '\u2014'}
             </span>
-            {!isMobile && (
+            )}
+            {showStars && (
             <span style={styles.colStars}>
               {playerScore.stars != null && playerScore.stars > 0
                 ? (() => {
@@ -574,7 +593,11 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
     gap: Gap.md,
     flexShrink: 0,
-    padding: `${Gap.md}px 0`,
+    padding: `${Gap.md}px ${Layout.paddingHorizontal}px`,
+    maxWidth: MaxWidth.card,
+    margin: '0 auto',
+    width: '100%',
+    boxSizing: 'border-box' as const,
   },
   pageButton: {
     padding: `${Gap.md}px ${Gap.xl}px`,
@@ -593,7 +616,6 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'default',
   },
   pageInfo: {
-    minWidth: '7.5em',
     textAlign: 'center' as const,
   },
   pageInfoBadge: {
@@ -651,10 +673,10 @@ const styles: Record<string, React.CSSProperties> = {
     height: 64,
     padding: `0 ${Gap.xl}px`,
     borderRadius: Radius.md,
-    backgroundColor: Colors.glassCard,
+    backgroundColor: 'rgba(75, 15, 99, 0.45)',
     backdropFilter: 'blur(20px)',
     WebkitBackdropFilter: 'blur(20px)',
-    border: `1px solid ${Colors.glassBorder}`,
+    border: `1px solid rgba(124, 58, 237, 0.35)`,
     fontSize: Font.lg,
     maxWidth: MaxWidth.card,
     margin: '0 auto',
