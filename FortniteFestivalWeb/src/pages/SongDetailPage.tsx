@@ -236,9 +236,6 @@ function SongHeader({
         <p style={styles.songArtist}>
           {song?.artist ?? 'Unknown Artist'}
         </p>
-        {song?.tempo ? (
-          <span style={styles.bpmBadge}>{song.tempo} BPM</span>
-        ) : null}
       </div>
     </div>
   );

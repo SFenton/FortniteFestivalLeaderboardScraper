@@ -17,6 +17,7 @@ import {
   type InstrumentKey,
   type ScoreHistoryEntry,
 } from '../models';
+import { InstrumentIcon } from './InstrumentIcons';
 import { Colors, Font, Gap, Radius } from '../theme';
 
 type Props = {
@@ -156,37 +157,35 @@ export default function ScoreHistoryChart({
     }
   }, [instrumentCounts, selected]);
 
+  const availableInstruments = useMemo(
+    () => INSTRUMENT_KEYS.filter((k) => (instrumentCounts[k] ?? 0) > 0),
+    [instrumentCounts],
+  );
+
   return (
     <div style={styles.wrapper}>
-      <h2 style={styles.sectionTitle}>
-        Score History — {playerName}
-      </h2>
-
-      {/* Instrument buttons */}
-      <div style={styles.buttonRow}>
-        {INSTRUMENT_KEYS.filter((inst) => (instrumentCounts[inst] ?? 0) > 0).map((inst) => {
-          const count = instrumentCounts[inst] ?? 0;
-          const isActive = inst === selected;
-          return (
-            <button
-              key={inst}
-              onClick={() => setSelected(inst)}
-              style={{
-                ...styles.instButton,
-                ...(isActive ? styles.instButtonActive : {}),
-              }}
-            >
-              {INSTRUMENT_LABELS[inst]}
-              {count > 0 && (
-                <span style={styles.count}>{count}</span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
       {/* Chart area */}
       <div style={styles.chartContainer}>
+        {/* Instrument icons */}
+        {availableInstruments.length > 1 && (
+          <div style={styles.iconRow}>
+            {availableInstruments.map((inst) => {
+              const isActive = inst === selected;
+              return (
+                <button
+                  key={inst}
+                  onClick={() => setSelected(inst)}
+                  style={{
+                    ...styles.iconButton,
+                    ...(isActive ? styles.iconButtonActive : {}),
+                  }}
+                >
+                  <InstrumentIcon instrument={inst} size={48} />
+                </button>
+              );
+            })}
+          </div>
+        )}
         {loading && (
           <div style={styles.placeholder}>Loading history…</div>
         )}
@@ -375,46 +374,31 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: Gap.section,
     marginBottom: Gap.section,
   },
-  sectionTitle: {
-    fontSize: Font.xl,
-    fontWeight: 700,
-    marginBottom: Gap.xl,
-    color: Colors.textPrimary,
-  },
-  buttonRow: {
+  iconRow: {
     display: 'flex',
-    flexWrap: 'wrap',
-    gap: Gap.md,
-    marginBottom: Gap.xl,
+    justifyContent: 'center',
+    gap: Gap.lg,
+    paddingTop: Gap.md,
+    paddingBottom: Gap.xs,
+    width: '100%',
   },
-  instButton: {
-    padding: `${Gap.md}px ${Gap.xl}px`,
-    borderRadius: Radius.xs,
-    border: `1px solid ${Colors.glassBorder}`,
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    color: Colors.textSecondary,
-    fontSize: Font.sm,
-    fontWeight: 600,
+  iconButton: {
+    background: 'none',
+    border: 'none',
+    borderRadius: '50%',
+    width: 64,
+    height: 64,
+    padding: 0,
     cursor: 'pointer',
+    transition: 'all 0.15s ease',
     display: 'flex',
     alignItems: 'center',
-    gap: Gap.sm,
-    transition: 'all 0.15s ease',
+    justifyContent: 'center',
+    opacity: 0.5,
   },
-  instButtonActive: {
-    backgroundColor: Colors.accentPurple,
-    borderColor: Colors.accentPurple,
-    color: Colors.textPrimary,
-  },
-  count: {
-    fontSize: Font.xs,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    padding: `0 ${Gap.sm}px`,
-    borderRadius: Radius.full,
-    minWidth: 18,
-    textAlign: 'center' as const,
+  iconButtonActive: {
+    backgroundColor: '#2ECC71',
+    opacity: 1,
   },
   chartContainer: {
     backgroundColor: Colors.glassCard,
@@ -424,7 +408,8 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: Radius.lg,
     padding: `${Gap.sm}px ${Gap.xl}px`,
     display: 'flex',
-    justifyContent: 'center',
+    flexDirection: 'column' as const,
+    alignItems: 'center',
   },
   placeholder: {
     color: Colors.textMuted,
