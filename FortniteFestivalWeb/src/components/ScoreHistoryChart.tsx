@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import {
   ComposedChart,
   Bar,
@@ -27,6 +27,8 @@ type Props = {
   defaultInstrument?: InstrumentKey;
   /** Pre-fetched history entries. When provided, skips internal fetch. */
   history?: ScoreHistoryEntry[];
+  /** When provided, only these instruments are shown. */
+  visibleInstruments?: InstrumentKey[];
 };
 
 type ChartPoint = {
@@ -50,6 +52,7 @@ export default function ScoreHistoryChart({
   playerName,
   defaultInstrument,
   history: historyProp,
+  visibleInstruments: visibleInstrumentsProp,
 }: Props) {
   const cacheKey = `${accountId}:${songId}`;
   const [selected, setSelected] = useState<InstrumentKey>(defaultInstrument ?? 'Solo_Guitar');
@@ -145,22 +148,47 @@ export default function ScoreHistoryChart({
     return counts;
   }, [songHistory]);
 
+  const instrumentPool = visibleInstrumentsProp ?? INSTRUMENT_KEYS;
+
   // Auto-select: prefer Lead, then first instrument with data, if current has none
   useEffect(() => {
-    if ((instrumentCounts[selected] ?? 0) === 0) {
-      if ((instrumentCounts['Solo_Guitar'] ?? 0) > 0) {
-        setSelected('Solo_Guitar');
+    if ((instrumentCounts[selected] ?? 0) === 0 || !instrumentPool.includes(selected)) {
+      const lead = instrumentPool.find(k => k === 'Solo_Guitar' && (instrumentCounts[k] ?? 0) > 0);
+      if (lead) {
+        setSelected(lead);
       } else {
-        const first = INSTRUMENT_KEYS.find((k) => (instrumentCounts[k] ?? 0) > 0);
+        const first = instrumentPool.find((k) => (instrumentCounts[k] ?? 0) > 0);
         if (first) setSelected(first);
       }
     }
-  }, [instrumentCounts, selected]);
+  }, [instrumentCounts, selected, instrumentPool]);
 
   const availableInstruments = useMemo(
-    () => INSTRUMENT_KEYS.filter((k) => (instrumentCounts[k] ?? 0) > 0),
-    [instrumentCounts],
+    () => instrumentPool.filter((k) => (instrumentCounts[k] ?? 0) > 0),
+    [instrumentCounts, instrumentPool],
   );
+
+  // Measure container width to decide between full icon row vs compact arrows
+  const iconRowRef = useRef<HTMLDivElement>(null);
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    const el = iconRowRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const width = entry.contentRect.width;
+      // Each button is 64px + gap (10px). Need room for all icons.
+      const needed = availableInstruments.length * 64 + (availableInstruments.length - 1) * 10;
+      setCompact(width < needed);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [availableInstruments.length]);
+
+  const cycleInstrument = useCallback((dir: 1 | -1) => {
+    const idx = availableInstruments.indexOf(selected);
+    const next = (idx + dir + availableInstruments.length) % availableInstruments.length;
+    setSelected(availableInstruments[next]);
+  }, [availableInstruments, selected]);
 
   return (
     <div style={styles.wrapper}>
@@ -168,22 +196,46 @@ export default function ScoreHistoryChart({
       <div style={styles.chartContainer}>
         {/* Instrument icons */}
         {availableInstruments.length > 1 && (
-          <div style={styles.iconRow}>
-            {availableInstruments.map((inst) => {
-              const isActive = inst === selected;
-              return (
+          <div ref={iconRowRef} style={styles.iconRow}>
+            {compact ? (
+              <>
                 <button
-                  key={inst}
-                  onClick={() => setSelected(inst)}
-                  style={{
-                    ...styles.iconButton,
-                    ...(isActive ? styles.iconButtonActive : {}),
-                  }}
+                  onClick={() => cycleInstrument(-1)}
+                  style={styles.arrowButton}
+                  aria-label="Previous instrument"
                 >
-                  <InstrumentIcon instrument={inst} size={48} />
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
                 </button>
-              );
-            })}
+                <button
+                  style={{ ...styles.iconButton, ...styles.iconButtonActive }}
+                >
+                  <InstrumentIcon instrument={selected} size={48} />
+                </button>
+                <button
+                  onClick={() => cycleInstrument(1)}
+                  style={styles.arrowButton}
+                  aria-label="Next instrument"
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                </button>
+              </>
+            ) : (
+              availableInstruments.map((inst) => {
+                const isActive = inst === selected;
+                return (
+                  <button
+                    key={inst}
+                    onClick={() => setSelected(inst)}
+                    style={{
+                      ...styles.iconButton,
+                      ...(isActive ? styles.iconButtonActive : {}),
+                    }}
+                  >
+                    <InstrumentIcon instrument={inst} size={48} />
+                  </button>
+                );
+              })
+            )}
           </div>
         )}
         {loading && (
@@ -377,6 +429,7 @@ const styles: Record<string, React.CSSProperties> = {
   iconRow: {
     display: 'flex',
     justifyContent: 'center',
+    alignItems: 'center',
     gap: Gap.lg,
     paddingTop: Gap.md,
     paddingBottom: Gap.xs,
@@ -399,6 +452,23 @@ const styles: Record<string, React.CSSProperties> = {
   iconButtonActive: {
     backgroundColor: '#2ECC71',
     opacity: 1,
+  },
+  arrowButton: {
+    background: 'none',
+    border: `1px solid ${Colors.borderPrimary}`,
+    borderRadius: '50%',
+    width: 40,
+    height: 40,
+    padding: 0,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: Colors.textSecondary,
+    fontSize: 24,
+    fontWeight: 700,
+    lineHeight: 1,
+    transition: 'all 0.15s ease',
   },
   chartContainer: {
     backgroundColor: Colors.glassCard,

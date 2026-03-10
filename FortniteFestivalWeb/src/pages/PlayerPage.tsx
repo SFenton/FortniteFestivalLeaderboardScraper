@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, type CSSProperties } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { formatPercentile } from '../utils/formatPercentile';
 import { useFestival } from '../contexts/FestivalContext';
 import { usePlayerData } from '../contexts/PlayerDataContext';
@@ -16,6 +16,7 @@ import {
 import { Colors, Font, Gap, Radius, Layout, MaxWidth } from '../theme';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import { useSettings, isInstrumentVisible } from '../contexts/SettingsContext';
+import { loadSongSettings, saveSongSettings } from '../components/songSettings';
 
 /** Wrapper that fades in via CSS animation, then strips the animation styles
  *  so that `opacity` is no longer set by the animation system.  This prevents
@@ -407,13 +408,32 @@ function InstrumentStatsCard({
         ))}
       </div>
       {stats.percentileBuckets.length > 0 && (
-        <PercentileTable buckets={stats.percentileBuckets} />
+        <PercentileTable buckets={stats.percentileBuckets} instrument={instrument} />
       )}
     </div>
   );
 }
 
-function PercentileTable({ buckets }: { buckets: { pct: number; count: number }[] }) {
+function PercentileTable({ buckets, instrument }: { buckets: { pct: number; count: number }[]; instrument: InstrumentKey }) {
+  const navigate = useNavigate();
+  const thresholds = [1,2,3,4,5,10,15,20,25,30,40,50,60,70,80,90,100];
+
+  const handleClick = (pct: number) => {
+    const settings = loadSongSettings();
+    // Disable all percentile buckets except the clicked one
+    const percentileFilter: Record<number, boolean> = {};
+    for (const t of thresholds) {
+      percentileFilter[t] = t === pct;
+    }
+    percentileFilter[0] = false; // hide "No Score"
+    saveSongSettings({
+      ...settings,
+      instrument,
+      filters: { ...settings.filters, percentileFilter },
+    });
+    navigate('/songs');
+  };
+
   return (
     <div style={styles.pctTablePanel}>
       <table style={styles.pctTable}>
@@ -424,12 +444,27 @@ function PercentileTable({ buckets }: { buckets: { pct: number; count: number }[
           </tr>
         </thead>
         <tbody>
-          {buckets.map((b) => (
-            <tr key={b.pct}>
-              <td style={styles.pctTd}>Top {b.pct}%</td>
-              <td style={{ ...styles.pctTd, textAlign: 'right', fontWeight: 600 }}>{b.count}</td>
-            </tr>
-          ))}
+          {buckets.map((b) => {
+            const isTop1 = b.pct <= 1;
+            const isGold = b.pct <= 5;
+            const badgeStyle = isTop1
+              ? styles.pctGoldBadge
+              : isGold
+                ? styles.pctGoldPill
+                : undefined;
+            return (
+              <tr key={b.pct} onClick={() => handleClick(b.pct)} style={styles.pctRow}>
+                <td style={styles.pctTd}>
+                  {badgeStyle
+                    ? <span style={badgeStyle}>Top {b.pct}%</span>
+                    : <span style={styles.pctPlainLabel}>Top {b.pct}%</span>}
+                </td>
+                <td style={{ ...styles.pctTd, textAlign: 'right', fontWeight: 600 }}>
+                  {b.count}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -871,9 +906,13 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     borderCollapse: 'collapse' as const,
   },
+  pctRow: {
+    cursor: 'pointer',
+    transition: 'background-color 0.15s',
+  },
   pctTh: {
-    padding: `${Gap.lg}px ${Gap.xl}px`,
-    fontSize: Font.xs,
+    padding: `${Gap.xl}px ${Gap.xl}px`,
+    fontSize: Font.sm,
     fontWeight: 600,
     color: Colors.textTertiary,
     textTransform: 'uppercase' as const,
@@ -882,10 +921,36 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'left' as const,
   },
   pctTd: {
-    padding: `${Gap.md}px ${Gap.xl}px`,
-    fontSize: Font.sm,
+    padding: `${Gap.xl}px ${Gap.xl}px`,
+    fontSize: Font.md,
     color: Colors.textPrimary,
     borderBottom: `1px solid ${Colors.glassBorder}`,
+  },
+  pctGoldBadge: {
+    color: Colors.gold,
+    backgroundColor: 'transparent',
+    padding: `${Gap.xs}px ${Gap.sm}px`,
+    borderRadius: Radius.xs,
+    border: `2px solid ${Colors.goldStroke}`,
+    fontWeight: 700,
+    fontStyle: 'italic' as const,
+    display: 'inline-block',
+    transform: 'skewX(-8deg)',
+  },
+  pctGoldPill: {
+    color: Colors.gold,
+    backgroundColor: 'transparent',
+    padding: `${Gap.xs}px ${Gap.sm}px`,
+    borderRadius: Radius.xs,
+    border: `2px solid ${Colors.goldStroke}`,
+    fontWeight: 700,
+    display: 'inline-block',
+  },
+  pctPlainLabel: {
+    padding: `${Gap.xs}px ${Gap.sm}px`,
+    border: '2px solid transparent',
+    display: 'inline-block',
+    fontWeight: 600,
   },
   // Top songs
   topSongs: {

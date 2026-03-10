@@ -15,6 +15,7 @@ import {
 import { Colors, Font, Gap, Radius, Layout, MaxWidth } from '../theme';
 import ScoreHistoryChart from '../components/ScoreHistoryChart';
 import { InstrumentIcon } from '../components/InstrumentIcons';
+import { useSettings, visibleInstruments } from '../contexts/SettingsContext';
 
 function accuracyColor(pct: number): string {
   const t = Math.min(Math.max(pct / 100, 0), 1);
@@ -44,6 +45,8 @@ export default function SongDetailPage() {
     state: { songs },
   } = useFestival();
   const { player } = useTrackedPlayer();
+  const { settings } = useSettings();
+  const activeInstruments = visibleInstruments(settings);
 
   const [playerScores, setPlayerScores] = useState<PlayerScore[]>([]);
   const [playerScoresReady, setPlayerScoresReady] = useState(false);
@@ -104,7 +107,7 @@ export default function SongDetailPage() {
         INSTRUMENT_KEYS.map((k) => [k, { entries: [], loading: true, error: null }]),
       ) as Record<InstrumentKey, InstrumentData>,
     );
-    for (const inst of INSTRUMENT_KEYS) {
+    for (const inst of activeInstruments) {
       api.getLeaderboard(songId, inst, 10).then((res) => {
         if (!cancelled) {
           setInstrumentData((prev) => ({
@@ -126,7 +129,7 @@ export default function SongDetailPage() {
 
   // No player means no player-specific data to wait for
   const playerDataReady = !player || (playerScoresReady && scoreHistoryReady);
-  const instrumentsReady = INSTRUMENT_KEYS.every((k) => !instrumentData[k].loading);
+  const instrumentsReady = activeInstruments.every((k) => !instrumentData[k].loading);
   const allReady = playerDataReady && instrumentsReady;
 
   // Transition: spinner fade-out → staggered content fade-in
@@ -234,11 +237,12 @@ export default function SongDetailPage() {
                 playerName={player.displayName}
                 defaultInstrument={defaultInstrument}
                 history={scoreHistory}
+                visibleInstruments={activeInstruments}
               />
             </div>
           )}
           <div style={styles.instrumentGrid}>
-            {INSTRUMENT_KEYS.map((inst, idx) => {
+            {activeInstruments.map((inst, idx) => {
               const rowIndex = Math.floor(idx / 2);
               const baseDelay = 450 + rowIndex * 150;
               return (
