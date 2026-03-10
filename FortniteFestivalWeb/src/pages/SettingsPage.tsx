@@ -106,25 +106,25 @@ export default function SettingsPage() {
 
           {/* ───── App Settings ───── */}
           <FadeInDiv delay={staggerIndex++ * 125}>
+          <div style={styles.sectionTitle}>App Settings</div>
+          <div style={styles.sectionHint}>General Festival Score Tracker app settings.</div>
           <Card>
-            <div style={styles.sectionTitle}>App Settings</div>
-            <div style={styles.sectionHint}>General Festival Score Tracker app settings.</div>
             <ToggleRow
               label="Show Instrument Icons"
               description="Display instrument icons on each song row showing which parts have leaderboard scores or FCs."
               checked={!settings.songsHideInstrumentIcons}
               onToggle={() => updateSettings({ songsHideInstrumentIcons: !settings.songsHideInstrumentIcons })}
+              large={isMobile}
             />
-            <div style={{ marginTop: Gap.md }}>
-              <ToggleRow
-                label="Enable Independent Song Row Visual Order"
-                description="When enabled, the metadata display order on song rows is controlled separately from sort priority. When disabled, metadata follows sort priority order."
-                checked={settings.songRowVisualOrderEnabled}
-                onToggle={() => updateSettings({ songRowVisualOrderEnabled: !settings.songRowVisualOrderEnabled })}
-              />
-            </div>
+            <ToggleRow
+              label="Enable Independent Song Row Visual Order"
+              description="When enabled, the metadata display order on song rows is controlled separately from sort priority. When disabled, metadata follows sort priority order."
+              checked={settings.songRowVisualOrderEnabled}
+              onToggle={() => updateSettings({ songRowVisualOrderEnabled: !settings.songRowVisualOrderEnabled })}
+              large={isMobile}
+            />
             {settings.songRowVisualOrderEnabled && (
-              <div style={{ marginTop: Gap.md }}>
+              <div>
                 <div style={styles.innerSectionTitle}>Song Row Visual Order</div>
                 <div style={styles.sectionHint}>
                   When filtering to a single instrument in the song list, extra metadata is displayed. Choose the order it appears in on the bottom row.
@@ -142,17 +142,18 @@ export default function SettingsPage() {
 
           {/* ───── Show Instruments ───── */}
           <FadeInDiv delay={staggerIndex++ * 125}>
+          <div style={styles.sectionTitle}>Show Instruments</div>
+          <div style={styles.sectionHint}>Choose which instruments to display throughout the app.</div>
           <Card>
-            <div style={styles.sectionTitle}>Show Instruments</div>
-            <div style={styles.sectionHint}>Choose which instruments to display throughout the app.</div>
             {INSTRUMENT_SHOW_MAP.map(inst => (
               <ToggleRow
                 key={inst.showKey}
                 label={inst.label}
-                icon={<InstrumentIcon instrument={inst.key} size={20} />}
+                icon={<InstrumentIcon instrument={inst.key} size={isMobile ? 28 : 24} />}
                 checked={settings[inst.showKey]}
                 onToggle={() => toggleShow(inst.showKey)}
                 disabled={settings[inst.showKey] && showActiveCount <= 1}
+                large={isMobile}
               />
             ))}
           </Card>
@@ -160,17 +161,18 @@ export default function SettingsPage() {
 
           {/* ───── Show Instrument Metadata ───── */}
           <FadeInDiv delay={staggerIndex++ * 125}>
+          <div style={styles.sectionTitle}>Show Instrument Metadata</div>
+          <div style={styles.sectionHint}>
+            When filtering songs down to one instrument in the song list, extra metadata for that song can appear. Choose what you'd like to see in the song row here.
+          </div>
           <Card>
-            <div style={styles.sectionTitle}>Show Instrument Metadata</div>
-            <div style={styles.sectionHint}>
-              When filtering songs down to one instrument in the song list, extra metadata for that song can appear. Choose what you'd like to see in the song row here.
-            </div>
             {METADATA_TOGGLES.map(m => (
               <ToggleRow
                 key={m.key}
                 label={m.label}
                 checked={settings[m.key]}
                 onToggle={() => toggleMetadata(m.key)}
+                large={isMobile}
               />
             ))}
           </Card>
@@ -178,16 +180,18 @@ export default function SettingsPage() {
 
           {/* ───── Reset Settings ───── */}
           <FadeInDiv delay={staggerIndex++ * 125}>
-          <Card>
-            <div style={styles.sectionTitle}>Reset Settings</div>
-            <div style={styles.sectionHint}>Restore all settings to their default values.</div>
+          <div style={{ ...styles.resetRow, ...(isMobile ? styles.resetRowMobile : {}) }}>
+            <div>
+              <div style={styles.sectionTitle}>Reset Settings</div>
+              <div style={{ ...styles.sectionHint, marginBottom: 0 }}>Restore all settings to their default values.</div>
+            </div>
             <button
-              style={styles.resetButton}
+              style={{ ...styles.resetButton, ...(isMobile ? styles.resetButtonMobile : {}) }}
               onClick={resetSettings}
             >
               Reset All Settings
             </button>
-          </Card>
+          </div>
           </FadeInDiv>
 
         </div>
@@ -246,7 +250,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: Gap.md,
   },
   sectionTitle: {
-    fontSize: Font.lg,
+    fontSize: Font.xl,
     fontWeight: 700,
     color: Colors.textPrimary,
   },
@@ -257,9 +261,10 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: Gap.sm,
   },
   sectionHint: {
-    fontSize: Font.sm,
+    fontSize: Font.md,
     color: Colors.textSecondary,
     lineHeight: '1.5',
+    marginBottom: Gap.md,
   },
   resetButton: {
     padding: `${Gap.md}px ${Gap.xl}px`,
@@ -270,6 +275,22 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: Font.sm,
     fontWeight: 600,
     cursor: 'pointer',
-    alignSelf: 'flex-start',
+    flexShrink: 0,
+  },
+  resetRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Gap.xl,
+  },
+  resetRowMobile: {
+    flexDirection: 'column' as const,
+    alignItems: 'stretch',
+  },
+  resetButtonMobile: {
+    width: '100%',
+    textAlign: 'center' as const,
+    padding: `${Gap.xl}px ${Gap.xl}px`,
+    fontSize: Font.md,
   },
 };

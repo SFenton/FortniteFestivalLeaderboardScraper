@@ -263,11 +263,12 @@ export function ChoicePill({ label, selected, onSelect }: { label: string; selec
   );
 }
 
-export function ToggleRow({ label, description, checked, onToggle, disabled, icon }: { label: React.ReactNode; description?: string; checked: boolean; onToggle: () => void; disabled?: boolean; icon?: React.ReactNode }) {
+export function ToggleRow({ label, description, checked, onToggle, disabled, icon, large }: { label: React.ReactNode; description?: string; checked: boolean; onToggle: () => void; disabled?: boolean; icon?: React.ReactNode; large?: boolean }) {
   return (
     <button
       style={{
         ...toggleStyles.row,
+        ...(large ? toggleStyles.rowLarge : {}),
         ...(disabled ? toggleStyles.rowDisabled : {}),
       }}
       onClick={disabled ? undefined : onToggle}
@@ -275,20 +276,20 @@ export function ToggleRow({ label, description, checked, onToggle, disabled, ico
     >
       {icon && <div style={toggleStyles.icon}>{icon}</div>}
       <div style={{ flex: 1 }}>
-        <div style={toggleStyles.label}>{label}</div>
-        {description && <div style={toggleStyles.desc}>{description}</div>}
+        <div style={{ ...toggleStyles.label, ...(large ? toggleStyles.labelLarge : {}) }}>{label}</div>
+        {description && <div style={{ ...toggleStyles.desc, ...(large ? toggleStyles.descLarge : {}) }}>{description}</div>}
       </div>
       <div
         style={{
-          ...toggleStyles.track,
-          ...(checked ? toggleStyles.trackOn : {}),
+          ...(large ? toggleStyles.trackLarge : toggleStyles.track),
+          ...(checked ? (large ? toggleStyles.trackLargeOn : toggleStyles.trackOn) : {}),
           ...(disabled ? toggleStyles.trackDisabled : {}),
         }}
       >
         <div
           style={{
-            ...toggleStyles.thumb,
-            ...(checked ? toggleStyles.thumbOn : {}),
+            ...(large ? toggleStyles.thumbLarge : toggleStyles.thumb),
+            ...(checked ? (large ? toggleStyles.thumbLargeOn : toggleStyles.thumbOn) : {}),
           }}
         />
       </div>
@@ -466,14 +467,11 @@ const toggleStyles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: Gap.xl,
     width: '100%',
-    padding: `${Gap.md}px ${Gap.xl}px`,
+    padding: `${Gap.md}px 0`,
     backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderStyle: 'solid',
-    borderColor: Colors.borderSubtle,
-    borderRadius: Radius.xs,
+    border: 'none',
+    borderRadius: 0,
     cursor: 'pointer',
-    marginBottom: Gap.xs,
     textAlign: 'left' as const,
     color: Colors.textPrimary,
   },
@@ -487,11 +485,11 @@ const toggleStyles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
   },
   label: {
-    fontSize: Font.sm,
+    fontSize: Font.md,
     fontWeight: 600,
   },
   desc: {
-    fontSize: Font.xs,
+    fontSize: Font.sm,
     color: Colors.textMuted,
     marginTop: Gap.xs,
   },
@@ -522,6 +520,40 @@ const toggleStyles: Record<string, React.CSSProperties> = {
   },
   thumbOn: {
     left: 18,
+  },
+  rowLarge: {
+    padding: `${Gap.lg}px 0`,
+  },
+  labelLarge: {
+    fontSize: Font.lg,
+  },
+  descLarge: {
+    fontSize: Font.md,
+  },
+  trackLarge: {
+    width: 44,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: Colors.surfaceMuted,
+    position: 'relative' as const,
+    flexShrink: 0,
+    transition: 'background-color 0.15s',
+  },
+  trackLargeOn: {
+    backgroundColor: Colors.accentBlue,
+  },
+  thumbLarge: {
+    width: 20,
+    height: 20,
+    borderRadius: '50%',
+    backgroundColor: Colors.textPrimary,
+    position: 'absolute' as const,
+    top: 2,
+    left: 2,
+    transition: 'left 0.15s',
+  },
+  thumbLargeOn: {
+    left: 22,
   },
 };
 
