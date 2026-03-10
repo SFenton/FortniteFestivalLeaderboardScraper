@@ -15,6 +15,7 @@ import {
 } from '../models';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth } from '../theme';
 import { InstrumentIcon } from '../components/InstrumentIcons';
+import { useSettings, isInstrumentVisible } from '../contexts/SettingsContext';
 
 /** Wrapper that fades in via CSS animation, then strips the animation styles
  *  so that `opacity` is no longer set by the animation system.  This prevents
@@ -100,7 +101,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   if (error) return <div style={styles.centerError}>{error}</div>;
   if (!data) return <div style={styles.center}>Player not found</div>;
 
-  return <PlayerContent data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} />;
+  return <PlayerContent data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} isTrackedPlayer={isTrackedPlayer} />;
 }
 
 function PlayerContent({
@@ -110,6 +111,7 @@ function PlayerContent({
   phase: syncPhase,
   backfillProgress,
   historyProgress,
+  isTrackedPlayer,
 }: {
   data: PlayerResponse;
   songs: Song[];
@@ -117,11 +119,22 @@ function PlayerContent({
   phase: string | null;
   backfillProgress: number;
   historyProgress: number;
+  isTrackedPlayer: boolean;
 }) {
+  const { settings } = useSettings();
+
+  // For the tracked player, filter scores by visible instruments;
+  // for other players, always show all data.
+  const effectiveScores = isTrackedPlayer
+    ? data.scores.filter(s => isInstrumentVisible(settings, s.instrument as InstrumentKey))
+    : data.scores;
+  const visibleKeys = isTrackedPlayer
+    ? INSTRUMENT_KEYS.filter(k => isInstrumentVisible(settings, k))
+    : INSTRUMENT_KEYS;
 
   const songMap = new Map(songs.map((s) => [s.songId, s]));
-  const byInstrument = groupByInstrument(data.scores);
-  const overallStats = computeOverallStats(data.scores);
+  const byInstrument = groupByInstrument(effectiveScores);
+  const overallStats = computeOverallStats(effectiveScores);
 
   // Build a flat list of stagger-able sections so we can assign sequential delays
   const sections: React.ReactNode[] = [];
@@ -131,7 +144,7 @@ function PlayerContent({
     <div key="header">
       <h1 style={styles.playerName}>{data.displayName}</h1>
       <p style={styles.subtitle}>
-        {data.totalScores.toLocaleString()} total scores
+        {effectiveScores.length.toLocaleString()} total scores
       </p>
     </div>,
   );
@@ -207,14 +220,17 @@ function PlayerContent({
         : accuracyColor(overallStats.avgAccuracy / 10000))
     : undefined;
   const overallSongsAllPlayed = overallStats.songsPlayed >= songs.length && songs.length > 0;
+  const overallFcIs100 = overallStats.fcPercent === '100.0';
+  const overallFcValue = overallFcIs100
+    ? overallStats.fcCount.toLocaleString()
+    : `${overallStats.fcCount} (${formatClamped(parseFloat(overallStats.fcPercent))}%)`;
   sections.push(
     <div key="summary" style={styles.summaryGrid}>
-      <StatBox label="Total Score" value={overallStats.totalScore.toLocaleString()} />
       <StatBox label="Songs Played" value={overallStats.songsPlayed.toLocaleString()} color={overallSongsAllPlayed ? Colors.statusGreen : undefined} />
-      <StatBox label="Full Combos" value={`${overallStats.fcCount} (${overallStats.fcPercent}%)`} />
+      <StatBox label="Full Combos" value={overallFcValue} color={overallFcIs100 ? Colors.gold : undefined} />
       <StatBox label="Gold Stars" value={overallStats.goldStarCount.toLocaleString()} color={Colors.gold} />
       <StatBox label="Avg Accuracy" value={overallStats.avgAccuracy > 0 ? formatClamped(overallStats.avgAccuracy / 10000) + '%' : '—'} color={overallAccColor} />
-      <StatBox label="Best Rank" value={overallStats.bestRank > 0 ? `#${overallStats.bestRank.toLocaleString()}` : '—'} />
+      <StatBox label="Best Rank" value={overallStats.bestRank > 0 ? `#${overallStats.bestRank.toLocaleString()}` : '—'} to={overallStats.bestRankSongId ? `/songs/${overallStats.bestRankSongId}?instrument=${encodeURIComponent(overallStats.bestRankInstrument!)}` : undefined} />
     </div>,
   );
 
@@ -228,7 +244,7 @@ function PlayerContent({
 
   // 4+: Each instrument stats card (inside a grid)
   const instCards: { inst: InstrumentKey; scores: PlayerScore[] }[] = [];
-  for (const inst of INSTRUMENT_KEYS) {
+  for (const inst of visibleKeys) {
     const scores = byInstrument.get(inst);
     if (!scores || scores.length === 0) continue;
     instCards.push({ inst, scores });
@@ -262,7 +278,7 @@ function PlayerContent({
 
   // Top/Bottom songs cards per instrument (inside a grid)
   const topBottomCards: React.ReactNode[] = [];
-  for (const inst of INSTRUMENT_KEYS) {
+  for (const inst of visibleKeys) {
     const scores = byInstrument.get(inst);
     if (!scores || scores.length === 0) continue;
     const withPct = scores.filter(
@@ -631,8 +647,9 @@ function computeOverallStats(scores: PlayerScore[]) {
     accuracies.length > 0
       ? accuracies.reduce((a, b) => a + b, 0) / accuracies.length
       : 0;
-  const ranks = scores.map((s) => s.rank).filter((r) => r > 0);
-  const bestRank = ranks.length > 0 ? Math.min(...ranks) : 0;
+  const rankedScores = scores.filter((s) => s.rank > 0);
+  const bestRank = rankedScores.length > 0 ? Math.min(...rankedScores.map((s) => s.rank)) : 0;
+  const bestRankScore = bestRank > 0 ? rankedScores.find((s) => s.rank === bestRank) : undefined;
 
   return {
     totalScore,
@@ -645,6 +662,8 @@ function computeOverallStats(scores: PlayerScore[]) {
     goldStarCount: goldStars,
     avgAccuracy: avgAcc,
     bestRank,
+    bestRankSongId: bestRankScore?.songId ?? null,
+    bestRankInstrument: bestRankScore?.instrument ?? null,
   };
 }
 

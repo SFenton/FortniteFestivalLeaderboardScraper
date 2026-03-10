@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
 import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
@@ -133,12 +133,51 @@ export default function SongDetailPage() {
   // phase: 'loading' | 'spinnerOut' | 'contentIn'
   const [phase, setPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>('loading');
 
+  const hasScrolled = useRef(false);
+
+  // Reset scroll tracking when song or instrument changes
+  useEffect(() => {
+    hasScrolled.current = false;
+  }, [songId, defaultInstrument]);
+
   useEffect(() => {
     if (!allReady) return;
     setPhase('spinnerOut');
     const id = setTimeout(() => setPhase('contentIn'), 500);
     return () => clearTimeout(id);
   }, [allReady]);
+
+  // Scroll to the instrument card when arriving with ?instrument=
+  useEffect(() => {
+    if (phase !== 'contentIn' || !defaultInstrument || hasScrolled.current) return;
+    hasScrolled.current = true;
+    // Wait for stagger animations to complete before measuring position
+    const id = setTimeout(() => {
+      const target = document.getElementById(`player-score-${defaultInstrument}`)
+        ?? document.getElementById(`instrument-card-${defaultInstrument}`);
+      if (!target) return;
+      // Find the scrollable ancestor (e.g. #main-content with overflow: auto)
+      let scrollContainer: HTMLElement | null = target.parentElement;
+      while (scrollContainer) {
+        const style = getComputedStyle(scrollContainer);
+        if (
+          scrollContainer.scrollHeight > scrollContainer.clientHeight &&
+          (style.overflowY === 'auto' || style.overflowY === 'scroll')
+        ) break;
+        scrollContainer = scrollContainer.parentElement;
+      }
+      if (!scrollContainer) return;
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const nav = document.querySelector('nav');
+      const navHeight = nav ? nav.getBoundingClientRect().height : 0;
+      const padding = 24;
+      const desiredBottom = containerRect.bottom - navHeight - padding;
+      const scrollTop = scrollContainer.scrollTop + targetRect.bottom - desiredBottom;
+      scrollContainer.scrollTo({ top: Math.max(0, scrollTop), behavior: 'smooth' });
+    }, 1500);
+    return () => clearTimeout(id);
+  }, [phase, defaultInstrument]);
 
   if (!songId) {
     return <div style={styles.center}>Song not found</div>;
@@ -203,17 +242,18 @@ export default function SongDetailPage() {
               const rowIndex = Math.floor(idx / 2);
               const baseDelay = 450 + rowIndex * 150;
               return (
-                  <InstrumentCard
-                    key={inst}
-                    songId={songId}
-                    instrument={inst}
-                    baseDelay={baseDelay}
-                    windowWidth={windowWidth}
-                    playerScore={playerScores.find((s) => s.instrument === inst)}
-                    playerName={player?.displayName}
-                    prefetchedEntries={instrumentData[inst].entries}
-                    prefetchedError={instrumentData[inst].error}
-                  />
+                  <div key={inst} id={`instrument-card-${inst}`}>
+                    <InstrumentCard
+                      songId={songId}
+                      instrument={inst}
+                      baseDelay={baseDelay}
+                      windowWidth={windowWidth}
+                      playerScore={playerScores.find((s) => s.instrument === inst)}
+                      playerName={player?.displayName}
+                      prefetchedEntries={instrumentData[inst].entries}
+                      prefetchedError={instrumentData[inst].error}
+                    />
+                  </div>
               );
             })}
           </div>
@@ -372,6 +412,7 @@ function InstrumentCard({
           const playerStagger = anim(playerDelay);
           return (
           <Link
+            id={`player-score-${instrument}`}
             to={(() => {
               const pageNum = Math.floor((playerScore.rank - 1) / 25) + 1;
               return `/songs/${songId}/${instrument}?page=${pageNum}&navToPlayer=true`;
