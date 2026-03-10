@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
 import { usePlayerData } from '../contexts/PlayerDataContext';
+import { useIsMobile } from '../hooks/useIsMobile';
 import { api } from '../api/client';
 import {
   INSTRUMENT_LABELS,
@@ -25,6 +26,8 @@ export default function LeaderboardPage() {
   const song = songs.find((s) => s.songId === songId);
   const instKey = instrument as InstrumentKey;
   const instLabel = INSTRUMENT_LABELS[instKey] ?? instrument;
+
+  const isMobile = useIsMobile();
 
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -182,12 +185,13 @@ export default function LeaderboardPage() {
                   animation: `fadeInUp 400ms ease-out ${(i + 1) * 125}ms forwards`,
                 };
                 const baseStyle = isPlayer ? { ...styles.row, ...styles.rowHighlight } : styles.row;
+                const rowStyle = isMobile ? { ...baseStyle, gap: Gap.md, padding: `0 ${Gap.md}px` } : baseStyle;
                 return (
                 <Link
                   key={e.accountId}
                   ref={isPlayer ? playerRowRef : undefined}
                   to={`/player/${e.accountId}`}
-                  style={{ ...baseStyle, ...staggerStyle }}
+                  style={{ ...rowStyle, ...staggerStyle }}
                   onAnimationEnd={(ev) => {
                     const el = ev.currentTarget;
                     el.style.opacity = '';
@@ -206,17 +210,14 @@ export default function LeaderboardPage() {
                       ? (() => {
                           const pct = e.accuracy / 10000;
                           const r1 = pct.toFixed(1);
-                          return r1.endsWith('.0') ? `${Math.round(pct)}%` : `${r1}%`;
+                          const text = r1.endsWith('.0') ? `${Math.round(pct)}%` : `${r1}%`;
+                          return e.isFullCombo
+                            ? <span style={styles.fcAccBadge}>{text}</span>
+                            : text;
                         })()
                       : '—'}
                   </span>
-                  <span style={styles.colFC}>
-                    {e.isFullCombo ? (
-                      <span style={styles.fcBadge}>FC</span>
-                    ) : (
-                      '—'
-                    )}
-                  </span>
+                  {!isMobile && (
                   <span style={styles.colStars}>
                     {e.stars != null && e.stars > 0
                       ? (() => {
@@ -229,6 +230,7 @@ export default function LeaderboardPage() {
                         })()
                       : '—'}
                   </span>
+                  )}
                 </Link>
                 );
               })}
@@ -296,7 +298,7 @@ export default function LeaderboardPage() {
 
       {playerScore && playerData && (
         <div style={styles.playerFooter} onClick={goToPlayerPage} role="button" tabIndex={0}>
-          <div style={{ ...styles.playerFooterRow, cursor: 'pointer' }}>
+          <div style={{ ...styles.playerFooterRow, cursor: 'pointer', ...(isMobile ? { gap: Gap.md, padding: `0 ${Gap.md}px` } : {}) }}>
             <span style={styles.colRank}>#{playerScore.rank.toLocaleString()}</span>
             <span style={styles.colName}>{playerData.displayName}</span>
             <span style={styles.colScore}>{playerScore.score.toLocaleString()}</span>
@@ -305,17 +307,14 @@ export default function LeaderboardPage() {
                 ? (() => {
                     const pct = playerScore.accuracy / 10000;
                     const r1 = pct.toFixed(1);
-                    return r1.endsWith('.0') ? `${Math.round(pct)}%` : `${r1}%`;
+                    const text = r1.endsWith('.0') ? `${Math.round(pct)}%` : `${r1}%`;
+                    return playerScore.isFullCombo
+                      ? <span style={styles.fcAccBadge}>{text}</span>
+                      : text;
                   })()
                 : '\u2014'}
             </span>
-            <span style={styles.colFC}>
-              {playerScore.isFullCombo ? (
-                <span style={styles.fcBadge}>FC</span>
-              ) : (
-                '\u2014'
-              )}
-            </span>
+            {!isMobile && (
             <span style={styles.colStars}>
               {playerScore.stars != null && playerScore.stars > 0
                 ? (() => {
@@ -328,6 +327,7 @@ export default function LeaderboardPage() {
                   })()
                 : '\u2014'}
             </span>
+            )}
           </div>
         </div>
       )}
@@ -481,21 +481,31 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     textAlign: 'right' as const,
     fontWeight: 600,
-    color: Colors.accentBlueBright,
+    color: Colors.textPrimary,
     fontVariantNumeric: 'tabular-nums',
   },
   colAcc: {
-    width: 90,
+    width: 70,
     flexShrink: 0,
     textAlign: 'center' as const,
-    color: Colors.textSecondary,
-    fontSize: Font.md,
+    fontWeight: 600,
+    color: Colors.accentBlueBright,
     fontVariantNumeric: 'tabular-nums',
+    marginLeft: Gap.md,
   },
-  colFC: {
-    width: 56,
-    flexShrink: 0,
-    textAlign: 'center' as const,
+  colAccFC: {
+    color: Colors.gold,
+  },
+  fcAccBadge: {
+    color: Colors.gold,
+    backgroundColor: 'transparent',
+    padding: `${Gap.xs}px ${Gap.sm}px`,
+    borderRadius: Radius.xs,
+    border: `2px solid ${Colors.goldStroke}`,
+    fontWeight: 700,
+    fontStyle: 'italic' as const,
+    display: 'inline-block',
+    transform: 'skewX(-8deg)',
   },
   colStars: {
     width: 110,

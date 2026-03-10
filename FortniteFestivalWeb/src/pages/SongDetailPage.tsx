@@ -287,9 +287,7 @@ function InstrumentCard({
         cursor: 'pointer',
       }}
       onClick={() => {
-        const pageNum = playerScore?.rank ? Math.floor((playerScore.rank - 1) / 25) + 1 : undefined;
-        const search = pageNum ? `?page=${pageNum}&navToPlayer=true` : '';
-        navigate(`/songs/${songId}/${instrument}${search}`);
+        navigate(`/songs/${songId}/${instrument}`);
       }}
     >
       <div style={styles.cardHeader}>
@@ -324,7 +322,18 @@ function InstrumentCard({
           <div style={styles.viewAll}>View full leaderboard →</div>
         )}
         {playerName && (
-          <div style={styles.playerScoreSection}>
+          <div
+            style={styles.playerScoreSection}
+            onClick={(ev) => {
+              ev.stopPropagation();
+              if (playerScore?.rank) {
+                const pageNum = Math.floor((playerScore.rank - 1) / 25) + 1;
+                navigate(`/songs/${songId}/${instrument}?page=${pageNum}&navToPlayer=true`);
+              } else {
+                navigate(`/songs/${songId}/${instrument}`);
+              }
+            }}
+          >
             <div style={styles.playerScoreLabel}>{playerName}</div>
             {playerScore ? (
               <div style={styles.playerScoreRow}>
