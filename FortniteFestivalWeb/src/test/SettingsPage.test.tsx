@@ -3,6 +3,23 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { SettingsProvider } from '../contexts/SettingsContext';
 import SettingsPage from '../pages/SettingsPage';
 
+beforeEach(() => {
+  localStorage.clear();
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+});
+
 function renderSettings() {
   return render(
     <SettingsProvider>
@@ -11,14 +28,21 @@ function renderSettings() {
   );
 }
 
-beforeEach(() => {
-  localStorage.clear();
-});
-
 describe('SettingsPage', () => {
-  it('renders the Settings heading', () => {
+  it('renders the Settings heading on mobile', () => {
+    // Mock mobile viewport
+    (window.matchMedia as ReturnType<typeof vi.fn>).mockImplementation((query: string) => ({
+      matches: true,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
     renderSettings();
-    expect(screen.getByText('Settings')).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Settings' })).toBeDefined();
   });
 
   it('renders App Settings section', () => {

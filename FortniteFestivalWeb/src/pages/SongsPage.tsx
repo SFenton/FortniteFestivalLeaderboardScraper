@@ -8,6 +8,8 @@ import { useSettings } from '../contexts/SettingsContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import type { Song, PlayerScore, InstrumentKey } from '../models';
 import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth } from '../theme';
+import { InstrumentIcon, getInstrumentStatusVisual } from '../components/InstrumentIcons';
+import { visibleInstruments } from '../contexts/SettingsContext';
 import SortModal from '../components/SortModal';
 import type { SortDraft } from '../components/SortModal';
 import FilterModal from '../components/FilterModal';
@@ -256,6 +258,11 @@ export default function SongsPage() {
 
   const hasPlayer = !!playerData;
 
+  const enabledInstruments = useMemo(
+    () => visibleInstruments(appSettings),
+    [appSettings],
+  );
+
   // Filter metadata keys by visibility settings (mirrors mobile visibleMetadataKeys)
   const visibleMetadataOrder = useMemo(() => {
     const hidden = new Set<string>();
@@ -474,6 +481,10 @@ export default function SongsPage() {
                   song={song}
                   score={hasPlayer ? scoreMap.get(song.songId) : undefined}
                   instrument={instrument}
+                  instrumentFilter={settings.instrument}
+                  allScoreMap={hasPlayer ? allScoreMap.get(song.songId) : undefined}
+                  showInstrumentIcons={hasPlayer && !appSettings.songsHideInstrumentIcons}
+                  enabledInstruments={enabledInstruments}
                   metadataOrder={visibleMetadataOrder}
                   sortMode={settings.sortMode}
                   isMobile={isMobile}
@@ -490,23 +501,23 @@ export default function SongsPage() {
           <div style={styles.bottomToolbarInner}>
             <div style={styles.toolbar}>
               <input
-                style={styles.searchInput}
+                style={{ ...styles.searchInput, ...styles.searchInputMobile }}
                 placeholder="Search songs or artists…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
               <div style={styles.sortGroup}>
-                <button style={styles.iconBtn} onClick={openSort} title="Sort" aria-label="Sort songs">
-                  <IoSwapVerticalSharp size={18} />
+                <button style={{ ...styles.iconBtn, ...styles.iconBtnMobile }} onClick={openSort} title="Sort" aria-label="Sort songs">
+                  <IoSwapVerticalSharp size={22} />
                 </button>
                 {hasPlayer && (
                   <button
-                    style={{ ...styles.iconBtn, ...(filtersActive ? styles.iconBtnActive : {}) }}
+                    style={{ ...styles.iconBtn, ...styles.iconBtnMobile, ...(filtersActive ? styles.iconBtnActive : {}) }}
                     onClick={openFilter}
                     title="Filter"
                     aria-label="Filter songs"
                   >
-                    <IoFunnel size={18} />
+                    <IoFunnel size={22} />
                     {filtersActive && <span style={styles.filterDot} />}
                   </button>
                 )}
@@ -754,6 +765,10 @@ function SongRow({
   song,
   score,
   instrument,
+  instrumentFilter,
+  allScoreMap,
+  showInstrumentIcons,
+  enabledInstruments,
   metadataOrder,
   sortMode,
   isMobile,
@@ -762,11 +777,25 @@ function SongRow({
   song: Song;
   score?: PlayerScore;
   instrument: InstrumentKey;
+  instrumentFilter?: InstrumentKey | null;
+  allScoreMap?: Map<string, PlayerScore>;
+  showInstrumentIcons: boolean;
+  enabledInstruments: InstrumentKey[];
   metadataOrder: string[];
   sortMode: SongSortMode;
   isMobile: boolean;
   staggerDelay?: number;
 }) {
+  const instrumentChips = useMemo(() => {
+    if (!showInstrumentIcons || instrumentFilter != null || !allScoreMap) return null;
+    return enabledInstruments.map(key => {
+      const ps = allScoreMap.get(key);
+      const hasScore = !!ps && ps.score > 0;
+      const isFC = !!ps?.isFullCombo;
+      const { fill, stroke } = getInstrumentStatusVisual(hasScore, isFC);
+      return { key, fill, stroke };
+    });
+  }, [showInstrumentIcons, instrumentFilter, allScoreMap, enabledInstruments]);
   const linkRef = useRef<HTMLAnchorElement>(null);
   const handleAnimEnd = useCallback(() => {
     const el = linkRef.current;
@@ -791,20 +820,30 @@ function SongRow({
   const songIntensityRaw = diffKey != null ? song.difficulty?.[diffKey] : undefined;
 
   const entries = useMemo(() => {
-    if (!score) return [];
+    if (!score || instrumentChips) return [];
     const result: { key: string; el: React.ReactNode }[] = [];
     for (const key of displayOrder) {
       const el = renderMetadataElement(key, score, displayOrder, songIntensityRaw);
       if (el) result.push({ key, el });
     }
     return result;
-  }, [score, displayOrder, songIntensityRaw]);
+  }, [score, displayOrder, songIntensityRaw, instrumentChips]);
 
   const thumb = song.albumArt ? (
     <img src={song.albumArt} alt="" style={styles.thumb} loading="lazy" />
   ) : (
     <div style={{ ...styles.thumb, ...styles.thumbPlaceholder }} />
   );
+
+  const chipRow = instrumentChips && instrumentChips.length > 0 ? (
+    <div style={styles.instrumentStatusRow}>
+      {instrumentChips.map(c => (
+        <div key={c.key} style={{ ...styles.instrumentStatusChip, backgroundColor: c.fill, borderColor: c.stroke }}>
+          <InstrumentIcon instrument={c.key} size={24} />
+        </div>
+      ))}
+    </div>
+  ) : null;
 
   if (isMobile && entries.length > 0) {
     const topEntry = entries[0]!;
@@ -828,6 +867,27 @@ function SongRow({
     );
   }
 
+  if (isMobile && chipRow) {
+    return (
+      <Link ref={linkRef} to={`/songs/${song.songId}`} style={{ ...styles.rowMobile, ...animStyle }} onAnimationEnd={handleAnimEnd}>
+        <div style={styles.mobileTopRow}>
+          {thumb}
+          <div style={styles.rowText}>
+            <span style={styles.rowTitle}>{song.title}</span>
+            <span style={styles.rowArtist}>{song.artist}</span>
+          </div>
+        </div>
+        <div style={{ ...styles.instrumentStatusRow, justifyContent: 'center' }}>
+          {instrumentChips!.map(c => (
+            <div key={c.key} style={{ ...styles.instrumentStatusChip, backgroundColor: c.fill, borderColor: c.stroke }}>
+              <InstrumentIcon instrument={c.key} size={24} />
+            </div>
+          ))}
+        </div>
+      </Link>
+    );
+  }
+
   return (
     <Link ref={linkRef} to={`/songs/${song.songId}?instrument=${encodeURIComponent(instrument)}`} style={{ ...styles.row, ...animStyle }} onAnimationEnd={handleAnimEnd}>
       {thumb}
@@ -835,6 +895,7 @@ function SongRow({
         <span style={styles.rowTitle}>{song.title}</span>
         <span style={styles.rowArtist}>{song.artist}</span>
       </div>
+      {chipRow}
       {entries.length > 0 && (
         <div style={styles.scoreMeta}>
           {entries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}
@@ -947,6 +1008,10 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: Font.md,
     outline: 'none',
   },
+  searchInputMobile: {
+    padding: `${Gap.xl}px ${Gap.section}px`,
+    fontSize: Font.lg,
+  },
   sortGroup: {
     display: 'flex',
     gap: Gap.sm,
@@ -965,6 +1030,10 @@ const styles: Record<string, React.CSSProperties> = {
     WebkitBackdropFilter: 'blur(20px)',
     color: Colors.textTertiary,
     cursor: 'pointer',
+  },
+  iconBtnMobile: {
+    width: 44,
+    height: 44,
   },
   iconBtnActive: {
     borderColor: Colors.accentBlue,
@@ -1105,6 +1174,22 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 0,
   },
   metadataCellAuto: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  instrumentStatusRow: {
+    display: 'flex',
+    gap: Gap.sm,
+    alignItems: 'center',
+    flexShrink: 0,
+  },
+  instrumentStatusChip: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 2,
+    borderStyle: 'solid',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
