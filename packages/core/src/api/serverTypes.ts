@@ -66,6 +66,7 @@ export type LeaderboardEntry = {
   accuracy?: number;
   isFullCombo?: boolean;
   stars?: number;
+  season?: number;
 };
 
 export type LeaderboardResponse = {

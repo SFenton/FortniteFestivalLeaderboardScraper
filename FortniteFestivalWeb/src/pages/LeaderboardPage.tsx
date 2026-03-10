@@ -14,6 +14,14 @@ import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size } from '../theme';
 
 const PAGE_SIZE = 25;
 
+function accuracyColor(pct: number): string {
+  const t = Math.min(Math.max(pct / 100, 0), 1);
+  const r = Math.round(220 * (1 - t) + 46 * t);
+  const g = Math.round(40 * (1 - t) + 204 * t);
+  const b = Math.round(40 * (1 - t) + 113 * t);
+  return `rgb(${r},${g},${b})`;
+}
+
 export default function LeaderboardPage() {
   const { songId, instrument } = useParams<{
     songId: string;
@@ -123,6 +131,14 @@ export default function LeaderboardPage() {
 
   const startRank = page * PAGE_SIZE;
 
+  const scoreWidth = useMemo(() => {
+    const maxLen = Math.max(
+      ...entries.map((e) => e.score.toLocaleString().length),
+      1,
+    );
+    return `${maxLen}ch`;
+  }, [entries]);
+
   return (
     <div style={styles.page}>
         {song?.albumArt && (
@@ -202,8 +218,13 @@ export default function LeaderboardPage() {
                   <span style={styles.colName}>
                     {e.displayName ?? e.accountId.slice(0, 12)}
                   </span>
-                  <span style={styles.colScore}>
-                    {e.score.toLocaleString()}
+                  <span style={styles.seasonScoreGroup}>
+                    {e.season != null && (
+                      <span style={styles.seasonPill}>S{e.season}</span>
+                    )}
+                    <span style={{ ...styles.colScore, width: scoreWidth }}>
+                      {e.score.toLocaleString()}
+                    </span>
                   </span>
                   <span style={styles.colAcc}>
                     {e.accuracy != null
@@ -213,7 +234,7 @@ export default function LeaderboardPage() {
                           const text = r1.endsWith('.0') ? `${Math.round(pct)}%` : `${r1}%`;
                           return e.isFullCombo
                             ? <span style={styles.fcAccBadge}>{text}</span>
-                            : text;
+                            : <span style={{ color: accuracyColor(pct) }}>{text}</span>;
                         })()
                       : '—'}
                   </span>
@@ -477,12 +498,30 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap' as const,
   },
   colScore: {
-    width: 110,
     flexShrink: 0,
-    textAlign: 'right' as const,
+    textAlign: 'center' as const,
     fontWeight: 600,
     color: Colors.textPrimary,
     fontVariantNumeric: 'tabular-nums',
+  },
+  seasonScoreGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.md,
+    flexShrink: 0,
+  },
+  seasonPill: {
+    flexShrink: 0,
+    width: 48,
+    textAlign: 'center' as const,
+    padding: `${Gap.xs}px ${Gap.sm}px`,
+    borderRadius: Radius.xs,
+    backgroundColor: Colors.surfaceSubtle,
+    color: Colors.textSecondary,
+    fontSize: Font.lg,
+    fontWeight: 600,
+    border: `2px solid ${Colors.borderSubtle}`,
+    display: 'inline-block',
   },
   colAcc: {
     width: 70,
@@ -491,7 +530,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     color: Colors.accentBlueBright,
     fontVariantNumeric: 'tabular-nums',
-    marginLeft: Gap.md,
+    marginLeft: 0,
   },
   colAccFC: {
     color: Colors.gold,
@@ -512,7 +551,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     display: 'inline-flex',
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
     gap: 3,
   },
   starImg: {

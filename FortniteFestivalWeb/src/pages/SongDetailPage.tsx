@@ -14,6 +14,15 @@ import {
 } from '../models';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth } from '../theme';
 import ScoreHistoryChart from '../components/ScoreHistoryChart';
+import { InstrumentIcon } from '../components/InstrumentIcons';
+
+function accuracyColor(pct: number): string {
+  const t = Math.min(Math.max(pct / 100, 0), 1);
+  const r = Math.round(220 * (1 - t) + 46 * t);
+  const g = Math.round(40 * (1 - t) + 204 * t);
+  const b = Math.round(40 * (1 - t) + 113 * t);
+  return `rgb(${r},${g},${b})`;
+}
 
 type InstrumentData = {
   entries: LeaderboardEntry[];
@@ -183,33 +192,23 @@ export default function SongDetailPage() {
               />
             </div>
           )}
-          <div style={{ ...styles.instrumentGrid, ...stagger(450) }} onAnimationEnd={clearAnim}>
-            {INSTRUMENT_KEYS.slice(0, 3).map((inst) => (
-              <InstrumentCard
-                key={inst}
-                songId={songId}
-                instrument={inst}
-                difficulty={getDifficulty(song, inst)}
-                playerScore={playerScores.find((s) => s.instrument === inst)}
-                playerName={player?.displayName}
-                prefetchedEntries={instrumentData[inst].entries}
-                prefetchedError={instrumentData[inst].error}
-              />
-            ))}
-          </div>
-          <div style={{ ...styles.instrumentGrid, ...stagger(600) }} onAnimationEnd={clearAnim}>
-            {INSTRUMENT_KEYS.slice(3).map((inst) => (
-              <InstrumentCard
-                key={inst}
-                songId={songId}
-                instrument={inst}
-                difficulty={getDifficulty(song, inst)}
-                playerScore={playerScores.find((s) => s.instrument === inst)}
-                playerName={player?.displayName}
-                prefetchedEntries={instrumentData[inst].entries}
-                prefetchedError={instrumentData[inst].error}
-              />
-            ))}
+          <div style={styles.instrumentGrid}>
+            {INSTRUMENT_KEYS.map((inst, idx) => {
+              const rowIndex = Math.floor(idx / 2);
+              const baseDelay = 450 + rowIndex * 150;
+              return (
+                  <InstrumentCard
+                    key={inst}
+                    songId={songId}
+                    instrument={inst}
+                    baseDelay={baseDelay}
+                    playerScore={playerScores.find((s) => s.instrument === inst)}
+                    playerName={player?.displayName}
+                    prefetchedEntries={instrumentData[inst].entries}
+                    prefetchedError={instrumentData[inst].error}
+                  />
+              );
+            })}
           </div>
         </div>
       )}
@@ -260,16 +259,15 @@ function getDifficulty(
 function InstrumentCard({
   songId,
   instrument,
-  difficulty,
+  baseDelay,
   playerScore,
   playerName,
-  highlight,
   prefetchedEntries,
   prefetchedError,
 }: {
   songId: string;
   instrument: InstrumentKey;
-  difficulty: number | undefined;
+  baseDelay: number;
   playerScore?: PlayerScore;
   playerName?: string;
   prefetchedEntries: LeaderboardEntry[];
@@ -277,86 +275,131 @@ function InstrumentCard({
 }) {
   const navigate = useNavigate();
 
+  const maxScoreLen = Math.max(
+    ...prefetchedEntries.map((e) => e.score.toLocaleString().length),
+    playerScore ? playerScore.score.toLocaleString().length : 0,
+    1,
+  );
+  const scoreWidth = `${maxScoreLen}ch`;
+
+  const anim = (delayMs: number): React.CSSProperties => ({
+    opacity: 0,
+    animation: `fadeInUp 300ms ease-out ${delayMs}ms forwards`,
+  });
+  const clearAnim = (ev: React.AnimationEvent<HTMLElement>) => {
+    ev.currentTarget.style.opacity = '';
+    ev.currentTarget.style.animation = '';
+  };
+
   return (
-    <div
-      style={{
-        ...styles.card,
-        cursor: 'pointer',
-      }}
-      onClick={() => {
-        navigate(`/songs/${songId}/${instrument}`);
-      }}
-    >
-      <div style={styles.cardHeader}>
+    <div style={styles.cardWrapper}>
+      <div style={{ ...styles.cardLabel, ...anim(baseDelay) }} onAnimationEnd={clearAnim}>
+        <InstrumentIcon instrument={instrument} size={36} />
         <span style={styles.cardTitle}>{INSTRUMENT_LABELS[instrument]}</span>
-        {difficulty != null && (
-          <DifficultyBadge difficulty={difficulty} />
-        )}
       </div>
-      <div style={styles.cardBody}>
+      <div
+        style={{
+          ...styles.card,
+          cursor: 'pointer',
+        }}
+        onClick={() => {
+          navigate(`/songs/${songId}/${instrument}`);
+        }}
+      >
+        <div style={styles.cardBody}>
         {prefetchedError && <span style={styles.cardError}>{prefetchedError}</span>}
         {!prefetchedError && prefetchedEntries.length === 0 && (
           <span style={styles.cardMuted}>No entries</span>
         )}
         {!prefetchedError &&
-          prefetchedEntries.map((e, i) => (
-            <div key={e.accountId} style={styles.entryRow}>
+          prefetchedEntries.map((e, i) => {
+            const rowStagger = anim(baseDelay + 80 + i * 60);
+            return (
+            <Link
+              key={e.accountId}
+              to={`/player/${e.accountId}`}
+              style={{ ...styles.entryRow, ...rowStagger }}
+              onClick={(ev) => ev.stopPropagation()}
+              onAnimationEnd={clearAnim}
+            >
               <span style={styles.entryRank}>#{i + 1}</span>
-              <Link
-                to={`/player/${e.accountId}`}
-                style={styles.entryName}
-                onClick={(ev) => ev.stopPropagation()}
-              >
+              <span style={styles.entryName}>
                 {e.displayName ?? e.accountId.slice(0, 8)}
-              </Link>
-              <span style={styles.entryScore}>
-                {e.score.toLocaleString()}
               </span>
-              {e.isFullCombo && <span style={styles.fcBadge}>FC</span>}
-            </div>
-          ))}
-        {!prefetchedError && prefetchedEntries.length > 0 && (
-          <div style={styles.viewAll}>View full leaderboard →</div>
-        )}
-        {playerName && (
-          <div
-            style={styles.playerScoreSection}
-            onClick={(ev) => {
-              ev.stopPropagation();
-              if (playerScore?.rank) {
-                const pageNum = Math.floor((playerScore.rank - 1) / 25) + 1;
-                navigate(`/songs/${songId}/${instrument}?page=${pageNum}&navToPlayer=true`);
-              } else {
-                navigate(`/songs/${songId}/${instrument}`);
-              }
-            }}
-          >
-            <div style={styles.playerScoreLabel}>{playerName}</div>
-            {playerScore ? (
-              <div style={styles.playerScoreRow}>
-                <span style={styles.playerRank}>#{playerScore.rank.toLocaleString()}</span>
-                <span style={styles.playerScoreValue}>
-                  {playerScore.score.toLocaleString()}
+              <span style={styles.seasonScoreGroup}>
+                {e.season != null && (
+                  <span style={styles.seasonPill}>S{e.season}</span>
+                )}
+                <span style={{ ...styles.entryScore, width: scoreWidth }}>
+                  {e.score.toLocaleString()}
                 </span>
-                {playerScore.isFullCombo && <span style={styles.fcBadge}>FC</span>}
-                {playerScore.accuracy != null && playerScore.accuracy > 0 && (
-                  <span style={styles.playerAccuracy}>
-                    {(playerScore.accuracy / 10000).toFixed(2)}%
-                  </span>
-                )}
-                {playerScore.stars != null && (
-                  <span style={styles.playerStars}>
-                    {'★'.repeat(playerScore.stars)}
-                  </span>
-                )}
-              </div>
-            ) : (
-              <div style={styles.playerScoreRow}>
-                <span style={styles.notPlayed}>Not played</span>
-              </div>
-            )}
-          </div>
-        )}
+              </span>
+              <span style={styles.entryAcc}>
+                {e.accuracy != null
+                  ? (() => {
+                      const pct = e.accuracy / 10000;
+                      const r1 = pct.toFixed(1);
+                      const text = r1.endsWith('.0') ? `${Math.round(pct)}%` : `${r1}%`;
+                      return e.isFullCombo
+                        ? <span style={styles.fcAccBadge}>{text}</span>
+                        : <span style={{ color: accuracyColor(pct) }}>{text}</span>;
+                    })()
+                  : '—'}
+              </span>
+            </Link>
+            );
+          })}
+        {playerName && playerScore && (() => {
+          const playerDelay = baseDelay + 80 + prefetchedEntries.length * 60;
+          const playerStagger = anim(playerDelay);
+          return (
+          <Link
+            to={(() => {
+              const pageNum = Math.floor((playerScore.rank - 1) / 25) + 1;
+              return `/songs/${songId}/${instrument}?page=${pageNum}&navToPlayer=true`;
+            })()}
+            style={{ ...styles.playerEntryRow, ...playerStagger }}
+            onClick={(ev) => ev.stopPropagation()}
+            onAnimationEnd={clearAnim}
+          >
+            <span style={styles.entryRank}>#{playerScore.rank.toLocaleString()}</span>
+            <span style={styles.entryName}>{playerName}</span>
+            <span style={styles.seasonScoreGroup}>
+              {playerScore.season != null && (
+                <span style={styles.seasonPill}>S{playerScore.season}</span>
+              )}
+              <span style={{ ...styles.entryScore, width: scoreWidth }}>
+                {playerScore.score.toLocaleString()}
+              </span>
+            </span>
+            <span style={styles.entryAcc}>
+              {playerScore.accuracy != null && playerScore.accuracy > 0
+                ? (() => {
+                    const pct = playerScore.accuracy / 10000;
+                    const r1 = pct.toFixed(1);
+                    const text = r1.endsWith('.0') ? `${Math.round(pct)}%` : `${r1}%`;
+                    return playerScore.isFullCombo
+                      ? <span style={styles.fcAccBadge}>{text}</span>
+                      : <span style={{ color: accuracyColor(pct) }}>{text}</span>;
+                  })()
+                : '\u2014'}
+            </span>
+          </Link>
+          );
+        })()}
+        {!prefetchedError && prefetchedEntries.length > 0 && (() => {
+          const viewAllDelay = baseDelay + 80 + (prefetchedEntries.length + (playerScore ? 1 : 0)) * 60;
+          const viewAllStagger = anim(viewAllDelay);
+          return (
+            <div
+              style={{ ...styles.viewAllButton, ...viewAllStagger }}
+              onAnimationEnd={clearAnim}
+            >
+              View full leaderboard
+            </div>
+          );
+        })()}
+      </div>
       </div>
     </div>
   );
@@ -473,37 +516,29 @@ const styles: Record<string, React.CSSProperties> = {
   },
   instrumentGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-    gap: 0,
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    border: `1px solid ${Colors.glassBorder}`,
-    borderRadius: Radius.lg,
-    overflow: 'hidden',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))',
+    gap: `${Gap.section}px ${Gap.md}px`,
   },
   card: {
-    backgroundColor: 'transparent',
-    border: `1px solid ${Colors.glassBorder}`,
-    borderRadius: Radius.lg,
-    overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column' as const,
     height: '100%',
   },
-  cardHeader: {
+  cardWrapper: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+  },
+  cardLabel: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: `${Gap.md}px ${Gap.xl}px`,
-    backgroundColor: Colors.accentPurpleDark,
+    gap: Gap.md,
+    paddingBottom: Gap.xs,
   },
   cardTitle: {
-    fontSize: Font.lg,
+    fontSize: Font.xl,
     fontWeight: 600,
   },
   cardBody: {
-    padding: Gap.xl,
     display: 'flex',
     flexDirection: 'column' as const,
     gap: Gap.sm,
@@ -520,93 +555,108 @@ const styles: Record<string, React.CSSProperties> = {
   entryRow: {
     display: 'flex',
     alignItems: 'center',
-    gap: Gap.md,
-    padding: `${Gap.sm}px 0`,
-    borderBottom: `1px solid ${Colors.borderSubtle}`,
-  },
-  entryRank: {
-    fontSize: Font.sm,
-    color: Colors.textTertiary,
-    width: 32,
-    flexShrink: 0,
-  },
-  entryName: {
-    fontSize: Font.md,
-    flex: 1,
-    whiteSpace: 'nowrap' as const,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
+    gap: Gap.xl,
+    padding: `0 ${Gap.xl}px`,
+    height: 48,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.glassCard,
+    backdropFilter: 'blur(20px)',
+    WebkitBackdropFilter: 'blur(20px)',
+    border: `1px solid ${Colors.glassBorder}`,
     textDecoration: 'none',
     color: 'inherit',
+    transition: 'background-color 0.15s',
+    fontSize: Font.md,
+  },
+  entryRank: {
+    width: 48,
+    flexShrink: 0,
+    color: Colors.textTertiary,
+    fontSize: Font.md,
+  },
+  entryName: {
+    flex: 1,
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap' as const,
   },
   entryScore: {
-    fontSize: Font.md,
+    flexShrink: 0,
+    textAlign: 'right' as const,
     fontWeight: 600,
-    color: Colors.accentBlueBright,
+    color: Colors.textPrimary,
     fontVariantNumeric: 'tabular-nums',
   },
-  fcBadge: {
-    fontSize: Font.xs,
-    fontWeight: 700,
-    color: Colors.gold,
-    backgroundColor: Colors.goldBg,
-    padding: `${Gap.xs}px ${Gap.sm}px`,
-    borderRadius: Radius.xs,
-    border: `1px solid ${Colors.goldStroke}`,
-  },
-  viewAll: {
-    fontSize: Font.sm,
-    color: Colors.accentBlue,
-    textAlign: 'center' as const,
-    paddingTop: Gap.md,
-    marginTop: Gap.sm,
-    borderTop: `1px solid ${Colors.borderSubtle}`,
-  },
-  playerScoreSection: {
-    marginTop: 'auto',
-    padding: Gap.md,
-    backgroundColor: Colors.accentPurpleDark,
-    borderRadius: Radius.xs,
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: Gap.sm,
-  },
-  playerScoreLabel: {
-    fontSize: Font.xs,
-    fontWeight: 600,
-    color: Colors.accentPurple,
-    textTransform: 'uppercase' as const,
-    letterSpacing: 0.5,
-  },
-  playerScoreRow: {
+  seasonScoreGroup: {
     display: 'flex',
     alignItems: 'center',
-    gap: Gap.md,
-  },
-  playerRank: {
-    fontSize: Font.sm,
-    color: Colors.textTertiary,
-    width: 56,
+    gap: Gap.sm,
     flexShrink: 0,
   },
-  playerScoreValue: {
-    fontSize: Font.lg,
-    fontWeight: 700,
+  entryAcc: {
+    width: 60,
+    flexShrink: 0,
+    textAlign: 'center' as const,
+    fontWeight: 600,
     color: Colors.accentBlueBright,
     fontVariantNumeric: 'tabular-nums',
   },
-  playerAccuracy: {
-    fontSize: Font.sm,
-    color: Colors.textSecondary,
-  },
-  playerStars: {
-    fontSize: Font.sm,
+  fcAccBadge: {
     color: Colors.gold,
-  },
-  notPlayed: {
-    fontSize: Font.lg,
-    color: Colors.textMuted,
+    backgroundColor: 'transparent',
+    padding: `${Gap.xs}px ${Gap.sm}px`,
+    borderRadius: Radius.xs,
+    border: `2px solid ${Colors.goldStroke}`,
+    fontWeight: 700,
     fontStyle: 'italic' as const,
+    display: 'inline-block',
+    transform: 'skewX(-8deg)',
+  },
+  seasonPill: {
+    flexShrink: 0,
+    width: 48,
+    textAlign: 'center' as const,
+    padding: `${Gap.xs}px 0`,
+    borderRadius: Radius.xs,
+    backgroundColor: Colors.surfaceSubtle,
+    color: Colors.textSecondary,
+    fontSize: Font.md,
+    fontWeight: 600,
+    border: `2px solid ${Colors.borderSubtle}`,
+    display: 'inline-block',
+  },
+  viewAllButton: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 48,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.glassCard,
+    backdropFilter: 'blur(20px)',
+    WebkitBackdropFilter: 'blur(20px)',
+    border: `1px solid ${Colors.glassBorder}`,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'background-color 0.15s',
+  },
+  playerEntryRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.xl,
+    padding: `0 ${Gap.xl}px`,
+    height: 48,
+    borderRadius: Radius.md,
+    backgroundColor: 'rgba(75, 15, 99, 0.45)',
+    backdropFilter: 'blur(20px)',
+    WebkitBackdropFilter: 'blur(20px)',
+    border: `1px solid rgba(124, 58, 237, 0.35)`,
+    textDecoration: 'none',
+    color: 'inherit',
+    transition: 'background-color 0.15s',
+    fontSize: Font.md,
   },
   center: {
     display: 'flex',
