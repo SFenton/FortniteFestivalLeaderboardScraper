@@ -9,7 +9,8 @@ import {
   type LeaderboardEntry,
 } from '../models';
 import { InstrumentIcon } from '../components/InstrumentIcons';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size } from '../theme';
+import SeasonPill from '../components/SeasonPill';
+import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutlineSkew } from '../theme';
 
 const PAGE_SIZE = 25;
 
@@ -228,7 +229,7 @@ export default function LeaderboardPage() {
                   </span>
                   <span style={styles.seasonScoreGroup}>
                     {showSeason && e.season != null && (
-                      <span style={styles.seasonPill}>S{e.season}</span>
+                      <SeasonPill season={e.season} />
                     )}
                     <span style={{ ...styles.colScore, width: scoreWidth }}>
                       {e.score.toLocaleString()}
@@ -334,7 +335,7 @@ export default function LeaderboardPage() {
             <span style={styles.colName}>{playerData.displayName}</span>
             <span style={styles.seasonScoreGroup}>
               {showSeason && playerScore.season != null && (
-                <span style={styles.seasonPill}>S{playerScore.season}</span>
+                <SeasonPill season={playerScore.season} />
               )}
               <span style={{ ...styles.colScore, width: scoreWidth }}>
                 {playerScore.score.toLocaleString()}
@@ -529,19 +530,6 @@ const styles: Record<string, React.CSSProperties> = {
     gap: Gap.md,
     flexShrink: 0,
   },
-  seasonPill: {
-    flexShrink: 0,
-    width: 48,
-    textAlign: 'center' as const,
-    padding: `${Gap.xs}px ${Gap.sm}px`,
-    borderRadius: Radius.xs,
-    backgroundColor: Colors.surfaceSubtle,
-    color: Colors.textSecondary,
-    fontSize: Font.lg,
-    fontWeight: 600,
-    border: `2px solid ${Colors.borderSubtle}`,
-    display: 'inline-block',
-  },
   colAcc: {
     width: 70,
     flexShrink: 0,
@@ -555,15 +543,9 @@ const styles: Record<string, React.CSSProperties> = {
     color: Colors.gold,
   },
   fcAccBadge: {
-    color: Colors.gold,
-    backgroundColor: 'transparent',
-    padding: `${Gap.xs}px ${Gap.sm}px`,
-    borderRadius: Radius.xs,
-    border: `2px solid ${Colors.goldStroke}`,
-    fontWeight: 700,
-    fontStyle: 'italic' as const,
-    display: 'inline-block',
-    transform: 'skewX(-8deg)',
+    ...goldOutlineSkew,
+    fontSize: Font.lg,
+    textAlign: 'center' as const,
   },
   colStars: {
     width: 110,
@@ -579,13 +561,11 @@ const styles: Record<string, React.CSSProperties> = {
     objectFit: 'contain' as const,
   },
   fcBadge: {
+    ...goldFill,
     fontSize: Font.sm,
     fontWeight: 700,
-    color: Colors.gold,
-    backgroundColor: Colors.goldBg,
     padding: `${Gap.xs}px ${Gap.sm}px`,
     borderRadius: Radius.xs,
-    border: `1px solid ${Colors.goldStroke}`,
   },
   pagination: {
     display: 'flex',

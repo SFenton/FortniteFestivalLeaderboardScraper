@@ -12,7 +12,8 @@ import {
   type PlayerScore,
   type ScoreHistoryEntry,
 } from '../models';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth } from '../theme';
+import { Colors, Font, Gap, Radius, Layout, MaxWidth, goldOutlineSkew } from '../theme';
+import SeasonPill from '../components/SeasonPill';
 import ScoreHistoryChart from '../components/ScoreHistoryChart';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import { useSettings, visibleInstruments } from '../contexts/SettingsContext';
@@ -388,7 +389,7 @@ function InstrumentCard({
               </span>
               <span style={styles.seasonScoreGroup}>
                 {showSeason && e.season != null && (
-                  <span style={styles.seasonPill}>S{e.season}</span>
+                  <SeasonPill season={e.season} />
                 )}
                 <span style={{ ...styles.entryScore, width: scoreWidth }}>
                   {e.score.toLocaleString()}
@@ -429,7 +430,7 @@ function InstrumentCard({
             <span style={styles.entryName}>{playerName}</span>
             <span style={styles.seasonScoreGroup}>
               {showSeason && playerScore.season != null && (
-                <span style={styles.seasonPill}>S{playerScore.season}</span>
+                <SeasonPill season={playerScore.season} />
               )}
               <span style={{ ...styles.entryScore, width: scoreWidth }}>
                 {playerScore.score.toLocaleString()}
@@ -673,28 +674,9 @@ const styles: Record<string, React.CSSProperties> = {
     fontVariantNumeric: 'tabular-nums',
   },
   fcAccBadge: {
-    color: Colors.gold,
-    backgroundColor: 'transparent',
-    padding: `${Gap.xs}px ${Gap.sm}px`,
-    borderRadius: Radius.xs,
-    border: `2px solid ${Colors.goldStroke}`,
-    fontWeight: 700,
-    fontStyle: 'italic' as const,
-    display: 'inline-block',
-    transform: 'skewX(-8deg)',
-  },
-  seasonPill: {
-    flexShrink: 0,
-    width: 48,
+    ...goldOutlineSkew,
+    fontSize: Font.lg,
     textAlign: 'center' as const,
-    padding: `${Gap.xs}px 0`,
-    borderRadius: Radius.xs,
-    backgroundColor: Colors.surfaceSubtle,
-    color: Colors.textSecondary,
-    fontSize: Font.md,
-    fontWeight: 600,
-    border: `2px solid ${Colors.borderSubtle}`,
-    display: 'inline-block',
   },
   viewAllButton: {
     display: 'flex',

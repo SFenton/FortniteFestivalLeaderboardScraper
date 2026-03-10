@@ -7,8 +7,9 @@ import { usePlayerData } from '../contexts/PlayerDataContext';
 import { useSettings } from '../contexts/SettingsContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import type { Song, PlayerScore, InstrumentKey } from '../models';
-import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth } from '../theme';
+import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth, goldFill, goldOutline, goldOutlineSkew } from '../theme';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../components/InstrumentIcons';
+import SeasonPill from '../components/SeasonPill';
 import { visibleInstruments } from '../contexts/SettingsContext';
 import SortModal from '../components/SortModal';
 import type { SortDraft } from '../components/SortModal';
@@ -611,8 +612,11 @@ function renderMetadataElement(
   songIntensityRaw?: number,
 ): React.ReactNode | null {
   const rawAcc = score.accuracy ?? 0;
-  const accuracy = rawAcc > 0 ? (rawAcc / 10000).toFixed(2) + '%' : undefined;
-  const is100FC = score.isFullCombo && accuracy === '100.00%';
+  const pct = rawAcc > 0 ? rawAcc / 10000 : 0;
+  const accuracy = pct > 0
+    ? (pct % 1 === 0 ? `${Math.round(pct)}%` : `${pct.toFixed(1)}%`)
+    : undefined;
+  const is100FC = score.isFullCombo && pct >= 100;
   const stars = score.stars ?? 0;
 
   switch (key) {
@@ -622,18 +626,9 @@ function renderMetadataElement(
       ) : null;
 
     case 'percentage':
-      if (is100FC) {
-        const pctIdx = allKeys.indexOf('percentage');
-        const fcIdx = allKeys.indexOf('isfc');
-        if (fcIdx !== -1 && fcIdx < pctIdx) return null;
-        return <span style={styles.fcBadge}>FC</span>;
-      }
       return accuracy ? (
         <span
-          style={{
-            ...styles.accuracyPill,
-            ...(score.isFullCombo ? styles.accuracyPillGold : {}),
-          }}
+          style={score.isFullCombo ? styles.accuracyBadgeFC : styles.accuracyPill}
         >
           {accuracy}
         </span>
@@ -657,7 +652,7 @@ function renderMetadataElement(
 
     case 'seasonachieved':
       return score.season != null && score.season > 0 ? (
-        <span style={styles.seasonPill}>S{score.season}</span>
+        <SeasonPill season={score.season} />
       ) : null;
 
     case 'percentile': {
@@ -667,17 +662,14 @@ function renderMetadataElement(
           : undefined;
       if (pct == null) return null;
       const display = formatPercentile(pct);
+      const isTop1 = pct <= 1;
       const isTop5 = pct <= 5;
-      return (
-        <span
-          style={{
-            ...styles.percentilePill,
-            ...(isTop5 ? styles.percentilePillGold : {}),
-          }}
-        >
-          {display}
-        </span>
-      );
+      const pctStyle = isTop1
+        ? styles.percentileBadgeTop1
+        : isTop5
+          ? styles.percentileBadgeTop5
+          : styles.percentilePill;
+      return <span style={pctStyle}>{display}</span>;
     }
 
     case 'intensity':
@@ -691,63 +683,11 @@ function renderMetadataElement(
 type MetadataEntry = { key: string; el: React.ReactNode };
 
 /** Bottom metadata grid matching mobile MetadataBottomRow layout rules. */
-function MetadataBottomRow({ entries, isMobile }: { entries: MetadataEntry[]; isMobile: boolean }) {
-  const n = entries.length;
-  if (n === 0) return null;
-
-  // Helper: render a row of cells, centering when ≤2 items
-  const renderRow = (items: MetadataEntry[]) => (
-    <div style={styles.metadataGridRow}>
-      {items.length <= 2
-        ? items.map(e => <div key={e.key} style={styles.metadataCellAuto}>{e.el}</div>)
-        : items.map(e => <div key={e.key} style={styles.metadataCell}>{e.el}</div>)}
-    </div>
-  );
-
-  // 5+ items on mobile: split into rows of 3
-  if (isMobile && n >= 5) {
-    const top = entries.slice(0, 3);
-    const bottom = entries.slice(3);
-    return (
-      <div style={styles.metadataGrid}>
-        {renderRow(top)}
-        {renderRow(bottom)}
-      </div>
-    );
-  }
-
-  // 4 items on mobile: 2×2 grid
-  if (isMobile && n === 4) {
-    return (
-      <div style={styles.metadataGrid}>
-        {renderRow(entries.slice(0, 2))}
-        {renderRow(entries.slice(2))}
-      </div>
-    );
-  }
-
-  // 2 items on mobile: centered side by side
-  if (isMobile && n === 2) {
-    return (
-      <div style={styles.metadataGridRow}>
-        {entries.map(e => <div key={e.key} style={styles.metadataCellAuto}>{e.el}</div>)}
-      </div>
-    );
-  }
-
-  // 1 item on mobile: right-aligned to match top-row detail strip
-  if (isMobile && n === 1) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'flex-end', paddingBottom: Gap.xs }}>
-        {entries[0]!.el}
-      </div>
-    );
-  }
-
-  // Default: single centered row
+function MetadataBottomRow({ entries }: { entries: MetadataEntry[] }) {
+  if (entries.length === 0) return null;
   return (
-    <div style={styles.metadataBottomRow}>
-      {entries.map(e => <div key={e.key} style={styles.metadataCell}>{e.el}</div>)}
+    <div style={styles.metadataWrap}>
+      {entries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}
     </div>
   );
 }
@@ -846,8 +786,9 @@ function SongRow({
   ) : null;
 
   if (isMobile && entries.length > 0) {
-    const topEntry = entries[0]!;
-    const bottomEntries = entries.slice(1);
+    // Score always goes top-right; rest wraps below
+    const scoreEntry = entries.find(e => e.key === 'score');
+    const bottomEntries = entries.filter(e => e.key !== 'score');
     return (
       <Link ref={linkRef} to={`/songs/${song.songId}?instrument=${encodeURIComponent(instrument)}`} style={{ ...styles.rowMobile, ...animStyle }} onAnimationEnd={handleAnimEnd}>
         <div style={styles.mobileTopRow}>
@@ -856,12 +797,14 @@ function SongRow({
             <span style={styles.rowTitle}>{song.title}</span>
             <span style={styles.rowArtist}>{song.artist}</span>
           </div>
-          <div style={styles.detailStrip}>
-            {topEntry.el}
-          </div>
+          {scoreEntry && (
+            <div style={styles.detailStrip}>
+              {scoreEntry.el}
+            </div>
+          )}
         </div>
         {bottomEntries.length > 0 && (
-          <MetadataBottomRow entries={bottomEntries} isMobile={true} />
+          <MetadataBottomRow entries={bottomEntries} />
         )}
       </Link>
     );
@@ -1112,7 +1055,8 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: Gap.xl,
-    padding: `${Gap.md}px ${Gap.xl}px`,
+    padding: `0 ${Gap.xl}px`,
+    height: 64,
     borderRadius: Radius.md,
     backgroundColor: Colors.glassCard,
     backdropFilter: 'blur(20px)',
@@ -1144,39 +1088,16 @@ const styles: Record<string, React.CSSProperties> = {
   detailStrip: {
     display: 'flex',
     alignItems: 'center',
-    gap: Gap.md,
+    gap: Gap.xl,
     flexShrink: 0,
     marginLeft: 'auto',
   },
-  metadataBottomRow: {
+  metadataWrap: {
     display: 'flex',
+    flexWrap: 'wrap' as const,
     alignItems: 'center',
-    justifyContent: 'space-evenly',
-    gap: Gap.md,
-    paddingBottom: Gap.xs,
-  },
-  metadataGrid: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: Gap.md,
-    paddingBottom: Gap.xs,
-  },
-  metadataGridRow: {
-    display: 'flex',
-    justifyContent: 'space-evenly',
-    gap: Gap.md,
-  },
-  metadataCell: {
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minWidth: 0,
-  },
-  metadataCellAuto: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-end',
+    gap: Gap.lg,
   },
   instrumentStatusRow: {
     display: 'flex',
@@ -1259,11 +1180,11 @@ const styles: Record<string, React.CSSProperties> = {
   scoreMeta: {
     display: 'flex',
     alignItems: 'center',
-    gap: Gap.md,
+    gap: Gap.xl,
     flexShrink: 0,
   },
   scoreValue: {
-    fontSize: Font.md,
+    fontSize: Font.lg,
     fontWeight: 700,
     color: Colors.textPrimary,
     fontVariantNumeric: 'tabular-nums',
@@ -1294,35 +1215,7 @@ const styles: Record<string, React.CSSProperties> = {
     objectFit: 'contain' as const,
   },
   accuracyPill: {
-    fontSize: Font.xs,
-    fontWeight: 600,
-    color: Colors.textSecondary,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    padding: `${Gap.xs}px ${Gap.md}px`,
-    borderRadius: Radius.xs,
-    minWidth: 52,
-    textAlign: 'center' as const,
-    display: 'inline-block',
-  },
-  accuracyPillGold: {
-    color: Colors.gold,
-    backgroundColor: Colors.goldBg,
-    border: `1px solid ${Colors.goldStroke}`,
-  },
-  fcBadge: {
-    fontSize: Font.xs,
-    fontWeight: 700,
-    color: Colors.gold,
-    backgroundColor: Colors.goldBg,
-    border: `1px solid ${Colors.goldStroke}`,
-    padding: `${Gap.xs}px ${Gap.md}px`,
-    borderRadius: Radius.xs,
-    minWidth: 52,
-    textAlign: 'center' as const,
-    display: 'inline-block',
-  },
-  percentilePill: {
-    fontSize: Font.xs,
+    fontSize: Font.lg,
     fontWeight: 600,
     color: Colors.textSecondary,
     backgroundColor: 'rgba(255,255,255,0.1)',
@@ -1332,22 +1225,41 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center' as const,
     display: 'inline-block',
   },
-  percentilePillGold: {
-    color: Colors.gold,
-    backgroundColor: Colors.goldBg,
-    border: `1px solid ${Colors.goldStroke}`,
+  accuracyBadgeFC: {
+    ...goldOutlineSkew,
+    fontSize: Font.lg,
+    textAlign: 'center' as const,
   },
-  seasonPill: {
-    fontSize: Font.xs,
+  fcBadge: {
+    ...goldFill,
+    fontSize: Font.sm,
     fontWeight: 700,
-    color: Colors.textPrimary,
-    backgroundColor: '#1D3A71',
-    padding: `${Gap.xs}px ${Gap.md}px`,
+    padding: `${Gap.xs}px ${Gap.sm}px`,
     borderRadius: Radius.xs,
-    whiteSpace: 'nowrap' as const,
-    minWidth: 38,
+    minWidth: 70,
     textAlign: 'center' as const,
     display: 'inline-block',
+  },
+  percentilePill: {
+    fontSize: Font.lg,
+    fontWeight: 600,
+    color: Colors.textSecondary,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    padding: `${Gap.xs}px ${Gap.md}px`,
+    borderRadius: Radius.xs,
+    minWidth: 70,
+    textAlign: 'center' as const,
+    display: 'inline-block',
+  },
+  percentileBadgeTop1: {
+    ...goldOutlineSkew,
+    fontSize: Font.lg,
+    textAlign: 'center' as const,
+  },
+  percentileBadgeTop5: {
+    ...goldOutline,
+    fontSize: Font.lg,
+    textAlign: 'center' as const,
   },
   center: {
     display: 'flex',

@@ -13,7 +13,7 @@ import {
   type PlayerScore,
   type Song,
 } from '../models';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth } from '../theme';
+import { Colors, Font, Gap, Radius, Layout, MaxWidth, goldFill, goldOutline, goldOutlineSkew } from '../theme';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import { useSettings, isInstrumentVisible } from '../contexts/SettingsContext';
 import { loadSongSettings, saveSongSettings } from '../components/songSettings';
@@ -926,26 +926,8 @@ const styles: Record<string, React.CSSProperties> = {
     color: Colors.textPrimary,
     borderBottom: `1px solid ${Colors.glassBorder}`,
   },
-  pctGoldBadge: {
-    color: Colors.gold,
-    backgroundColor: 'transparent',
-    padding: `${Gap.xs}px ${Gap.sm}px`,
-    borderRadius: Radius.xs,
-    border: `2px solid ${Colors.goldStroke}`,
-    fontWeight: 700,
-    fontStyle: 'italic' as const,
-    display: 'inline-block',
-    transform: 'skewX(-8deg)',
-  },
-  pctGoldPill: {
-    color: Colors.gold,
-    backgroundColor: 'transparent',
-    padding: `${Gap.xs}px ${Gap.sm}px`,
-    borderRadius: Radius.xs,
-    border: `2px solid ${Colors.goldStroke}`,
-    fontWeight: 700,
-    display: 'inline-block',
-  },
+  pctGoldBadge: goldOutlineSkew,
+  pctGoldPill: goldOutline,
   pctPlainLabel: {
     padding: `${Gap.xs}px ${Gap.sm}px`,
     border: '2px solid transparent',
@@ -1026,11 +1008,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'inline-block',
     marginBottom: 2,
   },
-  percentilePillGold: {
-    color: Colors.gold,
-    backgroundColor: Colors.goldBg,
-    border: `1px solid ${Colors.goldStroke}`,
-  },
+  percentilePillGold: goldFill,
   center: {
     display: 'flex',
     alignItems: 'center',

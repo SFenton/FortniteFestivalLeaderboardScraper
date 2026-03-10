@@ -18,7 +18,7 @@ import {
   type ScoreHistoryEntry,
 } from '../models';
 import { InstrumentIcon } from './InstrumentIcons';
-import { Colors, Font, Gap, Radius } from '../theme';
+import { Colors, Font, Gap, Radius, goldFill } from '../theme';
 
 type Props = {
   songId: string;
@@ -512,14 +512,12 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: Gap.xs,
   },
   tooltipFc: {
+    ...goldFill,
     marginLeft: Gap.md,
     fontSize: Font.xs,
     fontWeight: 700,
-    color: Colors.gold,
-    backgroundColor: Colors.goldBg,
     padding: `0 ${Gap.sm}px`,
     borderRadius: Radius.xs,
-    border: `1px solid ${Colors.goldStroke}`,
   },
   legend: {
     display: 'flex',

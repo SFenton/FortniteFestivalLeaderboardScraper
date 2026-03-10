@@ -18,7 +18,7 @@ import { shouldShowCategory, filterCategoryForInstruments } from '@festival/core
 import { globalKeyFor, getCategoryTypeId, getCategoryInstrument, perInstrumentKeyFor } from '@festival/core/suggestions/suggestionFilterConfig';
 import { useSettings } from '../contexts/SettingsContext';
 import type { AppSettings } from '../contexts/SettingsContext';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size } from '../theme';
+import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill } from '../theme';
 import { useIsMobile } from '../hooks/useIsMobile';
 import type { InstrumentKey as ServerInstrumentKey } from '../models';
 
@@ -813,10 +813,7 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: Colors.surfaceSubtle,
     color: Colors.textMuted,
   },
-  percentilePillGold: {
-    backgroundColor: Colors.goldBg,
-    color: Colors.gold,
-  },
+  percentilePillGold: goldFill,
   thumb: {
     width: Size.thumb,
     height: Size.thumb,
