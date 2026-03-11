@@ -23,7 +23,7 @@ import { useScrollMask } from '../hooks/useScrollMask';
  *  so that `opacity` is no longer set by the animation system.  This prevents
  *  the browser from keeping a compositing group alive, which would break
  *  `backdrop-filter: blur()` on child elements. */
-function FadeInDiv({ delay, children, style }: { delay: number; children: React.ReactNode; style?: CSSProperties }) {
+function FadeInDiv({ delay, children, style }: { delay?: number; children: React.ReactNode; style?: CSSProperties }) {
   const ref = useRef<HTMLDivElement>(null);
   const handleEnd = useCallback(() => {
     const el = ref.current;
@@ -31,6 +31,7 @@ function FadeInDiv({ delay, children, style }: { delay: number; children: React.
     el.style.opacity = '';
     el.style.animation = '';
   }, []);
+  if (delay == null) return <div style={style}>{children}</div>;
   return (
     <div
       ref={ref}
@@ -141,7 +142,7 @@ function PlayerContent({
 
   // Build a completely flat list of small items — each becomes a direct child
   // of the grid so each gets a staggered fade-in animation.
-  type Item = { key: string; node: React.ReactNode; span: boolean; style?: CSSProperties };
+  type Item = { key: string; node: React.ReactNode; span: boolean; style?: CSSProperties; heightEstimate: number };
   const items: Item[] = [];
 
   const cardStyle: CSSProperties = {
@@ -154,6 +155,7 @@ function PlayerContent({
     items.push({
       key: 'sync',
       span: true,
+      heightEstimate: 150,
       node: (
         <div style={styles.syncBanner}>
           <div style={styles.syncSpinner} />
@@ -226,13 +228,14 @@ function PlayerContent({
     { label: 'Best Rank', value: overallStats.bestRank > 0 ? `#${overallStats.bestRank.toLocaleString()}` : '—', to: overallStats.bestRankSongId ? `/songs/${overallStats.bestRankSongId}?instrument=${encodeURIComponent(overallStats.bestRankInstrument!)}` : undefined, state: { backTo: location.pathname } },
   ];
   for (const box of summaryBoxes) {
-    items.push({ key: `sum-${box.label}`, span: false, style: cardStyle, node: <StatBox label={box.label} value={box.value} color={box.color} to={box.to} state={box.state} /> });
+    items.push({ key: `sum-${box.label}`, span: false, heightEstimate: 100, style: cardStyle, node: <StatBox label={box.label} value={box.value} color={box.color} to={box.to} state={box.state} /> });
   }
 
   // --- Instrument Statistics heading ---
   items.push({
     key: 'inst-heading',
     span: true,
+    heightEstimate: 80,
     node: (
       <div style={{ marginTop: Gap.section }}>
         <h2 style={styles.sectionTitle}>Instrument Statistics</h2>
@@ -251,6 +254,7 @@ function PlayerContent({
     items.push({
       key: `inst-hdr-${inst}`,
       span: true,
+      heightEstimate: 64,
       node: (
         <div style={styles.instCardHeader}>
           <InstrumentIcon instrument={inst} size={48} />
@@ -280,7 +284,7 @@ function PlayerContent({
     cards.push({ label: 'Percentile (Songs Played)', value: stats.avgPercentile, color: pctGold(stats.avgPercentile) });
 
     for (const c of cards) {
-      items.push({ key: `${inst}-${c.label}`, span: false, style: cardStyle, node: <StatBox label={c.label} value={c.value} color={c.color} to={c.to} /> });
+      items.push({ key: `${inst}-${c.label}`, span: false, heightEstimate: 100, style: cardStyle, node: <StatBox label={c.label} value={c.value} color={c.color} to={c.to} /> });
     }
 
     // Percentile table — single glass container
@@ -289,6 +293,7 @@ function PlayerContent({
       items.push({
         key: `${inst}-pct-table`,
         span: true,
+        heightEstimate: 40 + stats.percentileBuckets.length * 44,
         style: { ...cardStyle, overflow: 'hidden' as const, marginBottom: Gap.md },
         node: (
           <div>
@@ -333,6 +338,7 @@ function PlayerContent({
   items.push({
     key: 'top-heading',
     span: true,
+    heightEstimate: 80,
     node: (
       <div style={{ marginTop: Gap.section }}>
         <h2 style={styles.sectionTitle}>Top Songs Per Instrument</h2>
@@ -382,6 +388,7 @@ function PlayerContent({
     items.push({
       key: `top-hdr-${inst}`,
       span: true,
+      heightEstimate: 64,
       node: (
         <div style={styles.instCardHeader}>
           <InstrumentIcon instrument={inst} size={48} />
@@ -397,6 +404,7 @@ function PlayerContent({
     items.push({
       key: `top-songs-${inst}`,
       span: true,
+      heightEstimate: topScores.length * 50,
       style: { ...cardStyle, overflow: 'hidden' as const },
       node: (
         <div>
@@ -410,6 +418,7 @@ function PlayerContent({
       items.push({
         key: `bot-hdr-${inst}`,
         span: true,
+        heightEstimate: 64,
         node: (
           <div style={{ ...styles.instCardHeader, marginTop: Gap.md }}>
             <InstrumentIcon instrument={inst} size={48} />
@@ -425,6 +434,7 @@ function PlayerContent({
       items.push({
         key: `bot-songs-${inst}`,
         span: true,
+        heightEstimate: bottomScores.length * 50,
         style: { ...cardStyle, overflow: 'hidden' as const },
         node: (
           <div>
@@ -448,11 +458,50 @@ function PlayerContent({
       <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
         <div style={styles.container}>
           <div style={styles.gridList}>
-            {items.map((item, i) => (
-              <FadeInDiv key={item.key} delay={i * 80} style={{ ...(item.span ? styles.gridFullWidth : {}), ...item.style }}>
-                {item.node}
-              </FadeInDiv>
-            ))}
+            {(() => {
+              // Compute which items are in the initial viewport by accumulating
+              // estimated row heights.  The grid is 2-col: span items take a full
+              // row, non-span items pair up (each row = max of the pair's height).
+              const vh = typeof window !== 'undefined' ? window.innerHeight : 900;
+              const gap = 8; // Gap.md
+              let accHeight = 0;
+              let col = 0; // 0 = left, 1 = right in the 2-col grid
+              let rowMax = 0;
+              let visibleCount = items.length; // default: animate all
+
+              for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                if (item.span) {
+                  // Flush any pending half-row
+                  if (col === 1) {
+                    accHeight += rowMax + gap;
+                    col = 0;
+                    rowMax = 0;
+                  }
+                  accHeight += item.heightEstimate + gap;
+                } else {
+                  rowMax = Math.max(rowMax, item.heightEstimate);
+                  col++;
+                  if (col === 2) {
+                    accHeight += rowMax + gap;
+                    col = 0;
+                    rowMax = 0;
+                  }
+                }
+                if (accHeight > vh && visibleCount === items.length) {
+                  visibleCount = i + 2; // +1 for the partially-visible item, +1 for 0-index
+                }
+              }
+
+              return items.map((item, i) => {
+                const delay = i < visibleCount ? (i + 1) * 80 : undefined;
+                return (
+                  <FadeInDiv key={item.key} delay={delay} style={{ ...(item.span ? styles.gridFullWidth : {}), ...item.style }}>
+                    {item.node}
+                  </FadeInDiv>
+                );
+              });
+            })()}
           </div>
         </div>
       </div>

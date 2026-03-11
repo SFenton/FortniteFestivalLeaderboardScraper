@@ -11,6 +11,7 @@ import {
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import SeasonPill from '../components/SeasonPill';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutlineSkew, frostedCard } from '../theme';
+import { staggerDelay, estimateVisibleCount } from '../utils/stagger';
 
 const PAGE_SIZE = 25;
 
@@ -206,10 +207,10 @@ export default function LeaderboardPage() {
             <div style={styles.list}>
               {entries.map((e, i) => {
                 const isPlayer = playerData?.accountId === e.accountId;
-                const staggerStyle: React.CSSProperties = {
-                  opacity: 0,
-                  animation: `fadeInUp 400ms ease-out ${(i + 1) * 125}ms forwards`,
-                };
+                const delay = staggerDelay(i, 125, estimateVisibleCount(72));
+                const staggerStyle: React.CSSProperties | undefined = delay != null
+                  ? { opacity: 0, animation: `fadeInUp 400ms ease-out ${delay}ms forwards` }
+                  : undefined;
                 const baseStyle = isPlayer ? { ...styles.row, ...styles.rowHighlight } : styles.row;
                 const rowStyle = isMobile ? { ...baseStyle, gap: Gap.md, padding: `0 ${Gap.md}px` } : baseStyle;
                 return (

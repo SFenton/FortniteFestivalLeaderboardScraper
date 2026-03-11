@@ -19,6 +19,7 @@ import { globalKeyFor, getCategoryTypeId, getCategoryInstrument, perInstrumentKe
 import { useSettings } from '../contexts/SettingsContext';
 import type { AppSettings } from '../contexts/SettingsContext';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, frostedCard } from '../theme';
+import { estimateVisibleCount } from '../utils/stagger';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useFabSearch } from '../contexts/FabSearchContext';
 import { useScrollFade } from '../hooks/useScrollFade';
@@ -292,6 +293,8 @@ export default function SuggestionsPage({ accountId }: Props) {
     if (phase !== 'contentIn') return null;                   // hidden behind spinner
     if (index < revealedCountRef.current) return -1;          // already visible, no animation
     const offset = index - revealedCountRef.current;
+    const maxVisible = estimateVisibleCount(200);
+    if (offset >= maxVisible) return -1;                      // beyond viewport, show instantly
     return offset * 125;
   };
 

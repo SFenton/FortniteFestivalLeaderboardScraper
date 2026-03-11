@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef, useCallback, Fragment, type CSSPr
 import { IoSwapVerticalSharp, IoFunnel } from 'react-icons/io5';
 import { Link, useLocation } from 'react-router-dom';
 import { formatPercentile } from '../utils/formatPercentile';
+import { staggerDelay, estimateVisibleCount } from '../utils/stagger';
 import { useFestival } from '../contexts/FestivalContext';
 import { usePlayerData } from '../contexts/PlayerDataContext';
 import { useSettings } from '../contexts/SettingsContext';
@@ -501,7 +502,7 @@ export default function SongsPage() {
                   metadataOrder={visibleMetadataOrder}
                   sortMode={settings.sortMode}
                   isMobile={isMobile}
-                  staggerDelay={(i + 1) * 125}
+                  staggerDelay={staggerDelay(i, 125, estimateVisibleCount(isMobile ? 120 : 72))}
                 />
             ))}
           </div>
