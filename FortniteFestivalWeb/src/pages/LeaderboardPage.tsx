@@ -3,8 +3,6 @@ import { useParams, Link, useSearchParams, useLocation } from 'react-router-dom'
 import { useFestival } from '../contexts/FestivalContext';
 import { usePlayerData } from '../contexts/PlayerDataContext';
 import { api } from '../api/client';
-import BackLink from '../components/BackLink';
-import { useIsMobile } from '../hooks/useIsMobile';
 import {
   INSTRUMENT_LABELS,
   type InstrumentKey,
@@ -48,7 +46,6 @@ export default function LeaderboardPage() {
   const showSeason = windowWidth >= 520;
   const showStars = windowWidth >= 768;
   const isMobile = windowWidth < 420;
-  const isMobileLayout = useIsMobile();
 
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -334,7 +331,7 @@ export default function LeaderboardPage() {
       )}
 
       {playerScore && playerData && (
-        <div style={{ ...styles.playerFooter, ...(isMobileLayout ? { marginBottom: 95 } : {}) }} onClick={goToPlayerPage} role="button" tabIndex={0}>
+        <div style={styles.playerFooter} onClick={goToPlayerPage} role="button" tabIndex={0}>
           <div style={{ ...styles.playerFooterRow, cursor: 'pointer', ...(isMobile ? { gap: Gap.md, padding: `0 ${Gap.md}px` } : {}) }}>
             <span style={styles.colRank}>#{playerScore.rank.toLocaleString()}</span>
             <span style={styles.colName}>{playerData.displayName}</span>

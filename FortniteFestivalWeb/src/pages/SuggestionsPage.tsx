@@ -356,7 +356,7 @@ export default function SuggestionsPage({ accountId }: Props) {
       </div>
       )}
       <div id="suggestions-scroll" style={styles.scrollArea}>
-      <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.section } : {}) }}>
+      <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.sm } : {}) }}>
         {visibleCategories.length === 0 && (categories.length > 0 || !effectiveHasMore) ? (
           <div style={styles.emptyState}>
             <div style={styles.emptyTitle}>No Suggestions Available</div>

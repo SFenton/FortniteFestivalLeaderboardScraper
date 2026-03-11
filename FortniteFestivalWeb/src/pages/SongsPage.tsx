@@ -410,7 +410,7 @@ export default function SongsPage() {
       </div>
       )}
       <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
-        <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.section } : {}) }}>
+        <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.sm } : {}) }}>
         {isSyncing && (
           <div style={styles.syncBanner}>
             <div style={styles.syncSpinner} />
