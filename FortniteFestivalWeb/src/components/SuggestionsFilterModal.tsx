@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import Modal, { ModalSection, ToggleRow } from './Modal';
+import { useState, useMemo, useCallback } from 'react';
+import Modal, { ModalSection, ToggleRow, Accordion } from './Modal';
 import { InstrumentIcon } from './InstrumentIcons';
 import type { InstrumentKey } from '@festival/core/instruments';
 import { InstrumentKeys } from '@festival/core/instruments';
@@ -9,7 +9,7 @@ import {
   perInstrumentKeyFor,
 } from '@festival/core/suggestions/suggestionFilterConfig';
 import type { SuggestionTypeId } from '@festival/core/suggestions/suggestionFilterConfig';
-import { Colors, Gap, Radius } from '../theme';
+import { Colors, Font, Gap } from '../theme';
 
 // ---------------------------------------------------------------------------
 // Filter draft type – mirrors the RN SuggestionsInstrumentFilters
@@ -77,6 +77,7 @@ type InstrumentVisibility = {
 type Props = {
   visible: boolean;
   draft: SuggestionsFilterDraft;
+  savedDraft?: SuggestionsFilterDraft;
   instrumentVisibility: InstrumentVisibility;
   onChange: (d: SuggestionsFilterDraft) => void;
   onCancel: () => void;
@@ -84,14 +85,31 @@ type Props = {
   onApply: () => void;
 };
 
-export default function SuggestionsFilterModal({ visible, draft, instrumentVisibility, onChange, onCancel, onReset, onApply }: Props) {
+export default function SuggestionsFilterModal({ visible, draft, savedDraft, instrumentVisibility, onChange, onCancel, onReset, onApply }: Props) {
   const [selectedInstrument, setSelectedInstrument] = useState<InstrumentKey | null>(null);
 
   const visibleInstruments = INSTRUMENTS.filter(i => instrumentVisibility[i.showKey as keyof InstrumentVisibility]);
-  // Clear instrument-specific picker if the selected instrument was hidden in app settings
   const effectiveSelectedInstrument = selectedInstrument && visibleInstruments.some(i => i.key === selectedInstrument) ? selectedInstrument : null;
 
   const toggle = (key: string) => onChange({ ...draft, [key]: !draft[key] });
+
+  const hasChanges = useMemo(() => {
+    if (!savedDraft) return true;
+    return JSON.stringify(draft) !== JSON.stringify(savedDraft);
+  }, [draft, savedDraft]);
+
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const handleClose = useCallback(() => {
+    if (hasChanges) {
+      setConfirmOpen(true);
+    } else {
+      onCancel();
+    }
+  }, [hasChanges, onCancel]);
+  const confirmDiscard = useCallback(() => {
+    setConfirmOpen(false);
+    onCancel();
+  }, [onCancel]);
 
   const toggleGlobal = (typeId: SuggestionTypeId) => {
     const gk = globalKeyFor(typeId);
@@ -121,76 +139,101 @@ export default function SuggestionsFilterModal({ visible, draft, instrumentVisib
   };
 
   return (
-    <Modal visible={visible} title="Filter Suggestions" onClose={onCancel} onApply={onApply} onReset={onReset}>
+    <>
+    <Modal visible={visible} title="Filter Suggestions" onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel="Reset Suggestion Filters" resetHint="Restore all suggestion filter options to their defaults." applyLabel="Apply Filter Changes" applyDisabled={!hasChanges}>
       {/* Instruments */}
-      <ModalSection title="Instruments" hint="Choose which instruments appear in your suggestions.">
-        {visibleInstruments.map(inst => (
-          <ToggleRow
-            key={inst.key}
-            label={
-              <span style={localStyles.instrumentLabel}>
-                <InstrumentIcon instrument={inst.key} size={20} />
-                {inst.label}
-              </span>
-            }
-            checked={!!draft[inst.filterKey]}
-            onToggle={() => toggle(inst.filterKey as string)}
-          />
-        ))}
+      <ModalSection>
+        <Accordion title="Instruments" hint="Choose which instruments appear in your suggestions.">
+          {visibleInstruments.map(inst => (
+            <ToggleRow
+              key={inst.key}
+              label={
+                <span style={localStyles.instrumentLabel}>
+                  <InstrumentIcon instrument={inst.key} size={20} />
+                  {inst.label}
+                </span>
+              }
+              checked={!!draft[inst.filterKey]}
+              onToggle={() => toggle(inst.filterKey as string)}
+            />
+          ))}
+        </Accordion>
       </ModalSection>
 
       {/* General type toggles */}
-      <ModalSection title="General" hint="Toggle broad suggestion types on or off.">
-        {SUGGESTION_TYPES.map(st => (
-          <ToggleRow
-            key={st.id}
-            label={st.label}
-            description={st.description}
-            checked={!!draft[globalKeyFor(st.id)]}
-            onToggle={() => toggleGlobal(st.id)}
-          />
-        ))}
+      <ModalSection>
+        <Accordion title="General" hint="Toggle broad suggestion types on or off." defaultOpen>
+          {SUGGESTION_TYPES.map(st => (
+            <ToggleRow
+              key={st.id}
+              label={st.label}
+              description={st.description}
+              checked={!!draft[globalKeyFor(st.id)]}
+              onToggle={() => toggleGlobal(st.id)}
+            />
+          ))}
+        </Accordion>
       </ModalSection>
 
       {/* Instrument-specific type toggles */}
-      <ModalSection title="Instrument-Specific" hint="These filters will filter out suggestions on a per-instrument basis, rather than global.">
+      <ModalSection title="Instrument-Specific" hint="Select an instrument to filter its suggestion types individually.">
         <div style={localStyles.instrumentRow}>
           {visibleInstruments.map(inst => {
             const isSelected = effectiveSelectedInstrument === inst.key;
             return (
               <button
                 key={inst.key}
-                style={{
-                  ...localStyles.instrumentBtn,
-                  ...(isSelected ? localStyles.instrumentBtnSelected : {}),
-                }}
+                style={localStyles.instrumentBtn}
                 onClick={() => setSelectedInstrument(cur => cur === inst.key ? null : inst.key)}
                 title={inst.label}
               >
-                <InstrumentIcon instrument={inst.key} size={24} />
+                <div style={{ ...localStyles.instrumentCircle, ...(isSelected ? localStyles.instrumentCircleActive : {}) }} />
+                <div style={{ position: 'relative' as const, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <InstrumentIcon instrument={inst.key} size={48} />
+                </div>
               </button>
             );
           })}
         </div>
 
-        {effectiveSelectedInstrument && (
-          <div style={{ marginTop: Gap.lg }}>
-            {SUGGESTION_TYPES.map(st => {
-              const key = perInstrumentKeyFor(effectiveSelectedInstrument, st.id);
-              return (
-                <ToggleRow
-                  key={st.id}
-                  label={st.label}
-                  description={st.description}
-                  checked={!!draft[key]}
-                  onToggle={() => togglePerInstrument(effectiveSelectedInstrument, st.id)}
-                />
-              );
-            })}
+        <div style={{
+          display: 'grid',
+          gridTemplateRows: effectiveSelectedInstrument ? '1fr' : '0fr',
+          transition: 'grid-template-rows 400ms ease',
+        }}>
+          <div style={{ overflow: 'hidden', minHeight: 0 }}>
+            {effectiveSelectedInstrument && (
+              SUGGESTION_TYPES.map(st => {
+                const key = perInstrumentKeyFor(effectiveSelectedInstrument, st.id);
+                return (
+                  <ToggleRow
+                    key={st.id}
+                    label={st.label}
+                    description={st.description}
+                    checked={!!draft[key]}
+                    onToggle={() => togglePerInstrument(effectiveSelectedInstrument, st.id)}
+                  />
+                );
+              })
+            )}
           </div>
-        )}
+        </div>
       </ModalSection>
     </Modal>
+
+      {confirmOpen && (
+        <div style={confirmStyles.overlay} onClick={() => setConfirmOpen(false)}>
+          <div style={confirmStyles.card} onClick={e => e.stopPropagation()}>
+            <div style={confirmStyles.title}>Cancel Suggestion Filter Changes</div>
+            <div style={confirmStyles.message}>Are you sure you want to discard your suggestion filter changes?</div>
+            <div style={confirmStyles.buttons}>
+              <button style={confirmStyles.btnNo} onClick={() => setConfirmOpen(false)}>No</button>
+              <button style={confirmStyles.btnYes} onClick={confirmDiscard}>Yes</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -202,28 +245,100 @@ const localStyles: Record<string, React.CSSProperties> = {
   instrumentRow: {
     display: 'flex',
     flexWrap: 'wrap',
+    justifyContent: 'center',
     gap: Gap.md,
     marginBottom: Gap.md,
   },
   instrumentBtn: {
-    width: 44,
-    height: 44,
+    width: 64,
+    height: 64,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: Radius.sm,
-    backgroundColor: Colors.surfaceSubtle,
-    border: `1px solid ${Colors.borderSubtle}`,
+    borderRadius: '50%',
+    border: 'none',
+    backgroundColor: 'transparent',
     cursor: 'pointer',
     padding: 0,
+    position: 'relative' as const,
+    overflow: 'hidden' as const,
   },
-  instrumentBtnSelected: {
-    backgroundColor: Colors.chipSelectedBgSubtle,
-    borderColor: Colors.accentBlue,
+  instrumentCircle: {
+    position: 'absolute' as const,
+    inset: 0,
+    borderRadius: '50%',
+    backgroundColor: '#2ECC71',
+    transform: 'scale(0)',
+    transition: 'transform 250ms ease',
+  },
+  instrumentCircleActive: {
+    transform: 'scale(1)',
   },
   instrumentLabel: {
     display: 'inline-flex',
     alignItems: 'center',
     gap: Gap.md,
+  },
+};
+
+const confirmStyles: Record<string, React.CSSProperties> = {
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    zIndex: 1100,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  card: {
+    backgroundColor: Colors.surfaceFrosted,
+    backdropFilter: 'blur(18px)',
+    WebkitBackdropFilter: 'blur(18px)',
+    borderRadius: 12,
+    padding: Gap.section,
+    maxWidth: 340,
+    width: '90%',
+    color: Colors.textPrimary,
+    boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+  },
+  title: {
+    fontSize: Font.lg,
+    fontWeight: 700,
+    marginBottom: Gap.md,
+  },
+  message: {
+    fontSize: Font.md,
+    color: Colors.textSecondary,
+    marginBottom: Gap.section,
+    lineHeight: '1.4',
+  },
+  buttons: {
+    display: 'flex',
+    gap: Gap.md,
+  },
+  btnNo: {
+    flex: 1,
+    padding: `${Gap.xl}px`,
+    borderRadius: 8,
+    border: `1px solid ${Colors.accentBlue}`,
+    backgroundColor: Colors.chipSelectedBg,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
+    fontWeight: 600,
+    cursor: 'pointer',
+    textAlign: 'center' as const,
+  },
+  btnYes: {
+    flex: 1,
+    padding: `${Gap.xl}px`,
+    borderRadius: 8,
+    border: 'none',
+    backgroundColor: Colors.statusRed,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
+    fontWeight: 600,
+    cursor: 'pointer',
+    textAlign: 'center' as const,
   },
 };

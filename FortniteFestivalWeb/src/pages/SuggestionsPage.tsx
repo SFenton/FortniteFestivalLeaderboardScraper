@@ -323,6 +323,7 @@ export default function SuggestionsPage({ accountId }: Props) {
         <SuggestionsFilterModal
           visible={showFilter}
           draft={filterDraft}
+          savedDraft={filterSettings}
           instrumentVisibility={instrumentVisibility}
           onChange={setFilterDraft}
           onCancel={() => setShowFilter(false)}
@@ -412,6 +413,7 @@ export default function SuggestionsPage({ accountId }: Props) {
       <SuggestionsFilterModal
         visible={showFilter}
         draft={filterDraft}
+        savedDraft={filterSettings}
         instrumentVisibility={instrumentVisibility}
         onChange={setFilterDraft}
         onCancel={() => setShowFilter(false)}
