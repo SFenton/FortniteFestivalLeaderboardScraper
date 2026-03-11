@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { useParams, Link, useSearchParams } from 'react-router-dom';
+import { useParams, Link, useSearchParams, useLocation } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
 import { usePlayerData } from '../contexts/PlayerDataContext';
 import { api } from '../api/client';
@@ -27,6 +27,7 @@ export default function LeaderboardPage() {
     songId: string;
     instrument: string;
   }>();
+  const location = useLocation();
   const {
     state: { songs },
   } = useFestival();
@@ -216,6 +217,7 @@ export default function LeaderboardPage() {
                   key={e.accountId}
                   ref={isPlayer ? playerRowRef : undefined}
                   to={`/player/${e.accountId}`}
+                  state={{ backTo: location.pathname }}
                   style={{ ...rowStyle, ...staggerStyle }}
                   onAnimationEnd={(ev) => {
                     const el = ev.currentTarget;

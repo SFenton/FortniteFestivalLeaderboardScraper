@@ -131,3 +131,17 @@ export function loadSongSettings(): SongSettings {
 export function saveSongSettings(settings: SongSettings): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
+
+/** Reset filters and instrument; revert sort to 'title' if an instrument sort mode was active. */
+export function resetSongSettingsForDeselect(): void {
+  const current = loadSongSettings();
+  const defaults = defaultSongSettings();
+  const updated: SongSettings = {
+    ...current,
+    filters: defaults.filters,
+    instrument: defaults.instrument,
+    sortMode: isInstrumentSortMode(current.sortMode) ? defaults.sortMode : current.sortMode,
+    sortAscending: isInstrumentSortMode(current.sortMode) ? defaults.sortAscending : current.sortAscending,
+  };
+  saveSongSettings(updated);
+}

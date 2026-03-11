@@ -1,12 +1,11 @@
-import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, useLocation } from 'react-router-dom';
-import { IoMusicalNotes, IoSparkles, IoStatsChart, IoPerson, IoSettings } from 'react-icons/io5';
-import { useEffect, useLayoutEffect, useState, useRef, useCallback } from 'react';
+import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { IoMusicalNotes, IoSparkles, IoStatsChart, IoPerson, IoSettings, IoSearch } from 'react-icons/io5';
+import { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
 import { SettingsProvider } from './contexts/SettingsContext';
-import PlayerSearch from './components/PlayerSearch';
 import { AnimatedBackground } from './components/AnimatedBackground';
 import { useTrackedPlayer, type TrackedPlayer } from './hooks/useTrackedPlayer';
-import { PlayerDataProvider, usePlayerData } from './contexts/PlayerDataContext';
+import { PlayerDataProvider } from './contexts/PlayerDataContext';
 import { api } from './api/client';
 import type { AccountSearchResult } from './models';
 import { useIsMobile } from './hooks/useIsMobile';
@@ -16,7 +15,9 @@ import LeaderboardPage from './pages/LeaderboardPage';
 import PlayerPage from './pages/PlayerPage';
 import SuggestionsPage from './pages/SuggestionsPage';
 import SettingsPage from './pages/SettingsPage';
-import { Colors, Font, Gap, Radius, Size } from './theme';
+import { Colors, Font, Gap, Layout, Radius, Size } from './theme';
+import { resetSongSettingsForDeselect } from './components/songSettings';
+import BackLink from './components/BackLink';
 
 export default function App() {
   return (
@@ -28,22 +29,6 @@ export default function App() {
       </FestivalProvider>
     </SettingsProvider>
   );
-}
-
-const NAV_TITLES: Record<string, string> = {
-  '/songs': 'Songs',
-  '/suggestions': 'Suggestions',
-  '/statistics': 'Statistics',
-  '/settings': 'Settings',
-};
-
-function getNavTitle(pathname: string): string | null {
-  return NAV_TITLES[pathname] ?? null;
-}
-
-function isDetailRoute(pathname: string): boolean {
-  const parts = pathname.split('/').filter(Boolean);
-  return parts[0] === 'songs' && parts.length >= 2;
 }
 
 const ANIMATED_BG_ROUTES = new Set(['/', '/songs', '/suggestions', '/statistics', '/settings']);
@@ -63,17 +48,28 @@ function AppShell() {
     setPlayer(p);
   };
 
+  const handleDeselect = useCallback(() => {
+    resetSongSettingsForDeselect();
+    clearPlayer();
+  }, [clearPlayer]);
+
   const showAnimatedBg = isAnimatedBgRoute(location.pathname);
 
-  const navTitle = !isMobile ? getNavTitle(location.pathname) : null;
-  const showNav = !isMobile && !isDetailRoute(location.pathname);
+  // Hierarchical back-navigation fallback for detail pages
+  const backFallback = useMemo(() => {
+    const path = location.pathname;
+    const parts = path.split('/').filter(Boolean);
+    if (parts[0] === 'songs' && parts.length === 3) return `/songs/${parts[1]}`;
+    if (parts[0] === 'songs' && parts.length === 2) return '/songs';
+    if (parts[0] === 'player' && parts.length === 2) return '/songs';
+    return null;
+  }, [location.pathname]);
 
   return (
     <PlayerDataProvider accountId={player?.accountId}>
     <div style={styles.shell}>
       <ScrollToTop />
       {showAnimatedBg && <AnimatedBackground songs={songs} />}
-      {showNav && (
         <nav style={styles.nav}>
           <button
             style={styles.hamburger}
@@ -84,25 +80,28 @@ function AppShell() {
             <span style={styles.hamburgerLine} />
             <span style={styles.hamburgerLine} />
           </button>
-          {navTitle && <span style={styles.navTitle}>{navTitle}</span>}
           <div style={styles.spacer} />
-          <NavPlayerSearch
-            player={player}
-            onSelect={handleSelect}
-            onClear={clearPlayer}
-          />
+          <HeaderSearch />
+          <button
+            style={styles.headerProfileBtn}
+            onClick={() => setPlayerModalOpen(true)}
+            aria-label="Profile"
+          >
+            <span style={player ? styles.headerProfileCircle : styles.headerProfileCircleEmpty}>
+              <IoPerson size={16} />
+            </span>
+          </button>
         </nav>
-      )}
 
-      {!isMobile && (
-        <Sidebar
-          player={player}
-          open={sidebarOpen}
-          onClose={() => setSidebarOpen(false)}
-          onDeselect={clearPlayer}
-          onSelect={handleSelect}
-        />
-      )}
+      {backFallback && <BackLink fallback={backFallback} />}
+
+      <Sidebar
+        player={player}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        onDeselect={handleDeselect}
+        onSelect={handleSelect}
+      />
 
       <div id="main-content" key={player?.accountId ?? 'none'} style={styles.content}>
         <Routes>
@@ -125,38 +124,99 @@ function AppShell() {
         </Routes>
       </div>
 
-      {isMobile && <BottomNav player={player} onProfilePress={() => setPlayerModalOpen(true)} />}
-      {isMobile && (
-        <MobilePlayerSearchModal
-          visible={playerModalOpen}
-          onClose={() => setPlayerModalOpen(false)}
-          onSelect={handleSelect}
-          player={player}
-          onDeselect={clearPlayer}
-        />
-      )}
+      {isMobile && <BottomNav player={player} />}
+      <MobilePlayerSearchModal
+        visible={playerModalOpen}
+        onClose={() => setPlayerModalOpen(false)}
+        onSelect={handleSelect}
+        player={player}
+        onDeselect={handleDeselect}
+        isMobile={isMobile}
+      />
     </div>
     </PlayerDataProvider>
   );
 }
 
-function NavPlayerSearch({
-  player,
-  onSelect,
-  onClear,
-}: {
-  player: TrackedPlayer | null;
-  onSelect: (p: TrackedPlayer) => void;
-  onClear: () => void;
-}) {
-  const { isSyncing } = usePlayerData();
+function HeaderSearch() {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<AccountSearchResult[]>([]);
+  const [isOpen, setIsOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
+
+  const search = useCallback(async (q: string) => {
+    if (q.length < 2) { setResults([]); setIsOpen(false); return; }
+    try {
+      const res = await api.searchAccounts(q, 10);
+      setResults(res.results);
+      setIsOpen(res.results.length > 0);
+      setActiveIndex(-1);
+    } catch { setResults([]); setIsOpen(false); }
+  }, []);
+
+  const handleChange = (value: string) => {
+    setQuery(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => { void search(value.trim()); }, 300);
+  };
+
+  const handleSelect = (r: AccountSearchResult) => {
+    navigate(`/player/${r.accountId}`);
+    setQuery('');
+    setResults([]);
+    setIsOpen(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (!isOpen || results.length === 0) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIndex(p => (p < results.length - 1 ? p + 1 : 0)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIndex(p => (p > 0 ? p - 1 : results.length - 1)); }
+    else if (e.key === 'Enter' && activeIndex >= 0) { e.preventDefault(); const r = results[activeIndex]; if (r) handleSelect(r); }
+    else if (e.key === 'Escape') { setIsOpen(false); }
+  };
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setIsOpen(false);
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
   return (
-    <PlayerSearch
-      player={player}
-      onSelect={onSelect}
-      onClear={onClear}
-      isSyncing={isSyncing}
-    />
+    <div ref={containerRef} style={styles.headerSearchContainer}>
+      <div style={styles.headerSearchInputWrap}>
+        <IoSearch size={14} style={{ color: Colors.textTertiary, flexShrink: 0 }} />
+        <input
+          style={styles.headerSearchInput}
+          placeholder="Search player…"
+          value={query}
+          onChange={e => handleChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onFocus={() => { if (results.length > 0) setIsOpen(true); }}
+        />
+      </div>
+      {isOpen && (
+        <div style={styles.headerSearchDropdown}>
+          {results.map((r, i) => (
+            <button
+              key={r.accountId}
+              style={{
+                ...styles.headerSearchResult,
+                ...(i === activeIndex ? { backgroundColor: Colors.surfaceSubtle } : {}),
+              }}
+              onClick={() => handleSelect(r)}
+              onMouseEnter={() => setActiveIndex(i)}
+            >
+              {r.displayName}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -176,6 +236,7 @@ function Sidebar({
   onSelect: (p: TrackedPlayer) => void;
 }) {
   const sidebarRef = useRef<HTMLDivElement>(null);
+  const location = useLocation();
   const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
 
@@ -275,6 +336,7 @@ function Sidebar({
             <div style={styles.sidebarPlayerRow}>
               <Link
                 to={`/player/${player.accountId}`}
+                state={{ backTo: location.pathname }}
                 onClick={onClose}
                 style={{
                   ...styles.sidebarLink,
@@ -477,12 +539,14 @@ function MobilePlayerSearchModal({
   onSelect,
   player,
   onDeselect,
+  isMobile,
 }: {
   visible: boolean;
   onClose: () => void;
   onSelect: (p: TrackedPlayer) => void;
   player: TrackedPlayer | null;
   onDeselect: () => void;
+  isMobile: boolean;
 }) {
   const [mounted, setMounted] = useState(false);
   const [animIn, setAnimIn] = useState(false);
@@ -608,10 +672,10 @@ function MobilePlayerSearchModal({
         aria-label="Select Player"
         style={{
           position: 'fixed',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          height: '80vh',
+          ...(isMobile
+            ? { bottom: 0, left: 0, right: 0, height: '80vh', borderTopLeftRadius: Radius.lg, borderTopRightRadius: Radius.lg }
+            : { top: '50%', left: '50%', width: 420, height: 600, maxHeight: '90vh', borderRadius: Radius.lg, transform: animIn ? 'translate(-50%, -50%)' : 'translate(-50%, -40%)', opacity: animIn ? 1 : 0 }
+          ),
           zIndex: 1001,
           display: 'flex',
           flexDirection: 'column' as const,
@@ -619,10 +683,13 @@ function MobilePlayerSearchModal({
           backdropFilter: 'blur(18px)',
           WebkitBackdropFilter: 'blur(18px)',
           color: Colors.textPrimary,
-          borderTopLeftRadius: Radius.lg,
-          borderTopRightRadius: Radius.lg,
-          transform: animIn ? 'translateY(0)' : 'translateY(100%)',
-          transition: `transform ${MODAL_TRANSITION_MS}ms ease`,
+          ...(isMobile
+            ? { transform: animIn ? 'translateY(0)' : 'translateY(100%)' }
+            : {}
+          ),
+          transition: isMobile
+            ? `transform ${MODAL_TRANSITION_MS}ms ease`
+            : `opacity ${MODAL_TRANSITION_MS}ms ease, transform ${MODAL_TRANSITION_MS}ms ease`,
         }}
         onTransitionEnd={handleTransitionEnd}
       >
@@ -657,32 +724,32 @@ function MobilePlayerSearchModal({
                   onChange={(e) => handleChange(e.target.value)}
                 />
               </div>
-          <div style={{ ...styles.modalResults, ...stagger(150) }}>
-            {loading && (
-              <div style={styles.modalSpinnerWrap}>
-                <div style={styles.modalArcSpinner} />
+              <div style={{ ...styles.modalResults, ...stagger(150) }}>
+                {loading && (
+                  <div style={styles.modalSpinnerWrap}>
+                    <div style={styles.modalArcSpinner} />
+                  </div>
+                )}
+                {!loading && query.length < 2 && (
+                  <div style={styles.modalHintCenter}>Enter a username to search for.</div>
+                )}
+                {!loading && query.length >= 2 && results.length === 0 && (
+                  <div style={styles.modalHintCenter}>No matching username found.</div>
+                )}
+                {!loading && results.map((r, i) => (
+                  <button
+                    key={`${resultSeq}-${r.accountId}`}
+                    style={{
+                      ...styles.modalResultBtn,
+                      opacity: 0,
+                      animation: `fadeInUp 300ms ease-out ${i * 50}ms forwards`,
+                    }}
+                    onClick={() => handleSelect(r)}
+                  >
+                    {r.displayName}
+                  </button>
+                ))}
               </div>
-            )}
-            {!loading && query.length < 2 && (
-              <div style={styles.modalHintCenter}>Enter a username to search for.</div>
-            )}
-            {!loading && query.length >= 2 && results.length === 0 && (
-              <div style={styles.modalHintCenter}>No matching username found.</div>
-            )}
-            {!loading && results.map((r, i) => (
-              <button
-                key={`${resultSeq}-${r.accountId}`}
-                style={{
-                  ...styles.modalResultBtn,
-                  opacity: 0,
-                  animation: `fadeInUp 300ms ease-out ${i * 50}ms forwards`,
-                }}
-                onClick={() => handleSelect(r)}
-              >
-                {r.displayName}
-              </button>
-            ))}
-          </div>
             </>
           )}
         </div>
@@ -691,7 +758,7 @@ function MobilePlayerSearchModal({
   );
 }
 
-function BottomNav({ player, onProfilePress }: { player: TrackedPlayer | null; onProfilePress: () => void }) {
+function BottomNav({ player }: { player: TrackedPlayer | null }) {
   const tabs: { to: string; label: string; icon: React.ReactNode }[] = [
     { to: '/songs', label: 'Songs', icon: <IoMusicalNotes size={20} /> },
     ...(player ? [{ to: '/suggestions', label: 'Suggestions', icon: <IoSparkles size={20} /> }] : []),
@@ -713,10 +780,6 @@ function BottomNav({ player, onProfilePress }: { player: TrackedPlayer | null; o
           {tab.label}
         </NavLink>
       ))}
-      <button style={styles.bottomTab} onClick={onProfilePress}>
-        <span style={styles.bottomTabIcon}><IoPerson size={20} /></span>
-        Profile
-      </button>
       <NavLink
         to="/settings"
         style={({ isActive }) => ({
@@ -757,7 +820,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: Gap.xl,
-    padding: `${Gap.md}px ${Gap.section}px`,
+    padding: `${Layout.paddingTop}px ${Layout.paddingHorizontal}px ${Gap.md}px`,
     backgroundColor: 'transparent',
     flexShrink: 0,
     zIndex: 100,
@@ -776,6 +839,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: 36,
     height: 36,
     padding: 6,
+    marginLeft: -6,
     background: 'none',
     border: 'none',
     cursor: 'pointer',
@@ -795,6 +859,56 @@ const styles: Record<string, React.CSSProperties> = {
   },
   spacer: {
     flex: 1,
+  },
+  headerSearchContainer: {
+    position: 'relative' as const,
+    flex: 1,
+    maxWidth: 320,
+  },
+  headerSearchInputWrap: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.sm,
+    padding: `${Gap.md}px ${Gap.xl}px`,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.glassCard,
+    backdropFilter: 'blur(18px) saturate(1.4)',
+    WebkitBackdropFilter: 'blur(18px) saturate(1.4)',
+    border: `1px solid ${Colors.glassBorder}`,
+  },
+  headerSearchInput: {
+    flex: 1,
+    background: 'none',
+    border: 'none',
+    outline: 'none',
+    color: Colors.textPrimary,
+    fontSize: Font.sm,
+  },
+  headerSearchDropdown: {
+    position: 'absolute' as const,
+    top: '100%',
+    left: 0,
+    right: 0,
+    marginTop: Gap.sm,
+    backgroundColor: Colors.glassCard,
+    backdropFilter: 'blur(24px) saturate(1.4)',
+    WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
+    border: `1px solid ${Colors.glassBorder}`,
+    borderRadius: Radius.sm,
+    zIndex: 300,
+    maxHeight: 400,
+    overflowY: 'auto' as const,
+  },
+  headerSearchResult: {
+    display: 'block',
+    width: '100%',
+    padding: `${Gap.xl}px ${Gap.section}px`,
+    background: 'none',
+    border: 'none',
+    color: Colors.textSecondary,
+    fontSize: Font.md,
+    cursor: 'pointer',
+    textAlign: 'left' as const,
   },
   brand: {
     fontSize: Font.lg,
@@ -866,6 +980,38 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid ${Colors.borderSubtle}`,
     flexShrink: 0,
     marginRight: Gap.md,
+  },
+  headerProfileBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    padding: 0,
+    marginRight: -4,
+  },
+  headerProfileCircle: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 48,
+    height: 48,
+    borderRadius: '50%',
+    backgroundColor: Colors.surfaceSubtle,
+    border: `1px solid ${Colors.borderSubtle}`,
+    color: Colors.textSecondary,
+  },
+  headerProfileCircleEmpty: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 48,
+    height: 48,
+    borderRadius: '50%',
+    backgroundColor: '#D0D5DD',
+    border: 'none',
+    color: '#4A5568',
   },
   deselectBtn: {
     background: Colors.dangerBg,

@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, Fragment, type CSSProperties } from 'react';
 import { IoSwapVerticalSharp, IoFunnel } from 'react-icons/io5';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { formatPercentile } from '../utils/formatPercentile';
 import { useFestival } from '../contexts/FestivalContext';
 import { usePlayerData } from '../contexts/PlayerDataContext';
@@ -366,10 +366,6 @@ export default function SongsPage() {
       )}
       <div style={isMobile ? styles.headerMobile : styles.header}>
         <div style={styles.container}>
-          {isMobile && <h1 style={styles.heading}>Songs</h1>}
-          {isMobile && filtersActive && filtered.length !== songs.length && (
-            <div style={styles.count}>{filtered.length} of {songs.length} songs</div>
-          )}
           {!isMobile && (toolbarShownRef.current || loadPhase === 'contentIn') && (
           <>
           <div style={styles.toolbar}>
@@ -404,7 +400,7 @@ export default function SongsPage() {
         </div>
       </div>
       <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
-        <div style={styles.container}>
+        <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.sm } : {}) }}>
         {isSyncing && (
           <div style={styles.syncBanner}>
             <div style={styles.syncSpinner} />
@@ -500,6 +496,7 @@ export default function SongsPage() {
       {isMobile && (toolbarShownRef.current || loadPhase === 'contentIn') && (
         <div style={styles.bottomToolbar}>
           <div style={styles.bottomToolbarInner}>
+            <div style={styles.bottomCount}>{filtered.length} of {songs.length} songs</div>
             <div style={styles.toolbar}>
               <input
                 style={{ ...styles.searchInput, ...styles.searchInputMobile }}
@@ -737,6 +734,7 @@ function SongRow({
     });
   }, [showInstrumentIcons, instrumentFilter, allScoreMap, enabledInstruments]);
   const linkRef = useRef<HTMLAnchorElement>(null);
+  const location = useLocation();
   const handleAnimEnd = useCallback(() => {
     const el = linkRef.current;
     if (!el) return;
@@ -790,7 +788,7 @@ function SongRow({
     const scoreEntry = entries.find(e => e.key === 'score');
     const bottomEntries = entries.filter(e => e.key !== 'score');
     return (
-      <Link ref={linkRef} to={`/songs/${song.songId}?instrument=${encodeURIComponent(instrument)}`} style={{ ...styles.rowMobile, ...animStyle }} onAnimationEnd={handleAnimEnd}>
+      <Link ref={linkRef} to={`/songs/${song.songId}?instrument=${encodeURIComponent(instrument)}`} state={{ backTo: location.pathname }} style={{ ...styles.rowMobile, ...animStyle }} onAnimationEnd={handleAnimEnd}>
         <div style={styles.mobileTopRow}>
           {thumb}
           <div style={styles.rowText}>
@@ -812,7 +810,7 @@ function SongRow({
 
   if (isMobile && chipRow) {
     return (
-      <Link ref={linkRef} to={`/songs/${song.songId}`} style={{ ...styles.rowMobile, ...animStyle }} onAnimationEnd={handleAnimEnd}>
+      <Link ref={linkRef} to={`/songs/${song.songId}`} state={{ backTo: location.pathname }} style={{ ...styles.rowMobile, ...animStyle }} onAnimationEnd={handleAnimEnd}>
         <div style={styles.mobileTopRow}>
           {thumb}
           <div style={styles.rowText}>
@@ -832,7 +830,7 @@ function SongRow({
   }
 
   return (
-    <Link ref={linkRef} to={`/songs/${song.songId}?instrument=${encodeURIComponent(instrument)}`} style={{ ...styles.row, ...animStyle }} onAnimationEnd={handleAnimEnd}>
+    <Link ref={linkRef} to={`/songs/${song.songId}?instrument=${encodeURIComponent(instrument)}`} state={{ backTo: location.pathname }} style={{ ...styles.row, ...animStyle }} onAnimationEnd={handleAnimEnd}>
       {thumb}
       <div style={styles.rowText}>
         <span style={styles.rowTitle}>{song.title}</span>

@@ -91,17 +91,8 @@ export default function SettingsPage() {
 
   return (
     <div style={styles.page}>
-      {isMobile && (
-        <div style={styles.header}>
-          <div style={styles.container}>
-            <FadeInDiv delay={staggerIndex++ * 125}>
-              <h1 style={styles.heading}>Settings</h1>
-            </FadeInDiv>
-          </div>
-        </div>
-      )}
       <div style={styles.scrollArea}>
-      <div style={styles.container}>
+      <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.md } : {}) }}>
         <div style={styles.cardColumn}>
 
           {/* ───── App Settings ───── */}

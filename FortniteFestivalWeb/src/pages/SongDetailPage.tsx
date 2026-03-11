@@ -222,11 +222,6 @@ export default function SongDetailPage() {
       )}
       {phase === 'contentIn' && (
         <div style={styles.container}>
-          <div style={stagger(0)} onAnimationEnd={clearAnim}>
-            <Link to="/songs" style={styles.backLink}>
-              ← Back to Songs
-            </Link>
-          </div>
           <div style={stagger(150)} onAnimationEnd={clearAnim}>
             <SongHeader song={song} songId={songId} />
           </div>
@@ -364,7 +359,7 @@ function InstrumentCard({
           cursor: 'pointer',
         }}
         onClick={() => {
-          navigate(`/songs/${songId}/${instrument}`);
+          navigate(`/songs/${songId}/${instrument}`, { state: { backTo: `/songs/${songId}` } });
         }}
       >
         <div style={styles.cardBody}>
@@ -379,6 +374,7 @@ function InstrumentCard({
             <Link
               key={e.accountId}
               to={`/player/${e.accountId}`}
+              state={{ backTo: `/songs/${songId}` }}
               style={{ ...styles.entryRow, ...(isMobile ? styles.entryRowMobile : {}), ...rowStagger }}
               onClick={(ev) => ev.stopPropagation()}
               onAnimationEnd={clearAnim}
@@ -538,13 +534,6 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: MaxWidth.card,
     margin: '0 auto',
     padding: `${Layout.paddingTop}px ${Layout.paddingHorizontal}px`,
-  },
-  backLink: {
-    color: Colors.accentBlue,
-    textDecoration: 'none',
-    fontSize: Font.md,
-    marginBottom: Gap.xl,
-    display: 'inline-block',
   },
   header: {
     display: 'flex',

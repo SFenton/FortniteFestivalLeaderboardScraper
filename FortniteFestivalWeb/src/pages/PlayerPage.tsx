@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, type CSSProperties } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { formatPercentile } from '../utils/formatPercentile';
 import { useFestival } from '../contexts/FestivalContext';
 import { usePlayerData } from '../contexts/PlayerDataContext';
@@ -123,6 +123,7 @@ function PlayerContent({
   isTrackedPlayer: boolean;
 }) {
   const { settings } = useSettings();
+  const location = useLocation();
 
   // For the tracked player, filter scores by visible instruments;
   // for other players, always show all data.
@@ -140,17 +141,7 @@ function PlayerContent({
   // Build a flat list of stagger-able sections so we can assign sequential delays
   const sections: React.ReactNode[] = [];
 
-  // 0: Header
-  sections.push(
-    <div key="header">
-      <h1 style={styles.playerName}>{data.displayName}</h1>
-      <p style={styles.subtitle}>
-        {effectiveScores.length.toLocaleString()} total scores
-      </p>
-    </div>,
-  );
-
-  // 1: Sync banner (if showing)
+  // 0: Sync banner (if showing)
   if (isSyncing) {
     sections.push(
       <div key="sync" style={styles.syncBanner}>
@@ -231,7 +222,7 @@ function PlayerContent({
       <StatBox label="Full Combos" value={overallFcValue} color={overallFcIs100 ? Colors.gold : undefined} />
       <StatBox label="Gold Stars" value={overallStats.goldStarCount.toLocaleString()} color={Colors.gold} />
       <StatBox label="Avg Accuracy" value={overallStats.avgAccuracy > 0 ? formatClamped(overallStats.avgAccuracy / 10000) + '%' : '—'} color={overallAccColor} />
-      <StatBox label="Best Rank" value={overallStats.bestRank > 0 ? `#${overallStats.bestRank.toLocaleString()}` : '—'} to={overallStats.bestRankSongId ? `/songs/${overallStats.bestRankSongId}?instrument=${encodeURIComponent(overallStats.bestRankInstrument!)}` : undefined} />
+      <StatBox label="Best Rank" value={overallStats.bestRank > 0 ? `#${overallStats.bestRank.toLocaleString()}` : '—'} to={overallStats.bestRankSongId ? `/songs/${overallStats.bestRankSongId}?instrument=${encodeURIComponent(overallStats.bestRankInstrument!)}` : undefined} state={{ backTo: location.pathname }} />
     </div>,
   );
 
@@ -343,14 +334,14 @@ function PlayerContent({
   );
 }
 
-function StatBox({ label, value, color, to }: { label: string; value: React.ReactNode; color?: string; to?: string }) {
+function StatBox({ label, value, color, to, state }: { label: string; value: React.ReactNode; color?: string; to?: string; state?: Record<string, string> }) {
   const inner = (
     <div style={styles.statBox}>
       <span style={{ ...styles.statValue, ...(color ? { color } : {}) }}>{value}</span>
       <span style={styles.statLabel}>{label}</span>
     </div>
   );
-  if (to) return <Link to={to} style={{ textDecoration: 'none', color: 'inherit' }}>{inner}</Link>;
+  if (to) return <Link to={to} state={state} style={{ textDecoration: 'none', color: 'inherit' }}>{inner}</Link>;
   return inner;
 }
 
@@ -506,6 +497,7 @@ function TopSongsCard({
             <Link
               key={s.songId}
               to={`/songs/${s.songId}?instrument=${encodeURIComponent(instrument)}`}
+              state={{ backTo: location.pathname }}
               style={styles.topSongRow}
             >
               {song?.albumArt ? (

@@ -292,7 +292,6 @@ export default function SuggestionsPage({ accountId }: Props) {
     return (
       <div style={styles.page}>
         <div style={styles.container}>
-          {isMobile && <h1 style={styles.heading}>Suggestions</h1>}
           <div style={styles.emptyState}>
             <div style={styles.emptyTitle}>No Suggestions Available</div>
             <div style={styles.emptySubtitle}>
@@ -332,10 +331,10 @@ export default function SuggestionsPage({ accountId }: Props) {
           <div style={styles.arcSpinner} />
         </div>
       )}
+      {!isMobile && (
       <div style={styles.header}>
         <div style={styles.container}>
           <div style={{ ...styles.headerRow, ...headerStagger }}>
-            {isMobile && <h1 style={styles.heading}>Suggestions</h1>}
             <button
               style={{ ...styles.iconBtn, ...(filtersActive ? styles.iconBtnActive : {}) }}
               onClick={openFilter}
@@ -348,8 +347,9 @@ export default function SuggestionsPage({ accountId }: Props) {
           </div>
         </div>
       </div>
+      )}
       <div id="suggestions-scroll" style={styles.scrollArea}>
-      <div style={styles.container}>
+      <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.sm } : {}) }}>
         {visibleCategories.length === 0 && (categories.length > 0 || !effectiveHasMore) ? (
           <div style={styles.emptyState}>
             <div style={styles.emptyTitle}>No Suggestions Available</div>
@@ -385,6 +385,23 @@ export default function SuggestionsPage({ accountId }: Props) {
         )}
       </div>
       </div>
+
+      {isMobile && (
+        <div style={styles.bottomToolbar}>
+          <div style={styles.bottomToolbarInner}>
+            <button
+              style={{ ...styles.iconBtn, ...styles.iconBtnMobile, ...(filtersActive ? styles.iconBtnActive : {}), marginLeft: 'auto' }}
+              onClick={openFilter}
+              title="Filter"
+              aria-label="Filter suggestions"
+            >
+              <IoFunnel size={22} />
+              {filtersActive && <span style={styles.filterDot} />}
+            </button>
+          </div>
+        </div>
+      )}
+
       <SuggestionsFilterModal
         visible={showFilter}
         draft={filterDraft}
@@ -603,6 +620,18 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     zIndex: 10,
   },
+  bottomToolbar: {
+    flexShrink: 0,
+    zIndex: 10,
+  },
+  bottomToolbarInner: {
+    display: 'flex',
+    width: '100%',
+    maxWidth: MaxWidth.card,
+    margin: '0 auto',
+    padding: `${Gap.md}px ${Layout.paddingHorizontal}px`,
+    boxSizing: 'border-box' as const,
+  },
   scrollArea: {
     flex: 1,
     overflowY: 'auto' as const,
@@ -658,6 +687,10 @@ const styles: Record<string, React.CSSProperties> = {
     WebkitBackdropFilter: 'blur(20px)',
     color: Colors.textTertiary,
     cursor: 'pointer',
+  },
+  iconBtnMobile: {
+    width: 44,
+    height: 44,
   },
   iconBtnActive: {
     borderColor: Colors.accentBlue,
