@@ -20,6 +20,7 @@ import { useSettings } from '../contexts/SettingsContext';
 import type { AppSettings } from '../contexts/SettingsContext';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill } from '../theme';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useFabSearch } from '../contexts/FabSearchContext';
 import type { InstrumentKey as ServerInstrumentKey } from '../models';
 
 /** Clears animation styles on completion so backdrop-filter works on children. */
@@ -169,6 +170,12 @@ export default function SuggestionsPage({ accountId }: Props) {
   };
 
   const filtersActive = isSuggestionsFilterActive(filterSettings);
+
+  // Register suggestions filter for FAB
+  const fabSearch = useFabSearch();
+  useEffect(() => {
+    fabSearch.registerSuggestionsActions({ openFilter });
+  });
 
   const instrumentVisibility = useMemo(() => ({
     showLead: appSettings.showLead,
@@ -349,7 +356,7 @@ export default function SuggestionsPage({ accountId }: Props) {
       </div>
       )}
       <div id="suggestions-scroll" style={styles.scrollArea}>
-      <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.sm } : {}) }}>
+      <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.section } : {}) }}>
         {visibleCategories.length === 0 && (categories.length > 0 || !effectiveHasMore) ? (
           <div style={styles.emptyState}>
             <div style={styles.emptyTitle}>No Suggestions Available</div>
@@ -385,22 +392,6 @@ export default function SuggestionsPage({ accountId }: Props) {
         )}
       </div>
       </div>
-
-      {isMobile && (
-        <div style={styles.bottomToolbar}>
-          <div style={styles.bottomToolbarInner}>
-            <button
-              style={{ ...styles.iconBtn, ...styles.iconBtnMobile, ...(filtersActive ? styles.iconBtnActive : {}), marginLeft: 'auto' }}
-              onClick={openFilter}
-              title="Filter"
-              aria-label="Filter suggestions"
-            >
-              <IoFunnel size={22} />
-              {filtersActive && <span style={styles.filterDot} />}
-            </button>
-          </div>
-        </div>
-      )}
 
       <SuggestionsFilterModal
         visible={showFilter}

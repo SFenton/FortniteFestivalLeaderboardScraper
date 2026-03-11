@@ -379,7 +379,7 @@ function InstrumentCard({
               onClick={(ev) => ev.stopPropagation()}
               onAnimationEnd={clearAnim}
             >
-              <span style={styles.entryRank}>#{i + 1}</span>
+              <span style={styles.entryRank}>#{(e.rank ?? i + 1).toLocaleString()}</span>
               <span style={styles.entryName}>
                 {e.displayName ?? e.accountId.slice(0, 8)}
               </span>

@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { IoMusicalNotes, IoSparkles, IoStatsChart, IoPerson, IoSettings, IoSearch } from 'react-icons/io5';
-import { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback } from 'react';
+import { IoMusicalNotes, IoSparkles, IoStatsChart, IoPerson, IoSettings, IoSearch, IoSwapVerticalSharp, IoFunnel } from 'react-icons/io5';
+import { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback, Fragment } from 'react';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import { AnimatedBackground } from './components/AnimatedBackground';
@@ -18,14 +18,17 @@ import SettingsPage from './pages/SettingsPage';
 import { Colors, Font, Gap, Layout, Radius, Size } from './theme';
 import { resetSongSettingsForDeselect } from './components/songSettings';
 import BackLink from './components/BackLink';
+import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
 
 export default function App() {
   return (
     <SettingsProvider>
       <FestivalProvider>
-        <BrowserRouter basename="/app">
-          <AppShell />
-        </BrowserRouter>
+        <FabSearchProvider>
+          <BrowserRouter basename="/app">
+            <AppShell />
+          </BrowserRouter>
+        </FabSearchProvider>
       </FestivalProvider>
     </SettingsProvider>
   );
@@ -41,12 +44,19 @@ function AppShell() {
   const { state: { songs } } = useFestival();
   const location = useLocation();
   const isMobile = useIsMobile();
+  const fabSearch = useFabSearch();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [playerModalOpen, setPlayerModalOpen] = useState(false);
+  const [findPlayerOpen, setFindPlayerOpen] = useState(false);
+  const navigate = useNavigate();
 
   const handleSelect = (p: TrackedPlayer) => {
     setPlayer(p);
   };
+
+  const handleFindPlayerSelect = useCallback((p: TrackedPlayer) => {
+    navigate(`/player/${p.accountId}`);
+  }, [navigate]);
 
   const handleDeselect = useCallback(() => {
     resetSongSettingsForDeselect();
@@ -54,6 +64,21 @@ function AppShell() {
   }, [clearPlayer]);
 
   const showAnimatedBg = isAnimatedBgRoute(location.pathname);
+
+  // Pages with custom backgrounds (album art) shouldn't get the scroll fade mask
+  const hasCustomBg = useMemo(() => {
+    const parts = location.pathname.split('/').filter(Boolean);
+    return parts[0] === 'songs' && parts.length >= 2;
+  }, [location.pathname]);
+
+  // Page title for mobile header
+  const NAV_TITLES: Record<string, string> = {
+    '/songs': 'Songs',
+    '/suggestions': 'Suggestions',
+    '/statistics': 'Statistics',
+    '/settings': 'Settings',
+  };
+  const navTitle = NAV_TITLES[location.pathname] ?? null;
 
   // Hierarchical back-navigation fallback for detail pages
   const backFallback = useMemo(() => {
@@ -70,28 +95,36 @@ function AppShell() {
     <div style={styles.shell}>
       <ScrollToTop />
       {showAnimatedBg && <AnimatedBackground songs={songs} />}
-        <nav style={styles.nav}>
-          <button
-            style={styles.hamburger}
-            onClick={() => setSidebarOpen((o) => !o)}
-            aria-label="Open navigation"
-          >
-            <span style={styles.hamburgerLine} />
-            <span style={styles.hamburgerLine} />
-            <span style={styles.hamburgerLine} />
-          </button>
-          <div style={styles.spacer} />
-          <HeaderSearch />
-          <button
-            style={styles.headerProfileBtn}
-            onClick={() => setPlayerModalOpen(true)}
-            aria-label="Profile"
-          >
-            <span style={player ? styles.headerProfileCircle : styles.headerProfileCircleEmpty}>
-              <IoPerson size={16} />
-            </span>
-          </button>
-        </nav>
+        {isMobile ? (
+          navTitle ? (
+            <div style={styles.mobileHeader}>
+              <span style={styles.navTitle}>{navTitle}</span>
+            </div>
+          ) : null
+        ) : (
+          <nav style={styles.nav}>
+            <button
+              style={styles.hamburger}
+              onClick={() => setSidebarOpen((o) => !o)}
+              aria-label="Open navigation"
+            >
+              <span style={styles.hamburgerLine} />
+              <span style={styles.hamburgerLine} />
+              <span style={styles.hamburgerLine} />
+            </button>
+            <div style={styles.spacer} />
+            <HeaderSearch />
+            <button
+              style={styles.headerProfileBtn}
+              onClick={() => setPlayerModalOpen(true)}
+              aria-label="Profile"
+            >
+              <span style={player ? styles.headerProfileCircle : styles.headerProfileCircleEmpty}>
+                <IoPerson size={16} />
+              </span>
+            </button>
+          </nav>
+        )}
 
       {backFallback && <BackLink fallback={backFallback} />}
 
@@ -125,12 +158,71 @@ function AppShell() {
       </div>
 
       {isMobile && <BottomNav player={player} />}
+      {isMobile && location.pathname === '/songs' && (
+        <FloatingActionButton
+          mode="songs"
+          defaultOpen
+          placeholder="Search songs or artists..."
+          actionGroups={[
+            [
+              { label: 'Sort Songs', icon: <IoSwapVerticalSharp size={18} />, onPress: () => fabSearch.openSort() },
+              ...(player ? [{ label: 'Filter Songs', icon: <IoFunnel size={18} />, onPress: () => fabSearch.openFilter() }] : []),
+            ],
+            [
+              { label: 'Find Player', icon: <IoSearch size={18} />, onPress: () => setFindPlayerOpen(true) },
+              player
+                ? { label: player.displayName, icon: <IoPerson size={18} />, onPress: () => setPlayerModalOpen(true) }
+                : { label: 'Select Player Profile', icon: <IoPerson size={18} />, onPress: () => setPlayerModalOpen(true) },
+            ],
+          ]}
+          onPress={() => {}}
+        />
+      )}
+      {isMobile && location.pathname === '/suggestions' && (
+        <FloatingActionButton
+          mode="players"
+          actionGroups={[
+            [
+              { label: 'Filter Suggestions', icon: <IoFunnel size={18} />, onPress: () => fabSearch.openSuggestionsFilter() },
+            ],
+            [
+              { label: 'Find Player', icon: <IoSearch size={18} />, onPress: () => setFindPlayerOpen(true) },
+              player
+                ? { label: player.displayName, icon: <IoPerson size={18} />, onPress: () => setPlayerModalOpen(true) }
+                : { label: 'Select Player Profile', icon: <IoPerson size={18} />, onPress: () => setPlayerModalOpen(true) },
+            ],
+          ]}
+          onPress={() => {}}
+        />
+      )}
+      {isMobile && location.pathname !== '/songs' && location.pathname !== '/suggestions' && (
+        <FloatingActionButton
+          mode="players"
+          actionGroups={[
+            [
+              { label: 'Find Player', icon: <IoSearch size={18} />, onPress: () => setFindPlayerOpen(true) },
+              player
+                ? { label: player.displayName, icon: <IoPerson size={18} />, onPress: () => setPlayerModalOpen(true) }
+                : { label: 'Select Player Profile', icon: <IoPerson size={18} />, onPress: () => setPlayerModalOpen(true) },
+            ],
+          ]}
+          onPress={() => {}}
+        />
+      )}
       <MobilePlayerSearchModal
         visible={playerModalOpen}
         onClose={() => setPlayerModalOpen(false)}
         onSelect={handleSelect}
         player={player}
         onDeselect={handleDeselect}
+        isMobile={isMobile}
+      />
+      <MobilePlayerSearchModal
+        visible={findPlayerOpen}
+        onClose={() => setFindPlayerOpen(false)}
+        onSelect={handleFindPlayerSelect}
+        player={null}
+        onDeselect={() => {}}
         isMobile={isMobile}
       />
     </div>
@@ -794,6 +886,188 @@ function BottomNav({ player }: { player: TrackedPlayer | null }) {
   );
 }
 
+function FloatingActionButton({
+  mode,
+  defaultOpen,
+  placeholder,
+  icon,
+  actionGroups,
+  onPress: _onPress,
+}: {
+  mode: 'players' | 'songs';
+  defaultOpen?: boolean;
+  placeholder?: string;
+  icon?: React.ReactNode;
+  actionGroups?: { label: string; icon: React.ReactNode; onPress: () => void }[][];
+  onPress: () => void;
+}) {
+  const searchVisible = !!defaultOpen;
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [popupMounted, setPopupMounted] = useState(false);
+  const [popupVisible, setPopupVisible] = useState(false);
+
+  const openActions = useCallback(() => {
+    setActionsOpen(true);
+    setPopupMounted(true);
+    requestAnimationFrame(() => requestAnimationFrame(() => setPopupVisible(true)));
+  }, []);
+
+  const closeActions = useCallback(() => {
+    setPopupVisible(false);
+    setTimeout(() => { setPopupMounted(false); setActionsOpen(false); }, 300);
+  }, []);
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<AccountSearchResult[]>([]);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
+  const fabSearch = useFabSearch();
+
+  const searchPlayers = useCallback(async (q: string) => {
+    if (q.length < 2) { setResults([]); return; }
+    try {
+      const res = await api.searchAccounts(q, 10);
+      setResults(res.results);
+      setActiveIndex(-1);
+    } catch { setResults([]); }
+  }, []);
+
+  const handleChange = (value: string) => {
+    setQuery(value);
+    if (mode === 'songs') {
+      fabSearch.setQuery(value);
+    } else {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => { void searchPlayers(value.trim()); }, 300);
+    }
+  };
+
+  const handleSelectPlayer = (r: AccountSearchResult) => {
+    navigate(`/player/${r.accountId}`);
+    setQuery('');
+    setResults([]);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (mode !== 'players' || results.length === 0) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIndex(p => (p < results.length - 1 ? p + 1 : 0)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIndex(p => (p > 0 ? p - 1 : results.length - 1)); }
+    else if (e.key === 'Enter' && activeIndex >= 0) { e.preventDefault(); const r = results[activeIndex]; if (r) handleSelectPlayer(r); }
+    else if (e.key === 'Escape') { setResults([]); }
+  };
+
+  useEffect(() => {
+    if (mode !== 'players' || results.length === 0) return;
+    const handleClick = (e: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        setResults([]);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [mode, results]);
+
+  useEffect(() => {
+    if (!actionsOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        closeActions();
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [actionsOpen]);
+
+  useEffect(() => {
+    if (searchVisible) {
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+  }, [searchVisible]);
+
+  return (
+    <div ref={searchContainerRef} style={styles.fabContainer}>
+      {searchVisible && (
+        <div style={styles.fabSearchBar}>
+          <input
+            ref={inputRef}
+            style={styles.fabSearchInput}
+            placeholder={placeholder ?? 'Search player…'}
+            value={query}
+            onChange={e => handleChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+          />
+          {mode === 'players' && results.length > 0 && (
+            <div style={styles.fabSearchResults}>
+              {results.map((r, i) => (
+                <button
+                  key={r.accountId}
+                  style={{
+                    ...styles.fabSearchResultBtn,
+                    ...(i === activeIndex ? { backgroundColor: Colors.surfaceSubtle } : {}),
+                  }}
+                  onClick={() => handleSelectPlayer(r)}
+                >
+                  {r.displayName}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      <button
+        style={styles.fab}
+        onClick={() => openActions()}
+        aria-label="Actions"
+      >
+        {icon ?? <span style={styles.fabHamburger}><span style={styles.fabHamburgerLine} /><span style={styles.fabHamburgerLine} /><span style={styles.fabHamburgerLine} /></span>}
+      </button>
+      {popupMounted && (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: 64,
+              right: 0,
+              zIndex: 1002,
+              pointerEvents: 'auto' as const,
+              backgroundColor: Colors.glassCard,
+              backdropFilter: 'blur(24px) saturate(1.4)',
+              WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
+              border: `1px solid ${Colors.glassBorder}`,
+              borderRadius: Radius.sm,
+              padding: `${Gap.sm}px 0`,
+              minWidth: 200,
+              boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+              transformOrigin: 'bottom right',
+              transform: popupVisible ? 'scale(1)' : 'scale(0)',
+              opacity: popupVisible ? 1 : 0,
+              transition: popupVisible
+                ? 'transform 450ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 300ms ease'
+                : 'transform 300ms ease, opacity 300ms ease',
+            }}
+          >
+            {(actionGroups ?? []).map((group, gi) => (
+              <Fragment key={gi}>
+                {gi > 0 && <div style={styles.fabPopupDivider} />}
+                {group.map((action) => (
+                  <button
+                    key={action.label}
+                    style={styles.fabPopupItem}
+                    onClick={() => { closeActions(); action.onPress(); }}
+                  >
+                    <span style={styles.fabPopupItemIcon}>{action.icon}</span>
+                    {action.label}
+                  </button>
+                ))}
+              </Fragment>
+            ))}
+          </div>
+      )}
+    </div>
+  );
+}
+
 function ScrollToTop() {
   const { pathname } = useLocation();
   useEffect(() => {
@@ -856,6 +1130,12 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     color: Colors.textPrimary,
     whiteSpace: 'nowrap' as const,
+  },
+  mobileHeader: {
+    padding: `${Layout.paddingTop + Gap.md}px ${Layout.paddingHorizontal}px ${Gap.sm}px`,
+    flexShrink: 0,
+    zIndex: 100,
+    position: 'relative' as const,
   },
   spacer: {
     flex: 1,
@@ -1115,6 +1395,123 @@ const styles: Record<string, React.CSSProperties> = {
     zIndex: 100,
     position: 'relative' as const,
     padding: `${Gap.sm}px 0 ${Gap.md}px`,
+  },
+  fabContainer: {
+    position: 'fixed' as const,
+    bottom: 80,
+    left: Layout.paddingHorizontal,
+    right: Layout.paddingHorizontal,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: Gap.md,
+    zIndex: 150,
+    pointerEvents: 'none' as const,
+  },
+  fab: {
+    width: 56,
+    height: 56,
+    borderRadius: '50%',
+    backgroundColor: 'rgba(124, 58, 237, 0.45)',
+    backdropFilter: 'blur(20px) saturate(1.4)',
+    WebkitBackdropFilter: 'blur(20px) saturate(1.4)',
+    border: `1px solid rgba(124, 58, 237, 0.35)`,
+    color: Colors.textPrimary,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+    flexShrink: 0,
+    pointerEvents: 'auto' as const,
+  },
+  fabHamburger: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    justifyContent: 'center',
+    gap: 5,
+  },
+  fabHamburgerLine: {
+    display: 'block',
+    width: 20,
+    height: 2,
+    backgroundColor: Colors.textPrimary,
+    borderRadius: 1,
+  },
+  fabSearchBar: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: Gap.sm,
+    flex: 1,
+    position: 'relative' as const,
+    pointerEvents: 'auto' as const,
+  },
+  fabSearchInput: {
+    width: '100%',
+    height: 56,
+    padding: `0 ${Gap.section}px`,
+    borderRadius: Radius.full,
+    backgroundColor: Colors.glassCard,
+    backdropFilter: 'blur(18px) saturate(1.4)',
+    WebkitBackdropFilter: 'blur(18px) saturate(1.4)',
+    border: `1px solid ${Colors.glassBorder}`,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
+    outline: 'none',
+    boxSizing: 'border-box' as const,
+    boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+  },
+  fabSearchResults: {
+    position: 'absolute' as const,
+    bottom: '100%',
+    right: 0,
+    left: 0,
+    marginBottom: Gap.sm,
+    backgroundColor: Colors.glassCard,
+    backdropFilter: 'blur(24px) saturate(1.4)',
+    WebkitBackdropFilter: 'blur(24px) saturate(1.4)',
+    border: `1px solid ${Colors.glassBorder}`,
+    borderRadius: Radius.sm,
+    maxHeight: 360,
+    overflowY: 'auto' as const,
+    boxShadow: '0 -4px 16px rgba(0,0,0,0.3)',
+  },
+  fabSearchResultBtn: {
+    display: 'block',
+    width: '100%',
+    padding: `${Gap.xl}px ${Gap.section}px`,
+    background: 'none',
+    border: 'none',
+    color: Colors.textSecondary,
+    fontSize: Font.md,
+    cursor: 'pointer',
+    textAlign: 'left' as const,
+  },
+  fabPopupItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.xl,
+    width: '100%',
+    padding: `${Gap.xl}px ${Gap.section}px`,
+    background: 'none',
+    border: 'none',
+    color: Colors.textSecondary,
+    fontSize: Font.md,
+    cursor: 'pointer',
+    textAlign: 'left' as const,
+  },
+  fabPopupItemIcon: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 20,
+    flexShrink: 0,
+    color: Colors.textTertiary,
+  },
+  fabPopupDivider: {
+    height: 1,
+    backgroundColor: Colors.glassBorder,
+    margin: `${Gap.sm}px 0`,
   },
   bottomTab: {
     display: 'flex',

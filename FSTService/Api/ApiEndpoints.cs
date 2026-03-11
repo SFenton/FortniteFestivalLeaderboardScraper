@@ -117,6 +117,7 @@ public static class ApiEndpoints
                 e.AccountId,
                 DisplayName = names.GetValueOrDefault(e.AccountId),
                 e.Score,
+                e.Rank,
                 e.Accuracy,
                 e.IsFullCombo,
                 e.Stars,

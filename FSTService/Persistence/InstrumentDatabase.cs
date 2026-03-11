@@ -258,13 +258,22 @@ public sealed class InstrumentDatabase : IDisposable
 
         if (top.HasValue)
         {
-            cmd.CommandText = "SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime FROM LeaderboardEntries WHERE SongId = @songId ORDER BY Score DESC LIMIT @top OFFSET @offset;";
+            cmd.CommandText = @"
+                SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime,
+                       ROW_NUMBER() OVER (ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC) AS Rank
+                FROM LeaderboardEntries WHERE SongId = @songId
+                ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC
+                LIMIT @top OFFSET @offset;";
             cmd.Parameters.AddWithValue("@top", top.Value);
             cmd.Parameters.AddWithValue("@offset", offset);
         }
         else
         {
-            cmd.CommandText = "SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime FROM LeaderboardEntries WHERE SongId = @songId ORDER BY Score DESC;";
+            cmd.CommandText = @"
+                SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime,
+                       ROW_NUMBER() OVER (ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC) AS Rank
+                FROM LeaderboardEntries WHERE SongId = @songId
+                ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC;";
         }
         cmd.Parameters.AddWithValue("@songId", songId);
 
@@ -358,7 +367,9 @@ public sealed class InstrumentDatabase : IDisposable
             SELECT
                 le.SongId,
                 (SELECT COUNT(*) + 1 FROM LeaderboardEntries x
-                 WHERE x.SongId = le.SongId AND x.Score > le.Score) AS Rank,
+                 WHERE x.SongId = le.SongId
+                   AND (x.Score > le.Score
+                        OR (x.Score = le.Score AND COALESCE(x.EndTime, x.FirstSeenAt) < COALESCE(le.EndTime, le.FirstSeenAt)))) AS Rank,
                 (SELECT COUNT(*) FROM LeaderboardEntries x
                  WHERE x.SongId = le.SongId) AS TotalEntries
             FROM LeaderboardEntries le
@@ -391,6 +402,7 @@ public sealed class InstrumentDatabase : IDisposable
             Season       = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
             Percentile   = reader.IsDBNull(6) ? 0 : reader.GetDouble(6),
             EndTime      = reader.IsDBNull(7) ? null : reader.GetString(7),
+            Rank         = reader.FieldCount > 8 && !reader.IsDBNull(8) ? reader.GetInt32(8) : 0,
         };
     }
 

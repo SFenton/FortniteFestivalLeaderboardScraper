@@ -6,6 +6,7 @@ import { useFestival } from '../contexts/FestivalContext';
 import { usePlayerData } from '../contexts/PlayerDataContext';
 import { useSettings } from '../contexts/SettingsContext';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useFabSearch } from '../contexts/FabSearchContext';
 import type { Song, PlayerScore, InstrumentKey } from '../models';
 import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth, goldFill, goldOutline, goldOutlineSkew } from '../theme';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../components/InstrumentIcons';
@@ -33,6 +34,7 @@ export default function SongsPage() {
   } = useFestival();
   const { settings: appSettings } = useSettings();
   const isMobile = useIsMobile();
+  const fabSearch = useFabSearch();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Restore scroll position on mount
@@ -50,11 +52,12 @@ export default function SongsPage() {
     }
   }, []);
   const [search, setSearch] = useState('');
+  const effectiveSearch = isMobile ? fabSearch.query : search;
   const [debouncedSearch, setDebouncedSearch] = useState('');
   useEffect(() => {
-    const id = setTimeout(() => setDebouncedSearch(search), 250);
+    const id = setTimeout(() => setDebouncedSearch(effectiveSearch), 250);
     return () => clearTimeout(id);
-  }, [search]);
+  }, [effectiveSearch]);
   const [settings, setSettings] = useState<SongSettings>(loadSongSettings);
   const [instrument, setInstrument] = useState<InstrumentKey>(
     () => settings.instrument ?? 'Solo_Guitar',
@@ -110,6 +113,11 @@ export default function SongsPage() {
   };
 
   const filtersActive = isFilterActive(settings.filters) || settings.instrument != null;
+
+  // Register sort/filter actions for FAB
+  useEffect(() => {
+    fabSearch.registerActions({ openSort, openFilter });
+  });
   const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress } = usePlayerData();
 
   // Build lookup: songId → PlayerScore for the selected instrument
@@ -364,9 +372,10 @@ export default function SongsPage() {
           <div style={styles.arcSpinner} />
         </div>
       )}
-      <div style={isMobile ? styles.headerMobile : styles.header}>
+      {!isMobile && (
+      <div style={styles.header}>
         <div style={styles.container}>
-          {!isMobile && (toolbarShownRef.current || loadPhase === 'contentIn') && (
+          {(toolbarShownRef.current || loadPhase === 'contentIn') && (
           <>
           <div style={styles.toolbar}>
             <input
@@ -399,8 +408,9 @@ export default function SongsPage() {
           )}
         </div>
       </div>
+      )}
       <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
-        <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.sm } : {}) }}>
+        <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.section } : {}) }}>
         {isSyncing && (
           <div style={styles.syncBanner}>
             <div style={styles.syncSpinner} />
@@ -493,37 +503,7 @@ export default function SongsPage() {
         </div>
       </div>
 
-      {isMobile && (toolbarShownRef.current || loadPhase === 'contentIn') && (
-        <div style={styles.bottomToolbar}>
-          <div style={styles.bottomToolbarInner}>
-            <div style={styles.bottomCount}>{filtered.length} of {songs.length} songs</div>
-            <div style={styles.toolbar}>
-              <input
-                style={{ ...styles.searchInput, ...styles.searchInputMobile }}
-                placeholder="Search songs or artists…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-              <div style={styles.sortGroup}>
-                <button style={{ ...styles.iconBtn, ...styles.iconBtnMobile }} onClick={openSort} title="Sort" aria-label="Sort songs">
-                  <IoSwapVerticalSharp size={22} />
-                </button>
-                {hasPlayer && (
-                  <button
-                    style={{ ...styles.iconBtn, ...styles.iconBtnMobile, ...(filtersActive ? styles.iconBtnActive : {}) }}
-                    onClick={openFilter}
-                    title="Filter"
-                    aria-label="Filter songs"
-                  >
-                    <IoFunnel size={22} />
-                    {filtersActive && <span style={styles.filterDot} />}
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {isMobile && <div style={styles.fabSpacer} />}
 
       <SortModal
         visible={showSort}
@@ -900,6 +880,10 @@ const styles: Record<string, React.CSSProperties> = {
   bottomToolbar: {
     flexShrink: 0,
     zIndex: 10,
+  },
+  fabSpacer: {
+    height: 80,
+    flexShrink: 0,
   },
   bottomToolbarInner: {
     width: '100%',

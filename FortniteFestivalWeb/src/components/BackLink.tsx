@@ -9,7 +9,7 @@ export default function BackLink({ fallback }: { fallback: string }) {
   return (
     <div style={styles.wrapper}>
       <Link to={backTo} style={styles.backLink}>
-        <IoChevronBack size={24} />
+        <IoChevronBack size={22} />
         Back
       </Link>
     </div>
@@ -23,6 +23,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     position: 'relative',
     zIndex: 50,
+    paddingTop: Layout.paddingTop,
   },
   backLink: {
     display: 'inline-flex',
@@ -30,8 +31,8 @@ const styles: Record<string, React.CSSProperties> = {
     gap: Gap.sm,
     color: Colors.textPrimary,
     textDecoration: 'none',
-    fontSize: 24,
-    fontWeight: 600,
+    fontSize: Font.title,
+    fontWeight: 700,
     padding: `${Gap.md}px ${Layout.paddingHorizontal}px ${Gap.md}px ${Layout.paddingHorizontal - 6}px`,
   },
 };
