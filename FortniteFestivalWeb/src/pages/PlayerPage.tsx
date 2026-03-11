@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, type CSSProperties } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react';
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { formatPercentile } from '../utils/formatPercentile';
 import { useFestival } from '../contexts/FestivalContext';
@@ -17,6 +17,7 @@ import { Colors, Font, Gap, Radius, Layout, MaxWidth, goldFill, goldOutline, gol
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import { useSettings, isInstrumentVisible } from '../contexts/SettingsContext';
 import { loadSongSettings, saveSongSettings } from '../components/songSettings';
+import { useScrollFade } from '../hooks/useScrollFade';
 
 /** Wrapper that fades in via CSS animation, then strips the animation styles
  *  so that `opacity` is no longer set by the animation system.  This prevents
@@ -124,9 +125,10 @@ function PlayerContent({
 }) {
   const { settings } = useSettings();
   const location = useLocation();
+  const navigate = useNavigate();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
-  // For the tracked player, filter scores by visible instruments;
-  // for other players, always show all data.
   const effectiveScores = isTrackedPlayer
     ? data.scores.filter(s => isInstrumentVisible(settings, s.instrument as InstrumentKey))
     : data.scores;
@@ -138,74 +140,78 @@ function PlayerContent({
   const byInstrument = groupByInstrument(effectiveScores);
   const overallStats = computeOverallStats(effectiveScores);
 
-  // Build a flat list of stagger-able sections so we can assign sequential delays
-  const sections: React.ReactNode[] = [];
+  // Build a completely flat list of small items — each becomes a direct child
+  // of listRef so useScrollFade only masks the 1-2 items at the scroll edge,
+  // preserving backdrop-filter on everything else.
+  type Item = { key: string; node: React.ReactNode; span: boolean; style?: CSSProperties };
+  const items: Item[] = [];
 
-  // 0: Sync banner (if showing)
+  const glassStyle: CSSProperties = {
+    backgroundColor: Colors.glassCard,
+    backdropFilter: 'blur(20px)',
+    WebkitBackdropFilter: 'blur(20px)',
+    border: `1px solid ${Colors.glassBorder}`,
+    borderRadius: Radius.md,
+  };
+
+  // --- Sync banner ---
   if (isSyncing) {
-    sections.push(
-      <div key="sync" style={styles.syncBanner}>
-        <div style={styles.syncSpinner} />
-        <div style={{ flex: 1 }}>
-          <div style={styles.syncTitle}>
-            {syncPhase === 'backfill' ? 'Syncing Data' : 'Building Score History'}
-          </div>
-          <div style={styles.syncSubtitle}>
-            {syncPhase === 'backfill'
-              ? `Syncing ${data.displayName}'s scores…`
-              : `Reconstructing ${data.displayName}'s score history across seasons…`}
-          </div>
-          {syncPhase === 'backfill' && backfillProgress > 0 && (
-            <div style={{ marginTop: Gap.md }}>
-              <div style={styles.syncProgressLabel}>
-                <span>Syncing scores</span>
-                <span>{(backfillProgress * 100).toFixed(1)}%</span>
-              </div>
-              <div style={styles.syncProgressOuter}>
-                <div
-                  style={{
-                    ...styles.syncProgressInner,
-                    width: `${Math.round(backfillProgress * 100)}%`,
-                  }}
-                />
-              </div>
+    items.push({
+      key: 'sync',
+      span: true,
+      node: (
+        <div style={styles.syncBanner}>
+          <div style={styles.syncSpinner} />
+          <div style={{ flex: 1 }}>
+            <div style={styles.syncTitle}>
+              {syncPhase === 'backfill' ? 'Syncing Data' : 'Building Score History'}
             </div>
-          )}
-          {syncPhase === 'history' && (
-            <>
+            <div style={styles.syncSubtitle}>
+              {syncPhase === 'backfill'
+                ? `Syncing ${data.displayName}'s scores…`
+                : `Reconstructing ${data.displayName}'s score history across seasons…`}
+            </div>
+            {syncPhase === 'backfill' && backfillProgress > 0 && (
               <div style={{ marginTop: Gap.md }}>
                 <div style={styles.syncProgressLabel}>
                   <span>Syncing scores</span>
-                  <span>100.0%</span>
+                  <span>{(backfillProgress * 100).toFixed(1)}%</span>
                 </div>
                 <div style={styles.syncProgressOuter}>
-                  <div style={{ ...styles.syncProgressInner, width: '100%' }} />
+                  <div style={{ ...styles.syncProgressInner, width: `${Math.round(backfillProgress * 100)}%` }} />
                 </div>
               </div>
-              {historyProgress > 0 && (
-                <div style={{ marginTop: Gap.sm }}>
+            )}
+            {syncPhase === 'history' && (
+              <>
+                <div style={{ marginTop: Gap.md }}>
                   <div style={styles.syncProgressLabel}>
-                    <span>Building history</span>
-                    <span>{(historyProgress * 100).toFixed(1)}%</span>
+                    <span>Syncing scores</span><span>100.0%</span>
                   </div>
                   <div style={styles.syncProgressOuter}>
-                    <div
-                      style={{
-                        ...styles.syncProgressInner,
-                        width: `${Math.round(historyProgress * 100)}%`,
-                      }}
-                    />
+                    <div style={{ ...styles.syncProgressInner, width: '100%' }} />
                   </div>
                 </div>
-              )}
-            </>
-          )}
+                {historyProgress > 0 && (
+                  <div style={{ marginTop: Gap.sm }}>
+                    <div style={styles.syncProgressLabel}>
+                      <span>Building history</span>
+                      <span>{(historyProgress * 100).toFixed(1)}%</span>
+                    </div>
+                    <div style={styles.syncProgressOuter}>
+                      <div style={{ ...styles.syncProgressInner, width: `${Math.round(historyProgress * 100)}%` }} />
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
-      </div>,
-    );
+      ),
+    });
   }
 
-  // 2: Overall summary
+  // --- Overall summary stat boxes (each is its own item) ---
   const overallAccColor = overallStats.avgAccuracy > 0
     ? (overallStats.avgAccuracy / 10000 >= 100 && overallStats.fcPercent === '100.0'
         ? Colors.gold
@@ -216,119 +222,244 @@ function PlayerContent({
   const overallFcValue = overallFcIs100
     ? overallStats.fcCount.toLocaleString()
     : `${overallStats.fcCount} (${formatClamped(parseFloat(overallStats.fcPercent))}%)`;
-  sections.push(
-    <div key="summary" style={styles.summaryGrid}>
-      <StatBox label="Songs Played" value={overallStats.songsPlayed.toLocaleString()} color={overallSongsAllPlayed ? Colors.statusGreen : undefined} />
-      <StatBox label="Full Combos" value={overallFcValue} color={overallFcIs100 ? Colors.gold : undefined} />
-      <StatBox label="Gold Stars" value={overallStats.goldStarCount.toLocaleString()} color={Colors.gold} />
-      <StatBox label="Avg Accuracy" value={overallStats.avgAccuracy > 0 ? formatClamped(overallStats.avgAccuracy / 10000) + '%' : '—'} color={overallAccColor} />
-      <StatBox label="Best Rank" value={overallStats.bestRank > 0 ? `#${overallStats.bestRank.toLocaleString()}` : '—'} to={overallStats.bestRankSongId ? `/songs/${overallStats.bestRankSongId}?instrument=${encodeURIComponent(overallStats.bestRankInstrument!)}` : undefined} state={{ backTo: location.pathname }} />
-    </div>,
-  );
 
-  // 3: Instrument Statistics heading
-  sections.push(
-    <div key="inst-heading">
-      <h2 style={styles.sectionTitle}>Instrument Statistics</h2>
-      <p style={styles.sectionDesc}>A quick look at your overall Festival statistics per instrument.</p>
-    </div>,
-  );
-
-  // 4+: Each instrument stats card (inside a grid)
-  const instCards: { inst: InstrumentKey; scores: PlayerScore[] }[] = [];
-  for (const inst of visibleKeys) {
-    const scores = byInstrument.get(inst);
-    if (!scores || scores.length === 0) continue;
-    instCards.push({ inst, scores });
+  const summaryBoxes: { label: string; value: React.ReactNode; color?: string; to?: string; state?: Record<string, string> }[] = [
+    { label: 'Songs Played', value: overallStats.songsPlayed.toLocaleString(), color: overallSongsAllPlayed ? Colors.statusGreen : undefined },
+    { label: 'Full Combos', value: overallFcValue, color: overallFcIs100 ? Colors.gold : undefined },
+    { label: 'Gold Stars', value: overallStats.goldStarCount.toLocaleString(), color: Colors.gold },
+    { label: 'Avg Accuracy', value: overallStats.avgAccuracy > 0 ? formatClamped(overallStats.avgAccuracy / 10000) + '%' : '—', color: overallAccColor },
+    { label: 'Best Rank', value: overallStats.bestRank > 0 ? `#${overallStats.bestRank.toLocaleString()}` : '—', to: overallStats.bestRankSongId ? `/songs/${overallStats.bestRankSongId}?instrument=${encodeURIComponent(overallStats.bestRankInstrument!)}` : undefined, state: { backTo: location.pathname } },
+  ];
+  for (const box of summaryBoxes) {
+    items.push({ key: `sum-${box.label}`, span: false, style: glassStyle, node: <StatBox label={box.label} value={box.value} color={box.color} to={box.to} state={box.state} /> });
   }
-  // Push each card as its own section so it gets its own stagger delay
-  // but wrap them in a grid parent. We use a "grid-start" marker and
-  // "grid-end" marker approach — or simpler: push one grid section containing
-  // all cards, each with an inline stagger using the section index as base.
-  const instGridBaseIndex = sections.length;
-  sections.push(
-    <div key="inst-grid" style={styles.instrumentGrid}>
-      {instCards.map(({ inst, scores }, i) => (
-        <FadeInDiv key={inst} delay={(instGridBaseIndex + i) * 125}>
-          <InstrumentStatsCard
-            instrument={inst}
-            scores={scores}
-            totalSongs={songs.length}
-          />
-        </FadeInDiv>
-      ))}
-    </div>,
-  );
 
-  // Top Songs heading
-  sections.push(
-    <div key="top-heading" style={{ marginTop: Gap.section * 2 }}>
-      <h2 style={styles.sectionTitle}>Top Songs Per Instrument</h2>
-      <p style={styles.sectionDesc}>Your best and worst competitive songs per instrument, sorted by percentile.</p>
-    </div>,
-  );
+  // --- Instrument Statistics heading ---
+  items.push({
+    key: 'inst-heading',
+    span: true,
+    node: (
+      <div style={{ marginTop: Gap.section }}>
+        <h2 style={styles.sectionTitle}>Instrument Statistics</h2>
+        <p style={styles.sectionDesc}>A quick look at your overall Festival statistics per instrument.</p>
+      </div>
+    ),
+  });
 
-  // Top/Bottom songs cards per instrument (inside a grid)
-  const topBottomCards: React.ReactNode[] = [];
+  // --- Per-instrument: header + stat boxes + percentile rows ---
   for (const inst of visibleKeys) {
     const scores = byInstrument.get(inst);
     if (!scores || scores.length === 0) continue;
-    const withPct = scores.filter(
-      (s) => s.rank > 0 && (s.totalEntries ?? 0) > 0,
-    );
-    if (withPct.length === 0) continue;
-    const sorted = withPct
-      .slice()
-      .sort(
-        (a, b) =>
-          a.rank / a.totalEntries! - b.rank / b.totalEntries!,
-      );
-    const topScores = sorted.slice(0, 5);
-    const bottomScores = sorted.length > 5
-      ? sorted.slice(-5).reverse()
-      : [];
-    topBottomCards.push(
-      <TopSongsCard
-        key={`top-${inst}`}
-        instrument={inst}
-        title="Top Five Songs"
-        description={`Your best five songs for ${INSTRUMENT_LABELS[inst]}.`}
-        scores={topScores}
-        songMap={songMap}
-      />,
-    );
-    if (bottomScores.length > 0) {
-      topBottomCards.push(
-        <TopSongsCard
-          key={`bottom-${inst}`}
-          instrument={inst}
-          title="Bottom Five Songs"
-          description={`Your worst five songs for ${INSTRUMENT_LABELS[inst]}.`}
-          scores={bottomScores}
-          songMap={songMap}
-        />,
-      );
+    const stats = computeInstrumentStats(scores, songs.length);
+
+    // Instrument header
+    items.push({
+      key: `inst-hdr-${inst}`,
+      span: true,
+      node: (
+        <div style={styles.instCardHeader}>
+          <InstrumentIcon instrument={inst} size={48} />
+          <span style={styles.instCardTitle}>{INSTRUMENT_LABELS[inst]}</span>
+        </div>
+      ),
+    });
+
+    // Stat boxes (each is its own grid item)
+    const cards: { label: string; value: React.ReactNode; color?: string; to?: string }[] = [];
+    if (stats.songsPlayed > 0) cards.push({ label: 'Songs Played', value: stats.songsPlayed.toLocaleString(), color: stats.songsPlayed >= songs.length ? Colors.statusGreen : undefined });
+    if (stats.fcCount > 0) cards.push({ label: 'FCs', value: stats.fcPercent === '100.0' ? stats.fcCount.toLocaleString() : `${stats.fcCount} (${stats.fcPercent}%)`, color: stats.fcPercent === '100.0' ? Colors.gold : undefined });
+    if (stats.goldStarCount > 0) cards.push({ label: 'Gold Stars', value: stats.goldStarCount.toLocaleString(), color: Colors.gold });
+    if (stats.fiveStarCount > 0) cards.push({ label: '5 Stars', value: stats.fiveStarCount.toLocaleString() });
+    if (stats.fourStarCount > 0) cards.push({ label: '4 Stars', value: stats.fourStarCount.toLocaleString() });
+    if (stats.threeStarCount > 0) cards.push({ label: '3 Stars', value: stats.threeStarCount.toLocaleString() });
+    if (stats.twoStarCount > 0) cards.push({ label: '2 Stars', value: stats.twoStarCount.toLocaleString() });
+    if (stats.oneStarCount > 0) cards.push({ label: '1 Star', value: stats.oneStarCount.toLocaleString() });
+    const accPct = stats.avgAccuracy / 10000;
+    const isGoldAcc = accPct >= 100 && stats.fcPercent === '100.0';
+    const accColor = stats.avgAccuracy > 0 ? (isGoldAcc ? Colors.gold : accuracyColor(accPct)) : undefined;
+    cards.push({ label: 'Avg Accuracy', value: stats.avgAccuracy > 0 ? formatClamped(accPct) + '%' : '—', color: accColor });
+    cards.push({ label: 'Avg Stars', value: stats.averageStars === 6 ? <GoldStars /> : (stats.averageStars > 0 ? formatClamped2(stats.averageStars) : '—') });
+    cards.push({ label: 'Best Rank', value: stats.bestRank > 0 ? `#${stats.bestRank.toLocaleString()}` : '—', to: stats.bestRankSongId ? `/songs/${stats.bestRankSongId}?instrument=${encodeURIComponent(inst)}` : undefined });
+    const pctGold = (v: string) => /^Top [1-5]%$/.test(v) ? Colors.gold : undefined;
+    cards.push({ label: 'Percentile', value: stats.overallPercentile, color: pctGold(stats.overallPercentile) });
+    cards.push({ label: 'Percentile (Songs Played)', value: stats.avgPercentile, color: pctGold(stats.avgPercentile) });
+
+    for (const c of cards) {
+      items.push({ key: `${inst}-${c.label}`, span: false, style: glassStyle, node: <StatBox label={c.label} value={c.value} color={c.color} to={c.to} /> });
+    }
+
+    // Percentile table — single glass container
+    if (stats.percentileBuckets.length > 0) {
+      const thresholds = [1,2,3,4,5,10,15,20,25,30,40,50,60,70,80,90,100];
+      items.push({
+        key: `${inst}-pct-table`,
+        span: true,
+        style: { ...glassStyle, overflow: 'hidden' as const, marginBottom: Gap.md },
+        node: (
+          <div>
+            <div style={styles.pctRowHeader}>
+              <span style={styles.pctHeaderText}>Percentile</span>
+              <span style={{ ...styles.pctHeaderText, textAlign: 'right' }}>Songs</span>
+            </div>
+            {stats.percentileBuckets.map((b, pi) => {
+              const isLast = pi === stats.percentileBuckets.length - 1;
+              const isTop1 = b.pct <= 1;
+              const isGold = b.pct <= 5;
+              const badgeStyle = isTop1 ? styles.pctGoldBadge : isGold ? styles.pctGoldPill : undefined;
+              return (
+                <div
+                  key={b.pct}
+                  style={{ ...styles.pctRowItem, ...(isLast ? { borderBottom: 'none' } : {}) }}
+                  onClick={() => {
+                    const s = loadSongSettings();
+                    const percentileFilter: Record<number, boolean> = {};
+                    for (const t of thresholds) percentileFilter[t] = t === b.pct;
+                    percentileFilter[0] = false;
+                    saveSongSettings({ ...s, instrument: inst, filters: { ...s.filters, percentileFilter } });
+                    navigate('/songs');
+                  }}
+                >
+                  <span>
+                    {badgeStyle
+                      ? <span style={badgeStyle}>Top {b.pct}%</span>
+                      : <span style={styles.pctPlainLabel}>Top {b.pct}%</span>}
+                  </span>
+                  <span style={{ fontWeight: 600 }}>{b.count}</span>
+                </div>
+              );
+            })}
+          </div>
+        ),
+      });
     }
   }
-  const topGridBaseIndex = sections.length;
-  sections.push(
-    <div key="top-grid" style={styles.instrumentGrid}>
-      {topBottomCards.map((card, i) => (
-        <FadeInDiv key={i} delay={(topGridBaseIndex + i) * 125}>
-          {card}
-        </FadeInDiv>
-      ))}
-    </div>,
-  );
+
+  // --- Top Songs heading ---
+  items.push({
+    key: 'top-heading',
+    span: true,
+    node: (
+      <div style={{ marginTop: Gap.section }}>
+        <h2 style={styles.sectionTitle}>Top Songs Per Instrument</h2>
+        <p style={styles.sectionDesc}>Your best and worst competitive songs per instrument, sorted by percentile.</p>
+      </div>
+    ),
+  });
+
+  // --- Top/Bottom song rows (each is its own grid item) ---
+  for (const inst of visibleKeys) {
+    const scores = byInstrument.get(inst);
+    if (!scores || scores.length === 0) continue;
+    const withPct = scores.filter((s) => s.rank > 0 && (s.totalEntries ?? 0) > 0);
+    if (withPct.length === 0) continue;
+    const sorted = withPct.slice().sort((a, b) => a.rank / a.totalEntries! - b.rank / b.totalEntries!);
+    const topScores = sorted.slice(0, 5);
+    const bottomScores = sorted.length > 5 ? sorted.slice(-5).reverse() : [];
+
+    const renderSongRow = (s: typeof topScores[0], isLast: boolean) => {
+      const song = songMap.get(s.songId);
+      const pct = s.rank > 0 && (s.totalEntries ?? 0) > 0
+        ? Math.min((s.rank / s.totalEntries!) * 100, 100)
+        : undefined;
+      return (
+        <Link key={s.songId} to={`/songs/${s.songId}?instrument=${encodeURIComponent(inst)}`} state={{ backTo: location.pathname }} style={{ ...styles.songListRow, ...(isLast ? { borderBottom: 'none' } : {}) }}>
+          {song?.albumArt ? (
+            <img src={song.albumArt} alt="" style={styles.topSongThumb} loading="lazy" />
+          ) : (
+            <div style={{ ...styles.topSongThumb, backgroundColor: Colors.purplePlaceholder }} />
+          )}
+          <div style={styles.topSongText}>
+            <span style={styles.topSongName}>{song?.title ?? s.songId.slice(0, 8)}</span>
+            <span style={styles.topSongArtist}>{song?.artist ?? ''}</span>
+          </div>
+          <div style={styles.topSongRight}>
+            {pct != null && (
+              <span style={{ ...styles.percentilePill, ...(pct <= 5 ? styles.percentilePillGold : {}) }}>
+                {formatPercentile(pct)}
+              </span>
+            )}
+          </div>
+        </Link>
+      );
+    };
+
+    // Top songs header
+    items.push({
+      key: `top-hdr-${inst}`,
+      span: true,
+      node: (
+        <div style={styles.instCardHeader}>
+          <InstrumentIcon instrument={inst} size={48} />
+          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: 48 }}>
+            <span style={styles.instCardTitle}>Top Five Songs</span>
+            <span style={{ ...styles.sectionDesc, margin: 0, fontSize: Font.md }}>{`Your best five songs for ${INSTRUMENT_LABELS[inst]}.`}</span>
+          </div>
+        </div>
+      ),
+    });
+
+    // Top songs table
+    items.push({
+      key: `top-songs-${inst}`,
+      span: true,
+      style: { ...glassStyle, overflow: 'hidden' as const },
+      node: (
+        <div>
+          {topScores.map((s, si) => renderSongRow(s, si === topScores.length - 1))}
+        </div>
+      ),
+    });
+
+    if (bottomScores.length > 0) {
+      // Bottom songs header
+      items.push({
+        key: `bot-hdr-${inst}`,
+        span: true,
+        node: (
+          <div style={{ ...styles.instCardHeader, marginTop: Gap.md }}>
+            <InstrumentIcon instrument={inst} size={48} />
+            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: 48 }}>
+              <span style={styles.instCardTitle}>Bottom Five Songs</span>
+              <span style={{ ...styles.sectionDesc, margin: 0, fontSize: Font.md }}>{`Your worst five songs for ${INSTRUMENT_LABELS[inst]}.`}</span>
+            </div>
+          </div>
+        ),
+      });
+
+      // Bottom songs table
+      items.push({
+        key: `bot-songs-${inst}`,
+        span: true,
+        style: { ...glassStyle, overflow: 'hidden' as const },
+        node: (
+          <div>
+            {bottomScores.map((s, si) => renderSongRow(s, si === bottomScores.length - 1))}
+          </div>
+        ),
+      });
+    }
+  }
+
+  // Wire up useScrollFade
+  const fadeDeps = useMemo(() => [items.length], [items.length]);
+  const updateFade = useScrollFade(scrollRef, listRef, fadeDeps);
+
+  const handleScroll = useCallback(() => {
+    updateFade();
+  }, [updateFade]);
 
   return (
     <div style={styles.page}>
-      <div style={styles.container}>
-        {sections.map((section, i) => (
-          <FadeInDiv key={i} delay={i * 125}>
-            {section}
-          </FadeInDiv>
-        ))}
+      <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
+        <div style={styles.container}>
+          <div ref={listRef} style={styles.gridList}>
+            {items.map((item, i) => (
+              <FadeInDiv key={item.key} delay={i * 80} style={{ ...(item.span ? styles.gridFullWidth : {}), ...item.style }}>
+                {item.node}
+              </FadeInDiv>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -352,195 +483,6 @@ function GoldStars() {
         <img key={i} src="/app/star_gold.png" alt="★" width={18} height={18} />
       ))}
     </span>
-  );
-}
-
-function InstrumentStatsCard({
-  instrument,
-  scores,
-  totalSongs,
-}: {
-  instrument: InstrumentKey;
-  scores: PlayerScore[];
-  totalSongs: number;
-}) {
-  const stats = computeInstrumentStats(scores, totalSongs);
-
-  const cards: { label: string; value: React.ReactNode; color?: string; to?: string }[] = [];
-  if (stats.songsPlayed > 0) cards.push({ label: 'Songs Played', value: stats.songsPlayed.toLocaleString(), color: stats.songsPlayed >= totalSongs ? Colors.statusGreen : undefined });
-  if (stats.fcCount > 0) cards.push({ label: 'FCs', value: stats.fcPercent === '100.0' ? stats.fcCount.toLocaleString() : `${stats.fcCount} (${stats.fcPercent}%)`, color: stats.fcPercent === '100.0' ? Colors.gold : undefined });
-  if (stats.goldStarCount > 0) cards.push({ label: 'Gold Stars', value: stats.goldStarCount.toLocaleString(), color: Colors.gold });
-  if (stats.fiveStarCount > 0) cards.push({ label: '5 Stars', value: stats.fiveStarCount.toLocaleString() });
-  if (stats.fourStarCount > 0) cards.push({ label: '4 Stars', value: stats.fourStarCount.toLocaleString() });
-  if (stats.threeStarCount > 0) cards.push({ label: '3 Stars', value: stats.threeStarCount.toLocaleString() });
-  if (stats.twoStarCount > 0) cards.push({ label: '2 Stars', value: stats.twoStarCount.toLocaleString() });
-  if (stats.oneStarCount > 0) cards.push({ label: '1 Star', value: stats.oneStarCount.toLocaleString() });
-  const accPct = stats.avgAccuracy / 10000;
-  const isGoldAcc = accPct >= 100 && stats.fcPercent === '100.0';
-  const accColor = stats.avgAccuracy > 0 ? (isGoldAcc ? Colors.gold : accuracyColor(accPct)) : undefined;
-  cards.push({ label: 'Avg Accuracy', value: stats.avgAccuracy > 0 ? formatClamped(accPct) + '%' : '—', color: accColor });
-  cards.push({ label: 'Avg Stars', value: stats.averageStars === 6 ? <GoldStars /> : (stats.averageStars > 0 ? formatClamped2(stats.averageStars) : '—') });
-  cards.push({ label: 'Best Rank', value: stats.bestRank > 0 ? `#${stats.bestRank.toLocaleString()}` : '—', to: stats.bestRankSongId ? `/songs/${stats.bestRankSongId}?instrument=${encodeURIComponent(instrument)}` : undefined });
-  const pctGold = (v: string) => /^Top [1-5]%$/.test(v) ? Colors.gold : undefined;
-  cards.push({ label: 'Percentile', value: stats.overallPercentile, color: pctGold(stats.overallPercentile) });
-  cards.push({ label: 'Percentile (Songs Played)', value: stats.avgPercentile, color: pctGold(stats.avgPercentile) });
-
-  return (
-    <div>
-      <div style={styles.instCardHeader}>
-        <InstrumentIcon instrument={instrument} size={48} />
-        <span style={styles.instCardTitle}>
-          {INSTRUMENT_LABELS[instrument]}
-        </span>
-      </div>
-      <div style={styles.instSummaryGrid}>
-        {cards.map((c) => (
-          <StatBox key={c.label} label={c.label} value={c.value} color={c.color} to={c.to} />
-        ))}
-      </div>
-      {stats.percentileBuckets.length > 0 && (
-        <PercentileTable buckets={stats.percentileBuckets} instrument={instrument} />
-      )}
-    </div>
-  );
-}
-
-function PercentileTable({ buckets, instrument }: { buckets: { pct: number; count: number }[]; instrument: InstrumentKey }) {
-  const navigate = useNavigate();
-  const thresholds = [1,2,3,4,5,10,15,20,25,30,40,50,60,70,80,90,100];
-
-  const handleClick = (pct: number) => {
-    const settings = loadSongSettings();
-    // Disable all percentile buckets except the clicked one
-    const percentileFilter: Record<number, boolean> = {};
-    for (const t of thresholds) {
-      percentileFilter[t] = t === pct;
-    }
-    percentileFilter[0] = false; // hide "No Score"
-    saveSongSettings({
-      ...settings,
-      instrument,
-      filters: { ...settings.filters, percentileFilter },
-    });
-    navigate('/songs');
-  };
-
-  return (
-    <div style={styles.pctTablePanel}>
-      <table style={styles.pctTable}>
-        <thead>
-          <tr>
-            <th style={styles.pctTh}>Percentile</th>
-            <th style={{ ...styles.pctTh, textAlign: 'right' }}>Songs</th>
-          </tr>
-        </thead>
-        <tbody>
-          {buckets.map((b) => {
-            const isTop1 = b.pct <= 1;
-            const isGold = b.pct <= 5;
-            const badgeStyle = isTop1
-              ? styles.pctGoldBadge
-              : isGold
-                ? styles.pctGoldPill
-                : undefined;
-            return (
-              <tr key={b.pct} onClick={() => handleClick(b.pct)} style={styles.pctRow}>
-                <td style={styles.pctTd}>
-                  {badgeStyle
-                    ? <span style={badgeStyle}>Top {b.pct}%</span>
-                    : <span style={styles.pctPlainLabel}>Top {b.pct}%</span>}
-                </td>
-                <td style={{ ...styles.pctTd, textAlign: 'right', fontWeight: 600 }}>
-                  {b.count}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function TopSongsCard({
-  instrument,
-  title,
-  description,
-  scores,
-  songMap,
-}: {
-  instrument: InstrumentKey;
-  title: string;
-  description: string;
-  scores: PlayerScore[];
-  songMap: Map<string, Song>;
-}) {
-  return (
-    <div>
-      <div style={styles.instCardHeader}>
-        <InstrumentIcon instrument={instrument} size={48} />
-        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: 48 }}>
-          <span style={styles.instCardTitle}>{title}</span>
-          <span style={{ ...styles.sectionDesc, margin: 0, fontSize: Font.md }}>{description}</span>
-        </div>
-      </div>
-      <div style={styles.instCard}>
-        <div style={styles.instCardBody}>
-          {scores.map((s) => {
-          const song = songMap.get(s.songId);
-          const pct =
-            s.rank > 0 && (s.totalEntries ?? 0) > 0
-              ? Math.min((s.rank / s.totalEntries!) * 100, 100)
-              : undefined;
-          const isTop5 = pct != null && pct <= 5;
-          return (
-            <Link
-              key={s.songId}
-              to={`/songs/${s.songId}?instrument=${encodeURIComponent(instrument)}`}
-              state={{ backTo: location.pathname }}
-              style={styles.topSongRow}
-            >
-              {song?.albumArt ? (
-                <img
-                  src={song.albumArt}
-                  alt=""
-                  style={styles.topSongThumb}
-                  loading="lazy"
-                />
-              ) : (
-                <div
-                  style={{
-                    ...styles.topSongThumb,
-                    backgroundColor: Colors.purplePlaceholder,
-                  }}
-                />
-              )}
-              <div style={styles.topSongText}>
-                <span style={styles.topSongName}>
-                  {song?.title ?? s.songId.slice(0, 8)}
-                </span>
-                <span style={styles.topSongArtist}>
-                  {song?.artist ?? ''}
-                </span>
-              </div>
-              <div style={styles.topSongRight}>
-                {pct != null && (
-                  <span
-                    style={{
-                      ...styles.percentilePill,
-                      ...(isTop5 ? styles.percentilePillGold : {}),
-                    }}
-                  >
-                    {formatPercentile(pct)}
-                  </span>
-                )}
-              </div>
-            </Link>
-          );
-        })}
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -728,10 +670,16 @@ function accuracyColor(pct: number): string {
 
 const styles: Record<string, React.CSSProperties> = {
   page: {
-    minHeight: '100vh',
+    height: '100%',
+    display: 'flex',
+    flexDirection: 'column' as const,
     color: Colors.textPrimary,
     fontFamily:
       "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+  },
+  scrollArea: {
+    flex: 1,
+    overflowY: 'auto' as const,
   },
   container: {
     maxWidth: MaxWidth.card,
@@ -828,11 +776,6 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column' as const,
     alignItems: 'center',
     padding: `${Gap.xl}px ${Gap.md}px`,
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    border: `1px solid ${Colors.glassBorder}`,
-    borderRadius: Radius.md,
   },
   statValue: {
     fontSize: Font.xl,
@@ -847,10 +790,13 @@ const styles: Record<string, React.CSSProperties> = {
     letterSpacing: 0.5,
   },
   // Per-instrument cards
-  instrumentGrid: {
+  gridList: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))',
-    gap: Gap.section,
+    gridTemplateColumns: 'repeat(2, 1fr)',
+    gap: Gap.md,
+  },
+  gridFullWidth: {
+    gridColumn: '1 / -1',
   },
   instCard: {
     backgroundColor: Colors.glassCard,
@@ -926,6 +872,30 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'inline-block',
     fontWeight: 600,
   },
+  pctRowHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    padding: `${Gap.md}px ${Gap.xl}px`,
+    borderBottom: `1px solid ${Colors.glassBorder}`,
+  },
+  pctHeaderText: {
+    fontSize: Font.sm,
+    fontWeight: 600,
+    color: Colors.textTertiary,
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.5,
+  },
+  pctRowItem: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: `${Gap.md}px ${Gap.xl}px`,
+    borderBottom: `1px solid ${Colors.glassBorder}`,
+    cursor: 'pointer',
+    transition: 'background-color 0.15s',
+    fontSize: Font.md,
+    color: Colors.textPrimary,
+  },
   // Top songs
   topSongs: {
     borderTop: `1px solid ${Colors.borderSubtle}`,
@@ -939,6 +909,40 @@ const styles: Record<string, React.CSSProperties> = {
     letterSpacing: 0.5,
     display: 'block',
     marginBottom: Gap.md,
+  },
+  topSongRowGlass: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.md,
+    padding: `${Gap.sm}px ${Gap.xl}px`,
+    textDecoration: 'none',
+    color: 'inherit',
+  },
+  songListHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.md,
+    padding: `${Gap.md}px ${Gap.xl}px`,
+    borderBottom: `1px solid ${Colors.glassBorder}`,
+  },
+  songListTitle: {
+    display: 'block',
+    fontSize: Font.md,
+    fontWeight: 600,
+  },
+  songListSubtitle: {
+    display: 'block',
+    fontSize: Font.xs,
+    color: Colors.textSecondary,
+  },
+  songListRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.md,
+    padding: `${Gap.sm}px ${Gap.xl}px`,
+    borderBottom: `1px solid ${Colors.glassBorder}`,
+    textDecoration: 'none',
+    color: 'inherit',
   },
   topSongRow: {
     display: 'flex',
