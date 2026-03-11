@@ -7,6 +7,7 @@ import { usePlayerData } from '../contexts/PlayerDataContext';
 import { useSettings } from '../contexts/SettingsContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useFabSearch } from '../contexts/FabSearchContext';
+import { useScrollFade } from '../hooks/useScrollFade';
 import type { Song, PlayerScore, InstrumentKey } from '../models';
 import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth, goldFill, goldOutline, goldOutlineSkew } from '../theme';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../components/InstrumentIcons';
@@ -36,6 +37,7 @@ export default function SongsPage() {
   const isMobile = useIsMobile();
   const fabSearch = useFabSearch();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   // Restore scroll position on mount
   useEffect(() => {
@@ -45,12 +47,6 @@ export default function SongsPage() {
     }
   }, []);
 
-  // Save scroll position continuously
-  const handleScroll = useCallback(() => {
-    if (scrollRef.current) {
-      _savedScrollTop = scrollRef.current.scrollTop;
-    }
-  }, []);
   const [search, setSearch] = useState('');
   const effectiveSearch = isMobile ? fabSearch.query : search;
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -353,6 +349,17 @@ export default function SongsPage() {
     }
   }, [loadPhase]);
 
+  // Per-card scroll fade
+  const updateRowFade = useScrollFade(scrollRef, listRef, [loadPhase, filtered]);
+
+  // Save scroll position continuously + update fade
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    _savedScrollTop = el.scrollTop;
+    updateRowFade();
+  }, [updateRowFade]);
+
   if (error) {
     return <div style={styles.center}>{error}</div>;
   }
@@ -481,7 +488,7 @@ export default function SongsPage() {
             </div>
           </div>
         ) : (
-          <div style={styles.list}>
+          <div ref={listRef} style={styles.list}>
             {loadPhase === 'contentIn' && filtered.map((song, i) => (
                 <SongRow
                   key={song.songId}
@@ -1032,6 +1039,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column' as const,
     gap: Gap.xs,
+    paddingTop: Gap.lg,
   },
   row: {
     display: 'flex',

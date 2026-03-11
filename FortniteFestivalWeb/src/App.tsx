@@ -1126,7 +1126,7 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap' as const,
   },
   mobileHeader: {
-    padding: `${Layout.paddingTop + Gap.md}px ${Layout.paddingHorizontal}px ${Layout.paddingTop + Gap.md}px`,
+    padding: `${Layout.paddingTop + Gap.md}px ${Layout.paddingHorizontal}px ${Gap.md}px`,
     flexShrink: 0,
     zIndex: 100,
     position: 'relative' as const,
