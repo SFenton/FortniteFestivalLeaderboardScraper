@@ -1,8 +1,11 @@
-import Modal, { ModalSection, RadioRow, ChoicePill, ReorderList, Accordion } from './Modal';
+import { useMemo, useCallback, useState } from 'react';
+import Modal, { ModalSection, RadioRow, ReorderList, Accordion } from './Modal';
 import type { InstrumentKey } from '../models';
 import { INSTRUMENT_LABELS } from '../models';
 import type { SongSortMode } from './songSettings';
 import { INSTRUMENT_SORT_MODES, METADATA_SORT_DISPLAY } from './songSettings';
+import { Colors, Font, Gap } from '../theme';
+import { IoArrowUp, IoArrowDown } from 'react-icons/io5';
 
 export type SortDraft = {
   sortMode: SongSortMode;
@@ -24,7 +27,9 @@ export type MetadataVisibility = {
 type Props = {
   visible: boolean;
   draft: SortDraft;
+  savedDraft?: SortDraft;
   instrumentFilter: InstrumentKey | null;
+  hasPlayer?: boolean;
   metadataVisibility?: MetadataVisibility;
   onChange: (d: SortDraft) => void;
   onCancel: () => void;
@@ -32,8 +37,29 @@ type Props = {
   onApply: () => void;
 };
 
-export default function SortModal({ visible, draft, instrumentFilter, metadataVisibility: mv, onChange, onCancel, onReset, onApply }: Props) {
+export default function SortModal({ visible, draft, savedDraft, instrumentFilter, hasPlayer, metadataVisibility: mv, onChange, onCancel, onReset, onApply }: Props) {
   const setMode = (sortMode: SongSortMode) => onChange({ ...draft, sortMode });
+
+  const hasChanges = useMemo(() => {
+    if (!savedDraft) return true;
+    return draft.sortMode !== savedDraft.sortMode
+      || draft.sortAscending !== savedDraft.sortAscending
+      || JSON.stringify(draft.metadataOrder) !== JSON.stringify(savedDraft.metadataOrder)
+      || JSON.stringify(draft.instrumentOrder) !== JSON.stringify(savedDraft.instrumentOrder);
+  }, [draft, savedDraft]);
+
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const handleClose = useCallback(() => {
+    if (hasChanges) {
+      setConfirmOpen(true);
+    } else {
+      onCancel();
+    }
+  }, [hasChanges, onCancel]);
+  const confirmDiscard = useCallback(() => {
+    setConfirmOpen(false);
+    onCancel();
+  }, [onCancel]);
 
   const visibleInstrumentSortModes = mv
     ? INSTRUMENT_SORT_MODES.filter(({ mode }) => {
@@ -58,35 +84,71 @@ export default function SortModal({ visible, draft, instrumentFilter, metadataVi
   const anyMetadataVisible = !mv || (mv.score || mv.percentage || mv.percentile || mv.isfc || mv.stars || mv.seasonachieved || mv.intensity);
 
   return (
-    <Modal visible={visible} title="Sort Songs" onClose={onCancel} onApply={onApply} onReset={onReset}>
+    <>
+    <Modal visible={visible} title="Sort Songs" onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel="Reset Sort Settings" resetHint="Restore sort mode, direction, and metadata priority to their defaults." applyLabel="Apply Sort Changes" applyDisabled={!hasChanges}>
       {/* Primary sort mode */}
-      <ModalSection title="Mode" hint="Choose which property to sort the song list by.">
-        <RadioRow label="Title" selected={draft.sortMode === 'title'} onSelect={() => setMode('title')} />
-        <RadioRow label="Artist" selected={draft.sortMode === 'artist'} onSelect={() => setMode('artist')} />
-        <RadioRow label="Year" selected={draft.sortMode === 'year'} onSelect={() => setMode('year')} />
-        <RadioRow label="Has FC" selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />
-      </ModalSection>
+      {hasPlayer ? (
+        <ModalSection>
+          <Accordion title="Mode" hint="Choose which property to sort the song list by." defaultOpen={!instrumentFilter}>
+            <RadioRow label="Title" selected={draft.sortMode === 'title'} onSelect={() => setMode('title')} />
+            <RadioRow label="Artist" selected={draft.sortMode === 'artist'} onSelect={() => setMode('artist')} />
+            <RadioRow label="Year" selected={draft.sortMode === 'year'} onSelect={() => setMode('year')} />
+            <RadioRow label="Has FC" selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />
+          </Accordion>
+        </ModalSection>
+      ) : (
+        <ModalSection title="Mode" hint="Choose which property to sort the song list by.">
+          <RadioRow label="Title" selected={draft.sortMode === 'title'} onSelect={() => setMode('title')} />
+          <RadioRow label="Artist" selected={draft.sortMode === 'artist'} onSelect={() => setMode('artist')} />
+          <RadioRow label="Year" selected={draft.sortMode === 'year'} onSelect={() => setMode('year')} />
+          <RadioRow label="Has FC" selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />
+        </ModalSection>
+      )}
 
       {/* Instrument-specific sort modes (only when an instrument is selected) */}
       {instrumentFilter != null && visibleInstrumentSortModes.length > 0 && (
-        <ModalSection title="Filtered Instrument Sort Mode" hint="Filtering to a single instrument enables more sort options.">
-          {visibleInstrumentSortModes.map(({ mode, label }) => (
-            <RadioRow key={mode} label={label} selected={draft.sortMode === mode} onSelect={() => setMode(mode)} />
-          ))}
+        <ModalSection>
+          <Accordion title="Filtered Instrument Sort Mode" hint="Filtering to a single instrument enables more sort options.">
+            {visibleInstrumentSortModes.map(({ mode, label }) => (
+              <RadioRow key={mode} label={label} selected={draft.sortMode === mode} onSelect={() => setMode(mode)} />
+            ))}
+          </Accordion>
         </ModalSection>
       )}
 
       {/* Direction */}
-      <ModalSection title="Direction" hint="Choose whether to sort ascending (A–Z, low–high) or descending (Z–A, high–low).">
-        <div style={{ display: 'flex', gap: 8 }}>
-          <ChoicePill label="Ascending" selected={draft.sortAscending} onSelect={() => onChange({ ...draft, sortAscending: true })} />
-          <ChoicePill label="Descending" selected={!draft.sortAscending} onSelect={() => onChange({ ...draft, sortAscending: false })} />
+      <ModalSection>
+        <div style={directionStyles.inner}>
+          <div style={directionStyles.textCol}>
+            <div style={directionStyles.title}>Sort Direction</div>
+            <div style={directionStyles.hint}>
+              {draft.sortAscending ? 'Ascending (A–Z, low–high)' : 'Descending (Z–A, high–low)'}
+            </div>
+          </div>
+          <div style={directionStyles.icons}>
+            <button
+              style={directionStyles.iconBtn}
+              onClick={() => onChange({ ...draft, sortAscending: true })}
+              aria-label="Ascending"
+            >
+              <div style={{ ...directionStyles.iconCircle, ...(draft.sortAscending ? directionStyles.iconCircleActive : {}) }} />
+              <IoArrowUp size={20} style={{ position: 'relative' as const, zIndex: 1, color: draft.sortAscending ? Colors.textPrimary : Colors.textMuted, transition: 'color 200ms ease' }} />
+            </button>
+            <button
+              style={directionStyles.iconBtn}
+              onClick={() => onChange({ ...draft, sortAscending: false })}
+              aria-label="Descending"
+            >
+              <div style={{ ...directionStyles.iconCircle, ...(!draft.sortAscending ? directionStyles.iconCircleActive : {}) }} />
+              <IoArrowDown size={20} style={{ position: 'relative' as const, zIndex: 1, color: !draft.sortAscending ? Colors.textPrimary : Colors.textMuted, transition: 'color 200ms ease' }} />
+            </button>
+          </div>
         </div>
       </ModalSection>
 
       {/* Metadata sort priority (only when an instrument is selected) */}
       {instrumentFilter != null && anyMetadataVisible && (
-        <ModalSection title="Metadata Sort Priority" hint="When scores are tied, metadata is compared in this order to break the tie.">
+        <ModalSection title="Metadata Sort Priority" hint="When two songs have the same value for the selected sort mode, songs are sorted by comparing these properties in order from top to bottom.">
           <ReorderList
             items={visibleMetadataOrder.map(k => ({ key: k, label: METADATA_SORT_DISPLAY[k] ?? k }))}
             onReorder={(items) => onChange({ ...draft, metadataOrder: items.map(i => i.key) })}
@@ -96,13 +158,145 @@ export default function SortModal({ visible, draft, instrumentFilter, metadataVi
 
       {/* Primary Instrument Order (only when NO instrument is selected and sorting by Has FC) */}
       {instrumentFilter == null && draft.sortMode === 'hasfc' && (
-        <Accordion title="Primary Instrument Order" hint="Instruments are checked in this order when sorting by Has FC." defaultOpen>
-          <ReorderList
-            items={draft.instrumentOrder.map(k => ({ key: k, label: INSTRUMENT_LABELS[k] }))}
-            onReorder={(items) => onChange({ ...draft, instrumentOrder: items.map(i => i.key) as InstrumentKey[] })}
-          />
-        </Accordion>
+        <ModalSection>
+          <Accordion title="Primary Instrument Order" hint="Instruments are checked in this order when sorting by Has FC." defaultOpen>
+            <ReorderList
+              items={draft.instrumentOrder.map(k => ({ key: k, label: INSTRUMENT_LABELS[k] }))}
+              onReorder={(items) => onChange({ ...draft, instrumentOrder: items.map(i => i.key) as InstrumentKey[] })}
+            />
+          </Accordion>
+        </ModalSection>
       )}
     </Modal>
+
+      {confirmOpen && (
+        <div style={confirmStyles.overlay} onClick={() => setConfirmOpen(false)}>
+          <div style={confirmStyles.card} onClick={e => e.stopPropagation()}>
+            <div style={confirmStyles.title}>Cancel Song Sort Changes</div>
+            <div style={confirmStyles.message}>Are you sure you want to discard your song sort changes?</div>
+            <div style={confirmStyles.buttons}>
+              <button style={confirmStyles.btnNo} onClick={() => setConfirmOpen(false)}>No</button>
+              <button style={confirmStyles.btnYes} onClick={confirmDiscard}>Yes</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
+
+const directionStyles: Record<string, React.CSSProperties> = {
+  inner: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.xl,
+    paddingBottom: Gap.md,
+  },
+  textCol: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: Gap.xs,
+  },
+  title: {
+    fontSize: Font.lg,
+    fontWeight: 700,
+    color: Colors.textPrimary,
+  },
+  hint: {
+    fontSize: Font.sm,
+    color: Colors.textSecondary,
+  },
+  icons: {
+    display: 'flex',
+    gap: Gap.md,
+    flexShrink: 0,
+    marginRight: -12,
+  },
+  iconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: '50%',
+    border: 'none',
+    backgroundColor: 'transparent',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    position: 'relative' as const,
+    overflow: 'hidden' as const,
+  },
+  iconCircle: {
+    position: 'absolute' as const,
+    inset: 0,
+    borderRadius: '50%',
+    backgroundColor: Colors.accentPurple,
+    transform: 'scale(0)',
+    transition: 'transform 250ms ease',
+  },
+  iconCircleActive: {
+    transform: 'scale(1)',
+  },
+};
+
+const confirmStyles: Record<string, React.CSSProperties> = {
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    zIndex: 1100,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  card: {
+    backgroundColor: Colors.surfaceFrosted,
+    backdropFilter: 'blur(18px)',
+    WebkitBackdropFilter: 'blur(18px)',
+    borderRadius: 12,
+    padding: Gap.section,
+    maxWidth: 340,
+    width: '90%',
+    color: Colors.textPrimary,
+    boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+  },
+  title: {
+    fontSize: Font.lg,
+    fontWeight: 700,
+    marginBottom: Gap.md,
+  },
+  message: {
+    fontSize: Font.md,
+    color: Colors.textSecondary,
+    marginBottom: Gap.section,
+    lineHeight: '1.4',
+  },
+  buttons: {
+    display: 'flex',
+    gap: Gap.md,
+  },
+  btnNo: {
+    flex: 1,
+    padding: `${Gap.xl}px`,
+    borderRadius: 8,
+    border: `1px solid ${Colors.accentBlue}`,
+    backgroundColor: Colors.chipSelectedBg,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
+    fontWeight: 600,
+    cursor: 'pointer',
+    textAlign: 'center' as const,
+  },
+  btnYes: {
+    flex: 1,
+    padding: `${Gap.xl}px`,
+    borderRadius: 8,
+    border: 'none',
+    backgroundColor: Colors.statusRed,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
+    fontWeight: 600,
+    cursor: 'pointer',
+    textAlign: 'center' as const,
+  },
+};

@@ -17,6 +17,8 @@ import SeasonPill from '../components/SeasonPill';
 import ScoreHistoryChart from '../components/ScoreHistoryChart';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import { useSettings, visibleInstruments } from '../contexts/SettingsContext';
+import { useScrollMask } from '../hooks/useScrollMask';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 function accuracyColor(pct: number): string {
   const t = Math.min(Math.max(pct / 100, 0), 1);
@@ -60,6 +62,7 @@ export default function SongDetailPage() {
   );
 
   const song = songs.find((s) => s.songId === songId);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   // Fetch player scores
   useEffect(() => {
@@ -136,6 +139,14 @@ export default function SongDetailPage() {
   // Transition: spinner fade-out → staggered content fade-in
   // phase: 'loading' | 'spinnerOut' | 'contentIn'
   const [phase, setPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>('loading');
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
+  const updateScrollMask = useScrollMask(scrollRef, [phase, activeInstruments.length]);
+  const handleScroll = useCallback(() => {
+    updateScrollMask();
+    const el = scrollRef.current;
+    if (el) setHeaderCollapsed(el.scrollTop > 40);
+  }, [updateScrollMask]);
+  const hasFab = useIsMobile();
 
   const hasScrolled = useRef(false);
 
@@ -221,10 +232,20 @@ export default function SongDetailPage() {
         </div>
       )}
       {phase === 'contentIn' && (
-        <div style={styles.container}>
+        <div style={{
+          ...styles.stickyHeader,
+          padding: headerCollapsed
+            ? `${Gap.md}px ${Layout.paddingHorizontal}px 0`
+            : `${Layout.paddingTop}px ${Layout.paddingHorizontal}px 0`,
+        }}>
           <div style={stagger(150)} onAnimationEnd={clearAnim}>
-            <SongHeader song={song} songId={songId} />
+            <SongHeader song={song} songId={songId} collapsed={headerCollapsed} />
           </div>
+        </div>
+      )}
+      <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
+      {phase === 'contentIn' && (
+        <div style={{ ...styles.container, ...(hasFab ? { paddingBottom: 96 } : {}) }}>
           {player && (
             <div style={stagger(300)} onAnimationEnd={clearAnim}>
               <ScoreHistoryChart
@@ -259,6 +280,7 @@ export default function SongDetailPage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -266,20 +288,24 @@ export default function SongDetailPage() {
 function SongHeader({
   song,
   songId,
+  collapsed,
 }: {
   song: Song | undefined;
   songId: string;
+  collapsed: boolean;
 }) {
+  const artSize = collapsed ? 80 : 120;
+  const transition = 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)';
   return (
-    <div style={styles.header}>
+    <div style={{ ...styles.header, marginTop: collapsed ? 0 : Gap.xl, marginBottom: collapsed ? Gap.md : Gap.section, transition }}>
       {song?.albumArt ? (
-        <img src={song.albumArt} alt="" style={styles.headerArt} />
+        <img src={song.albumArt} alt="" style={{ ...styles.headerArt, width: artSize, height: artSize, borderRadius: collapsed ? Radius.md : Radius.lg, transition }} />
       ) : (
-        <div style={{ ...styles.headerArt, ...styles.artPlaceholder }} />
+        <div style={{ ...styles.headerArt, ...styles.artPlaceholder, width: artSize, height: artSize, borderRadius: collapsed ? Radius.md : Radius.lg, transition }} />
       )}
       <div>
-        <h1 style={styles.songTitle}>{song?.title ?? songId}</h1>
-        <p style={styles.songArtist}>
+        <h1 style={{ ...styles.songTitle, marginBottom: collapsed ? Gap.xs : Gap.sm, transition }}>{song?.title ?? songId}</h1>
+        <p style={{ ...styles.songArtist, fontSize: collapsed ? Font.md : Font.lg, marginBottom: collapsed ? 0 : Gap.md, transition }}>
           {song?.artist ?? 'Unknown Artist'}
         </p>
       </div>
@@ -506,13 +532,30 @@ function DifficultyBadge({ difficulty }: { difficulty: number }) {
 
 const styles: Record<string, React.CSSProperties> = {
   page: {
-    minHeight: '100vh',
+    height: '100%',
+    display: 'flex',
+    flexDirection: 'column' as const,
     backgroundColor: Colors.backgroundApp,
     color: Colors.textPrimary,
     fontFamily:
       "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
     position: 'relative' as const,
     overflow: 'hidden' as const,
+  },
+  scrollArea: {
+    flex: 1,
+    overflowY: 'auto' as const,
+    position: 'relative' as const,
+    zIndex: 1,
+  },
+  stickyHeader: {
+    position: 'relative' as const,
+    zIndex: 1,
+    maxWidth: MaxWidth.card,
+    margin: '0 auto',
+    width: '100%',
+    boxSizing: 'border-box' as const,
+    transition: 'padding 300ms cubic-bezier(0.4, 0, 0.2, 1)',
   },
   bgImage: {
     position: 'fixed' as const,
@@ -529,11 +572,9 @@ const styles: Record<string, React.CSSProperties> = {
     pointerEvents: 'none' as const,
   },
   container: {
-    position: 'relative' as const,
-    zIndex: 1,
     maxWidth: MaxWidth.card,
     margin: '0 auto',
-    padding: `${Layout.paddingTop}px ${Layout.paddingHorizontal}px`,
+    padding: `0 ${Layout.paddingHorizontal}px ${Layout.paddingTop}px`,
   },
   header: {
     display: 'flex',

@@ -515,7 +515,14 @@ export default function SongsPage() {
       <SortModal
         visible={showSort}
         draft={sortDraft}
+        savedDraft={{
+          sortMode: settings.sortMode,
+          sortAscending: settings.sortAscending,
+          metadataOrder: settings.metadataOrder,
+          instrumentOrder: settings.instrumentOrder,
+        }}
         instrumentFilter={instrument}
+        hasPlayer={!!playerData}
         metadataVisibility={{
           score: appSettings.metadataShowScore,
           percentage: appSettings.metadataShowPercentage,

@@ -36,7 +36,7 @@ export default function FilterModal({ visible, draft, availableSeasons, onChange
   const hasInstrument = draft.instrumentFilter != null;
 
   return (
-    <Modal visible={visible} title="Filter Songs" onClose={onCancel} onApply={onApply} onReset={onReset}>
+    <Modal visible={visible} title="Filter Songs" onClose={onCancel} onApply={onApply} onReset={onReset} resetLabel="Reset Filter Settings" resetHint="Restore all filter options to their defaults.">
       {/* Missing filters */}
       <ModalSection title="Missing" hint="Only show songs where you are missing scores or full combos on pad or pro instruments.">
         <ToggleRow label="Pad Scores" description="Songs missing scores on Lead, Bass, Drums, or Vocals." checked={draft.missingPadScores} onToggle={() => toggle('missingPadScores')} />

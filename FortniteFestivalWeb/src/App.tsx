@@ -69,7 +69,7 @@ function AppShell() {
   const NAV_TITLES: Record<string, string> = {
     '/songs': 'Songs',
     '/suggestions': 'Suggestions',
-    '/statistics': 'Statistics',
+    '/statistics': player?.displayName ?? 'Statistics',
     '/settings': 'Settings',
   };
   const navTitle = NAV_TITLES[location.pathname] ?? null;
@@ -965,14 +965,15 @@ function FloatingActionButton({
 
   useEffect(() => {
     if (!actionsOpen) return;
-    const handleClick = (e: MouseEvent) => {
+    const handler = (e: MouseEvent) => {
       if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        e.stopPropagation();
         closeActions();
       }
     };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [actionsOpen]);
+    document.addEventListener('click', handler, true);
+    return () => document.removeEventListener('click', handler, true);
+  }, [actionsOpen, closeActions]);
 
   useEffect(() => {
     if (searchVisible) {

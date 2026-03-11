@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
-import { IoChevronDown } from 'react-icons/io5';
+import { IoChevronDown, IoClose } from 'react-icons/io5';
 import {
   DndContext,
   closestCenter,
@@ -19,6 +19,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useScrollMask } from '../hooks/useScrollMask';
 import { Colors, Radius, Font, Gap } from '../theme';
 
 const TRANSITION_MS = 300;
@@ -29,6 +30,10 @@ type Props = {
   onClose: () => void;
   onApply: () => void;
   onReset?: () => void;
+  resetLabel?: string;
+  resetHint?: string;
+  applyLabel?: string;
+  applyDisabled?: boolean;
   children: React.ReactNode;
 };
 
@@ -36,11 +41,14 @@ type Props = {
  * Adaptive modal: bottom sheet on mobile (≤768px), side flyout on desktop.
  * Uses a draft pattern — the parent controls open/close & apply/cancel.
  */
-export default function Modal({ visible, title, onClose, onApply, onReset, children }: Props) {
+export default function Modal({ visible, title, onClose, onApply, onReset, resetLabel, resetHint, applyLabel, applyDisabled, children }: Props) {
   const isMobile = useIsMobile();
   const [mounted, setMounted] = useState(false);
   const [animIn, setAnimIn] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const updateScrollMask = useScrollMask(scrollRef, [visible, children]);
+  const handleContentScroll = useCallback(() => { updateScrollMask(); }, [updateScrollMask]);
 
   useEffect(() => {
     if (visible) {
@@ -130,21 +138,28 @@ export default function Modal({ visible, title, onClose, onApply, onReset, child
         {/* Header */}
         <div style={headerStyles.wrap}>
           <h2 style={headerStyles.title}>{title}</h2>
-          <button style={headerStyles.closeBtn} onClick={onClose}>Cancel</button>
+          <button style={headerStyles.closeBtn} onClick={onClose} aria-label="Close"><IoClose size={18} /></button>
         </div>
 
         {/* Content */}
-        <div style={contentStyles.scroll}>
+        <div ref={scrollRef} onScroll={handleContentScroll} style={contentStyles.scroll}>
           {children}
+          {onReset && (
+            <ModalSection title={resetLabel ?? 'Reset'} hint={resetHint}>
+              <button style={footerStyles.reset} onClick={onReset}>{resetLabel ?? 'Reset'}</button>
+            </ModalSection>
+          )}
         </div>
 
         {/* Footer */}
         <div style={footerStyles.wrap}>
-          {onReset && (
-            <button style={footerStyles.reset} onClick={onReset}>Reset</button>
-          )}
-          <div style={{ flex: 1 }} />
-          <button style={footerStyles.apply} onClick={onApply}>Apply</button>
+          <button
+            style={{ ...footerStyles.apply, ...(applyDisabled ? footerStyles.applyDisabled : {}) }}
+            onClick={onApply}
+            disabled={applyDisabled}
+          >
+            {applyLabel ?? 'Apply'}
+          </button>
         </div>
       </div>
     </>
@@ -158,23 +173,26 @@ const headerStyles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: `${Gap.xl}px ${Gap.section}px`,
-    borderBottom: `1px solid ${Colors.borderSubtle}`,
+    padding: `${Gap.xl}px 16px ${Gap.xl}px ${Gap.section}px`,
     flexShrink: 0,
   },
   title: {
-    fontSize: Font.lg,
+    fontSize: Font.xl,
     fontWeight: 700,
     margin: 0,
   },
   closeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: '50%',
     background: Colors.surfaceElevated,
     border: `1px solid ${Colors.borderPrimary}`,
-    borderRadius: Radius.xs,
     color: Colors.textSecondary,
-    fontSize: Font.sm,
-    padding: `${Gap.sm}px ${Gap.xl}px`,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
     cursor: 'pointer',
+    flexShrink: 0,
   },
 };
 
@@ -190,39 +208,46 @@ const footerStyles: Record<string, React.CSSProperties> = {
   wrap: {
     display: 'flex',
     alignItems: 'center',
-    gap: Gap.md,
     padding: `${Gap.xl}px ${Gap.section}px`,
-    borderTop: `1px solid ${Colors.borderSubtle}`,
     flexShrink: 0,
   },
   reset: {
+    width: '100%',
     background: Colors.dangerBg,
     border: `1px solid ${Colors.statusRed}`,
     borderRadius: Radius.xs,
     color: Colors.textPrimary,
-    fontSize: Font.sm,
+    fontSize: Font.md,
     fontWeight: 600,
-    padding: `${Gap.md}px ${Gap.xl}px`,
+    padding: `${Gap.xl}px ${Gap.xl}px`,
     cursor: 'pointer',
+    textAlign: 'center' as const,
   },
   apply: {
+    width: '100%',
     background: Colors.chipSelectedBg,
     border: `1px solid ${Colors.accentBlue}`,
     borderRadius: Radius.xs,
     color: Colors.textPrimary,
-    fontSize: Font.sm,
-    fontWeight: 600,
-    padding: `${Gap.md}px ${Gap.xl}px`,
+    fontSize: Font.lg,
+    fontWeight: 700,
+    padding: `${Gap.xl}px ${Gap.xl}px`,
     cursor: 'pointer',
+    textAlign: 'center' as const,
+    transition: 'opacity 300ms ease',
+  },
+  applyDisabled: {
+    opacity: 0.4,
+    cursor: 'default',
   },
 };
 
 /* ── Reusable section + controls used by sort/filter modals ── */
 
-export function ModalSection({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+export function ModalSection({ title, hint, children }: { title?: string; hint?: string; children: React.ReactNode }) {
   return (
     <div style={sectionStyles.wrap}>
-      <div style={sectionStyles.title}>{title}</div>
+      {title && <div style={sectionStyles.title}>{title}</div>}
       {hint && <div style={sectionStyles.hint}>{hint}</div>}
       {children}
     </div>
@@ -389,14 +414,14 @@ const sectionStyles: Record<string, React.CSSProperties> = {
     marginBottom: Gap.section,
   },
   title: {
-    fontSize: Font.md,
+    fontSize: Font.lg,
     fontWeight: 700,
     marginBottom: Gap.sm,
     color: Colors.textPrimary,
   },
   hint: {
-    fontSize: Font.xs,
-    color: Colors.textMuted,
+    fontSize: Font.sm,
+    color: Colors.textSecondary,
     marginBottom: Gap.md,
     lineHeight: '1.4',
   },
@@ -406,34 +431,33 @@ const radioStyles: Record<string, React.CSSProperties> = {
   row: {
     display: 'flex',
     alignItems: 'center',
-    gap: Gap.md,
+    gap: Gap.xl,
     width: '100%',
-    padding: `${Gap.md}px ${Gap.xl}px`,
+    padding: `${Gap.xl}px ${Gap.xl}px`,
     backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderStyle: 'solid',
-    borderColor: Colors.borderSubtle,
+    border: 'none',
     borderRadius: Radius.xs,
     color: Colors.textSecondary,
-    fontSize: Font.sm,
+    fontSize: Font.md,
+    fontWeight: 500,
     cursor: 'pointer',
     marginBottom: Gap.xs,
     textAlign: 'left' as const,
   },
   rowSelected: {
-    backgroundColor: Colors.chipSelectedBgSubtle,
-    borderColor: Colors.accentBlue,
     color: Colors.textPrimary,
   },
   dot: {
-    width: 14,
-    height: 14,
+    width: 18,
+    height: 18,
     borderRadius: '50%',
     borderWidth: 2,
     borderStyle: 'solid',
     borderColor: Colors.borderPrimary,
     flexShrink: 0,
     boxSizing: 'border-box' as const,
+    position: 'relative' as const,
+    top: 1,
   },
   dotSelected: {
     borderColor: Colors.accentBlue,
@@ -451,7 +475,7 @@ const choiceStyles: Record<string, React.CSSProperties> = {
     borderColor: Colors.borderPrimary,
     backgroundColor: Colors.transparent,
     color: Colors.textTertiary,
-    fontSize: Font.sm,
+    fontSize: Font.md,
     cursor: 'pointer',
   },
   pillSelected: {
@@ -609,12 +633,12 @@ const accordionStyles: Record<string, React.CSSProperties> = {
     flex: 1,
   },
   title: {
-    fontSize: Font.md,
+    fontSize: Font.lg,
     fontWeight: 700,
   },
   hint: {
-    fontSize: Font.xs,
-    color: Colors.textMuted,
+    fontSize: Font.sm,
+    color: Colors.textSecondary,
   },
   chevron: {
     flexShrink: 0,

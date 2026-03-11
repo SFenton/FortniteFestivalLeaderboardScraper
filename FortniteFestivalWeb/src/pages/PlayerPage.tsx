@@ -13,11 +13,12 @@ import {
   type PlayerScore,
   type Song,
 } from '../models';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, goldFill, goldOutline, goldOutlineSkew, frostedCard } from '../theme';
+import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutline, goldOutlineSkew, frostedCard } from '../theme';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import { useSettings, isInstrumentVisible } from '../contexts/SettingsContext';
 import { loadSongSettings, saveSongSettings } from '../components/songSettings';
 import { useScrollMask } from '../hooks/useScrollMask';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 /** Wrapper that fades in via CSS animation, then strips the animation styles
  *  so that `opacity` is no longer set by the animation system.  This prevents
@@ -342,7 +343,7 @@ function PlayerContent({
     node: (
       <div style={{ marginTop: Gap.section }}>
         <h2 style={styles.sectionTitle}>Top Songs Per Instrument</h2>
-        <p style={styles.sectionDesc}>Your best and worst competitive songs per instrument, sorted by percentile.</p>
+        <p style={styles.sectionDesc}>{data.displayName}'s highest and lowest-ranked competitive songs per instrument, sorted by percentile.</p>
       </div>
     ),
   });
@@ -357,13 +358,13 @@ function PlayerContent({
     const topScores = sorted.slice(0, 5);
     const bottomScores = sorted.length > 5 ? sorted.slice(-5).reverse() : [];
 
-    const renderSongRow = (s: typeof topScores[0], isLast: boolean) => {
+    const renderSongRow = (s: typeof topScores[0], _isLast: boolean) => {
       const song = songMap.get(s.songId);
       const pct = s.rank > 0 && (s.totalEntries ?? 0) > 0
         ? Math.min((s.rank / s.totalEntries!) * 100, 100)
         : undefined;
       return (
-        <Link key={s.songId} to={`/songs/${s.songId}?instrument=${encodeURIComponent(inst)}`} state={{ backTo: location.pathname }} style={{ ...styles.songListRow, ...(isLast ? { borderBottom: 'none' } : {}) }}>
+        <Link key={s.songId} to={`/songs/${s.songId}?instrument=${encodeURIComponent(inst)}`} state={{ backTo: location.pathname }} style={styles.songListRow}>
           {song?.albumArt ? (
             <img src={song.albumArt} alt="" style={styles.topSongThumb} loading="lazy" />
           ) : (
@@ -374,11 +375,16 @@ function PlayerContent({
             <span style={styles.topSongArtist}>{song?.artist ?? ''}</span>
           </div>
           <div style={styles.topSongRight}>
-            {pct != null && (
-              <span style={{ ...styles.percentilePill, ...(pct <= 5 ? styles.percentilePillGold : {}) }}>
-                {formatPercentile(pct)}
-              </span>
-            )}
+            {pct != null && (() => {
+              const isTop1 = pct <= 1;
+              const isTop5 = pct <= 5;
+              const pctStyle = isTop1
+                ? styles.percentileBadgeTop1
+                : isTop5
+                  ? styles.percentileBadgeTop5
+                  : styles.percentilePill;
+              return <span style={pctStyle}>{formatPercentile(pct)}</span>;
+            })()}
           </div>
         </Link>
       );
@@ -394,7 +400,7 @@ function PlayerContent({
           <InstrumentIcon instrument={inst} size={48} />
           <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: 48 }}>
             <span style={styles.instCardTitle}>Top Five Songs</span>
-            <span style={{ ...styles.sectionDesc, margin: 0, fontSize: Font.md }}>{`Your best five songs for ${INSTRUMENT_LABELS[inst]}.`}</span>
+            <span style={{ ...styles.sectionDesc, margin: 0, fontSize: Font.md }}>{`${data.displayName}'s highest-ranked songs for ${INSTRUMENT_LABELS[inst]}.`}</span>
           </div>
         </div>
       ),
@@ -404,10 +410,9 @@ function PlayerContent({
     items.push({
       key: `top-songs-${inst}`,
       span: true,
-      heightEstimate: topScores.length * 50,
-      style: { ...cardStyle, overflow: 'hidden' as const },
+      heightEstimate: topScores.length * 72,
       node: (
-        <div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: Gap.sm, marginBottom: Gap.section }}>
           {topScores.map((s, si) => renderSongRow(s, si === topScores.length - 1))}
         </div>
       ),
@@ -424,7 +429,7 @@ function PlayerContent({
             <InstrumentIcon instrument={inst} size={48} />
             <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: 48 }}>
               <span style={styles.instCardTitle}>Bottom Five Songs</span>
-              <span style={{ ...styles.sectionDesc, margin: 0, fontSize: Font.md }}>{`Your worst five songs for ${INSTRUMENT_LABELS[inst]}.`}</span>
+              <span style={{ ...styles.sectionDesc, margin: 0, fontSize: Font.md }}>{`${data.displayName}'s lowest-ranked songs for ${INSTRUMENT_LABELS[inst]}.`}</span>
             </div>
           </div>
         ),
@@ -434,10 +439,9 @@ function PlayerContent({
       items.push({
         key: `bot-songs-${inst}`,
         span: true,
-        heightEstimate: bottomScores.length * 50,
-        style: { ...cardStyle, overflow: 'hidden' as const },
+        heightEstimate: bottomScores.length * 72,
         node: (
-          <div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: Gap.sm, marginBottom: Gap.section }}>
             {bottomScores.map((s, si) => renderSongRow(s, si === bottomScores.length - 1))}
           </div>
         ),
@@ -448,6 +452,7 @@ function PlayerContent({
   // Wire up container-level scroll fade
   const fadeDeps = useMemo(() => [items.length], [items.length]);
   const updateFade = useScrollMask(scrollRef, fadeDeps);
+  const hasFab = useIsMobile();
 
   const handleScroll = useCallback(() => {
     updateFade();
@@ -456,7 +461,7 @@ function PlayerContent({
   return (
     <div style={styles.page}>
       <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
-        <div style={styles.container}>
+        <div style={{ ...styles.container, ...(hasFab ? { paddingBottom: 72 } : {}) }}>
           <div style={styles.gridList}>
             {(() => {
               // Compute which items are in the initial viewport by accumulating
@@ -976,11 +981,14 @@ const styles: Record<string, React.CSSProperties> = {
   songListRow: {
     display: 'flex',
     alignItems: 'center',
-    gap: Gap.md,
-    padding: `${Gap.sm}px ${Gap.xl}px`,
-    borderBottom: `1px solid ${Colors.glassBorder}`,
+    gap: Gap.xl,
+    padding: `0 ${Gap.xl}px`,
+    height: 64,
+    borderRadius: Radius.md,
+    ...frostedCard,
     textDecoration: 'none',
     color: 'inherit',
+    transition: 'background-color 0.15s',
   },
   topSongRow: {
     display: 'flex',
@@ -991,8 +999,8 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'inherit',
   },
   topSongThumb: {
-    width: 32,
-    height: 32,
+    width: Size.thumb,
+    height: Size.thumb,
     borderRadius: Radius.xs,
     objectFit: 'cover' as const,
     flexShrink: 0,
@@ -1004,15 +1012,15 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column' as const,
   },
   topSongName: {
-    fontSize: Font.sm,
-    fontWeight: 500,
+    fontSize: Font.md,
+    fontWeight: 600,
     whiteSpace: 'nowrap' as const,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
   },
   topSongArtist: {
-    fontSize: Font.xs,
-    color: Colors.textMuted,
+    fontSize: Font.sm,
+    color: Colors.textSubtle,
     whiteSpace: 'nowrap' as const,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
@@ -1033,16 +1041,43 @@ const styles: Record<string, React.CSSProperties> = {
     color: Colors.gold,
   },
   percentilePill: {
-    fontSize: Font.xs,
+    fontSize: Font.lg,
     fontWeight: 600,
     color: Colors.textSecondary,
     backgroundColor: 'rgba(255,255,255,0.1)',
     padding: `${Gap.xs}px ${Gap.md}px`,
     borderRadius: Radius.xs,
+    minWidth: 70,
+    textAlign: 'center' as const,
     display: 'inline-block',
-    marginBottom: 2,
+  },
+  percentileBadgeTop1: {
+    ...goldOutlineSkew,
+    fontSize: Font.lg,
+    textAlign: 'center' as const,
+  },
+  percentileBadgeTop5: {
+    ...goldOutline,
+    fontSize: Font.lg,
+    textAlign: 'center' as const,
   },
   percentilePillGold: goldFill,
+  accuracyPill: {
+    fontSize: Font.lg,
+    fontWeight: 600,
+    color: Colors.textSecondary,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    padding: `${Gap.xs}px ${Gap.md}px`,
+    borderRadius: Radius.xs,
+    minWidth: 70,
+    textAlign: 'center' as const,
+    display: 'inline-block',
+  },
+  accuracyBadgeFC: {
+    ...goldOutlineSkew,
+    fontSize: Font.lg,
+    textAlign: 'center' as const,
+  },
   center: {
     display: 'flex',
     alignItems: 'center',

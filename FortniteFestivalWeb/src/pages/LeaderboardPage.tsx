@@ -12,6 +12,8 @@ import { InstrumentIcon } from '../components/InstrumentIcons';
 import SeasonPill from '../components/SeasonPill';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutlineSkew, frostedCard } from '../theme';
 import { staggerDelay, estimateVisibleCount } from '../utils/stagger';
+import { useScrollMask } from '../hooks/useScrollMask';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 const PAGE_SIZE = 25;
 
@@ -47,6 +49,7 @@ export default function LeaderboardPage() {
   const showSeason = windowWidth >= 520;
   const showStars = windowWidth >= 768;
   const isMobile = windowWidth < 420;
+  const hasFab = useIsMobile();
 
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -65,7 +68,22 @@ export default function LeaderboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const playerRowRef = useRef<HTMLAnchorElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
+  const headerPinned = useRef(false);
   const [loadPhase, setLoadPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>('loading');
+  const updateScrollMask = useScrollMask(scrollRef, [loadPhase, entries.length]);
+  const handleScroll = useCallback(() => {
+    updateScrollMask();
+    const el = scrollRef.current;
+    if (!el) return;
+    // If pinned (after pagination), only unpin once user scrolls past threshold
+    if (headerPinned.current) {
+      if (el.scrollTop > 40) headerPinned.current = false;
+      return;
+    }
+    setHeaderCollapsed(el.scrollTop > 40);
+  }, [updateScrollMask]);
 
   const totalPages = Math.max(1, Math.ceil(localEntries / PAGE_SIZE));
 
@@ -101,13 +119,26 @@ export default function LeaderboardPage() {
   }, [fetchPage]);
 
   // Spinner → staggered-content transition
+  const hasLoadedOnce = useRef(false);
   useEffect(() => {
     if (loading || error) {
       setLoadPhase('loading');
+      // Pin header state and scroll to top so new content staggers from top
+      headerPinned.current = true;
+      scrollRef.current?.scrollTo(0, 0);
       return;
     }
     setLoadPhase('spinnerOut');
-    const id = setTimeout(() => setLoadPhase('contentIn'), 500);
+    const id = setTimeout(() => {
+      setLoadPhase('contentIn');
+      // On initial load, let header be expanded and unpin immediately.
+      // On pagination, keep pinned — scroll handler will unpin once past threshold.
+      if (!hasLoadedOnce.current) {
+        hasLoadedOnce.current = true;
+        headerPinned.current = false;
+        setHeaderCollapsed(false);
+      }
+    }, 500);
     return () => clearTimeout(id);
   }, [loading, error]);
 
@@ -162,29 +193,64 @@ export default function LeaderboardPage() {
         )}
         <div style={styles.bgDim} />
 
-        <div style={styles.headerBar}>
+        <div style={{
+          ...styles.headerBar,
+          paddingTop: headerCollapsed ? Gap.md : Layout.paddingTop,
+          transition: 'padding 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+        }}>
           <div style={styles.container}>
             <div style={styles.headerContent}>
               <div style={styles.headerLeft}>
                 {song?.albumArt ? (
-                  <img src={song.albumArt} alt="" style={styles.headerArt} />
+                  <img src={song.albumArt} alt="" style={{
+                    ...styles.headerArt,
+                    width: headerCollapsed ? 80 : 120,
+                    height: headerCollapsed ? 80 : 120,
+                    borderRadius: headerCollapsed ? Radius.md : Radius.lg,
+                    transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                  }} />
                 ) : (
-                  <div style={{ ...styles.headerArt, ...styles.artPlaceholder }} />
+                  <div style={{
+                    ...styles.headerArt,
+                    ...styles.artPlaceholder,
+                    width: headerCollapsed ? 80 : 120,
+                    height: headerCollapsed ? 80 : 120,
+                    borderRadius: headerCollapsed ? Radius.md : Radius.lg,
+                    transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                  }} />
                 )}
                 <div>
-                  <h1 style={styles.songTitle}>{song?.title ?? songId}</h1>
-                  <p style={styles.songArtist}>{song?.artist ?? 'Unknown Artist'}</p>
+                  <h1 style={{
+                    ...styles.songTitle,
+                    marginBottom: headerCollapsed ? Gap.xs : Gap.sm,
+                    transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                  }}>{song?.title ?? songId}</h1>
+                  <p style={{
+                    ...styles.songArtist,
+                    fontSize: headerCollapsed ? Font.md : Font.lg,
+                    transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                  }}>{song?.artist ?? 'Unknown Artist'}</p>
                 </div>
               </div>
               <div style={styles.headerRight}>
-                <InstrumentIcon instrument={instKey} size={48} />
+                <div style={{
+                  width: 56,
+                  height: 56,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transform: headerCollapsed ? 'scale(0.857)' : 'scale(1)',
+                  transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                }}>
+                  <InstrumentIcon instrument={instKey} size={56} />
+                </div>
                 <span style={styles.instLabel}>{instLabel}</span>
               </div>
             </div>
           </div>
         </div>
 
-      <div style={styles.scrollArea}>
+      <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
         <div style={styles.container}>
 
         {error && <div style={styles.centerError}>{error}</div>}
@@ -207,12 +273,12 @@ export default function LeaderboardPage() {
             <div style={styles.list}>
               {entries.map((e, i) => {
                 const isPlayer = playerData?.accountId === e.accountId;
-                const delay = staggerDelay(i, 125, estimateVisibleCount(72));
+                const delay = staggerDelay(i, 125, estimateVisibleCount(56));
                 const staggerStyle: React.CSSProperties | undefined = delay != null
                   ? { opacity: 0, animation: `fadeInUp 400ms ease-out ${delay}ms forwards` }
                   : undefined;
                 const baseStyle = isPlayer ? { ...styles.row, ...styles.rowHighlight } : styles.row;
-                const rowStyle = isMobile ? { ...baseStyle, gap: Gap.md, padding: `0 ${Gap.md}px` } : baseStyle;
+                const rowStyle = isMobile ? { ...baseStyle, gap: Gap.md, padding: `0 ${Gap.md}px`, height: 40 } : baseStyle;
                 return (
                 <Link
                   key={e.accountId}
@@ -279,7 +345,7 @@ export default function LeaderboardPage() {
       </div>
       </div>
 
-        {loadPhase === 'contentIn' && !error && totalPages > 1 && (
+        {hasLoadedOnce.current && !error && totalPages > 1 && (
         <div style={{ ...styles.pagination, ...(isMobile ? { justifyContent: 'space-between', gap: 0 } : {}) }}>
           <button
             style={{
@@ -332,7 +398,7 @@ export default function LeaderboardPage() {
       )}
 
       {playerScore && playerData && (
-        <div style={styles.playerFooter} onClick={goToPlayerPage} role="button" tabIndex={0}>
+        <div style={{ ...styles.playerFooter, ...(hasFab ? { paddingBottom: 94 } : {}) }} onClick={goToPlayerPage} role="button" tabIndex={0}>
           <div style={{ ...styles.playerFooterRow, cursor: 'pointer', ...(isMobile ? { gap: Gap.md, padding: `0 ${Gap.md}px` } : {}) }}>
             <span style={styles.colRank}>#{playerScore.rank.toLocaleString()}</span>
             <span style={styles.colName}>{playerData.displayName}</span>
@@ -427,7 +493,6 @@ const styles: Record<string, React.CSSProperties> = {
     position: 'relative' as const,
     zIndex: 2,
     flexShrink: 0,
-    paddingTop: Gap.md,
     paddingBottom: Gap.md,
   },
   headerContent: {
@@ -487,13 +552,13 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: Gap.xl,
     padding: `0 ${Gap.xl}px`,
-    height: 64,
+    height: 48,
     borderRadius: Radius.md,
     ...frostedCard,
     textDecoration: 'none',
     color: 'inherit',
     transition: 'background-color 0.15s',
-    fontSize: Font.lg,
+    fontSize: Font.md,
   },
   emptyRow: {
     padding: `${Gap.xl}px`,
@@ -505,7 +570,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid rgba(88, 166, 255, 0.45)`,
   },
   colRank: {
-    width: 64,
+    width: 48,
     flexShrink: 0,
     color: Colors.textTertiary,
     fontSize: Font.md,
@@ -531,7 +596,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   colAcc: {
-    width: 70,
+    width: 60,
     flexShrink: 0,
     textAlign: 'center' as const,
     fontWeight: 600,
@@ -648,7 +713,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: Gap.xl,
-    height: 64,
+    height: 48,
     padding: `0 ${Gap.xl}px`,
     borderRadius: Radius.md,
     ...frostedCard,

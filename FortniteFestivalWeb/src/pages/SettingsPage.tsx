@@ -6,6 +6,7 @@ import { METADATA_SORT_DISPLAY } from '../components/songSettings';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import type { InstrumentKey } from '../models';
 import { Colors, Font, Gap, Layout, MaxWidth, Radius, frostedCard } from '../theme';
+import { useScrollMask } from '../hooks/useScrollMask';
 
 function FadeInDiv({ delay, children, style }: { delay: number; children: React.ReactNode; style?: CSSProperties }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -61,6 +62,9 @@ const METADATA_TOGGLES: { key: MetadataKey; label: string }[] = [
 export default function SettingsPage() {
   const { settings, updateSettings, resetSettings } = useSettings();
   const isMobile = useIsMobile();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const updateScrollMask = useScrollMask(scrollRef, []);
+  const handleScroll = useCallback(() => { updateScrollMask(); }, [updateScrollMask]);
 
   const showActiveCount = INSTRUMENT_SHOW_MAP.filter(i => settings[i.showKey]).length;
 
@@ -91,8 +95,8 @@ export default function SettingsPage() {
 
   return (
     <div style={styles.page}>
-      <div style={styles.scrollArea}>
-      <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.md } : {}) }}>
+      <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
+      <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.md, paddingBottom: 48 } : {}) }}>
         <div style={styles.cardColumn}>
 
           {/* ───── App Settings ───── */}
