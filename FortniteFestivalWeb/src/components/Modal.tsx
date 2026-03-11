@@ -403,8 +403,8 @@ export function Accordion({ title, hint, defaultOpen = false, children }: { titl
 export function BulkActions({ onSelectAll, onClearAll }: { onSelectAll: () => void; onClearAll: () => void }) {
   return (
     <div style={bulkStyles.wrap}>
-      <button style={bulkStyles.btn} onClick={onSelectAll}>Select All</button>
-      <button style={bulkStyles.btn} onClick={onClearAll}>Clear All</button>
+      <button style={bulkStyles.selectBtn} onClick={onSelectAll}>Select All</button>
+      <button style={bulkStyles.clearBtn} onClick={onClearAll}>Clear All</button>
     </div>
   );
 }
@@ -652,22 +652,35 @@ const accordionStyles: Record<string, React.CSSProperties> = {
   bodyInner: {
     overflow: 'hidden',
     minHeight: 0,
+    paddingLeft: Gap.xl,
   },
 };
 
 const bulkStyles: Record<string, React.CSSProperties> = {
   wrap: {
     display: 'flex',
+    justifyContent: 'flex-end',
     gap: Gap.md,
-    marginBottom: Gap.md,
+    marginBottom: Gap.xl,
   },
-  btn: {
-    padding: `${Gap.xs}px ${Gap.md}px`,
+  selectBtn: {
+    padding: `${Gap.sm}px ${Gap.md}px`,
     borderRadius: Radius.xs,
-    border: `1px solid ${Colors.borderPrimary}`,
-    backgroundColor: Colors.transparent,
-    color: Colors.textTertiary,
-    fontSize: Font.xs,
+    border: `1px solid ${Colors.accentBlue}`,
+    backgroundColor: Colors.chipSelectedBg,
+    color: Colors.textPrimary,
+    fontSize: Font.sm,
+    fontWeight: 600,
+    cursor: 'pointer',
+  },
+  clearBtn: {
+    padding: `${Gap.sm}px ${Gap.md}px`,
+    borderRadius: Radius.xs,
+    border: `1px solid ${Colors.statusRed}`,
+    backgroundColor: Colors.dangerBg,
+    color: Colors.textPrimary,
+    fontSize: Font.sm,
+    fontWeight: 600,
     cursor: 'pointer',
   },
 };

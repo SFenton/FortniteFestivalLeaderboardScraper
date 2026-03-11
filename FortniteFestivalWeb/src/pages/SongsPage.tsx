@@ -540,6 +540,7 @@ export default function SongsPage() {
       <FilterModal
         visible={showFilter}
         draft={filterDraft}
+        savedDraft={{ ...settings.filters, instrumentFilter: settings.instrument }}
         availableSeasons={availableSeasons}
         onChange={setFilterDraft}
         onCancel={() => setShowFilter(false)}

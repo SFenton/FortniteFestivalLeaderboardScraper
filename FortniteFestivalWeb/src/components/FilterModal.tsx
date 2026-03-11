@@ -1,10 +1,11 @@
+import { useMemo, useCallback, useState } from 'react';
 import Modal, { ModalSection, ToggleRow, Accordion, BulkActions } from './Modal';
 import { InstrumentIcon } from './InstrumentIcons';
 import type { InstrumentKey } from '../models';
 import { INSTRUMENT_KEYS, INSTRUMENT_LABELS } from '../models';
 import type { SongFilters } from './songSettings';
 import { useSettings, isInstrumentVisible } from '../contexts/SettingsContext';
-import { Colors, Gap, Radius } from '../theme';
+import { Colors, Font, Gap, Radius } from '../theme';
 
 export type FilterDraft = SongFilters & {
   instrumentFilter: InstrumentKey | null;
@@ -13,6 +14,7 @@ export type FilterDraft = SongFilters & {
 type Props = {
   visible: boolean;
   draft: FilterDraft;
+  savedDraft?: FilterDraft;
   availableSeasons: number[];
   onChange: (d: FilterDraft) => void;
   onCancel: () => void;
@@ -22,7 +24,7 @@ type Props = {
 
 const PERCENTILE_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100] as const;
 
-export default function FilterModal({ visible, draft, availableSeasons, onChange, onCancel, onReset, onApply }: Props) {
+export default function FilterModal({ visible, draft, savedDraft, availableSeasons, onChange, onCancel, onReset, onApply }: Props) {
   const { settings: appSettings } = useSettings();
   const visibleKeys = INSTRUMENT_KEYS.filter(k => isInstrumentVisible(appSettings, k));
 
@@ -35,14 +37,35 @@ export default function FilterModal({ visible, draft, availableSeasons, onChange
 
   const hasInstrument = draft.instrumentFilter != null;
 
+  const hasChanges = useMemo(() => {
+    if (!savedDraft) return true;
+    return JSON.stringify(draft) !== JSON.stringify(savedDraft);
+  }, [draft, savedDraft]);
+
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const handleClose = useCallback(() => {
+    if (hasChanges) {
+      setConfirmOpen(true);
+    } else {
+      onCancel();
+    }
+  }, [hasChanges, onCancel]);
+  const confirmDiscard = useCallback(() => {
+    setConfirmOpen(false);
+    onCancel();
+  }, [onCancel]);
+
   return (
-    <Modal visible={visible} title="Filter Songs" onClose={onCancel} onApply={onApply} onReset={onReset} resetLabel="Reset Filter Settings" resetHint="Restore all filter options to their defaults.">
+    <>
+    <Modal visible={visible} title="Filter Songs" onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel="Reset Filter Settings" resetHint="Restore all filter options to their defaults." applyLabel="Apply Filter Changes" applyDisabled={!hasChanges}>
       {/* Missing filters */}
-      <ModalSection title="Missing" hint="Only show songs where you are missing scores or full combos on pad or pro instruments.">
-        <ToggleRow label="Pad Scores" description="Songs missing scores on Lead, Bass, Drums, or Vocals." checked={draft.missingPadScores} onToggle={() => toggle('missingPadScores')} />
-        <ToggleRow label="Pad FCs" description="Songs missing FCs on Lead, Bass, Drums, or Vocals." checked={draft.missingPadFCs} onToggle={() => toggle('missingPadFCs')} />
-        <ToggleRow label="Pro Scores" description="Songs missing scores on Pro Lead or Pro Bass." checked={draft.missingProScores} onToggle={() => toggle('missingProScores')} />
-        <ToggleRow label="Pro FCs" description="Songs missing FCs on Pro Lead or Pro Bass." checked={draft.missingProFCs} onToggle={() => toggle('missingProFCs')} />
+      <ModalSection>
+        <Accordion title="Missing" hint="Only show songs where you are missing scores or full combos on pad or pro instruments.">
+          <ToggleRow label="Pad Scores" description="Songs missing scores on Lead, Bass, Drums, or Vocals." checked={draft.missingPadScores} onToggle={() => toggle('missingPadScores')} />
+          <ToggleRow label="Pad FCs" description="Songs missing FCs on Lead, Bass, Drums, or Vocals." checked={draft.missingPadFCs} onToggle={() => toggle('missingPadFCs')} />
+          <ToggleRow label="Pro Scores" description="Songs missing scores on Pro Lead or Pro Bass." checked={draft.missingProScores} onToggle={() => toggle('missingProScores')} />
+          <ToggleRow label="Pro FCs" description="Songs missing FCs on Pro Lead or Pro Bass." checked={draft.missingProFCs} onToggle={() => toggle('missingProFCs')} />
+        </Accordion>
       </ModalSection>
 
       {/* Instrument selector */}
@@ -53,61 +76,80 @@ export default function FilterModal({ visible, draft, availableSeasons, onChange
             return (
               <button
                 key={key}
-                style={{
-                  ...localStyles.instrumentBtn,
-                  ...(selected ? localStyles.instrumentBtnSelected : {}),
-                }}
+                style={localStyles.instrumentBtn}
                 onClick={() => onChange({ ...draft, instrumentFilter: selected ? null : key })}
                 title={INSTRUMENT_LABELS[key]}
               >
-                <InstrumentIcon instrument={key} size={24} />
+                <div style={{ ...localStyles.instrumentCircle, ...(selected ? localStyles.instrumentCircleActive : {}) }} />
+                <div style={{ position: 'relative' as const, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <InstrumentIcon instrument={key} size={48} />
+                </div>
               </button>
             );
           })}
         </div>
       </ModalSection>
 
-      {/* Season filter (instrument-specific) */}
-      {hasInstrument && (
-        <Accordion title="Season" hint="Filter by the season in which the score was achieved.">
-          <SeasonToggles
-            availableSeasons={availableSeasons}
-            seasonFilter={draft.seasonFilter}
-            onChange={seasonFilter => onChange({ ...draft, seasonFilter })}
-          />
-        </Accordion>
-      )}
+      {/* Instrument-specific filters (animated in/out) */}
+      <div style={{
+        display: 'grid',
+        gridTemplateRows: hasInstrument ? '1fr' : '0fr',
+        transition: 'grid-template-rows 400ms ease',
+      }}>
+        <div style={{ overflow: 'hidden', minHeight: 0 }}>
+          <ModalSection>
+            <Accordion title="Season" hint="Filter by the season in which the score was achieved.">
+              <SeasonToggles
+                availableSeasons={availableSeasons}
+                seasonFilter={draft.seasonFilter}
+                onChange={seasonFilter => onChange({ ...draft, seasonFilter })}
+              />
+            </Accordion>
+          </ModalSection>
 
-      {/* Percentile filter (instrument-specific) */}
-      {hasInstrument && (
-        <Accordion title="Percentile" hint="Show or hide songs based on their leaderboard ranking bracket.">
-          <PercentileToggles
-            percentileFilter={draft.percentileFilter}
-            onChange={percentileFilter => onChange({ ...draft, percentileFilter })}
-          />
-        </Accordion>
-      )}
+          <ModalSection>
+            <Accordion title="Percentile" hint="Show or hide songs based on their leaderboard ranking bracket.">
+              <PercentileToggles
+                percentileFilter={draft.percentileFilter}
+                onChange={percentileFilter => onChange({ ...draft, percentileFilter })}
+              />
+            </Accordion>
+          </ModalSection>
 
-      {/* Stars filter (instrument-specific) */}
-      {hasInstrument && (
-        <Accordion title="Stars" hint="Filter songs by the number of stars on your high score.">
-          <StarsToggles
-            starsFilter={draft.starsFilter}
-            onChange={starsFilter => onChange({ ...draft, starsFilter })}
-          />
-        </Accordion>
-      )}
+          <ModalSection>
+            <Accordion title="Stars" hint="Filter songs by the number of stars on your high score.">
+              <StarsToggles
+                starsFilter={draft.starsFilter}
+                onChange={starsFilter => onChange({ ...draft, starsFilter })}
+              />
+            </Accordion>
+          </ModalSection>
 
-      {/* Difficulty filter (instrument-specific) */}
-      {hasInstrument && (
-        <Accordion title="Song Intensity" hint="Filter by the song's difficulty rating for the selected instrument.">
-          <DifficultyToggles
-            difficultyFilter={draft.difficultyFilter}
-            onChange={difficultyFilter => onChange({ ...draft, difficultyFilter })}
-          />
-        </Accordion>
-      )}
+          <ModalSection>
+            <Accordion title="Song Intensity" hint="Filter by the song's difficulty rating for the selected instrument.">
+              <DifficultyToggles
+                difficultyFilter={draft.difficultyFilter}
+                onChange={difficultyFilter => onChange({ ...draft, difficultyFilter })}
+              />
+            </Accordion>
+          </ModalSection>
+        </div>
+      </div>
     </Modal>
+
+      {confirmOpen && (
+        <div style={confirmStyles.overlay} onClick={() => setConfirmOpen(false)}>
+          <div style={confirmStyles.card} onClick={e => e.stopPropagation()}>
+            <div style={confirmStyles.title}>Cancel Song Filter Changes</div>
+            <div style={confirmStyles.message}>Are you sure you want to discard your song filter changes?</div>
+            <div style={confirmStyles.buttons}>
+              <button style={confirmStyles.btnNo} onClick={() => setConfirmOpen(false)}>No</button>
+              <button style={confirmStyles.btnYes} onClick={confirmDiscard}>Yes</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -264,26 +306,94 @@ const localStyles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
   },
   instrumentBtn: {
-    width: 44,
-    height: 44,
+    width: 64,
+    height: 64,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: Radius.xs,
-    border: `1px solid ${Colors.borderPrimary}`,
-    backgroundColor: Colors.transparent,
+    borderRadius: '50%',
+    border: 'none',
+    backgroundColor: 'transparent',
     cursor: 'pointer',
-    opacity: 0.6,
-    transition: 'opacity 0.15s, border-color 0.15s',
+    position: 'relative' as const,
+    overflow: 'hidden' as const,
   },
-  instrumentBtnSelected: {
-    opacity: 1,
-    borderColor: Colors.accentBlue,
-    backgroundColor: Colors.chipSelectedBgSubtle,
+  instrumentCircle: {
+    position: 'absolute' as const,
+    inset: 0,
+    borderRadius: '50%',
+    backgroundColor: '#2ECC71',
+    transform: 'scale(0)',
+    transition: 'transform 250ms ease',
+  },
+  instrumentCircleActive: {
+    transform: 'scale(1)',
   },
   chipGrid: {
     display: 'flex',
     flexWrap: 'wrap',
     gap: Gap.sm,
+  },
+};
+
+const confirmStyles: Record<string, React.CSSProperties> = {
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    zIndex: 1100,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  card: {
+    backgroundColor: Colors.surfaceFrosted,
+    backdropFilter: 'blur(18px)',
+    WebkitBackdropFilter: 'blur(18px)',
+    borderRadius: 12,
+    padding: Gap.section,
+    maxWidth: 340,
+    width: '90%',
+    color: Colors.textPrimary,
+    boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+  },
+  title: {
+    fontSize: Font.lg,
+    fontWeight: 700,
+    marginBottom: Gap.md,
+  },
+  message: {
+    fontSize: Font.md,
+    color: Colors.textSecondary,
+    marginBottom: Gap.section,
+    lineHeight: '1.4',
+  },
+  buttons: {
+    display: 'flex',
+    gap: Gap.md,
+  },
+  btnNo: {
+    flex: 1,
+    padding: `${Gap.xl}px`,
+    borderRadius: 8,
+    border: `1px solid ${Colors.accentBlue}`,
+    backgroundColor: Colors.chipSelectedBg,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
+    fontWeight: 600,
+    cursor: 'pointer',
+    textAlign: 'center' as const,
+  },
+  btnYes: {
+    flex: 1,
+    padding: `${Gap.xl}px`,
+    borderRadius: 8,
+    border: 'none',
+    backgroundColor: Colors.statusRed,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
+    fontWeight: 600,
+    cursor: 'pointer',
+    textAlign: 'center' as const,
   },
 };
