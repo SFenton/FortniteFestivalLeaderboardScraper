@@ -1081,6 +1081,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column' as const,
     height: '100dvh',
+    overflow: 'hidden',
   },
   nav: {
     display: 'flex',
@@ -1091,10 +1092,12 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     zIndex: 100,
     position: 'relative' as const,
+    touchAction: 'none' as const,
   },
   content: {
     flex: 1,
     overflowY: 'auto' as const,
+    overscrollBehavior: 'contain' as const,
     position: 'relative' as const,
   },
   hamburger: {
@@ -1128,6 +1131,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     zIndex: 100,
     position: 'relative' as const,
+    touchAction: 'none' as const,
   },
   spacer: {
     flex: 1,
