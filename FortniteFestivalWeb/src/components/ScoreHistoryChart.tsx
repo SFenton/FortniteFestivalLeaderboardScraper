@@ -18,7 +18,7 @@ import {
   type ScoreHistoryEntry,
 } from '../models';
 import { InstrumentIcon } from './InstrumentIcons';
-import { Colors, Font, Gap, Radius, goldFill } from '../theme';
+import { Colors, Font, Gap, Radius, goldFill, frostedCard } from '../theme';
 
 type Props = {
   songId: string;
@@ -471,10 +471,7 @@ const styles: Record<string, React.CSSProperties> = {
     transition: 'all 0.15s ease',
   },
   chartContainer: {
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    border: `1px solid ${Colors.glassBorder}`,
+    ...frostedCard,
     borderRadius: Radius.lg,
     padding: `${Gap.sm}px ${Gap.xl}px`,
     display: 'flex',
@@ -494,7 +491,6 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid ${Colors.borderPrimary}`,
     borderRadius: Radius.xs,
     padding: Gap.xl,
-    backdropFilter: 'blur(12px)',
   },
   tooltipDate: {
     fontSize: Font.sm,

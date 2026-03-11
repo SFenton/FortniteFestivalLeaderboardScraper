@@ -7,9 +7,9 @@ import { usePlayerData } from '../contexts/PlayerDataContext';
 import { useSettings } from '../contexts/SettingsContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useFabSearch } from '../contexts/FabSearchContext';
-import { useScrollFade } from '../hooks/useScrollFade';
+import { useScrollMask } from '../hooks/useScrollMask';
 import type { Song, PlayerScore, InstrumentKey } from '../models';
-import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth, goldFill, goldOutline, goldOutlineSkew } from '../theme';
+import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth, goldFill, goldOutline, goldOutlineSkew, frostedCard } from '../theme';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../components/InstrumentIcons';
 import SeasonPill from '../components/SeasonPill';
 import { visibleInstruments } from '../contexts/SettingsContext';
@@ -37,7 +37,6 @@ export default function SongsPage() {
   const isMobile = useIsMobile();
   const fabSearch = useFabSearch();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
 
   // Restore scroll position on mount
   useEffect(() => {
@@ -349,16 +348,16 @@ export default function SongsPage() {
     }
   }, [loadPhase]);
 
-  // Per-card scroll fade
-  const updateRowFade = useScrollFade(scrollRef, listRef, [loadPhase, filtered]);
+  // Container-level scroll fade (works because frostedCard avoids backdrop-filter)
+  const updateScrollMask = useScrollMask(scrollRef, [loadPhase, filtered]);
 
   // Save scroll position continuously + update fade
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     _savedScrollTop = el.scrollTop;
-    updateRowFade();
-  }, [updateRowFade]);
+    updateScrollMask();
+  }, [updateScrollMask]);
 
   if (error) {
     return <div style={styles.center}>{error}</div>;
@@ -488,7 +487,7 @@ export default function SongsPage() {
             </div>
           </div>
         ) : (
-          <div ref={listRef} style={styles.list}>
+          <div style={styles.list}>
             {loadPhase === 'contentIn' && filtered.map((song, i) => (
                 <SongRow
                   key={song.songId}
@@ -932,10 +931,7 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 200,
     padding: `${Gap.md}px ${Gap.xl}px`,
     borderRadius: Radius.sm,
-    border: `1px solid ${Colors.glassBorder}`,
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
+    ...frostedCard,
     color: Colors.textPrimary,
     fontSize: Font.md,
     outline: 'none',
@@ -956,10 +952,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: Size.control,
     height: Size.control,
     borderRadius: Radius.xs,
-    border: `1px solid ${Colors.glassBorder}`,
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
+    ...frostedCard,
     color: Colors.textTertiary,
     cursor: 'pointer',
   },
@@ -1048,10 +1041,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: `0 ${Gap.xl}px`,
     height: 64,
     borderRadius: Radius.md,
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    border: `1px solid ${Colors.glassBorder}`,
+    ...frostedCard,
     textDecoration: 'none',
     color: 'inherit',
     transition: 'background-color 0.15s',
@@ -1062,10 +1052,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: Gap.md,
     padding: `${Gap.lg}px ${Gap.xl}px`,
     borderRadius: Radius.md,
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    border: `1px solid ${Colors.glassBorder}`,
+    ...frostedCard,
     textDecoration: 'none',
     color: 'inherit',
     transition: 'background-color 0.15s',

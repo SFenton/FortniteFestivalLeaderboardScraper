@@ -13,11 +13,11 @@ import {
   type PlayerScore,
   type Song,
 } from '../models';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, goldFill, goldOutline, goldOutlineSkew } from '../theme';
+import { Colors, Font, Gap, Radius, Layout, MaxWidth, goldFill, goldOutline, goldOutlineSkew, frostedCard } from '../theme';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import { useSettings, isInstrumentVisible } from '../contexts/SettingsContext';
 import { loadSongSettings, saveSongSettings } from '../components/songSettings';
-import { useScrollFade } from '../hooks/useScrollFade';
+import { useScrollMask } from '../hooks/useScrollMask';
 
 /** Wrapper that fades in via CSS animation, then strips the animation styles
  *  so that `opacity` is no longer set by the animation system.  This prevents
@@ -127,7 +127,6 @@ function PlayerContent({
   const location = useLocation();
   const navigate = useNavigate();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
 
   const effectiveScores = isTrackedPlayer
     ? data.scores.filter(s => isInstrumentVisible(settings, s.instrument as InstrumentKey))
@@ -141,16 +140,12 @@ function PlayerContent({
   const overallStats = computeOverallStats(effectiveScores);
 
   // Build a completely flat list of small items — each becomes a direct child
-  // of listRef so useScrollFade only masks the 1-2 items at the scroll edge,
-  // preserving backdrop-filter on everything else.
+  // of the grid so each gets a staggered fade-in animation.
   type Item = { key: string; node: React.ReactNode; span: boolean; style?: CSSProperties };
   const items: Item[] = [];
 
-  const glassStyle: CSSProperties = {
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    border: `1px solid ${Colors.glassBorder}`,
+  const cardStyle: CSSProperties = {
+    ...frostedCard,
     borderRadius: Radius.md,
   };
 
@@ -231,7 +226,7 @@ function PlayerContent({
     { label: 'Best Rank', value: overallStats.bestRank > 0 ? `#${overallStats.bestRank.toLocaleString()}` : '—', to: overallStats.bestRankSongId ? `/songs/${overallStats.bestRankSongId}?instrument=${encodeURIComponent(overallStats.bestRankInstrument!)}` : undefined, state: { backTo: location.pathname } },
   ];
   for (const box of summaryBoxes) {
-    items.push({ key: `sum-${box.label}`, span: false, style: glassStyle, node: <StatBox label={box.label} value={box.value} color={box.color} to={box.to} state={box.state} /> });
+    items.push({ key: `sum-${box.label}`, span: false, style: cardStyle, node: <StatBox label={box.label} value={box.value} color={box.color} to={box.to} state={box.state} /> });
   }
 
   // --- Instrument Statistics heading ---
@@ -285,7 +280,7 @@ function PlayerContent({
     cards.push({ label: 'Percentile (Songs Played)', value: stats.avgPercentile, color: pctGold(stats.avgPercentile) });
 
     for (const c of cards) {
-      items.push({ key: `${inst}-${c.label}`, span: false, style: glassStyle, node: <StatBox label={c.label} value={c.value} color={c.color} to={c.to} /> });
+      items.push({ key: `${inst}-${c.label}`, span: false, style: cardStyle, node: <StatBox label={c.label} value={c.value} color={c.color} to={c.to} /> });
     }
 
     // Percentile table — single glass container
@@ -294,7 +289,7 @@ function PlayerContent({
       items.push({
         key: `${inst}-pct-table`,
         span: true,
-        style: { ...glassStyle, overflow: 'hidden' as const, marginBottom: Gap.md },
+        style: { ...cardStyle, overflow: 'hidden' as const, marginBottom: Gap.md },
         node: (
           <div>
             <div style={styles.pctRowHeader}>
@@ -402,7 +397,7 @@ function PlayerContent({
     items.push({
       key: `top-songs-${inst}`,
       span: true,
-      style: { ...glassStyle, overflow: 'hidden' as const },
+      style: { ...cardStyle, overflow: 'hidden' as const },
       node: (
         <div>
           {topScores.map((s, si) => renderSongRow(s, si === topScores.length - 1))}
@@ -430,7 +425,7 @@ function PlayerContent({
       items.push({
         key: `bot-songs-${inst}`,
         span: true,
-        style: { ...glassStyle, overflow: 'hidden' as const },
+        style: { ...cardStyle, overflow: 'hidden' as const },
         node: (
           <div>
             {bottomScores.map((s, si) => renderSongRow(s, si === bottomScores.length - 1))}
@@ -440,9 +435,9 @@ function PlayerContent({
     }
   }
 
-  // Wire up useScrollFade
+  // Wire up container-level scroll fade
   const fadeDeps = useMemo(() => [items.length], [items.length]);
-  const updateFade = useScrollFade(scrollRef, listRef, fadeDeps);
+  const updateFade = useScrollMask(scrollRef, fadeDeps);
 
   const handleScroll = useCallback(() => {
     updateFade();
@@ -452,7 +447,7 @@ function PlayerContent({
     <div style={styles.page}>
       <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
         <div style={styles.container}>
-          <div ref={listRef} style={styles.gridList}>
+          <div style={styles.gridList}>
             {items.map((item, i) => (
               <FadeInDiv key={item.key} delay={i * 80} style={{ ...(item.span ? styles.gridFullWidth : {}), ...item.style }}>
                 {item.node}
@@ -799,10 +794,7 @@ const styles: Record<string, React.CSSProperties> = {
     gridColumn: '1 / -1',
   },
   instCard: {
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    border: `1px solid ${Colors.glassBorder}`,
+    ...frostedCard,
     borderRadius: Radius.lg,
     overflow: 'hidden',
   },
@@ -832,10 +824,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   // Percentile table
   pctTablePanel: {
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    border: `1px solid ${Colors.glassBorder}`,
+    ...frostedCard,
     borderRadius: Radius.lg,
     overflow: 'hidden',
     marginBottom: Gap.xl,

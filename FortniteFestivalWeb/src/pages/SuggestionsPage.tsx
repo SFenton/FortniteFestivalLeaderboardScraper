@@ -18,7 +18,7 @@ import { shouldShowCategory, filterCategoryForInstruments } from '@festival/core
 import { globalKeyFor, getCategoryTypeId, getCategoryInstrument, perInstrumentKeyFor } from '@festival/core/suggestions/suggestionFilterConfig';
 import { useSettings } from '../contexts/SettingsContext';
 import type { AppSettings } from '../contexts/SettingsContext';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill } from '../theme';
+import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, frostedCard } from '../theme';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useFabSearch } from '../contexts/FabSearchContext';
 import { useScrollFade } from '../hooks/useScrollFade';
@@ -685,10 +685,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: Size.control,
     height: Size.control,
     borderRadius: Radius.xs,
-    border: `1px solid ${Colors.glassBorder}`,
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
+    ...frostedCard,
     color: Colors.textTertiary,
     cursor: 'pointer',
   },
@@ -746,10 +743,7 @@ const styles: Record<string, React.CSSProperties> = {
     animation: 'spin 0.8s linear infinite',
   },
   card: {
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    border: `1px solid ${Colors.glassBorder}`,
+    ...frostedCard,
     borderRadius: Radius.lg,
     marginBottom: Gap.section,
     overflow: 'hidden',

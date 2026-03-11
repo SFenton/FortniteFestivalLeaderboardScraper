@@ -10,7 +10,7 @@ import {
 } from '../models';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import SeasonPill from '../components/SeasonPill';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutlineSkew } from '../theme';
+import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutlineSkew, frostedCard } from '../theme';
 
 const PAGE_SIZE = 25;
 
@@ -488,10 +488,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: `0 ${Gap.xl}px`,
     height: 64,
     borderRadius: Radius.md,
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    border: `1px solid ${Colors.glassBorder}`,
+    ...frostedCard,
     textDecoration: 'none',
     color: 'inherit',
     transition: 'background-color 0.15s',
@@ -580,14 +577,14 @@ const styles: Record<string, React.CSSProperties> = {
     margin: '0 auto',
     width: '100%',
     boxSizing: 'border-box' as const,
+    position: 'relative' as const,
+    zIndex: 1,
   },
   pageButton: {
     padding: `${Gap.md}px ${Gap.xl}px`,
     borderRadius: Radius.sm,
-    border: `1px solid ${Colors.glassBorder}`,
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
+    ...frostedCard,
+    backgroundColor: Colors.backgroundCard,
     color: Colors.textPrimary,
     fontSize: Font.sm,
     cursor: 'pointer',
@@ -608,10 +605,8 @@ const styles: Record<string, React.CSSProperties> = {
     color: Colors.textSecondary,
     padding: `${Gap.md}px ${Gap.xl}px`,
     borderRadius: Radius.sm,
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    border: `1px solid ${Colors.glassBorder}`,
+    ...frostedCard,
+    backgroundColor: Colors.backgroundCard,
   },
   spinnerContainer: {
     display: 'flex',
@@ -655,10 +650,9 @@ const styles: Record<string, React.CSSProperties> = {
     height: 64,
     padding: `0 ${Gap.xl}px`,
     borderRadius: Radius.md,
-    backgroundColor: 'rgba(75, 15, 99, 0.45)',
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    border: `1px solid rgba(124, 58, 237, 0.35)`,
+    ...frostedCard,
+    backgroundColor: 'rgba(75, 15, 99, 0.75)',
+    border: `1px solid rgba(124, 58, 237, 0.5)`,
     fontSize: Font.lg,
     maxWidth: MaxWidth.card,
     margin: '0 auto',

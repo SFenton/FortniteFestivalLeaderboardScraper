@@ -5,7 +5,7 @@ import { ToggleRow, ReorderList } from '../components/Modal';
 import { METADATA_SORT_DISPLAY } from '../components/songSettings';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import type { InstrumentKey } from '../models';
-import { Colors, Font, Gap, Layout, MaxWidth, Radius } from '../theme';
+import { Colors, Font, Gap, Layout, MaxWidth, Radius, frostedCard } from '../theme';
 
 function FadeInDiv({ delay, children, style }: { delay: number; children: React.ReactNode; style?: CSSProperties }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -230,10 +230,7 @@ const styles: Record<string, React.CSSProperties> = {
     paddingBottom: Gap.section * 2,
   },
   card: {
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    border: `1px solid ${Colors.glassBorder}`,
+    ...frostedCard,
     borderRadius: Radius.md,
     padding: 16,
     display: 'flex',

@@ -12,7 +12,7 @@ import {
   type PlayerScore,
   type ScoreHistoryEntry,
 } from '../models';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, goldOutlineSkew } from '../theme';
+import { Colors, Font, Gap, Radius, Layout, MaxWidth, goldOutlineSkew, frostedCard } from '../theme';
 import SeasonPill from '../components/SeasonPill';
 import ScoreHistoryChart from '../components/ScoreHistoryChart';
 import { InstrumentIcon } from '../components/InstrumentIcons';
@@ -614,10 +614,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: `0 ${Gap.xl}px`,
     height: 48,
     borderRadius: Radius.md,
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    border: `1px solid ${Colors.glassBorder}`,
+    ...frostedCard,
     textDecoration: 'none',
     color: 'inherit',
     transition: 'background-color 0.15s',
@@ -673,10 +670,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
     height: 48,
     borderRadius: Radius.md,
-    backgroundColor: Colors.glassCard,
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    border: `1px solid ${Colors.glassBorder}`,
+    ...frostedCard,
     color: Colors.textPrimary,
     fontSize: Font.md,
     fontWeight: 600,
@@ -690,10 +684,9 @@ const styles: Record<string, React.CSSProperties> = {
     padding: `0 ${Gap.xl}px`,
     height: 48,
     borderRadius: Radius.md,
-    backgroundColor: 'rgba(75, 15, 99, 0.45)',
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    border: `1px solid rgba(124, 58, 237, 0.35)`,
+    ...frostedCard,
+    backgroundColor: 'rgba(75, 15, 99, 0.75)',
+    border: `1px solid rgba(124, 58, 237, 0.5)`,
     textDecoration: 'none',
     color: 'inherit',
     transition: 'background-color 0.15s',
