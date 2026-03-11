@@ -21,6 +21,7 @@ import type { AppSettings } from '../contexts/SettingsContext';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill } from '../theme';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useFabSearch } from '../contexts/FabSearchContext';
+import { useScrollFade } from '../hooks/useScrollFade';
 import type { InstrumentKey as ServerInstrumentKey } from '../models';
 
 /** Clears animation styles on completion so backdrop-filter works on children. */
@@ -144,6 +145,9 @@ export default function SuggestionsPage({ accountId }: Props) {
     }
     return m;
   }, [songs]);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const { categories, loadMore, hasMore } = useSuggestions(accountId, coreSongs, scoresIndex);
 
@@ -273,6 +277,13 @@ export default function SuggestionsPage({ accountId }: Props) {
     return () => clearTimeout(id);
   }, [phase]);
 
+  // Per-card scroll fade
+  const updateCardFade = useScrollFade(scrollRef, listRef, [phase, visibleCategories]);
+
+  const handleScroll = useCallback(() => {
+    updateCardFade();
+  }, [updateCardFade]);
+
   // Track how many category cards have already been revealed so that newly
   // loaded batches get their own stagger starting from delay 0.
   const revealedCountRef = useRef(0);
@@ -355,7 +366,7 @@ export default function SuggestionsPage({ accountId }: Props) {
         </div>
       </div>
       )}
-      <div id="suggestions-scroll" style={styles.scrollArea}>
+      <div id="suggestions-scroll" ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
       <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.sm } : {}) }}>
         {visibleCategories.length === 0 && (categories.length > 0 || !effectiveHasMore) ? (
           <div style={styles.emptyState}>
@@ -376,6 +387,7 @@ export default function SuggestionsPage({ accountId }: Props) {
             scrollableTarget="suggestions-scroll"
             style={{ overflow: 'visible' }}
           >
+            <div ref={listRef} style={{ paddingTop: Gap.lg }}>
             {visibleCategories.map((cat, idx) => {
               const delay = getCardDelay(idx);
               if (delay === -1) {
@@ -388,6 +400,7 @@ export default function SuggestionsPage({ accountId }: Props) {
                 </FadeInDiv>
               );
             })}
+            </div>
           </InfiniteScroll>
         )}
       </div>
