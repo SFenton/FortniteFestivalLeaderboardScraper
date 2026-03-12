@@ -33,6 +33,8 @@ type Props = {
   visibleInstruments?: InstrumentKey[];
   /** When true, skip chart entry animations (e.g. returning from cache). */
   skipAnimation?: boolean;
+  /** Fixed score column width (e.g. "7ch") for alignment with leaderboard cards. */
+  scoreWidth?: string;
 };
 
 type ChartPoint = {
@@ -66,6 +68,7 @@ export default function ScoreHistoryChart({
   history: historyProp,
   visibleInstruments: visibleInstrumentsProp,
   skipAnimation,
+  scoreWidth: scoreWidthProp,
 }: Props) {
   const cacheKey = `${accountId}:${songId}`;
   const isMobile = useIsMobile();
@@ -167,6 +170,36 @@ export default function ScoreHistoryChart({
     });
   }, [filtered]);
 
+  // Measure chart container width to determine how many bars fit
+  const MIN_BAR_WIDTH = 32;
+  const BAR_H_MARGIN = 8; // 8px margin on each side of a bar
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const [chartWidth, setChartWidth] = useState(0);
+  useEffect(() => {
+    const el = chartContainerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      setChartWidth(entry.contentRect.width);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Estimate usable plot width: container minus chart margins (24+24) minus axis label regions (~80 each)
+  const plotWidth = Math.max(0, chartWidth - 48 - 160);
+  const barSlot = MIN_BAR_WIDTH + BAR_H_MARGIN * 2;
+  const maxBars = plotWidth > 0 ? Math.max(1, Math.floor(plotWidth / barSlot)) : chartData.length;
+  const [chartPage, setChartPage] = useState(0); // 0 = last page (most recent)
+
+  // Reset page when instrument changes
+  useEffect(() => { setChartPage(0); }, [selected]);
+
+  const totalPages = Math.max(1, Math.ceil(chartData.length / maxBars));
+  // Page 0 = most recent (last slice), page N = oldest
+  const pageIndex = totalPages - 1 - chartPage;
+  const pageStart = pageIndex * maxBars;
+  const visibleChartData = chartData.slice(pageStart, pageStart + maxBars);
+
   // Sequenced card animation: grow → fade-in, fade-out → shrink
   // When swapping: swapOut old content → swapIn new content (card stays open)
   const cardTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -194,7 +227,7 @@ export default function ScoreHistoryChart({
         setDisplayedPoint(selectedPoint);
         requestAnimationFrame(() => {
           if (cardContentRef.current) {
-            setCardHeight(cardContentRef.current.scrollHeight);
+            setCardHeight(cardContentRef.current.offsetHeight + 2);
           }
           setCardPhase('growing');
           cardTimers.current.push(setTimeout(() => setCardPhase('open'), 250));
@@ -215,6 +248,74 @@ export default function ScoreHistoryChart({
 
   // Clear selected score card when instrument changes
   useEffect(() => { setSelectedPoint(null); }, [selected]);
+
+  // Animated score card list beneath chart
+  const visibleCards = useMemo(() => chartData.slice(-5), [chartData]);
+  const [displayedCards, setDisplayedCards] = useState<ChartPoint[]>(visibleCards);
+  const [listPhase, setListPhase] = useState<'idle' | 'out' | 'in'>('idle');
+  const [listHeight, setListHeight] = useState(() => {
+    const n = visibleCards.length;
+    return n > 0 ? n * 48 + (n - 1) * 4 : 0; // card height + gap
+  });
+  const listHeightRef = useRef(listHeight);
+  listHeightRef.current = listHeight;
+  const listTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const prevCardsRef = useRef(visibleCards);
+
+  useEffect(() => {
+    // Skip animation on first render or if cards are the same
+    if (prevCardsRef.current === visibleCards) return;
+    prevCardsRef.current = visibleCards;
+
+    listTimers.current.forEach(clearTimeout);
+    listTimers.current = [];
+
+    const oldCount = displayedCards.length;
+    const outDuration = oldCount > 0 ? 200 + (oldCount - 1) * 40 : 0;
+
+    if (oldCount > 0) {
+      const newN = visibleCards.length;
+      const newHeight = newN > 0 ? newN * 48 + (newN - 1) * 4 : 0;
+      const isShrinking = newHeight < listHeightRef.current;
+
+      setListPhase('out');
+      listTimers.current.push(setTimeout(() => {
+        if (isShrinking) {
+          // Shrink: animate height down first, then swap content
+          setListHeight(newHeight);
+          listTimers.current.push(setTimeout(() => {
+            setDisplayedCards(visibleCards);
+            setListPhase('in');
+            const inDuration = 300 + (newN - 1) * 60;
+            listTimers.current.push(setTimeout(() => setListPhase('idle'), inDuration));
+          }, 300));
+        } else {
+          // Grow: clear old cards, animate height up, then show new cards
+          setDisplayedCards([]);
+          // Use rAF to ensure the empty state renders before height change
+          requestAnimationFrame(() => {
+            setListHeight(newHeight);
+            listTimers.current.push(setTimeout(() => {
+              setDisplayedCards(visibleCards);
+              setListPhase('in');
+              const inDuration = 300 + (newN - 1) * 60;
+              listTimers.current.push(setTimeout(() => setListPhase('idle'), inDuration));
+            }, 300));
+          });
+        }
+      }, outDuration));
+    } else {
+      setDisplayedCards(visibleCards);
+      const newN = visibleCards.length;
+      setListHeight(newN > 0 ? newN * 48 + (newN - 1) * 4 : 0);
+      setListPhase('in');
+      const newCount = visibleCards.length;
+      const inDuration = 300 + (newCount - 1) * 60;
+      listTimers.current.push(setTimeout(() => setListPhase('idle'), inDuration));
+    }
+
+    return () => { listTimers.current.forEach(clearTimeout); };
+  }, [visibleCards]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Count per-instrument entries so we can show which instruments have data
   const instrumentCounts = useMemo(() => {
@@ -271,7 +372,7 @@ export default function ScoreHistoryChart({
   return (
     <div style={styles.wrapper}>
       {/* Chart area */}
-      <div style={styles.chartContainer}>
+      <div style={styles.chartContainer} ref={chartContainerRef}>
         {/* Instrument icons */}
         {availableInstruments.length > 1 && (
           <div ref={iconRowRef} style={styles.iconRow}>
@@ -336,9 +437,9 @@ export default function ScoreHistoryChart({
             height={320}
           >
             <ComposedChart
-              data={chartData}
+              data={visibleChartData}
               margin={{ top: 16, right: 24, bottom: 28, left: 24 }}
-              barCategoryGap="20%"
+              barCategoryGap="10%"
             >
               <CartesianGrid
                 strokeDasharray="3 3"
@@ -394,8 +495,8 @@ export default function ScoreHistoryChart({
               {isMobile && <Tooltip content={() => null} cursor={{ fill: 'transparent', stroke: 'transparent' }} trigger="click" />}
               <Legend
                 content={() => {
-                  const hasFc = chartData.some(p => p.accuracy >= 100 && p.isFullCombo);
-                  const hasNonFc = chartData.some(p => !(p.accuracy >= 100 && p.isFullCombo));
+                  const hasFc = visibleChartData.some(p => p.accuracy >= 100 && p.isFullCombo);
+                  const hasNonFc = visibleChartData.some(p => !(p.accuracy >= 100 && p.isFullCombo));
                   return (
                   <div style={styles.legend}>
                     {hasNonFc && (
@@ -428,7 +529,7 @@ export default function ScoreHistoryChart({
                 radius={[4, 4, 0, 0]}
                 isAnimationActive={!skipAnimation}
                 onClick={isMobile ? (_data: Record<string, unknown>, index: number) => {
-                  const point = chartData[index];
+                  const point = visibleChartData[index];
                   setSelectedPoint(prev => prev === point ? null : point);
                 } : undefined}
                 shape={(props: Record<string, unknown>) => {
@@ -500,7 +601,7 @@ export default function ScoreHistoryChart({
                 <div style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: Gap.md,
+                  gap: Gap.xl,
                   width: '100%',
                   opacity: (cardPhase === 'open' || cardPhase === 'swapIn') ? 1 : (cardPhase === 'swapOut' ? 0 : undefined),
                   transform: (cardPhase === 'open' || cardPhase === 'swapIn') ? 'translateY(0)' : (cardPhase === 'swapOut' ? 'translateY(-6px)' : undefined),
@@ -513,7 +614,7 @@ export default function ScoreHistoryChart({
                     {displayedPoint.season != null && (
                       <SeasonPill season={displayedPoint.season} />
                     )}
-                    <span style={styles.scoreCardScore}>
+                    <span style={{ ...styles.scoreCardScore, width: scoreWidthProp }}>
                       {displayedPoint.score.toLocaleString()}
                     </span>
                   </span>
@@ -532,6 +633,67 @@ export default function ScoreHistoryChart({
           </div>
         )}
       </div>
+      {/* Player score cards beneath chart */}
+      {isMobile && (displayedCards.length > 0 || listHeight > 0) && (
+        <div style={{
+          overflow: 'hidden',
+          height: listHeight,
+          transition: 'height 0.3s ease',
+          marginTop: Gap.xl,
+        }}>
+          <div style={styles.scoreCardList}>
+          {displayedCards.map((point, i) => {
+            const pct = point.accuracy;
+            const text = pct % 1 === 0 ? `${pct}%` : `${pct.toFixed(1)}%`;
+            const count = displayedCards.length;
+
+            let animStyle: React.CSSProperties = {};
+            if (listPhase === 'out') {
+              // Stagger out top-down: first card fades first
+              animStyle = {
+                opacity: 0,
+                transform: 'translateY(-8px)',
+                transition: `opacity 0.15s ease-in ${i * 40}ms, transform 0.15s ease-in ${i * 40}ms`,
+              };
+            } else if (listPhase === 'in') {
+              // Stagger in top-down: matches leaderboard card animation
+              animStyle = {
+                opacity: 0,
+                animation: `fadeInUp 300ms ease-out ${i * 60}ms forwards`,
+              };
+            }
+
+            return (
+              <div
+                key={point.date}
+                style={{
+                  ...styles.scoreListCard,
+                  ...animStyle,
+                }}
+              >
+                <span style={styles.scoreCardDate}>
+                  {new Date(point.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                </span>
+                <span style={styles.scoreCardMiddle}>
+                  {point.season != null && (
+                    <SeasonPill season={point.season} />
+                  )}
+                  <span style={{ ...styles.scoreCardScore, width: scoreWidthProp }}>
+                    {point.score.toLocaleString()}
+                  </span>
+                </span>
+                <span style={styles.scoreCardAcc}>
+                  {point.isFullCombo
+                    ? <span style={styles.fcAccBadge}>{text}</span>
+                    : <span style={{ color: accuracyColor(pct) }}>{text}</span>
+                  }
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -725,18 +887,17 @@ const styles: Record<string, React.CSSProperties> = {
   scoreCard: {
     display: 'flex',
     alignItems: 'center',
-    gap: Gap.md,
-    padding: `0 ${Gap.md}px`,
+    gap: Gap.xl,
+    padding: `0 0`,
     height: 48,
-    borderRadius: Radius.md,
-    ...frostedCard,
     fontSize: Font.md,
     color: 'inherit',
     width: '100%',
     boxSizing: 'border-box' as const,
   },
   scoreCardDate: {
-    flexShrink: 0,
+    flex: 1,
+    minWidth: 0,
     color: Colors.textPrimary,
     fontSize: Font.md,
   },
@@ -744,8 +905,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: Gap.sm,
-    flex: 1,
-    justifyContent: 'flex-end',
+    flexShrink: 0,
   },
   scoreCardScore: {
     flexShrink: 0,
@@ -766,5 +926,25 @@ const styles: Record<string, React.CSSProperties> = {
     ...goldOutlineSkew,
     fontSize: Font.lg,
     textAlign: 'center' as const,
+  },
+  scoreCardList: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: Gap.sm,
+  },
+  scoreListCard: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.xl,
+    padding: `0 ${Gap.xl}px`,
+    height: 48,
+    borderRadius: Radius.md,
+    ...frostedCard,
+    fontSize: Font.md,
+    color: 'inherit',
+    transition: 'border-color 0.15s',
+  },
+  scoreListCardActive: {
+    borderColor: Colors.accentBlueBright,
   },
 };

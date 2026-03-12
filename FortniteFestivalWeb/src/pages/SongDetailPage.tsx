@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
 import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
@@ -156,6 +156,23 @@ export default function SongDetailPage() {
   const instrumentsReady = activeInstruments.every((k) => !instrumentData[k].loading);
   const allReady = playerDataReady && instrumentsReady;
 
+  // Compute a global score width so season pills align across all sections
+  const globalScoreWidth = useMemo(() => {
+    let maxLen = 1;
+    for (const inst of activeInstruments) {
+      for (const e of instrumentData[inst].entries) {
+        maxLen = Math.max(maxLen, e.score.toLocaleString().length);
+      }
+    }
+    for (const s of playerScores) {
+      maxLen = Math.max(maxLen, s.score.toLocaleString().length);
+    }
+    for (const h of scoreHistory) {
+      maxLen = Math.max(maxLen, h.newScore.toLocaleString().length);
+    }
+    return `${maxLen}ch`;
+  }, [activeInstruments, instrumentData, playerScores, scoreHistory]);
+
   // Transition: spinner fade-out → staggered content fade-in
   // phase: 'loading' | 'spinnerOut' | 'contentIn'
   const allCached = !!cached && (!player || hasCachedPlayer);
@@ -308,6 +325,7 @@ export default function SongDetailPage() {
                 history={scoreHistory}
                 visibleInstruments={activeInstruments}
                 skipAnimation={allCached}
+                scoreWidth={globalScoreWidth}
               />
             </div>
           )}
@@ -327,6 +345,7 @@ export default function SongDetailPage() {
                       prefetchedEntries={instrumentData[inst].entries}
                       prefetchedError={instrumentData[inst].error}
                       skipAnimation={allCached}
+                      scoreWidth={globalScoreWidth}
                     />
                   </div>
               );
@@ -395,6 +414,7 @@ function InstrumentCard({
   prefetchedEntries,
   prefetchedError,
   skipAnimation,
+  scoreWidth,
 }: {
   songId: string;
   instrument: InstrumentKey;
@@ -405,6 +425,7 @@ function InstrumentCard({
   prefetchedEntries: LeaderboardEntry[];
   prefetchedError: string | null;
   skipAnimation?: boolean;
+  scoreWidth: string;
 }) {
   const navigate = useNavigate();
 
@@ -414,13 +435,6 @@ function InstrumentCard({
   const showAccuracy = cardWidth >= 420;
   const showSeason = cardWidth >= 520;
   const isMobile = cardWidth < 360;
-
-  const maxScoreLen = Math.max(
-    ...prefetchedEntries.map((e) => e.score.toLocaleString().length),
-    playerScore ? playerScore.score.toLocaleString().length : 0,
-    1,
-  );
-  const scoreWidth = `${maxScoreLen}ch`;
 
   const anim = (delayMs: number): React.CSSProperties => skipAnimation ? {} : ({
     opacity: 0,
