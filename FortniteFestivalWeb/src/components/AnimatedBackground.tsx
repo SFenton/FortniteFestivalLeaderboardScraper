@@ -128,11 +128,38 @@ export function AnimatedBackground({
     }
   }, [imageUris]);
 
-  // Transition timer — fires every DISPLAY_DURATION
+  // Transition timer — fires every DISPLAY_DURATION, paused when tab is hidden
   useEffect(() => {
     if (imageUris.length < 2) return;
-    const timer = setInterval(doTransition, DISPLAY_DURATION);
-    return () => clearInterval(timer);
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const start = () => {
+      if (!timer) timer = setInterval(doTransition, DISPLAY_DURATION);
+    };
+    const stop = () => {
+      if (timer) { clearInterval(timer); timer = null; }
+      // Pause all running Web Animations on both layers to save GPU
+      layerARef.current?.getAnimations().forEach((a) => a.pause());
+      layerBRef.current?.getAnimations().forEach((a) => a.pause());
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        stop();
+      } else {
+        // Resume paused animations
+        layerARef.current?.getAnimations().forEach((a) => a.play());
+        layerBRef.current?.getAnimations().forEach((a) => a.play());
+        start();
+      }
+    };
+
+    if (!document.hidden) start();
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      stop();
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [imageUris.length, doTransition]);
 
   if (imageUris.length === 0) return null;

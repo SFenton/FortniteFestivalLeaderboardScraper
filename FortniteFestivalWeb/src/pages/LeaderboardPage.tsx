@@ -41,9 +41,13 @@ export default function LeaderboardPage() {
 
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   useEffect(() => {
-    const onResize = () => setWindowWidth(window.innerWidth);
+    let timer: ReturnType<typeof setTimeout>;
+    const onResize = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => setWindowWidth(window.innerWidth), 150);
+    };
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    return () => { clearTimeout(timer); window.removeEventListener('resize', onResize); };
   }, []);
   const showAccuracy = windowWidth >= 420;
   const showSeason = windowWidth >= 520;
@@ -69,12 +73,13 @@ export default function LeaderboardPage() {
   const [error, setError] = useState<string | null>(null);
   const playerRowRef = useRef<HTMLAnchorElement | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [headerCollapsed, setHeaderCollapsed] = useState(false);
+  const [headerCollapsed, setHeaderCollapsed] = useState(hasFab);
   const headerPinned = useRef(false);
   const [loadPhase, setLoadPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>('loading');
   const updateScrollMask = useScrollMask(scrollRef, [loadPhase, entries.length]);
   const handleScroll = useCallback(() => {
     updateScrollMask();
+    if (hasFab) return; // On mobile, header is always collapsed
     const el = scrollRef.current;
     if (!el) return;
     // If pinned (after pagination), only unpin once user scrolls past threshold
@@ -83,7 +88,7 @@ export default function LeaderboardPage() {
       return;
     }
     setHeaderCollapsed(el.scrollTop > 40);
-  }, [updateScrollMask]);
+  }, [updateScrollMask, hasFab]);
 
   const totalPages = Math.max(1, Math.ceil(localEntries / PAGE_SIZE));
 
@@ -136,7 +141,7 @@ export default function LeaderboardPage() {
       if (!hasLoadedOnce.current) {
         hasLoadedOnce.current = true;
         headerPinned.current = false;
-        setHeaderCollapsed(false);
+        if (!hasFab) setHeaderCollapsed(false);
       }
     }, 500);
     return () => clearTimeout(id);
@@ -195,8 +200,8 @@ export default function LeaderboardPage() {
 
         <div style={{
           ...styles.headerBar,
-          paddingTop: headerCollapsed ? Gap.md : Layout.paddingTop,
-          transition: 'padding 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+          paddingTop: hasFab || headerCollapsed ? Gap.md : Layout.paddingTop,
+          ...(!hasFab ? { transition: 'padding 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
         }}>
           <div style={styles.container}>
             <div style={styles.headerContent}>
@@ -204,31 +209,31 @@ export default function LeaderboardPage() {
                 {song?.albumArt ? (
                   <img src={song.albumArt} alt="" style={{
                     ...styles.headerArt,
-                    width: headerCollapsed ? 80 : 120,
-                    height: headerCollapsed ? 80 : 120,
-                    borderRadius: headerCollapsed ? Radius.md : Radius.lg,
-                    transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                    width: hasFab || headerCollapsed ? 80 : 120,
+                    height: hasFab || headerCollapsed ? 80 : 120,
+                    borderRadius: hasFab || headerCollapsed ? Radius.md : Radius.lg,
+                    ...(!hasFab ? { transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
                   }} />
                 ) : (
                   <div style={{
                     ...styles.headerArt,
                     ...styles.artPlaceholder,
-                    width: headerCollapsed ? 80 : 120,
-                    height: headerCollapsed ? 80 : 120,
-                    borderRadius: headerCollapsed ? Radius.md : Radius.lg,
-                    transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                    width: hasFab || headerCollapsed ? 80 : 120,
+                    height: hasFab || headerCollapsed ? 80 : 120,
+                    borderRadius: hasFab || headerCollapsed ? Radius.md : Radius.lg,
+                    ...(!hasFab ? { transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
                   }} />
                 )}
                 <div>
                   <h1 style={{
                     ...styles.songTitle,
-                    marginBottom: headerCollapsed ? Gap.xs : Gap.sm,
-                    transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                    marginBottom: hasFab || headerCollapsed ? Gap.xs : Gap.sm,
+                    ...(!hasFab ? { transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
                   }}>{song?.title ?? songId}</h1>
                   <p style={{
                     ...styles.songArtist,
-                    fontSize: headerCollapsed ? Font.md : Font.lg,
-                    transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                    fontSize: hasFab || headerCollapsed ? Font.md : Font.lg,
+                    ...(!hasFab ? { transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
                   }}>{song?.artist ?? 'Unknown Artist'}</p>
                 </div>
               </div>
@@ -239,8 +244,8 @@ export default function LeaderboardPage() {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  transform: headerCollapsed ? 'scale(0.857)' : 'scale(1)',
-                  transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1)',
+                  transform: hasFab || headerCollapsed ? 'scale(0.857)' : 'scale(1)',
+                  ...(!hasFab ? { transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
                 }}>
                   <InstrumentIcon instrument={instKey} size={56} />
                 </div>
@@ -346,7 +351,7 @@ export default function LeaderboardPage() {
       </div>
 
         {hasLoadedOnce.current && !error && totalPages > 1 && (
-        <div style={{ ...styles.pagination, ...(isMobile ? { justifyContent: 'space-between', gap: 0 } : {}) }}>
+        <div style={{ ...styles.pagination, ...(isMobile ? { justifyContent: 'space-between', gap: 0 } : {}), ...(hasFab && playerScore ? { paddingBottom: 96 } : hasFab ? { paddingBottom: 56 } : {}) }}>
           <button
             style={{
               ...styles.pageButton,
@@ -398,7 +403,7 @@ export default function LeaderboardPage() {
       )}
 
       {playerScore && playerData && (
-        <div style={{ ...styles.playerFooter, ...(hasFab ? { paddingBottom: 94 } : {}) }} onClick={goToPlayerPage} role="button" tabIndex={0}>
+        <div style={{ ...styles.playerFooter, ...(hasFab ? styles.playerFooterFab : {}) }} onClick={goToPlayerPage} role="button" tabIndex={0}>
           <div style={{ ...styles.playerFooterRow, cursor: 'pointer', ...(isMobile ? { gap: Gap.md, padding: `0 ${Gap.md}px` } : {}) }}>
             <span style={styles.colRank}>#{playerScore.rank.toLocaleString()}</span>
             <span style={styles.colName}>{playerData.displayName}</span>
@@ -708,6 +713,13 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     zIndex: 20,
     padding: `${Gap.md}px ${Layout.paddingHorizontal}px`,
+  },
+  playerFooterFab: {
+    position: 'fixed' as const,
+    bottom: 84,
+    left: Layout.paddingHorizontal,
+    right: Layout.paddingHorizontal * 2 + 56,
+    padding: 0,
   },
   playerFooterRow: {
     display: 'flex',

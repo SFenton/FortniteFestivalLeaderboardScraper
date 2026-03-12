@@ -1,4 +1,4 @@
-import { useCallback, useEffect, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, type RefObject } from 'react';
 
 export interface ScrollMaskOptions {
   /** Fade zone size in pixels. Default: 40 */
@@ -23,6 +23,7 @@ export function useScrollMask(
   options: ScrollMaskOptions = {},
 ): () => void {
   const size = options.size ?? DEFAULT_SIZE;
+  const rafId = useRef(0);
 
   const update = useCallback(() => {
     const el = scrollRef.current;
@@ -47,8 +48,20 @@ export function useScrollMask(
     el.style.webkitMaskImage = mask;
   }, [size, scrollRef]);
 
+  /** rAF-throttled wrapper — at most one update per animation frame. */
+  const throttledUpdate = useCallback(() => {
+    if (rafId.current) return;
+    rafId.current = requestAnimationFrame(() => {
+      rafId.current = 0;
+      update();
+    });
+  }, [update]);
+
+  // Cancel pending rAF on unmount
+  useEffect(() => () => { cancelAnimationFrame(rafId.current); }, []);
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { update(); }, [update, ...deps]);
 
-  return update;
+  return throttledUpdate;
 }

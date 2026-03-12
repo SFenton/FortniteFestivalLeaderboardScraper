@@ -40,9 +40,13 @@ export default function SongDetailPage() {
   const defaultInstrument = (searchParams.get('instrument') as InstrumentKey) || undefined;
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   useEffect(() => {
-    const onResize = () => setWindowWidth(window.innerWidth);
+    let timer: ReturnType<typeof setTimeout>;
+    const onResize = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => setWindowWidth(window.innerWidth), 150);
+    };
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    return () => { clearTimeout(timer); window.removeEventListener('resize', onResize); };
   }, []);
   const {
     state: { songs },

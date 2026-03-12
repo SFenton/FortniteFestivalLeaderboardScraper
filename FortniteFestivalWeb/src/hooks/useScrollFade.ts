@@ -1,4 +1,4 @@
-import { useCallback, useEffect, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, type RefObject } from 'react';
 
 export interface ScrollFadeOptions {
   /** How many pixels the fade zone extends inward from each scroll edge. Default: 36 */
@@ -51,6 +51,8 @@ export function useScrollFade(
   const distance = options.distance ?? DEFAULT_DISTANCE;
   const stops = options.stops ?? DEFAULT_STOPS;
 
+  const rafId = useRef(0);
+
   const update = useCallback(() => {
     const scrollEl = scrollRef.current;
     const listEl = listRef.current;
@@ -97,9 +99,21 @@ export function useScrollFade(
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [distance, stops]);
 
+  /** rAF-throttled wrapper — at most one update per animation frame. */
+  const throttledUpdate = useCallback(() => {
+    if (rafId.current) return;
+    rafId.current = requestAnimationFrame(() => {
+      rafId.current = 0;
+      update();
+    });
+  }, [update]);
+
+  // Cancel pending rAF on unmount
+  useEffect(() => () => { cancelAnimationFrame(rafId.current); }, []);
+
   // Recompute whenever deps change
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { update(); }, [update, ...deps]);
 
-  return update;
+  return throttledUpdate;
 }

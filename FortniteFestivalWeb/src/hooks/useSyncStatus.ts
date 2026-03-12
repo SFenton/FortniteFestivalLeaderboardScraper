@@ -94,7 +94,7 @@ export function useSyncStatus(accountId: string | undefined) {
     }
   }, [accountId]);
 
-  // Track player and start polling on mount
+  // Track player and start polling on mount; pause when tab is hidden
   useEffect(() => {
     if (!accountId) return;
     trackedRef.current = false;
@@ -114,16 +114,36 @@ export function useSyncStatus(accountId: string | undefined) {
       await checkStatus();
 
       // Start polling
-      pollRef.current = setInterval(checkStatus, POLL_INTERVAL);
+      startPolling();
     };
 
-    void init();
-
-    return () => {
+    const startPolling = () => {
+      if (!pollRef.current) {
+        pollRef.current = setInterval(checkStatus, POLL_INTERVAL);
+      }
+    };
+    const stopPolling = () => {
       if (pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;
       }
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        // Check immediately on return, then resume interval
+        void checkStatus();
+        startPolling();
+      }
+    };
+
+    document.addEventListener('visibilitychange', onVisibility);
+    void init();
+
+    return () => {
+      stopPolling();
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [accountId, checkStatus]);
 
