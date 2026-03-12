@@ -206,12 +206,12 @@ export default function LeaderboardPage() {
         <div style={{
           ...styles.headerBar,
           paddingTop: hasFab || headerCollapsed ? Gap.md : Layout.paddingTop,
+          paddingBottom: Gap.section,
           ...(!hasFab ? { transition: 'padding 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
         }}>
           <div style={styles.container}>
             <div style={{
               ...styles.headerContent,
-              marginBottom: hasFab || headerCollapsed ? Gap.md : Gap.section,
               ...(!hasFab ? { transition: 'margin 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
             }}>
               <div style={styles.headerLeft}>
@@ -524,6 +524,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: Gap.md,
     flexShrink: 0,
+    paddingRight: Gap.md,
   },
   headerArt: {
     width: 80,

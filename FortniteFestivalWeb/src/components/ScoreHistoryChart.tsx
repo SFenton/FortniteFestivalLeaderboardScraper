@@ -18,7 +18,9 @@ import {
   type ScoreHistoryEntry,
 } from '../models';
 import { InstrumentIcon } from './InstrumentIcons';
-import { Colors, Font, Gap, Radius, goldFill, frostedCard } from '../theme';
+import { Colors, Font, Gap, Radius, goldFill, goldOutlineSkew, frostedCard } from '../theme';
+import { useIsMobile } from '../hooks/useIsMobile';
+import SeasonPill from './SeasonPill';
 
 type Props = {
   songId: string;
@@ -48,6 +50,14 @@ type ChartPoint = {
 // Keyed by "accountId:songId"
 const historyCache = new Map<string, ScoreHistoryEntry[]>();
 
+function accuracyColor(pct: number): string {
+  const t = Math.min(Math.max(pct / 100, 0), 1);
+  const r = Math.round(220 * (1 - t) + 46 * t);
+  const g = Math.round(40 * (1 - t) + 204 * t);
+  const b = Math.round(40 * (1 - t) + 113 * t);
+  return `rgb(${r},${g},${b})`;
+}
+
 export default function ScoreHistoryChart({
   songId,
   accountId,
@@ -58,7 +68,17 @@ export default function ScoreHistoryChart({
   skipAnimation,
 }: Props) {
   const cacheKey = `${accountId}:${songId}`;
+  const isMobile = useIsMobile();
   const [selected, setSelected] = useState<InstrumentKey>(defaultInstrument ?? 'Solo_Guitar');
+  const [selectedPoint, setSelectedPoint] = useState<ChartPoint | null>(null);
+  const [displayedPoint, setDisplayedPoint] = useState<ChartPoint | null>(null);
+  // Phase: 'closed' → 'growing' → 'open' → 'fading' → 'shrinking' → 'closed'
+  // Swap: 'open' → 'swapOut' → 'swapIn' → 'open'
+  const [cardPhase, setCardPhase] = useState<'closed' | 'growing' | 'open' | 'fading' | 'shrinking' | 'swapOut' | 'swapIn'>('closed');
+  const cardPhaseRef = useRef(cardPhase);
+  cardPhaseRef.current = cardPhase;
+  const cardContentRef = useRef<HTMLDivElement>(null);
+  const [cardHeight, setCardHeight] = useState(0);
   const [songHistory, setSongHistory] = useState<ScoreHistoryEntry[]>(
     () => historyProp ?? historyCache.get(cacheKey) ?? [],
   );
@@ -112,18 +132,24 @@ export default function ScoreHistoryChart({
         new Date(a.scoreAchievedAt ?? a.changedAt).getTime() -
         new Date(b.scoreAchievedAt ?? b.changedAt).getTime(),
     );
-    // Build concise date labels: "Jun 5", "Jul 11", etc.
-    // When multiple entries share a day, append index: "Jul 11 (2)"
+    // Build concise date labels: "m/d/yy"
+    // When multiple entries share a day, append index: "3/1/26 (2)"
     const daySeen = new Map<string, number>();
     const dayTotal = new Map<string, number>();
+    const formatDay = (d: Date) => {
+      const m = d.getMonth() + 1;
+      const day = d.getDate();
+      const yy = String(d.getFullYear()).slice(-2);
+      return `${m}/${day}/${yy}`;
+    };
     for (const h of sorted) {
       const d = new Date(h.scoreAchievedAt ?? h.changedAt);
-      const dayKey = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const dayKey = formatDay(d);
       dayTotal.set(dayKey, (dayTotal.get(dayKey) ?? 0) + 1);
     }
     return sorted.map((h) => {
       const d = new Date(h.scoreAchievedAt ?? h.changedAt);
-      const dayKey = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const dayKey = formatDay(d);
       const total = dayTotal.get(dayKey) ?? 1;
       const idx = (daySeen.get(dayKey) ?? 0) + 1;
       daySeen.set(dayKey, idx);
@@ -140,6 +166,55 @@ export default function ScoreHistoryChart({
       };
     });
   }, [filtered]);
+
+  // Sequenced card animation: grow → fade-in, fade-out → shrink
+  // When swapping: swapOut old content → swapIn new content (card stays open)
+  const cardTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const pendingPoint = useRef<ChartPoint | null>(null);
+  const displayedPointRef = useRef(displayedPoint);
+  displayedPointRef.current = displayedPoint;
+  useEffect(() => {
+    cardTimers.current.forEach(clearTimeout);
+    cardTimers.current = [];
+    const phase = cardPhaseRef.current;
+    const shown = displayedPointRef.current;
+    if (selectedPoint) {
+      // Swap: card already open, switching to different point
+      if (shown && (phase === 'open' || phase === 'swapIn' || phase === 'swapOut')) {
+        pendingPoint.current = selectedPoint;
+        setCardPhase('swapOut');
+        cardTimers.current.push(setTimeout(() => {
+          setDisplayedPoint(pendingPoint.current);
+          pendingPoint.current = null;
+          setCardPhase('swapIn');
+          cardTimers.current.push(setTimeout(() => setCardPhase('open'), 150));
+        }, 150));
+      } else {
+        // Opening from closed
+        setDisplayedPoint(selectedPoint);
+        requestAnimationFrame(() => {
+          if (cardContentRef.current) {
+            setCardHeight(cardContentRef.current.scrollHeight);
+          }
+          setCardPhase('growing');
+          cardTimers.current.push(setTimeout(() => setCardPhase('open'), 250));
+        });
+      }
+    } else if (shown && phase !== 'closed') {
+      setCardPhase('fading');
+      cardTimers.current.push(setTimeout(() => {
+        setCardPhase('shrinking');
+        cardTimers.current.push(setTimeout(() => {
+          setDisplayedPoint(null);
+          setCardPhase('closed');
+        }, 250));
+      }, 200));
+    }
+    return () => { cardTimers.current.forEach(clearTimeout); };
+  }, [selectedPoint]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Clear selected score card when instrument changes
+  useEffect(() => { setSelectedPoint(null); }, [selected]);
 
   // Count per-instrument entries so we can show which instruments have data
   const instrumentCounts = useMemo(() => {
@@ -241,6 +316,12 @@ export default function ScoreHistoryChart({
             )}
           </div>
         )}
+        {isMobile && (
+          <div style={styles.chartHeader}>
+            <div style={styles.chartTitle}>Score History</div>
+            <div style={styles.chartSubtitle}>Select a bar to see more score details.</div>
+          </div>
+        )}
         {loading && (
           <div style={styles.placeholder}>Loading history…</div>
         )}
@@ -256,50 +337,79 @@ export default function ScoreHistoryChart({
           >
             <ComposedChart
               data={chartData}
-              margin={{ top: 16, right: 16, bottom: 16, left: 16 }}
+              margin={{ top: 16, right: 24, bottom: 28, left: 24 }}
+              barCategoryGap="20%"
             >
               <CartesianGrid
                 strokeDasharray="3 3"
                 stroke={Colors.borderSubtle}
+                horizontal={false}
+                vertical={false}
               />
               <XAxis
                 dataKey="dateLabel"
-                tick={{ fill: Colors.textMuted, fontSize: Font.xs, dy: 8 }}
+                tick={{ fill: '#fff', fontSize: Font.md, dy: 12 }}
                 stroke={Colors.borderSubtle}
+                axisLine={false}
+                tickLine={false}
                 angle={-35}
                 textAnchor="end"
                 interval="preserveStartEnd"
               />
               <YAxis
                 yAxisId="score"
-                tick={{ fill: Colors.textMuted, fontSize: Font.xs }}
+                tick={{ fill: '#fff', fontSize: Font.md }}
                 stroke={Colors.borderSubtle}
+                axisLine={false}
+                tickLine={false}
                 tickFormatter={(v: number) =>
                   v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)
                 }
-                label={{ value: 'Score', angle: -90, position: 'insideLeft', offset: 10, fill: Colors.textMuted, fontSize: Font.sm }}
+                label={({ viewBox }: { viewBox: { x: number; y: number; height: number } }) => {
+                  const cy = viewBox.y + viewBox.height / 2;
+                  return (
+                    <text x={viewBox.x - 8} y={cy} fill="#fff" fontSize={Font.md} textAnchor="middle" dominantBaseline="central" transform={`rotate(-90, ${viewBox.x - 8}, ${cy})`}>Score</text>
+                  );
+                }}
               />
               <YAxis
                 yAxisId="accuracy"
                 orientation="right"
                 domain={[0, 100]}
-                tick={{ fill: Colors.textMuted, fontSize: Font.xs }}
+                padding={{ top: 4 }}
+                tick={{ fill: '#fff', fontSize: Font.md }}
                 stroke={Colors.borderSubtle}
+                axisLine={false}
+                tickLine={false}
                 tickFormatter={(v: number) => `${v}%`}
-                label={{ value: 'Accuracy', angle: 90, position: 'insideRight', offset: 10, fill: Colors.textMuted, fontSize: Font.sm }}
+                label={({ viewBox }: { viewBox: { x: number; y: number; width: number; height: number } }) => {
+                  const cy = viewBox.y + viewBox.height / 2;
+                  const lx = viewBox.x + viewBox.width + 8;
+                  return (
+                    <text x={lx} y={cy} fill="#fff" fontSize={Font.md} textAnchor="middle" dominantBaseline="central" transform={`rotate(90, ${lx}, ${cy})`}>Accuracy</text>
+                  );
+                }}
               />
-              <Tooltip content={<CustomTooltip />} />
+              {!isMobile && <Tooltip content={<CustomTooltip />} />}
+              {isMobile && <Tooltip content={() => null} cursor={{ fill: 'transparent', stroke: 'transparent' }} trigger="click" />}
               <Legend
-                content={() => (
+                content={() => {
+                  const hasFc = chartData.some(p => p.accuracy >= 100 && p.isFullCombo);
+                  const hasNonFc = chartData.some(p => !(p.accuracy >= 100 && p.isFullCombo));
+                  return (
                   <div style={styles.legend}>
+                    {hasNonFc && (
                     <span style={styles.legendItem}>
                       <span style={styles.legendGradient} />
                       Accuracy
                     </span>
+                    )}
+                    {hasFc && (
                     <span style={styles.legendItem}>
                       <span style={styles.legendGold} />
                       Accuracy (FC)
                     </span>
+                    )}
                     <span style={styles.legendItem}>
                       <svg width={24} height={12} style={{ verticalAlign: 'middle' }}>
                         <line x1={0} y1={6} x2={18} y2={6} stroke={Colors.accentBlueBright} strokeWidth={2} />
@@ -308,7 +418,8 @@ export default function ScoreHistoryChart({
                       Score
                     </span>
                   </div>
-                )}
+                  );
+                }}
               />
               <Bar
                 yAxisId="accuracy"
@@ -316,6 +427,10 @@ export default function ScoreHistoryChart({
                 name="Accuracy"
                 radius={[4, 4, 0, 0]}
                 isAnimationActive={!skipAnimation}
+                onClick={isMobile ? (_data: Record<string, unknown>, index: number) => {
+                  const point = chartData[index];
+                  setSelectedPoint(prev => prev === point ? null : point);
+                } : undefined}
                 shape={(props: Record<string, unknown>) => {
                   const point = props as { x: number; y: number; width: number; height: number; payload: ChartPoint };
                   const acc = point.payload.accuracy;
@@ -348,9 +463,7 @@ export default function ScoreHistoryChart({
                       d={path}
                       fill={fill}
                       fillOpacity={fillOp}
-                      stroke={strokeColor}
-                      strokeOpacity={strokeOp}
-                      strokeWidth={1}
+                      stroke="none"
                     />
                   );
                 }}
@@ -363,11 +476,60 @@ export default function ScoreHistoryChart({
                 stroke={Colors.accentBlueBright}
                 strokeWidth={2}
                 dot={{ fill: Colors.accentBlueBright, r: 4 }}
-                activeDot={{ r: 6, fill: Colors.accentBlue }}
+                activeDot={isMobile ? false : { r: 6, fill: Colors.accentBlue }}
                 isAnimationActive={!skipAnimation}
               />
             </ComposedChart>
           </ResponsiveContainer>
+        )}
+        {isMobile && (
+          <div style={{
+            overflow: 'hidden',
+            maxHeight: (cardPhase === 'growing' || cardPhase === 'open' || cardPhase === 'fading' || cardPhase === 'swapOut' || cardPhase === 'swapIn') ? cardHeight : 0,
+            transition: `max-height 0.25s ${cardPhase === 'shrinking' ? 'ease-in' : 'ease-out'}`,
+            marginTop: cardPhase !== 'closed' ? Gap.xl : 0,
+            alignSelf: 'stretch',
+          }}>
+            {displayedPoint && (
+              <div style={{
+                ...styles.scoreCard,
+                opacity: (cardPhase === 'open' || cardPhase === 'swapOut' || cardPhase === 'swapIn') ? 1 : 0,
+                transform: (cardPhase === 'open' || cardPhase === 'swapOut' || cardPhase === 'swapIn') ? 'translateY(0)' : 'translateY(-8px)',
+                transition: 'opacity 0.15s ease, transform 0.15s ease',
+              }} ref={cardContentRef}>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: Gap.md,
+                  width: '100%',
+                  opacity: (cardPhase === 'open' || cardPhase === 'swapIn') ? 1 : (cardPhase === 'swapOut' ? 0 : undefined),
+                  transform: (cardPhase === 'open' || cardPhase === 'swapIn') ? 'translateY(0)' : (cardPhase === 'swapOut' ? 'translateY(-6px)' : undefined),
+                  transition: (cardPhase === 'swapOut' || cardPhase === 'swapIn') ? 'opacity 0.12s ease, transform 0.12s ease' : 'none',
+                }}>
+                  <span style={styles.scoreCardDate}>
+                    {new Date(displayedPoint.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </span>
+                  <span style={styles.scoreCardMiddle}>
+                    {displayedPoint.season != null && (
+                      <SeasonPill season={displayedPoint.season} />
+                    )}
+                    <span style={styles.scoreCardScore}>
+                      {displayedPoint.score.toLocaleString()}
+                    </span>
+                  </span>
+                  <span style={styles.scoreCardAcc}>
+                    {(() => {
+                      const pct = displayedPoint.accuracy;
+                      const text = pct % 1 === 0 ? `${pct}%` : `${pct.toFixed(1)}%`;
+                      return displayedPoint.isFullCombo
+                        ? <span style={styles.fcAccBadge}>{text}</span>
+                        : <span style={{ color: accuracyColor(pct) }}>{text}</span>;
+                    })()}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -428,7 +590,6 @@ function CustomTooltip({
 
 const styles: Record<string, React.CSSProperties> = {
   wrapper: {
-    marginTop: Gap.section,
     marginBottom: Gap.section,
   },
   iconRow: {
@@ -478,7 +639,7 @@ const styles: Record<string, React.CSSProperties> = {
   chartContainer: {
     ...frostedCard,
     borderRadius: Radius.lg,
-    padding: `${Gap.sm}px ${Gap.xl}px`,
+    padding: `${Gap.sm}px ${Gap.xl}px ${Gap.xl}px`,
     display: 'flex',
     flexDirection: 'column' as const,
     alignItems: 'center',
@@ -500,7 +661,7 @@ const styles: Record<string, React.CSSProperties> = {
   tooltipDate: {
     fontSize: Font.sm,
     fontWeight: 600,
-    color: Colors.textPrimary,
+    color: '#fff',
     marginBottom: Gap.sm,
   },
   tooltipSeason: {
@@ -509,7 +670,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   tooltipRow: {
     fontSize: Font.sm,
-    color: Colors.textSecondary,
+    color: '#fff',
     marginBottom: Gap.xs,
   },
   tooltipFc: {
@@ -524,8 +685,8 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     justifyContent: 'center',
     gap: Gap.xl,
-    fontSize: Font.sm,
-    color: Colors.textSecondary,
+    fontSize: Font.md,
+    color: '#fff',
     paddingTop: 16,
   },
   legendItem: {
@@ -546,5 +707,64 @@ const styles: Record<string, React.CSSProperties> = {
     height: 12,
     borderRadius: 2,
     backgroundColor: Colors.gold,
+  },
+  chartHeader: {
+    textAlign: 'center' as const,
+    marginBottom: Gap.md,
+  },
+  chartTitle: {
+    color: '#fff',
+    fontSize: Font.title,
+    fontWeight: 700,
+  },
+  chartSubtitle: {
+    color: Colors.textMuted,
+    fontSize: Font.lg,
+    marginTop: Gap.xs,
+  },
+  scoreCard: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.md,
+    padding: `0 ${Gap.md}px`,
+    height: 48,
+    borderRadius: Radius.md,
+    ...frostedCard,
+    fontSize: Font.md,
+    color: 'inherit',
+    width: '100%',
+    boxSizing: 'border-box' as const,
+  },
+  scoreCardDate: {
+    flexShrink: 0,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
+  },
+  scoreCardMiddle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.sm,
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  scoreCardScore: {
+    flexShrink: 0,
+    textAlign: 'right' as const,
+    fontWeight: 600,
+    color: Colors.textPrimary,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  scoreCardAcc: {
+    width: 60,
+    flexShrink: 0,
+    textAlign: 'center' as const,
+    fontWeight: 600,
+    color: Colors.accentBlueBright,
+    fontVariantNumeric: 'tabular-nums',
+  },
+  fcAccBadge: {
+    ...goldOutlineSkew,
+    fontSize: Font.lg,
+    textAlign: 'center' as const,
   },
 };

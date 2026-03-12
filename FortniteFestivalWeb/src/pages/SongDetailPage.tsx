@@ -287,8 +287,8 @@ export default function SongDetailPage() {
         <div style={{
           ...styles.stickyHeader,
           padding: hasFab || headerCollapsed
-            ? `${Gap.md}px ${Layout.paddingHorizontal}px 0`
-            : `${Layout.paddingTop}px ${Layout.paddingHorizontal}px 0`,
+            ? `${Gap.md}px ${Layout.paddingHorizontal}px ${Gap.section}px`
+            : `${Layout.paddingTop}px ${Layout.paddingHorizontal}px ${Gap.section}px`,
         }}>
           <div style={stagger(150)} onAnimationEnd={clearAnim}>
             <SongHeader song={song} songId={songId} collapsed={hasFab || headerCollapsed} noTransition={hasFab} />
@@ -353,7 +353,7 @@ function SongHeader({
   const artSize = collapsed ? 80 : 120;
   const transition = noTransition ? undefined : 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)';
   return (
-    <div style={{ ...styles.header, marginTop: collapsed ? 0 : Gap.xl, marginBottom: collapsed ? Gap.md : Gap.section, transition }}>
+    <div style={{ ...styles.header, marginTop: collapsed ? 0 : Gap.xl, transition }}>
       {song?.albumArt ? (
         <img src={song.albumArt} alt="" style={{ ...styles.headerArt, width: artSize, height: artSize, borderRadius: collapsed ? Radius.md : Radius.lg, transition }} />
       ) : (
@@ -638,8 +638,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: Gap.section,
-    marginTop: Gap.xl,
-    marginBottom: Gap.section,
   },
   headerArt: {
     width: 120,

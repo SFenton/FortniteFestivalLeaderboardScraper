@@ -53,21 +53,17 @@ button {
   -webkit-tap-highlight-color: transparent;
 }
 
+* {
+  scrollbar-width: none;
+}
+
 ::-webkit-scrollbar {
-  width: 8px;
+  display: none;
 }
 
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #2B3B55;
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #3B4B65;
+.recharts-surface,
+.recharts-surface * {
+  outline: none !important;
 }
 
 @keyframes spin {
