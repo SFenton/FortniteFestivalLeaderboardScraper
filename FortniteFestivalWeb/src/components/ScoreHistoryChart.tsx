@@ -29,6 +29,8 @@ type Props = {
   history?: ScoreHistoryEntry[];
   /** When provided, only these instruments are shown. */
   visibleInstruments?: InstrumentKey[];
+  /** When true, skip chart entry animations (e.g. returning from cache). */
+  skipAnimation?: boolean;
 };
 
 type ChartPoint = {
@@ -53,6 +55,7 @@ export default function ScoreHistoryChart({
   defaultInstrument,
   history: historyProp,
   visibleInstruments: visibleInstrumentsProp,
+  skipAnimation,
 }: Props) {
   const cacheKey = `${accountId}:${songId}`;
   const [selected, setSelected] = useState<InstrumentKey>(defaultInstrument ?? 'Solo_Guitar');
@@ -312,6 +315,7 @@ export default function ScoreHistoryChart({
                 dataKey="accuracy"
                 name="Accuracy"
                 radius={[4, 4, 0, 0]}
+                isAnimationActive={!skipAnimation}
                 shape={(props: Record<string, unknown>) => {
                   const point = props as { x: number; y: number; width: number; height: number; payload: ChartPoint };
                   const acc = point.payload.accuracy;
@@ -360,6 +364,7 @@ export default function ScoreHistoryChart({
                 strokeWidth={2}
                 dot={{ fill: Colors.accentBlueBright, r: 4 }}
                 activeDot={{ r: 6, fill: Colors.accentBlue }}
+                isAnimationActive={!skipAnimation}
               />
             </ComposedChart>
           </ResponsiveContainer>

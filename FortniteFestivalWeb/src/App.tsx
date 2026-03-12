@@ -1084,6 +1084,8 @@ function ScrollToTop() {
   }, []);
   useEffect(() => {
     if (pathname === '/suggestions' || pathname === '/songs') return;
+    // Song detail pages manage their own scroll restoration
+    if (/^\/songs\/[^/]+$/.test(pathname)) return;
     document.getElementById('main-content')?.scrollTo(0, 0);
   }, [pathname]);
   return null;

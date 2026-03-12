@@ -209,7 +209,11 @@ export default function LeaderboardPage() {
           ...(!hasFab ? { transition: 'padding 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
         }}>
           <div style={styles.container}>
-            <div style={styles.headerContent}>
+            <div style={{
+              ...styles.headerContent,
+              marginBottom: hasFab || headerCollapsed ? Gap.md : Gap.section,
+              ...(!hasFab ? { transition: 'margin 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
+            }}>
               <div style={styles.headerLeft}>
                 {song?.albumArt ? (
                   <img src={song.albumArt} alt="" style={{
@@ -302,8 +306,8 @@ export default function LeaderboardPage() {
                     el.style.animation = '';
                   }}
                 >
-                  <span style={styles.colRank}>#{(e.rank ?? startRank + i + 1).toLocaleString()}</span>
-                  <span style={styles.colName}>
+                  <span style={{ ...styles.colRank, ...(isPlayer ? { fontWeight: 700 } : {}) }}>#{(e.rank ?? startRank + i + 1).toLocaleString()}</span>
+                  <span style={{ ...styles.colName, ...(isPlayer ? { fontWeight: 700 } : {}) }}>
                     {e.displayName ?? e.accountId.slice(0, 12)}
                   </span>
                   <span style={styles.seasonScoreGroup}>
@@ -410,8 +414,8 @@ export default function LeaderboardPage() {
       {playerScore && playerData && (
         <div style={{ ...styles.playerFooter, ...(hasFab ? styles.playerFooterFab : {}), ...(hasFab && IS_PWA ? { bottom: 84 + Gap.section - Gap.md } : {}) }} onClick={goToPlayerPage} role="button" tabIndex={0}>
           <div style={{ ...styles.playerFooterRow, cursor: 'pointer', ...(isMobile ? { gap: Gap.md, padding: `0 ${Gap.md}px` } : {}) }}>
-            <span style={styles.colRank}>#{playerScore.rank.toLocaleString()}</span>
-            <span style={styles.colName}>{playerData.displayName}</span>
+            <span style={{ ...styles.colRank, fontWeight: 700 }}>#{playerScore.rank.toLocaleString()}</span>
+            <span style={{ ...styles.colName, fontWeight: 700 }}>{playerData.displayName}</span>
             <span style={styles.seasonScoreGroup}>
               {showSeason && playerScore.season != null && (
                 <SeasonPill season={playerScore.season} />
@@ -490,7 +494,7 @@ const styles: Record<string, React.CSSProperties> = {
     zIndex: 1,
     maxWidth: MaxWidth.card,
     margin: '0 auto',
-    padding: `${Layout.paddingTop}px ${Layout.paddingHorizontal}px`,
+    padding: `0 ${Layout.paddingHorizontal}px`,
   },
   backLink: {
     color: Colors.accentBlue,
@@ -503,7 +507,6 @@ const styles: Record<string, React.CSSProperties> = {
     position: 'relative' as const,
     zIndex: 2,
     flexShrink: 0,
-    paddingBottom: Gap.md,
   },
   headerContent: {
     display: 'flex',
@@ -576,13 +579,13 @@ const styles: Record<string, React.CSSProperties> = {
     color: Colors.textMuted,
   },
   rowHighlight: {
-    backgroundColor: 'rgba(88, 166, 255, 0.18)',
-    border: `1px solid rgba(88, 166, 255, 0.45)`,
+    backgroundColor: 'rgba(75, 15, 99, 0.75)',
+    border: `1px solid rgba(124, 58, 237, 0.5)`,
   },
   colRank: {
     width: 48,
     flexShrink: 0,
-    color: Colors.textTertiary,
+    color: Colors.textPrimary,
     fontSize: Font.md,
   },
   colName: {

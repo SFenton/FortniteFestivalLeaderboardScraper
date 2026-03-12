@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react';
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
 import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
@@ -34,6 +34,15 @@ type InstrumentData = {
   error: string | null;
 };
 
+type SongDetailCache = {
+  instrumentData: Record<InstrumentKey, InstrumentData>;
+  playerScores: PlayerScore[];
+  scoreHistory: ScoreHistoryEntry[];
+  accountId: string | undefined;
+  scrollTop: number;
+};
+const songDetailCache = new Map<string, SongDetailCache>();
+
 export default function SongDetailPage() {
   const { songId } = useParams<{ songId: string }>();
   const [searchParams] = useSearchParams();
@@ -55,14 +64,19 @@ export default function SongDetailPage() {
   const { settings } = useSettings();
   const activeInstruments = visibleInstruments(settings);
 
-  const [playerScores, setPlayerScores] = useState<PlayerScore[]>([]);
-  const [playerScoresReady, setPlayerScoresReady] = useState(false);
-  const [scoreHistory, setScoreHistory] = useState<ScoreHistoryEntry[]>([]);
-  const [scoreHistoryReady, setScoreHistoryReady] = useState(false);
+  const cached = songId ? songDetailCache.get(songId) : undefined;
+  const hasCachedPlayer = cached && cached.accountId === player?.accountId;
+
+  const [playerScores, setPlayerScores] = useState<PlayerScore[]>(hasCachedPlayer ? cached.playerScores : []);
+  const [playerScoresReady, setPlayerScoresReady] = useState(!!hasCachedPlayer);
+  const [scoreHistory, setScoreHistory] = useState<ScoreHistoryEntry[]>(hasCachedPlayer ? cached.scoreHistory : []);
+  const [scoreHistoryReady, setScoreHistoryReady] = useState(!!hasCachedPlayer);
   const [instrumentData, setInstrumentData] = useState<Record<InstrumentKey, InstrumentData>>(
-    () => Object.fromEntries(
-      INSTRUMENT_KEYS.map((k) => [k, { entries: [], loading: true, error: null }]),
-    ) as Record<InstrumentKey, InstrumentData>,
+    () => cached
+      ? cached.instrumentData
+      : Object.fromEntries(
+          INSTRUMENT_KEYS.map((k) => [k, { entries: [], loading: true, error: null }]),
+        ) as Record<InstrumentKey, InstrumentData>,
   );
 
   const song = songs.find((s) => s.songId === songId);
@@ -75,7 +89,7 @@ export default function SongDetailPage() {
       setPlayerScoresReady(true);
       return;
     }
-    setPlayerScoresReady(false);
+    if (!hasCachedPlayer) setPlayerScoresReady(false);
     let cancelled = false;
     api.getPlayer(player.accountId, songId).then((res) => {
       if (!cancelled) setPlayerScores(res.scores);
@@ -94,7 +108,7 @@ export default function SongDetailPage() {
       setScoreHistoryReady(true);
       return;
     }
-    setScoreHistoryReady(false);
+    if (!hasCachedPlayer) setScoreHistoryReady(false);
     let cancelled = false;
     api.getPlayerHistory(player.accountId, songId).then((res) => {
       if (!cancelled) setScoreHistory(res.history);
@@ -110,11 +124,13 @@ export default function SongDetailPage() {
   useEffect(() => {
     if (!songId) return;
     let cancelled = false;
-    setInstrumentData(
-      Object.fromEntries(
-        INSTRUMENT_KEYS.map((k) => [k, { entries: [], loading: true, error: null }]),
-      ) as Record<InstrumentKey, InstrumentData>,
-    );
+    if (!cached) {
+      setInstrumentData(
+        Object.fromEntries(
+          INSTRUMENT_KEYS.map((k) => [k, { entries: [], loading: true, error: null }]),
+        ) as Record<InstrumentKey, InstrumentData>,
+      );
+    }
     for (const inst of activeInstruments) {
       api.getLeaderboard(songId, inst, 10).then((res) => {
         if (!cancelled) {
@@ -142,18 +158,23 @@ export default function SongDetailPage() {
 
   // Transition: spinner fade-out → staggered content fade-in
   // phase: 'loading' | 'spinnerOut' | 'contentIn'
-  const [phase, setPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>('loading');
+  const allCached = !!cached && (!player || hasCachedPlayer);
+  const [phase, setPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>(allCached ? 'contentIn' : 'loading');
   const hasFab = useIsMobile();
-  const [headerCollapsed, setHeaderCollapsed] = useState(hasFab);
+  const [headerCollapsed, setHeaderCollapsed] = useState(hasFab || (allCached && (cached?.scrollTop ?? 0) > 40));
   const updateScrollMask = useScrollMask(scrollRef, [phase, activeInstruments.length]);
   const userScrolledRef = useRef(false);
   const handleScroll = useCallback(() => {
     updateScrollMask();
     userScrolledRef.current = true;
+    if (songId) {
+      const entry = songDetailCache.get(songId);
+      if (entry && scrollRef.current) entry.scrollTop = scrollRef.current.scrollTop;
+    }
     if (hasFab) return;
     const el = scrollRef.current;
     if (el) setHeaderCollapsed(el.scrollTop > 40);
-  }, [updateScrollMask, hasFab]);
+  }, [updateScrollMask, hasFab, songId]);
 
   const hasScrolled = useRef(false);
 
@@ -165,10 +186,32 @@ export default function SongDetailPage() {
 
   useEffect(() => {
     if (!allReady) return;
+    if (phase === 'contentIn') return;
     setPhase('spinnerOut');
     const id = setTimeout(() => setPhase('contentIn'), 500);
     return () => clearTimeout(id);
   }, [allReady]);
+
+  // Update cache when data is ready
+  useEffect(() => {
+    if (!songId || !allReady) return;
+    songDetailCache.set(songId, {
+      instrumentData,
+      playerScores,
+      scoreHistory,
+      accountId: player?.accountId,
+      scrollTop: scrollRef.current?.scrollTop ?? 0,
+    });
+  }, [allReady, songId, instrumentData, playerScores, scoreHistory, player?.accountId]);
+
+  // Restore scroll position when returning from cache
+  useLayoutEffect(() => {
+    if (!allCached || !songId) return;
+    const saved = songDetailCache.get(songId);
+    if (saved && saved.scrollTop > 0 && scrollRef.current) {
+      scrollRef.current.scrollTop = saved.scrollTop;
+    }
+  }, []);
 
   // Scroll to the instrument card when arriving with ?instrument=
   useEffect(() => {
@@ -207,7 +250,7 @@ export default function SongDetailPage() {
     return <div style={styles.center}>Song not found</div>;
   }
 
-  const stagger = (delayMs: number): React.CSSProperties => ({
+  const stagger = (delayMs: number): React.CSSProperties => allCached ? {} : ({
     opacity: 0,
     animation: `fadeInUp 400ms ease-out ${delayMs}ms forwards`,
   });
@@ -264,6 +307,7 @@ export default function SongDetailPage() {
                 defaultInstrument={defaultInstrument}
                 history={scoreHistory}
                 visibleInstruments={activeInstruments}
+                skipAnimation={allCached}
               />
             </div>
           )}
@@ -282,6 +326,7 @@ export default function SongDetailPage() {
                       playerName={player?.displayName}
                       prefetchedEntries={instrumentData[inst].entries}
                       prefetchedError={instrumentData[inst].error}
+                      skipAnimation={allCached}
                     />
                   </div>
               );
@@ -349,6 +394,7 @@ function InstrumentCard({
   playerName,
   prefetchedEntries,
   prefetchedError,
+  skipAnimation,
 }: {
   songId: string;
   instrument: InstrumentKey;
@@ -358,6 +404,7 @@ function InstrumentCard({
   playerName?: string;
   prefetchedEntries: LeaderboardEntry[];
   prefetchedError: string | null;
+  skipAnimation?: boolean;
 }) {
   const navigate = useNavigate();
 
@@ -375,7 +422,7 @@ function InstrumentCard({
   );
   const scoreWidth = `${maxScoreLen}ch`;
 
-  const anim = (delayMs: number): React.CSSProperties => ({
+  const anim = (delayMs: number): React.CSSProperties => skipAnimation ? {} : ({
     opacity: 0,
     animation: `fadeInUp 300ms ease-out ${delayMs}ms forwards`,
   });
@@ -459,8 +506,8 @@ function InstrumentCard({
             onClick={(ev) => ev.stopPropagation()}
             onAnimationEnd={clearAnim}
           >
-            <span style={styles.entryRank}>#{playerScore.rank.toLocaleString()}</span>
-            <span style={styles.entryName}>{playerName}</span>
+            <span style={{ ...styles.entryRank, fontWeight: 700 }}>#{playerScore.rank.toLocaleString()}</span>
+            <span style={{ ...styles.entryName, fontWeight: 700 }}>{playerName}</span>
             <span style={styles.seasonScoreGroup}>
               {showSeason && playerScore.season != null && (
                 <SeasonPill season={playerScore.season} />
@@ -680,7 +727,7 @@ const styles: Record<string, React.CSSProperties> = {
   entryRank: {
     width: 48,
     flexShrink: 0,
-    color: Colors.textTertiary,
+    color: Colors.textPrimary,
     fontSize: Font.md,
   },
   entryName: {
