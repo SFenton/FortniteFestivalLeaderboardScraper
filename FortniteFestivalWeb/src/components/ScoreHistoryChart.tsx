@@ -484,7 +484,7 @@ export default function ScoreHistoryChart({
           >
             <ComposedChart
               data={visibleChartData}
-              margin={{ top: 16, right: 24, bottom: 28, left: 24 }}
+              margin={{ top: 16, right: 24, bottom: 0, left: 24 }}
               barCategoryGap="10%"
             >
               <CartesianGrid
@@ -495,7 +495,7 @@ export default function ScoreHistoryChart({
               />
               <XAxis
                 dataKey="dateLabel"
-                tick={{ fill: '#fff', fontSize: Font.md, dy: 12 }}
+                tick={{ fill: '#fff', fontSize: Font.md, dy: 16 }}
                 stroke={Colors.borderSubtle}
                 axisLine={false}
                 tickLine={false}
@@ -798,7 +798,6 @@ function CustomTooltip({
 
 const styles: Record<string, React.CSSProperties> = {
   wrapper: {
-    marginBottom: Gap.section,
   },
   iconRow: {
     display: 'flex',
@@ -847,7 +846,7 @@ const styles: Record<string, React.CSSProperties> = {
   chartContainer: {
     ...frostedCard,
     borderRadius: Radius.lg,
-    padding: `${Gap.sm}px ${Gap.xl}px ${Gap.xl}px`,
+    padding: `${Gap.sm}px ${Gap.xl}px 0`,
     display: 'flex',
     flexDirection: 'column' as const,
     alignItems: 'center',
@@ -895,7 +894,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: Gap.xl,
     fontSize: Font.md,
     color: '#fff',
-    paddingTop: 16,
+    paddingTop: 36,
   },
   legendItem: {
     display: 'inline-flex',
