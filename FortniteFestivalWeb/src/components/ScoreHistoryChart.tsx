@@ -233,18 +233,58 @@ export default function ScoreHistoryChart({
     ? chartData.length
     : Math.max(1, Math.floor((plotWidth + BAR_GAP) / (MIN_BAR_WIDTH + BAR_GAP)));
 
-  const [chartPage, setChartPage] = useState(0); // 0 = last page (most recent)
+  // Offset-based pagination: 0 = most recent entries visible.
+  // Increase offset to scroll back in time, decrease to scroll forward.
+  const [chartOffset, setChartOffset] = useState(0);
 
-  // Reset page when instrument changes
-  useEffect(() => { setChartPage(0); }, [selected]);
+  // Reset offset when instrument changes
+  useEffect(() => { setChartOffset(0); }, [selected]);
 
-  const totalPages = Math.max(1, Math.ceil(chartData.length / maxBars));
-  // Page 0 = most recent (last slice), page N = oldest.
-  // Slice from the END so the most-recent page is always full and only the
-  // oldest page (highest chartPage) can have fewer than maxBars entries.
-  const pageEnd = chartData.length - chartPage * maxBars;
+  const maxOffset = Math.max(0, chartData.length - maxBars);
+  const clampedOffset = Math.min(chartOffset, maxOffset);
+  const pageEnd = chartData.length - clampedOffset;
   const pageStart = Math.max(0, pageEnd - maxBars);
   const visibleChartData = chartData.slice(pageStart, pageEnd);
+  const needsPagination = chartData.length > maxBars;
+
+  // Index of the selected point within the full chartData array
+  const selectedIndex = useMemo(() => {
+    if (!selectedPoint) return -1;
+    return chartData.findIndex(p => p.date === selectedPoint.date && p.score === selectedPoint.score);
+  }, [selectedPoint, chartData]);
+
+  // Navigation helpers: when a point is selected, step through chartData
+  // and adjust the offset so the target point is visible.
+  const navigatePoint = useCallback((targetIdx: number) => {
+    const clamped = Math.max(0, Math.min(targetIdx, chartData.length - 1));
+    const point = chartData[clamped];
+    setSelectedPoint(point);
+    // Ensure the target index is within the visible window.
+    // visible window covers indices [pageStart, pageEnd) where
+    //   pageEnd = chartData.length - offset
+    //   pageStart = pageEnd - maxBars
+    // We need: pageStart <= clamped < pageEnd
+    setChartOffset(prev => {
+      const curEnd = chartData.length - Math.min(prev, maxOffset);
+      const curStart = Math.max(0, curEnd - maxBars);
+      if (clamped >= curStart && clamped < curEnd) return prev; // already visible
+      // Shift so target is at the edge in the direction we're moving
+      if (clamped < curStart) {
+        // Moving backward: put target at the start of the window
+        return Math.min(chartData.length - clamped - maxBars, maxOffset);
+      }
+      // Moving forward: put target at the end of the window
+      return Math.max(chartData.length - clamped - 1, 0);
+    });
+  }, [chartData, maxBars, maxOffset]);
+
+  // Button disabled states depend on whether a point is selected
+  const backDisabled = selectedPoint
+    ? selectedIndex <= 0
+    : clampedOffset >= maxOffset;
+  const forwardDisabled = selectedPoint
+    ? selectedIndex >= chartData.length - 1
+    : clampedOffset <= 0;
 
   // Sequenced card animation: grow → fade-in, fade-out → shrink
   // When swapping: swapOut old content → swapIn new content (card stays open)
@@ -678,6 +718,80 @@ export default function ScoreHistoryChart({
             )}
           </div>
         )}
+        {/* Chart pagination controls */}
+        {!loading && needsPagination && (
+          <div style={styles.chartPagination}>
+            <button
+              style={{
+                ...styles.chartPageButton,
+                ...(backDisabled ? styles.chartPageButtonDisabled : {}),
+              }}
+              disabled={backDisabled}
+              onClick={() => {
+                if (selectedPoint) {
+                  navigatePoint(selectedIndex - maxBars);
+                } else {
+                  setChartOffset(o => Math.min(o + maxBars, maxOffset));
+                }
+              }}
+              aria-label="Back one page"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M9 3L4 8L9 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M14 3L9 8L14 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+            <button
+              style={{
+                ...styles.chartPageButton,
+                ...(backDisabled ? styles.chartPageButtonDisabled : {}),
+              }}
+              disabled={backDisabled}
+              onClick={() => {
+                if (selectedPoint) {
+                  navigatePoint(selectedIndex - 1);
+                } else {
+                  setChartOffset(o => Math.min(o + 1, maxOffset));
+                }
+              }}
+              aria-label="Back one entry"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+            <button
+              style={{
+                ...styles.chartPageButton,
+                ...(forwardDisabled ? styles.chartPageButtonDisabled : {}),
+                marginLeft: Gap.md,
+              }}
+              disabled={forwardDisabled}
+              onClick={() => {
+                if (selectedPoint) {
+                  navigatePoint(selectedIndex + 1);
+                } else {
+                  setChartOffset(o => Math.max(o - 1, 0));
+                }
+              }}
+              aria-label="Forward one entry"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+            <button
+              style={{
+                ...styles.chartPageButton,
+                ...(forwardDisabled ? styles.chartPageButtonDisabled : {}),
+              }}
+              disabled={forwardDisabled}
+              onClick={() => {
+                if (selectedPoint) {
+                  navigatePoint(selectedIndex + maxBars);
+                } else {
+                  setChartOffset(o => Math.max(o - maxBars, 0));
+                }
+              }}
+              aria-label="Forward one page"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M7 3L12 8L7 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M2 3L7 8L2 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+          </div>
+        )}
       </div>
       {/* Player score cards beneath chart */}
       {isMobile && (displayedCards.length > 0 || listHeight > 0) && (
@@ -991,5 +1105,31 @@ const styles: Record<string, React.CSSProperties> = {
   },
   scoreListCardActive: {
     borderColor: Colors.accentBlueBright,
+  },
+  chartPagination: {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: Gap.md,
+    paddingTop: Gap.xl,
+    paddingBottom: Gap.md,
+  },
+  chartPageButton: {
+    background: 'none',
+    border: `1px solid ${Colors.borderPrimary}`,
+    borderRadius: '50%',
+    width: 40,
+    height: 40,
+    padding: 0,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: Colors.textSecondary,
+    transition: 'all 0.15s ease',
+  },
+  chartPageButtonDisabled: {
+    opacity: 0.3,
+    cursor: 'default',
   },
 };
