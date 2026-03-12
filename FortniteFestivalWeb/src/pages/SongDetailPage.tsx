@@ -143,20 +143,24 @@ export default function SongDetailPage() {
   // Transition: spinner fade-out → staggered content fade-in
   // phase: 'loading' | 'spinnerOut' | 'contentIn'
   const [phase, setPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>('loading');
-  const [headerCollapsed, setHeaderCollapsed] = useState(false);
+  const hasFab = useIsMobile();
+  const [headerCollapsed, setHeaderCollapsed] = useState(hasFab);
   const updateScrollMask = useScrollMask(scrollRef, [phase, activeInstruments.length]);
+  const userScrolledRef = useRef(false);
   const handleScroll = useCallback(() => {
     updateScrollMask();
+    userScrolledRef.current = true;
+    if (hasFab) return;
     const el = scrollRef.current;
     if (el) setHeaderCollapsed(el.scrollTop > 40);
-  }, [updateScrollMask]);
-  const hasFab = useIsMobile();
+  }, [updateScrollMask, hasFab]);
 
   const hasScrolled = useRef(false);
 
   // Reset scroll tracking when song or instrument changes
   useEffect(() => {
     hasScrolled.current = false;
+    userScrolledRef.current = false;
   }, [songId, defaultInstrument]);
 
   useEffect(() => {
@@ -172,6 +176,7 @@ export default function SongDetailPage() {
     hasScrolled.current = true;
     // Wait for stagger animations to complete before measuring position
     const id = setTimeout(() => {
+      if (userScrolledRef.current) return;
       const target = document.getElementById(`player-score-${defaultInstrument}`)
         ?? document.getElementById(`instrument-card-${defaultInstrument}`);
       if (!target) return;
@@ -238,12 +243,12 @@ export default function SongDetailPage() {
       {phase === 'contentIn' && (
         <div style={{
           ...styles.stickyHeader,
-          padding: headerCollapsed
+          padding: hasFab || headerCollapsed
             ? `${Gap.md}px ${Layout.paddingHorizontal}px 0`
             : `${Layout.paddingTop}px ${Layout.paddingHorizontal}px 0`,
         }}>
           <div style={stagger(150)} onAnimationEnd={clearAnim}>
-            <SongHeader song={song} songId={songId} collapsed={headerCollapsed} />
+            <SongHeader song={song} songId={songId} collapsed={hasFab || headerCollapsed} noTransition={hasFab} />
           </div>
         </div>
       )}
@@ -293,13 +298,15 @@ function SongHeader({
   song,
   songId,
   collapsed,
+  noTransition,
 }: {
   song: Song | undefined;
   songId: string;
   collapsed: boolean;
+  noTransition?: boolean;
 }) {
   const artSize = collapsed ? 80 : 120;
-  const transition = 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)';
+  const transition = noTransition ? undefined : 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)';
   return (
     <div style={{ ...styles.header, marginTop: collapsed ? 0 : Gap.xl, marginBottom: collapsed ? Gap.md : Gap.section, transition }}>
       {song?.albumArt ? (

@@ -19,6 +19,8 @@ import { useSettings, isInstrumentVisible } from '../contexts/SettingsContext';
 import { loadSongSettings, saveSongSettings } from '../components/songSettings';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
+import ConfirmAlert from '../components/ConfirmAlert';
 
 /** Wrapper that fades in via CSS animation, then strips the animation styles
  *  so that `opacity` is no longer set by the animation system.  This prevents
@@ -53,7 +55,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
 
   // Use cached context data when viewing the tracked player (statistics tab)
   const ctx = usePlayerData();
-  const isTrackedPlayer = !!propAccountId && ctx.playerData?.accountId === propAccountId;
+  const isTrackedPlayer = !!propAccountId;
 
   // Local state for when viewing an arbitrary player via URL
   const [localData, setLocalData] = useState<PlayerResponse | null>(null);
@@ -101,9 +103,9 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   const backfillProgress = isTrackedPlayer ? ctx.backfillProgress : localBfProg;
   const historyProgress = isTrackedPlayer ? ctx.historyProgress : localHrProg;
 
-  if (loading) return <div style={styles.center}><div style={styles.arcSpinner} /></div>;
-  if (error) return <div style={styles.centerError}>{error}</div>;
-  if (!data) return <div style={styles.center}>Player not found</div>;
+  if (loading) return <div style={styles.page}><div style={styles.center}><div style={styles.arcSpinner} /></div></div>;
+  if (error) return <div style={styles.page}><div style={styles.centerError}>{error}</div></div>;
+  if (!data) return <div style={styles.page}><div style={styles.center}>Player not found</div></div>;
 
   return <PlayerContent data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} isTrackedPlayer={isTrackedPlayer} />;
 }
@@ -129,6 +131,8 @@ function PlayerContent({
   const location = useLocation();
   const navigate = useNavigate();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const { player: trackedPlayer, setPlayer } = useTrackedPlayer();
+  const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
 
   const effectiveScores = isTrackedPlayer
     ? data.scores.filter(s => isInstrumentVisible(settings, s.instrument as InstrumentKey))
@@ -240,7 +244,7 @@ function PlayerContent({
     node: (
       <div style={{ marginTop: Gap.section }}>
         <h2 style={styles.sectionTitle}>Instrument Statistics</h2>
-        <p style={styles.sectionDesc}>A quick look at your overall Festival statistics per instrument.</p>
+        <p style={styles.sectionDesc}>A quick look at {data.displayName}'s overall Festival statistics per instrument.</p>
       </div>
     ),
   });
@@ -312,12 +316,27 @@ function PlayerContent({
                   key={b.pct}
                   style={{ ...styles.pctRowItem, ...(isLast ? { borderBottom: 'none' } : {}) }}
                   onClick={() => {
-                    const s = loadSongSettings();
-                    const percentileFilter: Record<number, boolean> = {};
-                    for (const t of thresholds) percentileFilter[t] = t === b.pct;
-                    percentileFilter[0] = false;
-                    saveSongSettings({ ...s, instrument: inst, filters: { ...s.filters, percentileFilter } });
-                    navigate('/songs');
+                    const doFilterAndNav = () => {
+                      const s = loadSongSettings();
+                      const percentileFilter: Record<number, boolean> = {};
+                      for (const t of thresholds) percentileFilter[t] = t === b.pct;
+                      percentileFilter[0] = false;
+                      saveSongSettings({ ...s, instrument: inst, filters: { ...s.filters, percentileFilter } });
+                      navigate('/songs');
+                    };
+                    if (!isTrackedPlayer) {
+                      const selectAndGo = () => {
+                        setPlayer({ accountId: data.accountId, displayName: data.displayName });
+                        doFilterAndNav();
+                      };
+                      if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
+                        setPendingSwitch(() => selectAndGo);
+                      } else {
+                        selectAndGo();
+                      }
+                    } else {
+                      doFilterAndNav();
+                    }
                   }}
                 >
                   <span>
@@ -460,6 +479,11 @@ function PlayerContent({
 
   return (
     <div style={styles.page}>
+      {!isTrackedPlayer && (
+        <div style={styles.playerNameBar}>
+          <h1 style={styles.playerName}>{data.displayName}</h1>
+        </div>
+      )}
       <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
         <div style={{ ...styles.container, ...(hasFab ? { paddingBottom: 72 } : {}) }}>
           <div style={styles.gridList}>
@@ -510,6 +534,14 @@ function PlayerContent({
           </div>
         </div>
       </div>
+      {pendingSwitch && (
+        <ConfirmAlert
+          title={`Switch to ${data.displayName}`}
+          message={`In order to see ${data.displayName}'s scores, you will have to set them as your selected profile. Would you like to continue?`}
+          onNo={() => setPendingSwitch(null)}
+          onYes={() => { setPendingSwitch(null); pendingSwitch(); }}
+        />
+      )}
     </div>
   );
 }
@@ -735,10 +767,16 @@ const styles: Record<string, React.CSSProperties> = {
     margin: '0 auto',
     padding: `${Layout.paddingTop}px ${Layout.paddingHorizontal}px`,
   },
+  playerNameBar: {
+    maxWidth: MaxWidth.card,
+    margin: '0 auto',
+    width: '100%',
+    padding: `${Gap.lg}px ${Layout.paddingHorizontal}px 0`,
+  },
   playerName: {
     fontSize: 28,
     fontWeight: 700,
-    marginBottom: Gap.xs,
+    margin: 0,
   },
   subtitle: {
     fontSize: Font.md,
@@ -1082,7 +1120,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: '100vh',
+    flex: 1,
   },
   arcSpinner: {
     width: 48,

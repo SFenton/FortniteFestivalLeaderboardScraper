@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, NavLink, Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, NavLink, Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { IoMusicalNotes, IoSparkles, IoStatsChart, IoPerson, IoSettings, IoSearch, IoSwapVerticalSharp, IoFunnel } from 'react-icons/io5';
 import { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback, Fragment } from 'react';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
@@ -16,18 +16,22 @@ import PlayerPage from './pages/PlayerPage';
 import SuggestionsPage from './pages/SuggestionsPage';
 import SettingsPage from './pages/SettingsPage';
 import { Colors, Font, Gap, Layout, Radius, Size, frostedCard } from './theme';
-import { resetSongSettingsForDeselect } from './components/songSettings';
+import { resetSongSettingsForDeselect, loadSongSettings, SONG_SETTINGS_CHANGED_EVENT } from './components/songSettings';
 import BackLink from './components/BackLink';
+import { InstrumentIcon } from './components/InstrumentIcons';
 import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
+
+const IS_PWA = window.matchMedia('(display-mode: standalone)').matches ||
+  (navigator as unknown as { standalone?: boolean }).standalone === true;
 
 export default function App() {
   return (
     <SettingsProvider>
       <FestivalProvider>
         <FabSearchProvider>
-          <BrowserRouter basename="/app">
+          <HashRouter>
             <AppShell />
-          </BrowserRouter>
+          </HashRouter>
         </FabSearchProvider>
       </FestivalProvider>
     </SettingsProvider>
@@ -63,6 +67,13 @@ function AppShell() {
     clearPlayer();
   }, [clearPlayer]);
 
+  const [songInstrument, setSongInstrument] = useState(() => loadSongSettings().instrument);
+  useEffect(() => {
+    const sync = () => setSongInstrument(loadSongSettings().instrument);
+    window.addEventListener(SONG_SETTINGS_CHANGED_EVENT, sync);
+    return () => window.removeEventListener(SONG_SETTINGS_CHANGED_EVENT, sync);
+  }, []);
+
   const showAnimatedBg = isAnimatedBgRoute(location.pathname);
 
   // Page title for mobile header
@@ -91,12 +102,15 @@ function AppShell() {
       {showAnimatedBg && <AnimatedBackground songs={songs} />}
         {isMobile ? (
           navTitle ? (
-            <div style={styles.mobileHeader}>
+            <div className="sa-top" style={styles.mobileHeader}>
               <span style={styles.navTitle}>{navTitle}</span>
+              {location.pathname === '/songs' && songInstrument && (
+                <InstrumentIcon instrument={songInstrument} size={36} style={{ marginLeft: 'auto' }} />
+              )}
             </div>
           ) : null
         ) : (
-          <nav style={styles.nav}>
+          <nav className="sa-top" style={styles.nav}>
             <button
               style={styles.hamburger}
               onClick={() => setSidebarOpen((o) => !o)}
@@ -852,7 +866,7 @@ function BottomNav({ player }: { player: TrackedPlayer | null }) {
   ];
 
   return (
-    <nav style={styles.bottomNav}>
+    <nav style={{ ...styles.bottomNav, ...(IS_PWA ? { paddingBottom: Gap.section } : {}) }}>
       {tabs.map((tab) => (
         <NavLink
           key={tab.to}
@@ -982,7 +996,7 @@ function FloatingActionButton({
   }, [searchVisible]);
 
   return (
-    <div ref={searchContainerRef} style={styles.fabContainer}>
+    <div ref={searchContainerRef} style={{ ...styles.fabContainer, ...(IS_PWA ? { bottom: 80 + Gap.section - Gap.md } : {}) }}>
       {searchVisible && (
         <div style={styles.fabSearchBar}>
           <input
@@ -1128,6 +1142,8 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap' as const,
   },
   mobileHeader: {
+    display: 'flex',
+    alignItems: 'center',
     padding: `${Layout.paddingTop + Gap.md}px ${Layout.paddingHorizontal}px ${Gap.md}px`,
     flexShrink: 0,
     zIndex: 100,

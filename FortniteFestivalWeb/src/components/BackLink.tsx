@@ -7,7 +7,7 @@ export default function BackLink({ fallback }: { fallback: string }) {
   const backTo = (location.state as { backTo?: string } | null)?.backTo ?? fallback;
 
   return (
-    <div style={styles.wrapper}>
+    <div className="sa-top" style={styles.wrapper}>
       <Link to={backTo} style={styles.backLink}>
         <IoChevronBack size={22} />
         Back

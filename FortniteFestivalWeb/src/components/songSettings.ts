@@ -128,8 +128,11 @@ export function loadSongSettings(): SongSettings {
   }
 }
 
+export const SONG_SETTINGS_CHANGED_EVENT = 'fst:songSettingsChanged';
+
 export function saveSongSettings(settings: SongSettings): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+  window.dispatchEvent(new Event(SONG_SETTINGS_CHANGED_EVENT));
 }
 
 /** Reset filters and instrument; revert sort to 'title' if an instrument sort mode was active. */

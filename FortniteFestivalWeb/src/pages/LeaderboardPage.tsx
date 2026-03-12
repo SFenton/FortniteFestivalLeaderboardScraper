@@ -14,6 +14,7 @@ import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutlin
 import { staggerDelay, estimateVisibleCount } from '../utils/stagger';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { IS_PWA } from '../utils/isPwa';
 
 const PAGE_SIZE = 25;
 
@@ -77,8 +78,10 @@ export default function LeaderboardPage() {
   const headerPinned = useRef(false);
   const [loadPhase, setLoadPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>('loading');
   const updateScrollMask = useScrollMask(scrollRef, [loadPhase, entries.length]);
+  const userScrolledRef = useRef(false);
   const handleScroll = useCallback(() => {
     updateScrollMask();
+    userScrolledRef.current = true;
     if (hasFab) return; // On mobile, header is always collapsed
     const el = scrollRef.current;
     if (!el) return;
@@ -130,6 +133,7 @@ export default function LeaderboardPage() {
       setLoadPhase('loading');
       // Pin header state and scroll to top so new content staggers from top
       headerPinned.current = true;
+      userScrolledRef.current = false;
       scrollRef.current?.scrollTo(0, 0);
       return;
     }
@@ -158,6 +162,7 @@ export default function LeaderboardPage() {
     // Wait for the player's row stagger animation to finish: (index+1)*125ms delay + 400ms duration
     const scrollDelay = (playerIndex + 1) * 125 + 400;
     const id = setTimeout(() => {
+      if (userScrolledRef.current) return;
       playerRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       searchParams.delete('navToPlayer');
       setSearchParams(searchParams, { replace: true });
@@ -403,7 +408,7 @@ export default function LeaderboardPage() {
       )}
 
       {playerScore && playerData && (
-        <div style={{ ...styles.playerFooter, ...(hasFab ? styles.playerFooterFab : {}) }} onClick={goToPlayerPage} role="button" tabIndex={0}>
+        <div style={{ ...styles.playerFooter, ...(hasFab ? styles.playerFooterFab : {}), ...(hasFab && IS_PWA ? { bottom: 84 + Gap.section - Gap.md } : {}) }} onClick={goToPlayerPage} role="button" tabIndex={0}>
           <div style={{ ...styles.playerFooterRow, cursor: 'pointer', ...(isMobile ? { gap: Gap.md, padding: `0 ${Gap.md}px` } : {}) }}>
             <span style={styles.colRank}>#{playerScore.rank.toLocaleString()}</span>
             <span style={styles.colName}>{playerData.displayName}</span>

@@ -391,6 +391,9 @@ export default function SongsPage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
+            {settings.instrument && (
+              <InstrumentIcon instrument={settings.instrument} size={32} />
+            )}
             <div style={styles.sortGroup}>
               <button style={styles.iconBtn} onClick={openSort} title="Sort" aria-label="Sort songs">
                 <IoSwapVerticalSharp size={18} />

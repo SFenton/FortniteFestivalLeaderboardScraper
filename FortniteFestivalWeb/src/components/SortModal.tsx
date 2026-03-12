@@ -1,5 +1,6 @@
 import { useMemo, useCallback, useState } from 'react';
 import Modal, { ModalSection, RadioRow, ReorderList, Accordion } from './Modal';
+import ConfirmAlert from './ConfirmAlert';
 import type { InstrumentKey } from '../models';
 import { INSTRUMENT_LABELS } from '../models';
 import type { SongSortMode } from './songSettings';
@@ -170,16 +171,12 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
     </Modal>
 
       {confirmOpen && (
-        <div style={confirmStyles.overlay} onClick={() => setConfirmOpen(false)}>
-          <div style={confirmStyles.card} onClick={e => e.stopPropagation()}>
-            <div style={confirmStyles.title}>Cancel Song Sort Changes</div>
-            <div style={confirmStyles.message}>Are you sure you want to discard your song sort changes?</div>
-            <div style={confirmStyles.buttons}>
-              <button style={confirmStyles.btnNo} onClick={() => setConfirmOpen(false)}>No</button>
-              <button style={confirmStyles.btnYes} onClick={confirmDiscard}>Yes</button>
-            </div>
-          </div>
-        </div>
+        <ConfirmAlert
+          title="Cancel Song Sort Changes"
+          message="Are you sure you want to discard your song sort changes?"
+          onNo={() => setConfirmOpen(false)}
+          onYes={confirmDiscard}
+        />
       )}
     </>
   );
@@ -239,64 +236,3 @@ const directionStyles: Record<string, React.CSSProperties> = {
   },
 };
 
-const confirmStyles: Record<string, React.CSSProperties> = {
-  overlay: {
-    position: 'fixed',
-    inset: 0,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    zIndex: 1100,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  card: {
-    backgroundColor: Colors.surfaceFrosted,
-    backdropFilter: 'blur(18px)',
-    WebkitBackdropFilter: 'blur(18px)',
-    borderRadius: 12,
-    padding: Gap.section,
-    maxWidth: 340,
-    width: '90%',
-    color: Colors.textPrimary,
-    boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-  },
-  title: {
-    fontSize: Font.lg,
-    fontWeight: 700,
-    marginBottom: Gap.md,
-  },
-  message: {
-    fontSize: Font.md,
-    color: Colors.textSecondary,
-    marginBottom: Gap.section,
-    lineHeight: '1.4',
-  },
-  buttons: {
-    display: 'flex',
-    gap: Gap.md,
-  },
-  btnNo: {
-    flex: 1,
-    padding: `${Gap.xl}px`,
-    borderRadius: 8,
-    border: `1px solid ${Colors.accentBlue}`,
-    backgroundColor: Colors.chipSelectedBg,
-    color: Colors.textPrimary,
-    fontSize: Font.md,
-    fontWeight: 600,
-    cursor: 'pointer',
-    textAlign: 'center' as const,
-  },
-  btnYes: {
-    flex: 1,
-    padding: `${Gap.xl}px`,
-    borderRadius: 8,
-    border: 'none',
-    backgroundColor: Colors.statusRed,
-    color: Colors.textPrimary,
-    fontSize: Font.md,
-    fontWeight: 600,
-    cursor: 'pointer',
-    textAlign: 'center' as const,
-  },
-};
