@@ -44,6 +44,8 @@ type ChartPoint = {
   score: number;
   accuracy: number;
   isFullCombo: boolean;
+  /** Original accuracy preserved for bar coloring during animations */
+  colorAccuracy?: number;
   stars?: number;
   season?: number;
 };
@@ -156,7 +158,7 @@ export default function ScoreHistoryChart({
       const total = dayTotal.get(dayKey) ?? 1;
       const idx = (daySeen.get(dayKey) ?? 0) + 1;
       daySeen.set(dayKey, idx);
-      const dateLabel = total > 1 ? `${dayKey} (${idx})` : dayKey;
+      const dateLabel = dayKey;
       return {
         date: d.toISOString(),
         dateLabel,
@@ -285,6 +287,27 @@ export default function ScoreHistoryChart({
   const forwardDisabled = selectedPoint
     ? selectedIndex >= chartData.length - 1
     : clampedOffset <= 0;
+
+  // Enable Recharts animation when paginating so bars/line animate naturally
+  const [animatingPage, setAnimatingPage] = useState(false);
+  const pageAnimTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const paginateChart = useCallback((action: () => void, willPageChange: boolean, _direction: 'back' | 'forward') => {
+    if (!willPageChange) {
+      action();
+      return;
+    }
+    if (pageAnimTimer.current) clearTimeout(pageAnimTimer.current);
+    setAnimatingPage(true);
+    action();
+    pageAnimTimer.current = setTimeout(() => setAnimatingPage(false), 600);
+  }, []);
+
+  const chartAnimActive = animatingPage;
+
+  // Check if a target chartData index is within the current visible window
+  const isOnCurrentPage = useCallback((idx: number) => {
+    return idx >= pageStart && idx < pageEnd;
+  }, [pageStart, pageEnd]);
 
   // Sequenced card animation: grow → fade-in, fade-out → shrink
   // When swapping: swapOut old content → swapIn new content (card stays open)
@@ -613,15 +636,19 @@ export default function ScoreHistoryChart({
                 dataKey="accuracy"
                 name="Accuracy"
                 radius={[4, 4, 0, 0]}
-                isAnimationActive={!skipAnimation}
+                isAnimationActive={chartAnimActive}
+                animationDuration={400}
                 onClick={isMobile ? (_data: Record<string, unknown>, index: number) => {
                   const point = visibleChartData[index];
                   setSelectedPoint(prev => prev === point ? null : point);
                 } : undefined}
                 shape={(props: Record<string, unknown>) => {
                   const point = props as { x: number; y: number; width: number; height: number; payload: ChartPoint };
-                  const acc = point.payload.accuracy;
+                  const acc = point.payload.colorAccuracy ?? point.payload.accuracy;
                   const isGold = acc >= 100 && point.payload.isFullCombo;
+                  const isSelected = selectedPoint != null
+                    && point.payload.date === selectedPoint.date
+                    && point.payload.score === selectedPoint.score;
                   let fill: string;
                   let fillOp: number;
                   let strokeColor: string;
@@ -644,13 +671,14 @@ export default function ScoreHistoryChart({
                   }
                   const rad = 4;
                   const { x, y, width: w, height: h } = point;
-                  const path = `M${x},${y + h} L${x},${y + rad} Q${x},${y} ${x + rad},${y} L${x + w - rad},${y} Q${x + w},${y} ${x + w},${y + rad} L${x + w},${y + h} Z`;
+                  const path = `M${x + rad},${y + h} Q${x},${y + h} ${x},${y + h - rad} L${x},${y + rad} Q${x},${y} ${x + rad},${y} L${x + w - rad},${y} Q${x + w},${y} ${x + w},${y + rad} L${x + w},${y + h - rad} Q${x + w},${y + h} ${x + w - rad},${y + h} Z`;
                   return (
                     <path
                       d={path}
                       fill={fill}
                       fillOpacity={fillOp}
-                      stroke="none"
+                      stroke={isSelected ? Colors.accentPurple : 'none'}
+                      strokeWidth={isSelected ? 3 : 0}
                     />
                   );
                 }}
@@ -664,7 +692,8 @@ export default function ScoreHistoryChart({
                 strokeWidth={2}
                 dot={{ fill: Colors.accentBlueBright, r: 4 }}
                 activeDot={isMobile ? false : { r: 6, fill: Colors.accentBlue }}
-                isAnimationActive={!skipAnimation}
+                isAnimationActive={chartAnimActive}
+                animationDuration={400}
               />
             </ComposedChart>
           </ResponsiveContainer>
@@ -728,11 +757,15 @@ export default function ScoreHistoryChart({
               }}
               disabled={backDisabled}
               onClick={() => {
-                if (selectedPoint) {
-                  navigatePoint(selectedIndex - maxBars);
-                } else {
-                  setChartOffset(o => Math.min(o + maxBars, maxOffset));
-                }
+                const target = selectedIndex - maxBars;
+                const willChange = selectedPoint ? !isOnCurrentPage(Math.max(0, target)) : true;
+                paginateChart(() => {
+                  if (selectedPoint) {
+                    navigatePoint(target);
+                  } else {
+                    setChartOffset(o => Math.min(o + maxBars, maxOffset));
+                  }
+                }, willChange, 'back');
               }}
               aria-label="Back one page"
             >
@@ -745,11 +778,15 @@ export default function ScoreHistoryChart({
               }}
               disabled={backDisabled}
               onClick={() => {
-                if (selectedPoint) {
-                  navigatePoint(selectedIndex - 1);
-                } else {
-                  setChartOffset(o => Math.min(o + 1, maxOffset));
-                }
+                const target = selectedIndex - 1;
+                const willChange = selectedPoint ? !isOnCurrentPage(target) : true;
+                paginateChart(() => {
+                  if (selectedPoint) {
+                    navigatePoint(target);
+                  } else {
+                    setChartOffset(o => Math.min(o + 1, maxOffset));
+                  }
+                }, willChange, 'back');
               }}
               aria-label="Back one entry"
             >
@@ -763,11 +800,15 @@ export default function ScoreHistoryChart({
               }}
               disabled={forwardDisabled}
               onClick={() => {
-                if (selectedPoint) {
-                  navigatePoint(selectedIndex + 1);
-                } else {
-                  setChartOffset(o => Math.max(o - 1, 0));
-                }
+                const target = selectedIndex + 1;
+                const willChange = selectedPoint ? !isOnCurrentPage(target) : true;
+                paginateChart(() => {
+                  if (selectedPoint) {
+                    navigatePoint(target);
+                  } else {
+                    setChartOffset(o => Math.max(o - 1, 0));
+                  }
+                }, willChange, 'forward');
               }}
               aria-label="Forward one entry"
             >
@@ -780,11 +821,15 @@ export default function ScoreHistoryChart({
               }}
               disabled={forwardDisabled}
               onClick={() => {
-                if (selectedPoint) {
-                  navigatePoint(selectedIndex + maxBars);
-                } else {
-                  setChartOffset(o => Math.max(o - maxBars, 0));
-                }
+                const target = selectedIndex + maxBars;
+                const willChange = selectedPoint ? !isOnCurrentPage(Math.min(target, chartData.length - 1)) : true;
+                paginateChart(() => {
+                  if (selectedPoint) {
+                    navigatePoint(target);
+                  } else {
+                    setChartOffset(o => Math.max(o - maxBars, 0));
+                  }
+                }, willChange, 'forward');
               }}
               aria-label="Forward one page"
             >
@@ -960,7 +1005,7 @@ const styles: Record<string, React.CSSProperties> = {
   chartContainer: {
     ...frostedCard,
     borderRadius: Radius.lg,
-    padding: `${Gap.sm}px ${Gap.xl}px 0`,
+    padding: `${Gap.sm}px ${Gap.xl}px ${Gap.xl}px`,
     display: 'flex',
     flexDirection: 'column' as const,
     alignItems: 'center',

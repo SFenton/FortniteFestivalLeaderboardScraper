@@ -316,7 +316,7 @@ export default function SongDetailPage() {
       {phase === 'contentIn' && (
         <div style={{ ...styles.container, ...(hasFab ? { paddingBottom: 96 } : {}) }}>
           {player && (
-            <div style={stagger(300)} onAnimationEnd={clearAnim}>
+            <div style={{ ...stagger(300), marginBottom: Gap.section }} onAnimationEnd={clearAnim}>
               <ScoreHistoryChart
                 songId={songId}
                 accountId={player.accountId}
