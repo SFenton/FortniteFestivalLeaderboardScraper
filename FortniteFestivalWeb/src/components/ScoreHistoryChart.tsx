@@ -526,12 +526,10 @@ export default function ScoreHistoryChart({
             )}
           </div>
         )}
-        {isMobile && (
-          <div style={styles.chartHeader}>
-            <div style={styles.chartTitle}>Score History</div>
-            <div style={styles.chartSubtitle}>Select a bar to see more score details.</div>
-          </div>
-        )}
+        <div style={styles.chartHeader}>
+          <div style={styles.chartTitle}>Score History</div>
+          <div style={styles.chartSubtitle}>Select a bar to see more score details.</div>
+        </div>
         {loading && (
           <div style={styles.placeholder}>Loading history…</div>
         )}
@@ -600,8 +598,7 @@ export default function ScoreHistoryChart({
                   );
                 }}
               />
-              {!isMobile && <Tooltip content={<CustomTooltip />} />}
-              {isMobile && <Tooltip content={() => null} cursor={{ fill: 'transparent', stroke: 'transparent' }} trigger="click" />}
+              <Tooltip content={() => null} cursor={{ fill: 'transparent', stroke: 'transparent' }} trigger="click" />
               <Legend
                 content={() => {
                   const hasFc = visibleChartData.some(p => p.accuracy >= 100 && p.isFullCombo);
@@ -638,10 +635,10 @@ export default function ScoreHistoryChart({
                 radius={[4, 4, 0, 0]}
                 isAnimationActive={chartAnimActive}
                 animationDuration={400}
-                onClick={isMobile ? (_data: Record<string, unknown>, index: number) => {
+                onClick={(_data: Record<string, unknown>, index: number) => {
                   const point = visibleChartData[index];
                   setSelectedPoint(prev => prev === point ? null : point);
-                } : undefined}
+                }}
                 shape={(props: Record<string, unknown>) => {
                   const point = props as { x: number; y: number; width: number; height: number; payload: ChartPoint };
                   const acc = point.payload.colorAccuracy ?? point.payload.accuracy;
@@ -698,17 +695,19 @@ export default function ScoreHistoryChart({
             </ComposedChart>
           </ResponsiveContainer>
         )}
-        {isMobile && (
+        {displayedPoint && (
           <div style={{
             overflow: 'hidden',
             maxHeight: (cardPhase === 'growing' || cardPhase === 'open' || cardPhase === 'fading' || cardPhase === 'swapOut' || cardPhase === 'swapIn') ? cardHeight : 0,
             transition: `max-height 0.25s ${cardPhase === 'shrinking' ? 'ease-in' : 'ease-out'}`,
-            marginTop: cardPhase !== 'closed' ? Gap.xl : 0,
+            marginTop: Gap.xl,
             alignSelf: 'stretch',
+            ...(!isMobile ? { width: '50%', marginLeft: 'auto', marginRight: 'auto' } : {}),
           }}>
             {displayedPoint && (
               <div style={{
                 ...styles.scoreCard,
+                ...(!isMobile ? styles.scoreListCard : {}),
                 opacity: (cardPhase === 'open' || cardPhase === 'swapOut' || cardPhase === 'swapIn') ? 1 : 0,
                 transform: (cardPhase === 'open' || cardPhase === 'swapOut' || cardPhase === 'swapIn') ? 'translateY(0)' : 'translateY(-8px)',
                 transition: 'opacity 0.15s ease, transform 0.15s ease',
@@ -839,7 +838,7 @@ export default function ScoreHistoryChart({
         )}
       </div>
       {/* Player score cards beneath chart */}
-      {isMobile && (displayedCards.length > 0 || listHeight > 0) && (
+      {(displayedCards.length > 0 || listHeight > 0) && (
         <div style={{
           overflow: 'hidden',
           height: listHeight,
@@ -898,6 +897,11 @@ export default function ScoreHistoryChart({
           })}
         </div>
         </div>
+      )}
+      {chartData.length > 5 && (
+        <button style={styles.viewAllButton} onClick={() => {}}>
+          View all available player scores
+        </button>
       )}
     </div>
   );
@@ -1115,6 +1119,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     textAlign: 'right' as const,
     fontWeight: 600,
+    fontSize: Font.lg,
     color: Colors.textPrimary,
     fontVariantNumeric: 'tabular-nums',
   },
@@ -1123,6 +1128,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     textAlign: 'center' as const,
     fontWeight: 600,
+    fontSize: Font.lg,
     color: Colors.accentBlueBright,
     fontVariantNumeric: 'tabular-nums',
   },
@@ -1176,5 +1182,20 @@ const styles: Record<string, React.CSSProperties> = {
   chartPageButtonDisabled: {
     opacity: 0.3,
     cursor: 'default',
+  },
+  viewAllButton: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    height: 48,
+    marginTop: Gap.sm,
+    borderRadius: Radius.md,
+    ...frostedCard,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
+    fontWeight: 600,
+    cursor: 'pointer',
+    transition: 'background-color 0.15s',
   },
 };

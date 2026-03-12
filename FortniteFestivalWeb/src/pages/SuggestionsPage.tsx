@@ -563,7 +563,12 @@ function RightContent({
     const display = typeof pct === 'number' && pct > 0
       ? `${Math.max(0, Math.min(99, Math.floor(pct)))}%`
       : null;
-    return display ? <span style={styles.unfcPct}>{display}</span> : null;
+    if (!display || typeof pct !== 'number') return null;
+    const t = Math.min(Math.max(pct / 100, 0), 1);
+    const r = Math.round(220 * (1 - t) + 46 * t);
+    const g = Math.round(40 * (1 - t) + 204 * t);
+    const b = Math.round(40 * (1 - t) + 113 * t);
+    return <span style={{ ...styles.unfcPct, color: `rgb(${r},${g},${b})` }}>{display}</span>;
   }
 
   if (layout === 'percentile') {
@@ -831,11 +836,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   unfcPct: {
     fontSize: Font.lg,
-    fontWeight: 800,
-    color: Colors.textPrimary,
+    fontWeight: 600,
     minWidth: 48,
     textAlign: 'center' as const,
     flexShrink: 0,
+    fontVariantNumeric: 'tabular-nums',
   },
   starRow: {
     fontSize: Font.xs,
