@@ -170,35 +170,81 @@ export default function ScoreHistoryChart({
     });
   }, [filtered]);
 
-  // Measure chart container width to determine how many bars fit
-  const MIN_BAR_WIDTH = 32;
-  const BAR_H_MARGIN = 8; // 8px margin on each side of a bar
+  // Measure chart container width to determine how many bars fit.
+  //
+  // Strategy: use the container div width from ResizeObserver as our monotonic
+  // input. On first Recharts render, read the actual SVG clipPath rect to learn
+  // the true axes overhead (container width − clip width). That overhead is then
+  // locked and reused so bar count is a pure function of container width.
+  const MIN_BAR_WIDTH = 96;
+  const BAR_GAP = 8;
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const [chartWidth, setChartWidth] = useState(0);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const axesOverheadRef = useRef<number | null>(null);
+
   useEffect(() => {
     const el = chartContainerRef.current;
     if (!el) return;
     const ro = new ResizeObserver(([entry]) => {
-      setChartWidth(entry.contentRect.width);
+      const w = entry.contentRect.width;
+      setContainerWidth(w);
+      // Re-learn overhead if we don't have it yet
+      if (axesOverheadRef.current === null) {
+        const clip = el.querySelector('.recharts-surface clipPath rect');
+        if (clip) {
+          const clipW = parseFloat(clip.getAttribute('width') || '0');
+          if (clipW > 0) {
+            axesOverheadRef.current = w - clipW;
+          }
+        }
+      }
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
 
-  // Estimate usable plot width: container minus chart margins (24+24) minus axis label regions (~80 each)
-  const plotWidth = Math.max(0, chartWidth - 48 - 160);
-  const barSlot = MIN_BAR_WIDTH + BAR_H_MARGIN * 2;
-  const maxBars = plotWidth > 0 ? Math.max(1, Math.floor(plotWidth / barSlot)) : chartData.length;
+  // After initial Recharts render, learn the overhead from the clip rect
+  // This runs each render cycle until we capture a value.
+  useEffect(() => {
+    if (axesOverheadRef.current !== null || containerWidth === 0) return;
+    // Use rAF to wait for Recharts to paint
+    const raf = requestAnimationFrame(() => {
+      const el = chartContainerRef.current;
+      if (!el) return;
+      const clip = el.querySelector('.recharts-surface clipPath rect');
+      if (clip) {
+        const clipW = parseFloat(clip.getAttribute('width') || '0');
+        if (clipW > 0) {
+          axesOverheadRef.current = containerWidth - clipW;
+          // Force a re-render so maxBars recalculates with real overhead
+          setContainerWidth((prev) => prev);
+        }
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  });
+
+  const FALLBACK_OVERHEAD = 188; // reasonable default until we measure
+  const overhead = axesOverheadRef.current ?? FALLBACK_OVERHEAD;
+  const plotWidth = Math.max(0, containerWidth - overhead);
+  // Before the first ResizeObserver measurement (containerWidth === 0), show all
+  // data to avoid a flash. Once measured, bar count is monotonic with container width.
+  const maxBars = containerWidth === 0
+    ? chartData.length
+    : Math.max(1, Math.floor((plotWidth + BAR_GAP) / (MIN_BAR_WIDTH + BAR_GAP)));
+
   const [chartPage, setChartPage] = useState(0); // 0 = last page (most recent)
 
   // Reset page when instrument changes
   useEffect(() => { setChartPage(0); }, [selected]);
 
   const totalPages = Math.max(1, Math.ceil(chartData.length / maxBars));
-  // Page 0 = most recent (last slice), page N = oldest
-  const pageIndex = totalPages - 1 - chartPage;
-  const pageStart = pageIndex * maxBars;
-  const visibleChartData = chartData.slice(pageStart, pageStart + maxBars);
+  // Page 0 = most recent (last slice), page N = oldest.
+  // Slice from the END so the most-recent page is always full and only the
+  // oldest page (highest chartPage) can have fewer than maxBars entries.
+  const pageEnd = chartData.length - chartPage * maxBars;
+  const pageStart = Math.max(0, pageEnd - maxBars);
+  const visibleChartData = chartData.slice(pageStart, pageEnd);
 
   // Sequenced card animation: grow → fade-in, fade-out → shrink
   // When swapping: swapOut old content → swapIn new content (card stays open)
