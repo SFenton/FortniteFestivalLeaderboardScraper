@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ComposedChart,
   Bar,
@@ -73,6 +74,7 @@ export default function ScoreHistoryChart({
   scoreWidth: scoreWidthProp,
 }: Props) {
   const cacheKey = `${accountId}:${songId}`;
+  const navigate = useNavigate();
   const isMobile = useIsMobile();
   const [selected, setSelected] = useState<InstrumentKey>(defaultInstrument ?? 'Solo_Guitar');
   const [selectedPoint, setSelectedPoint] = useState<ChartPoint | null>(null);
@@ -359,7 +361,7 @@ export default function ScoreHistoryChart({
   useEffect(() => { setSelectedPoint(null); }, [selected]);
 
   // Animated score card list beneath chart
-  const visibleCards = useMemo(() => chartData.slice(-5), [chartData]);
+  const visibleCards = useMemo(() => [...chartData].sort((a, b) => b.score - a.score).slice(0, 5), [chartData]);
   const [displayedCards, setDisplayedCards] = useState<ChartPoint[]>(visibleCards);
   const [listPhase, setListPhase] = useState<'idle' | 'out' | 'in'>('idle');
   const [listHeight, setListHeight] = useState(() => {
@@ -899,7 +901,7 @@ export default function ScoreHistoryChart({
         </div>
       )}
       {chartData.length > 5 && (
-        <button style={styles.viewAllButton} onClick={() => {}}>
+        <button style={styles.viewAllButton} onClick={() => navigate(`/songs/${songId}/${selected}`)}>
           View all available player scores
         </button>
       )}

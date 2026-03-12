@@ -1,22 +1,19 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { useParams, Link, useSearchParams, useLocation } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
-import { usePlayerData } from '../contexts/PlayerDataContext';
+import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
 import { api } from '../api/client';
 import {
   INSTRUMENT_LABELS,
   type InstrumentKey,
-  type LeaderboardEntry,
+  type ScoreHistoryEntry,
 } from '../models';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import SeasonPill from '../components/SeasonPill';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutlineSkew, frostedCard } from '../theme';
+import { Colors, Font, Gap, Radius, Layout, MaxWidth, goldOutlineSkew, frostedCard } from '../theme';
 import { staggerDelay, estimateVisibleCount } from '../utils/stagger';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useIsMobile } from '../hooks/useIsMobile';
-import { IS_PWA } from '../utils/isPwa';
-
-const PAGE_SIZE = 25;
 
 function accuracyColor(pct: number): string {
   const t = Math.min(Math.max(pct / 100, 0), 1);
@@ -31,10 +28,10 @@ export default function LeaderboardPage() {
     songId: string;
     instrument: string;
   }>();
-  const location = useLocation();
   const {
     state: { songs },
   } = useFestival();
+  const { player } = useTrackedPlayer();
 
   const song = songs.find((s) => s.songId === songId);
   const instKey = instrument as InstrumentKey;
@@ -52,144 +49,87 @@ export default function LeaderboardPage() {
   }, []);
   const showAccuracy = windowWidth >= 420;
   const showSeason = windowWidth >= 520;
-  const showStars = windowWidth >= 768;
   const isMobile = windowWidth < 420;
   const hasFab = useIsMobile();
 
-  const [searchParams, setSearchParams] = useSearchParams();
-
-  const { playerData } = usePlayerData();
-  const playerScore = useMemo(() => {
-    if (!playerData || !songId) return null;
-    return playerData.scores.find(
-      (s) => s.songId === songId && s.instrument === instKey,
-    ) ?? null;
-  }, [playerData, songId, instKey]);
-
-  const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
-  const [totalEntries, setTotalEntries] = useState(0);
-  const [localEntries, setLocalEntries] = useState(0);
-  const [page, setPage] = useState(0);
+  const [history, setHistory] = useState<ScoreHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const playerRowRef = useRef<HTMLAnchorElement | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [headerCollapsed, setHeaderCollapsed] = useState(hasFab);
-  const headerPinned = useRef(false);
   const [loadPhase, setLoadPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>('loading');
-  const updateScrollMask = useScrollMask(scrollRef, [loadPhase, entries.length]);
+  const updateScrollMask = useScrollMask(scrollRef, [loadPhase, history.length]);
   const userScrolledRef = useRef(false);
   const handleScroll = useCallback(() => {
     updateScrollMask();
     userScrolledRef.current = true;
-    if (hasFab) return; // On mobile, header is always collapsed
+    if (hasFab) return;
     const el = scrollRef.current;
     if (!el) return;
-    // If pinned (after pagination), only unpin once user scrolls past threshold
-    if (headerPinned.current) {
-      if (el.scrollTop > 40) headerPinned.current = false;
-      return;
-    }
     setHeaderCollapsed(el.scrollTop > 40);
   }, [updateScrollMask, hasFab]);
 
-  const totalPages = Math.max(1, Math.ceil(localEntries / PAGE_SIZE));
-
-  const fetchPage = useCallback(
-    async (pageNum: number) => {
-      if (!songId || !instrument) return;
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await api.getLeaderboard(
-          songId,
-          instKey,
-          PAGE_SIZE,
-          pageNum * PAGE_SIZE,
-        );
-        setEntries(res.entries);
-        setTotalEntries(res.totalEntries);
-        setLocalEntries(res.localEntries ?? res.totalEntries);
-        setPage(pageNum);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to load leaderboard');
-      } finally {
-        setLoading(false);
-      }
-    },
-    [songId, instrument, instKey],
-  );
-
+  // Fetch player history for this song, filtered by instrument
   useEffect(() => {
-    const pageParam = parseInt(searchParams.get('page') ?? '', 10);
-    const startPage = !isNaN(pageParam) && pageParam >= 1 ? pageParam - 1 : 0;
-    void fetchPage(startPage);
-  }, [fetchPage]);
+    if (!player || !songId) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    api.getPlayerHistory(player.accountId, songId)
+      .then((res) => {
+        if (!cancelled) {
+          const filtered = res.history
+            .filter(h => h.instrument === instKey)
+            .sort((a, b) => b.newScore - a.newScore);
+          setHistory(filtered);
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load history');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [player, songId, instKey]);
 
   // Spinner → staggered-content transition
-  const hasLoadedOnce = useRef(false);
   useEffect(() => {
     if (loading || error) {
       setLoadPhase('loading');
-      // Pin header state and scroll to top so new content staggers from top
-      headerPinned.current = true;
-      userScrolledRef.current = false;
-      scrollRef.current?.scrollTo(0, 0);
       return;
     }
     setLoadPhase('spinnerOut');
     const id = setTimeout(() => {
       setLoadPhase('contentIn');
-      // On initial load, let header be expanded and unpin immediately.
-      // On pagination, keep pinned — scroll handler will unpin once past threshold.
-      if (!hasLoadedOnce.current) {
-        hasLoadedOnce.current = true;
-        headerPinned.current = false;
-        if (!hasFab) setHeaderCollapsed(false);
-      }
+      if (!hasFab) setHeaderCollapsed(false);
     }, 500);
     return () => clearTimeout(id);
   }, [loading, error]);
-
-  useEffect(() => {
-    if (loadPhase !== 'contentIn' || !searchParams.get('navToPlayer')) return;
-    const playerIndex = playerData ? entries.findIndex(e => e.accountId === playerData.accountId) : -1;
-    if (playerIndex < 0) {
-      searchParams.delete('navToPlayer');
-      setSearchParams(searchParams, { replace: true });
-      return;
-    }
-    // Wait for the player's row stagger animation to finish: (index+1)*125ms delay + 400ms duration
-    const scrollDelay = (playerIndex + 1) * 125 + 400;
-    const id = setTimeout(() => {
-      if (userScrolledRef.current) return;
-      playerRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      searchParams.delete('navToPlayer');
-      setSearchParams(searchParams, { replace: true });
-    }, scrollDelay);
-    return () => clearTimeout(id);
-  }, [loadPhase, entries, playerData, searchParams, setSearchParams]);
 
   if (!songId || !instrument) {
     return <div style={styles.center}>Not found</div>;
   }
 
-  const goToPlayerPage = useCallback(() => {
-    if (!playerScore) return;
-    const playerPage = Math.floor((playerScore.rank - 1) / PAGE_SIZE);
-    setSearchParams({ page: String(playerPage + 1), navToPlayer: 'true' }, { replace: true });
-    void fetchPage(playerPage);
-  }, [playerScore, fetchPage, setSearchParams]);
-
-  const startRank = page * PAGE_SIZE;
-
   const scoreWidth = useMemo(() => {
     const maxLen = Math.max(
-      ...entries.map((e) => e.score.toLocaleString().length),
+      ...history.map((h) => h.newScore.toLocaleString().length),
       1,
     );
     return `${maxLen}ch`;
-  }, [entries]);
+  }, [history]);
+
+  const highScoreIndex = useMemo(() => {
+    if (history.length === 0) return -1;
+    let best = 0;
+    for (let i = 1; i < history.length; i++) {
+      if (history[i].newScore > history[best].newScore) best = i;
+    }
+    return best;
+  }, [history]);
 
   return (
     <div style={styles.page}>
@@ -269,7 +209,11 @@ export default function LeaderboardPage() {
 
         {error && <div style={styles.centerError}>{error}</div>}
 
-        {!error && (
+        {!error && !player && !loading && (
+          <div style={styles.center}>Select a player to view score history</div>
+        )}
+
+        {!error && player && (
           <>
             {loadPhase !== 'contentIn' && (
               <div
@@ -284,73 +228,56 @@ export default function LeaderboardPage() {
               </div>
             )}
             {loadPhase === 'contentIn' && (
-            <div style={styles.list}>
-              {entries.map((e, i) => {
-                const isPlayer = playerData?.accountId === e.accountId;
+            <div style={{ ...styles.list, ...(hasFab ? { paddingBottom: 96 } : {}) }}>
+              {history.map((h, i) => {
                 const delay = staggerDelay(i, 125, estimateVisibleCount(56));
                 const staggerStyle: React.CSSProperties | undefined = delay != null
                   ? { opacity: 0, animation: `fadeInUp 400ms ease-out ${delay}ms forwards` }
                   : undefined;
-                const baseStyle = isPlayer ? { ...styles.row, ...styles.rowHighlight } : styles.row;
-                const rowStyle = isMobile ? { ...baseStyle, gap: Gap.md, padding: `0 ${Gap.md}px`, height: 40 } : baseStyle;
+                const pct = h.accuracy != null ? h.accuracy / 10000 : null;
+                const dateStr = new Date(h.scoreAchievedAt ?? h.changedAt)
+                  .toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                const isHighScore = i === highScoreIndex;
+                const baseRow = isHighScore ? { ...styles.row, ...styles.rowHighlight } : styles.row;
+                const rowStyle = isMobile
+                  ? { ...baseRow, gap: Gap.md, padding: `0 ${Gap.md}px`, height: 40 }
+                  : baseRow;
                 return (
-                <Link
-                  key={e.accountId}
-                  ref={isPlayer ? playerRowRef : undefined}
-                  to={`/player/${e.accountId}`}
-                  state={{ backTo: location.pathname }}
+                <div
+                  key={`${h.changedAt}-${h.newScore}`}
                   style={{ ...rowStyle, ...staggerStyle }}
                   onAnimationEnd={(ev) => {
-                    const el = ev.currentTarget;
-                    el.style.opacity = '';
-                    el.style.animation = '';
+                    ev.currentTarget.style.opacity = '';
+                    ev.currentTarget.style.animation = '';
                   }}
                 >
-                  <span style={{ ...styles.colRank, ...(isPlayer ? { fontWeight: 700 } : {}) }}>#{(e.rank ?? startRank + i + 1).toLocaleString()}</span>
-                  <span style={{ ...styles.colName, ...(isPlayer ? { fontWeight: 700 } : {}) }}>
-                    {e.displayName ?? e.accountId.slice(0, 12)}
-                  </span>
+                  <span style={{ ...styles.colName, ...(isHighScore ? { fontWeight: 700 } : {}) }}>{dateStr}</span>
                   <span style={styles.seasonScoreGroup}>
-                    {showSeason && e.season != null && (
-                      <SeasonPill season={e.season} />
+                    {showSeason && h.season != null && (
+                      <SeasonPill season={h.season} />
                     )}
                     <span style={{ ...styles.colScore, width: scoreWidth }}>
-                      {e.score.toLocaleString()}
+                      {h.newScore.toLocaleString()}
                     </span>
                   </span>
                   {showAccuracy && (
                   <span style={styles.colAcc}>
-                    {e.accuracy != null
+                    {pct != null
                       ? (() => {
-                          const pct = e.accuracy / 10000;
                           const r1 = pct.toFixed(1);
                           const text = r1.endsWith('.0') ? `${Math.round(pct)}%` : `${r1}%`;
-                          return e.isFullCombo
+                          return h.isFullCombo
                             ? <span style={styles.fcAccBadge}>{text}</span>
                             : <span style={{ color: accuracyColor(pct) }}>{text}</span>;
                         })()
-                      : '—'}
+                      : '\u2014'}
                   </span>
                   )}
-                  {showStars && (
-                  <span style={styles.colStars}>
-                    {e.stars != null && e.stars > 0
-                      ? (() => {
-                          const allGold = e.stars >= 6;
-                          const count = allGold ? 5 : e.stars;
-                          const src = allGold ? '/app/star_gold.png' : '/app/star_white.png';
-                          return Array.from({ length: count }, (_, i) => (
-                            <img key={i} src={src} alt="★" style={styles.starImg} />
-                          ));
-                        })()
-                      : '—'}
-                  </span>
-                  )}
-                </Link>
+                </div>
                 );
               })}
-              {entries.length === 0 && (
-                <div style={styles.emptyRow}>No entries on this page</div>
+              {history.length === 0 && (
+                <div style={styles.emptyRow}>No score history for this instrument</div>
               )}
             </div>
             )}
@@ -358,103 +285,6 @@ export default function LeaderboardPage() {
         )}
       </div>
       </div>
-
-        {hasLoadedOnce.current && !error && totalPages > 1 && (
-        <div style={{ ...styles.pagination, ...(isMobile ? { justifyContent: 'space-between', gap: 0 } : {}), ...(hasFab && playerScore ? { paddingBottom: 96 } : hasFab ? { paddingBottom: 56 } : {}) }}>
-          <button
-            style={{
-              ...styles.pageButton,
-              ...(page === 0 ? styles.pageButtonDisabled : {}),
-            }}
-            disabled={page === 0}
-            onClick={() => void fetchPage(0)}
-          >
-            « First
-          </button>
-          <button
-            style={{
-              ...styles.pageButton,
-              ...(page === 0 ? styles.pageButtonDisabled : {}),
-            }}
-            disabled={page === 0}
-            onClick={() => void fetchPage(page - 1)}
-          >
-            ‹ Prev
-          </button>
-          <span style={styles.pageInfo}>
-            <span style={styles.pageInfoBadge}>{page + 1} / {totalPages}</span>
-          </span>
-          <button
-            style={{
-              ...styles.pageButton,
-              ...(page >= totalPages - 1
-                ? styles.pageButtonDisabled
-                : {}),
-            }}
-            disabled={page >= totalPages - 1}
-            onClick={() => void fetchPage(page + 1)}
-          >
-            Next ›
-          </button>
-          <button
-            style={{
-              ...styles.pageButton,
-              ...(page >= totalPages - 1
-                ? styles.pageButtonDisabled
-                : {}),
-            }}
-            disabled={page >= totalPages - 1}
-            onClick={() => void fetchPage(totalPages - 1)}
-          >
-            Last »
-          </button>
-        </div>
-      )}
-
-      {playerScore && playerData && (
-        <div style={{ ...styles.playerFooter, ...(hasFab ? styles.playerFooterFab : {}), ...(hasFab && IS_PWA ? { bottom: 84 + Gap.section - Gap.md } : {}) }} onClick={goToPlayerPage} role="button" tabIndex={0}>
-          <div style={{ ...styles.playerFooterRow, cursor: 'pointer', ...(isMobile ? { gap: Gap.md, padding: `0 ${Gap.md}px` } : {}) }}>
-            <span style={{ ...styles.colRank, fontWeight: 700 }}>#{playerScore.rank.toLocaleString()}</span>
-            <span style={{ ...styles.colName, fontWeight: 700 }}>{playerData.displayName}</span>
-            <span style={styles.seasonScoreGroup}>
-              {showSeason && playerScore.season != null && (
-                <SeasonPill season={playerScore.season} />
-              )}
-              <span style={{ ...styles.colScore, width: scoreWidth }}>
-                {playerScore.score.toLocaleString()}
-              </span>
-            </span>
-            {showAccuracy && (
-            <span style={styles.colAcc}>
-              {playerScore.accuracy != null
-                ? (() => {
-                    const pct = playerScore.accuracy / 10000;
-                    const r1 = pct.toFixed(1);
-                    const text = r1.endsWith('.0') ? `${Math.round(pct)}%` : `${r1}%`;
-                    return playerScore.isFullCombo
-                      ? <span style={styles.fcAccBadge}>{text}</span>
-                      : text;
-                  })()
-                : '\u2014'}
-            </span>
-            )}
-            {showStars && (
-            <span style={styles.colStars}>
-              {playerScore.stars != null && playerScore.stars > 0
-                ? (() => {
-                    const allGold = playerScore.stars >= 6;
-                    const count = allGold ? 5 : playerScore.stars;
-                    const src = allGold ? '/app/star_gold.png' : '/app/star_white.png';
-                    return Array.from({ length: count }, (_, i) => (
-                      <img key={i} src={src} alt="\u2605" style={styles.starImg} />
-                    ));
-                  })()
-                : '\u2014'}
-            </span>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -495,13 +325,6 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: MaxWidth.card,
     margin: '0 auto',
     padding: `0 ${Layout.paddingHorizontal}px`,
-  },
-  backLink: {
-    color: Colors.accentBlue,
-    textDecoration: 'none',
-    fontSize: Font.md,
-    display: 'inline-block',
-    marginBottom: Gap.md,
   },
   headerBar: {
     position: 'relative' as const,
@@ -549,13 +372,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: Font.xl,
     fontWeight: 600,
   },
-  meta: {
-    fontSize: Font.sm,
-    color: Colors.textTertiary,
-  },
-  metaPage: {
-    color: Colors.textMuted,
-  },
   list: {
     display: 'flex',
     flexDirection: 'column' as const,
@@ -569,25 +385,17 @@ const styles: Record<string, React.CSSProperties> = {
     height: 48,
     borderRadius: Radius.md,
     ...frostedCard,
-    textDecoration: 'none',
     color: 'inherit',
-    transition: 'background-color 0.15s',
     fontSize: Font.md,
-  },
-  emptyRow: {
-    padding: `${Gap.xl}px`,
-    textAlign: 'center' as const,
-    color: Colors.textMuted,
   },
   rowHighlight: {
     backgroundColor: 'rgba(75, 15, 99, 0.75)',
     border: `1px solid rgba(124, 58, 237, 0.5)`,
   },
-  colRank: {
-    width: 48,
-    flexShrink: 0,
-    color: Colors.textPrimary,
-    fontSize: Font.md,
+  emptyRow: {
+    padding: `${Gap.xl}px`,
+    textAlign: 'center' as const,
+    color: Colors.textMuted,
   },
   colName: {
     flex: 1,
@@ -598,7 +406,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   colScore: {
     flexShrink: 0,
-    textAlign: 'center' as const,
+    textAlign: 'right' as const,
     fontWeight: 600,
     fontSize: Font.lg,
     color: Colors.textPrimary,
@@ -618,77 +426,11 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: Font.lg,
     color: Colors.accentBlueBright,
     fontVariantNumeric: 'tabular-nums',
-    marginLeft: 0,
-  },
-  colAccFC: {
-    color: Colors.gold,
   },
   fcAccBadge: {
     ...goldOutlineSkew,
     fontSize: Font.lg,
     textAlign: 'center' as const,
-  },
-  colStars: {
-    width: 110,
-    flexShrink: 0,
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: 3,
-  },
-  starImg: {
-    width: 20,
-    height: 20,
-    objectFit: 'contain' as const,
-  },
-  fcBadge: {
-    ...goldFill,
-    fontSize: Font.sm,
-    fontWeight: 700,
-    padding: `${Gap.xs}px ${Gap.sm}px`,
-    borderRadius: Radius.xs,
-  },
-  pagination: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Gap.md,
-    flexShrink: 0,
-    padding: `${Gap.md}px ${Layout.paddingHorizontal}px`,
-    maxWidth: MaxWidth.card,
-    margin: '0 auto',
-    width: '100%',
-    boxSizing: 'border-box' as const,
-    position: 'relative' as const,
-    zIndex: 1,
-  },
-  pageButton: {
-    padding: `${Gap.md}px ${Gap.xl}px`,
-    borderRadius: Radius.sm,
-    ...frostedCard,
-    backgroundColor: Colors.backgroundCard,
-    color: Colors.textPrimary,
-    fontSize: Font.sm,
-    cursor: 'pointer',
-    transition: 'background-color 0.15s',
-  },
-  pageButtonDisabled: {
-    opacity: 0.4,
-    cursor: 'default',
-  },
-  pageInfo: {
-    textAlign: 'center' as const,
-  },
-  pageInfoBadge: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: Font.sm,
-    color: Colors.textSecondary,
-    padding: `${Gap.md}px ${Gap.xl}px`,
-    borderRadius: Radius.sm,
-    ...frostedCard,
-    backgroundColor: Colors.backgroundCard,
   },
   spinnerContainer: {
     display: 'flex',
@@ -719,31 +461,5 @@ const styles: Record<string, React.CSSProperties> = {
     padding: `${Gap.section * 2}px 0`,
     color: Colors.statusRed,
     fontSize: Font.lg,
-  },
-  playerFooter: {
-    flexShrink: 0,
-    zIndex: 20,
-    padding: `${Gap.md}px ${Layout.paddingHorizontal}px`,
-  },
-  playerFooterFab: {
-    position: 'fixed' as const,
-    bottom: 84,
-    left: Layout.paddingHorizontal,
-    right: Layout.paddingHorizontal * 2 + 56,
-    padding: 0,
-  },
-  playerFooterRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.xl,
-    height: 48,
-    padding: `0 ${Gap.xl}px`,
-    borderRadius: Radius.md,
-    ...frostedCard,
-    backgroundColor: 'rgba(75, 15, 99, 0.75)',
-    border: `1px solid rgba(124, 58, 237, 0.5)`,
-    fontSize: Font.lg,
-    maxWidth: MaxWidth.card,
-    margin: '0 auto',
   },
 };

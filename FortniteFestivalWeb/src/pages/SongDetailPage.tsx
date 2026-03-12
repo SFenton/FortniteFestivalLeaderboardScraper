@@ -512,10 +512,7 @@ function InstrumentCard({
           return (
           <Link
             id={`player-score-${instrument}`}
-            to={(() => {
-              const pageNum = Math.floor((playerScore.rank - 1) / 25) + 1;
-              return `/songs/${songId}/${instrument}?page=${pageNum}&navToPlayer=true`;
-            })()}
+            to={`/songs/${songId}/${instrument}`}
             style={{ ...styles.playerEntryRow, ...(isMobile ? styles.entryRowMobile : {}), ...playerStagger }}
             onClick={(ev) => ev.stopPropagation()}
             onAnimationEnd={clearAnim}
