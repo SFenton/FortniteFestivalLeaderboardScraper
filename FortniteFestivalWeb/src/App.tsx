@@ -1,5 +1,5 @@
 import { HashRouter, Routes, Route, NavLink, Link, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
-import { IoMusicalNotes, IoSparkles, IoStatsChart, IoPerson, IoSettings, IoSearch, IoSwapVerticalSharp, IoFunnel, IoChevronBack } from 'react-icons/io5';
+import { IoMusicalNotes, IoSparkles, IoStatsChart, IoPerson, IoSettings, IoSearch, IoSwapVerticalSharp, IoFunnel, IoChevronBack, IoClose } from 'react-icons/io5';
 import { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback, Fragment } from 'react';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
 import { SettingsProvider } from './contexts/SettingsContext';
@@ -8,7 +8,8 @@ import { useTrackedPlayer, type TrackedPlayer } from './hooks/useTrackedPlayer';
 import { PlayerDataProvider } from './contexts/PlayerDataContext';
 import { api } from './api/client';
 import type { AccountSearchResult } from './models';
-import { useIsMobileChrome } from './hooks/useIsMobile';
+import { useIsMobile, useIsMobileChrome } from './hooks/useIsMobile';
+import { useVisualViewportHeight } from './hooks/useVisualViewport';
 import SongsPage from './pages/SongsPage';
 import SongDetailPage from './pages/SongDetailPage';
 import LeaderboardPage from './pages/LeaderboardPage';
@@ -46,6 +47,7 @@ function AppShell() {
   const { state: { songs } } = useFestival();
   const location = useLocation();
   const isMobile = useIsMobileChrome();
+  const isNarrow = useIsMobile();
   const fabSearch = useFabSearch();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [playerModalOpen, setPlayerModalOpen] = useState(false);
@@ -53,13 +55,16 @@ function AppShell() {
   const navigate = useNavigate();
   const navType = useNavigationType();
 
-  // Track in-app navigation depth so we know when back navigation is possible
+  // Track in-app navigation depth synchronously during render so canGoBack
+  // is correct on the same render cycle as the navigation (no effect delay).
   const navDepthRef = useRef(0);
-  useEffect(() => {
+  const prevLocationRef = useRef(location);
+  if (location !== prevLocationRef.current) {
+    prevLocationRef.current = location;
     if (navType === 'PUSH') navDepthRef.current++;
-    else if (navType === 'POP' && navDepthRef.current > 0) navDepthRef.current--;
+    else if (navType === 'POP') navDepthRef.current = Math.max(0, navDepthRef.current - 1);
     // REPLACE doesn't change depth
-  }, [location, navType]);
+  }
   const canGoBack = navDepthRef.current > 0;
 
   const handleSelect = (p: TrackedPlayer) => {
@@ -113,11 +118,11 @@ function AppShell() {
       <ScrollToTop />
       {showAnimatedBg && <AnimatedBackground songs={songs} />}
 
-      {!isMobile && backFallback && (IS_IOS || IS_ANDROID || IS_PWA) && <BackLink fallback={backFallback} />}
+      {!isMobile && backFallback && (IS_IOS || IS_ANDROID || IS_PWA) && <BackLink key={location.pathname} fallback={backFallback} />}
 
         {isMobile ? (
           navTitle ? (
-            <div className="sa-top" style={styles.mobileHeader}>
+            <div key={location.pathname} className="sa-top" style={{ ...styles.mobileHeader, animation: 'fadeIn 300ms ease-out' }}>
               {backFallback && (IS_IOS || IS_ANDROID || IS_PWA) ? (
                 <a
                   href="#"
@@ -135,7 +140,7 @@ function AppShell() {
               )}
             </div>
           ) : (
-            backFallback && (IS_IOS || IS_ANDROID || IS_PWA) ? <BackLink fallback={backFallback} /> : null
+            backFallback && (IS_IOS || IS_ANDROID || IS_PWA) ? <BackLink key={location.pathname} fallback={backFallback} /> : null
           )
         ) : (
           <nav className="sa-top" style={styles.nav}>
@@ -249,7 +254,7 @@ function AppShell() {
         onSelect={handleSelect}
         player={player}
         onDeselect={handleDeselect}
-        isMobile={isMobile}
+        isMobile={isNarrow}
       />
       <MobilePlayerSearchModal
         visible={findPlayerOpen}
@@ -257,7 +262,7 @@ function AppShell() {
         onSelect={handleFindPlayerSelect}
         player={null}
         onDeselect={() => {}}
-        isMobile={isMobile}
+        isMobile={isNarrow}
       />
     </div>
     </PlayerDataProvider>
@@ -684,6 +689,7 @@ function MobilePlayerSearchModal({
   const [resultSeq, setResultSeq] = useState(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const vvHeight = useVisualViewportHeight();
 
   useEffect(() => {
     if (visible) {
@@ -799,7 +805,7 @@ function MobilePlayerSearchModal({
         style={{
           position: 'fixed',
           ...(isMobile
-            ? { bottom: 0, left: 0, right: 0, height: '80vh', borderTopLeftRadius: Radius.lg, borderTopRightRadius: Radius.lg }
+            ? { bottom: 0, left: 0, right: 0, height: vvHeight * 0.8, maxHeight: '80vh', borderTopLeftRadius: Radius.lg, borderTopRightRadius: Radius.lg }
             : { top: '50%', left: '50%', width: 420, height: 600, maxHeight: '90vh', borderRadius: Radius.lg, transform: animIn ? 'translate(-50%, -50%)' : 'translate(-50%, -40%)', opacity: animIn ? 1 : 0 }
           ),
           zIndex: 1001,
@@ -821,7 +827,7 @@ function MobilePlayerSearchModal({
       >
         <div style={styles.modalHeader}>
           <h2 style={styles.modalTitle}>Profile</h2>
-          <button style={styles.modalCloseBtn} onClick={onClose}>Cancel</button>
+          <button style={styles.modalCloseBtn} onClick={onClose} aria-label="Close"><IoClose size={18} /></button>
         </div>
         <div style={styles.modalBody}>
           {player && (
@@ -848,6 +854,8 @@ function MobilePlayerSearchModal({
                   placeholder="Search player…"
                   value={query}
                   onChange={(e) => handleChange(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                  enterKeyHint="done"
                 />
               </div>
               <div style={{ ...styles.modalResults, ...stagger(150) }}>
@@ -985,10 +993,20 @@ function FloatingActionButton({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      if (mode === 'players' && activeIndex >= 0) {
+        e.preventDefault();
+        const r = results[activeIndex];
+        if (r) handleSelectPlayer(r);
+        return;
+      }
+      // Dismiss virtual keyboard
+      (e.target as HTMLInputElement).blur();
+      return;
+    }
     if (mode !== 'players' || results.length === 0) return;
     if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIndex(p => (p < results.length - 1 ? p + 1 : 0)); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIndex(p => (p > 0 ? p - 1 : results.length - 1)); }
-    else if (e.key === 'Enter' && activeIndex >= 0) { e.preventDefault(); const r = results[activeIndex]; if (r) handleSelectPlayer(r); }
     else if (e.key === 'Escape') { setResults([]); }
   };
 
@@ -1033,6 +1051,7 @@ function FloatingActionButton({
               value={query}
               onChange={e => handleChange(e.target.value)}
               onKeyDown={handleKeyDown}
+              enterKeyHint="done"
             />
             {mode === 'players' && results.length > 0 && (
               <div style={styles.fabSearchResults}>
@@ -1597,23 +1616,26 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: `${Gap.xl}px ${Gap.section}px`,
-    borderBottom: `1px solid ${Colors.borderSubtle}`,
+    padding: `${Gap.xl}px 16px ${Gap.xl}px ${Gap.section}px`,
     flexShrink: 0,
   },
   modalTitle: {
-    fontSize: Font.lg,
+    fontSize: Font.xl,
     fontWeight: 700,
     margin: 0,
   },
   modalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: '50%',
     background: Colors.surfaceElevated,
     border: `1px solid ${Colors.borderPrimary}`,
-    borderRadius: Radius.xs,
     color: Colors.textSecondary,
-    fontSize: Font.sm,
-    padding: `${Gap.sm}px ${Gap.xl}px`,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
     cursor: 'pointer',
+    flexShrink: 0,
   },
   modalBody: {
     flex: 1,

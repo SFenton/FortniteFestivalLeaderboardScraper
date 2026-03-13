@@ -257,6 +257,22 @@ export default function SuggestionsPage({ accountId }: Props) {
 
   const effectiveHasMore = hasMore && !filterExhausted;
 
+  // If InfiniteScroll's scrollable target isn't overflowing, scroll events
+  // never fire and `next` is never called.  Detect this after each render
+  // and pump another batch so the container eventually becomes scrollable.
+  useEffect(() => {
+    if (!effectiveHasMore) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    // Wait one frame so the DOM has updated with the latest content.
+    const id = requestAnimationFrame(() => {
+      if (el.scrollHeight <= el.clientHeight) {
+        loadMore();
+      }
+    });
+    return () => cancelAnimationFrame(id);
+  }, [visibleCategories.length, effectiveHasMore, loadMore]);
+
   const filteredLoadMore = useCallback(() => {
     if (filterExhausted) return;
     loadMore();

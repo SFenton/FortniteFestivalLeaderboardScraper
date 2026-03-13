@@ -15,7 +15,7 @@ export default function BackLink({ fallback }: { fallback: string }) {
   };
 
   return (
-    <div className="sa-top" style={styles.wrapper}>
+    <div className="sa-top" style={{ ...styles.wrapper, animation: 'fadeIn 300ms ease-out' }}>
       <Link to={backTo} onClick={handleClick} style={styles.backLink}>
         <IoChevronBack size={22} />
         Back

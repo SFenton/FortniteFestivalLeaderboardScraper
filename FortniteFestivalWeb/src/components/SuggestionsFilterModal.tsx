@@ -163,7 +163,7 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
 
       {/* General type toggles */}
       <ModalSection>
-        <Accordion title="General" hint="Toggle broad suggestion types on or off." defaultOpen>
+        <Accordion title="General" hint="Toggle broad suggestion types on or off.">
           {SUGGESTION_TYPES.map(st => (
             <ToggleRow
               key={st.id}

@@ -20,6 +20,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useScrollMask } from '../hooks/useScrollMask';
+import { useVisualViewportHeight } from '../hooks/useVisualViewport';
 import { Colors, Radius, Font, Gap } from '../theme';
 
 const TRANSITION_MS = 300;
@@ -43,6 +44,7 @@ type Props = {
  */
 export default function Modal({ visible, title, onClose, onApply, onReset, resetLabel, resetHint, applyLabel, applyDisabled, children }: Props) {
   const isMobile = useIsMobile();
+  const vvHeight = useVisualViewportHeight();
   const [mounted, setMounted] = useState(false);
   const [animIn, setAnimIn] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -100,7 +102,6 @@ export default function Modal({ visible, title, onClose, onApply, onReset, reset
     backdropFilter: 'blur(18px)',
     WebkitBackdropFilter: 'blur(18px)',
     color: Colors.textPrimary,
-    transition: `transform ${TRANSITION_MS}ms ease`,
   };
 
   const mobilePanel: React.CSSProperties = {
@@ -108,20 +109,25 @@ export default function Modal({ visible, title, onClose, onApply, onReset, reset
     bottom: 0,
     left: 0,
     right: 0,
-    height: '80vh',
+    height: vvHeight * 0.8,
+    maxHeight: '80vh',
     borderTopLeftRadius: Radius.lg,
     borderTopRightRadius: Radius.lg,
+    transition: `transform ${TRANSITION_MS}ms ease`,
     transform: animIn ? 'translateY(0)' : 'translateY(100%)',
   };
 
   const desktopPanel: React.CSSProperties = {
     ...panelBase,
-    top: 0,
-    right: 0,
-    bottom: 0,
+    top: '50%',
+    left: '50%',
     width: 440,
-    maxWidth: '100vw',
-    transform: animIn ? 'translateX(0)' : 'translateX(100%)',
+    maxWidth: '90vw',
+    height: '60vh',
+    borderRadius: Radius.lg,
+    transition: `opacity ${TRANSITION_MS}ms ease, transform ${TRANSITION_MS}ms ease`,
+    transform: animIn ? 'translate(-50%, -50%)' : 'translate(-50%, -40%)',
+    opacity: animIn ? 1 : 0,
   };
 
   return (

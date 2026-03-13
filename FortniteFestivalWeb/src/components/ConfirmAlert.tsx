@@ -1,4 +1,7 @@
+import { useEffect, useLayoutEffect, useState, useCallback } from 'react';
 import { Colors, Font, Gap } from '../theme';
+
+const TRANSITION_MS = 250;
 
 export default function ConfirmAlert({
   title,
@@ -11,12 +14,41 @@ export default function ConfirmAlert({
   onNo: () => void;
   onYes: () => void;
 }) {
+  const [animIn, setAnimIn] = useState(false);
+
+  useLayoutEffect(() => {
+    const id = requestAnimationFrame(() => setAnimIn(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  // Close on Escape
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onNo(); };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [onNo]);
+
   return (
-    <div style={styles.overlay} onClick={onNo}>
-      <div style={styles.card} onClick={e => e.stopPropagation()}>
-        <div style={styles.title}>{title}</div>
-        <div style={styles.message}>{message}</div>
-        <div style={styles.buttons}>
+    <div
+      style={{
+        ...styles.overlay,
+        opacity: animIn ? 1 : 0,
+        transition: `opacity ${TRANSITION_MS}ms ease`,
+      }}
+      onClick={onNo}
+    >
+      <div
+        style={{
+          ...styles.card,
+          opacity: animIn ? 1 : 0,
+          transform: animIn ? 'scale(1)' : 'scale(0.95)',
+          transition: `opacity ${TRANSITION_MS}ms ease, transform ${TRANSITION_MS}ms ease`,
+        }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div style={{ ...styles.title, opacity: 0, animation: animIn ? `fadeInUp 300ms ease-out 100ms forwards` : 'none' }}>{title}</div>
+        <div style={{ ...styles.message, opacity: 0, animation: animIn ? `fadeInUp 300ms ease-out 200ms forwards` : 'none' }}>{message}</div>
+        <div style={{ ...styles.buttons, opacity: 0, animation: animIn ? `fadeInUp 300ms ease-out 300ms forwards` : 'none' }}>
           <button style={styles.btnNo} onClick={onNo}>No</button>
           <button style={styles.btnYes} onClick={onYes}>Yes</button>
         </div>

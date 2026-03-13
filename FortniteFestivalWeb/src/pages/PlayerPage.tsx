@@ -275,15 +275,39 @@ function PlayerContent({
     });
 
     // Stat boxes (each is its own grid item)
-    const cards: { label: string; value: React.ReactNode; color?: string; to?: string }[] = [];
+    const cards: { label: string; value: React.ReactNode; color?: string; to?: string; onClick?: () => void }[] = [];
     if (stats.songsPlayed > 0) cards.push({ label: 'Songs Played', value: stats.songsPlayed.toLocaleString(), color: stats.songsPlayed >= songs.length ? Colors.statusGreen : undefined });
     if (stats.fcCount > 0) cards.push({ label: 'FCs', value: stats.fcPercent === '100.0' ? stats.fcCount.toLocaleString() : `${stats.fcCount} (${stats.fcPercent}%)`, color: stats.fcPercent === '100.0' ? Colors.gold : undefined });
-    if (stats.goldStarCount > 0) cards.push({ label: 'Gold Stars', value: stats.goldStarCount.toLocaleString(), color: Colors.gold });
-    if (stats.fiveStarCount > 0) cards.push({ label: '5 Stars', value: stats.fiveStarCount.toLocaleString() });
-    if (stats.fourStarCount > 0) cards.push({ label: '4 Stars', value: stats.fourStarCount.toLocaleString() });
-    if (stats.threeStarCount > 0) cards.push({ label: '3 Stars', value: stats.threeStarCount.toLocaleString() });
-    if (stats.twoStarCount > 0) cards.push({ label: '2 Stars', value: stats.twoStarCount.toLocaleString() });
-    if (stats.oneStarCount > 0) cards.push({ label: '1 Star', value: stats.oneStarCount.toLocaleString() });
+
+    // Star count cards — clickable to filter songs by star level
+    const STAR_CARDS: { count: number; label: string; starKey: number; color?: string }[] = [
+      { count: stats.goldStarCount, label: 'Gold Stars', starKey: 6, color: Colors.gold },
+      { count: stats.fiveStarCount, label: '5 Stars', starKey: 5 },
+      { count: stats.fourStarCount, label: '4 Stars', starKey: 4 },
+      { count: stats.threeStarCount, label: '3 Stars', starKey: 3 },
+      { count: stats.twoStarCount, label: '2 Stars', starKey: 2 },
+      { count: stats.oneStarCount, label: '1 Star', starKey: 1 },
+    ];
+    const makeStarNav = (starKey: number) => () => {
+      const doFilterAndNav = () => {
+        const s = loadSongSettings();
+        const starsFilter: Record<number, boolean> = { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false, [starKey]: true };
+        saveSongSettings({ ...s, instrument: inst, filters: { ...s.filters, starsFilter } });
+        navigate('/songs', { state: { backTo: location.pathname } });
+      };
+      if (!isTrackedPlayer) {
+        const selectAndGo = () => {
+          setPlayer({ accountId: data.accountId, displayName: data.displayName });
+          doFilterAndNav();
+        };
+        if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
+          setPendingSwitch(() => selectAndGo);
+        } else { selectAndGo(); }
+      } else { doFilterAndNav(); }
+    };
+    for (const sc of STAR_CARDS) {
+      if (sc.count > 0) cards.push({ label: sc.label, value: sc.count.toLocaleString(), color: sc.color, onClick: makeStarNav(sc.starKey) });
+    }
     const accPct = stats.avgAccuracy / 10000;
     const isGoldAcc = accPct >= 100 && stats.fcPercent === '100.0';
     const accColor = stats.avgAccuracy > 0 ? (isGoldAcc ? Colors.gold : accuracyColor(accPct)) : undefined;
@@ -295,7 +319,7 @@ function PlayerContent({
     cards.push({ label: 'Percentile (Songs Played)', value: stats.avgPercentile, color: pctGold(stats.avgPercentile) });
 
     for (const c of cards) {
-      items.push({ key: `${inst}-${c.label}`, span: false, heightEstimate: 100, style: cardStyle, node: <StatBox label={c.label} value={c.value} color={c.color} to={c.to} /> });
+      items.push({ key: `${inst}-${c.label}`, span: false, heightEstimate: 100, style: cardStyle, node: <StatBox label={c.label} value={c.value} color={c.color} to={c.to} onClick={c.onClick} /> });
     }
 
     // Percentile table — single glass container
@@ -552,7 +576,7 @@ function PlayerContent({
   );
 }
 
-function StatBox({ label, value, color, to, state }: { label: string; value: React.ReactNode; color?: string; to?: string; state?: Record<string, string> }) {
+function StatBox({ label, value, color, to, state, onClick }: { label: string; value: React.ReactNode; color?: string; to?: string; state?: Record<string, string>; onClick?: () => void }) {
   const inner = (
     <div style={styles.statBox}>
       <span style={{ ...styles.statValue, ...(color ? { color } : {}) }}>{value}</span>
@@ -560,6 +584,7 @@ function StatBox({ label, value, color, to, state }: { label: string; value: Rea
     </div>
   );
   if (to) return <Link to={to} state={state} style={{ textDecoration: 'none', color: 'inherit' }}>{inner}</Link>;
+  if (onClick) return <div onClick={onClick} style={{ cursor: 'pointer' }}>{inner}</div>;
   return inner;
 }
 
