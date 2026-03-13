@@ -328,7 +328,7 @@ function PlayerContent({
                       for (const t of thresholds) percentileFilter[t] = t === b.pct;
                       percentileFilter[0] = false;
                       saveSongSettings({ ...s, instrument: inst, filters: { ...s.filters, percentileFilter } });
-                      navigate('/songs');
+                      navigate('/songs', { state: { backTo: location.pathname } });
                     };
                     if (!isTrackedPlayer) {
                       const selectAndGo = () => {

@@ -1,5 +1,5 @@
-import { HashRouter, Routes, Route, NavLink, Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { IoMusicalNotes, IoSparkles, IoStatsChart, IoPerson, IoSettings, IoSearch, IoSwapVerticalSharp, IoFunnel } from 'react-icons/io5';
+import { HashRouter, Routes, Route, NavLink, Link, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
+import { IoMusicalNotes, IoSparkles, IoStatsChart, IoPerson, IoSettings, IoSearch, IoSwapVerticalSharp, IoFunnel, IoChevronBack } from 'react-icons/io5';
 import { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback, Fragment } from 'react';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
 import { SettingsProvider } from './contexts/SettingsContext';
@@ -51,6 +51,16 @@ function AppShell() {
   const [playerModalOpen, setPlayerModalOpen] = useState(false);
   const [findPlayerOpen, setFindPlayerOpen] = useState(false);
   const navigate = useNavigate();
+  const navType = useNavigationType();
+
+  // Track in-app navigation depth so we know when back navigation is possible
+  const navDepthRef = useRef(0);
+  useEffect(() => {
+    if (navType === 'PUSH') navDepthRef.current++;
+    else if (navType === 'POP' && navDepthRef.current > 0) navDepthRef.current--;
+    // REPLACE doesn't change depth
+  }, [location, navType]);
+  const canGoBack = navDepthRef.current > 0;
 
   const handleSelect = (p: TrackedPlayer) => {
     setPlayer(p);
@@ -89,24 +99,44 @@ function AppShell() {
     const parts = path.split('/').filter(Boolean);
     if (parts[0] === 'songs' && parts.length === 3) return `/songs/${parts[1]}`;
     if (parts[0] === 'songs' && parts.length === 2) return '/songs';
+    if (parts[0] === 'songs' && parts.length === 1 && canGoBack) return '/';
+    if (parts[0] === 'suggestions' && parts.length === 1 && canGoBack) return '/';
+    if (parts[0] === 'statistics' && parts.length === 1 && canGoBack) return '/';
+    if (parts[0] === 'settings' && parts.length === 1 && canGoBack) return '/';
     if (parts[0] === 'player' && parts.length === 2) return '/songs';
     return null;
-  }, [location.pathname]);
+  }, [location.pathname, canGoBack]);
 
   return (
     <PlayerDataProvider accountId={player?.accountId}>
     <div style={styles.shell}>
       <ScrollToTop />
       {showAnimatedBg && <AnimatedBackground songs={songs} />}
+
+      {!isMobile && backFallback && (IS_IOS || IS_ANDROID || IS_PWA) && <BackLink fallback={backFallback} />}
+
         {isMobile ? (
           navTitle ? (
             <div className="sa-top" style={styles.mobileHeader}>
-              <span style={styles.navTitle}>{navTitle}</span>
+              {backFallback && (IS_IOS || IS_ANDROID || IS_PWA) ? (
+                <a
+                  href="#"
+                  onClick={(e) => { e.preventDefault(); navigate(-1); }}
+                  style={styles.navTitleBack}
+                >
+                  <IoChevronBack size={22} />
+                  <span>{navTitle}</span>
+                </a>
+              ) : (
+                <span style={styles.navTitle}>{navTitle}</span>
+              )}
               {location.pathname === '/songs' && songInstrument && (
                 <InstrumentIcon instrument={songInstrument} size={36} style={{ marginLeft: 'auto' }} />
               )}
             </div>
-          ) : null
+          ) : (
+            backFallback && (IS_IOS || IS_ANDROID || IS_PWA) ? <BackLink fallback={backFallback} /> : null
+          )
         ) : (
           <nav className="sa-top" style={styles.nav}>
             <button
@@ -131,8 +161,6 @@ function AppShell() {
             </button>
           </nav>
         )}
-
-      {backFallback && (IS_IOS || IS_ANDROID || IS_PWA) && <BackLink fallback={backFallback} />}
 
       <Sidebar
         player={player}
@@ -1046,6 +1074,7 @@ function FloatingActionButton({
               borderRadius: Radius.sm,
               padding: `${Gap.sm}px 0`,
               minWidth: 200,
+              whiteSpace: 'nowrap' as const,
               boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
               transformOrigin: 'bottom right',
               transform: popupVisible ? 'scale(1)' : 'scale(0)',
@@ -1144,6 +1173,17 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     color: Colors.textPrimary,
     whiteSpace: 'nowrap' as const,
+  },
+  navTitleBack: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: Gap.sm,
+    fontSize: Font.title,
+    fontWeight: 700,
+    color: Colors.textPrimary,
+    textDecoration: 'none',
+    whiteSpace: 'nowrap' as const,
+    marginLeft: -6,
   },
   mobileHeader: {
     display: 'flex',

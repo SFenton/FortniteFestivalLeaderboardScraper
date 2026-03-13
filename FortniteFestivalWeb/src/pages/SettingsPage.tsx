@@ -1,8 +1,9 @@
-import { useCallback, useMemo, useRef, type CSSProperties } from 'react';
+import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useSettings } from '../contexts/SettingsContext';
-import { useIsMobile } from '../hooks/useIsMobile';
+import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
 import { ToggleRow, ReorderList } from '../components/Modal';
 import { METADATA_SORT_DISPLAY } from '../components/songSettings';
+import ConfirmAlert from '../components/ConfirmAlert';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import type { InstrumentKey } from '../models';
 import { Colors, Font, Gap, Layout, MaxWidth, Radius, frostedCard } from '../theme';
@@ -62,9 +63,11 @@ const METADATA_TOGGLES: { key: MetadataKey; label: string }[] = [
 export default function SettingsPage() {
   const { settings, updateSettings, resetSettings } = useSettings();
   const isMobile = useIsMobile();
+  const isMobileChrome = useIsMobileChrome();
   const scrollRef = useRef<HTMLDivElement>(null);
   const updateScrollMask = useScrollMask(scrollRef, []);
   const handleScroll = useCallback(() => { updateScrollMask(); }, [updateScrollMask]);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   const showActiveCount = INSTRUMENT_SHOW_MAP.filter(i => settings[i.showKey]).length;
 
@@ -96,7 +99,7 @@ export default function SettingsPage() {
   return (
     <div style={styles.page}>
       <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
-      <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.md, paddingBottom: 48 } : {}) }}>
+      <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.md } : {}) }}>
         <div style={styles.cardColumn}>
 
           {/* ───── App Settings ───── */}
@@ -182,7 +185,7 @@ export default function SettingsPage() {
             </div>
             <button
               style={{ ...styles.resetButton, ...(isMobile ? styles.resetButtonMobile : {}) }}
-              onClick={resetSettings}
+              onClick={() => setShowResetConfirm(true)}
             >
               Reset All Settings
             </button>
@@ -191,7 +194,16 @@ export default function SettingsPage() {
 
         </div>
       </div>
+      {isMobileChrome && <div style={styles.fabSpacer} />}
       </div>
+      {showResetConfirm && (
+        <ConfirmAlert
+          title="Reset Settings"
+          message="Are you sure you want to restore all settings to their default values?"
+          onNo={() => setShowResetConfirm(false)}
+          onYes={() => { setShowResetConfirm(false); resetSettings(); }}
+        />
+      )}
     </div>
   );
 }
@@ -231,7 +243,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column' as const,
     gap: Gap.section,
-    paddingBottom: Gap.section * 2,
   },
   card: {
     ...frostedCard,
@@ -262,7 +273,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: `${Gap.md}px ${Gap.xl}px`,
     borderRadius: Radius.xs,
     border: `1px solid ${Colors.statusRed}`,
-    backgroundColor: Colors.dangerBg,
+    backgroundColor: 'rgb(198,40,40)',
     color: Colors.textPrimary,
     fontSize: Font.sm,
     fontWeight: 600,
@@ -284,5 +295,9 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center' as const,
     padding: `${Gap.xl}px ${Gap.xl}px`,
     fontSize: Font.md,
+  },
+  fabSpacer: {
+    height: 72,
+    flexShrink: 0,
   },
 };

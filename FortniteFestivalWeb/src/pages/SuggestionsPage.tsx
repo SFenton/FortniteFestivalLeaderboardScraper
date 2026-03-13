@@ -20,7 +20,7 @@ import { useSettings } from '../contexts/SettingsContext';
 import type { AppSettings } from '../contexts/SettingsContext';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, frostedCard } from '../theme';
 import { estimateVisibleCount } from '../utils/stagger';
-import { useIsMobile } from '../hooks/useIsMobile';
+import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
 import { useFabSearch } from '../contexts/FabSearchContext';
 import { useScrollFade } from '../hooks/useScrollFade';
 import type { InstrumentKey as ServerInstrumentKey } from '../models';
@@ -129,6 +129,7 @@ export default function SuggestionsPage({ accountId }: Props) {
 
   const { playerData, playerLoading } = usePlayerData();
   const isMobile = useIsMobile();
+  const isMobileChrome = useIsMobileChrome();
 
   const coreSongs = useMemo(
     () => (playerData ? songs.map(serverSongToCore) : []),
@@ -353,7 +354,7 @@ export default function SuggestionsPage({ accountId }: Props) {
           <div style={styles.arcSpinner} />
         </div>
       )}
-      {!isMobile && (
+      {!isMobileChrome && (
       <div style={styles.header}>
         <div style={styles.container}>
           <div style={{ ...styles.headerRow, ...headerStagger }}>

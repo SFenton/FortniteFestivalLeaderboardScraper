@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, Link, useNavigate, useSearchParams, useNavigationType } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
 import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
 import { api } from '../api/client';
@@ -64,7 +64,9 @@ export default function SongDetailPage() {
   const { settings } = useSettings();
   const activeInstruments = visibleInstruments(settings);
 
-  const cached = songId ? songDetailCache.get(songId) : undefined;
+  const navType = useNavigationType();
+  const isBackNav = navType === 'POP';
+  const cached = isBackNav && songId ? songDetailCache.get(songId) : undefined;
   const hasCachedPlayer = cached && cached.accountId === player?.accountId;
 
   const [playerScores, setPlayerScores] = useState<PlayerScore[]>(hasCachedPlayer ? cached.playerScores : []);
@@ -787,7 +789,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   fcAccBadge: {
     ...goldOutlineSkew,
-    fontSize: Font.lg,
+    fontSize: Font.md,
     textAlign: 'center' as const,
   },
   viewAllButton: {

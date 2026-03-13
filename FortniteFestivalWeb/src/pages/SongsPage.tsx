@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback, Fragment, type CSSProperties } from 'react';
 import { IoSwapVerticalSharp, IoFunnel } from 'react-icons/io5';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigationType } from 'react-router-dom';
 import { formatPercentile } from '../utils/formatPercentile';
 import { staggerDelay, estimateVisibleCount } from '../utils/stagger';
 import { useFestival } from '../contexts/FestivalContext';
@@ -39,9 +39,12 @@ export default function SongsPage() {
   const isMobileChrome = useIsMobileChrome();
   const fabSearch = useFabSearch();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const navType = useNavigationType();
+  const isBackNav = navType === 'POP';
 
-  // Restore scroll position on mount
+  // Restore scroll position on back navigation
   useEffect(() => {
+    if (!isBackNav) return;
     const el = scrollRef.current;
     if (el && _savedScrollTop > 0) {
       el.scrollTop = _savedScrollTop;
@@ -294,9 +297,14 @@ export default function SongsPage() {
 
   // ── Spinner → staggered-content transition ──
   const dataReady = !isLoading && songs.length > 0 && !playerLoading;
+  const skipAnimation = isBackNav || dataReady;
   const [loadPhase, setLoadPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>(
-    dataReady ? 'contentIn' : 'loading',
+    skipAnimation ? 'contentIn' : 'loading',
   );
+  // Track whether the initial load phase was set via settings change (not mount)
+  const isSettingsChangeRef = useRef(false);
+  // Whether to run stagger animation on the current contentIn transition
+  const [shouldStagger, setShouldStagger] = useState(!skipAnimation);
 
   // Track whether the toolbar has been shown at least once (initial load complete)
   const toolbarShownRef = useRef(false);
@@ -311,24 +319,32 @@ export default function SongsPage() {
     prevSettingsKeyRef.current = settingsKey;
     // Only re-stagger if we were already showing content
     if (loadPhase === 'contentIn') {
+      isSettingsChangeRef.current = true;
+      setShouldStagger(true);
       setLoadPhase('spinnerOut');
     }
   }, [settingsKey, loadPhase]);
 
   useEffect(() => {
     if (!dataReady || loadPhase !== 'loading') return;
+    setShouldStagger(true);
     setLoadPhase('spinnerOut');
   }, [dataReady, loadPhase]);
 
   useEffect(() => {
     if (loadPhase !== 'spinnerOut') return;
-    const id = setTimeout(() => setLoadPhase('contentIn'), 500);
+    const id = setTimeout(() => {
+      setLoadPhase('contentIn');
+      // Turn off stagger after a generous window so CSS animations can start
+      setTimeout(() => setShouldStagger(false), 100);
+    }, 500);
     return () => clearTimeout(id);
   }, [loadPhase]);
 
-  // Scroll to top when content transitions in after a settings change
+  // Scroll to top when content transitions in after a settings change (not on initial mount or back nav)
   useEffect(() => {
-    if (loadPhase === 'contentIn' && scrollRef.current) {
+    if (loadPhase === 'contentIn' && isSettingsChangeRef.current && scrollRef.current) {
+      isSettingsChangeRef.current = false;
       scrollRef.current.scrollTop = 0;
       _savedScrollTop = 0;
     }
@@ -490,7 +506,7 @@ export default function SongsPage() {
                   metadataOrder={visibleMetadataOrder}
                   sortMode={settings.sortMode}
                   isMobile={isMobile}
-                  staggerDelay={staggerDelay(i, 125, estimateVisibleCount(isMobile ? 120 : 72))}
+                  staggerDelay={shouldStagger ? staggerDelay(i, 125, estimateVisibleCount(isMobile ? 120 : 72)) : undefined}
                 />
             ))}
           </div>
