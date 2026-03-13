@@ -1,4 +1,4 @@
-import React, {useCallback, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 
 import {isLiquidGlassSupported} from '@callstack/liquid-glass';
@@ -9,7 +9,7 @@ import {Screen, FrostedSurface, FestivalTextInput, PageHeader, HamburgerButton, 
 import {usePageInstrumentation, useFestival, useAuth} from '@festival/contexts';
 import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 import {useWindowsFlyoutUi} from '../navigation/windowsFlyoutUi';
-import {reorderPIOForVisibilityChange, showSettingKeyForInstrument, normalizeSongRowVisualOrder, InstrumentKeys} from '@festival/core';
+import {reorderPIOForVisibilityChange, showSettingKeyForInstrument, normalizeSongRowVisualOrder, InstrumentKeys, APP_VERSION, CORE_VERSION} from '@festival/core';
 import type {SongRowVisualItem, SongRowVisualKey} from '@festival/core';
 
 /* ────────────────────────── Settings screen ────────────────────────── */
@@ -24,6 +24,28 @@ export function SettingsScreen() {
   const {state, actions} = useFestival();
   const {auth, authActions} = useAuth();
   const [settingsServiceEndpoint, setSettingsServiceEndpoint] = useState('https://festivalscoretracker.com');
+  const [serviceVersion, setServiceVersion] = useState<string | null>(null);
+
+  // Fetch service version when connected
+  useEffect(() => {
+    const endpoint = auth.serviceEndpoint;
+    if (auth.status !== 'authenticated' || !endpoint) {
+      setServiceVersion(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${endpoint.replace(/\/+$/, '')}/api/version`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (!cancelled && data?.version) setServiceVersion(data.version);
+      } catch {
+        // Service unreachable — leave as null
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [auth.status, auth.serviceEndpoint]);
 
   const generateExchangeCodeUrl =
     'https://www.epicgames.com/id/api/redirect?clientId=ec684b8c687f479fadea3cb2ad83f5c6&responseType=code';
@@ -420,6 +442,27 @@ export function SettingsScreen() {
             </View>
         </FrostedSurface>
 
+        {/* ───── Festival Score Tracker Version ───── */}
+        <FrostedSurface style={styles.card} tint="dark" intensity={18}>
+          <Text style={styles.sectionTitle}>Festival Score Tracker Version</Text>
+          <Text style={styles.sectionHint}>Festival Score Tracker information to help with debugging.</Text>
+
+            <View style={[modalStyles.orderRow, styles.orderRowFirst, {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}]}>
+              <Text style={modalStyles.orderName}>App Version</Text>
+              <Text style={styles.versionValue}>{APP_VERSION}</Text>
+            </View>
+
+            <View style={[modalStyles.orderRow, styles.orderRowSeparator, {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}]}>
+              <Text style={modalStyles.orderName}>Service Version</Text>
+              <Text style={styles.versionValue}>{serviceVersion ?? (auth.status === 'authenticated' ? 'Loading…' : 'Not connected')}</Text>
+            </View>
+
+            <View style={[modalStyles.orderRow, styles.orderRowSeparator, {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}]}>
+              <Text style={modalStyles.orderName}>@festival/core Version</Text>
+              <Text style={styles.versionValue}>{CORE_VERSION}</Text>
+            </View>
+        </FrostedSurface>
+
         {/* ───── Clear Everything ───── */}
         <FrostedSurface style={styles.card} tint="dark" intensity={18}>
           <Text style={styles.sectionTitle}>Clear Everything</Text>
@@ -464,6 +507,7 @@ const styles = StyleSheet.create({
   orderRowLast: {},
   orderRowSeparator: {},
   descriptorText: { color: Colors.textMuted, fontSize: Font.sm, lineHeight: LineHeight.sm, marginTop: Gap.xs },
+  versionValue: { color: Colors.textSecondary, fontSize: Font.md },
 
   /* ── Extras added on top of shared modalStyles ── */
   orderListExtra: { marginTop: Gap.md },

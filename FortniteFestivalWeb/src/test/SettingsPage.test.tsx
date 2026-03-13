@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SettingsProvider } from '../contexts/SettingsContext';
 import SettingsPage from '../pages/SettingsPage';
 
@@ -18,6 +18,13 @@ beforeEach(() => {
       dispatchEvent: vi.fn(),
     })),
   });
+  // Mock fetch for /api/version
+  global.fetch = vi.fn().mockImplementation((url: string) => {
+    if (typeof url === 'string' && url.includes('/api/version')) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ version: '1.0.0' }) });
+    }
+    return Promise.resolve({ ok: false, statusText: 'Not Found', json: () => Promise.resolve({}) });
+  }) as unknown as typeof fetch;
 });
 
 function renderSettings() {
@@ -153,5 +160,19 @@ describe('SettingsPage', () => {
     const stored = JSON.parse(localStorage.getItem('fst:appSettings')!);
     expect(stored.showLead).toBe(true);
     expect(stored.metadataShowScore).toBe(true);
+  });
+
+  it('renders Festival Score Tracker Version section', () => {
+    renderSettings();
+    expect(screen.getByText('Festival Score Tracker Version')).toBeDefined();
+    expect(screen.getByText('App Version')).toBeDefined();
+    expect(screen.getByText('Service Version')).toBeDefined();
+  });
+
+  it('displays service version after fetch', async () => {
+    renderSettings();
+    await waitFor(() => {
+      expect(screen.getByText('1.0.0')).toBeDefined();
+    });
   });
 });

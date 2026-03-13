@@ -58,6 +58,17 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Contains("ok", body);
     }
 
+    [Fact]
+    public async Task ApiVersion_ReturnsVersion()
+    {
+        var response = await _client.GetAsync("/api/version");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var version = json.GetProperty("version").GetString();
+        Assert.NotNull(version);
+        Assert.NotEqual("unknown", version);
+    }
+
     // ─── Progress ───────────────────────────────────────────────
 
     [Fact]

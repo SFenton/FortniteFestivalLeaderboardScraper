@@ -70,4 +70,6 @@ export const api = {
     get<PlayerStatsResponse>(
       `/api/player/${encodeURIComponent(accountId)}/stats`,
     ),
+
+  getVersion: () => get<{ version: string }>('/api/version'),
 };

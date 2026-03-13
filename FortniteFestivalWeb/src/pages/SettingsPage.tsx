@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useSettings } from '../contexts/SettingsContext';
 import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
 import { ToggleRow, ReorderList } from '../components/Modal';
@@ -8,6 +8,10 @@ import { InstrumentIcon } from '../components/InstrumentIcons';
 import type { InstrumentKey } from '../models';
 import { Colors, Font, Gap, Layout, MaxWidth, Radius, frostedCard } from '../theme';
 import { useScrollMask } from '../hooks/useScrollMask';
+import { api } from '../api/client';
+
+const APP_VERSION = '0.1.0';
+const CORE_VERSION = '0.0.1';
 
 function FadeInDiv({ delay, children, style }: { delay: number; children: React.ReactNode; style?: CSSProperties }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -68,6 +72,15 @@ export default function SettingsPage() {
   const updateScrollMask = useScrollMask(scrollRef, []);
   const handleScroll = useCallback(() => { updateScrollMask(); }, [updateScrollMask]);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [serviceVersion, setServiceVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getVersion()
+      .then(data => { if (!cancelled) setServiceVersion(data.version); })
+      .catch(() => { /* service unreachable */ });
+    return () => { cancelled = true; };
+  }, []);
 
   const showActiveCount = INSTRUMENT_SHOW_MAP.filter(i => settings[i.showKey]).length;
 
@@ -173,6 +186,26 @@ export default function SettingsPage() {
                 large={isMobile}
               />
             ))}
+          </Card>
+          </FadeInDiv>
+
+          {/* ───── Festival Score Tracker Version ───── */}
+          <FadeInDiv delay={staggerIndex++ * 125}>
+          <div style={styles.sectionTitle}>Festival Score Tracker Version</div>
+          <div style={styles.sectionHint}>Festival Score Tracker information to help with debugging.</div>
+          <Card>
+            <div style={styles.versionRow}>
+              <span>App Version</span>
+              <span style={styles.versionValue}>{APP_VERSION}</span>
+            </div>
+            <div style={styles.versionRow}>
+              <span>Service Version</span>
+              <span style={styles.versionValue}>{serviceVersion ?? 'Loading…'}</span>
+            </div>
+            <div style={styles.versionRow}>
+              <span>@festival/core Version</span>
+              <span style={styles.versionValue}>{CORE_VERSION}</span>
+            </div>
           </Card>
           </FadeInDiv>
 
@@ -295,6 +328,16 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center' as const,
     padding: `${Gap.xl}px ${Gap.xl}px`,
     fontSize: Font.md,
+  },
+  versionRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: `${Gap.sm}px 0`,
+    fontSize: Font.md,
+  },
+  versionValue: {
+    color: Colors.textSecondary,
   },
   fabSpacer: {
     height: 72,

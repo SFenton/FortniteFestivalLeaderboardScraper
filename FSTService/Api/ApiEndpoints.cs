@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.WebSockets;
+using System.Reflection;
 using FortniteFestival.Core.Services;
 using FSTService.Auth;
 using FSTService.Persistence;
@@ -21,6 +22,18 @@ public static class ApiEndpoints
         app.MapGet("/healthz", () => Results.Ok("ok"))
            .WithTags("Health")
            .RequireRateLimiting("public");
+
+        app.MapGet("/api/version", () =>
+        {
+            var assembly = typeof(ApiEndpoints).Assembly;
+            var version = assembly.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()
+                ?.InformationalVersion
+                ?? assembly.GetName().Version?.ToString()
+                ?? "unknown";
+            return Results.Ok(new { version });
+        })
+        .WithTags("Health")
+        .RequireRateLimiting("public");
 
         // Check if an account exists by username (used by mobile app before login)
         app.MapGet("/api/account/check", (string username, MetaDatabase metaDb) =>

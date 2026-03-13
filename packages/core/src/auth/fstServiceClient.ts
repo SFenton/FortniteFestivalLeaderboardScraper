@@ -26,6 +26,10 @@ export interface SyncVersionResult {
   sizeBytes: number | null;
 }
 
+export interface ServiceVersionResult {
+  version: string;
+}
+
 export interface BackfillStatusResult {
   accountId: string;
   backfill: {
@@ -115,6 +119,19 @@ export class FstServiceClient {
     }
 
     return res.json() as Promise<BackfillStatusResult>;
+  }
+
+  /**
+   * Get the service version (public, no auth required).
+   */
+  async getServiceVersion(): Promise<ServiceVersionResult> {
+    const res = await fetch(`${this.baseUrl}/api/version`);
+
+    if (!res.ok) {
+      throw new FstServiceError('getServiceVersion', res.status, await res.text().catch(() => ''));
+    }
+
+    return res.json() as Promise<ServiceVersionResult>;
   }
 
   /**
