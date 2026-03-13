@@ -226,7 +226,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
     }
 
     [Fact]
-    public async Task ReconstructAccountAsync_SkipsNonIncreasingScores()
+    public async Task ReconstructAccountAsync_RecordsNonIncreasingScores()
     {
         var (recon, scraperHandler, _) = CreateReconstructor();
 
@@ -267,8 +267,8 @@ public class HistoryReconstructorInstanceTests : IDisposable
         var result = await recon.ReconstructAccountAsync(
             "acct1", windows, "token", "caller");
 
-        // Only 2: 3000 → 5000 (season 2's 2000 is skipped)
-        Assert.Equal(2, result);
+        // All 3 sessions recorded (including the 2000 non-improvement)
+        Assert.Equal(3, result);
     }
 
     // ─── Seasonal lookup failure → skipped, continues ───
@@ -578,7 +578,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
     }
 
     [Fact]
-    public async Task ReconstructAccountAsync_MultipleSessionsWithNonIncreasing_FiltersCorrectly()
+    public async Task ReconstructAccountAsync_MultipleSessionsWithNonIncreasing_RecordsAll()
     {
         var (recon, scraperHandler, _) = CreateReconstructor();
 
@@ -595,8 +595,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
             new() { SeasonNumber = 2, EventId = "e2", WindowId = "season_2" },
         };
 
-        // Season 1: 4 sessions, but scores go 100k → 200k → 150k → 300k
-        // (150k is less than 200k — should be filtered out)
+        // Season 1: 4 sessions, scores go 100k → 200k → 150k → 300k
         scraperHandler.EnqueueJsonOk("""
         [{
             "teamId":"acct1","rank":100,"percentile":0.2,
@@ -623,8 +622,8 @@ public class HistoryReconstructorInstanceTests : IDisposable
         var result = await recon.ReconstructAccountAsync(
             "acct1", windows, "token", "caller");
 
-        // 100k → 200k → (150k skipped) → 300k → 400k → 500k = 5 entries
-        Assert.Equal(5, result);
+        // All 6 sessions recorded (including 150k non-improvement)
+        Assert.Equal(6, result);
     }
 
     // ─── FirstSeenSeason optimization ───────────────────

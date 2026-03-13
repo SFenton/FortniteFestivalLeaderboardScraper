@@ -565,4 +565,153 @@ public sealed class InstrumentDatabaseTests : IDisposable
             try { Directory.Delete(dir, true); } catch { }
         }
     }
+
+    // ═══ RecomputeAllRanks ══════════════════════════════════════
+
+    [Fact]
+    public void RecomputeAllRanks_assigns_correct_ranks_by_score()
+    {
+        Db.UpsertEntries("song_1",
+        [
+            MakeEntry("acct_low",   50_000),
+            MakeEntry("acct_mid",   75_000),
+            MakeEntry("acct_high", 100_000),
+        ]);
+
+        var updated = Db.RecomputeAllRanks();
+        Assert.Equal(3, updated);
+
+        var e1 = Db.GetEntry("song_1", "acct_high");
+        var e2 = Db.GetEntry("song_1", "acct_mid");
+        var e3 = Db.GetEntry("song_1", "acct_low");
+        Assert.Equal(1, e1!.Rank);
+        Assert.Equal(2, e2!.Rank);
+        Assert.Equal(3, e3!.Rank);
+    }
+
+    [Fact]
+    public void RecomputeAllRanks_handles_multiple_songs()
+    {
+        Db.UpsertEntries("song_A", [MakeEntry("a1", 200), MakeEntry("a2", 100)]);
+        Db.UpsertEntries("song_B", [MakeEntry("a1", 50), MakeEntry("a3", 300)]);
+
+        Db.RecomputeAllRanks();
+
+        Assert.Equal(1, Db.GetEntry("song_A", "a1")!.Rank);
+        Assert.Equal(2, Db.GetEntry("song_A", "a2")!.Rank);
+        Assert.Equal(2, Db.GetEntry("song_B", "a1")!.Rank);
+        Assert.Equal(1, Db.GetEntry("song_B", "a3")!.Rank);
+    }
+
+    [Fact]
+    public void RecomputeAllRanks_returns_zero_for_empty_db()
+    {
+        var updated = Db.RecomputeAllRanks();
+        Assert.Equal(0, updated);
+    }
+
+    // ═══ GetLeaderboardWithCount ════════════════════════════════
+
+    [Fact]
+    public void GetLeaderboardCount_returns_count()
+    {
+        Db.UpsertEntries("song_1",
+        [
+            MakeEntry("a", 10_000),
+            MakeEntry("b", 20_000),
+            MakeEntry("c", 30_000),
+        ]);
+
+        Assert.Equal(3, Db.GetLeaderboardCount("song_1"));
+        Assert.Equal(0, Db.GetLeaderboardCount("nonexistent"));
+    }
+
+    [Fact]
+    public void GetLeaderboardWithCount_returns_entries_and_total()
+    {
+        Db.UpsertEntries("song_1",
+        [
+            MakeEntry("a", 10_000),
+            MakeEntry("b", 20_000),
+            MakeEntry("c", 30_000),
+        ]);
+
+        var (entries, total) = Db.GetLeaderboardWithCount("song_1");
+        Assert.Equal(3, entries.Count);
+        Assert.Equal(3, total);
+        Assert.Equal("c", entries[0].AccountId); // highest score first
+    }
+
+    [Fact]
+    public void GetLeaderboardWithCount_respects_top_and_offset()
+    {
+        Db.UpsertEntries("song_1",
+        [
+            MakeEntry("a", 10_000),
+            MakeEntry("b", 20_000),
+            MakeEntry("c", 30_000),
+            MakeEntry("d", 40_000),
+        ]);
+
+        var (entries, total) = Db.GetLeaderboardWithCount("song_1", top: 2, offset: 1);
+        Assert.Equal(2, entries.Count);
+        Assert.Equal(4, total); // total is all entries, not just page
+        Assert.Equal("c", entries[0].AccountId);
+        Assert.Equal("b", entries[1].AccountId);
+    }
+
+    [Fact]
+    public void GetLeaderboardWithCount_empty_returns_zero()
+    {
+        var (entries, total) = Db.GetLeaderboardWithCount("nonexistent");
+        Assert.Empty(entries);
+        Assert.Equal(0, total);
+    }
+
+    // ═══ GetPlayerStoredRankings ════════════════════════════════
+
+    [Fact]
+    public void GetPlayerStoredRankings_returns_stored_rank()
+    {
+        Db.UpsertEntries("song_1", [MakeEntry("acct_1", 100_000)]);
+        // Set stored rank via recompute
+        Db.RecomputeAllRanks();
+
+        var rankings = Db.GetPlayerStoredRankings("acct_1");
+        Assert.Single(rankings);
+        Assert.Equal(1, rankings["song_1"].Rank);
+        Assert.Equal(1, rankings["song_1"].Total);
+    }
+
+    [Fact]
+    public void GetPlayerStoredRankings_returns_zero_rank_if_not_computed()
+    {
+        // Insert with Rank=0 (default), don't call RecomputeAllRanks
+        var entry = MakeEntry("acct_1", 100_000);
+        entry.Rank = 0;
+        Db.UpsertEntries("song_1", [entry]);
+
+        var rankings = Db.GetPlayerStoredRankings("acct_1");
+        Assert.Single(rankings);
+        Assert.Equal(0, rankings["song_1"].Rank);
+    }
+
+    [Fact]
+    public void GetPlayerStoredRankings_filters_by_songId()
+    {
+        Db.UpsertEntries("song_A", [MakeEntry("acct_1", 100_000)]);
+        Db.UpsertEntries("song_B", [MakeEntry("acct_1", 50_000)]);
+        Db.RecomputeAllRanks();
+
+        var rankings = Db.GetPlayerStoredRankings("acct_1", songId: "song_A");
+        Assert.Single(rankings);
+        Assert.True(rankings.ContainsKey("song_A"));
+    }
+
+    [Fact]
+    public void GetPlayerStoredRankings_empty_for_unknown_account()
+    {
+        var rankings = Db.GetPlayerStoredRankings("nobody");
+        Assert.Empty(rankings);
+    }
 }

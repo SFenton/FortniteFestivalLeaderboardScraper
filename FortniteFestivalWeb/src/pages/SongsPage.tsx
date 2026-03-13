@@ -148,90 +148,74 @@ export default function SongsPage() {
 
   const filtered = useMemo(() => {
     const q = debouncedSearch.toLowerCase();
-    let list = songs;
-    if (q) {
-      list = list.filter(
-        (s) =>
-          s.title.toLowerCase().includes(q) ||
-          s.artist.toLowerCase().includes(q),
-      );
-    }
-
-    // Apply missing-score/FC filters (only when player data is loaded)
     const f = settings.filters;
-    if (allScoreMap.size > 0) {
-      if (f.missingPadScores) {
-        list = list.filter(s => {
-          const byInst = allScoreMap.get(s.songId);
-          return PAD_INSTRUMENTS.some(inst => !byInst?.get(inst)?.score);
-        });
-      }
-      if (f.missingPadFCs) {
-        list = list.filter(s => {
-          const byInst = allScoreMap.get(s.songId);
-          return PAD_INSTRUMENTS.some(inst => !byInst?.get(inst)?.isFullCombo);
-        });
-      }
-      if (f.missingProScores) {
-        list = list.filter(s => {
-          const byInst = allScoreMap.get(s.songId);
-          return PRO_INSTRUMENTS.some(inst => !byInst?.get(inst)?.score);
-        });
-      }
-      if (f.missingProFCs) {
-        list = list.filter(s => {
-          const byInst = allScoreMap.get(s.songId);
-          return PRO_INSTRUMENTS.some(inst => !byInst?.get(inst)?.isFullCombo);
-        });
+    const hasPlayerData = allScoreMap.size > 0;
+
+    // Pre-compute which filter checks are active
+    const seasonKeys = Object.keys(f.seasonFilter);
+    const checkSeason = hasPlayerData && seasonKeys.length > 0 && seasonKeys.some(k => f.seasonFilter[Number(k)] === false);
+    const pctKeys = Object.keys(f.percentileFilter);
+    const checkPct = hasPlayerData && pctKeys.length > 0 && pctKeys.some(k => f.percentileFilter[Number(k)] === false);
+    const starKeys = Object.keys(f.starsFilter);
+    const checkStars = hasPlayerData && starKeys.length > 0 && starKeys.some(k => f.starsFilter[Number(k)] === false);
+    const diffKeys = Object.keys(f.difficultyFilter);
+    const checkDiff = hasPlayerData && diffKeys.length > 0 && diffKeys.some(k => f.difficultyFilter[Number(k)] === false);
+    const pctThresholds = [1,2,3,4,5,10,15,20,25,30,40,50,60,70,80,90,100];
+
+    // Single-pass filter: combine all filter conditions into one loop
+    let list = songs.filter(s => {
+      // Text search
+      if (q && !s.title.toLowerCase().includes(q) && !s.artist.toLowerCase().includes(q)) return false;
+
+      if (!hasPlayerData) return true;
+
+      const byInst = allScoreMap.get(s.songId);
+
+      // Missing scores/FC filters
+      if (f.missingPadScores && !PAD_INSTRUMENTS.some(inst => !byInst?.get(inst)?.score)) return false;
+      if (f.missingPadFCs && !PAD_INSTRUMENTS.some(inst => !byInst?.get(inst)?.isFullCombo)) return false;
+      if (f.missingProScores && !PRO_INSTRUMENTS.some(inst => !byInst?.get(inst)?.score)) return false;
+      if (f.missingProFCs && !PRO_INSTRUMENTS.some(inst => !byInst?.get(inst)?.isFullCombo)) return false;
+
+      const score = scoreMap.get(s.songId);
+
+      // Season filter
+      if (checkSeason) {
+        const season = score?.season ?? 0;
+        if (f.seasonFilter[season] === false) return false;
       }
 
-      // Season filter — only include songs where the score's season is enabled
-      const seasonKeys = Object.keys(f.seasonFilter);
-      if (seasonKeys.length > 0 && seasonKeys.some(k => f.seasonFilter[Number(k)] === false)) {
-        list = list.filter(s => {
-          const score = scoreMap.get(s.songId);
-          const season = score?.season ?? 0;
-          return f.seasonFilter[season] !== false;
-        });
-      }
-
-      // Percentile filter — only include songs whose percentile falls in an enabled bracket
-      const pctKeys = Object.keys(f.percentileFilter);
-      if (pctKeys.length > 0 && pctKeys.some(k => f.percentileFilter[Number(k)] === false)) {
-        list = list.filter(s => {
-          const score = scoreMap.get(s.songId);
-          if (!score) return f.percentileFilter[0] !== false;
-          // Compute percentile from rank/totalEntries, same as the display
+      // Percentile filter
+      if (checkPct) {
+        if (!score) {
+          if (f.percentileFilter[0] === false) return false;
+        } else {
           const pct = score.rank > 0 && (score.totalEntries ?? 0) > 0
             ? Math.min((score.rank / score.totalEntries!) * 100, 100)
             : undefined;
-          if (pct == null) return f.percentileFilter[0] !== false;
-          // Find the smallest threshold >= pct
-          const thresholds = [1,2,3,4,5,10,15,20,25,30,40,50,60,70,80,90,100];
-          const bracket = thresholds.find(t => pct <= t) ?? 100;
-          return f.percentileFilter[bracket] !== false;
-        });
+          if (pct == null) {
+            if (f.percentileFilter[0] === false) return false;
+          } else {
+            const bracket = pctThresholds.find(t => pct <= t) ?? 100;
+            if (f.percentileFilter[bracket] === false) return false;
+          }
+        }
       }
 
       // Stars filter
-      const starKeys = Object.keys(f.starsFilter);
-      if (starKeys.length > 0 && starKeys.some(k => f.starsFilter[Number(k)] === false)) {
-        list = list.filter(s => {
-          const score = scoreMap.get(s.songId);
-          const stars = score?.stars ?? 0;
-          return f.starsFilter[stars] !== false;
-        });
+      if (checkStars) {
+        const stars = score?.stars ?? 0;
+        if (f.starsFilter[stars] === false) return false;
       }
 
       // Difficulty filter
-      const diffKeys = Object.keys(f.difficultyFilter);
-      if (diffKeys.length > 0 && diffKeys.some(k => f.difficultyFilter[Number(k)] === false)) {
-        list = list.filter(s => {
-          const diff = (s as any).difficulty ?? 0;
-          return f.difficultyFilter[diff] !== false;
-        });
+      if (checkDiff) {
+        const diff = (s as any).difficulty ?? 0;
+        if (f.difficultyFilter[diff] === false) return false;
       }
-    }
+
+      return true;
+    });
 
     const dir = settings.sortAscending ? 1 : -1;
     return list.slice().sort((a, b) => {

@@ -133,3 +133,25 @@ public sealed class SeasonWindowInfo
     public string WindowId { get; init; } = "";
     public string DiscoveredAt { get; init; } = "";
 }
+
+/// <summary>
+/// DTO for pre-computed player statistics (one per instrument, plus an "Overall" row).
+/// </summary>
+public sealed class PlayerStatsDto
+{
+    public string AccountId { get; init; } = "";
+    public string Instrument { get; init; } = "";
+    public int SongsPlayed { get; init; }
+    public int FullComboCount { get; init; }
+    public int GoldStarCount { get; init; }
+    public double AvgAccuracy { get; init; }
+    public int BestRank { get; init; }
+    public string? BestRankSongId { get; init; }
+    public long TotalScore { get; init; }
+    /// <summary>JSON-encoded percentile distribution, e.g. {"1":5,"5":12,...}</summary>
+    public string? PercentileDist { get; init; }
+    /// <summary>Average percentile across songs played, e.g. "Top 3%".</summary>
+    public string? AvgPercentile { get; init; }
+    /// <summary>Overall percentile (unplayed songs count as 100%), e.g. "Top 15%".</summary>
+    public string? OverallPercentile { get; init; }
+}

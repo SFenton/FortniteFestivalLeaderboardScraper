@@ -120,7 +120,7 @@ export default function SongDetailPage() {
     return () => { cancelled = true; };
   }, [player, songId]);
 
-  // Fetch all instrument leaderboards in parallel
+  // Fetch all instrument leaderboards in a single request
   useEffect(() => {
     if (!songId) return;
     let cancelled = false;
@@ -131,23 +131,27 @@ export default function SongDetailPage() {
         ) as Record<InstrumentKey, InstrumentData>,
       );
     }
-    for (const inst of activeInstruments) {
-      api.getLeaderboard(songId, inst, 10).then((res) => {
-        if (!cancelled) {
-          setInstrumentData((prev) => ({
-            ...prev,
-            [inst]: { entries: res.entries, loading: false, error: null },
-          }));
+    api.getAllLeaderboards(songId, 10).then((res) => {
+      if (cancelled) return;
+      const newData = Object.fromEntries(
+        INSTRUMENT_KEYS.map((k) => [k, { entries: [], loading: false, error: null }]),
+      ) as Record<InstrumentKey, InstrumentData>;
+      for (const inst of res.instruments) {
+        const key = inst.instrument as InstrumentKey;
+        if (key in newData) {
+          newData[key] = { entries: inst.entries, loading: false, error: null };
         }
-      }).catch((e) => {
-        if (!cancelled) {
-          setInstrumentData((prev) => ({
-            ...prev,
-            [inst]: { entries: [], loading: false, error: e instanceof Error ? e.message : 'Error' },
-          }));
-        }
-      });
-    }
+      }
+      setInstrumentData(newData);
+    }).catch((e) => {
+      if (cancelled) return;
+      const errMsg = e instanceof Error ? e.message : 'Error';
+      setInstrumentData(
+        Object.fromEntries(
+          INSTRUMENT_KEYS.map((k) => [k, { entries: [], loading: false, error: errMsg }]),
+        ) as Record<InstrumentKey, InstrumentData>,
+      );
+    });
     return () => { cancelled = true; };
   }, [songId]);
 

@@ -178,6 +178,23 @@ public sealed class MetaDatabase : IDisposable
                 PRIMARY KEY (SongId, Instrument)
             );
 
+            CREATE TABLE IF NOT EXISTS PlayerStats (
+                AccountId       TEXT    NOT NULL,
+                Instrument      TEXT    NOT NULL,
+                SongsPlayed     INTEGER NOT NULL DEFAULT 0,
+                FullComboCount  INTEGER NOT NULL DEFAULT 0,
+                GoldStarCount   INTEGER NOT NULL DEFAULT 0,
+                AvgAccuracy     REAL    NOT NULL DEFAULT 0,
+                BestRank        INTEGER NOT NULL DEFAULT 0,
+                BestRankSongId  TEXT,
+                TotalScore      INTEGER NOT NULL DEFAULT 0,
+                PercentileDist  TEXT,
+                AvgPercentile   TEXT,
+                OverallPercentile TEXT,
+                UpdatedAt       TEXT    NOT NULL,
+                PRIMARY KEY (AccountId, Instrument)
+            );
+
             """;
         cmd.ExecuteNonQuery();
 
@@ -1527,6 +1544,94 @@ public sealed class MetaDatabase : IDisposable
         cmd.CommandText = "DELETE FROM EpicUserTokens WHERE AccountId = @accountId;";
         cmd.Parameters.AddWithValue("@accountId", accountId);
         cmd.ExecuteNonQuery();
+    }
+
+    // ─── PlayerStats ────────────────────────────────────────────
+
+    /// <summary>
+    /// Upsert pre-computed player stats for a specific instrument (or "Overall").
+    /// </summary>
+    public void UpsertPlayerStats(PlayerStatsDto stats)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        lock (_writeLock)
+        {
+            using var conn = OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO PlayerStats (AccountId, Instrument, SongsPlayed, FullComboCount,
+                    GoldStarCount, AvgAccuracy, BestRank, BestRankSongId, TotalScore,
+                    PercentileDist, AvgPercentile, OverallPercentile, UpdatedAt)
+                VALUES (@accountId, @instrument, @songsPlayed, @fcCount,
+                    @goldStars, @avgAcc, @bestRank, @bestRankSongId, @totalScore,
+                    @pctDist, @avgPct, @overallPct, @now)
+                ON CONFLICT(AccountId, Instrument) DO UPDATE SET
+                    SongsPlayed       = excluded.SongsPlayed,
+                    FullComboCount    = excluded.FullComboCount,
+                    GoldStarCount     = excluded.GoldStarCount,
+                    AvgAccuracy       = excluded.AvgAccuracy,
+                    BestRank          = excluded.BestRank,
+                    BestRankSongId    = excluded.BestRankSongId,
+                    TotalScore        = excluded.TotalScore,
+                    PercentileDist    = excluded.PercentileDist,
+                    AvgPercentile     = excluded.AvgPercentile,
+                    OverallPercentile = excluded.OverallPercentile,
+                    UpdatedAt         = excluded.UpdatedAt;
+                """;
+            cmd.Parameters.AddWithValue("@accountId", stats.AccountId);
+            cmd.Parameters.AddWithValue("@instrument", stats.Instrument);
+            cmd.Parameters.AddWithValue("@songsPlayed", stats.SongsPlayed);
+            cmd.Parameters.AddWithValue("@fcCount", stats.FullComboCount);
+            cmd.Parameters.AddWithValue("@goldStars", stats.GoldStarCount);
+            cmd.Parameters.AddWithValue("@avgAcc", stats.AvgAccuracy);
+            cmd.Parameters.AddWithValue("@bestRank", stats.BestRank);
+            cmd.Parameters.AddWithValue("@bestRankSongId", (object?)stats.BestRankSongId ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@totalScore", stats.TotalScore);
+            cmd.Parameters.AddWithValue("@pctDist", (object?)stats.PercentileDist ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@avgPct", (object?)stats.AvgPercentile ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@overallPct", (object?)stats.OverallPercentile ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@now", now);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>
+    /// Get all pre-computed stats for a player (one row per instrument + "Overall").
+    /// </summary>
+    public List<PlayerStatsDto> GetPlayerStats(string accountId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT Instrument, SongsPlayed, FullComboCount, GoldStarCount, AvgAccuracy,
+                   BestRank, BestRankSongId, TotalScore, PercentileDist,
+                   AvgPercentile, OverallPercentile, UpdatedAt
+            FROM PlayerStats
+            WHERE AccountId = @accountId;
+            """;
+        cmd.Parameters.AddWithValue("@accountId", accountId);
+
+        var list = new List<PlayerStatsDto>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new PlayerStatsDto
+            {
+                AccountId = accountId,
+                Instrument = reader.GetString(0),
+                SongsPlayed = reader.GetInt32(1),
+                FullComboCount = reader.GetInt32(2),
+                GoldStarCount = reader.GetInt32(3),
+                AvgAccuracy = reader.GetDouble(4),
+                BestRank = reader.GetInt32(5),
+                BestRankSongId = reader.IsDBNull(6) ? null : reader.GetString(6),
+                TotalScore = reader.GetInt64(7),
+                PercentileDist = reader.IsDBNull(8) ? null : reader.GetString(8),
+                AvgPercentile = reader.IsDBNull(9) ? null : reader.GetString(9),
+                OverallPercentile = reader.IsDBNull(10) ? null : reader.GetString(10),
+            });
+        }
+        return list;
     }
 
     // ─── Helpers ────────────────────────────────────────────────

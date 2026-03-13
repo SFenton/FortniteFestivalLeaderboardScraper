@@ -29,6 +29,9 @@ export type {
   ServerScoreHistoryEntry as ScoreHistoryEntry,
   PlayerHistoryResponse,
   ServerInstrumentKey as InstrumentKey,
+  AllLeaderboardsResponse,
+  PlayerStatEntry,
+  PlayerStatsResponse,
 } from '@festival/core/api/serverTypes';
 
 export {

@@ -134,16 +134,22 @@ function PlayerContent({
   const { player: trackedPlayer, setPlayer } = useTrackedPlayer();
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
 
-  const effectiveScores = isTrackedPlayer
-    ? data.scores.filter(s => isInstrumentVisible(settings, s.instrument as InstrumentKey))
-    : data.scores;
-  const visibleKeys = isTrackedPlayer
-    ? INSTRUMENT_KEYS.filter(k => isInstrumentVisible(settings, k))
-    : INSTRUMENT_KEYS;
+  const effectiveScores = useMemo(() =>
+    isTrackedPlayer
+      ? data.scores.filter(s => isInstrumentVisible(settings, s.instrument as InstrumentKey))
+      : data.scores,
+    [isTrackedPlayer, data.scores, settings],
+  );
+  const visibleKeys = useMemo(() =>
+    isTrackedPlayer
+      ? INSTRUMENT_KEYS.filter(k => isInstrumentVisible(settings, k))
+      : INSTRUMENT_KEYS,
+    [isTrackedPlayer, settings],
+  );
 
-  const songMap = new Map(songs.map((s) => [s.songId, s]));
-  const byInstrument = groupByInstrument(effectiveScores);
-  const overallStats = computeOverallStats(effectiveScores);
+  const songMap = useMemo(() => new Map(songs.map((s) => [s.songId, s])), [songs]);
+  const byInstrument = useMemo(() => groupByInstrument(effectiveScores), [effectiveScores]);
+  const overallStats = useMemo(() => computeOverallStats(effectiveScores), [effectiveScores]);
 
   // Build a completely flat list of small items — each becomes a direct child
   // of the grid so each gets a staggered fade-in animation.

@@ -390,6 +390,18 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>
+    /// Get the leaderboard with count in a single query (avoids separate COUNT round-trip).
+    /// Returns null if the instrument is unknown.
+    /// </summary>
+    public (List<LeaderboardEntryDto> Entries, int TotalCount)? GetLeaderboardWithCount(
+        string songId, string instrument, int? top = null, int offset = 0)
+    {
+        if (!_instrumentDbs.TryGetValue(instrument, out var db))
+            return null;
+        return db.GetLeaderboardWithCount(songId, top, offset);
+    }
+
+    /// <summary>
     /// Get the total number of leaderboard entries for a song on a specific instrument.
     /// Returns null if the instrument is unknown.
     /// </summary>
@@ -398,6 +410,23 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         if (!_instrumentDbs.TryGetValue(instrument, out var db))
             return null;
         return db.GetLeaderboardCount(songId);
+    }
+
+    /// <summary>
+    /// Recompute the stored Rank column across all instrument databases.
+    /// Should be called after a scrape pass completes.
+    /// </summary>
+    /// <returns>Total number of rows updated across all instruments.</returns>
+    public int RecomputeAllRanks()
+    {
+        int total = 0;
+        foreach (var (instrument, db) in _instrumentDbs)
+        {
+            var updated = db.RecomputeAllRanks();
+            _log.LogInformation("Recomputed ranks for {Instrument}: {Updated} entries.", instrument, updated);
+            total += updated;
+        }
+        return total;
     }
 
     /// <summary>

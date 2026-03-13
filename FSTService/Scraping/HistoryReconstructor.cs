@@ -6,8 +6,8 @@ namespace FSTService.Scraping;
 
 /// <summary>
 /// One-time per user: walks seasonal leaderboards backwards to reconstruct
-/// the timeline of when a user set each high score. Produces <c>ScoreHistory</c>
-/// entries that capture the progression (first play → each improvement).
+/// the complete timeline of every score a user achieved. Produces <c>ScoreHistory</c>
+/// entries for every session, not just improvements.
 ///
 /// <para>Algorithm per song/instrument:</para>
 /// <list type="number">
@@ -16,9 +16,9 @@ namespace FSTService.Scraping;
 ///         <see cref="GlobalLeaderboardScraper.LookupSeasonalAsync"/>. Seasons before the
 ///         song existed are skipped, significantly reducing API calls for newer songs.</item>
 ///   <item>Collect all season responses into a list sorted by endTime ascending.</item>
-///   <item>Walk the sorted list, keeping only entries where the score strictly increases
-///         (the moments the player actually improved).</item>
-///   <item>Insert each kept entry as a <c>ScoreHistory</c> row with point-in-time snapshot data.</item>
+///   <item>Insert every session as a <c>ScoreHistory</c> row. <c>OldScore</c> reflects the
+///         running personal best before each session, making it easy to identify improvements
+///         (<c>NewScore &gt; OldScore</c>).</item>
 /// </list>
 ///
 /// Designed to be interruptible and resumable: progress is persisted per
@@ -469,11 +469,10 @@ public class HistoryReconstructor
     }
 
     /// <summary>
-    /// Reconstruct the score history for one song/instrument by querying
-    /// seasonal leaderboards and building a progression timeline.
-    /// Unlike the previous implementation that only kept the best score per season,
-    /// this version fetches ALL sessions from each season's <c>sessionHistory</c>
-    /// array, giving a complete picture of every score improvement.
+    /// Reconstruct the complete score history for one song/instrument by querying
+    /// seasonal leaderboards. Every session is recorded as a <c>ScoreHistory</c> entry,
+    /// not just improvements. <c>OldScore</c> tracks the running personal best before
+    /// each session so consumers can identify which sessions set a new record.
     /// </summary>
     /// <param name="firstSeenSeason">The earliest season this song existed in (from FirstSeenSeason data).
     /// Seasons before this are skipped, avoiding unnecessary API calls.</param>
@@ -566,37 +565,29 @@ public class HistoryReconstructor
             return a.Season.CompareTo(b.Season);
         });
 
-        // Walk through sorted sessions, keeping only those where score strictly increases
-        var progression = new List<(int Season, SessionHistoryEntry Session)>();
-        int prevScore = 0;
+        // Record every session. OldScore/OldRank track the running personal best
+        // so consumers can identify improvements (NewScore > OldScore).
+        int entriesCreated = 0;
+        int? bestScore = null;
+        int? bestRank = null;
 
         foreach (var (season, session) in sortedSessions)
         {
-            if (session.Score > prevScore)
-            {
-                progression.Add((season, session));
-                prevScore = session.Score;
-            }
-        }
-
-        // Build ScoreHistory entries
-        int entriesCreated = 0;
-        int? previousScore = null;
-        int? previousRank = null;
-
-        foreach (var (season, session) in progression)
-        {
             _metaDb.InsertScoreChange(
                 songId, instrument, accountId,
-                previousScore, session.Score,
-                previousRank, session.Rank,
+                bestScore, session.Score,
+                bestRank, session.Rank,
                 session.Accuracy, session.IsFullCombo, session.Stars,
                 session.Percentile, season, session.EndTime,
                 seasonRank: session.Rank);
 
-            previousScore = session.Score;
-            previousRank = session.Rank;
             entriesCreated++;
+
+            if (bestScore is null || session.Score > bestScore)
+            {
+                bestScore = session.Score;
+                bestRank = session.Rank;
+            }
         }
 
         return (entriesCreated, queriesMade);

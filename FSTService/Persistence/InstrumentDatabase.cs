@@ -86,6 +86,11 @@ public sealed class InstrumentDatabase : IDisposable
         createNewIdx.CommandText = "CREATE INDEX IF NOT EXISTS IX_Song ON LeaderboardEntries (SongId, Score DESC);";
         createNewIdx.ExecuteNonQuery();
 
+        // ── Composite index for player + song lookups ──
+        using var compIdx = conn.CreateCommand();
+        compIdx.CommandText = "CREATE INDEX IF NOT EXISTS IX_Account_Song ON LeaderboardEntries (AccountId, SongId);";
+        compIdx.ExecuteNonQuery();
+
         _initialized = true;
 
         _log.LogDebug("Schema ensured for instrument DB: {Instrument}", _instrument);
@@ -355,6 +360,7 @@ public sealed class InstrumentDatabase : IDisposable
     /// <summary>
     /// For each song where the given account has a score, compute
     /// (rank, totalEntries) from the leaderboard. Rank is 1-based.
+    /// Always uses the correlated subquery for correctness (not the stored Rank column).
     /// </summary>
     public Dictionary<string, (int Rank, int Total)> GetPlayerRankings(string accountId, string? songId = null)
     {
@@ -388,6 +394,120 @@ public sealed class InstrumentDatabase : IDisposable
             result[sid] = (rank, total);
         }
         return result;
+    }
+
+    /// <summary>
+    /// For each song where the given account has a score, return
+    /// the pre-computed stored Rank and TotalEntries. Much faster than
+    /// <see cref="GetPlayerRankings"/> but requires <see cref="RecomputeAllRanks"/>
+    /// to have been called after the most recent scrape pass.
+    /// Falls back to 0 for rank if not yet computed.
+    /// </summary>
+    public Dictionary<string, (int Rank, int Total)> GetPlayerStoredRankings(string accountId, string? songId = null)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        var where = "le.AccountId = @accountId";
+        if (songId is not null)
+            where += " AND le.SongId = @songId";
+        cmd.CommandText = $@"
+            SELECT
+                le.SongId,
+                COALESCE(le.Rank, 0) AS Rank,
+                (SELECT COUNT(*) FROM LeaderboardEntries x
+                 WHERE x.SongId = le.SongId) AS TotalEntries
+            FROM LeaderboardEntries le
+            WHERE {where};";
+        cmd.Parameters.AddWithValue("@accountId", accountId);
+        if (songId is not null)
+            cmd.Parameters.AddWithValue("@songId", songId);
+
+        var result = new Dictionary<string, (int, int)>(StringComparer.OrdinalIgnoreCase);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var sid = reader.GetString(0);
+            var rank = reader.GetInt32(1);
+            var total = reader.GetInt32(2);
+            result[sid] = (rank, total);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Batch-recompute the Rank column for every entry in every song.
+    /// Uses ROW_NUMBER window function to assign 1-based ranks ordered by
+    /// Score DESC, EndTime ASC. Should be called post-scrape.
+    /// </summary>
+    /// <returns>Number of rows updated.</returns>
+    public int RecomputeAllRanks()
+    {
+        lock (_writeLock)
+        {
+            var conn = GetPersistentConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                UPDATE LeaderboardEntries
+                SET Rank = (
+                    SELECT cnt FROM (
+                        SELECT AccountId AS aid, SongId AS sid,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY SongId
+                                   ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC
+                               ) AS cnt
+                        FROM LeaderboardEntries
+                    ) ranked
+                    WHERE ranked.sid = LeaderboardEntries.SongId
+                      AND ranked.aid = LeaderboardEntries.AccountId
+                );
+            ";
+            return cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>
+    /// Get the leaderboard for a song including the total count in a single query.
+    /// Returns (entries, totalCount) — avoids a separate COUNT(*) round-trip.
+    /// </summary>
+    public (List<LeaderboardEntryDto> Entries, int TotalCount) GetLeaderboardWithCount(
+        string songId, int? top = null, int offset = 0)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+
+        if (top.HasValue)
+        {
+            cmd.CommandText = @"
+                SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime,
+                       ROW_NUMBER() OVER (ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC) AS Rank,
+                       COUNT(*) OVER () AS TotalCount
+                FROM LeaderboardEntries WHERE SongId = @songId
+                ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC
+                LIMIT @top OFFSET @offset;";
+            cmd.Parameters.AddWithValue("@top", top.Value);
+            cmd.Parameters.AddWithValue("@offset", offset);
+        }
+        else
+        {
+            cmd.CommandText = @"
+                SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime,
+                       ROW_NUMBER() OVER (ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC) AS Rank,
+                       COUNT(*) OVER () AS TotalCount
+                FROM LeaderboardEntries WHERE SongId = @songId
+                ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC;";
+        }
+        cmd.Parameters.AddWithValue("@songId", songId);
+
+        var entries = new List<LeaderboardEntryDto>();
+        int totalCount = 0;
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            entries.Add(ReadEntryDto(reader));
+            if (totalCount == 0)
+                totalCount = reader.GetInt32(9);
+        }
+        return (entries, totalCount);
     }
 
     private static LeaderboardEntryDto ReadEntryDto(SqliteDataReader reader)

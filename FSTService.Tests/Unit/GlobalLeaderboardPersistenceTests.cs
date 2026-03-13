@@ -454,4 +454,118 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
 
         Assert.True(Directory.Exists(subDir));
     }
+
+    // ═══ GetLeaderboardWithCount ════════════════════════════════
+
+    [Fact]
+    public void GetLeaderboardWithCount_returns_entries_and_count()
+    {
+        using var glp = CreatePersistence();
+        var db = glp.GetOrCreateInstrumentDb("Solo_Guitar");
+        db.UpsertEntries("song_1", new[]
+        {
+            new LeaderboardEntry { AccountId = "a1", Score = 300 },
+            new LeaderboardEntry { AccountId = "a2", Score = 200 },
+        });
+
+        var result = glp.GetLeaderboardWithCount("song_1", "Solo_Guitar", top: 10);
+        Assert.NotNull(result);
+        var (entries, total) = result.Value;
+        Assert.Equal(2, entries.Count);
+        Assert.Equal(2, total);
+    }
+
+    [Fact]
+    public void GetLeaderboardWithCount_unknown_instrument_returns_null()
+    {
+        using var glp = CreatePersistence();
+        var result = glp.GetLeaderboardWithCount("song_1", "UnknownInst");
+        Assert.Null(result);
+    }
+
+    // ═══ RecomputeAllRanks ══════════════════════════════════════
+
+    [Fact]
+    public void RecomputeAllRanks_updates_all_instruments()
+    {
+        using var glp = CreatePersistence();
+
+        var guitarDb = glp.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song_1", new[]
+        {
+            new LeaderboardEntry { AccountId = "a1", Score = 300 },
+            new LeaderboardEntry { AccountId = "a2", Score = 200 },
+        });
+
+        var bassDb = glp.GetOrCreateInstrumentDb("Solo_Bass");
+        bassDb.UpsertEntries("song_1", new[]
+        {
+            new LeaderboardEntry { AccountId = "a3", Score = 500 },
+        });
+
+        var total = glp.RecomputeAllRanks();
+        Assert.Equal(3, total);
+
+        Assert.Equal(1, guitarDb.GetEntry("song_1", "a1")!.Rank);
+        Assert.Equal(2, guitarDb.GetEntry("song_1", "a2")!.Rank);
+        Assert.Equal(1, bassDb.GetEntry("song_1", "a3")!.Rank);
+    }
+
+    // ═══ GetSongCountsForInstruments ════════════════════════════
+
+    [Fact]
+    public void GetSongCountsForInstruments_returns_all_song_counts()
+    {
+        using var glp = CreatePersistence();
+        var guitarDb = glp.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song_1", new[]
+        {
+            new LeaderboardEntry { AccountId = "a1", Score = 300 },
+            new LeaderboardEntry { AccountId = "a2", Score = 200 },
+        });
+        var bassDb = glp.GetOrCreateInstrumentDb("Solo_Bass");
+        bassDb.UpsertEntries("song_1", new[]
+        {
+            new LeaderboardEntry { AccountId = "a3", Score = 500 },
+        });
+
+        var counts = glp.GetSongCountsForInstruments();
+        Assert.Equal(2, counts[("song_1", "Solo_Guitar")]);
+        Assert.Equal(1, counts[("song_1", "Solo_Bass")]);
+    }
+
+    // ═══ GetLeaderboardCount (GLP layer) ════════════════════════
+
+    [Fact]
+    public void GetLeaderboardCount_returns_count_for_known_instrument()
+    {
+        using var glp = CreatePersistence();
+        var db = glp.GetOrCreateInstrumentDb("Solo_Guitar");
+        db.UpsertEntries("song_1", new[]
+        {
+            new LeaderboardEntry { AccountId = "a1", Score = 100 },
+            new LeaderboardEntry { AccountId = "a2", Score = 200 },
+        });
+
+        var count = glp.GetLeaderboardCount("song_1", "Solo_Guitar");
+        Assert.Equal(2, count);
+    }
+
+    [Fact]
+    public void GetLeaderboardCount_returns_null_for_unknown_instrument()
+    {
+        using var glp = CreatePersistence();
+        var count = glp.GetLeaderboardCount("song_1", "Unknown_Instrument");
+        Assert.Null(count);
+    }
+
+    // ═══ GetLeaderboard (GLP layer) ═════════════════════════════
+
+    [Fact]
+    public void GetLeaderboard_GlpLayer_returns_null_for_unknown_instrument()
+    {
+        using var glp = CreatePersistence();
+        var entries = glp.GetLeaderboard("song_1", "Unknown_Instrument");
+        Assert.Null(entries);
+    }
 }

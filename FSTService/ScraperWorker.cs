@@ -451,6 +451,18 @@ public sealed class ScraperWorker : BackgroundService
 
         // ── Post-pass: calculate FirstSeenSeason for new songs ──
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.CalculatingFirstSeen);
+
+        // Recompute stored rank columns across all instrument DBs
+        try
+        {
+            var rankUpdated = _persistence.RecomputeAllRanks();
+            _log.LogInformation("Recomputed ranks across all instruments: {Count:N0} entries updated.", rankUpdated);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Rank recomputation failed. Stored ranks may be stale.");
+        }
+
         try
         {
             var firstSeenToken = await _tokenManager.GetAccessTokenAsync(ct);

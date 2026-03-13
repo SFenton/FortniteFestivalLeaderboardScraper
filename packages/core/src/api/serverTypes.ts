@@ -194,3 +194,35 @@ export type PlayerHistoryResponse = {
   count: number;
   history: ServerScoreHistoryEntry[];
 };
+
+/** Leaderboard data for all instruments on one song. */
+export type AllLeaderboardsResponse = {
+  songId: string;
+  instruments: {
+    instrument: string;
+    count: number;
+    totalEntries: number;
+    localEntries: number;
+    entries: LeaderboardEntry[];
+  }[];
+};
+
+/** Pre-computed player stats for one instrument (or "Overall"). */
+export type PlayerStatEntry = {
+  instrument: string;
+  songsPlayed: number;
+  fullComboCount: number;
+  goldStarCount: number;
+  avgAccuracy: number;
+  bestRank: number;
+  bestRankSongId?: string;
+  totalScore: number;
+  percentileDist?: string;
+  avgPercentile?: string;
+  overallPercentile?: string;
+};
+
+export type PlayerStatsResponse = {
+  accountId: string;
+  stats: PlayerStatEntry[];
+};

@@ -1113,4 +1113,112 @@ public sealed class MetaDatabaseTests : IDisposable
         Db.RaiseLeaderboardPopulationFloor("song1", "Solo_Guitar", -5);
         Assert.Equal(-1, Db.GetLeaderboardPopulation("song1", "Solo_Guitar"));
     }
+
+    // ═══ PlayerStats ════════════════════════════════════════════
+
+    [Fact]
+    public void UpsertPlayerStats_inserts_new_row()
+    {
+        Db.UpsertPlayerStats(new Persistence.PlayerStatsDto
+        {
+            AccountId = "acct_1",
+            Instrument = "Solo_Guitar",
+            SongsPlayed = 50,
+            FullComboCount = 10,
+            GoldStarCount = 5,
+            AvgAccuracy = 95.5,
+            BestRank = 3,
+            BestRankSongId = "song_best",
+            TotalScore = 5_000_000,
+            PercentileDist = "{\"1\":2,\"5\":10}",
+            AvgPercentile = "Top 3%",
+            OverallPercentile = "Top 10%",
+        });
+
+        var stats = Db.GetPlayerStats("acct_1");
+        Assert.Single(stats);
+        var s = stats[0];
+        Assert.Equal("Solo_Guitar", s.Instrument);
+        Assert.Equal(50, s.SongsPlayed);
+        Assert.Equal(10, s.FullComboCount);
+        Assert.Equal(5, s.GoldStarCount);
+        Assert.Equal(95.5, s.AvgAccuracy, 0.01);
+        Assert.Equal(3, s.BestRank);
+        Assert.Equal("song_best", s.BestRankSongId);
+        Assert.Equal(5_000_000, s.TotalScore);
+        Assert.Equal("{\"1\":2,\"5\":10}", s.PercentileDist);
+        Assert.Equal("Top 3%", s.AvgPercentile);
+        Assert.Equal("Top 10%", s.OverallPercentile);
+    }
+
+    [Fact]
+    public void UpsertPlayerStats_updates_existing_row()
+    {
+        Db.UpsertPlayerStats(new Persistence.PlayerStatsDto
+        {
+            AccountId = "acct_1",
+            Instrument = "Solo_Guitar",
+            SongsPlayed = 50,
+            FullComboCount = 10,
+        });
+        Db.UpsertPlayerStats(new Persistence.PlayerStatsDto
+        {
+            AccountId = "acct_1",
+            Instrument = "Solo_Guitar",
+            SongsPlayed = 60,
+            FullComboCount = 20,
+        });
+
+        var stats = Db.GetPlayerStats("acct_1");
+        Assert.Single(stats);
+        Assert.Equal(60, stats[0].SongsPlayed);
+        Assert.Equal(20, stats[0].FullComboCount);
+    }
+
+    [Fact]
+    public void GetPlayerStats_returns_multiple_instruments()
+    {
+        Db.UpsertPlayerStats(new Persistence.PlayerStatsDto
+        {
+            AccountId = "acct_1",
+            Instrument = "Solo_Guitar",
+            SongsPlayed = 50,
+        });
+        Db.UpsertPlayerStats(new Persistence.PlayerStatsDto
+        {
+            AccountId = "acct_1",
+            Instrument = "Solo_Bass",
+            SongsPlayed = 30,
+        });
+
+        var stats = Db.GetPlayerStats("acct_1");
+        Assert.Equal(2, stats.Count);
+    }
+
+    [Fact]
+    public void GetPlayerStats_returns_empty_for_unknown_account()
+    {
+        var stats = Db.GetPlayerStats("nobody");
+        Assert.Empty(stats);
+    }
+
+    [Fact]
+    public void UpsertPlayerStats_handles_null_optional_fields()
+    {
+        Db.UpsertPlayerStats(new Persistence.PlayerStatsDto
+        {
+            AccountId = "acct_1",
+            Instrument = "Overall",
+            SongsPlayed = 10,
+            BestRankSongId = null,
+            PercentileDist = null,
+            AvgPercentile = null,
+            OverallPercentile = null,
+        });
+
+        var stats = Db.GetPlayerStats("acct_1");
+        Assert.Single(stats);
+        Assert.Null(stats[0].BestRankSongId);
+        Assert.Null(stats[0].PercentileDist);
+    }
 }

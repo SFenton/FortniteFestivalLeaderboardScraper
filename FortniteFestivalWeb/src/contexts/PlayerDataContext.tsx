@@ -5,6 +5,7 @@ import {
   useEffect,
   useCallback,
   useRef,
+  useMemo,
   type ReactNode,
 } from 'react';
 import { api } from '../api/client';
@@ -88,19 +89,19 @@ export function PlayerDataProvider({
     }
   }, [accountId, fetchPlayer]);
 
+  const value = useMemo<PlayerDataContextValue>(() => ({
+    playerData: data,
+    playerLoading: loading,
+    playerError: error,
+    refreshPlayer,
+    isSyncing,
+    syncPhase: phase,
+    backfillProgress,
+    historyProgress,
+  }), [data, loading, error, refreshPlayer, isSyncing, phase, backfillProgress, historyProgress]);
+
   return (
-    <PlayerDataContext.Provider
-      value={{
-        playerData: data,
-        playerLoading: loading,
-        playerError: error,
-        refreshPlayer,
-        isSyncing,
-        syncPhase: phase,
-        backfillProgress,
-        historyProgress,
-      }}
-    >
+    <PlayerDataContext.Provider value={value}>
       {children}
     </PlayerDataContext.Provider>
   );

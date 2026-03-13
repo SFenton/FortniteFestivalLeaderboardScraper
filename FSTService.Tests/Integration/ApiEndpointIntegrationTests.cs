@@ -2104,6 +2104,153 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    // ═══ Leaderboard All Instruments ════════════════════════════
+
+    [Fact]
+    public async Task ApiLeaderboardAll_ReturnsAllInstruments()
+    {
+        // Seed data for multiple instruments
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var guitarDb = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            guitarDb.UpsertEntries("allSong1", new[]
+            {
+                new LeaderboardEntry { AccountId = "allAcct1", Score = 100_000 },
+                new LeaderboardEntry { AccountId = "allAcct2", Score = 90_000 },
+            });
+            var bassDb = persistence.GetOrCreateInstrumentDb("Solo_Bass");
+            bassDb.UpsertEntries("allSong1", new[]
+            {
+                new LeaderboardEntry { AccountId = "allAcct3", Score = 80_000 },
+            });
+        }
+
+        var response = await _client.GetAsync("/api/leaderboard/allSong1/all?top=10");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal("allSong1", json.GetProperty("songId").GetString());
+        var instruments = json.GetProperty("instruments");
+        Assert.True(instruments.GetArrayLength() >= 2);
+
+        // Check that at least one instrument has entries
+        bool hasEntries = false;
+        for (int i = 0; i < instruments.GetArrayLength(); i++)
+        {
+            var inst = instruments[i];
+            if (inst.GetProperty("count").GetInt32() > 0)
+            {
+                hasEntries = true;
+                // Verify entries have expected shape
+                var entries = inst.GetProperty("entries");
+                Assert.True(entries.GetArrayLength() > 0);
+                var first = entries[0];
+                Assert.True(first.TryGetProperty("accountId", out _));
+                Assert.True(first.TryGetProperty("score", out _));
+                Assert.True(first.TryGetProperty("rank", out _));
+            }
+        }
+        Assert.True(hasEntries);
+    }
+
+    [Fact]
+    public async Task ApiLeaderboardAll_EmptySong_ReturnsEmptyInstruments()
+    {
+        var response = await _client.GetAsync("/api/leaderboard/nonexistentSong/all");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("nonexistentSong", json.GetProperty("songId").GetString());
+        var instruments = json.GetProperty("instruments");
+        // Should have instruments but all with 0 entries
+        for (int i = 0; i < instruments.GetArrayLength(); i++)
+        {
+            Assert.Equal(0, instruments[i].GetProperty("count").GetInt32());
+        }
+    }
+
+    // ═══ Player Stats Endpoint ══════════════════════════════════
+
+    [Fact]
+    public async Task ApiPlayerStats_ReturnsEmptyWhenNoStats()
+    {
+        var response = await _client.GetAsync("/api/player/unknownAcct/stats");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("unknownAcct", json.GetProperty("accountId").GetString());
+        Assert.Equal(0, json.GetProperty("stats").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task ApiPlayerStats_ReturnsPreComputedStats()
+    {
+        // Seed player stats
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+            metaDb.UpsertPlayerStats(new PlayerStatsDto
+            {
+                AccountId = "statsAcct1",
+                Instrument = "Solo_Guitar",
+                SongsPlayed = 42,
+                FullComboCount = 10,
+                GoldStarCount = 5,
+                AvgAccuracy = 97.5,
+                BestRank = 3,
+                BestRankSongId = "bestSong",
+                TotalScore = 4_200_000,
+                PercentileDist = "{\"1\":2}",
+                AvgPercentile = "Top 5%",
+                OverallPercentile = "Top 15%",
+            });
+        }
+
+        var response = await _client.GetAsync("/api/player/statsAcct1/stats");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal("statsAcct1", json.GetProperty("accountId").GetString());
+        var stats = json.GetProperty("stats");
+        Assert.Equal(1, stats.GetArrayLength());
+
+        var stat = stats[0];
+        Assert.Equal("Solo_Guitar", stat.GetProperty("instrument").GetString());
+        Assert.Equal(42, stat.GetProperty("songsPlayed").GetInt32());
+        Assert.Equal(10, stat.GetProperty("fullComboCount").GetInt32());
+        Assert.Equal(5, stat.GetProperty("goldStarCount").GetInt32());
+        Assert.Equal(97.5, stat.GetProperty("avgAccuracy").GetDouble(), 0.01);
+        Assert.Equal(3, stat.GetProperty("bestRank").GetInt32());
+        Assert.Equal("bestSong", stat.GetProperty("bestRankSongId").GetString());
+        Assert.Equal("Top 5%", stat.GetProperty("avgPercentile").GetString());
+    }
+
+    // ═══ Leaderboard Combined Count ═════════════════════════════
+
+    [Fact]
+    public async Task ApiLeaderboard_ReturnsTotalAndLocal_Correctly()
+    {
+        // Seed leaderboard data
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            db.UpsertEntries("countSong", new[]
+            {
+                new LeaderboardEntry { AccountId = "cnt1", Score = 300 },
+                new LeaderboardEntry { AccountId = "cnt2", Score = 200 },
+                new LeaderboardEntry { AccountId = "cnt3", Score = 100 },
+            });
+        }
+
+        var response = await _client.GetAsync("/api/leaderboard/countSong/Solo_Guitar?top=2");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(2, json.GetProperty("count").GetInt32());
+        Assert.Equal(3, json.GetProperty("localEntries").GetInt32());
+        Assert.True(json.GetProperty("totalEntries").GetInt32() >= 3);
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Factory: sets up the test server with in-memory/temp dependencies
     // ═══════════════════════════════════════════════════════════════

@@ -7,6 +7,8 @@ import type {
   SyncStatusResponse,
   PlayerHistoryResponse,
   InstrumentKey,
+  AllLeaderboardsResponse,
+  PlayerStatsResponse,
 } from '../models';
 
 const BASE = '';
@@ -57,5 +59,15 @@ export const api = {
   getPlayerHistory: (accountId: string, songId?: string) =>
     get<PlayerHistoryResponse>(
       `/api/player/${encodeURIComponent(accountId)}/history${songId ? `?songId=${encodeURIComponent(songId)}` : ''}`,
+    ),
+
+  getAllLeaderboards: (songId: string, top = 10) =>
+    get<AllLeaderboardsResponse>(
+      `/api/leaderboard/${encodeURIComponent(songId)}/all?top=${top}`,
+    ),
+
+  getPlayerStats: (accountId: string) =>
+    get<PlayerStatsResponse>(
+      `/api/player/${encodeURIComponent(accountId)}/stats`,
     ),
 };

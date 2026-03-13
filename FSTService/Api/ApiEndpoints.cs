@@ -104,11 +104,11 @@ public static class ApiEndpoints
             GlobalLeaderboardPersistence persistence,
             MetaDatabase metaDb) =>
         {
-            var entries = persistence.GetLeaderboard(songId, instrument, top, offset ?? 0);
-            if (entries is null)
+            var result = persistence.GetLeaderboardWithCount(songId, instrument, top, offset ?? 0);
+            if (result is null)
                 return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
 
-            var dbCount = persistence.GetLeaderboardCount(songId, instrument) ?? 0;
+            var (entries, dbCount) = result.Value;
             var pop = metaDb.GetLeaderboardPopulation(songId, instrument);
             var totalEntries = pop > 0 ? (int)pop : dbCount;
             var names = metaDb.GetDisplayNames(entries.Select(e => e.AccountId));
@@ -134,6 +134,67 @@ public static class ApiEndpoints
                 totalEntries,
                 localEntries = dbCount,
                 entries = enriched
+            });
+        })
+        .WithTags("Leaderboards")
+        .RequireRateLimiting("public");
+
+        app.MapGet("/api/leaderboard/{songId}/all", (
+            string songId,
+            int? top,
+            GlobalLeaderboardPersistence persistence,
+            MetaDatabase metaDb) =>
+        {
+            var instrumentKeys = persistence.GetInstrumentKeys();
+            var population = metaDb.GetAllLeaderboardPopulation();
+            var allAccountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // Collect raw data per instrument
+            var rawInstruments = new List<(string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries)>();
+            foreach (var instrument in instrumentKeys)
+            {
+                var result = persistence.GetLeaderboardWithCount(songId, instrument, top ?? 10);
+                if (result is null) continue;
+
+                var (entries, dbCount) = result.Value;
+                var popKey = (songId, instrument);
+                var totalEntries = population.TryGetValue(popKey, out var pop) && pop > 0
+                    ? (int)pop : dbCount;
+
+                foreach (var e in entries)
+                    allAccountIds.Add(e.AccountId);
+
+                rawInstruments.Add((instrument, entries, dbCount, totalEntries));
+            }
+
+            // Single bulk name lookup
+            var names = metaDb.GetDisplayNames(allAccountIds);
+
+            var instruments = rawInstruments.Select(ri => new
+            {
+                instrument = ri.Instrument,
+                count = ri.Entries.Count,
+                totalEntries = ri.TotalEntries,
+                localEntries = ri.DbCount,
+                entries = ri.Entries.Select(e => new
+                {
+                    e.AccountId,
+                    DisplayName = names.GetValueOrDefault(e.AccountId),
+                    e.Score,
+                    e.Rank,
+                    e.Accuracy,
+                    e.IsFullCombo,
+                    e.Stars,
+                    e.Season,
+                    e.Percentile,
+                    e.EndTime,
+                }).ToList(),
+            }).ToList();
+
+            return Results.Ok(new
+            {
+                songId,
+                instruments,
             });
         })
         .WithTags("Leaderboards")
@@ -317,6 +378,36 @@ public static class ApiEndpoints
                     startedAt = historyRecon.StartedAt,
                     completedAt = historyRecon.CompletedAt,
                 },
+            });
+        })
+        .WithTags("Players")
+        .RequireRateLimiting("public");
+
+        app.MapGet("/api/player/{accountId}/stats", (
+            string accountId,
+            MetaDatabase metaDb) =>
+        {
+            var stats = metaDb.GetPlayerStats(accountId);
+            if (stats.Count == 0)
+                return Results.Ok(new { accountId, stats = Array.Empty<object>() });
+
+            return Results.Ok(new
+            {
+                accountId,
+                stats = stats.Select(s => new
+                {
+                    s.Instrument,
+                    s.SongsPlayed,
+                    s.FullComboCount,
+                    s.GoldStarCount,
+                    s.AvgAccuracy,
+                    s.BestRank,
+                    s.BestRankSongId,
+                    s.TotalScore,
+                    s.PercentileDist,
+                    s.AvgPercentile,
+                    s.OverallPercentile,
+                }).ToList(),
             });
         })
         .WithTags("Players")
