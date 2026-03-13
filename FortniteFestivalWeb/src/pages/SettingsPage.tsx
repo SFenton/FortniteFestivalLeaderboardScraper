@@ -10,7 +10,7 @@ import { Colors, Font, Gap, Layout, MaxWidth, Radius, frostedCard } from '../the
 import { useScrollMask } from '../hooks/useScrollMask';
 import { api } from '../api/client';
 
-const APP_VERSION = '0.1.2';
+const APP_VERSION = '0.1.3';
 const CORE_VERSION = '0.0.1';
 
 function FadeInDiv({ delay, children, style }: { delay: number; children: React.ReactNode; style?: CSSProperties }) {
