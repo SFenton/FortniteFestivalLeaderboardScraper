@@ -37,6 +37,18 @@ export default function App() {
   );
 }
 
+type TabKey = 'songs' | 'suggestions' | 'statistics' | 'settings';
+const TAB_ROOTS: Record<TabKey, string> = { songs: '/songs', suggestions: '/suggestions', statistics: '/statistics', settings: '/settings' };
+
+/** Infer which tab owns a route. Detail pages under /songs belong to songs; /player belongs to the active tab. */
+function inferTab(pathname: string): TabKey | null {
+  if (pathname === '/songs' || pathname.startsWith('/songs/')) return 'songs';
+  if (pathname === '/suggestions') return 'suggestions';
+  if (pathname === '/statistics') return 'statistics';
+  if (pathname === '/settings') return 'settings';
+  return null; // /player/:id — ambiguous, owned by the currently active tab
+}
+
 const ANIMATED_BG_ROUTES = new Set(['/', '/songs', '/suggestions', '/statistics', '/settings']);
 function isAnimatedBgRoute(pathname: string) {
   return ANIMATED_BG_ROUTES.has(pathname) || pathname.startsWith('/player/');
@@ -55,17 +67,52 @@ function AppShell() {
   const navigate = useNavigate();
   const navType = useNavigationType();
 
-  // Track in-app navigation depth synchronously during render so canGoBack
-  // is correct on the same render cycle as the navigation (no effect delay).
-  const navDepthRef = useRef(0);
-  const prevLocationRef = useRef(location);
-  if (location !== prevLocationRef.current) {
-    prevLocationRef.current = location;
-    if (navType === 'PUSH') navDepthRef.current++;
-    else if (navType === 'POP') navDepthRef.current = Math.max(0, navDepthRef.current - 1);
-    // REPLACE doesn't change depth
-  }
-  const canGoBack = navDepthRef.current > 0;
+  // --- Per-tab stack (mobile only) ---
+  // Each tab remembers the last route the user was on within it.
+  const [activeTab, setActiveTab] = useState<TabKey>(() => inferTab(location.pathname) ?? 'songs');
+  const [tabRoutes, setTabRoutes] = useState<Record<TabKey, string>>(() => ({
+    songs: '/songs',
+    suggestions: '/suggestions',
+    statistics: '/statistics',
+    settings: '/settings',
+  }));
+
+  // Keep tabRoutes in sync: as the user drills deeper, save the current URL to the active tab.
+  const prevPathRef = useRef(location.pathname);
+  useEffect(() => {
+    if (location.pathname === prevPathRef.current) return;
+    prevPathRef.current = location.pathname;
+
+    // On POP navigation, check if we landed on a route that belongs to a different tab
+    if (navType === 'POP') {
+      const landedTab = inferTab(location.pathname);
+      if (landedTab && landedTab !== activeTab) {
+        setActiveTab(landedTab);
+        setTabRoutes(prev => ({ ...prev, [landedTab]: location.pathname }));
+        return;
+      }
+    }
+
+    // For PUSH/REPLACE within the current tab, update the saved route
+    setTabRoutes(prev => ({ ...prev, [activeTab]: location.pathname }));
+  }, [location.pathname, navType, activeTab]);
+
+  const handleTabClick = useCallback((tab: TabKey) => {
+    if (tab === activeTab) {
+      // Re-tap: pop to tab root
+      const root = TAB_ROOTS[tab];
+      if (location.pathname !== root) {
+        navigate(root, { replace: true });
+        setTabRoutes(prev => ({ ...prev, [tab]: root }));
+      }
+      return;
+    }
+    // Save current location to current tab, then switch
+    setTabRoutes(prev => ({ ...prev, [activeTab]: location.pathname }));
+    setActiveTab(tab);
+    const target = tabRoutes[tab];
+    navigate(target, { replace: true });
+  }, [activeTab, location.pathname, navigate, tabRoutes]);
 
   const handleSelect = (p: TrackedPlayer) => {
     setPlayer(p);
@@ -98,19 +145,16 @@ function AppShell() {
   };
   const navTitle = NAV_TITLES[location.pathname] ?? null;
 
-  // Hierarchical back-navigation fallback for detail pages
+  // Hierarchical back-navigation fallback for detail pages only.
+  // Tab routes (songs, suggestions, statistics, settings) never show a back button.
   const backFallback = useMemo(() => {
     const path = location.pathname;
     const parts = path.split('/').filter(Boolean);
     if (parts[0] === 'songs' && parts.length === 3) return `/songs/${parts[1]}`;
     if (parts[0] === 'songs' && parts.length === 2) return '/songs';
-    if (parts[0] === 'songs' && parts.length === 1 && canGoBack) return '/';
-    if (parts[0] === 'suggestions' && parts.length === 1 && canGoBack) return '/';
-    if (parts[0] === 'statistics' && parts.length === 1 && canGoBack) return '/';
-    if (parts[0] === 'settings' && parts.length === 1 && canGoBack) return '/';
     if (parts[0] === 'player' && parts.length === 2) return '/songs';
     return null;
-  }, [location.pathname, canGoBack]);
+  }, [location.pathname]);
 
   return (
     <PlayerDataProvider accountId={player?.accountId}>
@@ -196,7 +240,7 @@ function AppShell() {
         </Routes>
       </div>
 
-      {isMobile && <BottomNav player={player} />}
+      {isMobile && <BottomNav player={player} activeTab={activeTab} onTabClick={handleTabClick} />}
       {isMobile && location.pathname === '/songs' && (
         <FloatingActionButton
           mode="songs"
@@ -892,38 +936,29 @@ function MobilePlayerSearchModal({
   );
 }
 
-function BottomNav({ player }: { player: TrackedPlayer | null }) {
-  const tabs: { to: string; label: string; icon: React.ReactNode }[] = [
-    { to: '/songs', label: 'Songs', icon: <IoMusicalNotes size={20} /> },
-    ...(player ? [{ to: '/suggestions', label: 'Suggestions', icon: <IoSparkles size={20} /> }] : []),
-    ...(player ? [{ to: '/statistics', label: 'Statistics', icon: <IoStatsChart size={20} /> }] : []),
+function BottomNav({ player, activeTab, onTabClick }: { player: TrackedPlayer | null; activeTab: TabKey; onTabClick: (tab: TabKey) => void }) {
+  const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
+    { key: 'songs', label: 'Songs', icon: <IoMusicalNotes size={20} /> },
+    ...(player ? [{ key: 'suggestions' as TabKey, label: 'Suggestions', icon: <IoSparkles size={20} /> }] : []),
+    ...(player ? [{ key: 'statistics' as TabKey, label: 'Statistics', icon: <IoStatsChart size={20} /> }] : []),
+    { key: 'settings', label: 'Settings', icon: <IoSettings size={20} /> },
   ];
 
   return (
     <nav style={{ ...styles.bottomNav, ...(IS_PWA ? { paddingBottom: Gap.section } : {}) }}>
       {tabs.map((tab) => (
-        <NavLink
-          key={tab.to}
-          to={tab.to}
-          style={({ isActive }) => ({
+        <button
+          key={tab.key}
+          onClick={() => onTabClick(tab.key)}
+          style={{
             ...styles.bottomTab,
-            ...(isActive ? styles.bottomTabActive : {}),
-          })}
+            ...(activeTab === tab.key ? styles.bottomTabActive : {}),
+          }}
         >
           <span style={styles.bottomTabIcon}>{tab.icon}</span>
           {tab.label}
-        </NavLink>
+        </button>
       ))}
-      <NavLink
-        to="/settings"
-        style={({ isActive }) => ({
-          ...styles.bottomTab,
-          ...(isActive ? styles.bottomTabActive : {}),
-        })}
-      >
-        <span style={styles.bottomTabIcon}><IoSettings size={20} /></span>
-        Settings
-      </NavLink>
     </nav>
   );
 }
@@ -1595,12 +1630,16 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column' as const,
     alignItems: 'center',
     gap: 2,
+    background: 'none',
+    border: 'none',
     textDecoration: 'none',
     color: Colors.textTertiary,
     fontSize: Font.xs,
+    fontFamily: 'inherit',
     padding: `${Gap.sm}px ${Gap.xl}px`,
     borderRadius: Radius.xs,
     transition: 'color 0.15s',
+    cursor: 'pointer',
     minWidth: 64,
   },
   bottomTabActive: {

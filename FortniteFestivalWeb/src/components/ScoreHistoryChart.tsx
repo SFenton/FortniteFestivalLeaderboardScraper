@@ -94,7 +94,7 @@ export default function ScoreHistoryChart({
   useEffect(() => {
     // If pre-fetched data was provided, use it directly
     if (historyProp) {
-      setSongHistory(historyProp);
+      setSongHistory(prev => prev === historyProp ? prev : historyProp);
       historyCache.set(cacheKey, historyProp);
       setLoading(false);
       return;
@@ -387,6 +387,15 @@ export default function ScoreHistoryChart({
     if (oldCount > 0) {
       const newN = visibleCards.length;
       const newHeight = newN > 0 ? newN * 48 + (newN - 1) * 4 : 0;
+
+      // Skip animation when restoring from cache — just swap the data silently
+      if (skipAnimation) {
+        setDisplayedCards(visibleCards);
+        setListHeight(newHeight);
+        setListPhase('idle');
+        return;
+      }
+
       const isShrinking = newHeight < listHeightRef.current;
 
       setListPhase('out');
@@ -419,10 +428,14 @@ export default function ScoreHistoryChart({
       setDisplayedCards(visibleCards);
       const newN = visibleCards.length;
       setListHeight(newN > 0 ? newN * 48 + (newN - 1) * 4 : 0);
-      setListPhase('in');
-      const newCount = visibleCards.length;
-      const inDuration = 300 + (newCount - 1) * 60;
-      listTimers.current.push(setTimeout(() => setListPhase('idle'), inDuration));
+      if (skipAnimation) {
+        setListPhase('idle');
+      } else {
+        setListPhase('in');
+        const newCount = visibleCards.length;
+        const inDuration = 300 + (newCount - 1) * 60;
+        listTimers.current.push(setTimeout(() => setListPhase('idle'), inDuration));
+      }
     }
 
     return () => { listTimers.current.forEach(clearTimeout); };

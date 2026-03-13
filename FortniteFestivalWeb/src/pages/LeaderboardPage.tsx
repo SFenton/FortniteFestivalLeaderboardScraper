@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigationType } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
 import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
 import { api } from '../api/client';
@@ -23,6 +23,9 @@ function accuracyColor(pct: number): string {
   return `rgb(${r},${g},${b})`;
 }
 
+type LeaderboardCache = { history: ScoreHistoryEntry[]; scrollTop: number; accountId: string };
+const leaderboardCache = new Map<string, LeaderboardCache>();
+
 export default function LeaderboardPage() {
   const { songId, instrument } = useParams<{
     songId: string;
@@ -36,6 +39,12 @@ export default function LeaderboardPage() {
   const song = songs.find((s) => s.songId === songId);
   const instKey = instrument as InstrumentKey;
   const instLabel = INSTRUMENT_LABELS[instKey] ?? instrument;
+
+  const navType = useNavigationType();
+  const cacheKey = `${songId}:${instKey}`;
+  const cached = cacheKey ? leaderboardCache.get(cacheKey) : undefined;
+  const hasCached = cached && cached.accountId === player?.accountId;
+  const skipAnim = !!hasCached && navType !== 'PUSH';
 
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   useEffect(() => {
@@ -52,25 +61,39 @@ export default function LeaderboardPage() {
   const isMobile = windowWidth < 420;
   const hasFab = useIsMobile();
 
-  const [history, setHistory] = useState<ScoreHistoryEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [history, setHistory] = useState<ScoreHistoryEntry[]>(hasCached ? cached.history : []);
+  const [loading, setLoading] = useState(!hasCached);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [headerCollapsed, setHeaderCollapsed] = useState(hasFab);
-  const [loadPhase, setLoadPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>('loading');
+  const [loadPhase, setLoadPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>(hasCached ? 'contentIn' : 'loading');
   const updateScrollMask = useScrollMask(scrollRef, [loadPhase, history.length]);
   const userScrolledRef = useRef(false);
   const handleScroll = useCallback(() => {
     updateScrollMask();
     userScrolledRef.current = true;
+    // Save scroll position to cache
+    const entry = leaderboardCache.get(cacheKey);
+    if (entry && scrollRef.current) entry.scrollTop = scrollRef.current.scrollTop;
     if (hasFab) return;
     const el = scrollRef.current;
     if (!el) return;
     setHeaderCollapsed(el.scrollTop > 40);
-  }, [updateScrollMask, hasFab]);
+  }, [updateScrollMask, hasFab, cacheKey]);
+
+  // Restore scroll position when returning from cache
+  useEffect(() => {
+    if (!skipAnim || !hasCached) return;
+    if (cached.scrollTop > 0 && scrollRef.current) {
+      scrollRef.current.scrollTop = cached.scrollTop;
+    }
+  }, []);
+
+  const mountedWithCacheRef = useRef(!!hasCached);
 
   // Fetch player history for this song, filtered by instrument
   useEffect(() => {
+    if (mountedWithCacheRef.current) return;
     if (!player || !songId) {
       setLoading(false);
       return;
@@ -96,15 +119,38 @@ export default function LeaderboardPage() {
     return () => { cancelled = true; };
   }, [player, songId, instKey]);
 
-  // Spinner → staggered-content transition
+  // Clear cache-skip flag after fetch effect has run
+  useEffect(() => { mountedWithCacheRef.current = false; }, []);
+
+  // Write cache when data is ready
+  useEffect(() => {
+    if (loading || error || !player || !songId) return;
+    leaderboardCache.set(cacheKey, {
+      history,
+      accountId: player.accountId,
+      scrollTop: scrollRef.current?.scrollTop ?? 0,
+    });
+  }, [loading, error, history, player, songId, cacheKey]);
+
+  // Spinner → staggered-content transition (skip if already showing content from cache)
+  const loadPhaseRef = useRef(loadPhase);
+  loadPhaseRef.current = loadPhase;
+  const hasShownContentRef = useRef(loadPhase === 'contentIn');
   useEffect(() => {
     if (loading || error) {
+      // Don't hide already-visible content for a background refetch
+      if (hasShownContentRef.current) return;
       setLoadPhase('loading');
+      return;
+    }
+    if (loadPhaseRef.current === 'contentIn') {
+      hasShownContentRef.current = true;
       return;
     }
     setLoadPhase('spinnerOut');
     const id = setTimeout(() => {
       setLoadPhase('contentIn');
+      hasShownContentRef.current = true;
       if (!hasFab) setHeaderCollapsed(false);
     }, 500);
     return () => clearTimeout(id);
@@ -230,7 +276,7 @@ export default function LeaderboardPage() {
             {loadPhase === 'contentIn' && (
             <div style={{ ...styles.list, ...(hasFab ? { paddingBottom: 96 } : {}) }}>
               {history.map((h, i) => {
-                const delay = staggerDelay(i, 125, estimateVisibleCount(56));
+                const delay = skipAnim ? null : staggerDelay(i, 125, estimateVisibleCount(56));
                 const staggerStyle: React.CSSProperties | undefined = delay != null
                   ? { opacity: 0, animation: `fadeInUp 400ms ease-out ${delay}ms forwards` }
                   : undefined;

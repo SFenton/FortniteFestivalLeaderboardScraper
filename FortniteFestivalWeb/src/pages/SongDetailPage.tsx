@@ -65,8 +65,7 @@ export default function SongDetailPage() {
   const activeInstruments = visibleInstruments(settings);
 
   const navType = useNavigationType();
-  const isBackNav = navType === 'POP';
-  const cached = isBackNav && songId ? songDetailCache.get(songId) : undefined;
+  const cached = songId ? songDetailCache.get(songId) : undefined;
   const hasCachedPlayer = cached && cached.accountId === player?.accountId;
 
   const [playerScores, setPlayerScores] = useState<PlayerScore[]>(hasCachedPlayer ? cached.playerScores : []);
@@ -81,11 +80,17 @@ export default function SongDetailPage() {
         ) as Record<InstrumentKey, InstrumentData>,
   );
 
+  // Track whether the component mounted with cached data so effects can skip the initial fetch.
+  // After the first render cycle, clear the flag so future prop changes (e.g. player swap) refetch.
+  // This must be declared AFTER the fetch effects so it runs last in the effect order.
+  const mountedWithCacheRef = useRef(!!cached);
+
   const song = songs.find((s) => s.songId === songId);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Fetch player scores
   useEffect(() => {
+    if (mountedWithCacheRef.current) return;
     if (!player || !songId) {
       setPlayerScores([]);
       setPlayerScoresReady(true);
@@ -105,6 +110,7 @@ export default function SongDetailPage() {
 
   // Fetch score history
   useEffect(() => {
+    if (mountedWithCacheRef.current) return;
     if (!player || !songId) {
       setScoreHistory([]);
       setScoreHistoryReady(true);
@@ -124,6 +130,7 @@ export default function SongDetailPage() {
 
   // Fetch all instrument leaderboards in a single request
   useEffect(() => {
+    if (mountedWithCacheRef.current) return;
     if (!songId) return;
     let cancelled = false;
     if (!cached) {
@@ -157,6 +164,10 @@ export default function SongDetailPage() {
     return () => { cancelled = true; };
   }, [songId]);
 
+  // Clear the cache-skip flag after all fetch effects have had a chance to check it.
+  // Must be declared AFTER the fetch effects so React runs it last in the effect order.
+  useEffect(() => { mountedWithCacheRef.current = false; }, []);
+
   // No player means no player-specific data to wait for
   const playerDataReady = !player || (playerScoresReady && scoreHistoryReady);
   const instrumentsReady = activeInstruments.every((k) => !instrumentData[k].loading);
@@ -182,9 +193,13 @@ export default function SongDetailPage() {
   // Transition: spinner fade-out → staggered content fade-in
   // phase: 'loading' | 'spinnerOut' | 'contentIn'
   const allCached = !!cached && (!player || hasCachedPlayer);
+  // Skip animations only when returning to a cached page (not on fresh PUSH).
+  // Frozen at mount time — the cache getting written mid-lifecycle should not flip this.
+  const skipAnimRef = useRef(allCached && navType !== 'PUSH');
+  const skipAnim = skipAnimRef.current;
   const [phase, setPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>(allCached ? 'contentIn' : 'loading');
   const hasFab = useIsMobile();
-  const [headerCollapsed, setHeaderCollapsed] = useState(hasFab || (allCached && (cached?.scrollTop ?? 0) > 40));
+  const [headerCollapsed, setHeaderCollapsed] = useState(hasFab || (skipAnim && (cached?.scrollTop ?? 0) > 40));
   const updateScrollMask = useScrollMask(scrollRef, [phase, activeInstruments.length]);
   const userScrolledRef = useRef(false);
   const handleScroll = useCallback(() => {
@@ -211,9 +226,13 @@ export default function SongDetailPage() {
     if (!allReady) return;
     if (phase === 'contentIn') return;
     setPhase('spinnerOut');
-    const id = setTimeout(() => setPhase('contentIn'), 500);
-    return () => clearTimeout(id);
-  }, [allReady]);
+    const id = setTimeout(() => {
+      setPhase('contentIn');
+    }, 500);
+    return () => {
+      clearTimeout(id);
+    };
+  }, [allReady, phase]);
 
   // Update cache when data is ready
   useEffect(() => {
@@ -227,9 +246,9 @@ export default function SongDetailPage() {
     });
   }, [allReady, songId, instrumentData, playerScores, scoreHistory, player?.accountId]);
 
-  // Restore scroll position when returning from cache
+  // Restore scroll position when returning from cache (not on fresh PUSH navigations)
   useLayoutEffect(() => {
-    if (!allCached || !songId) return;
+    if (navType === 'PUSH' || !allCached || !songId) return;
     const saved = songDetailCache.get(songId);
     if (saved && saved.scrollTop > 0 && scrollRef.current) {
       scrollRef.current.scrollTop = saved.scrollTop;
@@ -273,7 +292,7 @@ export default function SongDetailPage() {
     return <div style={styles.center}>Song not found</div>;
   }
 
-  const stagger = (delayMs: number): React.CSSProperties => allCached ? {} : ({
+  const stagger = (delayMs: number): React.CSSProperties => skipAnim ? {} : ({
     opacity: 0,
     animation: `fadeInUp 400ms ease-out ${delayMs}ms forwards`,
   });
@@ -330,7 +349,7 @@ export default function SongDetailPage() {
                 defaultInstrument={defaultInstrument}
                 history={scoreHistory}
                 visibleInstruments={activeInstruments}
-                skipAnimation={allCached}
+                skipAnimation={skipAnim}
                 scoreWidth={globalScoreWidth}
               />
             </div>
@@ -351,7 +370,7 @@ export default function SongDetailPage() {
                       playerAccountId={player?.accountId}
                       prefetchedEntries={instrumentData[inst].entries}
                       prefetchedError={instrumentData[inst].error}
-                      skipAnimation={allCached}
+                      skipAnimation={skipAnim}
                       scoreWidth={globalScoreWidth}
                     />
                   </div>
