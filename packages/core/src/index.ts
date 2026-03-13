@@ -30,10 +30,10 @@ export * from './calendar/calendarModels.types';
 export * from './app/formatters';
 
 /** Current app version. Keep in sync with package.json. */
-export const APP_VERSION = '0.0.1';
+export const APP_VERSION = '0.0.2';
 
 /** Current @festival/core package version. Keep in sync with packages/core/package.json. */
-export const CORE_VERSION = '0.0.1';
+export const CORE_VERSION = '0.0.2';
 export * from './app/scoreRows';
 export * from './app/songInfo';
 export * from './app/songFiltering';
