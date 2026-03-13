@@ -346,6 +346,7 @@ export default function SongDetailPage() {
                       windowWidth={windowWidth}
                       playerScore={playerScores.find((s) => s.instrument === inst)}
                       playerName={player?.displayName}
+                      playerAccountId={player?.accountId}
                       prefetchedEntries={instrumentData[inst].entries}
                       prefetchedError={instrumentData[inst].error}
                       skipAnimation={allCached}
@@ -415,6 +416,7 @@ function InstrumentCard({
   windowWidth,
   playerScore,
   playerName,
+  playerAccountId,
   prefetchedEntries,
   prefetchedError,
   skipAnimation,
@@ -426,6 +428,7 @@ function InstrumentCard({
   windowWidth: number;
   playerScore?: PlayerScore;
   playerName?: string;
+  playerAccountId?: string;
   prefetchedEntries: LeaderboardEntry[];
   prefetchedError: string | null;
   skipAnimation?: boolean;
@@ -439,6 +442,12 @@ function InstrumentCard({
   const showAccuracy = cardWidth >= 420;
   const showSeason = cardWidth >= 520;
   const isMobile = cardWidth < 360;
+
+  // If the tracked player is already in the top entries, highlight them inline
+  // instead of showing a separate row at the bottom.
+  const playerInTop = !!(playerAccountId && prefetchedEntries.some(
+    (e) => e.accountId === playerAccountId,
+  ));
 
   const anim = (delayMs: number): React.CSSProperties => skipAnimation ? {} : ({
     opacity: 0,
@@ -472,17 +481,22 @@ function InstrumentCard({
         {!prefetchedError &&
           prefetchedEntries.map((e, i) => {
             const rowStagger = anim(baseDelay + 80 + i * 60);
+            const isPlayer = playerInTop && e.accountId === playerAccountId;
+            const rowStyle = isPlayer
+              ? { ...styles.playerEntryRow, ...(isMobile ? styles.entryRowMobile : {}), ...rowStagger }
+              : { ...styles.entryRow, ...(isMobile ? styles.entryRowMobile : {}), ...rowStagger };
             return (
             <Link
               key={e.accountId}
+              id={isPlayer ? `player-score-${instrument}` : undefined}
               to={`/player/${e.accountId}`}
               state={{ backTo: `/songs/${songId}` }}
-              style={{ ...styles.entryRow, ...(isMobile ? styles.entryRowMobile : {}), ...rowStagger }}
+              style={rowStyle}
               onClick={(ev) => ev.stopPropagation()}
               onAnimationEnd={clearAnim}
             >
-              <span style={styles.entryRank}>#{(e.rank ?? i + 1).toLocaleString()}</span>
-              <span style={styles.entryName}>
+              <span style={{ ...styles.entryRank, ...(isPlayer ? { fontWeight: 700 } : {}) }}>#{(e.rank ?? i + 1).toLocaleString()}</span>
+              <span style={{ ...styles.entryName, ...(isPlayer ? { fontWeight: 700 } : {}) }}>
                 {e.displayName ?? e.accountId.slice(0, 8)}
               </span>
               <span style={styles.seasonScoreGroup}>
@@ -510,7 +524,7 @@ function InstrumentCard({
             </Link>
             );
           })}
-        {playerName && playerScore && (() => {
+        {playerName && playerScore && !playerInTop && (() => {
           const playerDelay = baseDelay + 80 + prefetchedEntries.length * 60;
           const playerStagger = anim(playerDelay);
           return (
@@ -549,7 +563,7 @@ function InstrumentCard({
           );
         })()}
         {!prefetchedError && prefetchedEntries.length > 0 && (() => {
-          const viewAllDelay = baseDelay + 80 + (prefetchedEntries.length + (playerScore ? 1 : 0)) * 60;
+          const viewAllDelay = baseDelay + 80 + (prefetchedEntries.length + (playerScore && !playerInTop ? 1 : 0)) * 60;
           const viewAllStagger = anim(viewAllDelay);
           return (
             <div
