@@ -95,3 +95,8 @@ button {
 .sa-top {
   padding-top: calc(env(safe-area-inset-top, 0px) + 16px) !important;
 }
+
+/* Search bar clears the FAB at narrow widths, no margin at wide widths */
+.fab-search-bar {
+  margin-right: clamp(0px, 76px - (100vw - 1080px) / 2, 76px);
+}

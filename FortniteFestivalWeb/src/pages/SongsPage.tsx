@@ -6,7 +6,7 @@ import { staggerDelay, estimateVisibleCount } from '../utils/stagger';
 import { useFestival } from '../contexts/FestivalContext';
 import { usePlayerData } from '../contexts/PlayerDataContext';
 import { useSettings } from '../contexts/SettingsContext';
-import { useIsMobile } from '../hooks/useIsMobile';
+import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
 import { useFabSearch } from '../contexts/FabSearchContext';
 import { useScrollMask } from '../hooks/useScrollMask';
 import type { Song, PlayerScore, InstrumentKey } from '../models';
@@ -36,6 +36,7 @@ export default function SongsPage() {
   } = useFestival();
   const { settings: appSettings } = useSettings();
   const isMobile = useIsMobile();
+  const isMobileChrome = useIsMobileChrome();
   const fabSearch = useFabSearch();
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -48,7 +49,7 @@ export default function SongsPage() {
   }, []);
 
   const [search, setSearch] = useState('');
-  const effectiveSearch = isMobile ? fabSearch.query : search;
+  const effectiveSearch = isMobileChrome ? fabSearch.query : search;
   const [debouncedSearch, setDebouncedSearch] = useState('');
   useEffect(() => {
     const id = setTimeout(() => setDebouncedSearch(effectiveSearch), 250);
@@ -363,7 +364,7 @@ export default function SongsPage() {
           <div style={styles.arcSpinner} />
         </div>
       )}
-      {!isMobile && (
+      {!isMobileChrome && (
       <div style={styles.header}>
         <div style={styles.container}>
           {(toolbarShownRef.current || loadPhase === 'contentIn') && (
@@ -497,7 +498,7 @@ export default function SongsPage() {
         </div>
       </div>
 
-      {isMobile && <div style={styles.fabSpacer} />}
+      {isMobileChrome && <div style={styles.fabSpacer} />}
 
       <SortModal
         visible={showSort}

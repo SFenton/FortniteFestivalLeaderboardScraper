@@ -8,21 +8,19 @@ import { useTrackedPlayer, type TrackedPlayer } from './hooks/useTrackedPlayer';
 import { PlayerDataProvider } from './contexts/PlayerDataContext';
 import { api } from './api/client';
 import type { AccountSearchResult } from './models';
-import { useIsMobile } from './hooks/useIsMobile';
+import { useIsMobileChrome } from './hooks/useIsMobile';
 import SongsPage from './pages/SongsPage';
 import SongDetailPage from './pages/SongDetailPage';
 import LeaderboardPage from './pages/LeaderboardPage';
 import PlayerPage from './pages/PlayerPage';
 import SuggestionsPage from './pages/SuggestionsPage';
 import SettingsPage from './pages/SettingsPage';
-import { Colors, Font, Gap, Layout, Radius, Size, frostedCard } from './theme';
+import { Colors, Font, Gap, Layout, MaxWidth, Radius, Size, frostedCard } from './theme';
 import { resetSongSettingsForDeselect, loadSongSettings, SONG_SETTINGS_CHANGED_EVENT } from './components/songSettings';
 import BackLink from './components/BackLink';
 import { InstrumentIcon } from './components/InstrumentIcons';
 import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
-
-const IS_PWA = window.matchMedia('(display-mode: standalone)').matches ||
-  (navigator as unknown as { standalone?: boolean }).standalone === true;
+import { IS_IOS, IS_ANDROID, IS_PWA } from './utils/platform';
 
 export default function App() {
   return (
@@ -47,7 +45,7 @@ function AppShell() {
   const { player, setPlayer, clearPlayer } = useTrackedPlayer();
   const { state: { songs } } = useFestival();
   const location = useLocation();
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobileChrome();
   const fabSearch = useFabSearch();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [playerModalOpen, setPlayerModalOpen] = useState(false);
@@ -134,7 +132,7 @@ function AppShell() {
           </nav>
         )}
 
-      {backFallback && <BackLink fallback={backFallback} />}
+      {backFallback && (IS_IOS || IS_ANDROID || IS_PWA) && <BackLink fallback={backFallback} />}
 
       <Sidebar
         player={player}
@@ -996,43 +994,46 @@ function FloatingActionButton({
   }, [searchVisible]);
 
   return (
-    <div ref={searchContainerRef} style={{ ...styles.fabContainer, ...(IS_PWA ? { bottom: 80 + Gap.section - Gap.md } : {}) }}>
+    <div ref={searchContainerRef}>
       {searchVisible && (
-        <div style={styles.fabSearchBar}>
-          <input
-            ref={inputRef}
-            style={styles.fabSearchInput}
-            placeholder={placeholder ?? 'Search player…'}
-            value={query}
-            onChange={e => handleChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-          />
-          {mode === 'players' && results.length > 0 && (
-            <div style={styles.fabSearchResults}>
-              {results.map((r, i) => (
-                <button
-                  key={r.accountId}
-                  style={{
-                    ...styles.fabSearchResultBtn,
-                    ...(i === activeIndex ? { backgroundColor: Colors.surfaceSubtle } : {}),
-                  }}
-                  onClick={() => handleSelectPlayer(r)}
-                >
-                  {r.displayName}
-                </button>
-              ))}
-            </div>
-          )}
+        <div style={{ ...styles.fabSearchBarOuter, ...(IS_PWA ? { bottom: 80 + Gap.section - Gap.md } : {}) }}>
+          <div className="fab-search-bar" style={styles.fabSearchBar}>
+            <input
+              ref={inputRef}
+              style={styles.fabSearchInput}
+              placeholder={placeholder ?? 'Search player\u2026'}
+              value={query}
+              onChange={e => handleChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+            />
+            {mode === 'players' && results.length > 0 && (
+              <div style={styles.fabSearchResults}>
+                {results.map((r, i) => (
+                  <button
+                    key={r.accountId}
+                    style={{
+                      ...styles.fabSearchResultBtn,
+                      ...(i === activeIndex ? { backgroundColor: Colors.surfaceSubtle } : {}),
+                    }}
+                    onClick={() => handleSelectPlayer(r)}
+                  >
+                    {r.displayName}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
-      <button
-        style={styles.fab}
-        onClick={() => openActions()}
-        aria-label="Actions"
-      >
-        {icon ?? <span style={styles.fabHamburger}><span style={styles.fabHamburgerLine} /><span style={styles.fabHamburgerLine} /><span style={styles.fabHamburgerLine} /></span>}
-      </button>
-      {popupMounted && (
+      <div style={{ ...styles.fabContainer, ...(IS_PWA ? { bottom: 80 + Gap.section - Gap.md } : {}) }}>
+        <button
+          style={styles.fab}
+          onClick={() => openActions()}
+          aria-label="Actions"
+        >
+          {icon ?? <span style={styles.fabHamburger}><span style={styles.fabHamburgerLine} /><span style={styles.fabHamburgerLine} /><span style={styles.fabHamburgerLine} /></span>}
+        </button>
+        {popupMounted && (
           <div
             style={{
               position: 'absolute',
@@ -1070,7 +1071,8 @@ function FloatingActionButton({
               </Fragment>
             ))}
           </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -1147,6 +1149,10 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     padding: `${Layout.paddingTop + Gap.md}px ${Layout.paddingHorizontal}px ${Gap.md}px`,
+    maxWidth: MaxWidth.card,
+    margin: '0 auto',
+    width: '100%',
+    boxSizing: 'border-box' as const,
     flexShrink: 0,
     zIndex: 100,
     position: 'relative' as const,
@@ -1408,11 +1414,10 @@ const styles: Record<string, React.CSSProperties> = {
   fabContainer: {
     position: 'fixed' as const,
     bottom: 80,
-    left: Layout.paddingHorizontal,
     right: Layout.paddingHorizontal,
     display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
+    flexDirection: 'column' as const,
+    alignItems: 'flex-end',
     gap: Gap.md,
     zIndex: 150,
     pointerEvents: 'none' as const,
@@ -1446,11 +1451,22 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: Colors.textPrimary,
     borderRadius: 1,
   },
+  fabSearchBarOuter: {
+    position: 'fixed' as const,
+    bottom: 80,
+    left: 0,
+    right: 0,
+    maxWidth: MaxWidth.card,
+    margin: '0 auto',
+    padding: `0 ${Layout.paddingHorizontal}px`,
+    boxSizing: 'border-box' as const,
+    zIndex: 150,
+    pointerEvents: 'none' as const,
+  },
   fabSearchBar: {
     display: 'flex',
     flexDirection: 'column' as const,
     gap: Gap.sm,
-    flex: 1,
     position: 'relative' as const,
     pointerEvents: 'auto' as const,
   },
