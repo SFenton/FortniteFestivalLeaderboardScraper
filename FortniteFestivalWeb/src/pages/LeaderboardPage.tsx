@@ -444,7 +444,7 @@ export default function LeaderboardPage() {
         {hasLoadedOnce.current && !error && totalPages > 1 && (() => {
           return (
         <div
-          style={{ ...styles.pagination, ...(isMobile ? { justifyContent: 'space-between', gap: 0 } : {}), ...(hasFab && playerScore ? { paddingBottom: 96 } : hasFab ? { paddingBottom: 56 } : {}) }}
+          style={{ ...styles.pagination, ...(isMobile ? { justifyContent: 'space-between', gap: 0 } : {}), ...(hasFab ? { paddingBottom: 96 } : {}) }}
         >
           <button
             style={{
