@@ -40,7 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for container hardening
-RUN adduser --disabled-password --gecos "" --home /app appuser
+RUN useradd --no-create-home --home-dir /app --shell /usr/sbin/nologin appuser
 
 # Download CHOpt CLI for path generation (Linux x64) — pinned in tools/chopt-cli-linux/
 COPY tools/chopt-cli-linux/ /app/tools/
