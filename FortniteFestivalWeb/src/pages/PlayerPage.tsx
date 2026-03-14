@@ -605,7 +605,7 @@ function GoldStars() {
   return (
     <span style={{ display: 'inline-flex', gap: 2 }}>
       {Array.from({ length: 5 }, (_, i) => (
-        <img key={i} src="/app/star_gold.png" alt="★" width={18} height={18} />
+        <img key={i} src={`${import.meta.env.BASE_URL}star_gold.png`} alt="★" width={18} height={18} />
       ))}
     </span>
   );

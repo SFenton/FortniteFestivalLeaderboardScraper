@@ -603,7 +603,7 @@ function DifficultyBars({ raw }: { raw: number }) {
 function MiniStars({ starsCount, isFullCombo }: { starsCount: number; isFullCombo: boolean }) {
   const allGold = starsCount >= 6;
   const displayCount = allGold ? 5 : Math.max(1, starsCount);
-  const src = allGold ? '/app/star_gold.png' : '/app/star_white.png';
+  const src = allGold ? `${import.meta.env.BASE_URL}star_gold.png` : `${import.meta.env.BASE_URL}star_white.png`;
   const outline = (isFullCombo || allGold) ? Colors.gold : 'transparent';
   return (
     <span style={styles.miniStarRow}>

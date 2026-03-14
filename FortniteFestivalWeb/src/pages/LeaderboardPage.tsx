@@ -420,7 +420,7 @@ export default function LeaderboardPage() {
                       ? (() => {
                           const allGold = e.stars >= 6;
                           const count = allGold ? 5 : e.stars;
-                          const src = allGold ? '/app/star_gold.png' : '/app/star_white.png';
+                          const src = allGold ? `${import.meta.env.BASE_URL}star_gold.png` : `${import.meta.env.BASE_URL}star_white.png`;
                           return Array.from({ length: count }, (_, i) => (
                             <img key={i} src={src} alt="★" style={styles.starImg} />
                           ));
@@ -534,7 +534,7 @@ export default function LeaderboardPage() {
                 ? (() => {
                     const allGold = playerScore.stars >= 6;
                     const count = allGold ? 5 : playerScore.stars;
-                    const src = allGold ? '/app/star_gold.png' : '/app/star_white.png';
+                    const src = allGold ? `${import.meta.env.BASE_URL}star_gold.png` : `${import.meta.env.BASE_URL}star_white.png`;
                     return Array.from({ length: count }, (_, i) => (
                       <img key={i} src={src} alt="\u2605" style={styles.starImg} />
                     ));
@@ -821,6 +821,10 @@ const styles: Record<string, React.CSSProperties> = {
     paddingBottom: Gap.md,
     paddingLeft: Layout.paddingHorizontal,
     paddingRight: Layout.paddingHorizontal,
+    maxWidth: MaxWidth.card,
+    margin: '0 auto',
+    boxSizing: 'border-box' as const,
+    width: '100%',
   },
   playerFooterFab: {
     position: 'fixed' as const,
@@ -847,6 +851,6 @@ const styles: Record<string, React.CSSProperties> = {
     ...frostedCard,
     backgroundColor: 'rgba(75, 15, 99, 0.75)',
     border: `1px solid rgba(124, 58, 237, 0.5)`,
-    fontSize: Font.lg,
+    fontSize: Font.md,
   },
 };

@@ -551,7 +551,7 @@ function SongRow({
     ? `/songs/${song.songId}?instrument=${CORE_TO_SERVER_INSTRUMENT[instrument]}`
     : `/songs/${song.songId}`;
 
-  const starSrc = isGold ? '/app/star_gold.png' : '/app/star_white.png';
+  const starSrc = isGold ? `${import.meta.env.BASE_URL}star_gold.png` : `${import.meta.env.BASE_URL}star_white.png`;
 
   return (
     <Link to={songUrl} style={showStarPngs ? { ...styles.row, flexDirection: 'column' as const, alignItems: 'stretch' as const } : styles.row}>
@@ -728,7 +728,7 @@ const styles: Record<string, React.CSSProperties> = {
   headerRow: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
   },
   iconBtn: {
     display: 'flex',
