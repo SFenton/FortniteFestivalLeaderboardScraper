@@ -1,0 +1,25 @@
+{
+    "files.watcherExclude": {
+        "**/node_modules/**": true,
+        "**/FortniteFestivalRN/android/**": true,
+        "**/FortniteFestivalRN/ios/**": true,
+        "**/FortniteFestivalRN/windows/**": true,
+        "**/FortniteFestivalRN/coverage/**": true,
+        "**/.gradle/**": true,
+        "**/.cxx/**": true,
+        "**/bin/**": true,
+        "**/obj/**": true,
+        "**/TestResults/**": true
+    },
+    "files.exclude": {
+        "**/node_modules": true,
+        "**/.git": true
+    },
+    "search.exclude": {
+        "**/node_modules": true,
+        "**/bin": true,
+        "**/obj": true,
+        "**/TestResults": true,
+        "**/coverage": true
+    }
+}
