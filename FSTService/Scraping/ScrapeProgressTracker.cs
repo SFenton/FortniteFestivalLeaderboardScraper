@@ -242,7 +242,11 @@ public sealed class ScrapeProgressTracker
         _pathGenStopwatch.Stop();
         _pathGenRunning = false;
         _pathGenCurrentSong = null;
+        // Snapshot the completed run for the completed operations list
+        _lastPathGenSnapshot = BuildPathGenerationSnapshot();
     }
+
+    private PathGenerationProgress? _lastPathGenSnapshot;
 
     // ─── Snapshot for API ───────────────────────────────────
 
@@ -251,12 +255,29 @@ public sealed class ScrapeProgressTracker
     /// </summary>
     public ProgressResponse GetProgressResponse()
     {
+        // Build the running operations list (main scrape phase + path gen if active)
+        var running = new List<object>();
+        var currentOp = BuildCurrentOperationSnapshot();
+        if (currentOp is not null)
+            running.Add(currentOp);
+
+        var pathGenSnapshot = BuildPathGenerationSnapshot();
+        if (pathGenSnapshot is { Running: true })
+            running.Add(pathGenSnapshot);
+
+        // Build the completed operations list (scrape phases + last path gen if finished)
+        var completed = new List<object>(_completedOperations);
+        if (_lastPathGenSnapshot is not null)
+            completed.Add(_lastPathGenSnapshot);
+
         return new ProgressResponse
         {
-            Current = BuildCurrentOperationSnapshot(),
-            CompletedOperations = _completedOperations.ToList(), // defensive copy
+            Current = currentOp,
+            Running = running,
+            CompletedOperations = _completedOperations.ToList(),
+            Completed = completed,
             PassElapsedSeconds = Math.Round(_passStopwatch.Elapsed.TotalSeconds, 1),
-            PathGeneration = BuildPathGenerationSnapshot(),
+            PathGeneration = pathGenSnapshot,
         };
     }
 
@@ -427,12 +448,19 @@ public sealed class ScrapeProgressTracker
 /// <summary>Top-level response from /api/progress.</summary>
 public sealed class ProgressResponse
 {
-    /// <summary>Currently active operation, or null if idle.</summary>
-    public OperationSnapshot? Current { get; init; }
-    /// <summary>Previously completed operations in this pass (oldest first).</summary>
-    public List<OperationSnapshot> CompletedOperations { get; init; } = new();
+    /// <summary>All currently running operations (main scrape phase + parallel path generation).</summary>
+    public List<object> Running { get; init; } = new();
+    /// <summary>All completed operations this pass, including last path generation run.</summary>
+    public List<object> Completed { get; init; } = new();
     /// <summary>Total wall-clock seconds since the pass started.</summary>
     public double PassElapsedSeconds { get; init; }
+
+    // ── Legacy fields (kept for backward compatibility) ──
+
+    /// <summary>Currently active scrape operation, or null if idle.</summary>
+    public OperationSnapshot? Current { get; init; }
+    /// <summary>Previously completed scrape operations in this pass (oldest first).</summary>
+    public List<OperationSnapshot> CompletedOperations { get; init; } = new();
     /// <summary>Path generation progress (runs in parallel with scraping). Null if never started.</summary>
     public PathGenerationProgress? PathGeneration { get; init; }
 }
