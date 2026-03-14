@@ -29,10 +29,15 @@ COPY --from=webapp /webapp-dist/ FSTService/wwwroot/
 RUN dotnet publish FSTService/FSTService.csproj -c Release --no-restore -o /app
 
 # ── Stage 3: Runtime ─────────────────────────────────────────
-# Using aspnet base image to support the future HTTP API layer.
-# For a pure BackgroundService, dotnet/runtime:9.0 would suffice.
-FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
+# Noble (Ubuntu 24.04) provides glibc 2.39+ and libstdc++ 3.4.32 required by CHOpt.
+FROM mcr.microsoft.com/dotnet/aspnet:9.0-noble AS runtime
 WORKDIR /app
+
+# Install runtime dependencies for CHOpt (Qt6 GUI app that generates path images)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpng16-16t64 libglx0 libopengl0 libegl1 libfontconfig1 \
+    libglib2.0-0t64 libxkbcommon0 libgl1 libfreetype6 libdbus-1-3 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for container hardening
 RUN adduser --disabled-password --gecos "" --home /app appuser

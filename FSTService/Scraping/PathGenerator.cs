@@ -289,6 +289,12 @@ public sealed class PathGenerator
             CreateNoWindow = true,
         };
 
+        // CHOpt bundles Qt6 libraries in a sibling "libs/" directory.
+        // Set LD_LIBRARY_PATH so the dynamic linker finds them at runtime.
+        var libsDir = Path.Combine(Path.GetDirectoryName(choptPath)!, "libs");
+        if (Directory.Exists(libsDir))
+            psi.Environment["LD_LIBRARY_PATH"] = libsDir;
+
         using var process = Process.Start(psi);
         if (process is null)
         {
