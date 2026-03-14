@@ -54,7 +54,7 @@ public sealed class PercentileScrapeProgressTrackerTests
         var tracker = new PercentileScrapeProgressTracker();
         tracker.BeginScrape(10);
 
-        tracker.ReportFailed();
+        tracker.ReportFailed("song1", "Solo_Guitar", "Could not derive population");
 
         var snap = tracker.GetProgressResponse();
         Assert.Equal(1, snap.Entries!.Failed);
@@ -77,7 +77,7 @@ public sealed class PercentileScrapeProgressTrackerTests
     }
 
     [Fact]
-    public void EndScrape_sets_not_running()
+    public void EndScrape_sets_not_running_and_creates_last_run()
     {
         var tracker = new PercentileScrapeProgressTracker();
         tracker.BeginScrape(5);
@@ -88,6 +88,13 @@ public sealed class PercentileScrapeProgressTrackerTests
         var snap = tracker.GetProgressResponse();
         Assert.False(snap.IsRunning);
         Assert.Null(snap.StartedAtUtc); // null when not running
+
+        // LastRun should be populated
+        Assert.NotNull(snap.LastRun);
+        Assert.Equal(5, snap.LastRun!.Entries!.Total);
+        Assert.Equal(5, snap.LastRun.Entries.Succeeded);
+        Assert.True(snap.LastRun.ElapsedSeconds >= 0);
+        Assert.True(snap.LastRun.CompletedAtUtc >= snap.LastRun.StartedAtUtc);
     }
 
     [Fact]
@@ -223,10 +230,10 @@ public sealed class PercentileScrapeProgressTrackerTests
 
         tracker.ReportSuccess();
         tracker.ReportSuccess();
-        tracker.ReportFailed();
+        tracker.ReportFailed("s1", "Solo_Guitar", "bad pop");
         tracker.ReportSkipped();
         tracker.ReportSuccess();
-        tracker.ReportFailed();
+        tracker.ReportFailed("s2", "Solo_Bass", "timeout");
 
         var snap = tracker.GetProgressResponse();
         Assert.Equal(6, snap.Entries!.Completed);
@@ -234,5 +241,81 @@ public sealed class PercentileScrapeProgressTrackerTests
         Assert.Equal(2, snap.Entries.Failed);
         Assert.Equal(1, snap.Entries.Skipped);
         Assert.Equal(100.0, snap.ProgressPercent);
+    }
+
+    [Fact]
+    public void Failures_shown_while_running_hidden_when_idle()
+    {
+        var tracker = new PercentileScrapeProgressTracker();
+        tracker.BeginScrape(3);
+        tracker.ReportFailed("song1", "Solo_Guitar", "Could not derive population");
+        tracker.ReportFailed("song2", "Solo_Bass", "Timeout");
+        tracker.ReportSuccess();
+
+        // While running, failures are in the response
+        var running = tracker.GetProgressResponse();
+        Assert.NotNull(running.Failures);
+        Assert.Equal(2, running.Failures!.Length);
+        Assert.Equal("song1", running.Failures[0].SongId);
+        Assert.Equal("Solo_Guitar", running.Failures[0].Instrument);
+        Assert.Equal("Could not derive population", running.Failures[0].Reason);
+        Assert.Null(running.LastRun);
+
+        tracker.EndScrape();
+
+        // After completion, failures move into LastRun
+        var idle = tracker.GetProgressResponse();
+        Assert.Null(idle.Failures);
+        Assert.NotNull(idle.LastRun);
+        Assert.Equal(2, idle.LastRun!.Failures!.Length);
+        Assert.Equal("song2", idle.LastRun.Failures[1].SongId);
+    }
+
+    [Fact]
+    public void ReportFailed_without_details_still_increments()
+    {
+        var tracker = new PercentileScrapeProgressTracker();
+        tracker.BeginScrape(2);
+
+        tracker.ReportFailed();
+
+        var snap = tracker.GetProgressResponse();
+        Assert.Equal(1, snap.Entries!.Failed);
+        Assert.Empty(snap.Failures!);
+    }
+
+    [Fact]
+    public void LastRun_null_before_first_scrape()
+    {
+        var tracker = new PercentileScrapeProgressTracker();
+        var snap = tracker.GetProgressResponse();
+        Assert.Null(snap.LastRun);
+    }
+
+    [Fact]
+    public void LastRun_persists_across_new_scrape()
+    {
+        var tracker = new PercentileScrapeProgressTracker();
+
+        // First run
+        tracker.BeginScrape(2);
+        tracker.ReportSuccess();
+        tracker.ReportFailed("s1", "Solo_Drums", "bad");
+        tracker.EndScrape();
+
+        // Start second run — LastRun hidden while running
+        tracker.BeginScrape(1);
+        var running = tracker.GetProgressResponse();
+        Assert.Null(running.LastRun);
+
+        tracker.ReportSuccess();
+        tracker.EndScrape();
+
+        // After second run, LastRun reflects the SECOND run
+        var idle = tracker.GetProgressResponse();
+        Assert.NotNull(idle.LastRun);
+        Assert.Equal(1, idle.LastRun!.Entries!.Total);
+        Assert.Equal(1, idle.LastRun.Entries.Succeeded);
+        Assert.Equal(0, idle.LastRun.Entries.Failed);
     }
 }

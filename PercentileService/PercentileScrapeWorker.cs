@@ -180,7 +180,7 @@ public sealed class PercentileScrapeWorker : BackgroundService
                 _log.LogDebug("Failed {SongId}/{Instrument}: could not derive population (percentile={Percentile}).",
                     songId, instrument, result.Percentile);
                 limiter.ReportSuccess(); // Not an API error
-                _progress.ReportFailed();
+                _progress.ReportFailed(songId, instrument, "Could not derive population");
                 return;
             }
 
@@ -205,7 +205,7 @@ public sealed class PercentileScrapeWorker : BackgroundService
         {
             _log.LogWarning(ex, "Error querying {SongId}/{Instrument}.", songId, instrument);
             limiter.ReportFailure();
-            _progress.ReportFailed();
+            _progress.ReportFailed(songId, instrument, ex.Message);
         }
         finally
         {

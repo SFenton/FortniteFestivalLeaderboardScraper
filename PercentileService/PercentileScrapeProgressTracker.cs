@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 
 namespace PercentileService;
@@ -18,6 +19,13 @@ public sealed class PercentileScrapeProgressTracker
     private DateTime _startedAtUtc;
     private readonly Stopwatch _stopwatch = new();
 
+    // ── Last-run snapshot (persisted after EndScrape) ──
+    private PercentileLastRunSummary? _lastRun;
+
+    // ── Failure details (capped) ──
+    private const int MaxFailureDetails = 50;
+    private ConcurrentQueue<PercentileFailureDetail> _failures = new();
+
     // ── Adaptive concurrency ──
     private AdaptiveConcurrencyLimiter? _limiter;
 
@@ -36,6 +44,7 @@ public sealed class PercentileScrapeProgressTracker
         _failed = 0;
         _skipped = 0;
         _limiter = null;
+        _failures = new ConcurrentQueue<PercentileFailureDetail>();
         _startedAtUtc = DateTime.UtcNow;
         _stopwatch.Restart();
         _isRunning = true;
@@ -48,11 +57,21 @@ public sealed class PercentileScrapeProgressTracker
         Interlocked.Increment(ref _completedEntries);
     }
 
-    /// <summary>Report a failed V1 query (returned invalid population).</summary>
-    public void ReportFailed()
+    /// <summary>Report a failed V1 query with details.</summary>
+    public void ReportFailed(string? songId = null, string? instrument = null, string? reason = null)
     {
         Interlocked.Increment(ref _failed);
         Interlocked.Increment(ref _completedEntries);
+
+        if (songId is not null && _failures.Count < MaxFailureDetails)
+        {
+            _failures.Enqueue(new PercentileFailureDetail
+            {
+                SongId = songId,
+                Instrument = instrument,
+                Reason = reason,
+            });
+        }
     }
 
     /// <summary>Report a skipped V1 query (returned null / no score).</summary>
@@ -62,10 +81,27 @@ public sealed class PercentileScrapeProgressTracker
         Interlocked.Increment(ref _completedEntries);
     }
 
-    /// <summary>Mark the scrape as complete.</summary>
+    /// <summary>Mark the scrape as complete and snapshot the run summary.</summary>
     public void EndScrape()
     {
         _stopwatch.Stop();
+
+        _lastRun = new PercentileLastRunSummary
+        {
+            StartedAtUtc = _startedAtUtc,
+            CompletedAtUtc = DateTime.UtcNow,
+            ElapsedSeconds = Math.Round(_stopwatch.Elapsed.TotalSeconds, 1),
+            Entries = new PercentileProgressCounter
+            {
+                Total = _totalEntries,
+                Completed = Volatile.Read(ref _completedEntries),
+                Succeeded = Volatile.Read(ref _succeeded),
+                Failed = Volatile.Read(ref _failed),
+                Skipped = Volatile.Read(ref _skipped),
+            },
+            Failures = _failures.ToArray(),
+        };
+
         _isRunning = false;
     }
 
@@ -106,6 +142,8 @@ public sealed class PercentileScrapeProgressTracker
                 Skipped = Volatile.Read(ref _skipped),
             },
             CurrentDop = _limiter?.CurrentDop,
+            Failures = _isRunning ? _failures.ToArray() : null,
+            LastRun = _isRunning ? null : _lastRun,
         };
     }
 }
@@ -122,6 +160,8 @@ public sealed class PercentileProgressResponse
     public double? ProgressPercent { get; init; }
     public PercentileProgressCounter? Entries { get; init; }
     public int? CurrentDop { get; init; }
+    public PercentileFailureDetail[]? Failures { get; init; }
+    public PercentileLastRunSummary? LastRun { get; init; }
 }
 
 public sealed class PercentileProgressCounter
@@ -131,4 +171,22 @@ public sealed class PercentileProgressCounter
     public int Succeeded { get; init; }
     public int Failed { get; init; }
     public int Skipped { get; init; }
+}
+
+/// <summary>Summary of the last completed scrape run.</summary>
+public sealed class PercentileLastRunSummary
+{
+    public DateTime StartedAtUtc { get; init; }
+    public DateTime CompletedAtUtc { get; init; }
+    public double ElapsedSeconds { get; init; }
+    public PercentileProgressCounter? Entries { get; init; }
+    public PercentileFailureDetail[]? Failures { get; init; }
+}
+
+/// <summary>Details of a single failed V1 query.</summary>
+public sealed class PercentileFailureDetail
+{
+    public string? SongId { get; init; }
+    public string? Instrument { get; init; }
+    public string? Reason { get; init; }
 }
