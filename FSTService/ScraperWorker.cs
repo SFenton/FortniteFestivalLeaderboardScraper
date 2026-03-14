@@ -646,14 +646,14 @@ public sealed class ScraperWorker : BackgroundService
 
             _log.LogInformation("Path generation: checking {Count} songs for new/changed MIDI data.", requests.Count);
 
-            _progress.BeginPathGeneration(requests.Count);
+            var ownsProgress = _progress.BeginPathGeneration(requests.Count);
 
             var results = await _pathGenerator.GeneratePathsAsync(requests, force, ct);
 
             if (results.Count == 0)
             {
                 _log.LogDebug("Path generation: no songs needed updating.");
-                _progress.EndPathGeneration();
+                if (ownsProgress) _progress.EndPathGeneration();
                 return;
             }
 
@@ -674,7 +674,7 @@ public sealed class ScraperWorker : BackgroundService
                 _pathDataStore.UpdateMaxScores(result.SongId, scores, result.DatFileHash, songLastMod);
             }
 
-            _progress.EndPathGeneration();
+            if (ownsProgress) _progress.EndPathGeneration();
             _log.LogInformation("Path generation complete: {Count} song(s) updated.", results.Count);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

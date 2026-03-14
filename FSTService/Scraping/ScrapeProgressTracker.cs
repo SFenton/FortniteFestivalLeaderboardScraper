@@ -204,8 +204,15 @@ public sealed class ScrapeProgressTracker
     private DateTime? _pathGenStartedAtUtc;
     private readonly Stopwatch _pathGenStopwatch = new();
 
-    public void BeginPathGeneration(int totalSongs)
+    /// <summary>
+    /// Start tracking path generation. Returns false if one is already running
+    /// (e.g. admin-triggered), in which case the caller should skip its own tracking.
+    /// </summary>
+    public bool BeginPathGeneration(int totalSongs)
     {
+        if (_pathGenRunning)
+            return false;
+
         _pathGenTotal = totalSongs;
         _pathGenCompleted = 0;
         _pathGenSkipped = 0;
@@ -214,6 +221,7 @@ public sealed class ScrapeProgressTracker
         _pathGenStartedAtUtc = DateTime.UtcNow;
         _pathGenStopwatch.Restart();
         _pathGenRunning = true;
+        return true;
     }
 
     public void PathGenProcessing(string songTitle)
