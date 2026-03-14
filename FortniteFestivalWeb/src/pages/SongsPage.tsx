@@ -807,7 +807,7 @@ function SongRow({
     const scoreEntry = entries.find(e => e.key === 'score');
     const bottomEntries = entries.filter(e => e.key !== 'score');
     return (
-      <Link ref={linkRef} to={`/songs/${song.songId}?instrument=${encodeURIComponent(instrument)}`} state={{ backTo: location.pathname }} style={{ ...styles.rowMobile, ...animStyle }} onAnimationEnd={handleAnimEnd}>
+      <Link ref={linkRef} to={`/songs/${song.songId}${instrumentFilter != null ? `?instrument=${encodeURIComponent(instrument)}` : ''}`} state={{ backTo: location.pathname }} style={{ ...styles.rowMobile, ...animStyle }} onAnimationEnd={handleAnimEnd}>
         <div style={styles.mobileTopRow}>
           {thumb}
           <div style={styles.rowText}>
@@ -849,7 +849,7 @@ function SongRow({
   }
 
   return (
-    <Link ref={linkRef} to={`/songs/${song.songId}?instrument=${encodeURIComponent(instrument)}`} state={{ backTo: location.pathname }} style={{ ...styles.row, ...animStyle }} onAnimationEnd={handleAnimEnd}>
+    <Link ref={linkRef} to={`/songs/${song.songId}${instrumentFilter != null ? `?instrument=${encodeURIComponent(instrument)}` : ''}`} state={{ backTo: location.pathname }} style={{ ...styles.row, ...animStyle }} onAnimationEnd={handleAnimEnd}>
       {thumb}
       <div style={styles.rowText}>
         <span style={styles.rowTitle}>{song.title}</span>
