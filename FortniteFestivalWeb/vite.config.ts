@@ -13,6 +13,7 @@ export default defineConfig(({ mode }) => {
       alias: {
         '@festival/core': path.resolve(__dirname, '../packages/core/src'),
         'react-native': path.resolve(__dirname, 'src/stubs/react-native.ts'),
+        'react-native-app-auth': path.resolve(__dirname, 'src/stubs/react-native-app-auth.ts'),
       },
     },
     test: {
