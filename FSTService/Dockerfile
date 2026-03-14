@@ -24,7 +24,7 @@ COPY FortniteFestival.Core/ FortniteFestival.Core/
 COPY FSTService/ FSTService/
 
 # Copy built React app into wwwroot/app BEFORE publish so the static assets manifest includes them
-COPY --from=webapp /webapp-dist/ FSTService/wwwroot/app/
+COPY --from=webapp /webapp-dist/ FSTService/wwwroot/
 
 RUN dotnet publish FSTService/FSTService.csproj -c Release --no-restore -o /app
 

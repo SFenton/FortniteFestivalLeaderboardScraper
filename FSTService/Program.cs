@@ -280,44 +280,6 @@ app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// ── Web app: basic auth gate for /app ──
-{
-    var webAppSection = builder.Configuration.GetSection("WebApp");
-    var webAppUser = webAppSection["Username"] ?? "admin";
-    var webAppPass = webAppSection["Password"] ?? "changeme";
-
-    app.Use(async (context, next) =>
-    {
-        if (context.Request.Path.StartsWithSegments("/app"))
-        {
-            var authHeader = context.Request.Headers.Authorization.FirstOrDefault();
-            if (authHeader is not null && authHeader.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
-            {
-                try
-                {
-                    var decoded = System.Text.Encoding.UTF8.GetString(
-                        Convert.FromBase64String(authHeader["Basic ".Length..]));
-                    var parts = decoded.Split(':', 2);
-                    if (parts.Length == 2 &&
-                        string.Equals(parts[0], webAppUser, StringComparison.Ordinal) &&
-                        string.Equals(parts[1], webAppPass, StringComparison.Ordinal))
-                    {
-                        await next();
-                        return;
-                    }
-                }
-                catch { /* malformed header — fall through to challenge */ }
-            }
-
-            context.Response.StatusCode = 401;
-            context.Response.Headers.WWWAuthenticate = "Basic realm=\"Festival Score Tracker\"";
-            return;
-        }
-
-        await next();
-    });
-}
-
 // Serve static files (wwwroot/) and fall back to index.html for non-API routes
 app.UseDefaultFiles();
 app.UseStaticFiles();
@@ -328,7 +290,6 @@ app.MapAuthEndpoints();
 app.MapStaticAssets();
 
 // Fallback: serve index.html for any non-API GET request (SPA support)
-app.MapFallbackToFile("/app/{**path}", "app/index.html");
 app.MapFallbackToFile("index.html");
 
 app.Run();

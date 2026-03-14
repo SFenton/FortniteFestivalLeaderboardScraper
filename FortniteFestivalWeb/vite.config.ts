@@ -7,7 +7,7 @@ export default defineConfig(({ mode }) => {
   const apiTarget = env.VITE_API_BASE || 'http://localhost:8080';
 
   return {
-    base: '/app/',
+    base: '/',
     plugins: [react()],
     resolve: {
       alias: {
@@ -20,7 +20,7 @@ export default defineConfig(({ mode }) => {
       setupFiles: ['./src/test/setup.ts'],
     },
     build: {
-      outDir: path.resolve(__dirname, '../FSTService/wwwroot/app'),
+      outDir: path.resolve(__dirname, '../FSTService/wwwroot'),
       emptyOutDir: true,
     },
     server: {
