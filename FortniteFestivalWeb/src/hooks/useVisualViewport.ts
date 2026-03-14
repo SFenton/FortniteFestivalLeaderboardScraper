@@ -35,3 +35,21 @@ function getServerSnapshot(): number {
 export function useVisualViewportHeight(): number {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }
+
+function getOffsetTopSnapshot(): number {
+  return window.visualViewport?.offsetTop ?? 0;
+}
+
+function getOffsetTopServerSnapshot(): number {
+  return 0;
+}
+
+/**
+ * Returns the current visual viewport offsetTop in pixels.
+ * On iOS Safari, when the virtual keyboard opens, the visual viewport
+ * scrolls within the layout viewport — this offset tells you where
+ * the visible area begins relative to the layout viewport top.
+ */
+export function useVisualViewportOffsetTop(): number {
+  return useSyncExternalStore(subscribe, getOffsetTopSnapshot, getOffsetTopServerSnapshot);
+}

@@ -20,7 +20,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useScrollMask } from '../hooks/useScrollMask';
-import { useVisualViewportHeight } from '../hooks/useVisualViewport';
+import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../hooks/useVisualViewport';
 import { Colors, Radius, Font, Gap } from '../theme';
 
 const TRANSITION_MS = 300;
@@ -45,6 +45,7 @@ type Props = {
 export default function Modal({ visible, title, onClose, onApply, onReset, resetLabel, resetHint, applyLabel, applyDisabled, children }: Props) {
   const isMobile = useIsMobile();
   const vvHeight = useVisualViewportHeight();
+  const vvOffsetTop = useVisualViewportOffsetTop();
   const [mounted, setMounted] = useState(false);
   const [animIn, setAnimIn] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -106,11 +107,10 @@ export default function Modal({ visible, title, onClose, onApply, onReset, reset
 
   const mobilePanel: React.CSSProperties = {
     ...panelBase,
-    bottom: 0,
     left: 0,
     right: 0,
+    top: vvOffsetTop + vvHeight * 0.2,
     height: vvHeight * 0.8,
-    maxHeight: '80vh',
     borderTopLeftRadius: Radius.lg,
     borderTopRightRadius: Radius.lg,
     transition: `transform ${TRANSITION_MS}ms ease`,

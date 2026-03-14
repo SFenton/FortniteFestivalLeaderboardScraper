@@ -9,7 +9,7 @@ import { PlayerDataProvider } from './contexts/PlayerDataContext';
 import { api } from './api/client';
 import type { AccountSearchResult } from './models';
 import { useIsMobile, useIsMobileChrome } from './hooks/useIsMobile';
-import { useVisualViewportHeight } from './hooks/useVisualViewport';
+import { useVisualViewportHeight, useVisualViewportOffsetTop } from './hooks/useVisualViewport';
 import SongsPage from './pages/SongsPage';
 import SongDetailPage from './pages/SongDetailPage';
 import LeaderboardPage from './pages/LeaderboardPage';
@@ -768,6 +768,7 @@ function MobilePlayerSearchModal({
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const vvHeight = useVisualViewportHeight();
+  const vvOffsetTop = useVisualViewportOffsetTop();
 
   useEffect(() => {
     if (visible) {
@@ -883,7 +884,7 @@ function MobilePlayerSearchModal({
         style={{
           position: 'fixed',
           ...(isMobile
-            ? { bottom: 0, left: 0, right: 0, height: vvHeight * 0.8, maxHeight: '80vh', borderTopLeftRadius: Radius.lg, borderTopRightRadius: Radius.lg }
+            ? { left: 0, right: 0, top: vvOffsetTop + vvHeight * 0.2, height: vvHeight * 0.8, borderTopLeftRadius: Radius.lg, borderTopRightRadius: Radius.lg }
             : { top: '50%', left: '50%', width: 420, height: 600, maxHeight: '90vh', borderRadius: Radius.lg, transform: animIn ? 'translate(-50%, -50%)' : 'translate(-50%, -40%)', opacity: animIn ? 1 : 0 }
           ),
           zIndex: 1001,
