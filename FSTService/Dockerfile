@@ -41,8 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Create non-root user for container hardening (UID 1000 matches the previous
 # Debian-based image so existing volume files remain writable).
-RUN groupadd --gid 1000 appuser && \
-    useradd --uid 1000 --gid 1000 --no-create-home --home-dir /app --shell /usr/sbin/nologin appuser
+RUN useradd --uid 1000 --no-create-home --home-dir /app --shell /usr/sbin/nologin appuser
 
 # Download CHOpt CLI for path generation (Linux x64) — pinned in tools/chopt-cli-linux/
 COPY tools/chopt-cli-linux/ /app/tools/
