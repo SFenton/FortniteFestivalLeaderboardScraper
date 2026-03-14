@@ -707,9 +707,9 @@ public static class ApiEndpoints
             PathDataStore pathStore,
             FestivalService festivalService,
             ScrapeProgressTracker progress,
+            IHostApplicationLifetime lifetime,
             IOptions<ScraperOptions> scraperOptions,
-            ILogger<PathGenerator> logger,
-            CancellationToken ct) =>
+            ILogger<PathGenerator> logger) =>
         {
             if (!scraperOptions.Value.EnablePathGeneration)
                 return Results.BadRequest(new { error = "Path generation is disabled." });
@@ -743,13 +743,15 @@ public static class ApiEndpoints
             if (songs.Count == 0)
                 return Results.NotFound(new { error = "No matching songs found." });
 
-            // Fire-and-forget — returns immediately
+            // Fire-and-forget — use app shutdown token, not the request token
+            // which gets cancelled as soon as the 202 response is sent.
+            var appStopping = lifetime.ApplicationStopping;
             _ = Task.Run(async () =>
             {
                 progress.BeginPathGeneration(songs.Count);
                 try
                 {
-                    var results = await pathGenerator.GeneratePathsAsync(songs, force ?? false, ct);
+                    var results = await pathGenerator.GeneratePathsAsync(songs, force ?? false, appStopping);
                     foreach (var result in results)
                     {
                         var scores = new SongMaxScores
@@ -771,7 +773,7 @@ public static class ApiEndpoints
                     progress.EndPathGeneration();
                     logger.LogError(ex, "Admin path regeneration failed.");
                 }
-            }, ct);
+            }, appStopping);
 
             return Results.Accepted(value: new
             {
