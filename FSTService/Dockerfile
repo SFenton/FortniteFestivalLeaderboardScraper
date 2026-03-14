@@ -39,9 +39,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0t64 libxkbcommon0 libgl1 libfreetype6 libdbus-1-3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user for container hardening (UID 1000 matches the previous
-# Debian-based image so existing volume files remain writable).
-RUN useradd --uid 1000 --no-create-home --home-dir /app --shell /usr/sbin/nologin appuser
+# Reuse the existing 'ubuntu' user (UID 1000) for container hardening.
+# Noble ships with this user pre-created; UID 1000 matches the previous
+# Debian-based image so existing volume files remain writable.
+RUN usermod --home /app --shell /usr/sbin/nologin ubuntu
 
 # Download CHOpt CLI for path generation (Linux x64) — pinned in tools/chopt-cli-linux/
 COPY tools/chopt-cli-linux/ /app/tools/
@@ -52,9 +53,9 @@ COPY --from=build /app .
 
 # Data directory (DB files + device-auth.json) is a volume mount.
 # Create it and set ownership before switching to non-root user.
-RUN mkdir -p /app/data && chown -R appuser:appuser /app/data
+RUN mkdir -p /app/data && chown -R ubuntu:ubuntu /app/data
 
-USER appuser
+USER ubuntu
 
 VOLUME /app/data
 EXPOSE 8080
