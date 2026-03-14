@@ -706,6 +706,7 @@ public static class ApiEndpoints
             PathGenerator pathGenerator,
             PathDataStore pathStore,
             FestivalService festivalService,
+            ScrapeProgressTracker progress,
             IOptions<ScraperOptions> scraperOptions,
             ILogger<PathGenerator> logger,
             CancellationToken ct) =>
@@ -745,6 +746,7 @@ public static class ApiEndpoints
             // Fire-and-forget — returns immediately
             _ = Task.Run(async () =>
             {
+                progress.BeginPathGeneration(songs.Count);
                 try
                 {
                     var results = await pathGenerator.GeneratePathsAsync(songs, force ?? false, ct);
@@ -761,10 +763,12 @@ public static class ApiEndpoints
                         var lastMod = songEntry?.lastModified is { } lm && lm != DateTime.MinValue ? lm.ToString("o") : null;
                         pathStore.UpdateMaxScores(result.SongId, scores, result.DatFileHash, lastMod);
                     }
+                    progress.EndPathGeneration();
                     logger.LogInformation("Admin path regeneration complete: {Count} song(s) updated.", results.Count);
                 }
                 catch (Exception ex)
                 {
+                    progress.EndPathGeneration();
                     logger.LogError(ex, "Admin path regeneration failed.");
                 }
             }, ct);
