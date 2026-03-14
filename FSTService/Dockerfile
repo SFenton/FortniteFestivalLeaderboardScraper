@@ -37,18 +37,9 @@ WORKDIR /app
 # Create non-root user for container hardening
 RUN adduser --disabled-password --gecos "" --home /app appuser
 
-# Download CHOpt CLI for path generation (Linux x64)
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends unzip ca-certificates curl \
-    && curl -fSL -o /tmp/chopt.zip \
-       https://github.com/GenericMadScientist/CHOpt/releases/download/v1.10.3/CHOpt.CLI.1.10.3.x64.Linux.zip \
-    && mkdir -p /app/tools \
-    && unzip /tmp/chopt.zip -d /app/tools \
-    && chmod +x /app/tools/CHOpt \
-    && rm /tmp/chopt.zip \
-    && apt-get purge -y unzip curl \
-    && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
+# Download CHOpt CLI for path generation (Linux x64) — pinned in tools/chopt-cli-linux/
+COPY tools/chopt-cli-linux/ /app/tools/
+RUN chmod +x /app/tools/CHOpt
 
 # Copy published output
 COPY --from=build /app .
