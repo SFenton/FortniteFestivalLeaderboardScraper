@@ -8,6 +8,12 @@ namespace FSTService.Persistence;
 /// </summary>
 public sealed class MetaDatabase : IDisposable
 {
+    /// <summary>
+    /// Bump this when data-collection logic changes in a way that requires
+    /// re-running backfill / history reconstruction for all users.
+    /// </summary>
+    internal const int DataCollectionVersion = 2;
+
     private readonly string _connectionString;
     private readonly ILogger<MetaDatabase> _log;
     private bool _initialized;
@@ -22,6 +28,9 @@ public sealed class MetaDatabase : IDisposable
 
         _connectionString = new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString();
     }
+
+    /// <summary>Allow tests to re-run <see cref="EnsureSchema"/> after mutating version rows.</summary>
+    internal void ResetInitialized() => _initialized = false;
 
     /// <summary>
     /// Create all meta-DB tables if they don't already exist.
@@ -195,6 +204,11 @@ public sealed class MetaDatabase : IDisposable
                 PRIMARY KEY (AccountId, Instrument)
             );
 
+            CREATE TABLE IF NOT EXISTS DataVersion (
+                Key     TEXT PRIMARY KEY,
+                Version INTEGER NOT NULL
+            );
+
             """;
         cmd.ExecuteNonQuery();
 
@@ -232,6 +246,9 @@ public sealed class MetaDatabase : IDisposable
         MigrateAddColumn(conn, "RegisteredUsers", "DisplayName", "TEXT");
         MigrateAddColumn(conn, "RegisteredUsers", "Platform", "TEXT");
         MigrateAddColumn(conn, "RegisteredUsers", "LastLoginAt", "TEXT");
+
+        // ── Migration: re-queue backfill / history recon when data-collection version bumps ──
+        MigrateDataCollectionVersion(conn);
 
         _initialized = true;
 
@@ -1867,6 +1884,76 @@ public sealed class MetaDatabase : IDisposable
             ALTER TABLE SongFirstSeenSeason_new RENAME TO SongFirstSeenSeason;
             """;
         cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// If the stored data-collection version is behind <see cref="DataCollectionVersion"/>,
+    /// reset all completed backfill and history-reconstruction work so it re-runs
+    /// with the latest collection logic.
+    /// </summary>
+    private void MigrateDataCollectionVersion(SqliteConnection conn)
+    {
+        // Read current stored version (0 if row doesn't exist yet)
+        int storedVersion;
+        using (var read = conn.CreateCommand())
+        {
+            read.CommandText = "SELECT Version FROM DataVersion WHERE Key = 'DataCollection';";
+            var result = read.ExecuteScalar();
+            storedVersion = result is long v ? (int)v : 0;
+        }
+
+        if (storedVersion >= DataCollectionVersion)
+            return;
+
+        _log.LogInformation(
+            "Data-collection version upgraded {Old} → {New}. Re-queuing completed backfill/history-recon work.",
+            storedVersion, DataCollectionVersion);
+
+        using (var reset = conn.CreateCommand())
+        {
+            reset.CommandText = """
+                UPDATE BackfillStatus
+                   SET Status = 'pending', SongsChecked = 0, EntriesFound = 0,
+                       StartedAt = NULL, CompletedAt = NULL, LastResumedAt = NULL, ErrorMessage = NULL
+                 WHERE Status = 'complete';
+
+                DELETE FROM BackfillProgress
+                 WHERE AccountId IN (SELECT AccountId FROM BackfillStatus WHERE Status = 'pending');
+
+                UPDATE HistoryReconStatus
+                   SET Status = 'pending', SongsProcessed = 0, TotalSongsToProcess = 0,
+                       SeasonsQueried = 0, HistoryEntriesFound = 0,
+                       StartedAt = NULL, CompletedAt = NULL, ErrorMessage = NULL
+                 WHERE Status = 'complete';
+
+                DELETE FROM HistoryReconProgress
+                 WHERE AccountId IN (SELECT AccountId FROM HistoryReconStatus WHERE Status = 'pending');
+                """;
+            reset.ExecuteNonQuery();
+        }
+
+        // Store the new version
+        using (var upsert = conn.CreateCommand())
+        {
+            upsert.CommandText = """
+                INSERT INTO DataVersion (Key, Version) VALUES ('DataCollection', @ver)
+                ON CONFLICT(Key) DO UPDATE SET Version = @ver;
+                """;
+            upsert.Parameters.AddWithValue("@ver", DataCollectionVersion);
+            upsert.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>
+    /// Returns the stored data-collection version, or 0 if not yet recorded.
+    /// </summary>
+    internal int GetDataCollectionVersion()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Version FROM DataVersion WHERE Key = 'DataCollection';";
+        var result = cmd.ExecuteScalar();
+        return result is long v ? (int)v : 0;
     }
 
     /// <summary>

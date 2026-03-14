@@ -13,7 +13,10 @@ import { api } from '../api/client';
 const APP_VERSION = '0.1.3';
 const CORE_VERSION = '0.0.1';
 
-function FadeInDiv({ delay, children, style }: { delay: number; children: React.ReactNode; style?: CSSProperties }) {
+/** Track whether settings page has rendered at least once to skip stagger on re-visit. */
+let _hasRendered = false;
+
+function FadeInDiv({ delay, children, style }: { delay?: number; children: React.ReactNode; style?: CSSProperties }) {
   const ref = useRef<HTMLDivElement>(null);
   const handleEnd = useCallback(() => {
     const el = ref.current;
@@ -21,6 +24,7 @@ function FadeInDiv({ delay, children, style }: { delay: number; children: React.
     el.style.opacity = '';
     el.style.animation = '';
   }, []);
+  if (delay == null) return <div style={style}>{children}</div>;
   return (
     <div
       ref={ref}
@@ -73,6 +77,11 @@ export default function SettingsPage() {
   const handleScroll = useCallback(() => { updateScrollMask(); }, [updateScrollMask]);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [serviceVersion, setServiceVersion] = useState<string | null>(null);
+  // Capture skip decision at mount time (ref avoids StrictMode double-mount issues)
+  const skipAnimRef = useRef(_hasRendered);
+  const skipAnim = skipAnimRef.current;
+  _hasRendered = true;
+  console.log(`[SettingsPage] _hasRendered=${_hasRendered} skipAnimRef.current=${skipAnimRef.current} skipAnim=${skipAnim}`);
 
   useEffect(() => {
     let cancelled = false;
@@ -108,6 +117,7 @@ export default function SettingsPage() {
   );
 
   let staggerIndex = 0;
+  const stagger = (idx: number) => skipAnim ? undefined : idx * 125;
 
   return (
     <div style={styles.page}>
@@ -116,7 +126,7 @@ export default function SettingsPage() {
         <div style={styles.cardColumn}>
 
           {/* ───── App Settings ───── */}
-          <FadeInDiv delay={staggerIndex++ * 125}>
+          <FadeInDiv delay={stagger(staggerIndex++)}>
           <div style={styles.sectionTitle}>App Settings</div>
           <div style={styles.sectionHint}>General Festival Score Tracker app settings.</div>
           <Card>
@@ -152,7 +162,7 @@ export default function SettingsPage() {
           </FadeInDiv>
 
           {/* ───── Show Instruments ───── */}
-          <FadeInDiv delay={staggerIndex++ * 125}>
+          <FadeInDiv delay={stagger(staggerIndex++)}>
           <div style={styles.sectionTitle}>Show Instruments</div>
           <div style={styles.sectionHint}>Choose which instruments to display throughout the app.</div>
           <Card>
@@ -171,7 +181,7 @@ export default function SettingsPage() {
           </FadeInDiv>
 
           {/* ───── Show Instrument Metadata ───── */}
-          <FadeInDiv delay={staggerIndex++ * 125}>
+          <FadeInDiv delay={stagger(staggerIndex++)}>
           <div style={styles.sectionTitle}>Show Instrument Metadata</div>
           <div style={styles.sectionHint}>
             When filtering songs down to one instrument in the song list, extra metadata for that song can appear. Choose what you'd like to see in the song row here.
@@ -190,7 +200,7 @@ export default function SettingsPage() {
           </FadeInDiv>
 
           {/* ───── Festival Score Tracker Version ───── */}
-          <FadeInDiv delay={staggerIndex++ * 125}>
+          <FadeInDiv delay={stagger(staggerIndex++)}>
           <div style={styles.sectionTitle}>Festival Score Tracker Version</div>
           <div style={styles.sectionHint}>Festival Score Tracker information to help with debugging.</div>
           <Card>
@@ -210,7 +220,7 @@ export default function SettingsPage() {
           </FadeInDiv>
 
           {/* ───── Reset Settings ───── */}
-          <FadeInDiv delay={staggerIndex++ * 125}>
+          <FadeInDiv delay={stagger(staggerIndex++)}>
           <div style={{ ...styles.resetRow, ...(isMobile ? styles.resetRowMobile : {}) }}>
             <div>
               <div style={styles.sectionTitle}>Reset Settings</div>

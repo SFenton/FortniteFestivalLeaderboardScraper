@@ -13,6 +13,7 @@ import { useVisualViewportHeight } from './hooks/useVisualViewport';
 import SongsPage from './pages/SongsPage';
 import SongDetailPage from './pages/SongDetailPage';
 import LeaderboardPage from './pages/LeaderboardPage';
+import PlayerHistoryPage from './pages/PlayerHistoryPage';
 import PlayerPage from './pages/PlayerPage';
 import SuggestionsPage from './pages/SuggestionsPage';
 import SettingsPage from './pages/SettingsPage';
@@ -81,6 +82,7 @@ function AppShell() {
   const prevPathRef = useRef(location.pathname);
   useEffect(() => {
     if (location.pathname === prevPathRef.current) return;
+    const previousPath = prevPathRef.current;
     prevPathRef.current = location.pathname;
 
     // On POP navigation, check if we landed on a route that belongs to a different tab
@@ -91,6 +93,19 @@ function AppShell() {
         setTabRoutes(prev => ({ ...prev, [landedTab]: location.pathname }));
         return;
       }
+    }
+
+    // For PUSH/REPLACE that crosses to a different tab, switch the active tab
+    // and save the previous tab's route so switching back resumes where the user was.
+    const landedTab = inferTab(location.pathname);
+    if (landedTab && landedTab !== activeTab && navType !== 'POP') {
+      setActiveTab(landedTab);
+      setTabRoutes(prev => ({
+        ...prev,
+        [activeTab]: previousPath,
+        [landedTab]: location.pathname,
+      }));
+      return;
     }
 
     // For PUSH/REPLACE within the current tab, update the saved route
@@ -150,6 +165,7 @@ function AppShell() {
   const backFallback = useMemo(() => {
     const path = location.pathname;
     const parts = path.split('/').filter(Boolean);
+    if (parts[0] === 'songs' && parts.length === 4) return `/songs/${parts[1]}/${parts[2]}`;
     if (parts[0] === 'songs' && parts.length === 3) return `/songs/${parts[1]}`;
     if (parts[0] === 'songs' && parts.length === 2) return '/songs';
     if (parts[0] === 'player' && parts.length === 2) return '/songs';
@@ -225,6 +241,7 @@ function AppShell() {
           <Route path="/songs" element={<SongsPage />} />
           <Route path="/songs/:songId" element={<SongDetailPage />} />
           <Route path="/songs/:songId/:instrument" element={<LeaderboardPage />} />
+          <Route path="/songs/:songId/:instrument/history" element={<PlayerHistoryPage />} />
           <Route path="/player/:accountId" element={<PlayerPage />} />
           {player ? (
             <Route path="/statistics" element={<PlayerPage accountId={player.accountId} />} />

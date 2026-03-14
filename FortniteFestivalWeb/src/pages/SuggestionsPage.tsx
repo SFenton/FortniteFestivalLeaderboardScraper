@@ -121,6 +121,8 @@ function filterCategoryForInstrumentTypes(
 
 type Props = { accountId: string };
 
+let _suggestionsHasRendered = false;
+
 export default function SuggestionsPage({ accountId }: Props) {
   const { settings: appSettings } = useSettings();
   const {
@@ -280,8 +282,11 @@ export default function SuggestionsPage({ accountId }: Props) {
 
   // ── Spinner → staggered-content transition ──
   const dataReady = !(isLoading || playerLoading) || categories.length > 0;
+  const skipAnimRef = useRef(_suggestionsHasRendered);
+  const skipAnim = skipAnimRef.current;
+  _suggestionsHasRendered = true;
   const [phase, setPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>(
-    dataReady ? 'contentIn' : 'loading',
+    (skipAnim || dataReady) ? 'contentIn' : 'loading',
   );
 
   useEffect(() => {
@@ -307,6 +312,7 @@ export default function SuggestionsPage({ accountId }: Props) {
   const revealedCountRef = useRef(0);
 
   const getCardDelay = (index: number): number | null => {
+    if (skipAnim) return -1;                                   // skip all animation
     if (phase !== 'contentIn') return null;                   // hidden behind spinner
     if (index < revealedCountRef.current) return -1;          // already visible, no animation
     const offset = index - revealedCountRef.current;
@@ -351,9 +357,9 @@ export default function SuggestionsPage({ accountId }: Props) {
     );
   }
 
-  const headerStagger: React.CSSProperties = phase === 'contentIn'
+  const headerStagger: React.CSSProperties = phase === 'contentIn' && !skipAnim
     ? { opacity: 0, animation: 'fadeInUp 400ms ease-out forwards' }
-    : { opacity: 0 };
+    : skipAnim ? {} : { opacity: 0 };
 
   return (
     <div style={styles.page}>

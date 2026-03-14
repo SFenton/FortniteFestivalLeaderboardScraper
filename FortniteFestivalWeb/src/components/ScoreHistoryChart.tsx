@@ -914,7 +914,7 @@ export default function ScoreHistoryChart({
         </div>
       )}
       {chartData.length > 5 && (
-        <button style={styles.viewAllButton} onClick={() => navigate(`/songs/${songId}/${selected}`)}>
+        <button style={styles.viewAllButton} onClick={() => navigate(`/songs/${songId}/${selected}/history`)}>
           View all available player scores
         </button>
       )}

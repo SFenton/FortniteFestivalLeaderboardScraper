@@ -475,6 +475,79 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal(2, pending.Count);
     }
 
+    // ═══ DataCollectionVersion ═════════════════════════════════
+
+    [Fact]
+    public void EnsureSchema_sets_data_collection_version()
+    {
+        Assert.Equal(Persistence.MetaDatabase.DataCollectionVersion, Db.GetDataCollectionVersion());
+    }
+
+    [Fact]
+    public void Version_upgrade_resets_completed_backfill_and_history_recon()
+    {
+        // Simulate two users: one completed, one in-progress
+        Db.EnqueueBackfill("acct_done", 100);
+        Db.StartBackfill("acct_done");
+        Db.MarkBackfillSongChecked("acct_done", "song_1", "Solo_Guitar", true);
+        Db.CompleteBackfill("acct_done");
+
+        Db.EnqueueHistoryRecon("acct_done", 50);
+        Db.StartHistoryRecon("acct_done");
+        Db.MarkHistoryReconSongProcessed("acct_done", "song_1", "Solo_Guitar");
+        Db.CompleteHistoryRecon("acct_done");
+
+        Db.EnqueueBackfill("acct_wip", 100);
+        Db.StartBackfill("acct_wip");
+
+        // Downgrade the stored version to simulate a pre-upgrade DB
+        using (var conn = new SqliteConnection($"Data Source={_fixture.DbPath}"))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "UPDATE DataVersion SET Version = 0 WHERE Key = 'DataCollection';";
+            cmd.ExecuteNonQuery();
+        }
+
+        // Re-run schema (simulates service restart after code upgrade)
+        Db.ResetInitialized();
+        Db.EnsureSchema();
+
+        // Completed user should be reset to pending with cleared progress
+        var bf = Db.GetBackfillStatus("acct_done");
+        Assert.Equal("pending", bf!.Status);
+        Assert.Equal(0, bf.SongsChecked);
+        Assert.Empty(Db.GetCheckedBackfillPairs("acct_done"));
+
+        var hr = Db.GetHistoryReconStatus("acct_done");
+        Assert.Equal("pending", hr!.Status);
+        Assert.Equal(0, hr.SongsProcessed);
+        Assert.Empty(Db.GetProcessedHistoryReconPairs("acct_done"));
+
+        // In-progress user should be untouched (only 'complete' gets reset)
+        var wip = Db.GetBackfillStatus("acct_wip");
+        Assert.Equal("in_progress", wip!.Status);
+
+        // Version should now match the constant
+        Assert.Equal(Persistence.MetaDatabase.DataCollectionVersion, Db.GetDataCollectionVersion());
+    }
+
+    [Fact]
+    public void Version_upgrade_is_idempotent_when_already_current()
+    {
+        // Complete a user
+        Db.EnqueueBackfill("acct_1", 100);
+        Db.StartBackfill("acct_1");
+        Db.CompleteBackfill("acct_1");
+
+        // Re-run schema — version is already current, so nothing should change
+        Db.ResetInitialized();
+        Db.EnsureSchema();
+
+        var bf = Db.GetBackfillStatus("acct_1");
+        Assert.Equal("complete", bf!.Status);
+    }
+
     // ═══ SeasonWindows ══════════════════════════════════════════
 
     [Fact]

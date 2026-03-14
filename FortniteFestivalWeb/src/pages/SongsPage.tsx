@@ -29,6 +29,7 @@ import {
 } from '../components/songSettings';
 
 let _savedScrollTop = 0;
+let _songsHasRendered = false;
 
 export default function SongsPage() {
   const {
@@ -40,7 +41,11 @@ export default function SongsPage() {
   const fabSearch = useFabSearch();
   const scrollRef = useRef<HTMLDivElement>(null);
   const navType = useNavigationType();
-  const isBackNav = navType === 'POP';
+  const location = useLocation();
+  const forceRestagger = !!(location.state as any)?.restagger;
+  // POP fires for both back-nav and fresh page load/refresh;
+  // only treat it as back-nav if we have a saved scroll position from a prior visit.
+  const isBackNav = navType === 'POP' && _savedScrollTop > 0;
 
   // Restore scroll position on back navigation
   useEffect(() => {
@@ -297,14 +302,18 @@ export default function SongsPage() {
 
   // ── Spinner → staggered-content transition ──
   const dataReady = !isLoading && songs.length > 0 && !playerLoading;
-  const skipAnimation = isBackNav || dataReady;
+  // Capture "first visit this session" before marking as rendered
+  const skipAnimRef = useRef((_songsHasRendered || isBackNav) && !forceRestagger);
+  const skipAnim = skipAnimRef.current;
+  _songsHasRendered = true;
+  // Skip spinner if data already available OR already visited; skip stagger only if already visited
   const [loadPhase, setLoadPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>(
-    skipAnimation ? 'contentIn' : 'loading',
+    (skipAnim || dataReady) ? 'contentIn' : 'loading',
   );
   // Track whether the initial load phase was set via settings change (not mount)
   const isSettingsChangeRef = useRef(false);
   // Whether to run stagger animation on the current contentIn transition
-  const [shouldStagger, setShouldStagger] = useState(!skipAnimation);
+  const [shouldStagger, setShouldStagger] = useState(!skipAnim);
 
   // Track whether the toolbar has been shown at least once (initial load complete)
   const toolbarShownRef = useRef(false);
@@ -335,11 +344,18 @@ export default function SongsPage() {
     if (loadPhase !== 'spinnerOut') return;
     const id = setTimeout(() => {
       setLoadPhase('contentIn');
-      // Turn off stagger after a generous window so CSS animations can start
-      setTimeout(() => setShouldStagger(false), 100);
     }, 500);
     return () => clearTimeout(id);
   }, [loadPhase]);
+
+  // Turn off stagger after all animations finish
+  const maxVisibleSongs = useMemo(() => estimateVisibleCount(isMobile ? 120 : 72), [isMobile]);
+  useEffect(() => {
+    if (loadPhase !== 'contentIn' || !shouldStagger) return;
+    const totalAnimTime = (maxVisibleSongs + 1) * 125 + 400;
+    const id = setTimeout(() => setShouldStagger(false), totalAnimTime);
+    return () => clearTimeout(id);
+  }, [loadPhase, shouldStagger, maxVisibleSongs]);
 
   // Scroll to top when content transitions in after a settings change (not on initial mount or back nav)
   useEffect(() => {
@@ -506,7 +522,7 @@ export default function SongsPage() {
                   metadataOrder={visibleMetadataOrder}
                   sortMode={settings.sortMode}
                   isMobile={isMobile}
-                  staggerDelay={shouldStagger ? staggerDelay(i, 125, estimateVisibleCount(isMobile ? 120 : 72)) : undefined}
+                  staggerDelay={shouldStagger ? (staggerDelay(i, 125, maxVisibleSongs) ?? maxVisibleSongs * 125) : undefined}
                 />
             ))}
           </div>
@@ -588,7 +604,7 @@ function MiniStars({ starsCount, isFullCombo }: { starsCount: number; isFullComb
   const allGold = starsCount >= 6;
   const displayCount = allGold ? 5 : Math.max(1, starsCount);
   const src = allGold ? '/app/star_gold.png' : '/app/star_white.png';
-  const outline = isFullCombo ? Colors.gold : 'transparent';
+  const outline = (isFullCombo || allGold) ? Colors.gold : 'transparent';
   return (
     <span style={styles.miniStarRow}>
       {Array.from({ length: displayCount }).map((_, i) => (
@@ -1209,16 +1225,20 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     color: Colors.textSecondary,
     backgroundColor: 'rgba(255,255,255,0.1)',
-    padding: `${Gap.xs}px ${Gap.md}px`,
+    padding: `${Gap.xs}px ${Gap.sm}px`,
     borderRadius: Radius.xs,
-    minWidth: 70,
+    border: '2px solid transparent',
+    minWidth: 58,
     textAlign: 'center' as const,
     display: 'inline-block',
+    boxSizing: 'border-box' as const,
   },
   accuracyBadgeFC: {
     ...goldOutlineSkew,
     fontSize: Font.lg,
+    minWidth: 58,
     textAlign: 'center' as const,
+    boxSizing: 'border-box' as const,
   },
   fcBadge: {
     ...goldFill,
@@ -1235,21 +1255,27 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     color: Colors.textSecondary,
     backgroundColor: 'rgba(255,255,255,0.1)',
-    padding: `${Gap.xs}px ${Gap.md}px`,
+    padding: `${Gap.xs}px ${Gap.sm}px`,
     borderRadius: Radius.xs,
-    minWidth: 70,
+    border: '2px solid transparent',
+    minWidth: 82,
     textAlign: 'center' as const,
     display: 'inline-block',
+    boxSizing: 'border-box' as const,
   },
   percentileBadgeTop1: {
     ...goldOutlineSkew,
     fontSize: Font.lg,
+    minWidth: 82,
     textAlign: 'center' as const,
+    boxSizing: 'border-box' as const,
   },
   percentileBadgeTop5: {
     ...goldOutline,
     fontSize: Font.lg,
+    minWidth: 82,
     textAlign: 'center' as const,
+    boxSizing: 'border-box' as const,
   },
   center: {
     display: 'flex',

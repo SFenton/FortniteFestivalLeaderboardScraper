@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react';
-import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, Link, useNavigate, useNavigationType, useLocation } from 'react-router-dom';
 import { formatPercentile } from '../utils/formatPercentile';
 import { useFestival } from '../contexts/FestivalContext';
 import { usePlayerData } from '../contexts/PlayerDataContext';
@@ -16,7 +16,7 @@ import {
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutline, goldOutlineSkew, frostedCard } from '../theme';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import { useSettings, isInstrumentVisible } from '../contexts/SettingsContext';
-import { loadSongSettings, saveSongSettings } from '../components/songSettings';
+import { loadSongSettings, saveSongSettings, defaultSongFilters } from '../components/songSettings';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
@@ -46,9 +46,14 @@ function FadeInDiv({ delay, children, style }: { delay?: number; children: React
   );
 }
 
+/** Track whether PlayerContent has rendered at least once for the current account,
+ *  so we can skip stagger animation on back-nav. */
+let _hasRenderedAccount: string | null = null;
+
 export default function PlayerPage({ accountId: propAccountId }: { accountId?: string } = {}) {
   const params = useParams<{ accountId: string }>();
   const accountId = propAccountId ?? params.accountId;
+  const navType = useNavigationType();
   const {
     state: { songs },
   } = useFestival();
@@ -103,11 +108,16 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   const backfillProgress = isTrackedPlayer ? ctx.backfillProgress : localBfProg;
   const historyProgress = isTrackedPlayer ? ctx.historyProgress : localHrProg;
 
+  // Skip stagger if we've already rendered this account (must be before early returns)
+  const skipAnimRef = useRef(_hasRenderedAccount === accountId);
+  const skipAnim = skipAnimRef.current;
+  if (data) _hasRenderedAccount = accountId!;
+
   if (loading) return <div style={styles.page}><div style={styles.center}><div style={styles.arcSpinner} /></div></div>;
   if (error) return <div style={styles.page}><div style={styles.centerError}>{error}</div></div>;
   if (!data) return <div style={styles.page}><div style={styles.center}>Player not found</div></div>;
 
-  return <PlayerContent data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} isTrackedPlayer={isTrackedPlayer} />;
+  return <PlayerContent data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} isTrackedPlayer={isTrackedPlayer} skipAnim={skipAnim} />;
 }
 
 function PlayerContent({
@@ -118,6 +128,7 @@ function PlayerContent({
   backfillProgress,
   historyProgress,
   isTrackedPlayer,
+  skipAnim,
 }: {
   data: PlayerResponse;
   songs: Song[];
@@ -126,6 +137,7 @@ function PlayerContent({
   backfillProgress: number;
   historyProgress: number;
   isTrackedPlayer: boolean;
+  skipAnim: boolean;
 }) {
   const { settings } = useSettings();
   const location = useLocation();
@@ -293,7 +305,7 @@ function PlayerContent({
         const s = loadSongSettings();
         const starsFilter: Record<number, boolean> = { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false, [starKey]: true };
         saveSongSettings({ ...s, instrument: inst, filters: { ...s.filters, starsFilter } });
-        navigate('/songs', { state: { backTo: location.pathname } });
+        navigate('/songs', { state: { backTo: location.pathname, restagger: true } });
       };
       if (!isTrackedPlayer) {
         const selectAndGo = () => {
@@ -351,8 +363,8 @@ function PlayerContent({
                       const percentileFilter: Record<number, boolean> = {};
                       for (const t of thresholds) percentileFilter[t] = t === b.pct;
                       percentileFilter[0] = false;
-                      saveSongSettings({ ...s, instrument: inst, filters: { ...s.filters, percentileFilter } });
-                      navigate('/songs', { state: { backTo: location.pathname } });
+                      saveSongSettings({ ...s, instrument: inst, filters: { ...defaultSongFilters(), percentileFilter } });
+                      navigate('/songs', { state: { backTo: location.pathname, restagger: true } });
                     };
                     if (!isTrackedPlayer) {
                       const selectAndGo = () => {
@@ -552,8 +564,9 @@ function PlayerContent({
                 }
               }
 
+              const lastVisibleDelay = visibleCount * 80;
               return items.map((item, i) => {
-                const delay = i < visibleCount ? (i + 1) * 80 : undefined;
+                const delay = skipAnim ? undefined : (i < visibleCount ? (i + 1) * 80 : lastVisibleDelay);
                 return (
                   <FadeInDiv key={item.key} delay={delay} style={{ ...(item.span ? styles.gridFullWidth : {}), ...item.style }}>
                     {item.node}

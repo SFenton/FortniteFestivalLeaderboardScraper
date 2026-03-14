@@ -12,6 +12,7 @@ public sealed class InMemoryMetaDatabase : IDisposable
 {
     private readonly string _dbPath;
     public MetaDatabase Db { get; }
+    public string DbPath => _dbPath;
 
     public InMemoryMetaDatabase()
     {
