@@ -1,4 +1,5 @@
 import {
+  formatPercentileBucket,
   formatPercentileTopExact,
   formatScoreCompact,
   instrumentKeyToColorHex,
@@ -49,6 +50,31 @@ describe('app/format/formatters', () => {
     test('handles non-finite', () => {
       expect(formatPercentileTopExact(Number.NaN)).toBe('N/A');
       expect(formatPercentileTopExact(Number.POSITIVE_INFINITY)).toBe('N/A');
+    });
+  });
+
+  describe('formatPercentileBucket', () => {
+    test('clamps values below 1 to Top 1%', () => {
+      expect(formatPercentileBucket(0.5)).toBe('Top 1%');
+      expect(formatPercentileBucket(0.01)).toBe('Top 1%');
+    });
+
+    test('snaps to exact bucket boundaries', () => {
+      expect(formatPercentileBucket(1)).toBe('Top 1%');
+      expect(formatPercentileBucket(2)).toBe('Top 2%');
+      expect(formatPercentileBucket(5)).toBe('Top 5%');
+      expect(formatPercentileBucket(10)).toBe('Top 10%');
+    });
+
+    test('rounds up to next bucket', () => {
+      expect(formatPercentileBucket(1.5)).toBe('Top 2%');
+      expect(formatPercentileBucket(5.01)).toBe('Top 10%');
+      expect(formatPercentileBucket(15.5)).toBe('Top 20%');
+    });
+
+    test('clamps values above 100', () => {
+      expect(formatPercentileBucket(100)).toBe('Top 100%');
+      expect(formatPercentileBucket(150)).toBe('Top 100%');
     });
   });
 

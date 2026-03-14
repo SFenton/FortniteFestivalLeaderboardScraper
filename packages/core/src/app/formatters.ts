@@ -72,6 +72,15 @@ export const formatPercentileTopExact = (rawPercentile: number): string => {
   return `Top ${rounded.toFixed(0)}%`;
 };
 
+const PERCENTILE_BUCKETS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100] as const;
+
+/** Clamp a raw percentile (0–100) to the nearest bucket and return e.g. "Top 5%". */
+export const formatPercentileBucket = (pct: number): string => {
+  const clamped = Math.max(1, Math.min(100, pct));
+  const bucket = PERCENTILE_BUCKETS.find(t => clamped <= t) ?? 100;
+  return `Top ${bucket}%`;
+};
+
 export const instrumentKeyToLabel = (key: InstrumentKey): string => {
   switch (key) {
     case 'guitar':

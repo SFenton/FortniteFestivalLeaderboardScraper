@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react';
 import { useParams, Link, useNavigate, useNavigationType, useLocation } from 'react-router-dom';
-import { formatPercentile } from '../utils/formatPercentile';
+import { formatPercentileBucket } from '@festival/core';
 import { useFestival } from '../contexts/FestivalContext';
 import { usePlayerData } from '../contexts/PlayerDataContext';
 import { useSyncStatus } from '../hooks/useSyncStatus';
@@ -444,7 +444,7 @@ function PlayerContent({
                 : isTop5
                   ? styles.percentileBadgeTop5
                   : styles.percentilePill;
-              return <span style={pctStyle}>{formatPercentile(pct)}</span>;
+              return <span style={pctStyle}>{formatPercentileBucket(pct)}</span>;
             })()}
           </div>
         </Link>
@@ -683,13 +683,13 @@ function computeInstrumentStats(
   if (percentiled.length > 0) {
     // Songs Played: simple average across songs with data
     const avgPlayed = (percentiled.reduce((a, v) => a + v.pct, 0) / percentiled.length) * 100;
-    avgPercentile = formatPercentile(avgPlayed);
+    avgPercentile = formatPercentileBucket(avgPlayed);
 
     // Overall: unplayed songs count as 100% (worst)
     const unplayedCount = totalSongs - n;
     const totalPct = percentiled.reduce((a, v) => a + v.pct, 0) + unplayedCount; // unplayed × 1.0
     const overall = (totalPct / totalSongs) * 100;
-    overallPercentile = formatPercentile(overall);
+    overallPercentile = formatPercentileBucket(overall);
   }
 
   // Percentile distribution buckets (matching filter thresholds)

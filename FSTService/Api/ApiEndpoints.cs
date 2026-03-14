@@ -123,7 +123,7 @@ public static class ApiEndpoints
 
             var (entries, dbCount) = result.Value;
             var pop = metaDb.GetLeaderboardPopulation(songId, instrument);
-            var totalEntries = pop > 0 ? (int)pop : dbCount;
+            var totalEntries = Math.Max(pop > 0 ? (int)pop : 0, dbCount);
             var names = metaDb.GetDisplayNames(entries.Select(e => e.AccountId));
             var enriched = entries.Select(e => new
             {
@@ -171,8 +171,9 @@ public static class ApiEndpoints
 
                 var (entries, dbCount) = result.Value;
                 var popKey = (songId, instrument);
-                var totalEntries = population.TryGetValue(popKey, out var pop) && pop > 0
-                    ? (int)pop : dbCount;
+                var totalEntries = Math.Max(
+                    population.TryGetValue(popKey, out var pop) && pop > 0 ? (int)pop : 0,
+                    dbCount);
 
                 foreach (var e in entries)
                     allAccountIds.Add(e.AccountId);
@@ -230,10 +231,10 @@ public static class ApiEndpoints
                 var (computedRank, dbTotal) = rankings.GetValueOrDefault(key, (0, 0));
                 // Always use DB-computed rank for consistency with leaderboard ordering
                 var rank = computedRank > 0 ? computedRank : s.Rank;
-                // Prefer true leaderboard population from PercentileService; fall back to DB row count
-                var totalEntries = population.TryGetValue(key, out var pop) && pop > 0
-                    ? (int)pop
-                    : dbTotal;
+                // Use the larger of PercentileService population and DB row count
+                var totalEntries = Math.Max(
+                    population.TryGetValue(key, out var pop) && pop > 0 ? (int)pop : 0,
+                    dbTotal);
                 return new
                 {
                     s.SongId,

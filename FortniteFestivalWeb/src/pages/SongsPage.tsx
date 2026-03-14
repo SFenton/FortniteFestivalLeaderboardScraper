@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback, Fragment, type CSSProperties } from 'react';
 import { IoSwapVerticalSharp, IoFunnel } from 'react-icons/io5';
 import { Link, useLocation, useNavigationType } from 'react-router-dom';
-import { formatPercentile } from '../utils/formatPercentile';
+import { formatPercentileBucket } from '@festival/core';
 import { staggerDelay, estimateVisibleCount } from '../utils/stagger';
 import { useFestival } from '../contexts/FestivalContext';
 import { usePlayerData } from '../contexts/PlayerDataContext';
@@ -677,7 +677,7 @@ function renderMetadataElement(
           ? Math.min((score.rank / score.totalEntries!) * 100, 100)
           : undefined;
       if (pct == null) return null;
-      const display = formatPercentile(pct);
+      const display = formatPercentileBucket(pct);
       const isTop1 = pct <= 1;
       const isTop5 = pct <= 5;
       const pctStyle = isTop1
