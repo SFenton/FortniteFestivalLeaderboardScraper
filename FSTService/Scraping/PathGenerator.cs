@@ -124,6 +124,14 @@ public sealed class PathGenerator
             return null;
         }
 
+        // Fast check: skip download entirely if the song's lastModified hasn't changed
+        var lastModStr = song.LastModified?.ToString("o");
+        if (!force && lastModStr is not null && lastModStr == song.ExistingLastModified)
+        {
+            _log.LogDebug("Song {SongId} lastModified unchanged ({LastMod}). Skipping download.", song.SongId, lastModStr);
+            return null;
+        }
+
         // Download .dat file
         byte[] datBytes;
         try
@@ -363,5 +371,7 @@ public sealed class PathGenerator
         string Title,
         string Artist,
         string? DatUrl,
-        string? ExistingDatHash);
+        DateTime? LastModified,
+        string? ExistingDatHash,
+        string? ExistingLastModified);
 }

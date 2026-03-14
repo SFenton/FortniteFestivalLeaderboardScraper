@@ -136,7 +136,7 @@ public sealed class PathGeneratorOrchestrationTests : IDisposable
         var gen = CreateGenerator(handler, opts);
 
         var results = await gen.GeneratePathsAsync(
-            [new PathGenerator.SongPathRequest("s1", "Song", "Artist", "http://x/s.dat", null)],
+            [new PathGenerator.SongPathRequest("s1", "Song", "Artist", "http://x/s.dat", null, null, null)],
             false, CancellationToken.None);
 
         Assert.Empty(results);
@@ -156,7 +156,7 @@ public sealed class PathGeneratorOrchestrationTests : IDisposable
         var gen = CreateGenerator(handler, opts);
 
         var results = await gen.GeneratePathsAsync(
-            [new PathGenerator.SongPathRequest("s1", "Song", "Artist", "http://x/s.dat", null)],
+            [new PathGenerator.SongPathRequest("s1", "Song", "Artist", "http://x/s.dat", null, null, null)],
             false, CancellationToken.None);
 
         Assert.Empty(results);
@@ -177,7 +177,7 @@ public sealed class PathGeneratorOrchestrationTests : IDisposable
 
         var gen = CreateGenerator(handler);
         var results = await gen.GeneratePathsAsync(
-            [new PathGenerator.SongPathRequest("s1", "Song", "Artist", "http://x/s.dat", hash)],
+            [new PathGenerator.SongPathRequest("s1", "Song", "Artist", "http://x/s.dat", null, hash, null)],
             false, CancellationToken.None);
 
         // Should skip because hash matches
@@ -199,7 +199,7 @@ public sealed class PathGeneratorOrchestrationTests : IDisposable
 
         var gen = CreateGenerator(handler);
         var results = await gen.GeneratePathsAsync(
-            [new PathGenerator.SongPathRequest("s1", "Song", "Artist", "http://x/s.dat", hash)],
+            [new PathGenerator.SongPathRequest("s1", "Song", "Artist", "http://x/s.dat", null, hash, null)],
             force: true, CancellationToken.None);
 
         // Should process even though hash matches because force=true
@@ -224,7 +224,7 @@ public sealed class PathGeneratorOrchestrationTests : IDisposable
 
         var gen = CreateGenerator(handler);
         var results = await gen.GeneratePathsAsync(
-            [new PathGenerator.SongPathRequest("s1", "Song", "Artist", "http://x/s.dat", null)],
+            [new PathGenerator.SongPathRequest("s1", "Song", "Artist", "http://x/s.dat", null, null, null)],
             false, CancellationToken.None);
 
         Assert.Single(results);
@@ -242,7 +242,7 @@ public sealed class PathGeneratorOrchestrationTests : IDisposable
         var gen = CreateGenerator(handler);
 
         var results = await gen.GeneratePathsAsync(
-            [new PathGenerator.SongPathRequest("s1", "Song", "Artist", null, null)],
+            [new PathGenerator.SongPathRequest("s1", "Song", "Artist", null, null, null, null)],
             false, CancellationToken.None);
 
         Assert.Empty(results);
@@ -257,7 +257,7 @@ public sealed class PathGeneratorOrchestrationTests : IDisposable
 
         var gen = CreateGenerator(handler);
         var results = await gen.GeneratePathsAsync(
-            [new PathGenerator.SongPathRequest("s1", "Song", "Artist", "http://x/s.dat", null)],
+            [new PathGenerator.SongPathRequest("s1", "Song", "Artist", "http://x/s.dat", null, null, null)],
             false, CancellationToken.None);
 
         // Download failure is caught and song is skipped
@@ -278,7 +278,7 @@ public sealed class PathGeneratorOrchestrationTests : IDisposable
 
         var gen = CreateGenerator(handler);
         await gen.GeneratePathsAsync(
-            [new PathGenerator.SongPathRequest("song123", "Test Song", "Test Artist", "http://x/s.dat", null)],
+            [new PathGenerator.SongPathRequest("song123", "Test Song", "Test Artist", "http://x/s.dat", null, null, null)],
             false, CancellationToken.None);
 
         // Verify directory structure: data/paths/{songId}/{instrument}/
@@ -315,7 +315,7 @@ public sealed class PathGeneratorOrchestrationTests : IDisposable
 
         var gen = CreateGenerator(handler);
         var results = await gen.GeneratePathsAsync(
-            [new PathGenerator.SongPathRequest("s1", "Song", "Artist", "http://x/s.dat", null)],
+            [new PathGenerator.SongPathRequest("s1", "Song", "Artist", "http://x/s.dat", null, null, null)],
             false, CancellationToken.None);
 
         var songResult = Assert.Single(results);
@@ -343,8 +343,8 @@ public sealed class PathGeneratorOrchestrationTests : IDisposable
         var gen = CreateGenerator(handler);
         var results = await gen.GeneratePathsAsync(
             [
-                new PathGenerator.SongPathRequest("s1", "Song1", "Artist1", "http://x/1.dat", null),
-                new PathGenerator.SongPathRequest("s2", "Song2", "Artist2", "http://x/2.dat", null),
+                new PathGenerator.SongPathRequest("s1", "Song1", "Artist1", "http://x/1.dat", null, null, null),
+                new PathGenerator.SongPathRequest("s2", "Song2", "Artist2", "http://x/2.dat", null, null, null),
             ],
             false, CancellationToken.None);
 
@@ -413,7 +413,7 @@ public sealed class PathGeneratorOrchestrationTests : IDisposable
 
         var gen = CreateGenerator(handler);
         await gen.GeneratePathsAsync(
-            [new PathGenerator.SongPathRequest("iniTest", "My Song Title", "My Artist", "http://x/s.dat", null)],
+            [new PathGenerator.SongPathRequest("iniTest", "My Song Title", "My Artist", "http://x/s.dat", null, null, null)],
             false, CancellationToken.None);
 
         // The song.ini is written to a temp dir and cleaned up after — we can verify
@@ -437,7 +437,7 @@ public sealed class PathGeneratorOrchestrationTests : IDisposable
                     SongId TEXT PRIMARY KEY, Title TEXT,
                     MaxLeadScore INTEGER, MaxBassScore INTEGER, MaxDrumsScore INTEGER,
                     MaxVocalsScore INTEGER, MaxProLeadScore INTEGER, MaxProBassScore INTEGER,
-                    DatFileHash TEXT, PathsGeneratedAt TEXT, CHOptVersion TEXT
+                    DatFileHash TEXT, SongLastModified TEXT, PathsGeneratedAt TEXT, CHOptVersion TEXT
                 );
                 INSERT INTO Songs (SongId, Title) VALUES ('testSong', 'Test Song');
                 """;
@@ -456,7 +456,7 @@ public sealed class PathGeneratorOrchestrationTests : IDisposable
 
         var gen = CreateGenerator(handler);
         var results = await gen.GeneratePathsAsync(
-            [new PathGenerator.SongPathRequest("testSong", "Test Song", "Artist", "http://x/s.dat", null)],
+            [new PathGenerator.SongPathRequest("testSong", "Test Song", "Artist", "http://x/s.dat", null, null, null)],
             false, CancellationToken.None);
 
         var songResult = Assert.Single(results);
@@ -478,8 +478,8 @@ public sealed class PathGeneratorOrchestrationTests : IDisposable
         Assert.Equal(123456, allScores["testSong"].MaxLeadScore);
         Assert.Equal(123456, allScores["testSong"].MaxBassScore);
 
-        var hashes = store.GetDatFileHashes();
-        Assert.Equal(songResult.DatFileHash, hashes["testSong"]);
+        var state = store.GetPathGenerationState();
+        Assert.Equal(songResult.DatFileHash, state["testSong"].Hash);
     }
 
     [Fact]
@@ -494,7 +494,7 @@ public sealed class PathGeneratorOrchestrationTests : IDisposable
 
         var gen = CreateGenerator(handler);
         var results = await gen.GeneratePathsAsync(
-            [new PathGenerator.SongPathRequest("bad", "Bad Song", "Artist", "http://x/bad.dat", null)],
+            [new PathGenerator.SongPathRequest("bad", "Bad Song", "Artist", "http://x/bad.dat", null, null, null)],
             false, CancellationToken.None);
 
         // Song should fail and be filtered out — caught by the exception handler

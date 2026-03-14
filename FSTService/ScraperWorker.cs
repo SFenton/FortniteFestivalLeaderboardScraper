@@ -628,16 +628,21 @@ public sealed class ScraperWorker : BackgroundService
             var songs = service.Songs.Where(s => s.track?.su is not null && !string.IsNullOrEmpty(s.track.mu)).ToList();
             if (songs.Count == 0) return;
 
-            // Load existing hashes to detect changes
-            var existingHashes = _pathDataStore.GetDatFileHashes();
+            // Load existing path generation state to detect changes
+            var existingState = _pathDataStore.GetPathGenerationState();
 
-            var requests = songs.Select(s => new PathGenerator.SongPathRequest(
-                s.track.su,
-                s.track.tt ?? s.track.su,
-                s.track.an ?? "Unknown",
-                s.track.mu,
-                existingHashes.GetValueOrDefault(s.track.su)
-            )).ToList();
+            var requests = songs.Select(s =>
+            {
+                existingState.TryGetValue(s.track.su, out var state);
+                return new PathGenerator.SongPathRequest(
+                    s.track.su,
+                    s.track.tt ?? s.track.su,
+                    s.track.an ?? "Unknown",
+                    s.track.mu,
+                    s.lastModified == DateTime.MinValue ? null : s.lastModified,
+                    state.Hash,
+                    state.LastModified);
+            }).ToList();
 
             _log.LogInformation("Path generation: checking {Count} songs for new/changed MIDI data.", requests.Count);
 
@@ -660,7 +665,10 @@ public sealed class ScraperWorker : BackgroundService
                 foreach (var pr in result.Results.Where(r => r.Difficulty == "expert"))
                     scores.SetByInstrument(pr.Instrument, pr.MaxScore);
 
-                _pathDataStore.UpdateMaxScores(result.SongId, scores, result.DatFileHash);
+                // Find the song's lastModified to store alongside
+                var song = songs.FirstOrDefault(s => s.track.su == result.SongId);
+                var songLastMod = song?.lastModified is { } lm && lm != DateTime.MinValue ? lm.ToString("o") : null;
+                _pathDataStore.UpdateMaxScores(result.SongId, scores, result.DatFileHash, songLastMod);
             }
 
             _log.LogInformation("Path generation complete: {Count} song(s) updated.", results.Count);

@@ -720,17 +720,24 @@ public static class ApiEndpoints
                     return Results.Problem("Song catalog is empty.");
             }
 
-            var existingHashes = pathStore.GetDatFileHashes();
-            var songs = festivalService.Songs
+            var existingState = pathStore.GetPathGenerationState();
+            var allSongs = festivalService.Songs
                 .Where(s => s.track?.su is not null && !string.IsNullOrEmpty(s.track.mu))
                 .Where(s => songId is null || s.track.su == songId)
-                .Select(s => new PathGenerator.SongPathRequest(
+                .ToList();
+
+            var songs = allSongs.Select(s =>
+            {
+                existingState.TryGetValue(s.track.su, out var state);
+                return new PathGenerator.SongPathRequest(
                     s.track.su,
                     s.track.tt ?? s.track.su,
                     s.track.an ?? "Unknown",
                     s.track.mu,
-                    existingHashes.GetValueOrDefault(s.track.su)))
-                .ToList();
+                    s.lastModified == DateTime.MinValue ? null : s.lastModified,
+                    state.Hash,
+                    state.LastModified);
+            }).ToList();
 
             if (songs.Count == 0)
                 return Results.NotFound(new { error = "No matching songs found." });
@@ -750,7 +757,9 @@ public static class ApiEndpoints
                         };
                         foreach (var pr in result.Results.Where(r => r.Difficulty == "expert"))
                             scores.SetByInstrument(pr.Instrument, pr.MaxScore);
-                        pathStore.UpdateMaxScores(result.SongId, scores, result.DatFileHash);
+                        var songEntry = allSongs.FirstOrDefault(s => s.track.su == result.SongId);
+                        var lastMod = songEntry?.lastModified is { } lm && lm != DateTime.MinValue ? lm.ToString("o") : null;
+                        pathStore.UpdateMaxScores(result.SongId, scores, result.DatFileHash, lastMod);
                     }
                     logger.LogInformation("Admin path regeneration complete: {Count} song(s) updated.", results.Count);
                 }

@@ -174,6 +174,7 @@ CREATE TABLE IF NOT EXISTS Scores (
                         AddColumn("MaxProLeadScore", "INTEGER");
                         AddColumn("MaxProBassScore", "INTEGER");
                         AddColumn("DatFileHash", "TEXT");
+                        AddColumn("SongLastModified", "TEXT");
                         AddColumn("PathsGeneratedAt", "TEXT");
                         AddColumn("CHOptVersion", "TEXT");
                         // Scores table rank migrations

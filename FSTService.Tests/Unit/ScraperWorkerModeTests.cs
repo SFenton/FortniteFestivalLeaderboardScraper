@@ -1453,7 +1453,7 @@ public class ScraperWorkerModeTests : IDisposable
                     SongId TEXT PRIMARY KEY, Title TEXT,
                     MaxLeadScore INTEGER, MaxBassScore INTEGER, MaxDrumsScore INTEGER,
                     MaxVocalsScore INTEGER, MaxProLeadScore INTEGER, MaxProBassScore INTEGER,
-                    DatFileHash TEXT, PathsGeneratedAt TEXT, CHOptVersion TEXT
+                    DatFileHash TEXT, SongLastModified TEXT, PathsGeneratedAt TEXT, CHOptVersion TEXT
                 );
                 INSERT INTO Songs (SongId, Title) VALUES ('testSong', 'Test Song');
                 """;
@@ -1500,13 +1500,13 @@ public class ScraperWorkerModeTests : IDisposable
 
         // 8) Verify results were persisted
         var store = new PathDataStore(dbPath);
-        var hashes = store.GetDatFileHashes();
+        var state = store.GetPathGenerationState();
         var allScores = store.GetAllMaxScores();
 
         // If these assertions fail, the PathGenerator returned no results.
         // Common causes: MIDI key not configured, CHOpt not found, HTTP failure.
-        Assert.True(hashes.Count > 0, $"No dat hashes found — PathGenerator returned no results. Handler requests: {handler.Requests.Count}");
-        Assert.True(allScores.ContainsKey("testSong"), $"testSong not in max scores. Hashes: {string.Join(",", hashes.Keys)}");
+        Assert.True(state.Count > 0, $"No dat hashes found — PathGenerator returned no results. Handler requests: {handler.Requests.Count}");
+        Assert.True(allScores.ContainsKey("testSong"), $"testSong not in max scores. Hashes: {string.Join(",", state.Keys)}");
         Assert.Equal(99999, allScores["testSong"].MaxLeadScore);
     }
 

@@ -19,25 +19,26 @@ public sealed class PathDataStore
     }
 
     /// <summary>
-    /// Returns a dictionary of SongId → DatFileHash for all songs that have been processed.
+    /// Returns a dictionary of SongId → (DatFileHash, SongLastModified) for path generation state.
     /// Returns empty if the table or columns don't exist yet.
     /// </summary>
-    public Dictionary<string, string> GetDatFileHashes()
+    public Dictionary<string, (string Hash, string? LastModified)> GetPathGenerationState()
     {
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var result = new Dictionary<string, (string, string?)>(StringComparer.OrdinalIgnoreCase);
         try
         {
             using var conn = new SqliteConnection(_connectionString);
             conn.Open();
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = "SELECT SongId, DatFileHash FROM Songs WHERE DatFileHash IS NOT NULL";
+            cmd.CommandText = "SELECT SongId, DatFileHash, SongLastModified FROM Songs WHERE DatFileHash IS NOT NULL";
             using var reader = cmd.ExecuteReader();
 
             while (reader.Read())
             {
                 var songId = reader.GetString(0);
                 var hash = reader.GetString(1);
-                result[songId] = hash;
+                var lastMod = reader.IsDBNull(2) ? null : reader.GetString(2);
+                result[songId] = (hash, lastMod);
             }
         }
         catch (SqliteException)
@@ -100,7 +101,7 @@ public sealed class PathDataStore
     /// <summary>
     /// Update max scores and .dat hash for a song after path generation.
     /// </summary>
-    public void UpdateMaxScores(string songId, SongMaxScores scores, string datFileHash)
+    public void UpdateMaxScores(string songId, SongMaxScores scores, string datFileHash, string? songLastModified = null)
     {
         using var conn = new SqliteConnection(_connectionString);
         conn.Open();
@@ -114,6 +115,7 @@ public sealed class PathDataStore
                 MaxProLeadScore  = @proLead,
                 MaxProBassScore  = @proBass,
                 DatFileHash      = @hash,
+                SongLastModified = @songLastMod,
                 PathsGeneratedAt = @genAt,
                 CHOptVersion     = @version
             WHERE SongId = @songId
@@ -125,6 +127,7 @@ public sealed class PathDataStore
         cmd.Parameters.AddWithValue("@proLead", (object?)scores.MaxProLeadScore ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@proBass", (object?)scores.MaxProBassScore ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@hash", datFileHash);
+        cmd.Parameters.AddWithValue("@songLastMod", (object?)songLastModified ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@genAt", scores.GeneratedAt ?? DateTime.UtcNow.ToString("o"));
         cmd.Parameters.AddWithValue("@version", (object?)scores.CHOptVersion ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@songId", songId);
