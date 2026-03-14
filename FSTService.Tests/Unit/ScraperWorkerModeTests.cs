@@ -123,6 +123,9 @@ public class ScraperWorkerModeTests : IDisposable
     }
 
     private ScraperWorker CreateWorker(ScraperOptions? opts = null)
+        => CreateWorkerWithHttp(opts, null);
+
+    private ScraperWorker CreateWorkerWithHttp(ScraperOptions? opts, HttpMessageHandler? httpHandler)
     {
         var options = Options.Create(opts ?? new ScraperOptions
         {
@@ -131,12 +134,22 @@ public class ScraperWorkerModeTests : IDisposable
             DeviceAuthPath = Path.Combine(_tempDir, "device.json"),
         });
 
+        var http = httpHandler != null ? new HttpClient(httpHandler) : new HttpClient();
+        var pathGenerator = new PathGenerator(
+            http,
+            options,
+            Substitute.For<ILogger<PathGenerator>>());
+
+        var pathDataStore = new PathDataStore(
+            Path.Combine(_tempDir, "core.db"));
+
         return new ScraperWorker(
             _tokenManager, _scraper, _persistence, _nameResolver,
             _personalDbBuilder, _backfiller, _backfillQueue, _refresher,
             _historyReconstructor, _firstSeenCalculator, _festivalService,
             new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()),
             _tokenVault,
+            pathGenerator, pathDataStore,
             _progress, options, _lifetime, _log);
     }
 
@@ -1312,6 +1325,193 @@ public class ScraperWorkerModeTests : IDisposable
 
         // Loop should have caught the exception and not propagated it
     }
+
+    // ─── TryGeneratePathsAsync tests ────────────────────────────
+
+    [Fact]
+    public async Task TryGeneratePathsAsync_disabled_does_nothing()
+    {
+        var worker = CreateWorker(new ScraperOptions
+        {
+            DataDirectory = _tempDir,
+            DatabasePath = Path.Combine(_tempDir, "core.db"),
+            DeviceAuthPath = Path.Combine(_tempDir, "device.json"),
+            EnablePathGeneration = false,
+        });
+
+        // Should return immediately without touching anything
+        await worker.TryGeneratePathsAsync(_festivalService, force: false, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task TryGeneratePathsAsync_no_songs_with_dat_url_does_nothing()
+    {
+        // FestivalService has no songs (empty)
+        var worker = CreateWorker(new ScraperOptions
+        {
+            DataDirectory = _tempDir,
+            DatabasePath = Path.Combine(_tempDir, "core.db"),
+            DeviceAuthPath = Path.Combine(_tempDir, "device.json"),
+            EnablePathGeneration = true,
+            MidiEncryptionKey = "0123456789abcdef0123456789abcdef",
+        });
+
+        // _festivalService has no songs loaded → should return early
+        await worker.TryGeneratePathsAsync(_festivalService, force: false, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task TryGeneratePathsAsync_catches_exceptions_gracefully()
+    {
+        // Load a song with a .dat URL into the festival service
+        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+        var songsField = typeof(FestivalService).GetField("_songs", flags)!;
+        var dict = (Dictionary<string, Song>)songsField.GetValue(service)!;
+        dict["testSong"] = new Song
+        {
+            track = new Track
+            {
+                su = "testSong",
+                tt = "Test Song",
+                an = "Artist",
+                mu = "http://example.com/test.dat", // has a .dat URL
+                @in = new In { gr = 5 },
+            }
+        };
+
+        var worker = CreateWorker(new ScraperOptions
+        {
+            DataDirectory = _tempDir,
+            DatabasePath = Path.Combine(_tempDir, "core.db"),
+            DeviceAuthPath = Path.Combine(_tempDir, "device.json"),
+            EnablePathGeneration = true,
+            MidiEncryptionKey = "0123456789abcdef0123456789abcdef",
+            CHOptPath = Path.Combine(_tempDir, "nonexistent_chopt"),
+        });
+
+        // PathGenerator will fail (no CHOpt binary) but TryGeneratePathsAsync
+        // should catch the exception and not propagate it
+        await worker.TryGeneratePathsAsync(service, force: false, CancellationToken.None);
+        // If we get here, the method caught the error gracefully
+    }
+
+    [Fact]
+    public async Task TryGeneratePathsAsync_persists_results_to_PathDataStore()
+    {
+        // 1) Create fake CHOpt script
+        string fakeChopt;
+        if (OperatingSystem.IsWindows())
+        {
+            fakeChopt = Path.Combine(_tempDir, "fake_chopt.bat");
+            File.WriteAllText(fakeChopt,
+                "@echo off\necho Total score: 99999\nset \"out=\"\n:p\nif \"%~1\"==\"\" goto d\nif \"%~1\"==\"-o\" set \"out=%~2\"\nshift\ngoto p\n:d\nif defined out echo PNG>\"%out%\"\n");
+        }
+        else
+        {
+            fakeChopt = Path.Combine(_tempDir, "fake_chopt.sh");
+            File.WriteAllText(fakeChopt,
+                "#!/bin/sh\necho 'Total score: 99999'\no=\"\"\nwhile [ \"$#\" -gt 0 ]; do case \"$1\" in -o) o=\"$2\"; shift ;; esac; shift; done\n[ -n \"$o\" ] && echo PNG > \"$o\"\n");
+            File.SetUnixFileMode(fakeChopt,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+
+        // 2) Create a minimal MIDI, encrypt with a known key
+        var midiKey = new byte[32];
+        System.Security.Cryptography.RandomNumberGenerator.Fill(midiKey);
+        var keyHex = Convert.ToHexString(midiKey);
+
+        using var midiMs = new MemoryStream();
+        midiMs.Write("MThd"u8);
+        WriteBE(midiMs, 6); WriteBE16(midiMs, 1); WriteBE16(midiMs, 1); WriteBE16(midiMs, 480);
+        var trk = new byte[] { 0x00, 0xFF, 0x2F, 0x00 };
+        midiMs.Write("MTrk"u8); WriteBE(midiMs, trk.Length); midiMs.Write(trk);
+        var midiBytes = midiMs.ToArray();
+
+        using var aes = System.Security.Cryptography.Aes.Create();
+        aes.Key = midiKey; aes.Mode = System.Security.Cryptography.CipherMode.ECB;
+        aes.Padding = System.Security.Cryptography.PaddingMode.Zeros;
+        var padded = new byte[(midiBytes.Length + 15) / 16 * 16];
+        Array.Copy(midiBytes, padded, midiBytes.Length);
+        var encrypted = aes.CreateEncryptor().TransformFinalBlock(padded, 0, padded.Length);
+
+        // 3) Mock HTTP to serve the encrypted .dat
+        var handler = new Helpers.MockHttpMessageHandler();
+        handler.EnqueueResponse(new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(encrypted),
+        });
+
+        // 4) Create a Songs table in core.db so PathDataStore can write
+        var dbPath = Path.Combine(_tempDir, "core.db");
+        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}"))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                CREATE TABLE IF NOT EXISTS Songs (
+                    SongId TEXT PRIMARY KEY, Title TEXT,
+                    MaxLeadScore INTEGER, MaxBassScore INTEGER, MaxDrumsScore INTEGER,
+                    MaxVocalsScore INTEGER, MaxProLeadScore INTEGER, MaxProBassScore INTEGER,
+                    DatFileHash TEXT, PathsGeneratedAt TEXT, CHOptVersion TEXT
+                );
+                INSERT INTO Songs (SongId, Title) VALUES ('testSong', 'Test Song');
+                """;
+            cmd.ExecuteNonQuery();
+        }
+
+        // 5) Load a festival service with a song that has a .dat URL
+        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+        var songsField = typeof(FestivalService).GetField("_songs", flags)!;
+        var dirtyField = typeof(FestivalService).GetField("_songsDirty", flags)!;
+        var songDict = (Dictionary<string, Song>)songsField.GetValue(service)!;
+        songDict["testSong"] = new Song
+        {
+            track = new Track
+            {
+                su = "testSong", tt = "Test Song", an = "Artist",
+                mu = "http://example.com/test.dat",
+                @in = new In { gr = 5 },
+            }
+        };
+        dirtyField.SetValue(service, true);
+
+        // 6) Create worker with real PathGenerator using fake CHOpt + mock HTTP
+        var opts = new ScraperOptions
+        {
+            DataDirectory = _tempDir,
+            DatabasePath = dbPath,
+            DeviceAuthPath = Path.Combine(_tempDir, "device.json"),
+            EnablePathGeneration = true,
+            MidiEncryptionKey = keyHex,
+            CHOptPath = fakeChopt,
+            PathGenerationParallelism = 2,
+        };
+
+        // Pre-check: ensure the key and CHOpt are valid from PathGenerator's perspective
+        Assert.True(File.Exists(fakeChopt), $"Fake CHOpt not found: {fakeChopt}");
+        Assert.Equal(64, keyHex.Length);
+
+        var worker = CreateWorkerWithHttp(opts, handler);
+
+        // 7) Run TryGeneratePathsAsync
+        await worker.TryGeneratePathsAsync(service, force: false, CancellationToken.None);
+
+        // 8) Verify results were persisted
+        var store = new PathDataStore(dbPath);
+        var hashes = store.GetDatFileHashes();
+        var allScores = store.GetAllMaxScores();
+
+        // If these assertions fail, the PathGenerator returned no results.
+        // Common causes: MIDI key not configured, CHOpt not found, HTTP failure.
+        Assert.True(hashes.Count > 0, $"No dat hashes found — PathGenerator returned no results. Handler requests: {handler.Requests.Count}");
+        Assert.True(allScores.ContainsKey("testSong"), $"testSong not in max scores. Hashes: {string.Join(",", hashes.Keys)}");
+        Assert.Equal(99999, allScores["testSong"].MaxLeadScore);
+    }
+
+    private static void WriteBE(Stream s, int v) { s.WriteByte((byte)(v>>24)); s.WriteByte((byte)(v>>16)); s.WriteByte((byte)(v>>8)); s.WriteByte((byte)v); }
+    private static void WriteBE16(Stream s, int v) { s.WriteByte((byte)(v>>8)); s.WriteByte((byte)v); }
 
     /// <summary>No-op HTTP handler for constructing sealed EpicAuthService instances.</summary>
     private sealed class NoOpHttpHandler : HttpMessageHandler

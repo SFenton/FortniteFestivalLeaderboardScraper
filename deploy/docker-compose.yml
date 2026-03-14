@@ -26,6 +26,8 @@ services:
       - EpicOAuth__ClientSecret=${EPIC_CLIENT_SECRET:?Set EPIC_CLIENT_SECRET in .env}
       - EpicOAuth__TokenEncryptionKey=${TOKEN_ENCRYPTION_KEY:?Set TOKEN_ENCRYPTION_KEY in .env}
       - Api__ApiKey=${API_KEY:?Set API_KEY in .env}
+      # ── Path generation (MIDI decryption key for CHOpt max score calculation) ──
+      - Scraper__MidiEncryptionKey=${MIDI_ENCRYPTION_KEY:-}
       # Set to true to disable background scraping (API-only mode)
       # - Scraper__ApiOnly=true
       # Override scraper settings via environment variables if needed:

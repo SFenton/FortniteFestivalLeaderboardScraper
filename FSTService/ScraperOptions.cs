@@ -90,4 +90,27 @@ public sealed class ScraperOptions
     /// Set via <c>--test "song name"</c> CLI argument.
     /// </summary>
     public string? TestSongQuery { get; set; }
+
+    // ─── Path Generation ───────────────────────────────────────
+
+    /// <summary>
+    /// Path to the CHOpt CLI binary. Relative paths are resolved from the working directory.
+    /// </summary>
+    public string CHOptPath { get; set; } = "tools/CHOpt";
+
+    /// <summary>
+    /// Hex-encoded 128-bit AES key for decrypting Fortnite Festival MIDI .dat files.
+    /// Can also be set via the FESTIVAL_MIDI_KEY environment variable.
+    /// </summary>
+    public string? MidiEncryptionKey { get; set; }
+
+    /// <summary>
+    /// Maximum number of concurrent CHOpt processes during path generation.
+    /// </summary>
+    public int PathGenerationParallelism { get; set; } = 4;
+
+    /// <summary>
+    /// Enable or disable automatic path generation when new songs are detected.
+    /// </summary>
+    public bool EnablePathGeneration { get; set; } = true;
 }

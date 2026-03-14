@@ -179,6 +179,24 @@ builder.Services.AddHttpClient<HistoryReconstructor>()
         AutomaticDecompression = System.Net.DecompressionMethods.All,
     });
 
+// ─── Path Generation ────────────────────────────────────────
+
+builder.Services.AddSingleton<PathDataStore>(sp =>
+{
+    var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
+    var dbPath = Path.GetFullPath(opts.DatabasePath);
+    return new PathDataStore(dbPath);
+});
+
+builder.Services.AddHttpClient<PathGenerator>()
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        MaxConnectionsPerServer = 8,
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+        AutomaticDecompression = System.Net.DecompressionMethods.All,
+    });
+
 builder.Services.AddSingleton<UserAuthService>();
 
 // Core FestivalService — song catalog sync. Shared with API for /api/songs.

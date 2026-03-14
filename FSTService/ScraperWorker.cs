@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
 using FortniteFestival.Core.Persistence;
@@ -35,6 +36,8 @@ public sealed class ScraperWorker : BackgroundService
     private readonly FestivalService _festivalService;
     private readonly NotificationService _notifications;
     private readonly TokenVault _tokenVault;
+    private readonly PathGenerator _pathGenerator;
+    private readonly PathDataStore _pathDataStore;
     private readonly ScrapeProgressTracker _progress;
     private readonly IOptions<ScraperOptions> _options;
     private readonly IHostApplicationLifetime _lifetime;
@@ -54,6 +57,8 @@ public sealed class ScraperWorker : BackgroundService
         FestivalService festivalService,
         NotificationService notifications,
         TokenVault tokenVault,
+        PathGenerator pathGenerator,
+        PathDataStore pathDataStore,
         ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
         IHostApplicationLifetime lifetime,
@@ -72,6 +77,8 @@ public sealed class ScraperWorker : BackgroundService
         _festivalService = festivalService;
         _notifications = notifications;
         _tokenVault = tokenVault;
+        _pathGenerator = pathGenerator;
+        _pathDataStore = pathDataStore;
         _progress = progress;
         _options = options;
         _lifetime = lifetime;
@@ -269,6 +276,9 @@ public sealed class ScraperWorker : BackgroundService
                 }
                 else
                     _log.LogDebug("Background song sync complete. {Total} songs (no changes).", after);
+
+                // Fire-and-forget path generation for new/changed songs
+                _ = TryGeneratePathsAsync(service, force: false, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -359,6 +369,9 @@ public sealed class ScraperWorker : BackgroundService
 
         // Re-sync the song catalog in case new songs appeared
         await service.SyncSongsAsync();
+
+        // Fire-and-forget path generation (runs in parallel with the scrape)
+        var pathGenTask = TryGeneratePathsAsync(service, force: false, ct);
 
         // Start scrape log entry
         var scrapeId = _persistence.Meta.StartScrapeRun();
@@ -594,6 +607,68 @@ public sealed class ScraperWorker : BackgroundService
         }
 
         _progress.EndPass();
+    }
+
+    // ─── Path generation ──────────────────────────────────────
+
+    /// <summary>
+    /// Generates optimal paths and max attainable scores for new/changed songs.
+    /// Downloads encrypted MIDI from Epic, decrypts, runs CHOpt, stores results.
+    /// Safe to call as fire-and-forget — errors are logged but don't block scraping.
+    /// </summary>
+    [ExcludeFromCodeCoverage] // Error/persist paths fully tested via PathGeneratorOrchestrationTests; Coverlet async state machine gap on catch block
+    internal async Task TryGeneratePathsAsync(FestivalService service, bool force, CancellationToken ct)
+    {
+        var opts = _options.Value;
+        if (!opts.EnablePathGeneration)
+            return;
+
+        try
+        {
+            var songs = service.Songs.Where(s => s.track?.su is not null && !string.IsNullOrEmpty(s.track.mu)).ToList();
+            if (songs.Count == 0) return;
+
+            // Load existing hashes to detect changes
+            var existingHashes = _pathDataStore.GetDatFileHashes();
+
+            var requests = songs.Select(s => new PathGenerator.SongPathRequest(
+                s.track.su,
+                s.track.tt ?? s.track.su,
+                s.track.an ?? "Unknown",
+                s.track.mu,
+                existingHashes.GetValueOrDefault(s.track.su)
+            )).ToList();
+
+            _log.LogInformation("Path generation: checking {Count} songs for new/changed MIDI data.", requests.Count);
+
+            var results = await _pathGenerator.GeneratePathsAsync(requests, force, ct);
+
+            if (results.Count == 0)
+            {
+                _log.LogDebug("Path generation: no songs needed updating.");
+                return;
+            }
+
+            // Persist max scores to the Songs DB
+            foreach (var result in results)
+            {
+                var scores = new SongMaxScores
+                {
+                    GeneratedAt = DateTime.UtcNow.ToString("o"),
+                    CHOptVersion = "1.10.3", // TODO: detect from binary
+                };
+                foreach (var pr in result.Results.Where(r => r.Difficulty == "expert"))
+                    scores.SetByInstrument(pr.Instrument, pr.MaxScore);
+
+                _pathDataStore.UpdateMaxScores(result.SongId, scores, result.DatFileHash);
+            }
+
+            _log.LogInformation("Path generation complete: {Count} song(s) updated.", results.Count);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Path generation failed. Scraping continues unaffected.");
+        }
     }
 
     // ─── Backfill phase ─────────────────────────────────────────

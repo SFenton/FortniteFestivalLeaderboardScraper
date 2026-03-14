@@ -166,6 +166,16 @@ CREATE TABLE IF NOT EXISTS Scores (
                         AddColumn("PlasticBassDiff", "INTEGER");
                         AddColumn("PlasticDrumsDiff", "INTEGER");
                         AddColumn("ProVocalsDiff", "INTEGER");
+                        // Path generation: max attainable scores per instrument
+                        AddColumn("MaxLeadScore", "INTEGER");
+                        AddColumn("MaxBassScore", "INTEGER");
+                        AddColumn("MaxDrumsScore", "INTEGER");
+                        AddColumn("MaxVocalsScore", "INTEGER");
+                        AddColumn("MaxProLeadScore", "INTEGER");
+                        AddColumn("MaxProBassScore", "INTEGER");
+                        AddColumn("DatFileHash", "TEXT");
+                        AddColumn("PathsGeneratedAt", "TEXT");
+                        AddColumn("CHOptVersion", "TEXT");
                         // Scores table rank migrations
                         try
                         {

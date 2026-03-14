@@ -95,6 +95,51 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.True(first.TryGetProperty("title", out _));
     }
 
+    // ─── Path Images ────────────────────────────────────────────
+
+    [Fact]
+    public async Task ApiPaths_InvalidInstrument_Returns400()
+    {
+        var response = await _client.GetAsync("/api/paths/testSong1/BadInstrument/expert");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ApiPaths_InvalidDifficulty_Returns400()
+    {
+        var response = await _client.GetAsync("/api/paths/testSong1/Solo_Guitar/nightmare");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ApiPaths_ValidButMissing_Returns404()
+    {
+        var response = await _client.GetAsync("/api/paths/testSong1/Solo_Guitar/expert");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ApiPaths_AllowedInstruments_AreAccepted()
+    {
+        // All valid instruments should return 404 (not generated yet), not 400
+        var instruments = new[] { "Solo_Guitar", "Solo_Bass", "Solo_Drums", "Solo_Vocals", "Solo_PeripheralGuitar", "Solo_PeripheralBass" };
+        foreach (var inst in instruments)
+        {
+            var response = await _client.GetAsync($"/api/paths/testSong1/{inst}/easy");
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task ApiPaths_AllDifficulties_AreAccepted()
+    {
+        foreach (var diff in new[] { "easy", "medium", "hard", "expert" })
+        {
+            var response = await _client.GetAsync($"/api/paths/testSong1/Solo_Guitar/{diff}");
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        }
+    }
+
     // ─── Leaderboard ────────────────────────────────────────────
 
     [Fact]

@@ -78,35 +78,88 @@ public static class ApiEndpoints
         .WithTags("Progress")
         .RequireRateLimiting("public");
 
-        app.MapGet("/api/songs", (FestivalService service) =>
+        app.MapGet("/api/songs", (FestivalService service, PathDataStore pathStore) =>
         {
+            var maxScoresMap = pathStore.GetAllMaxScores();
             var songs = service.Songs
                 .Where(s => s.track?.su is not null)
-                .Select(s => new
+                .Select(s =>
                 {
-                    songId     = s.track.su,
-                    title      = s.track.tt,
-                    artist     = s.track.an,
-                    album      = s.track.ab,
-                    year       = s.track.ry,
-                    tempo      = s.track.mt,
-                    albumArt   = s.track.au,
-                    genres     = s.track.ge,
-                    difficulty = s.track.@in is null ? null : new
+                    maxScoresMap.TryGetValue(s.track.su, out var ms);
+                    return new
                     {
-                        guitar     = s.track.@in.gr,
-                        bass       = s.track.@in.ba,
-                        vocals     = s.track.@in.vl,
-                        drums      = s.track.@in.ds,
-                        proGuitar  = s.track.@in.pg,
-                        proBass    = s.track.@in.pb,
-                    }
+                        songId     = s.track.su,
+                        title      = s.track.tt,
+                        artist     = s.track.an,
+                        album      = s.track.ab,
+                        year       = s.track.ry,
+                        tempo      = s.track.mt,
+                        albumArt   = s.track.au,
+                        genres     = s.track.ge,
+                        difficulty = s.track.@in is null ? null : new
+                        {
+                            guitar     = s.track.@in.gr,
+                            bass       = s.track.@in.ba,
+                            vocals     = s.track.@in.vl,
+                            drums      = s.track.@in.ds,
+                            proGuitar  = s.track.@in.pg,
+                            proBass    = s.track.@in.pb,
+                        },
+                        maxScores = ms is null ? null : new
+                        {
+                            Solo_Guitar           = ms.MaxLeadScore,
+                            Solo_Bass             = ms.MaxBassScore,
+                            Solo_Drums            = ms.MaxDrumsScore,
+                            Solo_Vocals           = ms.MaxVocalsScore,
+                            Solo_PeripheralGuitar = ms.MaxProLeadScore,
+                            Solo_PeripheralBass   = ms.MaxProBassScore,
+                        },
+                        pathsGeneratedAt = ms?.GeneratedAt,
+                    };
                 })
                 .ToList();
 
             return Results.Ok(new { count = songs.Count, songs });
         })
         .WithTags("Songs")
+        .RequireRateLimiting("public");
+
+        // ── Path images ─────────────────────────────────────────
+        app.MapGet("/api/paths/{songId}/{instrument}/{difficulty}", (
+            string songId,
+            string instrument,
+            string difficulty,
+            IOptions<ScraperOptions> options) =>
+        {
+            // Validate instrument name to prevent path traversal
+            var allowedInstruments = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "Solo_Guitar", "Solo_Bass", "Solo_Drums",
+                "Solo_Vocals", "Solo_PeripheralGuitar", "Solo_PeripheralBass"
+            };
+            if (!allowedInstruments.Contains(instrument))
+                return Results.BadRequest(new { error = "Invalid instrument name." });
+
+            var allowedDifficulties = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "easy", "medium", "hard", "expert"
+            };
+            if (!allowedDifficulties.Contains(difficulty))
+                return Results.BadRequest(new { error = "Invalid difficulty. Use easy, medium, hard, or expert." });
+
+            var dataDir = Path.GetFullPath(options.Value.DataDirectory);
+            var imagePath = Path.Combine(dataDir, "paths", songId, instrument, $"{difficulty.ToLowerInvariant()}.png");
+
+            // Ensure the resolved path is still within the data directory
+            if (!Path.GetFullPath(imagePath).StartsWith(dataDir, StringComparison.OrdinalIgnoreCase))
+                return Results.BadRequest(new { error = "Invalid path." });
+
+            if (!File.Exists(imagePath))
+                return Results.NotFound(new { error = "Path image not yet generated for this song/instrument/difficulty." });
+
+            return Results.File(imagePath, "image/png");
+        })
+        .WithTags("Paths")
         .RequireRateLimiting("public");
 
         app.MapGet("/api/leaderboard/{songId}/{instrument}", (
@@ -643,6 +696,79 @@ public static class ApiEndpoints
             });
         })
         .WithTags("FirstSeenSeason")
+        .RequireAuthorization()
+        .RequireRateLimiting("protected");
+
+        // ── Path regeneration (admin) ───────────────────────────
+        app.MapPost("/api/admin/regenerate-paths", async (
+            string? songId,
+            bool? force,
+            PathGenerator pathGenerator,
+            PathDataStore pathStore,
+            FestivalService festivalService,
+            IOptions<ScraperOptions> scraperOptions,
+            ILogger<PathGenerator> logger,
+            CancellationToken ct) =>
+        {
+            if (!scraperOptions.Value.EnablePathGeneration)
+                return Results.BadRequest(new { error = "Path generation is disabled." });
+
+            if (festivalService.Songs.Count == 0)
+            {
+                await festivalService.InitializeAsync();
+                if (festivalService.Songs.Count == 0)
+                    return Results.Problem("Song catalog is empty.");
+            }
+
+            var existingHashes = pathStore.GetDatFileHashes();
+            var songs = festivalService.Songs
+                .Where(s => s.track?.su is not null && !string.IsNullOrEmpty(s.track.mu))
+                .Where(s => songId is null || s.track.su == songId)
+                .Select(s => new PathGenerator.SongPathRequest(
+                    s.track.su,
+                    s.track.tt ?? s.track.su,
+                    s.track.an ?? "Unknown",
+                    s.track.mu,
+                    existingHashes.GetValueOrDefault(s.track.su)))
+                .ToList();
+
+            if (songs.Count == 0)
+                return Results.NotFound(new { error = "No matching songs found." });
+
+            // Fire-and-forget — returns immediately
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var results = await pathGenerator.GeneratePathsAsync(songs, force ?? false, ct);
+                    foreach (var result in results)
+                    {
+                        var scores = new SongMaxScores
+                        {
+                            GeneratedAt = DateTime.UtcNow.ToString("o"),
+                            CHOptVersion = "1.10.3",
+                        };
+                        foreach (var pr in result.Results.Where(r => r.Difficulty == "expert"))
+                            scores.SetByInstrument(pr.Instrument, pr.MaxScore);
+                        pathStore.UpdateMaxScores(result.SongId, scores, result.DatFileHash);
+                    }
+                    logger.LogInformation("Admin path regeneration complete: {Count} song(s) updated.", results.Count);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Admin path regeneration failed.");
+                }
+            }, ct);
+
+            return Results.Accepted(value: new
+            {
+                message = songId is not null
+                    ? $"Path regeneration started for song {songId}."
+                    : $"Path regeneration started for {songs.Count} song(s).",
+                force = force ?? false,
+            });
+        })
+        .WithTags("Paths")
         .RequireAuthorization()
         .RequireRateLimiting("protected");
 

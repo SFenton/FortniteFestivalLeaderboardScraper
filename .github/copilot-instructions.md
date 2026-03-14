@@ -32,14 +32,15 @@ A self-hosted ASP.NET Core application that runs as both an HTTP API server and 
 **Scrape pass phases** (executed sequentially in ScraperWorker):
 1. Auth token acquisition (Epic device auth)
 2. Song catalog sync (via FestivalService)
-3. Global leaderboard scrape (pipelined writes to sharded DBs)
-4. FirstSeenSeason calculation
-5. Account name resolution (Epic API)
-6. Personal DB rebuild (for changed accounts)
-7. Post-scrape refresh (registered users' stale entries)
-8. Backfill missing scores (LookupAccountAsync for below-60K scores)
-9. History reconstruction (seasonal leaderboard walks)
-10. Expired session cleanup
+3. Path generation — runs in parallel with scrape (download MIDI .dat, decrypt, CHOpt → max scores + path images)
+4. Global leaderboard scrape (pipelined writes to sharded DBs)
+5. FirstSeenSeason calculation
+6. Account name resolution (Epic API)
+7. Personal DB rebuild (for changed accounts)
+8. Post-scrape refresh (registered users' stale entries)
+9. Backfill missing scores (LookupAccountAsync for below-60K scores)
+10. History reconstruction (seasonal leaderboard walks)
+11. Expired session cleanup
 
 ### Key Source Layout
 
@@ -77,6 +78,10 @@ FSTService/
     BackfillQueue.cs               — Queues users for backfill processing
     ScrapeProgressTracker.cs       — Live progress exposed to API
     ResilientHttpExecutor.cs       — Retry/circuit-breaker HTTP wrapper
+    PathGenerator.cs               — Orchestrates MIDI download/decrypt/CHOpt for max scores
+    MidiCryptor.cs                 — AES-ECB decrypt/encrypt for .dat ↔ .mid
+    MidiTrackRenamer.cs            — Produces instrument-specific MIDI variants for CHOpt
+    PathDataStore.cs               — Reads/writes max scores + .dat hashes in Songs DB
 ```
 
 ### FortniteFestival.Core
