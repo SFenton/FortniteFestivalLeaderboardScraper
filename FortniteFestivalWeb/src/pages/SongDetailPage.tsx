@@ -83,7 +83,8 @@ export default function SongDetailPage() {
   // Track whether the component mounted with cached data so effects can skip the initial fetch.
   // After the first render cycle, clear the flag so future prop changes (e.g. player swap) refetch.
   // This must be declared AFTER the fetch effects so it runs last in the effect order.
-  const mountedWithCacheRef = useRef(!!cached);
+  // The cache is only fully valid when player-specific data also matches (or no player is selected).
+  const mountedWithCacheRef = useRef(!!cached && (!player || !!hasCachedPlayer));
 
   const song = songs.find((s) => s.songId === songId);
   const scrollRef = useRef<HTMLDivElement>(null);
