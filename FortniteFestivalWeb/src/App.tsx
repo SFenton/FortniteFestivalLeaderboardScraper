@@ -183,7 +183,7 @@ function AppShell() {
         {isMobile ? (
           navTitle ? (
             <div key={location.pathname} className="sa-top" style={{ ...styles.mobileHeader, animation: 'fadeIn 300ms ease-out' }}>
-              {backFallback && (IS_IOS || IS_ANDROID || IS_PWA) ? (
+              {backFallback ? (
                 <a
                   href="#"
                   onClick={(e) => { e.preventDefault(); navigate(-1); }}
@@ -200,7 +200,7 @@ function AppShell() {
               )}
             </div>
           ) : (
-            backFallback && (IS_IOS || IS_ANDROID || IS_PWA) ? <BackLink key={location.pathname} fallback={backFallback} /> : null
+            backFallback ? <BackLink key={location.pathname} fallback={backFallback} /> : null
           )
         ) : (
           <nav className="sa-top" style={styles.nav}>
