@@ -295,7 +295,24 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      {isMobile && location.pathname !== '/songs' && location.pathname !== '/suggestions' && (
+      {isMobile && location.pathname.endsWith('/history') && (
+        <FloatingActionButton
+          mode="players"
+          actionGroups={[
+            [
+              { label: 'Sort Player Scores', icon: <IoSwapVerticalSharp size={18} />, onPress: () => fabSearch.openPlayerHistorySort() },
+            ],
+            [
+              { label: 'Find Player', icon: <IoSearch size={18} />, onPress: () => setFindPlayerOpen(true) },
+              player
+                ? { label: player.displayName, icon: <IoPerson size={18} />, onPress: () => setPlayerModalOpen(true) }
+                : { label: 'Select Player Profile', icon: <IoPerson size={18} />, onPress: () => setPlayerModalOpen(true) },
+            ],
+          ]}
+          onPress={() => {}}
+        />
+      )}
+      {isMobile && location.pathname !== '/songs' && location.pathname !== '/suggestions' && !location.pathname.endsWith('/history') && (
         <FloatingActionButton
           mode="players"
           actionGroups={[

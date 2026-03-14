@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
+import { IoSwapVerticalSharp } from 'react-icons/io5';
 import { useFestival } from '../contexts/FestivalContext';
 import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
+import { useFabSearch } from '../contexts/FabSearchContext';
 import { api } from '../api/client';
 import {
   INSTRUMENT_LABELS,
@@ -10,10 +12,13 @@ import {
 } from '../models';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import SeasonPill from '../components/SeasonPill';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, goldOutlineSkew, frostedCard } from '../theme';
+import PlayerScoreSortModal from '../components/PlayerScoreSortModal';
+import type { PlayerScoreSortMode, PlayerScoreSortDraft } from '../components/PlayerScoreSortModal';
+import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldOutlineSkew, frostedCard } from '../theme';
 import { staggerDelay, estimateVisibleCount } from '../utils/stagger';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { IS_IOS, IS_ANDROID, IS_PWA } from '../utils/platform';
 
 function accuracyColor(pct: number): string {
   const t = Math.min(Math.max(pct / 100, 0), 1);
@@ -59,6 +64,35 @@ export default function PlayerHistoryPage() {
   const [headerCollapsed, setHeaderCollapsed] = useState(hasFab);
   const [loadPhase, setLoadPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>('loading');
   const updateScrollMask = useScrollMask(scrollRef, [loadPhase, history.length]);
+
+  // Sort state
+  const DEFAULT_SORT: PlayerScoreSortDraft = { sortMode: 'score', sortAscending: false };
+  const [sortMode, setSortMode] = useState<PlayerScoreSortMode>('score');
+  const [sortAscending, setSortAscending] = useState(false);
+  const [showSort, setShowSort] = useState(false);
+  const [sortDraft, setSortDraft] = useState<PlayerScoreSortDraft>({ sortMode: 'score', sortAscending: false });
+  const [staggerKey, setStaggerKey] = useState(0);
+
+  const openSort = useCallback(() => {
+    setSortDraft({ sortMode, sortAscending });
+    setShowSort(true);
+  }, [sortMode, sortAscending]);
+  const applySort = () => {
+    setSortMode(sortDraft.sortMode);
+    setSortAscending(sortDraft.sortAscending);
+    setShowSort(false);
+    setStaggerKey(k => k + 1);
+  };
+  const resetSort = () => {
+    setSortDraft({ ...DEFAULT_SORT });
+  };
+
+  // Register sort action for FAB
+  const fabSearch = useFabSearch();
+  useEffect(() => {
+    fabSearch.registerPlayerHistoryActions({ openSort });
+  });
+
   const handleScroll = useCallback(() => {
     updateScrollMask();
     if (hasFab) return;
@@ -79,8 +113,7 @@ export default function PlayerHistoryPage() {
       .then((res) => {
         if (!cancelled) {
           const filtered = res.history
-            .filter(h => h.instrument === instKey)
-            .sort((a, b) => b.newScore - a.newScore);
+            .filter(h => h.instrument === instKey);
           setHistory(filtered);
         }
       })
@@ -110,6 +143,39 @@ export default function PlayerHistoryPage() {
     return <div style={styles.center}>Not found</div>;
   }
 
+  const sortedHistory = useMemo(() => {
+    const arr = [...history];
+    const dir = sortAscending ? 1 : -1;
+    arr.sort((a, b) => {
+      switch (sortMode) {
+        case 'date': {
+          const da = a.scoreAchievedAt ?? a.changedAt ?? '';
+          const db = b.scoreAchievedAt ?? b.changedAt ?? '';
+          return dir * da.localeCompare(db);
+        }
+        case 'score':
+          return dir * (a.newScore - b.newScore);
+        case 'accuracy': {
+          const cmp = dir * ((a.accuracy ?? 0) - (b.accuracy ?? 0));
+          if (cmp !== 0) return cmp;
+          // Tiebreakers: FC first, then score, then date
+          const fcA = a.isFullCombo ? 1 : 0;
+          const fcB = b.isFullCombo ? 1 : 0;
+          if (fcA !== fcB) return dir * (fcA - fcB);
+          if (a.newScore !== b.newScore) return dir * (a.newScore - b.newScore);
+          const da = a.scoreAchievedAt ?? a.changedAt ?? '';
+          const db = b.scoreAchievedAt ?? b.changedAt ?? '';
+          return dir * da.localeCompare(db);
+        }
+        case 'season':
+          return dir * ((a.season ?? 0) - (b.season ?? 0));
+        default:
+          return 0;
+      }
+    });
+    return arr;
+  }, [history, sortMode, sortAscending]);
+
   const scoreWidth = useMemo(() => {
     const maxLen = Math.max(
       ...history.map((h) => h.newScore.toLocaleString().length),
@@ -119,13 +185,13 @@ export default function PlayerHistoryPage() {
   }, [history]);
 
   const highScoreIndex = useMemo(() => {
-    if (history.length === 0) return -1;
+    if (sortedHistory.length === 0) return -1;
     let best = 0;
-    for (let i = 1; i < history.length; i++) {
-      if (history[i]!.newScore > history[best]!.newScore) best = i;
+    for (let i = 1; i < sortedHistory.length; i++) {
+      if (sortedHistory[i]!.newScore > sortedHistory[best]!.newScore) best = i;
     }
     return best;
-  }, [history]);
+  }, [sortedHistory]);
 
   return (
     <div style={styles.page}>
@@ -183,6 +249,11 @@ export default function PlayerHistoryPage() {
                 </div>
               </div>
               <div style={styles.headerRight}>
+                {!hasFab && !IS_IOS && !IS_ANDROID && !IS_PWA && (
+                  <button style={styles.sortBtn} onClick={openSort} title="Sort" aria-label="Sort player scores">
+                    <IoSwapVerticalSharp size={18} />
+                  </button>
+                )}
                 <div style={{
                   width: 56,
                   height: 56,
@@ -224,8 +295,8 @@ export default function PlayerHistoryPage() {
               </div>
             )}
             {loadPhase === 'contentIn' && (
-            <div style={{ ...styles.list, ...(hasFab ? { paddingBottom: 96 } : {}) }}>
-              {history.map((h, i) => {
+            <div key={staggerKey} style={{ ...styles.list, ...(hasFab ? { paddingBottom: 96 } : {}) }}>
+              {sortedHistory.map((h, i) => {
                 const delay = staggerDelay(i, 125, estimateVisibleCount(56));
                 const staggerStyle: React.CSSProperties | undefined = delay != null
                   ? { opacity: 0, animation: `fadeInUp 400ms ease-out ${delay}ms forwards` }
@@ -272,7 +343,7 @@ export default function PlayerHistoryPage() {
                 </div>
                 );
               })}
-              {history.length === 0 && (
+              {sortedHistory.length === 0 && (
                 <div style={styles.emptyRow}>No score history for this instrument</div>
               )}
             </div>
@@ -281,6 +352,16 @@ export default function PlayerHistoryPage() {
         )}
       </div>
       </div>
+
+      <PlayerScoreSortModal
+        visible={showSort}
+        draft={sortDraft}
+        savedDraft={{ sortMode, sortAscending }}
+        onChange={setSortDraft}
+        onCancel={() => setShowSort(false)}
+        onReset={resetSort}
+        onApply={applySort}
+      />
     </div>
   );
 }
@@ -344,6 +425,18 @@ const styles: Record<string, React.CSSProperties> = {
     gap: Gap.md,
     flexShrink: 0,
     paddingRight: Gap.md,
+  },
+  sortBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative' as const,
+    width: Size.control,
+    height: Size.control,
+    borderRadius: Radius.xs,
+    ...frostedCard,
+    color: Colors.textTertiary,
+    cursor: 'pointer',
   },
   headerArt: {
     width: 80,
