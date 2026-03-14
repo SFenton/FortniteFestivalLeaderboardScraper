@@ -18,6 +18,7 @@ public sealed class PathGenerator
 {
     private readonly HttpClient _http;
     private readonly IOptions<ScraperOptions> _options;
+    private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<PathGenerator> _log;
     private readonly SemaphoreSlim _concurrency;
 
@@ -41,10 +42,12 @@ public sealed class PathGenerator
     public PathGenerator(
         HttpClient http,
         IOptions<ScraperOptions> options,
+        ScrapeProgressTracker progress,
         ILogger<PathGenerator> log)
     {
         _http = http;
         _options = options;
+        _progress = progress;
         _log = log;
         _concurrency = new SemaphoreSlim(options.Value.PathGenerationParallelism);
     }
@@ -100,6 +103,7 @@ public sealed class PathGenerator
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _log.LogError(ex, "Path generation failed for song {SongId} ({Title}).", song.SongId, song.Title);
+                _progress.PathGenSongFailed();
                 return null;
             }
         });
@@ -121,6 +125,7 @@ public sealed class PathGenerator
         if (string.IsNullOrEmpty(song.DatUrl))
         {
             _log.LogDebug("Song {SongId} has no .dat URL. Skipping.", song.SongId);
+            _progress.PathGenSongSkipped();
             return null;
         }
 
@@ -129,8 +134,11 @@ public sealed class PathGenerator
         if (!force && lastModStr is not null && lastModStr == song.ExistingLastModified)
         {
             _log.LogDebug("Song {SongId} lastModified unchanged ({LastMod}). Skipping download.", song.SongId, lastModStr);
+            _progress.PathGenSongSkipped();
             return null;
         }
+
+        _progress.PathGenProcessing(song.Title);
 
         // Download .dat file
         byte[] datBytes;
@@ -141,6 +149,7 @@ public sealed class PathGenerator
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Failed to download .dat for {SongId}.", song.SongId);
+            _progress.PathGenSongFailed();
             return null;
         }
 
@@ -149,6 +158,7 @@ public sealed class PathGenerator
         if (!force && hash == song.ExistingDatHash)
         {
             _log.LogDebug("Song {SongId} .dat unchanged (hash={Hash}). Skipping.", song.SongId, hash[..12]);
+            _progress.PathGenSongSkipped();
             return null;
         }
 
@@ -235,6 +245,8 @@ public sealed class PathGenerator
                 string.Join(", ", results
                     .Where(r => r.Difficulty == "expert" && r.MaxScore.HasValue)
                     .Select(r => $"{r.Instrument}={r.MaxScore}")));
+
+            _progress.PathGenSongCompleted();
 
             return new SongPathResult(song.SongId, hash, results);
         }

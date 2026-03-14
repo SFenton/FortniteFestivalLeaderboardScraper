@@ -119,7 +119,7 @@ public sealed class PathGeneratorOrchestrationTests : IDisposable
             PathGenerationParallelism = 2,
         };
         var http = new HttpClient(handler);
-        return new PathGenerator(http, Options.Create(opts), Substitute.For<ILogger<PathGenerator>>());
+        return new PathGenerator(http, Options.Create(opts), new ScrapeProgressTracker(), Substitute.For<ILogger<PathGenerator>>());
     }
 
     [Fact]

@@ -138,6 +138,7 @@ public class ScraperWorkerModeTests : IDisposable
         var pathGenerator = new PathGenerator(
             http,
             options,
+            _progress,
             Substitute.For<ILogger<PathGenerator>>());
 
         var pathDataStore = new PathDataStore(

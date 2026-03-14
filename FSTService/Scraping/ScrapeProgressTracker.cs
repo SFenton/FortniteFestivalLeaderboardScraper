@@ -193,6 +193,57 @@ public sealed class ScrapeProgressTracker
         _phase = ScrapePhase.Idle;
     }
 
+    // ─── Path generation (runs in parallel with scrape) ─────
+
+    private volatile bool _pathGenRunning;
+    private volatile int _pathGenTotal;
+    private int _pathGenCompleted;
+    private int _pathGenSkipped;
+    private int _pathGenFailed;
+    private volatile string? _pathGenCurrentSong;
+    private DateTime? _pathGenStartedAtUtc;
+    private readonly Stopwatch _pathGenStopwatch = new();
+
+    public void BeginPathGeneration(int totalSongs)
+    {
+        _pathGenTotal = totalSongs;
+        _pathGenCompleted = 0;
+        _pathGenSkipped = 0;
+        _pathGenFailed = 0;
+        _pathGenCurrentSong = null;
+        _pathGenStartedAtUtc = DateTime.UtcNow;
+        _pathGenStopwatch.Restart();
+        _pathGenRunning = true;
+    }
+
+    public void PathGenProcessing(string songTitle)
+    {
+        _pathGenCurrentSong = songTitle;
+    }
+
+    public void PathGenSongCompleted()
+    {
+        Interlocked.Increment(ref _pathGenCompleted);
+        _pathGenCurrentSong = null;
+    }
+
+    public void PathGenSongSkipped()
+    {
+        Interlocked.Increment(ref _pathGenSkipped);
+    }
+
+    public void PathGenSongFailed()
+    {
+        Interlocked.Increment(ref _pathGenFailed);
+    }
+
+    public void EndPathGeneration()
+    {
+        _pathGenStopwatch.Stop();
+        _pathGenRunning = false;
+        _pathGenCurrentSong = null;
+    }
+
     // ─── Snapshot for API ───────────────────────────────────
 
     /// <summary>
@@ -205,6 +256,7 @@ public sealed class ScrapeProgressTracker
             Current = BuildCurrentOperationSnapshot(),
             CompletedOperations = _completedOperations.ToList(), // defensive copy
             PassElapsedSeconds = Math.Round(_passStopwatch.Elapsed.TotalSeconds, 1),
+            PathGeneration = BuildPathGenerationSnapshot(),
         };
     }
 
@@ -343,6 +395,31 @@ public sealed class ScrapeProgressTracker
         }
         return result;
     }
+
+    private PathGenerationProgress? BuildPathGenerationSnapshot()
+    {
+        if (!_pathGenRunning && _pathGenStartedAtUtc is null)
+            return null; // never started
+
+        var elapsed = _pathGenStopwatch.Elapsed;
+        var total = _pathGenTotal;
+        var completed = _pathGenCompleted;
+        var skipped = _pathGenSkipped;
+        var processed = completed + skipped + _pathGenFailed;
+
+        return new PathGenerationProgress
+        {
+            Running = _pathGenRunning,
+            StartedAtUtc = _pathGenStartedAtUtc,
+            ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 1),
+            TotalSongs = total,
+            Completed = completed,
+            Skipped = skipped,
+            Failed = _pathGenFailed,
+            ProgressPercent = total > 0 ? Math.Round((double)processed / total * 100.0, 1) : 0,
+            CurrentSong = _pathGenCurrentSong,
+        };
+    }
 }
 
 // ─── Snapshot DTOs ──────────────────────────────────────────
@@ -356,6 +433,8 @@ public sealed class ProgressResponse
     public List<OperationSnapshot> CompletedOperations { get; init; } = new();
     /// <summary>Total wall-clock seconds since the pass started.</summary>
     public double PassElapsedSeconds { get; init; }
+    /// <summary>Path generation progress (runs in parallel with scraping). Null if never started.</summary>
+    public PathGenerationProgress? PathGeneration { get; init; }
 }
 
 /// <summary>
@@ -399,4 +478,25 @@ public sealed class PageProgress
     public int DiscoveredTotal { get; init; }
     public bool DiscoveryComplete { get; init; }
     public int LeaderboardsDiscovered { get; init; }
+}
+
+/// <summary>
+/// Progress of the parallel path generation task.
+/// </summary>
+public sealed class PathGenerationProgress
+{
+    /// <summary>True if path generation is currently running.</summary>
+    public bool Running { get; init; }
+    public DateTime? StartedAtUtc { get; init; }
+    public double ElapsedSeconds { get; init; }
+    public int TotalSongs { get; init; }
+    /// <summary>Songs that were downloaded, decrypted, and had CHOpt run.</summary>
+    public int Completed { get; init; }
+    /// <summary>Songs skipped because lastModified or .dat hash was unchanged.</summary>
+    public int Skipped { get; init; }
+    /// <summary>Songs that failed (download error, decrypt error, CHOpt error).</summary>
+    public int Failed { get; init; }
+    public double ProgressPercent { get; init; }
+    /// <summary>Title of the song currently being processed, or null.</summary>
+    public string? CurrentSong { get; init; }
 }
