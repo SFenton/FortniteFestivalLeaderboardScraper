@@ -181,9 +181,11 @@ export default function SuggestionsPage({ accountId }: Props) {
 
   // Register suggestions filter for FAB
   const fabSearch = useFabSearch();
+  const openFilterRef = useRef(openFilter);
+  openFilterRef.current = openFilter;
   useEffect(() => {
-    fabSearch.registerSuggestionsActions({ openFilter });
-  });
+    fabSearch.registerSuggestionsActions({ openFilter: () => openFilterRef.current() });
+  }, [fabSearch]);
 
   const instrumentVisibility = useMemo(() => ({
     showLead: appSettings.showLead,
@@ -252,9 +254,9 @@ export default function SuggestionsPage({ accountId }: Props) {
     }
 
     // Either visible is still too sparse OR raw grew with nothing new visible.
-    // Schedule another loadMore so the user isn't stuck.
-    const id = requestAnimationFrame(() => loadMore());
-    return () => cancelAnimationFrame(id);
+    // Use setTimeout to yield to the browser between batches and avoid a hot loop.
+    const id = setTimeout(() => loadMore(), 100);
+    return () => clearTimeout(id);
   }, [categories.length, visibleCategories.length, hasMore, filterExhausted, loadMore]);
 
   const effectiveHasMore = hasMore && !filterExhausted;
@@ -266,13 +268,13 @@ export default function SuggestionsPage({ accountId }: Props) {
     if (!effectiveHasMore) return;
     const el = scrollRef.current;
     if (!el) return;
-    // Wait one frame so the DOM has updated with the latest content.
-    const id = requestAnimationFrame(() => {
+    // Wait briefly so the DOM has updated with the latest content.
+    const id = setTimeout(() => {
       if (el.scrollHeight <= el.clientHeight) {
         loadMore();
       }
-    });
-    return () => cancelAnimationFrame(id);
+    }, 100);
+    return () => clearTimeout(id);
   }, [visibleCategories.length, effectiveHasMore, loadMore]);
 
   const filteredLoadMore = useCallback(() => {

@@ -21,7 +21,8 @@ type SyncState = {
   entriesFound: number;
 };
 
-const POLL_INTERVAL = 3000;
+const POLL_INTERVAL_ACTIVE = 3000;   // 3s while syncing
+const POLL_INTERVAL_IDLE = 60_000;   // 60s background heartbeat
 
 export function useSyncStatus(accountId: string | undefined) {
   const [syncState, setSyncState] = useState<SyncState>({
@@ -34,12 +35,20 @@ export function useSyncStatus(accountId: string | undefined) {
     entriesFound: 0,
   });
   const [justCompleted, setJustCompleted] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval>>(null);
+  const pollRef = useRef<ReturnType<typeof setTimeout>>(null);
   const trackedRef = useRef(false);
   const wasSyncingRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearTimeout(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
 
   const checkStatus = useCallback(async () => {
-    if (!accountId) return;
+    if (!accountId || !mountedRef.current) return;
     try {
       const res: SyncStatusResponse = await api.getSyncStatus(accountId);
 
@@ -69,6 +78,8 @@ export function useSyncStatus(accountId: string | undefined) {
       else if (bfStatus === 'error' || hrStatus === 'error') phase = 'error';
       else phase = 'idle';
 
+      if (!mountedRef.current) return;
+
       setSyncState({
         isSyncing,
         phase,
@@ -80,23 +91,32 @@ export function useSyncStatus(accountId: string | undefined) {
       });
 
       if (!isSyncing && (phase === 'complete' || phase === 'error')) {
-        if (pollRef.current) {
-          clearInterval(pollRef.current);
-          pollRef.current = null;
-        }
-        // Only signal completion if we actually observed an active sync
+        // Sync finished — stop active polling entirely
+        stopPolling();
         if (phase === 'complete' && wasSyncingRef.current) {
           setJustCompleted(true);
         }
+        return; // Don't schedule another poll
+      }
+
+      // Schedule next poll: fast while syncing, slow when idle
+      if (!document.hidden && mountedRef.current) {
+        stopPolling();
+        pollRef.current = setTimeout(checkStatus, isSyncing ? POLL_INTERVAL_ACTIVE : POLL_INTERVAL_IDLE);
       }
     } catch {
-      // Silently ignore status check errors
+      // On error, retry after a longer delay
+      if (!document.hidden && mountedRef.current) {
+        stopPolling();
+        pollRef.current = setTimeout(checkStatus, POLL_INTERVAL_IDLE);
+      }
     }
-  }, [accountId]);
+  }, [accountId, stopPolling]);
 
   // Track player and start polling on mount; pause when tab is hidden
   useEffect(() => {
     if (!accountId) return;
+    mountedRef.current = true;
     trackedRef.current = false;
     wasSyncingRef.current = false;
     setJustCompleted(false);
@@ -110,31 +130,16 @@ export function useSyncStatus(accountId: string | undefined) {
       }
       trackedRef.current = true;
 
-      // Check status immediately
+      // Check status immediately (this schedules the next poll if needed)
       await checkStatus();
-
-      // Start polling
-      startPolling();
     };
 
-    const startPolling = () => {
-      if (!pollRef.current) {
-        pollRef.current = setInterval(checkStatus, POLL_INTERVAL);
-      }
-    };
-    const stopPolling = () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-    };
     const onVisibility = () => {
       if (document.hidden) {
         stopPolling();
       } else {
-        // Check immediately on return, then resume interval
+        // Check immediately on return (this schedules the next poll if needed)
         void checkStatus();
-        startPolling();
       }
     };
 
@@ -142,10 +147,11 @@ export function useSyncStatus(accountId: string | undefined) {
     void init();
 
     return () => {
+      mountedRef.current = false;
       stopPolling();
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [accountId, checkStatus]);
+  }, [accountId, checkStatus, stopPolling]);
 
   // Clear justCompleted after consumer reads it
   const clearCompleted = useCallback(() => setJustCompleted(false), []);

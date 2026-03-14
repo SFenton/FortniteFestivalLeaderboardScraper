@@ -119,10 +119,14 @@ export default function SongsPage() {
 
   const filtersActive = isFilterActive(settings.filters) || settings.instrument != null;
 
-  // Register sort/filter actions for FAB
+  // Register sort/filter actions for FAB — uses refs so latest closures are always captured
+  const openSortRef = useRef(openSort);
+  const openFilterRef = useRef(openFilter);
+  openSortRef.current = openSort;
+  openFilterRef.current = openFilter;
   useEffect(() => {
-    fabSearch.registerActions({ openSort, openFilter });
-  });
+    fabSearch.registerActions({ openSort: () => openSortRef.current(), openFilter: () => openFilterRef.current() });
+  }, [fabSearch]);
   const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress } = usePlayerData();
 
   // Build lookup: songId → PlayerScore for the selected instrument

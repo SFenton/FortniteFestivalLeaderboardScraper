@@ -89,9 +89,11 @@ export default function PlayerHistoryPage() {
 
   // Register sort action for FAB
   const fabSearch = useFabSearch();
+  const openSortRef = useRef(openSort);
+  openSortRef.current = openSort;
   useEffect(() => {
-    fabSearch.registerPlayerHistoryActions({ openSort });
-  });
+    fabSearch.registerPlayerHistoryActions({ openSort: () => openSortRef.current() });
+  }, [fabSearch]);
 
   const handleScroll = useCallback(() => {
     updateScrollMask();
