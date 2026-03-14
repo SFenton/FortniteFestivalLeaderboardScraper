@@ -538,9 +538,12 @@ function SongRow({
   leaderboardData?: LeaderboardData;
 }) {
   const layout = getRowLayout(categoryKey);
+  const isMobile = useIsMobile();
   const starCount = song.stars ?? 0;
   const isGold = starCount >= 6;
   const displayStars = isGold ? 5 : starCount;
+  const showStars = layout === 'singleInstrument' && categoryKey.startsWith('star_gains') && starCount > 0;
+  const showStarPngs = showStars && isMobile;
 
   // Instrument from the song item, or inferred from the category key
   const instrument = song.instrumentKey ?? getCatInstrument(categoryKey);
@@ -548,24 +551,30 @@ function SongRow({
     ? `/songs/${song.songId}?instrument=${CORE_TO_SERVER_INSTRUMENT[instrument]}`
     : `/songs/${song.songId}`;
 
+  const starSrc = isGold ? '/app/star_gold.png' : '/app/star_white.png';
+
   return (
-    <Link to={songUrl} style={styles.row}>
-      {albumArt ? (
-        <img src={albumArt} alt="" style={styles.thumb} loading="lazy" />
-      ) : (
-        <div style={{ ...styles.thumb, ...styles.thumbPlaceholder }} />
-      )}
-      <div style={styles.rowText}>
-        <span style={styles.rowTitle}>{song.title}</span>
-        <span style={styles.rowArtist}>{song.artist}</span>
-        {/* Star gains: show stars + score beneath title */}
-        {layout === 'singleInstrument' && categoryKey.startsWith('star_gains') && starCount > 0 && (
-          <span style={{ ...styles.starRow, ...(isGold ? { color: Colors.gold } : {}) }}>
-            {'★'.repeat(displayStars)}
-          </span>
+    <Link to={songUrl} style={showStarPngs ? { ...styles.row, flexDirection: 'column' as const, alignItems: 'stretch' as const } : styles.row}>
+      <div style={showStarPngs ? styles.rowMainLine : { display: 'contents' }}>
+        {albumArt ? (
+          <img src={albumArt} alt="" style={styles.thumb} loading="lazy" />
+        ) : (
+          <div style={{ ...styles.thumb, ...styles.thumbPlaceholder }} />
         )}
+        <div style={styles.rowText}>
+          <span style={styles.rowTitle}>{song.title}</span>
+          <span style={styles.rowArtist}>{song.artist}</span>
+        </div>
+        <RightContent song={song} layout={layout} leaderboardData={leaderboardData} starCount={showStars ? displayStars : 0} starSrc={starSrc} />
       </div>
-      <RightContent song={song} layout={layout} leaderboardData={leaderboardData} />
+      {/* Star gains: PNG stars centered below on mobile */}
+      {showStarPngs && (
+        <div style={styles.starPngRow}>
+          {Array.from({ length: displayStars }, (_, i) => (
+            <img key={i} src={starSrc} alt="★" style={styles.starPngImg} />
+          ))}
+        </div>
+      )}
     </Link>
   );
 }
@@ -574,10 +583,14 @@ function RightContent({
   song,
   layout,
   leaderboardData,
+  starCount = 0,
+  starSrc,
 }: {
   song: SuggestionSongItem;
   layout: RowLayout;
   leaderboardData?: LeaderboardData;
+  starCount?: number;
+  starSrc?: string;
 }) {
   if (layout === 'hidden') return null;
 
@@ -614,6 +627,13 @@ function RightContent({
   if (layout === 'singleInstrument') {
     return song.instrumentKey ? (
       <div style={styles.badges}>
+        {starCount > 0 && starSrc && (
+          <span style={styles.starPngInlineRow}>
+            {Array.from({ length: starCount }, (_, i) => (
+              <img key={i} src={starSrc} alt="★" style={styles.starPngImg} />
+            ))}
+          </span>
+        )}
         <InstrumentIcon instrument={song.instrumentKey} size={28} />
       </div>
     ) : null;
@@ -865,10 +885,26 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     fontVariantNumeric: 'tabular-nums',
   },
-  starRow: {
-    fontSize: Font.xs,
-    color: Colors.textTertiary,
-    marginTop: Gap.xs,
+  rowMainLine: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.xl,
+  },
+  starPngRow: {
+    display: 'flex',
+    justifyContent: 'center',
+    gap: 3,
+    paddingTop: Gap.sm,
+  },
+  starPngImg: {
+    width: 20,
+    height: 20,
+    objectFit: 'contain' as const,
+  },
+  starPngInlineRow: {
+    display: 'inline-flex',
+    gap: 3,
+    alignItems: 'center',
   },
   percentilePill: {
     fontSize: Font.xs,
