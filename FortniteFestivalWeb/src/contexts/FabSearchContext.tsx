@@ -10,6 +10,8 @@ type FabSearchContextType = {
   openSuggestionsFilter: () => void;
   registerPlayerHistoryActions: (actions: { openSort: () => void }) => void;
   openPlayerHistorySort: () => void;
+  registerSongDetailActions: (actions: { openPaths: () => void }) => void;
+  openPaths: () => void;
 };
 
 const FabSearchContext = createContext<FabSearchContextType>({
@@ -17,6 +19,7 @@ const FabSearchContext = createContext<FabSearchContextType>({
   registerActions: () => {}, openSort: () => {}, openFilter: () => {},
   registerSuggestionsActions: () => {}, openSuggestionsFilter: () => {},
   registerPlayerHistoryActions: () => {}, openPlayerHistorySort: () => {},
+  registerSongDetailActions: () => {}, openPaths: () => {},
 });
 
 export function FabSearchProvider({ children }: { children: ReactNode }) {
@@ -25,6 +28,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
   const actionsRef = useRef<{ openSort: () => void; openFilter: () => void }>({ openSort: () => {}, openFilter: () => {} });
   const suggestionsActionsRef = useRef<{ openFilter: () => void }>({ openFilter: () => {} });
   const playerHistoryActionsRef = useRef<{ openSort: () => void }>({ openSort: () => {} });
+  const songDetailActionsRef = useRef<{ openPaths: () => void }>({ openPaths: () => {} });
 
   const registerActions = useCallback((actions: { openSort: () => void; openFilter: () => void }) => {
     actionsRef.current = actions;
@@ -38,13 +42,18 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     playerHistoryActionsRef.current = actions;
   }, []);
 
+  const registerSongDetailActions = useCallback((actions: { openPaths: () => void }) => {
+    songDetailActionsRef.current = actions;
+  }, []);
+
   const openSort = useCallback(() => actionsRef.current.openSort(), []);
   const openFilter = useCallback(() => actionsRef.current.openFilter(), []);
   const openSuggestionsFilter = useCallback(() => suggestionsActionsRef.current.openFilter(), []);
   const openPlayerHistorySort = useCallback(() => playerHistoryActionsRef.current.openSort(), []);
+  const openPaths = useCallback(() => songDetailActionsRef.current.openPaths(), []);
 
   return (
-    <FabSearchContext.Provider value={{ query, setQuery, registerActions, openSort, openFilter, registerSuggestionsActions, openSuggestionsFilter, registerPlayerHistoryActions, openPlayerHistorySort }}>
+    <FabSearchContext.Provider value={{ query, setQuery, registerActions, openSort, openFilter, registerSuggestionsActions, openSuggestionsFilter, registerPlayerHistoryActions, openPlayerHistorySort, registerSongDetailActions, openPaths }}>
       {children}
     </FabSearchContext.Provider>
   );

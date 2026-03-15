@@ -1,5 +1,5 @@
 import { HashRouter, Routes, Route, NavLink, Link, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
-import { IoMusicalNotes, IoSparkles, IoStatsChart, IoPerson, IoSettings, IoSearch, IoSwapVerticalSharp, IoFunnel, IoChevronBack, IoClose } from 'react-icons/io5';
+import { IoMusicalNotes, IoSparkles, IoStatsChart, IoPerson, IoSettings, IoSearch, IoSwapVerticalSharp, IoFunnel, IoChevronBack, IoClose, IoFlash } from 'react-icons/io5';
 import { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback, Fragment } from 'react';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
 import { SettingsProvider } from './contexts/SettingsContext';
@@ -312,7 +312,24 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      {isMobile && location.pathname !== '/songs' && location.pathname !== '/suggestions' && !location.pathname.endsWith('/history') && (
+      {isMobile && /^\/songs\/[^/]+$/.test(location.pathname) && (
+        <FloatingActionButton
+          mode="players"
+          actionGroups={[
+            ...(isNarrow ? [[
+              { label: 'View Paths', icon: <IoFlash size={18} />, onPress: () => fabSearch.openPaths() },
+            ]] : []),
+            [
+              { label: 'Find Player', icon: <IoSearch size={18} />, onPress: () => setFindPlayerOpen(true) },
+              player
+                ? { label: player.displayName, icon: <IoPerson size={18} />, onPress: () => setPlayerModalOpen(true) }
+                : { label: 'Select Player Profile', icon: <IoPerson size={18} />, onPress: () => setPlayerModalOpen(true) },
+            ],
+          ]}
+          onPress={() => {}}
+        />
+      )}
+      {isMobile && location.pathname !== '/songs' && location.pathname !== '/suggestions' && !location.pathname.endsWith('/history') && !/^\/songs\/[^/]+$/.test(location.pathname) && (
         <FloatingActionButton
           mode="players"
           actionGroups={[

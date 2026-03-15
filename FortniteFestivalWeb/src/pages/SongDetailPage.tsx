@@ -19,6 +19,9 @@ import { InstrumentIcon } from '../components/InstrumentIcons';
 import { useSettings, visibleInstruments } from '../contexts/SettingsContext';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { IoFlash } from 'react-icons/io5';
+import { useFabSearch } from '../contexts/FabSearchContext';
+import PathsModal from '../components/PathsModal';
 
 function accuracyColor(pct: number): string {
   const t = Math.min(Math.max(pct / 100, 0), 1);
@@ -63,6 +66,8 @@ export default function SongDetailPage() {
   const { player } = useTrackedPlayer();
   const { settings } = useSettings();
   const activeInstruments = visibleInstruments(settings);
+  const fabSearch = useFabSearch();
+  const [pathsOpen, setPathsOpen] = useState(false);
 
   const navType = useNavigationType();
   const cached = songId ? songDetailCache.get(songId) : undefined;
@@ -85,6 +90,11 @@ export default function SongDetailPage() {
   // This must be declared AFTER the fetch effects so it runs last in the effect order.
   // The cache is only fully valid when player-specific data also matches (or no player is selected).
   const mountedWithCacheRef = useRef(!!cached && (!player || !!hasCachedPlayer));
+
+  // Register openPaths for the FAB
+  useEffect(() => {
+    fabSearch.registerSongDetailActions({ openPaths: () => setPathsOpen(true) });
+  }, [fabSearch]);
 
   const song = songs.find((s) => s.songId === songId);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -334,7 +344,7 @@ export default function SongDetailPage() {
             : `${Layout.paddingTop}px ${Layout.paddingHorizontal}px ${Gap.section}px`,
         }}>
           <div style={stagger(150)} onAnimationEnd={clearAnim}>
-            <SongHeader song={song} songId={songId} collapsed={hasFab || headerCollapsed} noTransition={hasFab} />
+            <SongHeader song={song} songId={songId} collapsed={hasFab || headerCollapsed} noTransition={hasFab} onOpenPaths={() => setPathsOpen(true)} />
           </div>
         </div>
       )}
@@ -381,6 +391,7 @@ export default function SongDetailPage() {
         </div>
       )}
       </div>
+      {songId && <PathsModal visible={pathsOpen} songId={songId} onClose={() => setPathsOpen(false)} />}
     </div>
   );
 }
@@ -390,12 +401,15 @@ function SongHeader({
   songId,
   collapsed,
   noTransition,
+  onOpenPaths,
 }: {
   song: Song | undefined;
   songId: string;
   collapsed: boolean;
   noTransition?: boolean;
+  onOpenPaths: () => void;
 }) {
+  const isMobile = useIsMobile();
   const artSize = collapsed ? 80 : 120;
   const transition = noTransition ? undefined : 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)';
   return (
@@ -405,12 +419,21 @@ function SongHeader({
       ) : (
         <div style={{ ...styles.headerArt, ...styles.artPlaceholder, width: artSize, height: artSize, borderRadius: collapsed ? Radius.md : Radius.lg, transition }} />
       )}
-      <div>
+      <div style={{ flex: 1, minWidth: 0 }}>
         <h1 style={{ ...styles.songTitle, marginBottom: collapsed ? Gap.xs : Gap.sm, transition }}>{song?.title ?? songId}</h1>
         <p style={{ ...styles.songArtist, fontSize: collapsed ? Font.md : Font.lg, marginBottom: collapsed ? 0 : Gap.md, transition }}>
           {song?.artist ?? 'Unknown Artist'}
         </p>
       </div>
+      {!isMobile && (
+        <button
+          onClick={onOpenPaths}
+          style={styles.viewPathsButton}
+        >
+          <IoFlash size={16} style={{ marginRight: Gap.md }} />
+          View Paths
+        </button>
+      )}
     </div>
   );
 }
@@ -710,6 +733,24 @@ const styles: Record<string, React.CSSProperties> = {
     color: Colors.textSubtle,
     marginBottom: Gap.md,
   },
+  viewPathsButton: {
+    ...frostedCard,
+    backgroundColor: 'rgba(124,58,237,0.35)',
+    border: '1px solid rgba(168,120,255,0.3)',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: `0 ${Gap.section + 8}px 0 ${Gap.section}px`,
+    borderRadius: Radius.full,
+    color: '#fff',
+    fontSize: Font.lg,
+    fontWeight: 600,
+    textDecoration: 'none',
+    cursor: 'pointer',
+    flexShrink: 0,
+    alignSelf: 'center',
+    height: 48,
+  } as React.CSSProperties,
   bpmBadge: {
     fontSize: Font.sm,
     color: Colors.textMuted,
