@@ -1,4 +1,4 @@
-import { HashRouter, Routes, Route, NavLink, Link, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
+import { HashRouter, Routes, Route, Link, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { IoMusicalNotes, IoSparkles, IoStatsChart, IoPerson, IoPersonAdd, IoSettings, IoSearch, IoSwapVerticalSharp, IoFunnel, IoChevronBack, IoClose, IoFlash } from 'react-icons/io5';
 import { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback, Fragment, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -26,6 +26,7 @@ import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
 import { useSettings } from './contexts/SettingsContext';
 import HeaderSearch from './components/shell/HeaderSearch';
 import BottomNav from './components/shell/BottomNav';
+import Sidebar from './components/shell/Sidebar';
 import { clearSongDetailCache } from './pages/SongDetailPage';
 import { clearLeaderboardCache } from './pages/LeaderboardPage';
 import { clearPlayerPageCache } from './pages/PlayerPage';
@@ -435,170 +436,6 @@ function AppShell() {
       {changelogOpen && <ChangelogModal onDismiss={dismissChangelog} />}
     </div>
     </PlayerDataProvider>
-  );
-}
-
-const SIDEBAR_DURATION = 250;
-
-function Sidebar({
-  player,
-  open,
-  onClose,
-  onDeselect,
-  onSelectPlayer,
-}: {
-  player: TrackedPlayer | null;
-  open: boolean;
-  onClose: () => void;
-  onDeselect: () => void;
-  onSelectPlayer: () => void;
-}) {
-  const { t } = useTranslation();
-  const sidebarRef = useRef<HTMLDivElement>(null);
-  const location = useLocation();
-  const [mounted, setMounted] = useState(false);
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    if (open) {
-      setMounted(true);
-    } else {
-      setVisible(false);
-    }
-  }, [open]);
-
-  useLayoutEffect(() => {
-    if (mounted && open) {
-      sidebarRef.current?.getBoundingClientRect();
-      const id = requestAnimationFrame(() => setVisible(true));
-      return () => cancelAnimationFrame(id);
-    }
-  }, [mounted, open]);
-
-  const handleTransitionEnd = useCallback(() => {
-    if (!visible) setMounted(false);
-  }, [visible]);
-
-  useEffect(() => {
-    if (!mounted) return;
-    function handleClick(e: MouseEvent) {
-      if (sidebarRef.current && !sidebarRef.current.contains(e.target as Node)) {
-        onClose();
-      }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [mounted, onClose]);
-
-  if (!mounted) return null;
-
-  return (
-    <>
-      <div
-        style={{
-          ...styles.overlay,
-          opacity: visible ? 1 : 0,
-          transition: `opacity ${SIDEBAR_DURATION}ms ease`,
-        }}
-        onClick={onClose}
-      />
-      <div
-        ref={sidebarRef}
-        style={{
-          ...styles.sidebar,
-          transform: visible ? 'translateX(0)' : `translateX(-100%)`,
-          transition: `transform ${SIDEBAR_DURATION}ms ease`,
-        }}
-        onTransitionEnd={handleTransitionEnd}
-      >
-        <div style={styles.sidebarHeader}>
-          <span style={styles.brand}>Festival Score Tracker</span>
-        </div>
-        <nav style={styles.sidebarNav}>
-          <NavLink
-            to="/songs"
-            onClick={onClose}
-            style={({ isActive }) => ({
-              ...styles.sidebarLink,
-              ...(isActive ? styles.sidebarLinkActive : {}),
-            })}
-          >
-            {t('nav.songs')}
-          </NavLink>
-          {player && (
-            <NavLink
-              to="/suggestions"
-              onClick={onClose}
-              style={({ isActive }) => ({
-                ...styles.sidebarLink,
-                ...(isActive ? styles.sidebarLinkActive : {}),
-              })}
-            >
-              {t('nav.suggestions')}
-            </NavLink>
-          )}
-          {player && (
-            <NavLink
-              to="/statistics"
-              onClick={onClose}
-              style={({ isActive }) => ({
-                ...styles.sidebarLink,
-                ...(isActive ? styles.sidebarLinkActive : {}),
-              })}
-            >
-              {t('nav.statistics')}
-            </NavLink>
-          )}
-        </nav>
-        <div style={styles.sidebarFooter}>
-          {player ? (
-            <div style={styles.sidebarPlayerRow}>
-              <Link
-                to="/statistics"
-                onClick={onClose}
-                style={{
-                  ...styles.sidebarLink,
-                  flex: 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                }}
-              >
-                <span style={styles.profileCircle}>
-                  <IoPerson size={14} />
-                </span>
-                {player.displayName}
-              </Link>
-              <button
-                style={{ ...styles.deselectBtn, marginRight: Gap.section }}
-                onClick={() => { onDeselect(); }}
-              >
-                Deselect
-              </button>
-            </div>
-          ) : (
-            <button
-              style={{ ...styles.sidebarLink, display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer' }}
-              onClick={onSelectPlayer}
-            >
-              <span style={styles.profileCircleEmpty}>
-                <IoPerson size={14} />
-              </span>
-              Select Player
-            </button>
-          )}
-          <NavLink
-            to="/settings"
-            onClick={onClose}
-            style={({ isActive }) => ({
-              ...styles.sidebarLink,
-              ...(isActive ? styles.sidebarLinkActive : {}),
-            })}
-          >
-            Settings
-          </NavLink>
-        </div>
-      </div>
-    </>
   );
 }
 
@@ -1085,8 +922,6 @@ function ScrollToTop() {
   return null;
 }
 
-const SIDEBAR_WIDTH = 280;
-
 const styles: Record<string, React.CSSProperties> = {
   shell: {
     display: 'flex',
@@ -1167,84 +1002,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: Font.lg,
     fontWeight: 700,
     color: Colors.accentPurple,
-  },
-
-  // Sidebar flyout
-  overlay: {
-    position: 'fixed' as const,
-    inset: 0,
-    backgroundColor: Colors.overlayDark,
-    zIndex: 200,
-  },
-  sidebar: {
-    position: 'fixed' as const,
-    top: 0,
-    left: 0,
-    bottom: 0,
-    width: SIDEBAR_WIDTH,
-    ...frostedCard,
-    backgroundColor: Colors.backgroundCard,
-    borderRight: `1px solid ${Colors.glassBorder}`,
-    zIndex: 201,
-    display: 'flex',
-    flexDirection: 'column' as const,
-    overflow: 'hidden',
-  },
-  sidebarHeader: {
-    padding: `${Gap.section}px ${Gap.section}px ${Gap.xl}px`,
-    borderBottom: `1px solid ${Colors.borderSubtle}`,
-  },
-  sidebarNav: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    padding: `${Gap.md}px 0`,
-    flex: 1,
-  },
-  sidebarFooter: {
-    borderTop: `1px solid ${Colors.borderSubtle}`,
-    padding: `${Gap.md}px 0`,
-  },
-  sidebarLink: {
-    display: 'block',
-    padding: `${Gap.xl}px ${Gap.section}px`,
-    color: Colors.textSecondary,
-    textDecoration: 'none',
-    fontSize: Font.md,
-    transition: 'background-color 0.15s, color 0.15s',
-  },
-  sidebarLinkActive: {
-    color: Colors.textPrimary,
-    backgroundColor: Colors.surfaceSubtle,
-    borderLeft: `3px solid ${Colors.accentPurple}`,
-  },
-  sidebarPlayerRow: {
-    display: 'flex',
-    alignItems: 'center',
-  },
-  profileCircle: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 28,
-    height: 28,
-    borderRadius: '50%',
-    backgroundColor: Colors.surfaceSubtle,
-    border: `1px solid ${Colors.borderSubtle}`,
-    flexShrink: 0,
-    marginRight: Gap.md,
-  },
-  profileCircleEmpty: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 28,
-    height: 28,
-    borderRadius: '50%',
-    backgroundColor: '#D0D5DD',
-    border: 'none',
-    color: '#4A5568',
-    flexShrink: 0,
-    marginRight: Gap.md,
   },
   headerProfileBtn: {
     display: 'flex',
