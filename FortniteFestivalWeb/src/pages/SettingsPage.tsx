@@ -155,7 +155,6 @@ export default function SettingsPage() {
   const skipAnimRef = useRef(_hasRendered);
   const skipAnim = skipAnimRef.current;
   _hasRendered = true;
-  console.log(`[SettingsPage] _hasRendered=${_hasRendered} skipAnimRef.current=${skipAnimRef.current} skipAnim=${skipAnim}`);
 
   useEffect(() => {
     let cancelled = false;
