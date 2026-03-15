@@ -6,6 +6,7 @@ import type { InstrumentKey } from '../models';
 import { INSTRUMENT_KEYS, INSTRUMENT_LABELS } from '../models';
 import type { SongFilters } from './songSettings';
 import { useSettings, isInstrumentVisible } from '../contexts/SettingsContext';
+import DifficultyBars from './songs/DifficultyBars';
 import { Colors, Font, Gap, Radius } from '../theme';
 
 export type FilterDraft = SongFilters & {
@@ -307,30 +308,6 @@ function StarsToggles({ starsFilter, onChange }: { starsFilter: Record<number, b
         <ToggleRow key={s} label={starLabel(s)} checked={isOn(s)} onToggle={() => toggleS(s)} />
       ))}
     </>
-  );
-}
-
-function DifficultyBars({ level }: { level: number }) {
-  const barW = 10;
-  const barH = 20;
-  const offset = Math.round(barW * 0.26);
-  const gap = 2;
-  const totalW = 7 * barW + 6 * gap;
-
-  return (
-    <svg width={totalW} height={barH} style={{ display: 'block' }}>
-      {Array.from({ length: 7 }, (_, i) => {
-        const filled = i + 1 <= level;
-        const x = i * (barW + gap);
-        return (
-          <polygon
-            key={i}
-            points={`${x + offset},0 ${x + barW},0 ${x + barW - offset},${barH} ${x},${barH}`}
-            fill={filled ? '#FFFFFF' : '#666666'}
-          />
-        );
-      })}
-    </svg>
   );
 }
 

@@ -16,6 +16,8 @@ import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth, goldFill, goldOutlin
 import { InstrumentIcon, getInstrumentStatusVisual } from '../components/InstrumentIcons';
 import SeasonPill from '../components/SeasonPill';
 import AlbumArt from '../components/AlbumArt';
+import DifficultyBars from '../components/songs/DifficultyBars';
+import MiniStars from '../components/songs/MiniStars';
 import { visibleInstruments } from '../contexts/SettingsContext';
 import SortModal from '../components/SortModal';
 import type { SortDraft } from '../components/SortModal';
@@ -615,51 +617,6 @@ export default function SongsPage() {
   );
 }
 
-/** SVG parallelogram difficulty bars matching mobile DifficultyBars. */
-function DifficultyBars({ raw }: { raw: number }) {
-  const display = Math.max(0, Math.min(6, Math.trunc(raw))) + 1;
-  const barW = 8;
-  const barH = 20;
-  const offset = Math.min(Math.max(Math.round(barW * 0.26), 1), Math.floor(barW * 0.45));
-  return (
-    <svg
-      width={barW * 7 + 6}
-      height={barH}
-      style={{ display: 'inline-block', verticalAlign: 'middle' }}
-      aria-label={`Difficulty ${display} of 7`}
-    >
-      {Array.from({ length: 7 }).map((_, i) => {
-        const filled = i + 1 <= display;
-        const x = i * (barW + 1);
-        return (
-          <polygon
-            key={i}
-            points={`${x + offset},0 ${x + barW},0 ${x + barW - offset},${barH} ${x},${barH}`}
-            fill={filled ? '#FFFFFF' : '#666666'}
-          />
-        );
-      })}
-    </svg>
-  );
-}
-
-/** Star images matching mobile MiniStars component. */
-function MiniStars({ starsCount, isFullCombo }: { starsCount: number; isFullCombo: boolean }) {
-  const allGold = starsCount >= 6;
-  const displayCount = allGold ? 5 : Math.max(1, starsCount);
-  const src = allGold ? `${import.meta.env.BASE_URL}star_gold.png` : `${import.meta.env.BASE_URL}star_white.png`;
-  const outline = (isFullCombo || allGold) ? Colors.gold : 'transparent';
-  return (
-    <span style={styles.miniStarRow}>
-      {Array.from({ length: displayCount }).map((_, i) => (
-        <span key={i} style={{ ...styles.miniStarCircle, borderColor: outline }}>
-          <img src={src} alt="★" style={styles.miniStarIcon} />
-        </span>
-      ))}
-    </span>
-  );
-}
-
 /** Render a single metadata element for the given key. Mirrors mobile renderMetadataElement. */
 function renderMetadataElement(
   key: string,
@@ -718,7 +675,7 @@ function renderMetadataElement(
     }
 
     case 'intensity':
-      return songIntensityRaw != null ? <DifficultyBars raw={songIntensityRaw} /> : null;
+      return songIntensityRaw != null ? <DifficultyBars level={songIntensityRaw} raw /> : null;
 
     default:
       return null;
@@ -1268,28 +1225,6 @@ const styles: Record<string, React.CSSProperties> = {
     width: 78,
     textAlign: 'right' as const,
     display: 'inline-block',
-  },
-  miniStarRow: {
-    display: 'inline-flex',
-    gap: 3,
-    alignItems: 'center',
-    justifyContent: 'flex-end' as const,
-    width: 132,
-  },
-  miniStarCircle: {
-    width: Size.iconSm,
-    height: Size.iconSm,
-    borderRadius: '50%',
-    border: '1.5px solid transparent',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  miniStarIcon: {
-    width: 20,
-    height: 20,
-    objectFit: 'contain' as const,
   },
   accuracyPill: {
     fontSize: Font.lg,
