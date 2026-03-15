@@ -9,7 +9,11 @@
     "allowImportingTsExtensions": true,
     "paths": {
       "@festival/core": ["../packages/core/src"],
-      "@festival/core/*": ["../packages/core/src/*"]
+      "@festival/core/*": ["../packages/core/src/*"],
+      "@festival/theme": ["../packages/theme/src"],
+      "@festival/theme/*": ["../packages/theme/src/*"],
+      "@festival/ui-utils": ["../packages/ui-utils/src"],
+      "@festival/ui-utils/*": ["../packages/ui-utils/src/*"]
     },
     "isolatedModules": true,
     "moduleDetection": "force",
