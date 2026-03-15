@@ -1,0 +1,65 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card {
+  background-color: rgba(18, 24, 38, 0.78);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-radius: 12px;
+  padding: 24px;
+  max-width: 340px;
+  width: 90%;
+  color: #FFFFFF;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.message {
+  font-size: 14px;
+  color: #D7DEE8;
+  margin-bottom: 24px;
+  line-height: 1.4;
+}
+
+.buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.btnNo {
+  flex: 1;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #2D82E6;
+  background-color: rgba(45, 130, 230, 0.4);
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+}
+
+.btnYes {
+  flex: 1;
+  padding: 12px;
+  border-radius: 8px;
+  border: none;
+  background-color: #C62828;
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+}
