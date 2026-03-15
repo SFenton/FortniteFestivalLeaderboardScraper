@@ -72,8 +72,10 @@
     "filterInvalidScores": "Filter Invalid Scores",
     "leeway": "Leeway",
     "resetAll": "Reset All Settings",
-    "resetConfirmTitle": "Reset Settings?",
-    "resetConfirmMessage": "This will reset all settings to their defaults. Are you sure?",
+    "resetSection": "Reset Settings",
+    "resetDescription": "Restore all settings to their default values.",
+    "resetConfirmTitle": "Reset Settings",
+    "resetConfirmMessage": "Are you sure you want to restore all settings to their default values?",
     "version": "Version",
     "serviceVersion": "Service"
   },

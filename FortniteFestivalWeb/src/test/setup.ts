@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest';
+import '../i18n';
 
 // Provide a minimal matchMedia stub for modules that call it at import time
 // (e.g. @festival/ui-utils/platform).  Individual tests can override this

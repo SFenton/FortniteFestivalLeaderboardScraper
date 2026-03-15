@@ -1,8 +1,7 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../api/client';
-import type { AccountSearchResult } from '../models';
 import type { TrackedPlayer } from '../hooks/useTrackedPlayer';
+import { useAccountSearch } from '../hooks/useAccountSearch';
 import { Colors, Font, Gap, Radius } from '../theme';
 
 type Props = {
@@ -38,102 +37,35 @@ export default function PlayerSearch({ player, onSelect, onClear, isSyncing }: P
 }
 
 function SearchInput({ onSelect }: { onSelect: (p: TrackedPlayer) => void }) {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<AccountSearchResult[]>([]);
-  const [isOpen, setIsOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(-1);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const search = useCallback(async (q: string) => {
-    if (q.length < 2) {
-      setResults([]);
-      setIsOpen(false);
-      return;
-    }
-    setLoading(true);
-    try {
-      const res = await api.searchAccounts(q, 10);
-      setResults(res.results);
-      setIsOpen(res.results.length > 0);
-      setActiveIndex(-1);
-    } catch {
-      setResults([]);
-      setIsOpen(false);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const handleChange = (value: string) => {
-    setQuery(value);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      void search(value.trim());
-    }, 300);
-  };
-
-  const handleSelect = (result: AccountSearchResult) => {
-    onSelect({ accountId: result.accountId, displayName: result.displayName });
-    setQuery('');
-    setResults([]);
-    setIsOpen(false);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (!isOpen || results.length === 0) return;
-
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setActiveIndex((prev) => (prev < results.length - 1 ? prev + 1 : 0));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setActiveIndex((prev) => (prev > 0 ? prev - 1 : results.length - 1));
-    } else if (e.key === 'Enter' && activeIndex >= 0) {
-      e.preventDefault();
-      const selected = results[activeIndex];
-      if (selected) handleSelect(selected);
-    } else if (e.key === 'Escape') {
-      setIsOpen(false);
-    }
-  };
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setIsOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
+  const handleSelect = useCallback(
+    (r: { accountId: string; displayName: string }) =>
+      onSelect({ accountId: r.accountId, displayName: r.displayName }),
+    [onSelect],
+  );
+  const s = useAccountSearch(handleSelect);
 
   return (
-    <div ref={containerRef} style={styles.searchContainer}>
+    <div ref={s.containerRef} style={styles.searchContainer}>
       <input
         style={styles.searchInput}
         placeholder="Search player…"
-        value={query}
-        onChange={(e) => handleChange(e.target.value)}
-        onKeyDown={handleKeyDown}
-        onFocus={() => {
-          if (results.length > 0) setIsOpen(true);
-        }}
+        value={s.query}
+        onChange={(e) => s.handleChange(e.target.value)}
+        onKeyDown={s.handleKeyDown}
+        onFocus={() => { if (s.results.length > 0) s.close(); /* reopen */ }}
       />
-      {loading && <span style={styles.spinner} />}
-      {isOpen && (
+      {s.loading && <span style={styles.spinner} />}
+      {s.isOpen && (
         <div style={styles.dropdown}>
-          {results.map((r, i) => (
+          {s.results.map((r, i) => (
             <button
               key={r.accountId}
               style={{
                 ...styles.dropdownItem,
-                ...(i === activeIndex ? styles.dropdownItemActive : {}),
+                ...(i === s.activeIndex ? styles.dropdownItemActive : {}),
               }}
-              onMouseEnter={() => setActiveIndex(i)}
-              onClick={() => handleSelect(r)}
+              onMouseEnter={() => s.setActiveIndex(i)}
+              onClick={() => s.selectResult(r)}
             >
               {r.displayName}
             </button>

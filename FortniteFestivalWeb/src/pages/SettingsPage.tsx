@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useSettings } from '../contexts/SettingsContext';
 import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
 import { ToggleRow, ReorderList } from '../components/Modal';
@@ -142,6 +143,7 @@ function LeewaySlider({ value, onChange }: { value: number; onChange: (v: number
 }
 
 export default function SettingsPage() {
+  const { t } = useTranslation();
   const { settings, updateSettings, resetSettings } = useSettings();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
@@ -319,14 +321,14 @@ export default function SettingsPage() {
           <FadeInDiv delay={stagger(staggerIndex++)}>
           <div style={{ ...styles.resetRow, ...(isMobile ? styles.resetRowMobile : {}) }}>
             <div>
-              <div style={styles.sectionTitle}>Reset Settings</div>
-              <div style={{ ...styles.sectionHint, marginBottom: 0 }}>Restore all settings to their default values.</div>
+              <div style={styles.sectionTitle}>{t('settings.resetSection')}</div>
+              <div style={{ ...styles.sectionHint, marginBottom: 0 }}>{t('settings.resetDescription')}</div>
             </div>
             <button
               style={{ ...styles.resetButton, ...(isMobile ? styles.resetButtonMobile : {}) }}
               onClick={() => setShowResetConfirm(true)}
             >
-              Reset All Settings
+              {t('settings.resetAll')}
             </button>
           </div>
           </FadeInDiv>
@@ -337,8 +339,8 @@ export default function SettingsPage() {
       </div>
       {showResetConfirm && (
         <ConfirmAlert
-          title="Reset Settings"
-          message="Are you sure you want to restore all settings to their default values?"
+          title={t('settings.resetConfirmTitle')}
+          message={t('settings.resetConfirmMessage')}
           onNo={() => setShowResetConfirm(false)}
           onYes={() => { setShowResetConfirm(false); resetSettings(); }}
         />

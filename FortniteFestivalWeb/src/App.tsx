@@ -1,6 +1,6 @@
 import { HashRouter, Routes, Route, NavLink, Link, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { IoMusicalNotes, IoSparkles, IoStatsChart, IoPerson, IoPersonAdd, IoSettings, IoSearch, IoSwapVerticalSharp, IoFunnel, IoChevronBack, IoClose, IoFlash } from 'react-icons/io5';
-import { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback, Fragment } from 'react';
+import { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback, Fragment, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
 import { SettingsProvider } from './contexts/SettingsContext';
@@ -12,12 +12,12 @@ import type { AccountSearchResult } from './models';
 import { useIsMobile, useIsMobileChrome } from './hooks/useIsMobile';
 import { useVisualViewportHeight, useVisualViewportOffsetTop } from './hooks/useVisualViewport';
 import SongsPage from './pages/SongsPage';
-import SongDetailPage from './pages/SongDetailPage';
-import LeaderboardPage from './pages/LeaderboardPage';
-import PlayerHistoryPage from './pages/PlayerHistoryPage';
-import PlayerPage from './pages/PlayerPage';
-import SuggestionsPage from './pages/SuggestionsPage';
-import SettingsPage from './pages/SettingsPage';
+const SongDetailPage = lazy(() => import('./pages/SongDetailPage'));
+const LeaderboardPage = lazy(() => import('./pages/LeaderboardPage'));
+const PlayerHistoryPage = lazy(() => import('./pages/PlayerHistoryPage'));
+const PlayerPage = lazy(() => import('./pages/PlayerPage'));
+const SuggestionsPage = lazy(() => import('./pages/SuggestionsPage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 import { Colors, Font, Gap, Layout, MaxWidth, Radius, Size, frostedCard } from './theme';
 import { resetSongSettingsForDeselect, loadSongSettings, SONG_SETTINGS_CHANGED_EVENT } from './components/songSettings';
 import BackLink from './components/BackLink';
@@ -301,6 +301,7 @@ function AppShell() {
       />
 
       <div id="main-content" style={styles.content}>
+        <Suspense fallback={null}>
         <Routes>
           <Route path="/" element={<Navigate to="/songs" replace />} />
           <Route path="/songs" element={<SongsPage />} />
@@ -320,6 +321,7 @@ function AppShell() {
           )}
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
+        </Suspense>
       </div>
 
       {isMobile && <BottomNav player={player} activeTab={activeTab} onTabClick={handleTabClick} />}
