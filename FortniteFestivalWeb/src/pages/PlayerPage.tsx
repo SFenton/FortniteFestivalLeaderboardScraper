@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useParams, Link, useNavigate, useNavigationType, useLocation } from 'react-router-dom';
 import { IoPerson } from 'react-icons/io5';
 import { formatPercentileBucket } from '@festival/core';
@@ -42,6 +43,7 @@ export function clearPlayerPageCache() {
 }
 
 export default function PlayerPage({ accountId: propAccountId }: { accountId?: string } = {}) {
+  const { t } = useTranslation();
   const params = useParams<{ accountId: string }>();
   const accountId = propAccountId ?? params.accountId;
   const navType = useNavigationType();
@@ -222,7 +224,7 @@ function PlayerContent({
           <div style={styles.syncSpinner} />
           <div style={{ flex: 1 }}>
             <div style={styles.syncTitle}>
-              {syncPhase === 'backfill' ? 'Syncing Data' : 'Building Score History'}
+              {syncPhase === 'backfill' ? t('player.syncInProgress') : t('player.syncInProgress')}
             </div>
             <div style={styles.syncSubtitle}>
               {syncPhase === 'backfill'

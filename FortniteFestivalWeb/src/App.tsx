@@ -24,6 +24,8 @@ import BackLink from './components/BackLink';
 import { InstrumentIcon } from './components/InstrumentIcons';
 import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
 import { useSettings } from './contexts/SettingsContext';
+import HeaderSearch from './components/shell/HeaderSearch';
+import BottomNav from './components/shell/BottomNav';
 import { clearSongDetailCache } from './pages/SongDetailPage';
 import { clearLeaderboardCache } from './pages/LeaderboardPage';
 import { clearPlayerPageCache } from './pages/PlayerPage';
@@ -433,90 +435,6 @@ function AppShell() {
       {changelogOpen && <ChangelogModal onDismiss={dismissChangelog} />}
     </div>
     </PlayerDataProvider>
-  );
-}
-
-function HeaderSearch() {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<AccountSearchResult[]>([]);
-  const [isOpen, setIsOpen] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(-1);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const navigate = useNavigate();
-
-  const search = useCallback(async (q: string) => {
-    if (q.length < 2) { setResults([]); setIsOpen(false); return; }
-    try {
-      const res = await api.searchAccounts(q, 10);
-      setResults(res.results);
-      setIsOpen(res.results.length > 0);
-      setActiveIndex(-1);
-    } catch { setResults([]); setIsOpen(false); }
-  }, []);
-
-  const handleChange = (value: string) => {
-    setQuery(value);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => { void search(value.trim()); }, 300);
-  };
-
-  const handleSelect = (r: AccountSearchResult) => {
-    navigate(`/player/${r.accountId}`);
-    setQuery('');
-    setResults([]);
-    setIsOpen(false);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (!isOpen || results.length === 0) return;
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIndex(p => (p < results.length - 1 ? p + 1 : 0)); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIndex(p => (p > 0 ? p - 1 : results.length - 1)); }
-    else if (e.key === 'Enter' && activeIndex >= 0) { e.preventDefault(); const r = results[activeIndex]; if (r) handleSelect(r); }
-    else if (e.key === 'Escape') { setIsOpen(false); }
-  };
-
-  useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setIsOpen(false);
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, []);
-
-  return (
-    <div ref={containerRef} style={styles.headerSearchContainer}>
-      <div style={styles.headerSearchInputWrap} onClick={() => inputRef.current?.focus()}>
-        <IoSearch size={16} style={{ color: Colors.textTertiary, flexShrink: 0 }} />
-        <input
-          ref={inputRef}
-          style={styles.headerSearchInput}
-          placeholder="Search player…"
-          value={query}
-          onChange={e => handleChange(e.target.value)}
-          onKeyDown={handleKeyDown}
-          onFocus={() => { if (results.length > 0) setIsOpen(true); }}
-        />
-      </div>
-      {isOpen && (
-        <div style={styles.headerSearchDropdown}>
-          {results.map((r, i) => (
-            <button
-              key={r.accountId}
-              style={{
-                ...styles.headerSearchResult,
-                ...(i === activeIndex ? { backgroundColor: Colors.surfaceSubtle } : {}),
-              }}
-              onClick={() => handleSelect(r)}
-              onMouseEnter={() => setActiveIndex(i)}
-            >
-              {r.displayName}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -950,34 +868,6 @@ function MobilePlayerSearchModal({
   );
 }
 
-function BottomNav({ player, activeTab, onTabClick }: { player: TrackedPlayer | null; activeTab: TabKey; onTabClick: (tab: TabKey) => void }) {
-  const { t } = useTranslation();
-  const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
-    { key: 'songs', label: t('nav.songs'), icon: <IoMusicalNotes size={20} /> },
-    ...(player ? [{ key: 'suggestions' as TabKey, label: t('nav.suggestions'), icon: <IoSparkles size={20} /> }] : []),
-    ...(player ? [{ key: 'statistics' as TabKey, label: t('nav.statistics'), icon: <IoStatsChart size={20} /> }] : []),
-    { key: 'settings', label: t('nav.settings'), icon: <IoSettings size={20} /> },
-  ];
-
-  return (
-    <nav style={{ ...styles.bottomNav, ...(IS_PWA ? { paddingBottom: Gap.section } : {}) }}>
-      {tabs.map((tab) => (
-        <button
-          key={tab.key}
-          onClick={() => onTabClick(tab.key)}
-          style={{
-            ...styles.bottomTab,
-            ...(activeTab === tab.key ? styles.bottomTabActive : {}),
-          }}
-        >
-          <span style={styles.bottomTabIcon}>{tab.icon}</span>
-          {tab.label}
-        </button>
-      ))}
-    </nav>
-  );
-}
-
 function FloatingActionButton({
   mode,
   defaultOpen,
@@ -1273,54 +1163,6 @@ const styles: Record<string, React.CSSProperties> = {
   spacer: {
     flex: 1,
   },
-  headerSearchContainer: {
-    position: 'relative' as const,
-    flex: 1,
-    maxWidth: 320,
-  },
-  headerSearchInputWrap: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.sm,
-    height: 48,
-    padding: `0 ${Gap.xl}px`,
-    borderRadius: Radius.full,
-    boxSizing: 'border-box' as const,
-    cursor: 'text',
-    ...frostedCard,
-  },
-  headerSearchInput: {
-    flex: 1,
-    background: 'none',
-    border: 'none',
-    outline: 'none',
-    color: Colors.textPrimary,
-    fontSize: Font.md,
-  },
-  headerSearchDropdown: {
-    position: 'absolute' as const,
-    top: '100%',
-    left: 0,
-    right: 0,
-    marginTop: Gap.sm,
-    ...frostedCard,
-    backgroundColor: Colors.backgroundCard,
-    borderRadius: Radius.sm,
-    zIndex: 300,
-    maxHeight: 400,
-    overflowY: 'auto' as const,
-  },
-  headerSearchResult: {
-    display: 'block',
-    width: '100%',
-    padding: `${Gap.xl}px ${Gap.section}px`,
-    background: 'none',
-    border: 'none',
-    color: Colors.textSecondary,
-    fontSize: Font.md,
-    cursor: 'pointer',
-    textAlign: 'left' as const,
-  },
   brand: {
     fontSize: Font.lg,
     fontWeight: 700,
@@ -1434,20 +1276,7 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap' as const,
   },
 
-  // Bottom nav (mobile)
-  bottomNav: {
-    display: 'flex',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-    backgroundColor: Colors.glassNav,
-    backdropFilter: 'blur(12px) saturate(1.2)',
-    WebkitBackdropFilter: 'blur(12px) saturate(1.2)',
-    borderTop: `1px solid ${Colors.glassBorder}`,
-    flexShrink: 0,
-    zIndex: 100,
-    position: 'relative' as const,
-    padding: `${Gap.sm}px 0 ${Gap.md}px`,
-  },
+  // FAB (mobile)
   fabContainer: {
     position: 'fixed' as const,
     bottom: 80,
@@ -1576,30 +1405,6 @@ const styles: Record<string, React.CSSProperties> = {
     height: 1,
     backgroundColor: Colors.glassBorder,
     margin: `${Gap.sm}px 0`,
-  },
-  bottomTab: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    alignItems: 'center',
-    gap: 2,
-    background: 'none',
-    border: 'none',
-    textDecoration: 'none',
-    color: Colors.textTertiary,
-    fontSize: Font.xs,
-    fontFamily: 'inherit',
-    padding: `${Gap.sm}px ${Gap.xl}px`,
-    borderRadius: Radius.xs,
-    transition: 'color 0.15s',
-    cursor: 'pointer',
-    minWidth: 64,
-  },
-  bottomTabActive: {
-    color: Colors.accentPurple,
-  },
-  bottomTabIcon: {
-    fontSize: 20,
-    lineHeight: '24px',
   },
 
   // Mobile player search modal

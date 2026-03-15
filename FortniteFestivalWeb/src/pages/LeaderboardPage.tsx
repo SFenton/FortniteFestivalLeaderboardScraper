@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useParams, Link, useSearchParams, useLocation, useNavigate } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
 import { usePlayerData } from '../contexts/PlayerDataContext';
@@ -43,6 +44,7 @@ export function clearLeaderboardCache() {
 }
 
 export default function LeaderboardPage() {
+  const { t } = useTranslation();
   const { songId, instrument } = useParams<{
     songId: string;
     instrument: string;

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useParams, Link, useNavigate, useSearchParams, useNavigationType } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
 import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
@@ -53,6 +54,7 @@ export function clearSongDetailCache() {
 }
 
 export default function SongDetailPage() {
+  const { t } = useTranslation();
   const { songId } = useParams<{ songId: string }>();
   const [searchParams] = useSearchParams();
   const defaultInstrument = (searchParams.get('instrument') as InstrumentKey) || undefined;
