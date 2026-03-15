@@ -1,0 +1,98 @@
+{
+  "common": {
+    "back": "Back",
+    "cancel": "Cancel",
+    "apply": "Apply",
+    "reset": "Reset",
+    "search": "Search...",
+    "dismiss": "Dismiss",
+    "loading": "Loading...",
+    "error": "Something went wrong",
+    "notFound": "Not found",
+    "unknownUser": "Unknown User",
+    "yes": "Yes",
+    "no": "No"
+  },
+  "songs": {
+    "title": "Songs",
+    "searchPlaceholder": "Search songs or artists…",
+    "noResults": "No songs match your filters.",
+    "noResultsSubtitle": "Try adjusting your search or filters.",
+    "count": "{{filtered}} of {{total}} songs",
+    "sort": "Sort",
+    "filter": "Filter"
+  },
+  "songDetail": {
+    "leaderboard": "Leaderboard",
+    "scoreHistory": "Score History",
+    "noScores": "No scores recorded yet."
+  },
+  "leaderboard": {
+    "title": "Leaderboard",
+    "page": "Page {{current}} of {{total}}",
+    "totalEntries": "{{count}} total entries",
+    "localEntries": "{{count}} tracked",
+    "noEntries": "No leaderboard entries found."
+  },
+  "player": {
+    "title": "Statistics",
+    "syncInProgress": "Syncing scores…",
+    "backfillProgress": "Checking scores: {{checked}} / {{total}}",
+    "historyProgress": "Building history: {{processed}} / {{total}}",
+    "syncComplete": "Sync complete",
+    "noPlayer": "No player selected",
+    "noPlayerSubtitle": "Search for a player to view their statistics.",
+    "selectProfile": "Select as Profile",
+    "switchProfile": "Switch Profile",
+    "switchProfileConfirm": "Switch to {{name}} as your tracked profile?",
+    "totalScore": "Total Score",
+    "songsPlayed": "Songs Played",
+    "fullCombos": "Full Combos",
+    "goldStars": "Gold Stars",
+    "avgAccuracy": "Avg Accuracy",
+    "bestRank": "Best Rank",
+    "topSongs": "Top Songs",
+    "bottomSongs": "Needs Work",
+    "percentileDistribution": "Percentile Distribution"
+  },
+  "suggestions": {
+    "title": "Suggestions",
+    "noSuggestions": "No suggestions available.",
+    "noSuggestionsSubtitle": "Select a player profile to get personalized suggestions.",
+    "filterButton": "Filter Suggestions",
+    "loadingMore": "Loading more suggestions…"
+  },
+  "settings": {
+    "title": "Settings",
+    "instruments": "Instruments",
+    "metadata": "Song Metadata",
+    "metadataOrder": "Metadata Display Order",
+    "visualOrder": "Song Row Visual Order",
+    "scoreFiltering": "Score Filtering",
+    "filterInvalidScores": "Filter Invalid Scores",
+    "leeway": "Leeway",
+    "resetAll": "Reset All Settings",
+    "resetConfirmTitle": "Reset Settings?",
+    "resetConfirmMessage": "This will reset all settings to their defaults. Are you sure?",
+    "version": "Version",
+    "serviceVersion": "Service"
+  },
+  "history": {
+    "title": "Score History",
+    "sortBy": "Sort By",
+    "noHistory": "No score history available.",
+    "date": "Date",
+    "score": "Score",
+    "accuracy": "Accuracy",
+    "season": "Season"
+  },
+  "changelog": {
+    "title": "What's New"
+  },
+  "nav": {
+    "songs": "Songs",
+    "suggestions": "Suggestions",
+    "statistics": "Statistics",
+    "settings": "Settings"
+  }
+}

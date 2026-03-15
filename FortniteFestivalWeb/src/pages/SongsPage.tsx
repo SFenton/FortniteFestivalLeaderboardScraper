@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback, Fragment, memo, type CSSProperties } from 'react';
+import { useTranslation } from 'react-i18next';
 import { IoSwapVerticalSharp, IoFunnel, IoSearch } from 'react-icons/io5';
 import { Link, useLocation, useNavigationType } from 'react-router-dom';
 import { formatPercentileBucket } from '@festival/core';
@@ -37,6 +38,7 @@ import {
 let _songsHasRendered = false;
 
 export default function SongsPage() {
+  const { t } = useTranslation();
   const {
     state: { songs, isLoading, error },
   } = useFestival();
@@ -456,7 +458,7 @@ export default function SongsPage() {
               <IoSearch size={16} style={{ color: Colors.textTertiary, flexShrink: 0 }} />
               <input
                 style={styles.searchInput}
-                placeholder="Search songs or artists…"
+                placeholder={t('songs.searchPlaceholder')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -547,10 +549,10 @@ export default function SongsPage() {
         )}
         {loadPhase === 'contentIn' && filtered.length === 0 ? (
           <div style={styles.emptyState}>
-            <div style={styles.emptyTitle}>No Songs Found</div>
+            <div style={styles.emptyTitle}>{t('songs.noResults')}</div>
             <div style={styles.emptySubtitle}>
               {filtersActive
-                ? 'Try changing your filters to see more songs.'
+                ? t('songs.noResultsSubtitle')
                 : 'The service may be down unexpectedly. Please refresh to try again.'}
             </div>
           </div>
