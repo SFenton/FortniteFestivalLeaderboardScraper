@@ -1,0 +1,40 @@
+.nav {
+  display: flex;
+  justify-content: space-around;
+  align-items: stretch;
+  background-color: var(--color-glass-nav);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-top: 1px solid var(--color-glass-border);
+  flex-shrink: 0;
+  z-index: 100;
+}
+
+.tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: var(--gap-md) 0 var(--gap-sm);
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 500;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.tabActive {
+  composes: tab;
+  color: var(--color-purple-tab-active);
+  font-weight: 700;
+}
+
+.tabIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+}
