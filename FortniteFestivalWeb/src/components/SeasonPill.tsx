@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Colors, Font, Gap, Radius } from '../theme';
 
 const style: React.CSSProperties = {
@@ -14,6 +15,6 @@ const style: React.CSSProperties = {
   display: 'inline-block',
 };
 
-export default function SeasonPill({ season }: { season: number }) {
+export default memo(function SeasonPill({ season }: { season: number }) {
   return <span style={style}>S{season}</span>;
-}
+});

@@ -4,6 +4,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useMemo,
   type ReactNode,
 } from 'react';
 import type { Song } from '../models';
@@ -51,13 +52,13 @@ export function FestivalProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
+  const value = useMemo<FestivalContextValue>(() => ({
+    state: { songs, currentSeason, isLoading, error },
+    actions: { refresh },
+  }), [songs, currentSeason, isLoading, error, refresh]);
+
   return (
-    <FestivalContext.Provider
-      value={{
-        state: { songs, currentSeason, isLoading, error },
-        actions: { refresh },
-      }}
-    >
+    <FestivalContext.Provider value={value}>
       {children}
     </FestivalContext.Provider>
   );

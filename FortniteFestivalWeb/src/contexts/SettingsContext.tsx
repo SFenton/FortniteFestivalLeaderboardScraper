@@ -4,6 +4,7 @@ import {
   useState,
   useCallback,
   useEffect,
+  useMemo,
   type ReactNode,
 } from 'react';
 import type { InstrumentKey } from '../models';
@@ -136,8 +137,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     setSettingsState(defaultAppSettings());
   }, []);
 
+  const value = useMemo<SettingsContextValue>(() => ({
+    settings, setSettings, updateSettings, resetSettings,
+  }), [settings, setSettings, updateSettings, resetSettings]);
+
   return (
-    <SettingsContext.Provider value={{ settings, setSettings, updateSettings, resetSettings }}>
+    <SettingsContext.Provider value={value}>
       {children}
     </SettingsContext.Provider>
   );
