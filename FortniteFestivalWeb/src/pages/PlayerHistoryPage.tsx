@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigationType } from 'react-router-dom';
 import { IoSwapVerticalSharp } from 'react-icons/io5';
 import { useFestival } from '../contexts/FestivalContext';
 import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
@@ -22,6 +22,7 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { useScoreFilter } from '../hooks/useScoreFilter';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useHeaderCollapse } from '../hooks/useHeaderCollapse';
+import { useScrollRestore } from '../hooks/useScrollRestore';
 import { IS_IOS, IS_ANDROID, IS_PWA } from '../utils/platform';
 
 function accuracyColor(pct: number): string {
@@ -45,6 +46,7 @@ export default function PlayerHistoryPage() {
   const song = songs.find((s) => s.songId === songId);
   const instKey = instrument as InstrumentKey;
   const instLabel = INSTRUMENT_LABELS[instKey] ?? instrument;
+  const navType = useNavigationType();
 
   const showAccuracy = useMediaQuery('(min-width: 420px)');
   const showSeason = useMediaQuery('(min-width: 520px)');
@@ -56,6 +58,7 @@ export default function PlayerHistoryPage() {
   const [error, setError] = useState<string | null>(null);
   const { filterHistory } = useScoreFilter();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const saveScroll = useScrollRestore(scrollRef, `history:${songId}:${instKey}`, navType);
   const [headerCollapsed, updateHeaderCollapse] = useHeaderCollapse(scrollRef, { disabled: hasFab, forcedValue: hasFab });
   const [loadPhase, setLoadPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>('loading');
   const updateScrollMask = useScrollMask(scrollRef, [loadPhase, history.length]);
@@ -92,10 +95,11 @@ export default function PlayerHistoryPage() {
 
   const rushOnScroll = useStaggerRush(scrollRef);
   const handleScroll = useCallback(() => {
+    saveScroll();
     updateScrollMask();
     rushOnScroll();
     updateHeaderCollapse();
-  }, [updateScrollMask, rushOnScroll, updateHeaderCollapse]);
+  }, [saveScroll, updateScrollMask, rushOnScroll, updateHeaderCollapse]);
 
   useEffect(() => {
     if (!player || !songId) {
