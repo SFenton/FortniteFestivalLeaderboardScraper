@@ -1,1 +1,1 @@
-export { IS_PWA } from './platform';
+export { IS_PWA } from '@festival/ui-utils';
