@@ -1,0 +1,99 @@
+/*
+ * Design tokens as CSS custom properties.
+ * Source of truth: packages/theme/src/colors.ts + spacing.ts
+ * Import once in index.css — all CSS Modules reference these vars.
+ */
+:root {
+  /* ── Backgrounds ── */
+  --color-bg-app: #1A0830;
+  --color-bg-card: #0B1220;
+  --color-bg-black: #000000;
+  --color-bg-card-alt: #111827;
+  --color-bg-card-alt2: #0F172A;
+
+  /* ── Surfaces ── */
+  --color-surface-frosted: rgba(18,24,38,0.78);
+  --color-surface-elevated: #1A2940;
+  --color-surface-subtle: #162133;
+  --color-surface-pressed: #101826;
+  --color-surface-muted: #223047;
+
+  /* ── Frosted glass ── */
+  --color-glass-card: rgba(11,18,32,0.35);
+  --color-glass-border: rgba(255,255,255,0.08);
+  --color-glass-nav: rgba(11,3,24,0.40);
+
+  /* ── Overlays ── */
+  --color-overlay-modal: rgba(0,0,0,0.55);
+  --color-overlay-scrim: rgba(0,0,0,0.35);
+  --color-overlay-dark: rgba(0,0,0,0.7);
+
+  /* ── Text ── */
+  --color-text-primary: #FFFFFF;
+  --color-text-secondary: #D7DEE8;
+  --color-text-tertiary: #9AA6B2;
+  --color-text-muted: #8899AA;
+  --color-text-subtle: #B8C0CC;
+  --color-text-disabled: #607089;
+  --color-text-placeholder: rgba(255,255,255,0.4);
+
+  /* ── Borders ── */
+  --color-border-primary: #2B3B55;
+  --color-border-card: #263244;
+  --color-border-subtle: #1E2A3A;
+  --color-border-separator: #1A2535;
+
+  /* ── Accent / Brand ── */
+  --color-accent-blue: #2D82E6;
+  --color-accent-blue-bright: #4C7DFF;
+  --color-accent-purple: #7C3AED;
+  --color-accent-purple-dark: #4B0F63;
+
+  /* ── Gold / FC ── */
+  --color-gold: #FFD700;
+  --color-gold-bg: #332915;
+  --color-gold-stroke: #CFA500;
+
+  /* ── Status ── */
+  --color-status-green: #2ECC71;
+  --color-status-red: #C62828;
+  --color-danger-bg: rgba(198,40,40,0.4);
+  --color-chip-selected: rgba(45,130,230,0.4);
+  --color-purple-tab-active: #7A2B95;
+
+  /* ── Spacing ── */
+  --gap-xs: 2px;
+  --gap-sm: 4px;
+  --gap-md: 8px;
+  --gap-lg: 10px;
+  --gap-xl: 12px;
+  --gap-section: 24px;
+
+  /* ── Radius ── */
+  --radius-xs: 8px;
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-full: 999px;
+
+  /* ── Font ── */
+  --font-xs: 11px;
+  --font-sm: 12px;
+  --font-md: 14px;
+  --font-lg: 16px;
+  --font-xl: 20px;
+  --font-title: 22px;
+
+  /* ── Size ── */
+  --size-thumb: 44px;
+  --size-icon-lg: 40px;
+  --size-icon-md: 28px;
+  --size-icon-sm: 24px;
+
+  /* ── Layout ── */
+  --layout-padding-h: 20px;
+  --layout-padding-top: 16px;
+  --max-width-card: 1080px;
+  --max-width-grid: 2170px;
+  --max-width-narrow: 600px;
+}
