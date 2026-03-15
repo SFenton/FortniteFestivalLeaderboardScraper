@@ -49,10 +49,15 @@ export const api = {
       `/api/leaderboard/${encodeURIComponent(songId)}/${encodeURIComponent(instrument)}?top=${top}&offset=${offset}${leeway != null ? `&leeway=${leeway}` : ''}`,
     ),
 
-  getPlayer: (accountId: string, songId?: string) =>
-    get<PlayerResponse>(
-      `/api/player/${encodeURIComponent(accountId)}${songId ? `?songId=${encodeURIComponent(songId)}` : ''}`,
-    ).then(normalizeDisplayName),
+  getPlayer: (accountId: string, songId?: string, instruments?: string[]) => {
+    const params = new URLSearchParams();
+    if (songId) params.set('songId', songId);
+    if (instruments?.length) params.set('instruments', instruments.join(','));
+    const qs = params.toString();
+    return get<PlayerResponse>(
+      `/api/player/${encodeURIComponent(accountId)}${qs ? `?${qs}` : ''}`,
+    ).then(normalizeDisplayName);
+  },
 
   searchAccounts: (q: string, limit = 10) =>
     get<AccountSearchResponse>(
@@ -65,10 +70,15 @@ export const api = {
   getSyncStatus: (accountId: string) =>
     get<SyncStatusResponse>(`/api/player/${encodeURIComponent(accountId)}/sync-status`),
 
-  getPlayerHistory: (accountId: string, songId?: string) =>
-    get<PlayerHistoryResponse>(
-      `/api/player/${encodeURIComponent(accountId)}/history${songId ? `?songId=${encodeURIComponent(songId)}` : ''}`,
-    ),
+  getPlayerHistory: (accountId: string, songId?: string, instrument?: string) => {
+    const params = new URLSearchParams();
+    if (songId) params.set('songId', songId);
+    if (instrument) params.set('instrument', instrument);
+    const qs = params.toString();
+    return get<PlayerHistoryResponse>(
+      `/api/player/${encodeURIComponent(accountId)}/history${qs ? `?${qs}` : ''}`,
+    );
+  },
 
   getAllLeaderboards: (songId: string, top = 10, leeway?: number) =>
     get<AllLeaderboardsResponse>(

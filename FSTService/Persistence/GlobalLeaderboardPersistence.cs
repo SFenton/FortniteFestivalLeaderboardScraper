@@ -341,11 +341,14 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// <summary>
     /// Get a player's scores across all instruments (player profile).
     /// </summary>
-    public List<PlayerScoreDto> GetPlayerProfile(string accountId, string? songId = null)
+    public List<PlayerScoreDto> GetPlayerProfile(string accountId, string? songId = null, HashSet<string>? instruments = null)
     {
         var allScores = new List<PlayerScoreDto>();
-        foreach (var (_, db) in _instrumentDbs)
+        foreach (var (instrument, db) in _instrumentDbs)
+        {
+            if (instruments is not null && !instruments.Contains(instrument)) continue;
             allScores.AddRange(db.GetPlayerScores(accountId, songId));
+        }
         return allScores;
     }
 
@@ -368,11 +371,12 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// Compute (rank, totalEntries) for every song a player has across all instruments.
     /// Uses DB-computed rank (position by score) rather than stored Rank column.
     /// </summary>
-    public Dictionary<(string SongId, string Instrument), (int Rank, int Total)> GetPlayerRankings(string accountId, string? songId = null)
+    public Dictionary<(string SongId, string Instrument), (int Rank, int Total)> GetPlayerRankings(string accountId, string? songId = null, HashSet<string>? instruments = null)
     {
         var result = new Dictionary<(string, string), (int, int)>();
         foreach (var (instrument, db) in _instrumentDbs)
         {
+            if (instruments is not null && !instruments.Contains(instrument)) continue;
             foreach (var (sid, (rank, total)) in db.GetPlayerRankings(accountId, songId))
                 result[(sid, instrument)] = (rank, total);
         }
