@@ -26,28 +26,8 @@ import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
 import { useFabSearch } from '../contexts/FabSearchContext';
 import { useScrollFade } from '../hooks/useScrollFade';
 import { useStaggerRush } from '../hooks/useStaggerRush';
+import FadeInDiv from '../components/FadeInDiv';
 import type { InstrumentKey as ServerInstrumentKey } from '../models';
-
-/** Clears animation styles on completion so backdrop-filter works on children. */
-function FadeInDiv({ delay, hidden, children, style }: { delay: number; hidden?: boolean; children: React.ReactNode; style?: CSSProperties }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const handleEnd = useCallback(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.opacity = '';
-    el.style.animation = '';
-  }, []);
-  if (hidden) return <div style={{ opacity: 0 }}>{children}</div>;
-  return (
-    <div
-      ref={ref}
-      style={{ opacity: 0, animation: `fadeInUp 400ms ease-out ${delay}ms forwards`, ...style }}
-      onAnimationEnd={handleEnd}
-    >
-      {children}
-    </div>
-  );
-}
 
 const CORE_TO_SERVER_INSTRUMENT: Record<InstrumentKey, ServerInstrumentKey> = {
   guitar: 'Solo_Guitar',

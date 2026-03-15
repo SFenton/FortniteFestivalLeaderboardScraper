@@ -16,6 +16,7 @@ import { useScrollMask } from '../hooks/useScrollMask';
 import { useStaggerRush } from '../hooks/useStaggerRush';
 import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
 import { useScoreFilter } from '../hooks/useScoreFilter';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import { IS_PWA } from '../utils/isPwa';
 
 const PAGE_SIZE = 25;
@@ -62,20 +63,10 @@ export default function LeaderboardPage() {
   // Skip all animations when data is already cached (return visit to this leaderboard)
   const skipAllAnim = hasCached;
 
-  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    const onResize = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => setWindowWidth(window.innerWidth), 150);
-    };
-    window.addEventListener('resize', onResize);
-    return () => { clearTimeout(timer); window.removeEventListener('resize', onResize); };
-  }, []);
-  const showAccuracy = windowWidth >= 420;
-  const showSeason = windowWidth >= 520;
-  const showStars = windowWidth >= 768;
-  const isMobile = windowWidth < 420;
+  const showAccuracy = useMediaQuery('(min-width: 420px)');
+  const showSeason = useMediaQuery('(min-width: 520px)');
+  const showStars = useMediaQuery('(min-width: 768px)');
+  const isMobile = !showAccuracy;
   const isNarrow = useIsMobile();
   const hasFab = useIsMobileChrome();
 

@@ -1,0 +1,42 @@
+import { useRef, useCallback, memo, type CSSProperties, type ReactNode } from 'react';
+import { FADE_DURATION } from '@festival/theme';
+
+interface FadeInDivProps {
+  /** Stagger delay in ms.  `undefined` → render children without animation. */
+  delay?: number;
+  /** When true, render the wrapper at opacity 0 (hidden but in the DOM). */
+  hidden?: boolean;
+  children: ReactNode;
+  style?: CSSProperties;
+}
+
+/**
+ * Wrapper that fades children in with a `fadeInUp` animation.
+ * Cleans up inline animation styles after completion so they don't interfere
+ * with subsequent re-renders or `useStaggerRush`.
+ */
+const FadeInDiv = memo(function FadeInDiv({ delay, hidden, children, style }: FadeInDivProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const handleEnd = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.opacity = '';
+    el.style.animation = '';
+  }, []);
+
+  if (delay == null) return <div style={style}>{children}</div>;
+
+  if (hidden) return <div style={{ ...style, opacity: 0 }}>{children}</div>;
+
+  return (
+    <div
+      ref={ref}
+      style={{ opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${delay}ms forwards`, ...style }}
+      onAnimationEnd={handleEnd}
+    >
+      {children}
+    </div>
+  );
+});
+
+export default FadeInDiv;

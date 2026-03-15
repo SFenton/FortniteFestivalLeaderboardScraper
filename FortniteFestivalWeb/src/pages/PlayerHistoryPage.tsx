@@ -20,6 +20,8 @@ import { useScrollMask } from '../hooks/useScrollMask';
 import { useStaggerRush } from '../hooks/useStaggerRush';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useScoreFilter } from '../hooks/useScoreFilter';
+import { useMediaQuery } from '../hooks/useMediaQuery';
+import { useHeaderCollapse } from '../hooks/useHeaderCollapse';
 import { IS_IOS, IS_ANDROID, IS_PWA } from '../utils/platform';
 
 function accuracyColor(pct: number): string {
@@ -44,19 +46,9 @@ export default function PlayerHistoryPage() {
   const instKey = instrument as InstrumentKey;
   const instLabel = INSTRUMENT_LABELS[instKey] ?? instrument;
 
-  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    const onResize = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => setWindowWidth(window.innerWidth), 150);
-    };
-    window.addEventListener('resize', onResize);
-    return () => { clearTimeout(timer); window.removeEventListener('resize', onResize); };
-  }, []);
-  const showAccuracy = windowWidth >= 420;
-  const showSeason = windowWidth >= 520;
-  const isMobile = windowWidth < 420;
+  const showAccuracy = useMediaQuery('(min-width: 420px)');
+  const showSeason = useMediaQuery('(min-width: 520px)');
+  const isMobile = !showAccuracy;
   const hasFab = useIsMobile();
 
   const [history, setHistory] = useState<ScoreHistoryEntry[]>([]);
@@ -64,7 +56,7 @@ export default function PlayerHistoryPage() {
   const [error, setError] = useState<string | null>(null);
   const { filterHistory } = useScoreFilter();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [headerCollapsed, setHeaderCollapsed] = useState(hasFab);
+  const [headerCollapsed, updateHeaderCollapse] = useHeaderCollapse(scrollRef, { disabled: hasFab, forcedValue: hasFab });
   const [loadPhase, setLoadPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>('loading');
   const updateScrollMask = useScrollMask(scrollRef, [loadPhase, history.length]);
 
@@ -102,11 +94,8 @@ export default function PlayerHistoryPage() {
   const handleScroll = useCallback(() => {
     updateScrollMask();
     rushOnScroll();
-    if (hasFab) return;
-    const el = scrollRef.current;
-    if (!el) return;
-    setHeaderCollapsed(el.scrollTop > 40);
-  }, [updateScrollMask, rushOnScroll, hasFab]);
+    updateHeaderCollapse();
+  }, [updateScrollMask, rushOnScroll, updateHeaderCollapse]);
 
   useEffect(() => {
     if (!player || !songId) {
@@ -141,7 +130,6 @@ export default function PlayerHistoryPage() {
     setLoadPhase('spinnerOut');
     const id = setTimeout(() => {
       setLoadPhase('contentIn');
-      if (!hasFab) setHeaderCollapsed(false);
     }, 500);
     return () => clearTimeout(id);
   }, [loading, error]);
