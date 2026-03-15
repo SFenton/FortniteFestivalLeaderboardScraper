@@ -1,5 +1,5 @@
 import { HashRouter, Routes, Route, NavLink, Link, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
-import { IoMusicalNotes, IoSparkles, IoStatsChart, IoPerson, IoSettings, IoSearch, IoSwapVerticalSharp, IoFunnel, IoChevronBack, IoClose, IoFlash } from 'react-icons/io5';
+import { IoMusicalNotes, IoSparkles, IoStatsChart, IoPerson, IoPersonAdd, IoSettings, IoSearch, IoSwapVerticalSharp, IoFunnel, IoChevronBack, IoClose, IoFlash } from 'react-icons/io5';
 import { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback, Fragment } from 'react';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
 import { SettingsProvider } from './contexts/SettingsContext';
@@ -27,6 +27,8 @@ import { clearSongDetailCache } from './pages/SongDetailPage';
 import { clearLeaderboardCache } from './pages/LeaderboardPage';
 import { clearPlayerPageCache } from './pages/PlayerPage';
 import { IS_IOS, IS_ANDROID, IS_PWA } from './utils/platform';
+import ChangelogModal from './components/ChangelogModal';
+import { APP_VERSION, changelogHash } from './changelog';
 
 export default function App() {
   return (
@@ -70,8 +72,28 @@ function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [playerModalOpen, setPlayerModalOpen] = useState(false);
   const [findPlayerOpen, setFindPlayerOpen] = useState(false);
+  const [changelogOpen, setChangelogOpen] = useState(() => {
+    try {
+      const stored = localStorage.getItem('fst:changelog');
+      if (!stored) return true;
+      const parsed = JSON.parse(stored);
+      return parsed.version !== APP_VERSION || parsed.hash !== changelogHash();
+    } catch { return true; }
+  });
+  // Mark as seen immediately so refresh won't re-show
+  useEffect(() => {
+    if (changelogOpen) {
+      localStorage.setItem('fst:changelog', JSON.stringify({ version: APP_VERSION, hash: changelogHash() }));
+    }
+  }, [changelogOpen]);
+  const dismissChangelog = useCallback(() => {
+    setChangelogOpen(false);
+  }, []);
   const navigate = useNavigate();
   const navType = useNavigationType();
+
+  // Track whether the back button has already appeared in the current detail stack.
+  const backShownRef = useRef(false);
 
   // Clear page caches when score filter settings change so pages restagger
   const filterRef = useRef({ e: settings.filterInvalidScores, l: settings.filterInvalidScoresLeeway });
@@ -139,15 +161,23 @@ function AppShell() {
       }
       return;
     }
-    // Save current location to current tab, then switch
-    setTabRoutes(prev => ({ ...prev, [activeTab]: location.pathname }));
+    // Save current location to current tab (except Statistics — always reset to root)
+    setTabRoutes(prev => ({
+      ...prev,
+      [activeTab]: activeTab === 'statistics' ? TAB_ROOTS.statistics : location.pathname,
+    }));
     setActiveTab(tab);
-    const target = tabRoutes[tab];
+    // Statistics always navigates to root
+    const target = tab === 'statistics' ? TAB_ROOTS.statistics : tabRoutes[tab];
     navigate(target, { replace: true });
   }, [activeTab, location.pathname, navigate, tabRoutes]);
 
   const handleSelect = (p: TrackedPlayer) => {
     setPlayer(p);
+    // Navigate to statistics unless already on that player's page
+    if (location.pathname !== `/player/${p.accountId}`) {
+      navigate('/statistics');
+    }
   };
 
   const handleFindPlayerSelect = useCallback((p: TrackedPlayer) => {
@@ -189,17 +219,28 @@ function AppShell() {
     return null;
   }, [location.pathname]);
 
+  // Animate header only on first push into a detail stack
+  const shouldAnimateHeader = (() => {
+    if (!backFallback) {
+      backShownRef.current = false;
+      return false;
+    }
+    if (backShownRef.current) return false;
+    backShownRef.current = true;
+    return navType === 'PUSH';
+  })();
+
   return (
     <PlayerDataProvider accountId={player?.accountId}>
     <div style={styles.shell}>
       <ScrollToTop />
       {showAnimatedBg && <AnimatedBackground songs={songs} />}
 
-      {!isMobile && backFallback && (IS_IOS || IS_ANDROID || IS_PWA) && <BackLink key={location.pathname} fallback={backFallback} />}
+      {!isMobile && backFallback && (IS_IOS || IS_ANDROID || IS_PWA) && <BackLink key={location.pathname} fallback={backFallback} animate={shouldAnimateHeader} />}
 
         {isMobile ? (
           navTitle ? (
-            <div key={location.pathname} className="sa-top" style={{ ...styles.mobileHeader, animation: 'fadeIn 300ms ease-out' }}>
+            <div key={location.pathname} className="sa-top" style={{ ...styles.mobileHeader, ...(shouldAnimateHeader ? { animation: 'fadeIn 300ms ease-out' } : {}) }}>
               {backFallback ? (
                 <a
                   href="#"
@@ -217,7 +258,7 @@ function AppShell() {
               )}
             </div>
           ) : (
-            backFallback ? <BackLink key={location.pathname} fallback={backFallback} /> : null
+            backFallback ? <BackLink key={location.pathname} fallback={backFallback} animate={shouldAnimateHeader} /> : null
           )
         ) : (
           <nav className="sa-top" style={styles.nav}>
@@ -237,7 +278,12 @@ function AppShell() {
               onClick={() => player ? navigate('/statistics') : setPlayerModalOpen(true)}
               aria-label="Profile"
             >
-              <span style={player ? styles.headerProfileCircle : styles.headerProfileCircleEmpty}>
+              <span style={{
+                ...styles.headerProfileCircleBase,
+                backgroundColor: player ? Colors.surfaceSubtle : '#D0D5DD',
+                border: player ? `1px solid ${Colors.borderSubtle}` : '1px solid transparent',
+                color: player ? Colors.textSecondary : '#4A5568',
+              }}>
                 <IoPerson size={16} />
               </span>
             </button>
@@ -252,7 +298,7 @@ function AppShell() {
         onSelectPlayer={() => { setSidebarOpen(false); setPlayerModalOpen(true); }}
       />
 
-      <div id="main-content" key={player?.accountId ?? 'none'} style={styles.content}>
+      <div id="main-content" style={styles.content}>
         <Routes>
           <Route path="/" element={<Navigate to="/songs" replace />} />
           <Route path="/songs" element={<SongsPage />} />
@@ -350,6 +396,9 @@ function AppShell() {
         <FloatingActionButton
           mode="players"
           actionGroups={[
+            ...(fabSearch.playerPageSelect ? [[
+              { label: `Select ${fabSearch.playerPageSelect.displayName} as Player Profile`, icon: <IoPersonAdd size={18} />, onPress: fabSearch.playerPageSelect.onSelect },
+            ]] : []),
             [
               { label: 'Find Player', icon: <IoSearch size={18} />, onPress: () => setFindPlayerOpen(true) },
               player
@@ -375,7 +424,9 @@ function AppShell() {
         player={null}
         onDeselect={() => {}}
         isMobile={isNarrow}
+        title="Find Player"
       />
+      {changelogOpen && <ChangelogModal onDismiss={dismissChangelog} />}
     </div>
     </PlayerDataProvider>
   );
@@ -388,6 +439,7 @@ function HeaderSearch() {
   const [activeIndex, setActiveIndex] = useState(-1);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
   const search = useCallback(async (q: string) => {
@@ -431,9 +483,10 @@ function HeaderSearch() {
 
   return (
     <div ref={containerRef} style={styles.headerSearchContainer}>
-      <div style={styles.headerSearchInputWrap}>
+      <div style={styles.headerSearchInputWrap} onClick={() => inputRef.current?.focus()}>
         <IoSearch size={16} style={{ color: Colors.textTertiary, flexShrink: 0 }} />
         <input
+          ref={inputRef}
           style={styles.headerSearchInput}
           placeholder="Search player…"
           value={query}
@@ -635,6 +688,7 @@ function MobilePlayerSearchModal({
   player,
   onDeselect,
   isMobile,
+  title = 'Select Player Profile',
 }: {
   visible: boolean;
   onClose: () => void;
@@ -642,6 +696,7 @@ function MobilePlayerSearchModal({
   player: TrackedPlayer | null;
   onDeselect: () => void;
   isMobile: boolean;
+  title?: string;
 }) {
   const [mounted, setMounted] = useState(false);
   const [animIn, setAnimIn] = useState(false);
@@ -791,7 +846,7 @@ function MobilePlayerSearchModal({
         onTransitionEnd={handleTransitionEnd}
       >
         <div style={styles.modalHeader}>
-          <h2 style={styles.modalTitle}>Profile</h2>
+          <h2 style={styles.modalTitle}>{title}</h2>
           <button style={styles.modalCloseBtn} onClick={onClose} aria-label="Close"><IoClose size={18} /></button>
         </div>
         <div style={styles.modalBody}>
@@ -912,16 +967,17 @@ function FloatingActionButton({
 
   const closeActions = useCallback(() => {
     setPopupVisible(false);
-    setTimeout(() => { setPopupMounted(false); setActionsOpen(false); }, 300);
+    setActionsOpen(false);
+    setTimeout(() => { setPopupMounted(false); }, 300);
   }, []);
-  const [query, setQuery] = useState('');
+  const fabSearch = useFabSearch();
+  const [query, setQuery] = useState(mode === 'songs' ? fabSearch.query : '');
   const [results, setResults] = useState<AccountSearchResult[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
-  const fabSearch = useFabSearch();
 
   const searchPlayers = useCallback(async (q: string) => {
     if (q.length < 2) { setResults([]); return; }
@@ -1000,15 +1056,18 @@ function FloatingActionButton({
       {searchVisible && (
         <div style={{ ...styles.fabSearchBarOuter, ...(IS_PWA ? { bottom: 80 + Gap.section - Gap.md } : {}) }}>
           <div className="fab-search-bar" style={styles.fabSearchBar}>
-            <input
-              ref={inputRef}
-              style={styles.fabSearchInput}
-              placeholder={placeholder ?? 'Search player\u2026'}
-              value={query}
-              onChange={e => handleChange(e.target.value)}
-              onKeyDown={handleKeyDown}
-              enterKeyHint="done"
-            />
+            <div style={styles.fabSearchInputWrap} onClick={() => inputRef.current?.focus()}>
+              <IoSearch size={16} style={{ color: Colors.textTertiary, flexShrink: 0 }} />
+              <input
+                ref={inputRef}
+                style={styles.fabSearchInput}
+                placeholder={placeholder ?? 'Search player\u2026'}
+                value={query}
+                onChange={e => handleChange(e.target.value)}
+                onKeyDown={handleKeyDown}
+                enterKeyHint="done"
+              />
+            </div>
             {mode === 'players' && results.length > 0 && (
               <div style={styles.fabSearchResults}>
                 {results.map((r, i) => (
@@ -1031,7 +1090,7 @@ function FloatingActionButton({
       <div style={{ ...styles.fabContainer, ...(IS_PWA ? { bottom: 80 + Gap.section - Gap.md } : {}) }}>
         <button
           style={styles.fab}
-          onClick={() => openActions()}
+          onClick={() => actionsOpen ? closeActions() : openActions()}
           aria-label="Actions"
         >
           {icon ?? <span style={styles.fabHamburger}><span style={styles.fabHamburgerLine} /><span style={styles.fabHamburgerLine} /><span style={styles.fabHamburgerLine} /></span>}
@@ -1188,6 +1247,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: `0 ${Gap.xl}px`,
     borderRadius: Radius.full,
     boxSizing: 'border-box' as const,
+    cursor: 'text',
     ...frostedCard,
   },
   headerSearchInput: {
@@ -1314,27 +1374,14 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     padding: 0,
   },
-  headerProfileCircle: {
+  headerProfileCircleBase: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     width: 48,
     height: 48,
     borderRadius: '50%',
-    backgroundColor: Colors.surfaceSubtle,
-    border: `1px solid ${Colors.borderSubtle}`,
-    color: Colors.textSecondary,
-  },
-  headerProfileCircleEmpty: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 48,
-    height: 48,
-    borderRadius: '50%',
-    backgroundColor: '#D0D5DD',
-    border: 'none',
-    color: '#4A5568',
+    transition: 'background-color 300ms ease, border-color 300ms ease, color 300ms ease',
   },
   deselectBtn: {
     background: Colors.dangerBg,
@@ -1421,17 +1468,26 @@ const styles: Record<string, React.CSSProperties> = {
     position: 'relative' as const,
     pointerEvents: 'auto' as const,
   },
-  fabSearchInput: {
+  fabSearchInputWrap: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.sm,
     width: '100%',
     height: 56,
     padding: `0 ${Gap.section}px`,
     borderRadius: Radius.full,
     ...frostedCard,
-    color: Colors.textPrimary,
-    fontSize: Font.md,
-    outline: 'none',
     boxSizing: 'border-box' as const,
     boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+    cursor: 'text',
+  },
+  fabSearchInput: {
+    flex: 1,
+    background: 'none',
+    border: 'none',
+    outline: 'none',
+    color: Colors.textPrimary,
+    fontSize: Font.md,
   },
   fabSearchResults: {
     position: 'absolute' as const,
@@ -1602,14 +1658,8 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
     flex: 1,
     color: Colors.textTertiary,
-    fontSize: Font.sm,
+    fontSize: Font.lg,
     textAlign: 'center' as const,
-  },
-  modalSpinnerWrap: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
   },
   modalArcSpinner: {
     width: 36,

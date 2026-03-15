@@ -13,6 +13,7 @@ import SeasonPill from '../components/SeasonPill';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutlineSkew, frostedCard } from '../theme';
 import { staggerDelay } from '../utils/stagger';
 import { useScrollMask } from '../hooks/useScrollMask';
+import { useStaggerRush } from '../hooks/useStaggerRush';
 import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
 import { useScoreFilter } from '../hooks/useScoreFilter';
 import { IS_PWA } from '../utils/isPwa';
@@ -111,9 +112,11 @@ export default function LeaderboardPage() {
     if (entry && scrollRef.current) entry.scrollTop = scrollRef.current.scrollTop;
   }, [cacheKey]);
 
+  const rushOnScroll = useStaggerRush(scrollRef);
   const handleScroll = useCallback(() => {
     updateScrollMask();
     handleScrollCache();
+    rushOnScroll();
     userScrolledRef.current = true;
     if (isNarrow) return; // On mobile, header is always collapsed
     const el = scrollRef.current;
@@ -124,7 +127,7 @@ export default function LeaderboardPage() {
       return;
     }
     setHeaderCollapsed(el.scrollTop > 40);
-  }, [updateScrollMask, handleScrollCache, isNarrow]);
+  }, [updateScrollMask, handleScrollCache, rushOnScroll, isNarrow]);
 
   const totalPages = Math.max(1, Math.ceil(localEntries / PAGE_SIZE));
 
@@ -331,7 +334,7 @@ export default function LeaderboardPage() {
                     ...styles.songArtist,
                     fontSize: isNarrow || headerCollapsed ? Font.md : Font.lg,
                     ...(!isNarrow ? { transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
-                  }}>{song?.artist ?? 'Unknown Artist'}</p>
+                  }}>{song?.artist ?? 'Unknown Artist'}{song?.year ? ` · ${song.year}` : ''}</p>
                 </div>
               </div>
               <div style={styles.headerRight}>
@@ -397,7 +400,7 @@ export default function LeaderboardPage() {
                 >
                   <span style={{ ...styles.colRank, ...(isPlayer ? { fontWeight: 700 } : {}) }}>#{(e.rank ?? startRank + i + 1).toLocaleString()}</span>
                   <span style={{ ...styles.colName, ...(isPlayer ? { fontWeight: 700 } : {}) }}>
-                    {e.displayName ?? e.accountId.slice(0, 12)}
+                    {e.displayName || 'Unknown User'}
                   </span>
                   <span style={styles.seasonScoreGroup}>
                     {showSeason && e.season != null && (

@@ -7,6 +7,8 @@ import { usePlayerData } from '../contexts/PlayerDataContext';
 import { useSuggestions } from '../hooks/useSuggestions';
 import { serverSongToCore, buildScoresIndex } from '../utils/suggestionAdapter';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../components/InstrumentIcons';
+import AlbumArt from '../components/AlbumArt';
+import SeasonPill from '../components/SeasonPill';
 import SuggestionsFilterModal from '../components/SuggestionsFilterModal';
 import type { SuggestionsFilterDraft } from '../components/SuggestionsFilterModal';
 import { defaultSuggestionsFilterDraft, isSuggestionsFilterActive } from '../components/SuggestionsFilterModal';
@@ -18,11 +20,12 @@ import { shouldShowCategory, filterCategoryForInstruments } from '@festival/core
 import { globalKeyFor, getCategoryTypeId, getCategoryInstrument, perInstrumentKeyFor } from '@festival/core/suggestions/suggestionFilterConfig';
 import { useSettings } from '../contexts/SettingsContext';
 import type { AppSettings } from '../contexts/SettingsContext';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, frostedCard } from '../theme';
+import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutline, goldOutlineSkew, frostedCard } from '../theme';
 import { estimateVisibleCount } from '../utils/stagger';
 import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
 import { useFabSearch } from '../contexts/FabSearchContext';
 import { useScrollFade } from '../hooks/useScrollFade';
+import { useStaggerRush } from '../hooks/useStaggerRush';
 import type { InstrumentKey as ServerInstrumentKey } from '../models';
 
 /** Clears animation styles on completion so backdrop-filter works on children. */
@@ -126,7 +129,7 @@ let _suggestionsHasRendered = false;
 export default function SuggestionsPage({ accountId }: Props) {
   const { settings: appSettings } = useSettings();
   const {
-    state: { songs, isLoading },
+    state: { songs, currentSeason, isLoading },
   } = useFestival();
 
   const { playerData, playerLoading } = usePlayerData();
@@ -153,7 +156,18 @@ export default function SuggestionsPage({ accountId }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const { categories, loadMore, hasMore } = useSuggestions(accountId, coreSongs, scoresIndex);
+  // Use server-provided season, fall back to highest season in player scores
+  const effectiveSeason = useMemo(() => {
+    if (currentSeason > 0) return currentSeason;
+    if (!playerData) return 0;
+    let max = 0;
+    for (const s of playerData.scores) {
+      if (s.season != null && s.season > max) max = s.season;
+    }
+    return max;
+  }, [currentSeason, playerData]);
+
+  const { categories, loadMore, hasMore } = useSuggestions(accountId, coreSongs, scoresIndex, effectiveSeason);
 
   // Suggestions filter state
   const [filterSettings, setFilterSettings] = useState<SuggestionsFilterDraft>(loadSuggestionsFilter);
@@ -305,9 +319,11 @@ export default function SuggestionsPage({ accountId }: Props) {
   // Per-card scroll fade
   const updateCardFade = useScrollFade(scrollRef, listRef, [phase, visibleCategories]);
 
+  const rushOnScroll = useStaggerRush(scrollRef);
   const handleScroll = useCallback(() => {
     updateCardFade();
-  }, [updateCardFade]);
+    rushOnScroll();
+  }, [updateCardFade, rushOnScroll]);
 
   // Track how many category cards have already been revealed so that newly
   // loaded batches get their own stagger starting from delay 0.
@@ -383,13 +399,13 @@ export default function SuggestionsPage({ accountId }: Props) {
         <div style={styles.container}>
           <div style={{ ...styles.headerRow, ...headerStagger }}>
             <button
-              style={{ ...styles.iconBtn, ...(filtersActive ? styles.iconBtnActive : {}) }}
+              style={{ ...styles.iconBtn, ...(filtersActive ? styles.iconBtnActive : {}), width: 'auto', paddingLeft: Gap.xl, paddingRight: Gap.xl, gap: Gap.md }}
               onClick={openFilter}
               title="Filter"
               aria-label="Filter suggestions"
             >
               <IoFunnel size={18} />
-              {filtersActive && <span style={styles.filterDot} />}
+              <span style={{ fontSize: Font.sm, fontWeight: 600, whiteSpace: 'nowrap' }}>Filter</span>
             </button>
           </div>
         </div>
@@ -411,7 +427,7 @@ export default function SuggestionsPage({ accountId }: Props) {
             dataLength={visibleCategories.length}
             next={filteredLoadMore}
             hasMore={effectiveHasMore}
-            loader={<div style={styles.loader}><div style={styles.loaderSpinner} /></div>}
+            loader={phase === 'contentIn' ? <div style={styles.loader}><div style={styles.loaderSpinner} /></div> : <></>}
             scrollThreshold="600px"
             scrollableTarget="suggestions-scroll"
             style={{ overflow: 'visible' }}
@@ -492,7 +508,7 @@ function CategoryCard({
 // ---------------------------------------------------------------------------
 
 function getCatInstrument(key: string): InstrumentKey | null {
-  const prefixes = ['unfc_', 'unplayed_', 'almost_elite_', 'pct_push_'];
+  const prefixes = ['unfc_', 'unplayed_', 'almost_elite_', 'pct_push_', 'stale_', 'pct_improve_', 'improve_rankings_'];
   let remainder: string | null = null;
   for (const p of prefixes) {
     if (key.startsWith(p)) {
@@ -511,7 +527,8 @@ function getCatInstrument(key: string): InstrumentKey | null {
 type RowLayout =
   | 'instrumentChips'   // default: 6 colored instrument status circles
   | 'singleInstrument'  // FC/near-FC/gold-push/star-gains: single instrument icon
-  | 'percentile'        // almost_elite/pct_push: percentile pill + instrument icon
+  | 'percentile'        // almost_elite/pct_push/pct_improve: percentile pill + instrument icon
+  | 'season'            // stale songs: season pill
   | 'unfcAccuracy'      // unfc_*: bold accuracy %
   | 'hidden';           // variety/artist/samename_title/unplayed_any: nothing
 
@@ -521,7 +538,8 @@ function getRowLayout(categoryKey: string): RowLayout {
     || k.startsWith('unplayed_')
     || (k.startsWith('samename_') && !k.startsWith('samename_nearfc_'))) return 'hidden';
   if (k.startsWith('unfc_')) return 'unfcAccuracy';
-  if (k.startsWith('almost_elite') || k.startsWith('pct_push')) return 'percentile';
+  if (k.startsWith('stale_')) return 'season';
+  if (k.startsWith('almost_elite') || k.startsWith('pct_push') || k.startsWith('pct_improve') || k.startsWith('same_pct') || k.startsWith('improve_rankings')) return 'percentile';
   if (k.startsWith('near_fc') || k.startsWith('almost_six_star') || k.startsWith('more_stars')
     || k.startsWith('first_plays_mixed') || k.startsWith('star_gains')
     || k.startsWith('samename_nearfc_')) return 'singleInstrument';
@@ -558,16 +576,12 @@ function SongRow({
   return (
     <Link to={songUrl} style={showStarPngs ? { ...styles.row, flexDirection: 'column' as const, alignItems: 'stretch' as const } : styles.row}>
       <div style={showStarPngs ? styles.rowMainLine : { display: 'contents' }}>
-        {albumArt ? (
-          <img src={albumArt} alt="" style={styles.thumb} loading="lazy" />
-        ) : (
-          <div style={{ ...styles.thumb, ...styles.thumbPlaceholder }} />
-        )}
+        <AlbumArt src={albumArt} size={Size.thumb} />
         <div style={styles.rowText}>
           <span style={styles.rowTitle}>{song.title}</span>
-          <span style={styles.rowArtist}>{song.artist}</span>
+          <span style={styles.rowArtist}>{song.artist}{song.year ? ` · ${song.year}` : ''}</span>
         </div>
-        <RightContent song={song} layout={layout} leaderboardData={leaderboardData} starCount={showStars ? displayStars : 0} starSrc={starSrc} />
+        <RightContent song={song} layout={layout} leaderboardData={leaderboardData} starCount={showStars && !showStarPngs ? displayStars : 0} starSrc={starSrc} />
       </div>
       {/* Star gains: PNG stars centered below on mobile */}
       {showStarPngs && (
@@ -609,13 +623,32 @@ function RightContent({
     return <span style={{ ...styles.unfcPct, color: `rgb(${r},${g},${b})` }}>{display}</span>;
   }
 
+  if (layout === 'season') {
+    // Look up the season from leaderboard data for the specific instrument, or max across all
+    let season = 0;
+    if (leaderboardData) {
+      if (song.instrumentKey) {
+        const tr = (leaderboardData as Record<string, unknown>)[song.instrumentKey] as { seasonAchieved?: number } | undefined;
+        season = tr?.seasonAchieved ?? 0;
+      } else {
+        for (const ins of InstrumentKeys) {
+          const tr = (leaderboardData as Record<string, unknown>)[ins] as { seasonAchieved?: number } | undefined;
+          if (tr && (tr.seasonAchieved ?? 0) > season) season = tr.seasonAchieved!;
+        }
+      }
+    }
+    return season > 0 ? <SeasonPill season={season} /> : null;
+  }
+
   if (layout === 'percentile') {
     const display = song.percentileDisplay;
-    const isTop5 = display === 'Top 1%' || display === 'Top 2%' || display === 'Top 3%' || display === 'Top 4%' || display === 'Top 5%';
+    const isTop1 = display === 'Top 1%';
+    const isTop5 = display === 'Top 2%' || display === 'Top 3%' || display === 'Top 4%' || display === 'Top 5%';
+    const pillStyle = isTop1 ? styles.percentileBadgeTop1 : isTop5 ? styles.percentileBadgeTop5 : styles.percentilePill;
     return (
       <div style={styles.badges}>
         {display && (
-          <span style={{ ...styles.percentilePill, ...(isTop5 ? styles.percentilePillGold : {}) }}>
+          <span style={pillStyle}>
             {display}
           </span>
         )}
@@ -731,15 +764,16 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'flex-end',
+    marginBottom: Gap.md,
   },
   iconBtn: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative' as const,
-    width: Size.control,
-    height: Size.control,
-    borderRadius: Radius.xs,
+    width: 48,
+    height: 48,
+    borderRadius: Radius.full,
     ...frostedCard,
     color: Colors.textTertiary,
     cursor: 'pointer',
@@ -749,9 +783,9 @@ const styles: Record<string, React.CSSProperties> = {
     height: 44,
   },
   iconBtnActive: {
-    borderColor: Colors.accentBlue,
-    color: Colors.accentBlue,
-    backgroundColor: Colors.chipSelectedBgSubtle,
+    border: 'none',
+    color: '#FFFFFF',
+    backgroundColor: Colors.accentBlue,
   },
   filterDot: {
     position: 'absolute' as const,
@@ -909,11 +943,24 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
   },
   percentilePill: {
-    fontSize: Font.xs,
+    fontSize: Font.lg,
+    fontWeight: 600,
     padding: `${Gap.xs}px ${Gap.md}px`,
     borderRadius: Radius.xs,
-    backgroundColor: Colors.surfaceSubtle,
-    color: Colors.textMuted,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    color: Colors.textSecondary,
+    display: 'inline-block',
+    textAlign: 'center' as const,
+  },
+  percentileBadgeTop1: {
+    ...goldOutlineSkew,
+    fontSize: Font.lg,
+    textAlign: 'center' as const,
+  },
+  percentileBadgeTop5: {
+    ...goldOutline,
+    fontSize: Font.lg,
+    textAlign: 'center' as const,
   },
   percentilePillGold: goldFill,
   thumb: {

@@ -29,11 +29,26 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
   const { settings: appSettings } = useSettings();
   const visibleKeys = INSTRUMENT_KEYS.filter(k => isInstrumentVisible(appSettings, k));
 
-  const toggle = (key: keyof SongFilters) => {
-    const val = draft[key];
-    if (typeof val === 'boolean') {
-      onChange({ ...draft, [key]: !val });
-    }
+  const toggleMissingScores = (key: InstrumentKey) => {
+    onChange({ ...draft, missingScores: { ...draft.missingScores, [key]: !(draft.missingScores[key] ?? false) } });
+  };
+  const toggleMissingFCs = (key: InstrumentKey) => {
+    onChange({ ...draft, missingFCs: { ...draft.missingFCs, [key]: !(draft.missingFCs[key] ?? false) } });
+  };
+  const toggleHasScores = (key: InstrumentKey) => {
+    onChange({ ...draft, hasScores: { ...draft.hasScores, [key]: !(draft.hasScores[key] ?? false) } });
+  };
+  const toggleHasFCs = (key: InstrumentKey) => {
+    onChange({ ...draft, hasFCs: { ...draft.hasFCs, [key]: !(draft.hasFCs[key] ?? false) } });
+  };
+
+  // Global toggles: set/unset all visible instruments at once
+  const allOn = (map: Record<string, boolean>) => visibleKeys.every(k => map[k] === true);
+  const toggleGlobal = (field: 'missingScores' | 'missingFCs' | 'hasScores' | 'hasFCs') => {
+    const current = allOn(draft[field]);
+    const updated: Record<string, boolean> = { ...draft[field] };
+    for (const k of visibleKeys) updated[k] = !current;
+    onChange({ ...draft, [field]: updated });
   };
 
   const hasInstrument = draft.instrumentFilter != null;
@@ -59,18 +74,70 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
   return (
     <>
     <Modal visible={visible} title="Filter Songs" onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel="Reset Filter Settings" resetHint="Restore all filter options to their defaults." applyLabel="Apply Filter Changes" applyDisabled={!hasChanges}>
-      {/* Missing filters */}
+      {/* Global filters */}
       <ModalSection>
-        <Accordion title="Missing" hint="Only show songs where you are missing scores or full combos on pad or pro instruments.">
-          <ToggleRow label="Pad Scores" description="Songs missing scores on Lead, Bass, Drums, or Vocals." checked={draft.missingPadScores} onToggle={() => toggle('missingPadScores')} />
-          <ToggleRow label="Pad FCs" description="Songs missing FCs on Lead, Bass, Drums, or Vocals." checked={draft.missingPadFCs} onToggle={() => toggle('missingPadFCs')} />
-          <ToggleRow label="Pro Scores" description="Songs missing scores on Pro Lead or Pro Bass." checked={draft.missingProScores} onToggle={() => toggle('missingProScores')} />
-          <ToggleRow label="Pro FCs" description="Songs missing FCs on Pro Lead or Pro Bass." checked={draft.missingProFCs} onToggle={() => toggle('missingProFCs')} />
+        <Accordion title="Global Score & FC Toggles" hint="Toggles that impact all instruments globally. Turning these on or off will enable or disable them across all instruments.">
+          <ToggleRow
+            label="Missing Scores"
+            description="Songs missing scores on all visible instruments."
+            checked={allOn(draft.missingScores)}
+            onToggle={() => toggleGlobal('missingScores')}
+          />
+          <ToggleRow
+            label="Has Scores"
+            description="Songs with scores on all visible instruments."
+            checked={allOn(draft.hasScores)}
+            onToggle={() => toggleGlobal('hasScores')}
+          />
+          <ToggleRow
+            label="Missing FCs"
+            description="Songs missing FCs on all visible instruments."
+            checked={allOn(draft.missingFCs)}
+            onToggle={() => toggleGlobal('missingFCs')}
+          />
+          <ToggleRow
+            label="Has FCs"
+            description="Songs with FCs on all visible instruments."
+            checked={allOn(draft.hasFCs)}
+            onToggle={() => toggleGlobal('hasFCs')}
+          />
         </Accordion>
       </ModalSection>
 
+      {/* Missing filters — per-instrument accordions */}
+      <ModalSection title="Individual Score & FC Toggles" hint="Toggles that impact individual instruments. Turning these on or off will not impact other individual instruments. These filters are computed per-instrument and then OR'd with other instruments. (Example: Lead &ldquo;has scores&rdquo; and Drums &ldquo;missing scores&rdquo; will yield all songs where Lead has a score OR drums do not have a score.)">
+        {visibleKeys.map(key => (
+          <Accordion key={key} title={INSTRUMENT_LABELS[key]} icon={<InstrumentIcon instrument={key} size={28} />}>
+            <ToggleRow
+              label={`Missing ${INSTRUMENT_LABELS[key]} Scores`}
+              description={`Songs missing scores on ${INSTRUMENT_LABELS[key]}.`}
+              checked={draft.missingScores[key] ?? false}
+              onToggle={() => toggleMissingScores(key)}
+            />
+            <ToggleRow
+              label={`Has ${INSTRUMENT_LABELS[key]} Scores`}
+              description={`Songs with scores on ${INSTRUMENT_LABELS[key]}.`}
+              checked={draft.hasScores[key] ?? false}
+              onToggle={() => toggleHasScores(key)}
+            />
+            <ToggleRow
+              label={`Missing ${INSTRUMENT_LABELS[key]} FCs`}
+              description={`Songs missing FCs on ${INSTRUMENT_LABELS[key]}.`}
+              checked={draft.missingFCs[key] ?? false}
+              onToggle={() => toggleMissingFCs(key)}
+            />
+            <ToggleRow
+              label={`Has ${INSTRUMENT_LABELS[key]} FCs`}
+              description={`Songs with FCs on ${INSTRUMENT_LABELS[key]}.`}
+              checked={draft.hasFCs[key] ?? false}
+              onToggle={() => toggleHasFCs(key)}
+            />
+          </Accordion>
+        ))}
+      </ModalSection>
+
       {/* Instrument selector */}
-      <ModalSection title="Instrument" hint="Select an instrument to only show its metadata on each song row. When none is selected, all instruments are shown.">
+      <ModalSection title="Selected Instrument Filters" hint="Select an instrument to only show its metadata on each song row. When none is selected, all instruments are shown.">
         <div style={localStyles.instrumentRow}>
           {visibleKeys.map(key => {
             const selected = draft.instrumentFilter === key;

@@ -82,6 +82,7 @@ export function AnimatedBackground({
   const [layerBIdx, setLayerBIdx] = useState(1);
   const [opacityA, setOpacityA] = useState(1);
   const [opacityB, setOpacityB] = useState(0);
+  const [containerVisible, setContainerVisible] = useState(false);
 
   // Reset layers when image URIs change
   useEffect(() => {
@@ -162,13 +163,20 @@ export function AnimatedBackground({
     };
   }, [imageUris.length, doTransition]);
 
+  // Fade in the container once images are available
+  useEffect(() => {
+    if (imageUris.length > 0 && !containerVisible) {
+      requestAnimationFrame(() => requestAnimationFrame(() => setContainerVisible(true)));
+    }
+  }, [imageUris.length, containerVisible]);
+
   if (imageUris.length === 0) return null;
   const uriA = imageUris[layerAIdx];
   const uriB = imageUris[layerBIdx];
   if (!uriA) return null;
 
   return (
-    <div style={containerStyle}>
+    <div style={{ ...containerStyle, opacity: containerVisible ? 1 : 0, transition: 'opacity 800ms ease' }}>
       <div
         ref={layerARef}
         style={{

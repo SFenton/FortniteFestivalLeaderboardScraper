@@ -1464,6 +1464,17 @@ public sealed class MetaDatabase : IDisposable
         };
     }
 
+    /// <summary>
+    /// Get the highest known season number, or 0 if none are tracked.
+    /// </summary>
+    public int GetCurrentSeason()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COALESCE(MAX(SeasonNumber), 0) FROM SeasonWindows;";
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
     private static HistoryReconStatusInfo ReadHistoryReconStatus(SqliteDataReader reader)
     {
         return new HistoryReconStatusInfo

@@ -121,9 +121,9 @@ export default function Modal({ visible, title, onClose, onApply, onReset, reset
     ...panelBase,
     top: '50%',
     left: '50%',
-    width: 440,
+    width: '80vw',
     maxWidth: '90vw',
-    height: '60vh',
+    height: '70vh',
     borderRadius: Radius.lg,
     transition: `opacity ${TRANSITION_MS}ms ease, transform ${TRANSITION_MS}ms ease`,
     transform: animIn ? 'translate(-50%, -50%)' : 'translate(-50%, -40%)',
@@ -387,11 +387,12 @@ function SortableRow({ item }: { item: { key: string; label: string } }) {
 }
 
 /** Collapsible accordion section. */
-export function Accordion({ title, hint, defaultOpen = false, children }: { title: string; hint?: string; defaultOpen?: boolean; children: React.ReactNode }) {
+export function Accordion({ title, hint, icon, defaultOpen = false, children }: { title: string; hint?: string; icon?: React.ReactNode; defaultOpen?: boolean; children: React.ReactNode }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div>
       <button style={accordionStyles.header} onClick={() => setOpen(o => !o)}>
+        {icon && <span style={accordionStyles.icon}>{icon}</span>}
         <div style={accordionStyles.titleGroup}>
           <span style={accordionStyles.title}>{title}</span>
           {hint && <span style={accordionStyles.hint}>{hint}</span>}
@@ -504,6 +505,7 @@ const toggleStyles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     textAlign: 'left' as const,
     color: Colors.textPrimary,
+    transition: 'opacity 300ms ease',
   },
   rowDisabled: {
     opacity: 0.5,
@@ -637,6 +639,12 @@ const accordionStyles: Record<string, React.CSSProperties> = {
     flexDirection: 'column' as const,
     gap: Gap.xs,
     flex: 1,
+  },
+  icon: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
   },
   title: {
     fontSize: Font.lg,

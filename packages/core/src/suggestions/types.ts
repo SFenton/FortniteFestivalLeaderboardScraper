@@ -4,6 +4,7 @@ export type SuggestionSongItem = {
   songId: string;
   title: string;
   artist: string;
+  year?: number;
   stars?: number;
   percent?: number;
   fullCombo?: boolean;

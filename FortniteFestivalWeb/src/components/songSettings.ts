@@ -16,7 +16,6 @@ export type SongSortMode =
   | 'score'
   | 'percentage'
   | 'percentile'
-  | 'isfc'
   | 'stars'
   | 'seasonachieved'
   | 'intensity';
@@ -26,7 +25,6 @@ export const INSTRUMENT_SORT_MODES: { mode: SongSortMode; label: string }[] = [
   { mode: 'score', label: 'Score' },
   { mode: 'percentage', label: 'Percentage' },
   { mode: 'percentile', label: 'Percentile' },
-  { mode: 'isfc', label: 'Is FC' },
   { mode: 'stars', label: 'Stars' },
   { mode: 'seasonachieved', label: 'Season' },
   { mode: 'intensity', label: 'Intensity' },
@@ -39,23 +37,22 @@ export const METADATA_SORT_DISPLAY: Record<string, string> = {
   score: 'Score',
   percentage: 'Percentage',
   percentile: 'Percentile',
-  isfc: 'Is FC',
   stars: 'Stars',
   seasonachieved: 'Season Achieved',
   intensity: 'Song Intensity',
 };
 
 export const DEFAULT_METADATA_ORDER: string[] = [
-  'score', 'percentage', 'percentile', 'isfc', 'stars', 'seasonachieved', 'intensity',
+  'score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity',
 ];
 
 /* ── Filter ── */
 
 export type SongFilters = {
-  missingPadScores: boolean;
-  missingPadFCs: boolean;
-  missingProScores: boolean;
-  missingProFCs: boolean;
+  missingScores: Record<string, boolean>;
+  missingFCs: Record<string, boolean>;
+  hasScores: Record<string, boolean>;
+  hasFCs: Record<string, boolean>;
   seasonFilter: Record<number, boolean>;
   percentileFilter: Record<number, boolean>;
   starsFilter: Record<number, boolean>;
@@ -63,10 +60,10 @@ export type SongFilters = {
 };
 
 export const defaultSongFilters = (): SongFilters => ({
-  missingPadScores: false,
-  missingPadFCs: false,
-  missingProScores: false,
-  missingProFCs: false,
+  missingScores: {},
+  missingFCs: {},
+  hasScores: {},
+  hasFCs: {},
   seasonFilter: {},
   percentileFilter: {},
   starsFilter: {},
@@ -74,10 +71,10 @@ export const defaultSongFilters = (): SongFilters => ({
 });
 
 export const isFilterActive = (f: SongFilters): boolean =>
-  f.missingPadScores ||
-  f.missingPadFCs ||
-  f.missingProScores ||
-  f.missingProFCs ||
+  Object.values(f.missingScores).some(v => v === true) ||
+  Object.values(f.missingFCs).some(v => v === true) ||
+  Object.values(f.hasScores).some(v => v === true) ||
+  Object.values(f.hasFCs).some(v => v === true) ||
   Object.values(f.seasonFilter).some(v => v === false) ||
   Object.values(f.percentileFilter).some(v => v === false) ||
   Object.values(f.starsFilter).some(v => v === false) ||

@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback, Fragment, type CSSProperties } from 'react';
-import { IoSwapVerticalSharp, IoFunnel } from 'react-icons/io5';
+import { IoSwapVerticalSharp, IoFunnel, IoSearch } from 'react-icons/io5';
 import { Link, useLocation, useNavigationType } from 'react-router-dom';
 import { formatPercentileBucket } from '@festival/core';
 import { staggerDelay, estimateVisibleCount } from '../utils/stagger';
@@ -9,10 +9,12 @@ import { useSettings } from '../contexts/SettingsContext';
 import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
 import { useFabSearch } from '../contexts/FabSearchContext';
 import { useScrollMask } from '../hooks/useScrollMask';
+import { useStaggerRush } from '../hooks/useStaggerRush';
 import type { Song, PlayerScore, InstrumentKey } from '../models';
 import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth, goldFill, goldOutline, goldOutlineSkew, frostedCard } from '../theme';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../components/InstrumentIcons';
 import SeasonPill from '../components/SeasonPill';
+import AlbumArt from '../components/AlbumArt';
 import { visibleInstruments } from '../contexts/SettingsContext';
 import SortModal from '../components/SortModal';
 import type { SortDraft } from '../components/SortModal';
@@ -25,6 +27,7 @@ import {
   defaultSongFilters,
   loadSongSettings,
   saveSongSettings,
+  SONG_SETTINGS_CHANGED_EVENT,
   isFilterActive,
 } from '../components/songSettings';
 
@@ -56,14 +59,31 @@ export default function SongsPage() {
     }
   }, []);
 
-  const [search, setSearch] = useState('');
+  const [search, setSearchLocal] = useState(fabSearch.query);
+  const setSearch = useCallback((q: string) => {
+    setSearchLocal(q);
+    fabSearch.setQuery(q);
+  }, [fabSearch]);
   const effectiveSearch = isMobileChrome ? fabSearch.query : search;
-  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState(effectiveSearch);
   useEffect(() => {
     const id = setTimeout(() => setDebouncedSearch(effectiveSearch), 250);
     return () => clearTimeout(id);
   }, [effectiveSearch]);
   const [settings, setSettings] = useState<SongSettings>(loadSongSettings);
+
+  // Re-sync settings from localStorage when changed externally (e.g. PlayerPage card clicks)
+  const savingRef = useRef(false);
+  useEffect(() => {
+    const sync = () => {
+      if (savingRef.current) return; // ignore self-triggered events
+      const fresh = loadSongSettings();
+      setSettings(fresh);
+      setInstrument(fresh.instrument ?? 'Solo_Guitar');
+    };
+    window.addEventListener(SONG_SETTINGS_CHANGED_EVENT, sync);
+    return () => window.removeEventListener(SONG_SETTINGS_CHANGED_EVENT, sync);
+  }, []);
   const [instrument, setInstrument] = useState<InstrumentKey>(
     () => settings.instrument ?? 'Solo_Guitar',
   );
@@ -83,7 +103,7 @@ export default function SongsPage() {
   }));
 
   // Persist settings on change
-  useEffect(() => { saveSongSettings(settings); }, [settings]);
+  useEffect(() => { savingRef.current = true; saveSongSettings(settings); savingRef.current = false; }, [settings]);
 
   const openSort = () => {
     setSortDraft({
@@ -156,13 +176,22 @@ export default function SongsPage() {
     return map;
   }, [playerData]);
 
-  const PAD_INSTRUMENTS: InstrumentKey[] = ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals'];
-  const PRO_INSTRUMENTS: InstrumentKey[] = ['Solo_PeripheralGuitar', 'Solo_PeripheralBass'];
-
   const filtered = useMemo(() => {
     const q = debouncedSearch.toLowerCase();
     const f = settings.filters;
     const hasPlayerData = allScoreMap.size > 0;
+
+    // Pre-compute which instruments have any missing/has filter active
+    const inst = settings.instrument;
+    const filterInstruments = new Set<InstrumentKey>();
+    for (const [k, v] of Object.entries(f.missingScores)) { if (v) filterInstruments.add(k as InstrumentKey); }
+    for (const [k, v] of Object.entries(f.missingFCs)) { if (v) filterInstruments.add(k as InstrumentKey); }
+    for (const [k, v] of Object.entries(f.hasScores)) { if (v) filterInstruments.add(k as InstrumentKey); }
+    for (const [k, v] of Object.entries(f.hasFCs)) { if (v) filterInstruments.add(k as InstrumentKey); }
+    // When an instrument is selected, only that instrument's filters apply
+    const activeFilterInstruments = inst
+      ? (filterInstruments.has(inst) ? [inst] : [])
+      : [...filterInstruments];
 
     // Pre-compute which filter checks are active
     const seasonKeys = Object.keys(f.seasonFilter);
@@ -184,11 +213,37 @@ export default function SongsPage() {
 
       const byInst = allScoreMap.get(s.songId);
 
-      // Missing scores/FC filters
-      if (f.missingPadScores && !PAD_INSTRUMENTS.some(inst => !byInst?.get(inst)?.score)) return false;
-      if (f.missingPadFCs && !PAD_INSTRUMENTS.some(inst => !byInst?.get(inst)?.isFullCombo)) return false;
-      if (f.missingProScores && !PRO_INSTRUMENTS.some(inst => !byInst?.get(inst)?.score)) return false;
-      if (f.missingProFCs && !PRO_INSTRUMENTS.some(inst => !byInst?.get(inst)?.isFullCombo)) return false;
+      // Per-instrument filters: (MS OR HS) AND (MF OR HF) per instrument, OR'd across instruments
+      if (activeFilterInstruments.length > 0) {
+        let anyInstrumentPassed = false;
+        for (const key of activeFilterInstruments) {
+          const ps = byInst?.get(key);
+          const hasScore = !!ps?.score;
+          const hasFC = !!ps?.isFullCombo;
+
+          const ms = f.missingScores[key];
+          const hs = f.hasScores[key];
+          const mf = f.missingFCs[key];
+          const hf = f.hasFCs[key];
+
+          let passed = true;
+          // Score axis: (MS OR HS) — skip if neither is active for this instrument
+          if (ms || hs) {
+            const passedMS = ms && !hasScore;
+            const passedHS = hs && hasScore;
+            if (!passedMS && !passedHS) passed = false;
+          }
+          // FC axis: (MF OR HF) — skip if neither is active for this instrument
+          if (passed && (mf || hf)) {
+            const passedMF = mf && !hasFC;
+            const passedHF = hf && hasFC;
+            if (!passedMF && !passedHF) passed = false;
+          }
+
+          if (passed) { anyInstrumentPassed = true; break; }
+        }
+        if (!anyInstrumentPassed) return false;
+      }
 
       const score = scoreMap.get(s.songId);
 
@@ -273,7 +328,6 @@ export default function SongsPage() {
     if (!appSettings.metadataShowPercentile) hidden.add('percentile');
     if (!appSettings.metadataShowSeasonAchieved) hidden.add('seasonachieved');
     if (!appSettings.metadataShowDifficulty) hidden.add('intensity');
-    if (!appSettings.metadataShowIsFC) hidden.add('isfc');
     if (!appSettings.metadataShowStars) hidden.add('stars');
     if (hidden.size === 0) return settings.metadataOrder;
 
@@ -290,7 +344,6 @@ export default function SongsPage() {
     appSettings.metadataShowPercentile,
     appSettings.metadataShowSeasonAchieved,
     appSettings.metadataShowDifficulty,
-    appSettings.metadataShowIsFC,
     appSettings.metadataShowStars,
   ]);
 
@@ -320,7 +373,7 @@ export default function SongsPage() {
   const [shouldStagger, setShouldStagger] = useState(!skipAnim);
 
   // Track whether the toolbar has been shown at least once (initial load complete)
-  const toolbarShownRef = useRef(false);
+  const toolbarShownRef = useRef(skipAnim);
   if (loadPhase === 'contentIn') toolbarShownRef.current = true;
 
   // Fingerprint of sort/filter/search settings — when it changes, re-stagger the list
@@ -374,12 +427,14 @@ export default function SongsPage() {
   const updateScrollMask = useScrollMask(scrollRef, [loadPhase, filtered]);
 
   // Save scroll position continuously + update fade
+  const rushOnScroll = useStaggerRush(scrollRef);
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     _savedScrollTop = el.scrollTop;
     updateScrollMask();
-  }, [updateScrollMask]);
+    rushOnScroll();
+  }, [updateScrollMask, rushOnScroll]);
 
   if (error) {
     return <div style={styles.center}>{error}</div>;
@@ -403,15 +458,17 @@ export default function SongsPage() {
       {!isMobileChrome && (
       <div style={styles.header}>
         <div style={styles.container}>
-          {(toolbarShownRef.current || loadPhase === 'contentIn') && (
-          <>
+          <div style={{ visibility: (toolbarShownRef.current || loadPhase === 'contentIn') ? 'visible' : 'hidden' } as CSSProperties}>
           <div style={styles.toolbar}>
-            <input
-              style={styles.searchInput}
-              placeholder="Search songs or artists…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+            <div style={styles.searchWrap} onClick={e => { const input = e.currentTarget.querySelector('input'); input?.focus(); }}>
+              <IoSearch size={16} style={{ color: Colors.textTertiary, flexShrink: 0 }} />
+              <input
+                style={styles.searchInput}
+                placeholder="Search songs or artists…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
             {settings.instrument && (
               <InstrumentIcon instrument={settings.instrument} size={32} />
             )}
@@ -423,7 +480,6 @@ export default function SongsPage() {
                   label="Filter"
                   onClick={openFilter}
                   active={filtersActive}
-                  dot={filtersActive}
                 />
               )}
             </div>
@@ -431,8 +487,7 @@ export default function SongsPage() {
           {filtersActive && filtered.length !== songs.length && (
             <div style={styles.count}>{filtered.length} of {songs.length} songs</div>
           )}
-          </>
-          )}
+          </div>
         </div>
       </div>
       )}
@@ -549,7 +604,6 @@ export default function SongsPage() {
           percentile: appSettings.metadataShowPercentile,
           seasonachieved: appSettings.metadataShowSeasonAchieved,
           intensity: appSettings.metadataShowDifficulty,
-          isfc: appSettings.metadataShowIsFC,
           stars: appSettings.metadataShowStars,
         }}
         onChange={setSortDraft}
@@ -646,17 +700,6 @@ function renderMetadataElement(
         </span>
       ) : null;
 
-    case 'isfc':
-      if (is100FC) {
-        const pctIdx = allKeys.indexOf('percentage');
-        const fcIdx = allKeys.indexOf('isfc');
-        if (pctIdx !== -1 && pctIdx < fcIdx) return null;
-        return <span style={styles.fcBadge}>FC</span>;
-      }
-      return score.isFullCombo ? (
-        <span style={styles.fcBadge}>FC</span>
-      ) : null;
-
     case 'stars':
       return stars > 0 ? (
         <MiniStars starsCount={stars} isFullCombo={!!score.isFullCombo} />
@@ -739,9 +782,9 @@ function SongRow({
   staggerDelay?: number;
 }) {
   const instrumentChips = useMemo(() => {
-    if (!showInstrumentIcons || instrumentFilter != null || !allScoreMap) return null;
+    if (!showInstrumentIcons || instrumentFilter != null) return null;
     return enabledInstruments.map(key => {
-      const ps = allScoreMap.get(key);
+      const ps = allScoreMap?.get(key);
       const hasScore = !!ps && ps.score > 0;
       const isFC = !!ps?.isFullCombo;
       const { fill, stroke } = getInstrumentStatusVisual(hasScore, isFC);
@@ -782,11 +825,7 @@ function SongRow({
     return result;
   }, [score, displayOrder, songIntensityRaw, instrumentChips]);
 
-  const thumb = song.albumArt ? (
-    <img src={song.albumArt} alt="" style={styles.thumb} loading="lazy" />
-  ) : (
-    <div style={{ ...styles.thumb, ...styles.thumbPlaceholder }} />
-  );
+  const thumb = <AlbumArt src={song.albumArt} size={Size.thumb} />;
 
   const chipRow = instrumentChips && instrumentChips.length > 0 ? (
     <div style={styles.instrumentStatusRow}>
@@ -799,16 +838,17 @@ function SongRow({
   ) : null;
 
   if (isMobile && entries.length > 0) {
-    // Score always goes top-right; rest wraps below
-    const scoreEntry = entries.find(e => e.key === 'score');
-    const bottomEntries = entries.filter(e => e.key !== 'score');
+    // Promoted sort attribute goes top-right; rest wraps below
+    const primaryKey = entries[0]?.key;
+    const scoreEntry = primaryKey ? entries.find(e => e.key === primaryKey) : null;
+    const bottomEntries = primaryKey ? entries.filter(e => e.key !== primaryKey) : entries;
     return (
       <Link ref={linkRef} to={`/songs/${song.songId}${instrumentFilter != null ? `?instrument=${encodeURIComponent(instrument)}` : ''}`} state={{ backTo: location.pathname }} style={{ ...styles.rowMobile, ...animStyle }} onAnimationEnd={handleAnimEnd}>
         <div style={styles.mobileTopRow}>
           {thumb}
           <div style={styles.rowText}>
             <span style={styles.rowTitle}>{song.title}</span>
-            <span style={styles.rowArtist}>{song.artist}</span>
+            <span style={styles.rowArtist}>{song.artist}{song.year ? ` · ${song.year}` : ''}</span>
           </div>
           {scoreEntry && (
             <div style={styles.detailStrip}>
@@ -830,7 +870,7 @@ function SongRow({
           {thumb}
           <div style={styles.rowText}>
             <span style={styles.rowTitle}>{song.title}</span>
-            <span style={styles.rowArtist}>{song.artist}</span>
+            <span style={styles.rowArtist}>{song.artist}{song.year ? ` · ${song.year}` : ''}</span>
           </div>
         </div>
         <div style={{ ...styles.instrumentStatusRow, justifyContent: 'center' }}>
@@ -849,7 +889,7 @@ function SongRow({
       {thumb}
       <div style={styles.rowText}>
         <span style={styles.rowTitle}>{song.title}</span>
-        <span style={styles.rowArtist}>{song.artist}</span>
+        <span style={styles.rowArtist}>{song.artist}{song.year ? ` · ${song.year}` : ''}</span>
       </div>
       {chipRow}
       {entries.length > 0 && (
@@ -873,16 +913,18 @@ function compareByMode(mode: SongSortMode, a?: PlayerScore, b?: PlayerScore): nu
     case 'percentage': {
       const pa = a.accuracy ?? 0;
       const pb = b.accuracy ?? 0;
-      return pa - pb;
+      if (pa !== pb) return pa - pb;
+      // Tiebreak: FC takes priority over non-FC
+      const fa = a.isFullCombo ? 1 : 0;
+      const fb = b.isFullCombo ? 1 : 0;
+      return fa - fb;
     }
     case 'percentile': {
-      // Lower percentile rank = better, so invert for natural ascending
-      const pa = a.percentile ?? Infinity;
-      const pb = b.percentile ?? Infinity;
+      // Compute percentile from rank/totalEntries; lower = better
+      const pa = a.rank > 0 && (a.totalEntries ?? 0) > 0 ? a.rank / a.totalEntries! : Infinity;
+      const pb = b.rank > 0 && (b.totalEntries ?? 0) > 0 ? b.rank / b.totalEntries! : Infinity;
       return pa - pb;
     }
-    case 'isfc':
-      return (a.isFullCombo ? 1 : 0) - (b.isFullCombo ? 1 : 0);
     case 'stars':
       return (a.stars ?? 0) - (b.stars ?? 0);
     case 'seasonachieved':
@@ -982,17 +1024,26 @@ const styles: Record<string, React.CSSProperties> = {
     flexWrap: 'wrap' as const,
     marginBottom: Gap.md,
   },
-  searchInput: {
+  searchWrap: {
     flex: 1,
     minWidth: 200,
     height: 48,
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.sm,
     padding: `0 ${Gap.xl}px`,
     boxSizing: 'border-box' as const,
     borderRadius: Radius.full,
     ...frostedCard,
+    cursor: 'text',
+  },
+  searchInput: {
+    flex: 1,
+    background: 'none',
+    border: 'none',
+    outline: 'none',
     color: Colors.textPrimary,
     fontSize: Font.md,
-    outline: 'none',
   },
   searchInputMobile: {
     padding: `${Gap.xl}px ${Gap.section}px`,
@@ -1019,9 +1070,9 @@ const styles: Record<string, React.CSSProperties> = {
     height: 44,
   },
   iconBtnActive: {
-    borderColor: Colors.accentBlue,
-    color: Colors.accentBlue,
-    backgroundColor: Colors.chipSelectedBgSubtle,
+    border: 'none',
+    color: '#FFFFFF',
+    backgroundColor: Colors.accentBlue,
   },
   filterDot: {
     position: 'absolute' as const,
@@ -1268,16 +1319,6 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 58,
     textAlign: 'center' as const,
     boxSizing: 'border-box' as const,
-  },
-  fcBadge: {
-    ...goldFill,
-    fontSize: Font.sm,
-    fontWeight: 700,
-    padding: `${Gap.xs}px ${Gap.sm}px`,
-    borderRadius: Radius.xs,
-    minWidth: 70,
-    textAlign: 'center' as const,
-    display: 'inline-block',
   },
   percentilePill: {
     fontSize: Font.lg,

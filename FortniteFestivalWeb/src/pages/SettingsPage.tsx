@@ -8,9 +8,10 @@ import { InstrumentIcon } from '../components/InstrumentIcons';
 import type { InstrumentKey } from '../models';
 import { Colors, Font, Gap, Layout, MaxWidth, Radius, frostedCard } from '../theme';
 import { useScrollMask } from '../hooks/useScrollMask';
+import { useStaggerRush } from '../hooks/useStaggerRush';
 import { api } from '../api/client';
 
-const APP_VERSION = '0.1.13';
+import { APP_VERSION } from '../changelog';
 const CORE_VERSION = '0.0.2';
 
 /** Track whether settings page has rendered at least once to skip stagger on re-visit. */
@@ -55,7 +56,6 @@ type MetadataKey =
   | 'metadataShowPercentile'
   | 'metadataShowSeasonAchieved'
   | 'metadataShowDifficulty'
-  | 'metadataShowIsFC'
   | 'metadataShowStars';
 
 const METADATA_TOGGLES: { key: MetadataKey; label: string }[] = [
@@ -64,7 +64,6 @@ const METADATA_TOGGLES: { key: MetadataKey; label: string }[] = [
   { key: 'metadataShowPercentile', label: 'Percentile' },
   { key: 'metadataShowSeasonAchieved', label: 'Season Achieved' },
   { key: 'metadataShowDifficulty', label: 'Song Intensity' },
-  { key: 'metadataShowIsFC', label: 'Is FC' },
   { key: 'metadataShowStars', label: 'Stars' },
 ];
 
@@ -149,7 +148,8 @@ export default function SettingsPage() {
   const isMobileChrome = useIsMobileChrome();
   const scrollRef = useRef<HTMLDivElement>(null);
   const updateScrollMask = useScrollMask(scrollRef, []);
-  const handleScroll = useCallback(() => { updateScrollMask(); }, [updateScrollMask]);
+  const rushOnScroll = useStaggerRush(scrollRef);
+  const handleScroll = useCallback(() => { updateScrollMask(); rushOnScroll(); }, [updateScrollMask, rushOnScroll]);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [serviceVersion, setServiceVersion] = useState<string | null>(null);
   // Capture skip decision at mount time (ref avoids StrictMode double-mount issues)

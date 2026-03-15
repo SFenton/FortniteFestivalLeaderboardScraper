@@ -34,7 +34,6 @@ export type AppSettings = {
   metadataShowPercentile: boolean;
   metadataShowSeasonAchieved: boolean;
   metadataShowDifficulty: boolean;
-  metadataShowIsFC: boolean;
   metadataShowStars: boolean;
 };
 
@@ -57,7 +56,6 @@ export const defaultAppSettings = (): AppSettings => ({
   metadataShowPercentile: true,
   metadataShowSeasonAchieved: true,
   metadataShowDifficulty: true,
-  metadataShowIsFC: true,
   metadataShowStars: true,
 });
 

@@ -17,6 +17,7 @@ import type { PlayerScoreSortMode, PlayerScoreSortDraft } from '../components/Pl
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldOutlineSkew, frostedCard } from '../theme';
 import { staggerDelay, estimateVisibleCount } from '../utils/stagger';
 import { useScrollMask } from '../hooks/useScrollMask';
+import { useStaggerRush } from '../hooks/useStaggerRush';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useScoreFilter } from '../hooks/useScoreFilter';
 import { IS_IOS, IS_ANDROID, IS_PWA } from '../utils/platform';
@@ -97,13 +98,15 @@ export default function PlayerHistoryPage() {
     fabSearch.registerPlayerHistoryActions({ openSort: () => openSortRef.current() });
   }, [fabSearch]);
 
+  const rushOnScroll = useStaggerRush(scrollRef);
   const handleScroll = useCallback(() => {
     updateScrollMask();
+    rushOnScroll();
     if (hasFab) return;
     const el = scrollRef.current;
     if (!el) return;
     setHeaderCollapsed(el.scrollTop > 40);
-  }, [updateScrollMask, hasFab]);
+  }, [updateScrollMask, rushOnScroll, hasFab]);
 
   useEffect(() => {
     if (!player || !songId) {
@@ -254,7 +257,7 @@ export default function PlayerHistoryPage() {
                     ...styles.songArtist,
                     fontSize: hasFab || headerCollapsed ? Font.md : Font.lg,
                     ...(!hasFab ? { transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
-                  }}>{song?.artist ?? 'Unknown Artist'}</p>
+                  }}>{song?.artist ?? 'Unknown Artist'}{song?.year ? ` · ${song.year}` : ''}</p>
                 </div>
               </div>
               <div style={styles.headerRight}>

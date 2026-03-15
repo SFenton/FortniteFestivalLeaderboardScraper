@@ -55,6 +55,7 @@ export type ServerSong = {
 
 export type SongsResponse = {
   count: number;
+  currentSeason?: number;
   songs: ServerSong[];
 };
 

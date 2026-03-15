@@ -76,7 +76,6 @@ describe('SettingsPage', () => {
     expect(screen.getByText('Percentile')).toBeDefined();
     expect(screen.getByText('Season Achieved')).toBeDefined();
     expect(screen.getByText('Song Intensity')).toBeDefined();
-    expect(screen.getByText('Is FC')).toBeDefined();
     expect(screen.getByText('Stars')).toBeDefined();
   });
 

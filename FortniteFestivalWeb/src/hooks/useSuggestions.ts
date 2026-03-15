@@ -18,6 +18,7 @@ export function useSuggestions(
   accountId: string,
   coreSongs: CoreSong[],
   scoresIndex: Record<string, LeaderboardData>,
+  currentSeason = 0,
 ) {
   // Restore from cache if same account
   const cached = _cache?.accountId === accountId ? _cache : null;
@@ -64,7 +65,7 @@ export function useSuggestions(
     if (initializedRef.current) return;
     initializedRef.current = true;
 
-    const gen = new SuggestionGenerator({ seed: Date.now() });
+    const gen = new SuggestionGenerator({ seed: Date.now(), currentSeason });
     gen.setSource(coreSongs, scoresIndex);
     generatorRef.current = gen;
     readyRef.current = true;

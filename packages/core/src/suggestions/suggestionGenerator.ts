@@ -73,6 +73,7 @@ export type SuggestionGeneratorOptions = {
   rng?: Rng;
   disableSkipping?: boolean;
   fixedDisplayCount?: number;
+  currentSeason?: number;
 };
 
 type SongPair = {song: Song; tracker: ScoreTracker | null; instrumentKey?: InstrumentKey};
@@ -81,6 +82,7 @@ export class SuggestionGenerator {
   private readonly rng: Rng;
   private readonly disableSkipping: boolean;
   private readonly fixedDisplayCount?: number;
+  private readonly currentSeason: number;
 
   private songs: Song[] = [];
   private scoresIndex: Readonly<Record<string, LeaderboardData | undefined>> = {};
@@ -100,6 +102,7 @@ export class SuggestionGenerator {
     this.rng = opts.rng ?? createSeededRng(opts.seed ?? 1);
     this.disableSkipping = opts.disableSkipping ?? false;
     this.fixedDisplayCount = opts.fixedDisplayCount;
+    this.currentSeason = opts.currentSeason ?? 0;
   }
 
   setSource(songs: Song[], scoresIndex: Readonly<Record<string, LeaderboardData | undefined>>): void {
@@ -284,6 +287,7 @@ export class SuggestionGenerator {
       songId: song.track.su,
       title: song.track.tt ?? song._title ?? '(unknown)',
       artist: song.track.an ?? '(unknown)',
+      year: song.track.ry,
       stars: stars(pair.tracker),
       percent: pct(pair.tracker),
       fullCombo: pair.tracker ? pair.tracker.isFullCombo : undefined,
@@ -494,6 +498,27 @@ export class SuggestionGenerator {
       () => this.artistFocusUnplayed(),
       () => this.sameNameSets(),
       () => this.sameNameNearFc(),
+      // Stale / untouched songs
+      () => this.staleGlobal(1),
+      () => this.staleGlobal(2),
+      () => this.staleGlobal(3),
+      () => this.staleGlobal(4),
+      () => this.staleGlobal(5),
+      ...Instruments.flatMap(ins => [
+        () => this.staleInstrument(ins, 1),
+        () => this.staleInstrument(ins, 2),
+        () => this.staleInstrument(ins, 3),
+        () => this.staleInstrument(ins, 4),
+        () => this.staleInstrument(ins, 5),
+      ]),
+      // Percentile improvements
+      () => this.samePercentileBucket(),
+      ...[2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50].map(b => () => this.samePercentileBucketSpecific(b)),
+      ...[2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50].map(b => () => this.percentileImproveBucket(b)),
+      ...Instruments.flatMap(ins => [
+        () => this.improveInstrumentRankings(ins),
+        ...[2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50].map(b => () => this.percentileImproveInstrument(ins, b)),
+      ]),
     ];
     this.shuffleInPlace(list);
     this.pipelines = list;
@@ -1247,5 +1272,257 @@ export class SuggestionGenerator {
         songs: pool.map(p => this.mapUniqueSongWithInstrument(p)),
       },
     ];
+  }
+
+  // ── Stale / Untouched Songs ─────────────────────────────────────
+
+  /** Get the most recent season any instrument was played for this song. */
+  private latestSeason(songId: string): number {
+    const board = this.scoresIndex[songId];
+    if (!board) return 0;
+    let best = 0;
+    for (const ins of Instruments) {
+      const tr = getTracker(board, ins);
+      if (tr && tr.seasonAchieved > best) best = tr.seasonAchieved;
+    }
+    return best;
+  }
+
+  /** Get the season a specific instrument was last played. */
+  private instrumentSeason(songId: string, instrument: InstrumentKey): number {
+    const tr = getTracker(this.scoresIndex[songId], instrument);
+    return tr?.seasonAchieved ?? 0;
+  }
+
+  private staleGlobal(minSeasonsAgo: number): SuggestionCategory[] {
+    if (this.currentSeason <= 0) return [];
+    const pool: SongPair[] = [];
+    for (const s of this.songs) {
+      const latest = this.latestSeason(s.track.su);
+      if (latest <= 0) continue; // never played — different category
+      const ago = this.currentSeason - latest;
+      const match = minSeasonsAgo === 0 ? ago > 0
+        : minSeasonsAgo >= 5 ? ago >= 5
+        : ago >= minSeasonsAgo;
+      if (match) {
+        pool.push({song: s, tracker: null});
+      }
+    }
+    this.shuffleInPlace(pool);
+    const suffix = minSeasonsAgo >= 5 ? '5plus' : String(minSeasonsAgo);
+    const key = `stale_global_${suffix}`;
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst(key, pool, take);
+    if (final.length === 0) return [];
+    const label = minSeasonsAgo === 1 ? 'Play This Season'
+      : minSeasonsAgo >= 5 ? 'Untouched for 5+ Seasons'
+      : `Untouched for ${minSeasonsAgo} Seasons`;
+    const desc = minSeasonsAgo === 1
+      ? "Songs you haven't played on any instrument this season."
+      : minSeasonsAgo >= 5
+        ? "Songs you haven't played on any instrument in 5 or more seasons."
+        : `Songs you haven't played on any instrument in at least ${minSeasonsAgo} seasons.`;
+    return [{key, title: label, description: desc, songs: final.map(p => this.mapUniqueSong(p))}];
+  }
+
+  private staleInstrument(instrument: InstrumentKey, minSeasonsAgo: number): SuggestionCategory[] {
+    if (this.currentSeason <= 0) return [];
+    const pool: SongPair[] = [];
+    for (const s of this.songs) {
+      const season = this.instrumentSeason(s.track.su, instrument);
+      if (season <= 0) continue;
+      const ago = this.currentSeason - season;
+      const match = minSeasonsAgo === 0 ? ago > 0
+        : minSeasonsAgo >= 5 ? ago >= 5
+        : ago >= minSeasonsAgo;
+      if (match) {
+        const tr = getTracker(this.scoresIndex[s.track.su], instrument);
+        pool.push({song: s, tracker: tr ?? null, instrumentKey: instrument});
+      }
+    }
+    this.shuffleInPlace(pool);
+    const suffix = minSeasonsAgo >= 5 ? '5plus' : String(minSeasonsAgo);
+    const key = `stale_${instrument}_${suffix}`;
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst(key, pool, take);
+    if (final.length === 0) return [];
+    const instName = instrumentLabel(instrument);
+    const label = minSeasonsAgo === 1 ? `Play ${instName} This Season`
+      : minSeasonsAgo >= 5 ? `${instName} Untouched for 5+ Seasons`
+      : `${instName} Untouched for ${minSeasonsAgo} Seasons`;
+    const desc = minSeasonsAgo === 1
+      ? `Songs you haven't played on ${instName} this season.`
+      : minSeasonsAgo >= 5
+        ? `Songs you haven't played on ${instName} in 5 or more seasons.`
+        : `Songs you haven't played on ${instName} in at least ${minSeasonsAgo} seasons.`;
+    return [{key, title: label, description: desc, songs: final.map(p => this.mapUniqueSongWithInstrument(p))}];
+  }
+
+  // ── Percentile Improvement Categories ──────────────────────────
+
+  /** Songs where ALL played instruments are in the same percentile bucket (not Top 1%). */
+  private samePercentileBucket(): SuggestionCategory[] {
+    const pool: SongPair[] = [];
+    for (const s of this.songs) {
+      const board = this.scoresIndex[s.track.su];
+      if (!board) continue;
+      const buckets: number[] = [];
+      for (const ins of Instruments) {
+        const tr = getTracker(board, ins);
+        if (tr && tr.rawPercentile > 0) {
+          const b = SuggestionGenerator.percentileBucket(tr.rawPercentile);
+          if (b != null) buckets.push(b);
+        }
+      }
+      if (buckets.length >= 2 && buckets.every(b => b === buckets[0]) && buckets[0] > 1) {
+        pool.push({song: s, tracker: null});
+      }
+    }
+    this.shuffleInPlace(pool);
+    const key = 'same_pct_improve';
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst(key, pool, take);
+    if (final.length === 0) return [];
+    return [{
+      key,
+      title: 'Competitive Improvements',
+      description: 'Songs where your percentile is the same across all instruments. An improvement on any instrument moves you up everywhere.',
+      songs: final.map(p => this.mapUniqueSong(p)),
+    }];
+  }
+
+  /** Songs where ALL played instruments are in the same specific bucket (not Top 1%). */
+  private samePercentileBucketSpecific(bucket: number): SuggestionCategory[] {
+    const pool: SongPair[] = [];
+    for (const s of this.songs) {
+      const board = this.scoresIndex[s.track.su];
+      if (!board) continue;
+      const buckets: number[] = [];
+      for (const ins of Instruments) {
+        const tr = getTracker(board, ins);
+        if (tr && tr.rawPercentile > 0) {
+          const b = SuggestionGenerator.percentileBucket(tr.rawPercentile);
+          if (b != null) buckets.push(b);
+        }
+      }
+      if (buckets.length >= 2 && buckets.every(b => b === bucket)) {
+        pool.push({song: s, tracker: null});
+      }
+    }
+    this.shuffleInPlace(pool);
+    const key = `same_pct_${bucket}`;
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst(key, pool, take);
+    if (final.length === 0) return [];
+    const next = SuggestionGenerator.nextLowerThreshold(bucket);
+    const target = next != null ? `Top ${next}%` : 'a higher bracket';
+    return [{
+      key,
+      title: `Break Into ${target}`,
+      description: `Songs where all your instruments are ranked Top ${bucket}%. Improve any instrument to break the tie and climb to ${target}.`,
+      songs: final.map(p => this.mapUniqueSong(p)),
+    }];
+  }
+
+  /** Per-bucket: songs in a specific percentile bucket across any instrument (not Top 1%). */
+  private percentileImproveBucket(bucket: number): SuggestionCategory[] {
+    const pool: SongPair[] = [];
+    for (const s of this.songs) {
+      const board = this.scoresIndex[s.track.su];
+      pool.push(
+        ...this.eachTracker(s, board, t => {
+          const b = SuggestionGenerator.percentileBucket(t.rawPercentile);
+          return b === bucket && bucket > 1;
+        }),
+      );
+    }
+    this.shuffleInPlace(pool);
+    const key = `pct_improve_${bucket}`;
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst(key, pool, take);
+    if (final.length === 0) return [];
+    return [{
+      key,
+      title: `Top ${bucket}% Push`,
+      description: `Songs with at least one instrument ranked Top ${bucket}%. A small score bump could push you higher.`,
+      songs: final.map(p => this.mapUniqueSongWithInstrument(p)),
+    }];
+  }
+
+  /** Per-instrument: songs in a specific percentile bucket (not Top 1%). */
+  private percentileImproveInstrument(instrument: InstrumentKey, bucket: number): SuggestionCategory[] {
+    const pool: SongPair[] = [];
+    for (const s of this.songs) {
+      const tr = getTracker(this.scoresIndex[s.track.su], instrument);
+      if (tr) {
+        const b = SuggestionGenerator.percentileBucket(tr.rawPercentile);
+        if (b === bucket && bucket > 1) {
+          pool.push({song: s, tracker: tr, instrumentKey: instrument});
+        }
+      }
+    }
+    this.shuffleInPlace(pool);
+    const key = `pct_improve_${instrument}_${bucket}`;
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst(key, pool, take);
+    if (final.length === 0) return [];
+    return [{
+      key,
+      title: `${instrumentLabel(instrument)} Top ${bucket}% Push`,
+      description: `Songs ranked Top ${bucket}% on ${instrumentLabel(instrument)}. A better score could push you into the next bracket.`,
+      songs: final.map(p => this.mapUniqueSong(p)),
+    }];
+  }
+
+  /** Per-instrument: varied non-Top-1% songs — only show if we can get 3+ entries with all different buckets. */
+  private improveInstrumentRankings(instrument: InstrumentKey): SuggestionCategory[] {
+    // Group by bucket
+    const byBucket = new Map<number, SongPair[]>();
+    for (const s of this.songs) {
+      const tr = getTracker(this.scoresIndex[s.track.su], instrument);
+      if (tr && tr.rawPercentile > 0) {
+        const b = SuggestionGenerator.percentileBucket(tr.rawPercentile);
+        if (b != null && b > 1) {
+          const list = byBucket.get(b) ?? [];
+          list.push({song: s, tracker: tr, instrumentKey: instrument});
+          byBucket.set(b, list);
+        }
+      }
+    }
+    // Need 3+ distinct buckets to show variety
+    if (byBucket.size < 3) return [];
+
+    // Pick one song from each bucket, shuffle
+    const candidates: SongPair[] = [];
+    for (const [, pairs] of byBucket) {
+      this.shuffleInPlace(pairs);
+      candidates.push(pairs[0]);
+    }
+    this.shuffleInPlace(candidates);
+
+    const key = `improve_rankings_${instrument}`;
+    const freshCount = this.getFreshCount(candidates);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = Math.min(this.getDisplayCount(), candidates.length);
+    const final = this.selectNewFirst(key, candidates, take);
+    if (final.length < 3) return [];
+    return [{
+      key,
+      title: `Improve ${instrumentLabel(instrument)} Rankings`,
+      description: `A varied mix of ${instrumentLabel(instrument)} songs across different percentile brackets — all with room to grow.`,
+      songs: final.map(p => this.mapUniqueSong(p)),
+    }];
   }
 }

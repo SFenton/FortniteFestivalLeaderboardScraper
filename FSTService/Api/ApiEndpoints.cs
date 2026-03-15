@@ -78,9 +78,10 @@ public static class ApiEndpoints
         .WithTags("Progress")
         .RequireRateLimiting("public");
 
-        app.MapGet("/api/songs", (FestivalService service, PathDataStore pathStore) =>
+        app.MapGet("/api/songs", (FestivalService service, PathDataStore pathStore, MetaDatabase metaDb) =>
         {
             var maxScoresMap = pathStore.GetAllMaxScores();
+            var currentSeason = metaDb.GetCurrentSeason();
             var songs = service.Songs
                 .Where(s => s.track?.su is not null)
                 .Select(s =>
@@ -119,7 +120,7 @@ public static class ApiEndpoints
                 })
                 .ToList();
 
-            return Results.Ok(new { count = songs.Count, songs });
+            return Results.Ok(new { count = songs.Count, currentSeason, songs });
         })
         .WithTags("Songs")
         .RequireRateLimiting("public");

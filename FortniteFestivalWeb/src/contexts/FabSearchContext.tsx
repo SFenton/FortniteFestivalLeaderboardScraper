@@ -12,6 +12,8 @@ type FabSearchContextType = {
   openPlayerHistorySort: () => void;
   registerSongDetailActions: (actions: { openPaths: () => void }) => void;
   openPaths: () => void;
+  registerPlayerPageSelect: (action: { displayName: string; onSelect: () => void } | null) => void;
+  playerPageSelect: { displayName: string; onSelect: () => void } | null;
 };
 
 const FabSearchContext = createContext<FabSearchContextType>({
@@ -20,6 +22,7 @@ const FabSearchContext = createContext<FabSearchContextType>({
   registerSuggestionsActions: () => {}, openSuggestionsFilter: () => {},
   registerPlayerHistoryActions: () => {}, openPlayerHistorySort: () => {},
   registerSongDetailActions: () => {}, openPaths: () => {},
+  registerPlayerPageSelect: () => {}, playerPageSelect: null,
 });
 
 export function FabSearchProvider({ children }: { children: ReactNode }) {
@@ -52,8 +55,13 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
   const openPlayerHistorySort = useCallback(() => playerHistoryActionsRef.current.openSort(), []);
   const openPaths = useCallback(() => songDetailActionsRef.current.openPaths(), []);
 
+  const [playerPageSelect, setPlayerPageSelect] = useState<{ displayName: string; onSelect: () => void } | null>(null);
+  const registerPlayerPageSelect = useCallback((action: { displayName: string; onSelect: () => void } | null) => {
+    setPlayerPageSelect(action);
+  }, []);
+
   return (
-    <FabSearchContext.Provider value={{ query, setQuery, registerActions, openSort, openFilter, registerSuggestionsActions, openSuggestionsFilter, registerPlayerHistoryActions, openPlayerHistorySort, registerSongDetailActions, openPaths }}>
+    <FabSearchContext.Provider value={{ query, setQuery, registerActions, openSort, openFilter, registerSuggestionsActions, openSuggestionsFilter, registerPlayerHistoryActions, openPlayerHistorySort, registerSongDetailActions, openPaths, registerPlayerPageSelect, playerPageSelect }}>
       {children}
     </FabSearchContext.Provider>
   );

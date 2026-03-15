@@ -41,6 +41,8 @@ export const SUGGESTION_TYPES = [
   {id: 'SameName',          label: 'Same Name',          description: 'Different tracks that share the same title.'},
   {id: 'AlmostElite',       label: 'Almost Elite',       description: 'Top 5% \u2014 one good run could crack the top 1%.'},
   {id: 'PercentilePush',    label: 'Percentile Push',    description: 'Close to the next percentile bracket.'},
+  {id: 'Stale',             label: 'Stale Songs',        description: "Songs you haven't played in a while."},
+  {id: 'PctImprove',        label: 'Percentile Improve', description: 'Songs with room for percentile improvement.'},
 ] as const;
 
 export type SuggestionTypeId = (typeof SUGGESTION_TYPES)[number]['id'];
@@ -112,6 +114,10 @@ export function getCategoryTypeId(categoryKey: string): SuggestionTypeId | null 
   if (key.startsWith('almost_elite')) return 'AlmostElite';
   // Percentile push
   if (key.startsWith('pct_push')) return 'PercentilePush';
+  // Stale / untouched songs
+  if (key.startsWith('stale_')) return 'Stale';
+  // Percentile improvements
+  if (key.startsWith('pct_improve') || key.startsWith('same_pct_improve') || key.startsWith('improve_rankings_')) return 'PctImprove';
   // Unplayed: unplayed_*, first_plays_mixed
   if (key.startsWith('unplayed_') || key.startsWith('first_plays_mixed')) return 'Unplayed';
   // Variety pack
@@ -129,7 +135,7 @@ export function getCategoryTypeId(categoryKey: string): SuggestionTypeId | null 
  * Given a suggestion generator category key, extract the instrument it targets,
  * or `null` for instrument-agnostic / multi-instrument categories.
  */
-const INSTRUMENT_TYPE_PREFIXES = ['unfc_', 'unplayed_', 'almost_elite_', 'pct_push_'];
+const INSTRUMENT_TYPE_PREFIXES = ['unfc_', 'unplayed_', 'almost_elite_', 'pct_push_', 'stale_', 'pct_improve_', 'improve_rankings_'];
 
 export function getCategoryInstrument(categoryKey: string): InstrumentKey | null {
   const k = categoryKey.toLowerCase();

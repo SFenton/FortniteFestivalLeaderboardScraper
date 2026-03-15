@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react';
 import { useParams, Link, useNavigate, useNavigationType, useLocation } from 'react-router-dom';
+import { IoPerson } from 'react-icons/io5';
 import { formatPercentileBucket } from '@festival/core';
 import { useFestival } from '../contexts/FestivalContext';
 import { usePlayerData } from '../contexts/PlayerDataContext';
@@ -19,9 +20,13 @@ import { useSettings, isInstrumentVisible } from '../contexts/SettingsContext';
 import { loadSongSettings, saveSongSettings, defaultSongFilters } from '../components/songSettings';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { IS_IOS, IS_ANDROID, IS_PWA } from '../utils/platform';
 import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
 import { useScoreFilter } from '../hooks/useScoreFilter';
+import { useFabSearch } from '../contexts/FabSearchContext';
+import AlbumArt from '../components/AlbumArt';
 import ConfirmAlert from '../components/ConfirmAlert';
+import { useStaggerRush } from '../hooks/useStaggerRush';
 
 /** Wrapper that fades in via CSS animation, then strips the animation styles
  *  so that `opacity` is no longer set by the animation system.  This prevents
@@ -47,12 +52,16 @@ function FadeInDiv({ delay, children, style }: { delay?: number; children: React
   );
 }
 
-/** Track whether PlayerContent has rendered at least once for the current account,
- *  so we can skip stagger animation on back-nav. */
-let _hasRenderedAccount: string | null = null;
+/** Track rendered accounts so we can skip stagger animation on revisit.
+ *  Stores the last-visited player page account and the tracked (statistics) account. */
+let _renderedPlayerAccount: string | null = null;
+let _renderedTrackedAccount: string | null = null;
+let _cachedPlayerData: { accountId: string; data: PlayerResponse } | null = null;
 
 export function clearPlayerPageCache() {
-  _hasRenderedAccount = null;
+  _renderedPlayerAccount = null;
+  _renderedTrackedAccount = null;
+  _cachedPlayerData = null;
 }
 
 export default function PlayerPage({ accountId: propAccountId }: { accountId?: string } = {}) {
@@ -68,10 +77,11 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   const isTrackedPlayer = !!propAccountId;
 
   // Local state for when viewing an arbitrary player via URL
-  const [localData, setLocalData] = useState<PlayerResponse | null>(null);
-  const [localLoading, setLocalLoading] = useState(!isTrackedPlayer);
+  const cachedData = _cachedPlayerData?.accountId === accountId ? _cachedPlayerData.data : null;
+  const [localData, setLocalData] = useState<PlayerResponse | null>(cachedData);
+  const [localLoading, setLocalLoading] = useState(!isTrackedPlayer && !cachedData);
   const [localError, setLocalError] = useState<string | null>(null);
-  const hasDataRef = useRef(false);
+  const hasDataRef = useRef(!!cachedData);
 
   const { isSyncing: localSyncing, phase: localPhase, backfillProgress: localBfProg, historyProgress: localHrProg, justCompleted, clearCompleted } =
     useSyncStatus(!isTrackedPlayer ? accountId : undefined);
@@ -83,6 +93,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
     try {
       const res = await api.getPlayer(accountId);
       setLocalData(res);
+      _cachedPlayerData = { accountId, data: res };
       hasDataRef.current = true;
     } catch (e) {
       setLocalError(e instanceof Error ? e.message : 'Failed to load player');
@@ -93,7 +104,6 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
 
   useEffect(() => {
     if (isTrackedPlayer) return;
-    hasDataRef.current = false;
     void fetchPlayer();
   }, [fetchPlayer, isTrackedPlayer]);
 
@@ -113,16 +123,31 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   const backfillProgress = isTrackedPlayer ? ctx.backfillProgress : localBfProg;
   const historyProgress = isTrackedPlayer ? ctx.historyProgress : localHrProg;
 
-  // Skip stagger if we've already rendered this account (must be before early returns)
-  const skipAnimRef = useRef(_hasRenderedAccount === accountId);
+  // Skip stagger if we've rendered this account before.
+  const hasRendered = isTrackedPlayer
+    ? _renderedTrackedAccount === accountId
+    : _renderedPlayerAccount === accountId;
+  const prevAccountRef = useRef(accountId);
+  const skipAnimRef = useRef(hasRendered);
+  // When accountId changes within the same component instance, re-evaluate skip
+  if (prevAccountRef.current !== accountId) {
+    prevAccountRef.current = accountId;
+    const alreadyRendered = isTrackedPlayer
+      ? _renderedTrackedAccount === accountId
+      : _renderedPlayerAccount === accountId;
+    skipAnimRef.current = alreadyRendered;
+  }
   const skipAnim = skipAnimRef.current;
-  if (data) _hasRenderedAccount = accountId!;
+  if (data) {
+    if (isTrackedPlayer) _renderedTrackedAccount = accountId!;
+    else _renderedPlayerAccount = accountId!;
+  }
 
   if (loading) return <div style={styles.page}><div style={styles.center}><div style={styles.arcSpinner} /></div></div>;
   if (error) return <div style={styles.page}><div style={styles.centerError}>{error}</div></div>;
   if (!data) return <div style={styles.page}><div style={styles.center}>Player not found</div></div>;
 
-  return <PlayerContent data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} isTrackedPlayer={isTrackedPlayer} skipAnim={skipAnim} />;
+  return <PlayerContent key={accountId} data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} isTrackedPlayer={isTrackedPlayer} skipAnim={skipAnim} />;
 }
 
 function PlayerContent({
@@ -151,19 +176,48 @@ function PlayerContent({
   const { player: trackedPlayer, setPlayer } = useTrackedPlayer();
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
   const { filterPlayerScores } = useScoreFilter();
+  const { registerPlayerPageSelect } = useFabSearch();
+
+  // Register FAB "Select as Profile" action
+  useEffect(() => {
+    if (trackedPlayer?.accountId === data.accountId) {
+      registerPlayerPageSelect(null);
+      return;
+    }
+    registerPlayerPageSelect({
+      displayName: data.displayName,
+      onSelect: () => {
+        if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
+          setPendingSwitch(() => () => setPlayer({ accountId: data.accountId, displayName: data.displayName }));
+        } else {
+          setPlayer({ accountId: data.accountId, displayName: data.displayName });
+        }
+      },
+    });
+    return () => registerPlayerPageSelect(null);
+  }, [data.accountId, data.displayName, trackedPlayer, setPlayer, registerPlayerPageSelect]);
+
+  // Helper: wrap a navigation action with profile-switch logic when viewing another player
+  const withProfileSwitch = useCallback((action: () => void) => {
+    if (!isTrackedPlayer) {
+      const selectAndGo = () => {
+        setPlayer({ accountId: data.accountId, displayName: data.displayName });
+        action();
+      };
+      if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
+        setPendingSwitch(() => selectAndGo);
+      } else { selectAndGo(); }
+    } else { action(); }
+  }, [isTrackedPlayer, trackedPlayer, data.accountId, data.displayName, setPlayer]);
 
   const effectiveScores = useMemo(() => {
-    const visible = isTrackedPlayer
-      ? data.scores.filter(s => isInstrumentVisible(settings, s.instrument as InstrumentKey))
-      : data.scores;
+    const visible = data.scores.filter(s => isInstrumentVisible(settings, s.instrument as InstrumentKey));
     return filterPlayerScores(visible);
-  }, [isTrackedPlayer, data.scores, settings, filterPlayerScores],
+  }, [data.scores, settings, filterPlayerScores],
   );
   const visibleKeys = useMemo(() =>
-    isTrackedPlayer
-      ? INSTRUMENT_KEYS.filter(k => isInstrumentVisible(settings, k))
-      : INSTRUMENT_KEYS,
-    [isTrackedPlayer, settings],
+    INSTRUMENT_KEYS.filter(k => isInstrumentVisible(settings, k)),
+    [settings],
   );
 
   const songMap = useMemo(() => new Map(songs.map((s) => [s.songId, s])), [songs]);
@@ -250,15 +304,31 @@ function PlayerContent({
     ? overallStats.fcCount.toLocaleString()
     : `${overallStats.fcCount} (${formatClamped(parseFloat(overallStats.fcPercent))}%)`;
 
-  const summaryBoxes: { label: string; value: React.ReactNode; color?: string; to?: string; state?: Record<string, string> }[] = [
-    { label: 'Songs Played', value: overallStats.songsPlayed.toLocaleString(), color: overallSongsAllPlayed ? Colors.statusGreen : undefined },
-    { label: 'Full Combos', value: overallFcValue, color: overallFcIs100 ? Colors.gold : undefined },
+  const summaryBoxes: { label: string; value: React.ReactNode; color?: string; onClick?: () => void }[] = [
+    { label: 'Songs Played', value: overallStats.songsPlayed.toLocaleString(), color: overallSongsAllPlayed ? Colors.statusGreen : undefined, onClick: () => {
+      withProfileSwitch(() => {
+        const s = loadSongSettings();
+        const hasScores: Record<string, boolean> = {};
+        for (const k of visibleKeys) hasScores[k] = true;
+        saveSongSettings({ ...s, instrument: null, sortMode: 'title', sortAscending: true, filters: { ...defaultSongFilters(), hasScores } });
+        navigate('/songs', { state: { backTo: location.pathname, restagger: true } });
+      });
+    } },
+    { label: 'Full Combos', value: overallFcValue, color: overallFcIs100 ? Colors.gold : undefined, onClick: () => {
+      withProfileSwitch(() => {
+        const s = loadSongSettings();
+        const hasFCs: Record<string, boolean> = {};
+        for (const k of visibleKeys) hasFCs[k] = true;
+        saveSongSettings({ ...s, instrument: null, sortMode: 'title', sortAscending: true, filters: { ...defaultSongFilters(), hasFCs } });
+        navigate('/songs', { state: { backTo: location.pathname, restagger: true } });
+      });
+    } },
     { label: 'Gold Stars', value: overallStats.goldStarCount.toLocaleString(), color: Colors.gold },
     { label: 'Avg Accuracy', value: overallStats.avgAccuracy > 0 ? formatClamped(overallStats.avgAccuracy / 10000) + '%' : '—', color: overallAccColor },
-    { label: 'Best Rank', value: overallStats.bestRank > 0 ? `#${overallStats.bestRank.toLocaleString()}` : '—', to: overallStats.bestRankSongId ? `/songs/${overallStats.bestRankSongId}?instrument=${encodeURIComponent(overallStats.bestRankInstrument!)}` : undefined, state: { backTo: location.pathname } },
+    { label: 'Best Rank', value: overallStats.bestRank > 0 ? `#${overallStats.bestRank.toLocaleString()}` : '—', onClick: overallStats.bestRankSongId ? () => withProfileSwitch(() => navigate(`/songs/${overallStats.bestRankSongId}?instrument=${encodeURIComponent(overallStats.bestRankInstrument!)}`, { state: { backTo: location.pathname, autoScroll: true } })) : undefined },
   ];
   for (const box of summaryBoxes) {
-    items.push({ key: `sum-${box.label}`, span: false, heightEstimate: 100, style: cardStyle, node: <StatBox label={box.label} value={box.value} color={box.color} to={box.to} state={box.state} /> });
+    items.push({ key: `sum-${box.label}`, span: false, heightEstimate: 100, style: cardStyle, node: <StatBox label={box.label} value={box.value} color={box.color} onClick={box.onClick} /> });
   }
 
   // --- Instrument Statistics heading ---
@@ -295,8 +365,20 @@ function PlayerContent({
 
     // Stat boxes (each is its own grid item)
     const cards: { label: string; value: React.ReactNode; color?: string; to?: string; onClick?: () => void }[] = [];
-    if (stats.songsPlayed > 0) cards.push({ label: 'Songs Played', value: stats.songsPlayed.toLocaleString(), color: stats.songsPlayed >= songs.length ? Colors.statusGreen : undefined });
-    if (stats.fcCount > 0) cards.push({ label: 'FCs', value: stats.fcPercent === '100.0' ? stats.fcCount.toLocaleString() : `${stats.fcCount} (${stats.fcPercent}%)`, color: stats.fcPercent === '100.0' ? Colors.gold : undefined });
+    if (stats.songsPlayed > 0) cards.push({ label: 'Songs Played', value: stats.songsPlayed.toLocaleString(), color: stats.songsPlayed >= songs.length ? Colors.statusGreen : undefined, onClick: () => {
+      withProfileSwitch(() => {
+        const s = loadSongSettings();
+        saveSongSettings({ ...s, instrument: inst, sortMode: 'score', sortAscending: true, filters: { ...cleanFilters(s), hasScores: { ...s.filters.hasScores, [inst]: true } } });
+        navigate('/songs', { state: { backTo: location.pathname, restagger: true } });
+      });
+    } });
+    if (stats.fcCount > 0) cards.push({ label: 'FCs', value: stats.fcPercent === '100.0' ? stats.fcCount.toLocaleString() : `${stats.fcCount} (${stats.fcPercent}%)`, color: stats.fcPercent === '100.0' ? Colors.gold : undefined, onClick: () => {
+      withProfileSwitch(() => {
+        const s = loadSongSettings();
+        saveSongSettings({ ...s, instrument: inst, sortMode: 'score', sortAscending: true, filters: { ...cleanFilters(s), hasFCs: { ...s.filters.hasFCs, [inst]: true } } });
+        navigate('/songs', { state: { backTo: location.pathname, restagger: true } });
+      });
+    } });
 
     // Star count cards — clickable to filter songs by star level
     const STAR_CARDS: { count: number; label: string; starKey: number; color?: string }[] = [
@@ -307,22 +389,26 @@ function PlayerContent({
       { count: stats.twoStarCount, label: '2 Stars', starKey: 2 },
       { count: stats.oneStarCount, label: '1 Star', starKey: 1 },
     ];
+    // Build clean filters: preserve other instruments' missing/has, clear current instrument's, reset instrument-specific filters
+    const cleanFilters = (s: ReturnType<typeof loadSongSettings>) => ({
+      ...s.filters,
+      seasonFilter: {},
+      percentileFilter: {},
+      starsFilter: {},
+      difficultyFilter: {},
+      missingScores: { ...s.filters.missingScores, [inst]: false },
+      missingFCs: { ...s.filters.missingFCs, [inst]: false },
+      hasScores: { ...s.filters.hasScores, [inst]: false },
+      hasFCs: { ...s.filters.hasFCs, [inst]: false },
+    });
+
     const makeStarNav = (starKey: number) => () => {
-      const doFilterAndNav = () => {
+      withProfileSwitch(() => {
         const s = loadSongSettings();
         const starsFilter: Record<number, boolean> = { 0: false, 1: false, 2: false, 3: false, 4: false, 5: false, 6: false, [starKey]: true };
-        saveSongSettings({ ...s, instrument: inst, filters: { ...s.filters, starsFilter } });
+        saveSongSettings({ ...s, instrument: inst, sortMode: 'stars', sortAscending: true, filters: { ...cleanFilters(s), starsFilter } });
         navigate('/songs', { state: { backTo: location.pathname, restagger: true } });
-      };
-      if (!isTrackedPlayer) {
-        const selectAndGo = () => {
-          setPlayer({ accountId: data.accountId, displayName: data.displayName });
-          doFilterAndNav();
-        };
-        if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
-          setPendingSwitch(() => selectAndGo);
-        } else { selectAndGo(); }
-      } else { doFilterAndNav(); }
+      });
     };
     for (const sc of STAR_CARDS) {
       if (sc.count > 0) cards.push({ label: sc.label, value: sc.count.toLocaleString(), color: sc.color, onClick: makeStarNav(sc.starKey) });
@@ -332,13 +418,26 @@ function PlayerContent({
     const accColor = stats.avgAccuracy > 0 ? (isGoldAcc ? Colors.gold : accuracyColor(accPct)) : undefined;
     cards.push({ label: 'Avg Accuracy', value: stats.avgAccuracy > 0 ? formatClamped(accPct) + '%' : '—', color: accColor });
     cards.push({ label: 'Avg Stars', value: stats.averageStars === 6 ? <GoldStars /> : (stats.averageStars > 0 ? formatClamped2(stats.averageStars) : '—') });
-    cards.push({ label: 'Best Rank', value: stats.bestRank > 0 ? `#${stats.bestRank.toLocaleString()}` : '—', to: stats.bestRankSongId ? `/songs/${stats.bestRankSongId}?instrument=${encodeURIComponent(inst)}` : undefined });
+    cards.push({ label: 'Best Rank', value: stats.bestRank > 0 ? `#${stats.bestRank.toLocaleString()}` : '—', onClick: stats.bestRankSongId ? () => withProfileSwitch(() => navigate(`/songs/${stats.bestRankSongId}?instrument=${encodeURIComponent(inst)}`, { state: { backTo: location.pathname, autoScroll: true } })) : undefined });
     const pctGold = (v: string) => /^Top [1-5]%$/.test(v) ? Colors.gold : undefined;
-    cards.push({ label: 'Percentile', value: stats.overallPercentile, color: pctGold(stats.overallPercentile) });
-    cards.push({ label: 'Percentile (Songs Played)', value: stats.avgPercentile, color: pctGold(stats.avgPercentile) });
+    cards.push({ label: 'Percentile', value: stats.overallPercentile, color: pctGold(stats.overallPercentile), onClick: () => {
+      withProfileSwitch(() => {
+        const s = loadSongSettings();
+        saveSongSettings({ ...s, instrument: inst, sortMode: 'percentile', sortAscending: true, filters: cleanFilters(s) });
+        navigate('/songs', { state: { backTo: location.pathname, restagger: true } });
+      });
+    } });
+    cards.push({ label: 'Songs Played', value: stats.avgPercentile, color: pctGold(stats.avgPercentile), onClick: () => {
+      withProfileSwitch(() => {
+        const s = loadSongSettings();
+        saveSongSettings({ ...s, instrument: inst, sortMode: 'percentile', sortAscending: true, filters: { ...cleanFilters(s), hasScores: { ...s.filters.hasScores, [inst]: true } } });
+        navigate('/songs', { state: { backTo: location.pathname, restagger: true } });
+      });
+    } });
 
-    for (const c of cards) {
-      items.push({ key: `${inst}-${c.label}`, span: false, heightEstimate: 100, style: cardStyle, node: <StatBox label={c.label} value={c.value} color={c.color} to={c.to} onClick={c.onClick} /> });
+    for (let ci = 0; ci < cards.length; ci++) {
+      const c = cards[ci];
+      items.push({ key: `${inst}-card-${ci}`, span: false, heightEstimate: 100, style: cardStyle, node: <StatBox label={c.label} value={c.value} color={c.color} onClick={c.onClick} /> });
     }
 
     // Percentile table — single glass container
@@ -365,27 +464,14 @@ function PlayerContent({
                   key={b.pct}
                   style={{ ...styles.pctRowItem, ...(isLast ? { borderBottom: 'none' } : {}) }}
                   onClick={() => {
-                    const doFilterAndNav = () => {
+                    withProfileSwitch(() => {
                       const s = loadSongSettings();
                       const percentileFilter: Record<number, boolean> = {};
                       for (const t of thresholds) percentileFilter[t] = t === b.pct;
                       percentileFilter[0] = false;
-                      saveSongSettings({ ...s, instrument: inst, filters: { ...defaultSongFilters(), percentileFilter } });
+                      saveSongSettings({ ...s, instrument: inst, sortAscending: true, filters: { ...cleanFilters(s), percentileFilter } });
                       navigate('/songs', { state: { backTo: location.pathname, restagger: true } });
-                    };
-                    if (!isTrackedPlayer) {
-                      const selectAndGo = () => {
-                        setPlayer({ accountId: data.accountId, displayName: data.displayName });
-                        doFilterAndNav();
-                      };
-                      if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
-                        setPendingSwitch(() => selectAndGo);
-                      } else {
-                        selectAndGo();
-                      }
-                    } else {
-                      doFilterAndNav();
-                    }
+                    });
                   }}
                 >
                   <span>
@@ -431,16 +517,16 @@ function PlayerContent({
       const pct = s.rank > 0 && (s.totalEntries ?? 0) > 0
         ? Math.min((s.rank / s.totalEntries!) * 100, 100)
         : undefined;
+      const handleClick = (e: React.MouseEvent) => {
+        e.preventDefault();
+        withProfileSwitch(() => navigate(`/songs/${s.songId}?instrument=${encodeURIComponent(inst)}`, { state: { backTo: location.pathname, autoScroll: true } }));
+      };
       return (
-        <Link key={s.songId} to={`/songs/${s.songId}?instrument=${encodeURIComponent(inst)}`} state={{ backTo: location.pathname }} style={styles.songListRow}>
-          {song?.albumArt ? (
-            <img src={song.albumArt} alt="" style={styles.topSongThumb} loading="lazy" />
-          ) : (
-            <div style={{ ...styles.topSongThumb, backgroundColor: Colors.purplePlaceholder }} />
-          )}
+        <a key={s.songId} href={`#/songs/${s.songId}?instrument=${encodeURIComponent(inst)}`} onClick={handleClick} style={styles.songListRow}>
+          <AlbumArt src={song?.albumArt} size={Size.thumb} />
           <div style={styles.topSongText}>
             <span style={styles.topSongName}>{song?.title ?? s.songId.slice(0, 8)}</span>
-            <span style={styles.topSongArtist}>{song?.artist ?? ''}</span>
+            <span style={styles.topSongArtist}>{song?.artist ?? ''}{song?.year ? ` · ${song.year}` : ''}</span>
           </div>
           <div style={styles.topSongRight}>
             {pct != null && (() => {
@@ -454,7 +540,7 @@ function PlayerContent({
               return <span style={pctStyle}>{formatPercentileBucket(pct)}</span>;
             })()}
           </div>
-        </Link>
+        </a>
       );
     };
 
@@ -521,21 +607,56 @@ function PlayerContent({
   const fadeDeps = useMemo(() => [items.length], [items.length]);
   const updateFade = useScrollMask(scrollRef, fadeDeps);
   const hasFab = useIsMobile();
+  const rushOnScroll = useStaggerRush(scrollRef);
 
   const handleScroll = useCallback(() => {
     updateFade();
-  }, [updateFade]);
+    rushOnScroll();
+  }, [updateFade, rushOnScroll]);
+
+  const [isNarrowGrid, setIsNarrowGrid] = useState(() => hasFab && typeof window !== 'undefined' && window.innerWidth < 400);
+  useEffect(() => {
+    if (!hasFab) return;
+    const mql = window.matchMedia('(max-width: 399px)');
+    const handler = () => setIsNarrowGrid(mql.matches);
+    mql.addEventListener('change', handler);
+    handler();
+    return () => mql.removeEventListener('change', handler);
+  }, [hasFab]);
+
+  // Only render the button container on desktop non-PWA; animate visibility
+  const canShowSelectBtn = !hasFab && !IS_IOS && !IS_ANDROID && !IS_PWA;
+  const selectBtnVisible = canShowSelectBtn && !isTrackedPlayer && trackedPlayer?.accountId !== data.accountId;
 
   return (
     <div style={styles.page}>
-      {!isTrackedPlayer && (
-        <div style={styles.playerNameBar}>
-          <h1 style={styles.playerName}>{data.displayName}</h1>
-        </div>
-      )}
+      <div style={styles.playerNameBar}>
+        <h1 style={styles.playerName}>{data.displayName}</h1>
+        {canShowSelectBtn && (
+          <button
+            style={{
+              ...styles.selectProfileBtn,
+              opacity: selectBtnVisible ? 1 : 0,
+              transform: selectBtnVisible ? 'scale(1)' : 'scale(0.9)',
+              pointerEvents: selectBtnVisible ? 'auto' as const : 'none' as const,
+              transition: 'opacity 300ms ease, transform 300ms ease',
+            }}
+            onClick={() => {
+              if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
+                setPendingSwitch(() => () => setPlayer({ accountId: data.accountId, displayName: data.displayName }));
+              } else {
+                setPlayer({ accountId: data.accountId, displayName: data.displayName });
+              }
+            }}
+          >
+            <IoPerson size={16} style={{ marginRight: Gap.md }} />
+            Select Player Profile
+          </button>
+        )}
+      </div>
       <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
         <div style={{ ...styles.container, ...(hasFab ? { paddingBottom: 72 } : {}) }}>
-          <div style={styles.gridList}>
+          <div style={{ ...styles.gridList, ...(isNarrowGrid ? { gridTemplateColumns: 'minmax(0, 1fr)' } : {}) }}>
             {(() => {
               // Compute which items are in the initial viewport by accumulating
               // estimated row heights.  The grid is 2-col: span items take a full
@@ -596,15 +717,19 @@ function PlayerContent({
   );
 }
 
-function StatBox({ label, value, color, to, state, onClick }: { label: string; value: React.ReactNode; color?: string; to?: string; state?: Record<string, string>; onClick?: () => void }) {
+function StatBox({ label, value, color, onClick }: { label: string; value: React.ReactNode; color?: string; onClick?: () => void }) {
   const inner = (
     <div style={styles.statBox}>
       <span style={{ ...styles.statValue, ...(color ? { color } : {}) }}>{value}</span>
       <span style={styles.statLabel}>{label}</span>
     </div>
   );
-  if (to) return <Link to={to} state={state} style={{ textDecoration: 'none', color: 'inherit' }}>{inner}</Link>;
-  if (onClick) return <div onClick={onClick} style={{ cursor: 'pointer' }}>{inner}</div>;
+  if (onClick) return (
+    <div onClick={onClick} style={{ cursor: 'pointer', position: 'relative' as const }}>
+      {inner}
+      <svg style={styles.statChevron} width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1.5 1.5L6.5 7L1.5 12.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+    </div>
+  );
   return inner;
 }
 
@@ -717,7 +842,7 @@ function computeInstrumentStats(
     completionPercent:
       totalSongs > 0 ? ((n / totalSongs) * 100).toFixed(1) : '0',
     fcCount,
-    fcPercent: n > 0 ? ((fcCount / n) * 100).toFixed(1) : '0',
+    fcPercent: n > 0 ? (Math.floor((fcCount / n) * 1000) / 10).toFixed(1) : '0',
     goldStarCount: goldStars,
     fiveStarCount: fiveStars,
     fourStarCount: fourStars,
@@ -758,7 +883,7 @@ function computeOverallStats(scores: PlayerScore[]) {
     fcCount,
     fcPercent:
       scores.length > 0
-        ? ((fcCount / scores.length) * 100).toFixed(1)
+        ? (Math.floor((fcCount / scores.length) * 1000) / 10).toFixed(1)
         : '0',
     goldStarCount: goldStars,
     avgAccuracy: avgAcc,
@@ -779,8 +904,9 @@ function groupByInstrument(scores: PlayerScore[]) {
 }
 
 function formatClamped(val: number): string {
-  const fixed = val.toFixed(1);
-  return fixed.endsWith('.0') ? Math.round(val).toString() : fixed;
+  const floored = Math.floor(val * 10) / 10;
+  const fixed = floored.toFixed(1);
+  return fixed.endsWith('.0') ? Math.floor(val).toString() : fixed;
 }
 
 function formatClamped2(val: number): string {
@@ -812,17 +938,25 @@ const styles: Record<string, React.CSSProperties> = {
   scrollArea: {
     flex: 1,
     overflowY: 'auto' as const,
+    overflowX: 'hidden' as const,
   },
   container: {
     maxWidth: MaxWidth.card,
     margin: '0 auto',
     padding: `${Layout.paddingTop}px ${Layout.paddingHorizontal}px`,
+    boxSizing: 'border-box' as const,
+    width: '100%',
   },
   playerNameBar: {
     maxWidth: MaxWidth.card,
     margin: '0 auto',
     width: '100%',
     padding: `${Gap.lg}px ${Layout.paddingHorizontal}px 0`,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    boxSizing: 'border-box' as const,
+    minHeight: 48 + Gap.lg,
   },
   playerName: {
     fontSize: 28,
@@ -846,6 +980,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: Colors.textSecondary,
     marginBottom: Gap.xl,
     marginTop: 0,
+    wordWrap: 'break-word' as const,
   },
   catDesc: {
     fontSize: Font.xs,
@@ -914,12 +1049,16 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column' as const,
     alignItems: 'center',
     padding: `${Gap.xl}px ${Gap.md}px`,
+    minWidth: 0,
+    overflow: 'hidden',
   },
   statValue: {
     fontSize: Font.xl,
     fontWeight: 700,
     color: Colors.accentBlueBright,
     marginBottom: Gap.xs,
+    wordBreak: 'break-word' as const,
+    textAlign: 'center' as const,
   },
   statLabel: {
     fontSize: Font.xs,
@@ -927,11 +1066,37 @@ const styles: Record<string, React.CSSProperties> = {
     textTransform: 'uppercase' as const,
     letterSpacing: 0.5,
   },
+  statChevron: {
+    position: 'absolute' as const,
+    right: Gap.xl,
+    top: '50%',
+    transform: 'translateY(-50%)',
+    color: Colors.textPrimary,
+  },
+  selectProfileBtn: {
+    ...frostedCard,
+    backgroundColor: 'rgb(124,58,237)',
+    border: '1px solid rgba(168,120,255,0.3)',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: `0 ${Gap.section + 8}px 0 ${Gap.section}px`,
+    borderRadius: Radius.full,
+    color: '#fff',
+    fontSize: Font.lg,
+    fontWeight: 600,
+    cursor: 'pointer',
+    flexShrink: 0,
+    height: 48,
+    whiteSpace: 'nowrap' as const,
+  },
   // Per-instrument cards
   gridList: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(2, 1fr)',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
     gap: Gap.md,
+    minWidth: 0,
+    overflow: 'hidden',
   },
   gridFullWidth: {
     gridColumn: '1 / -1',
@@ -1027,6 +1192,7 @@ const styles: Record<string, React.CSSProperties> = {
     transition: 'background-color 0.15s',
     fontSize: Font.md,
     color: Colors.textPrimary,
+    minWidth: 0,
   },
   // Top songs
   topSongs: {
@@ -1136,7 +1302,6 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: 'rgba(255,255,255,0.1)',
     padding: `${Gap.xs}px ${Gap.md}px`,
     borderRadius: Radius.xs,
-    minWidth: 70,
     textAlign: 'center' as const,
     display: 'inline-block',
   },

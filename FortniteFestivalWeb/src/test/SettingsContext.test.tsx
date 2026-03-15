@@ -40,7 +40,6 @@ describe('SettingsContext', () => {
       expect(d.metadataShowPercentile).toBe(true);
       expect(d.metadataShowSeasonAchieved).toBe(true);
       expect(d.metadataShowDifficulty).toBe(true);
-      expect(d.metadataShowIsFC).toBe(true);
       expect(d.metadataShowStars).toBe(true);
     });
 
@@ -125,14 +124,14 @@ describe('SettingsContext', () => {
 
     it('setSettings replaces the entire settings object', () => {
       const { result } = renderHook(() => useSettings(), { wrapper });
-      const custom = { ...defaultAppSettings(), showDrums: false, metadataShowIsFC: false };
+      const custom = { ...defaultAppSettings(), showDrums: false };
 
       act(() => {
         result.current.setSettings(custom);
       });
 
       expect(result.current.settings.showDrums).toBe(false);
-      expect(result.current.settings.metadataShowIsFC).toBe(false);
+      expect(result.current.settings.showLead).toBe(true);
     });
 
     it('resetSettings restores defaults', () => {

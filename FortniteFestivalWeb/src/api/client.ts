@@ -32,6 +32,13 @@ async function post<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+const UNKNOWN_USER = 'Unknown User';
+
+function normalizeDisplayName<T extends { displayName: string }>(data: T): T {
+  if (!data.displayName) return { ...data, displayName: UNKNOWN_USER };
+  return data;
+}
+
 export const api = {
   getSongs: () => get<SongsResponse>('/api/songs'),
 
@@ -43,7 +50,7 @@ export const api = {
   getPlayer: (accountId: string, songId?: string) =>
     get<PlayerResponse>(
       `/api/player/${encodeURIComponent(accountId)}${songId ? `?songId=${encodeURIComponent(songId)}` : ''}`,
-    ),
+    ).then(normalizeDisplayName),
 
   searchAccounts: (q: string, limit = 10) =>
     get<AccountSearchResponse>(
@@ -51,7 +58,7 @@ export const api = {
     ),
 
   trackPlayer: (accountId: string) =>
-    post<TrackPlayerResponse>(`/api/player/${encodeURIComponent(accountId)}/track`),
+    post<TrackPlayerResponse>(`/api/player/${encodeURIComponent(accountId)}/track`).then(normalizeDisplayName),
 
   getSyncStatus: (accountId: string) =>
     get<SyncStatusResponse>(`/api/player/${encodeURIComponent(accountId)}/sync-status`),

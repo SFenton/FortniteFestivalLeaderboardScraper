@@ -21,7 +21,6 @@ export type MetadataVisibility = {
   percentile: boolean;
   seasonachieved: boolean;
   intensity: boolean;
-  isfc: boolean;
   stars: boolean;
 };
 
@@ -66,7 +65,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
     ? INSTRUMENT_SORT_MODES.filter(({ mode }) => {
         const visMap: Record<string, boolean> = {
           score: mv.score, percentage: mv.percentage, percentile: mv.percentile,
-          isfc: mv.isfc, stars: mv.stars, seasonachieved: mv.seasonachieved, intensity: mv.intensity,
+          stars: mv.stars, seasonachieved: mv.seasonachieved, intensity: mv.intensity,
         };
         return visMap[mode] !== false;
       })
@@ -76,13 +75,13 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
     ? draft.metadataOrder.filter(k => {
         const visMap: Record<string, boolean> = {
           score: mv.score, percentage: mv.percentage, percentile: mv.percentile,
-          isfc: mv.isfc, stars: mv.stars, seasonachieved: mv.seasonachieved, intensity: mv.intensity,
+          stars: mv.stars, seasonachieved: mv.seasonachieved, intensity: mv.intensity,
         };
         return visMap[k] !== false;
       })
     : draft.metadataOrder;
 
-  const anyMetadataVisible = !mv || (mv.score || mv.percentage || mv.percentile || mv.isfc || mv.stars || mv.seasonachieved || mv.intensity);
+  const anyMetadataVisible = !mv || (mv.score || mv.percentage || mv.percentile || mv.stars || mv.seasonachieved || mv.intensity);
 
   return (
     <>

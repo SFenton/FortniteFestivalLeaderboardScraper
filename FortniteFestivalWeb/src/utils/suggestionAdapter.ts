@@ -54,6 +54,9 @@ function buildTracker(ps: PlayerScore): ScoreTracker {
   // percentile from API is 0-100 "top X%"; convert to raw fraction
   if (ps.percentile != null && ps.percentile > 0) {
     t.rawPercentile = ps.percentile / 100;
+  } else if (t.rank > 0 && t.totalEntries > 0) {
+    // Fallback: compute from rank/totalEntries
+    t.rawPercentile = t.rank / t.totalEntries;
   }
 
   t.refreshDerived();

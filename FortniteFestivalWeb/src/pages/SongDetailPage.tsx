@@ -18,6 +18,7 @@ import ScoreHistoryChart from '../components/ScoreHistoryChart';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import { useSettings, visibleInstruments } from '../contexts/SettingsContext';
 import { useScrollMask } from '../hooks/useScrollMask';
+import { useStaggerRush } from '../hooks/useStaggerRush';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { IoFlash } from 'react-icons/io5';
 import { useFabSearch } from '../contexts/FabSearchContext';
@@ -235,8 +236,10 @@ export default function SongDetailPage() {
   const [headerCollapsed, setHeaderCollapsed] = useState(hasFab || (skipAnim && (cached?.scrollTop ?? 0) > 40));
   const updateScrollMask = useScrollMask(scrollRef, [phase, activeInstruments.length]);
   const userScrolledRef = useRef(false);
+  const rushOnScroll = useStaggerRush(scrollRef);
   const handleScroll = useCallback(() => {
     updateScrollMask();
+    rushOnScroll();
     userScrolledRef.current = true;
     if (songId) {
       const entry = songDetailCache.get(songId);
@@ -245,7 +248,7 @@ export default function SongDetailPage() {
     if (hasFab) return;
     const el = scrollRef.current;
     if (el) setHeaderCollapsed(el.scrollTop > 40);
-  }, [updateScrollMask, hasFab, songId]);
+  }, [updateScrollMask, rushOnScroll, hasFab, songId]);
 
   const hasScrolled = useRef(false);
 
@@ -288,9 +291,10 @@ export default function SongDetailPage() {
     }
   }, []);
 
-  // Scroll to the instrument card when arriving with ?instrument=
+  // Scroll to the instrument card when arriving with ?instrument= and autoScroll state
+  const autoScroll = !!(location.state as any)?.autoScroll;
   useEffect(() => {
-    if (phase !== 'contentIn' || !defaultInstrument || hasScrolled.current) return;
+    if (phase !== 'contentIn' || !defaultInstrument || hasScrolled.current || !autoScroll) return;
     hasScrolled.current = true;
     // Wait for stagger animations to complete before measuring position
     const id = setTimeout(() => {
@@ -373,7 +377,7 @@ export default function SongDetailPage() {
       <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
       {phase === 'contentIn' && (
         <div style={{ ...styles.container, ...(hasFab ? { paddingBottom: 96 } : {}) }}>
-          {player && (
+          {player && scoreHistoryReady && filteredScoreHistory.length > 0 && (
             <div style={{ ...stagger(300), marginBottom: Gap.section }} onAnimationEnd={clearAnim}>
               <ScoreHistoryChart
                 songId={songId}
@@ -444,7 +448,7 @@ function SongHeader({
       <div style={{ flex: 1, minWidth: 0 }}>
         <h1 style={{ ...styles.songTitle, marginBottom: collapsed ? Gap.xs : Gap.sm, transition }}>{song?.title ?? songId}</h1>
         <p style={{ ...styles.songArtist, fontSize: collapsed ? Font.md : Font.lg, marginBottom: collapsed ? 0 : Gap.md, transition }}>
-          {song?.artist ?? 'Unknown Artist'}
+          {song?.artist ?? 'Unknown Artist'}{song?.year ? ` · ${song.year}` : ''}
         </p>
       </div>
       {!isMobile && (

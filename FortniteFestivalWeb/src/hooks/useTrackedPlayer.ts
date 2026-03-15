@@ -8,12 +8,16 @@ export type TrackedPlayer = {
   displayName: string;
 };
 
+const UNKNOWN_USER = 'Unknown User';
+
 function loadPlayer(): TrackedPlayer | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (parsed?.accountId && parsed?.displayName) return parsed;
+    if (parsed?.accountId) {
+      return { accountId: parsed.accountId, displayName: parsed.displayName || UNKNOWN_USER };
+    }
     return null;
   } catch {
     return null;
@@ -24,8 +28,9 @@ export function useTrackedPlayer() {
   const [player, setPlayerState] = useState<TrackedPlayer | null>(loadPlayer);
 
   const setPlayer = useCallback((p: TrackedPlayer) => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(p));
-    setPlayerState(p);
+    const normalized = { ...p, displayName: p.displayName || UNKNOWN_USER };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+    setPlayerState(normalized);
     window.dispatchEvent(new Event(SYNC_EVENT));
   }, []);
 

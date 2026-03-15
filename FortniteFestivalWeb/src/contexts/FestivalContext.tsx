@@ -11,6 +11,7 @@ import { api } from '../api/client';
 
 type FestivalState = {
   songs: Song[];
+  currentSeason: number;
   isLoading: boolean;
   error: string | null;
 };
@@ -28,6 +29,7 @@ const FestivalContext = createContext<FestivalContextValue | null>(null);
 
 export function FestivalProvider({ children }: { children: ReactNode }) {
   const [songs, setSongs] = useState<Song[]>([]);
+  const [currentSeason, setCurrentSeason] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,6 +39,7 @@ export function FestivalProvider({ children }: { children: ReactNode }) {
     try {
       const res = await api.getSongs();
       setSongs(res.songs);
+      setCurrentSeason(res.currentSeason ?? 0);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load songs');
     } finally {
@@ -51,7 +54,7 @@ export function FestivalProvider({ children }: { children: ReactNode }) {
   return (
     <FestivalContext.Provider
       value={{
-        state: { songs, isLoading, error },
+        state: { songs, currentSeason, isLoading, error },
         actions: { refresh },
       }}
     >

@@ -2,7 +2,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { IoChevronBack } from 'react-icons/io5';
 import { Colors, Font, Gap, Layout, MaxWidth } from '../theme';
 
-export default function BackLink({ fallback }: { fallback: string }) {
+export default function BackLink({ fallback, animate = true }: { fallback: string; animate?: boolean }) {
   const location = useLocation();
   const navigate = useNavigate();
   const backTo = (location.state as { backTo?: string } | null)?.backTo ?? fallback;
@@ -15,7 +15,7 @@ export default function BackLink({ fallback }: { fallback: string }) {
   };
 
   return (
-    <div className="sa-top" style={{ ...styles.wrapper, animation: 'fadeIn 300ms ease-out' }}>
+    <div className="sa-top" style={{ ...styles.wrapper, ...(animate ? { animation: 'fadeIn 300ms ease-out' } : {}) }}>
       <Link to={backTo} onClick={handleClick} style={styles.backLink}>
         <IoChevronBack size={22} />
         Back
