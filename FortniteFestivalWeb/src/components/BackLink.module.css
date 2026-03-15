@@ -1,0 +1,27 @@
+.wrapper {
+  display: flex;
+  align-items: center;
+  padding: 24px 20px 8px; /* Layout.paddingTop + Gap.md, Layout.paddingHorizontal, Gap.md */
+  max-width: 1080px; /* MaxWidth.card */
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+  position: relative;
+  z-index: 50;
+}
+
+.wrapperAnimated {
+  composes: wrapper;
+  animation: fadeIn 300ms ease-out;
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px; /* Gap.sm */
+  color: #FFFFFF; /* Colors.textPrimary */
+  text-decoration: none;
+  font-size: 22px; /* Font.title */
+  font-weight: 700;
+  margin-left: -6px;
+}

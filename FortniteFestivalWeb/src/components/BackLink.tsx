@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { IoChevronBack } from 'react-icons/io5';
-import { Colors, Font, Gap, Layout, MaxWidth } from '../theme';
+import css from './BackLink.module.css';
 
 export default function BackLink({ fallback, animate = true }: { fallback: string; animate?: boolean }) {
   const location = useLocation();
@@ -15,35 +15,11 @@ export default function BackLink({ fallback, animate = true }: { fallback: strin
   };
 
   return (
-    <div className="sa-top" style={{ ...styles.wrapper, ...(animate ? { animation: 'fadeIn 300ms ease-out' } : {}) }}>
-      <Link to={backTo} onClick={handleClick} style={styles.backLink}>
+    <div className={`sa-top ${animate ? css.wrapperAnimated : css.wrapper}`}>
+      <Link to={backTo} onClick={handleClick} className={css.backLink}>
         <IoChevronBack size={22} />
         Back
       </Link>
     </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  wrapper: {
-    display: 'flex',
-    alignItems: 'center',
-    padding: `${Layout.paddingTop + Gap.md}px ${Layout.paddingHorizontal}px ${Gap.md}px`,
-    maxWidth: MaxWidth.card,
-    margin: '0 auto',
-    width: '100%',
-    boxSizing: 'border-box' as const,
-    position: 'relative',
-    zIndex: 50,
-  },
-  backLink: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: Gap.sm,
-    color: Colors.textPrimary,
-    textDecoration: 'none',
-    fontSize: Font.title,
-    fontWeight: 700,
-    marginLeft: -6,
-  },
-};
