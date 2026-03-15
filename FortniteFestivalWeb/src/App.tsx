@@ -1,6 +1,7 @@
 import { HashRouter, Routes, Route, NavLink, Link, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { IoMusicalNotes, IoSparkles, IoStatsChart, IoPerson, IoPersonAdd, IoSettings, IoSearch, IoSwapVerticalSharp, IoFunnel, IoChevronBack, IoClose, IoFlash } from 'react-icons/io5';
 import { useEffect, useLayoutEffect, useState, useMemo, useRef, useCallback, Fragment } from 'react';
+import { useTranslation } from 'react-i18next';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import { AnimatedBackground } from './components/AnimatedBackground';
@@ -532,6 +533,7 @@ function Sidebar({
   onDeselect: () => void;
   onSelectPlayer: () => void;
 }) {
+  const { t } = useTranslation();
   const sidebarRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
   const [mounted, setMounted] = useState(false);
@@ -601,7 +603,7 @@ function Sidebar({
               ...(isActive ? styles.sidebarLinkActive : {}),
             })}
           >
-            Songs
+            {t('nav.songs')}
           </NavLink>
           {player && (
             <NavLink
@@ -612,7 +614,7 @@ function Sidebar({
                 ...(isActive ? styles.sidebarLinkActive : {}),
               })}
             >
-              Suggestions
+              {t('nav.suggestions')}
             </NavLink>
           )}
           {player && (
@@ -624,7 +626,7 @@ function Sidebar({
                 ...(isActive ? styles.sidebarLinkActive : {}),
               })}
             >
-              Statistics
+              {t('nav.statistics')}
             </NavLink>
           )}
         </nav>
@@ -947,11 +949,12 @@ function MobilePlayerSearchModal({
 }
 
 function BottomNav({ player, activeTab, onTabClick }: { player: TrackedPlayer | null; activeTab: TabKey; onTabClick: (tab: TabKey) => void }) {
+  const { t } = useTranslation();
   const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
-    { key: 'songs', label: 'Songs', icon: <IoMusicalNotes size={20} /> },
-    ...(player ? [{ key: 'suggestions' as TabKey, label: 'Suggestions', icon: <IoSparkles size={20} /> }] : []),
-    ...(player ? [{ key: 'statistics' as TabKey, label: 'Statistics', icon: <IoStatsChart size={20} /> }] : []),
-    { key: 'settings', label: 'Settings', icon: <IoSettings size={20} /> },
+    { key: 'songs', label: t('nav.songs'), icon: <IoMusicalNotes size={20} /> },
+    ...(player ? [{ key: 'suggestions' as TabKey, label: t('nav.suggestions'), icon: <IoSparkles size={20} /> }] : []),
+    ...(player ? [{ key: 'statistics' as TabKey, label: t('nav.statistics'), icon: <IoStatsChart size={20} /> }] : []),
+    { key: 'settings', label: t('nav.settings'), icon: <IoSettings size={20} /> },
   ];
 
   return (
