@@ -186,9 +186,10 @@ public sealed class PathGenerator
             await File.WriteAllBytesAsync(drumvoxPath, variants.DrumVoxMidi, ct);
             await File.WriteAllBytesAsync(ogPath, variants.OgMidi, ct);
 
-            // Write empty song.ini so CHOpt does not render song name/artist/charter in the image header
+            // Write song.ini so CHOpt renders song metadata in the image header
             var songIni = Path.Combine(tempDir, "song.ini");
-            await File.WriteAllTextAsync(songIni, "[song]\n", ct);
+            await File.WriteAllTextAsync(songIni,
+                $"[song]\nname = {song.Title}\nartist = {song.Artist}\ncharter = Epic Games\n", ct);
 
             // Create output directory for this song's path images
             var songPathsDir = Path.Combine(pathsDir, song.SongId);
