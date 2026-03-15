@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react';
+import { useTranslation } from 'react-i18next';
 import { IoFunnel } from 'react-icons/io5';
 import { Link } from 'react-router-dom';
 import InfiniteScroll from 'react-infinite-scroll-component';
@@ -107,6 +108,7 @@ type Props = { accountId: string };
 let _suggestionsHasRendered = false;
 
 export default function SuggestionsPage({ accountId }: Props) {
+  const { t } = useTranslation();
   const { settings: appSettings } = useSettings();
   const {
     state: { songs, currentSeason, isLoading },
@@ -335,7 +337,7 @@ export default function SuggestionsPage({ accountId }: Props) {
       <div style={styles.page}>
         <div style={styles.container}>
           <div style={styles.emptyState}>
-            <div style={styles.emptyTitle}>No Suggestions Available</div>
+            <div style={styles.emptyTitle}>{t('suggestions.noSuggestions')}</div>
             <div style={styles.emptySubtitle}>
               The service may be down unexpectedly. Please refresh to try again.
             </div>
@@ -395,7 +397,7 @@ export default function SuggestionsPage({ accountId }: Props) {
       <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.sm } : {}) }}>
         {visibleCategories.length === 0 && (categories.length > 0 || !effectiveHasMore) ? (
           <div style={styles.emptyState}>
-            <div style={styles.emptyTitle}>No Suggestions Available</div>
+            <div style={styles.emptyTitle}>{t('suggestions.noSuggestions')}</div>
             <div style={styles.emptySubtitle}>
               {filtersActive
                 ? 'Try changing your filters to see more suggestions.'
