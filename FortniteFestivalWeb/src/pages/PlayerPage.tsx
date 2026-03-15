@@ -26,31 +26,8 @@ import { useScoreFilter } from '../hooks/useScoreFilter';
 import { useFabSearch } from '../contexts/FabSearchContext';
 import AlbumArt from '../components/AlbumArt';
 import ConfirmAlert from '../components/ConfirmAlert';
+import FadeInDiv from '../components/FadeInDiv';
 import { useStaggerRush } from '../hooks/useStaggerRush';
-
-/** Wrapper that fades in via CSS animation, then strips the animation styles
- *  so that `opacity` is no longer set by the animation system.  This prevents
- *  the browser from keeping a compositing group alive, which would break
- *  `backdrop-filter: blur()` on child elements. */
-function FadeInDiv({ delay, children, style }: { delay?: number; children: React.ReactNode; style?: CSSProperties }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const handleEnd = useCallback(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.opacity = '';
-    el.style.animation = '';
-  }, []);
-  if (delay == null) return <div style={style}>{children}</div>;
-  return (
-    <div
-      ref={ref}
-      style={{ opacity: 0, animation: `fadeInUp 400ms ease-out ${delay}ms forwards`, ...style }}
-      onAnimationEnd={handleEnd}
-    >
-      {children}
-    </div>
-  );
-}
 
 /** Track rendered accounts so we can skip stagger animation on revisit.
  *  Stores the last-visited player page account and the tracked (statistics) account. */
