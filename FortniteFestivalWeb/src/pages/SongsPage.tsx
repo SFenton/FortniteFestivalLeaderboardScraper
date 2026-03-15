@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef, useCallback, Fragment, type CSSProperties } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback, Fragment, memo, type CSSProperties } from 'react';
 import { IoSwapVerticalSharp, IoFunnel, IoSearch } from 'react-icons/io5';
 import { Link, useLocation, useNavigationType } from 'react-router-dom';
 import { formatPercentileBucket } from '@festival/core';
@@ -758,7 +758,7 @@ const INSTRUMENT_DIFFICULTY_KEY: Record<string, keyof import('../models').SongDi
   Solo_PeripheralBass: 'proBass',
 };
 
-function SongRow({
+const SongRow = memo(function SongRow({
   song,
   score,
   instrument,
@@ -901,7 +901,7 @@ function SongRow({
       )}
     </Link>
   );
-}
+});
 
 /** Compare two PlayerScores by a given sort mode; undefined scores sort last. */
 function compareByMode(mode: SongSortMode, a?: PlayerScore, b?: PlayerScore): number {

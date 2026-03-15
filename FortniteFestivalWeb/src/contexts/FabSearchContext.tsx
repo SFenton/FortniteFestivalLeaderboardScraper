@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useRef, type ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useRef, useMemo, type ReactNode } from 'react';
 
 type FabSearchContextType = {
   query: string;
@@ -60,8 +60,20 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     setPlayerPageSelect(action);
   }, []);
 
+  const value = useMemo<FabSearchContextType>(() => ({
+    query, setQuery, registerActions, openSort, openFilter,
+    registerSuggestionsActions, openSuggestionsFilter,
+    registerPlayerHistoryActions, openPlayerHistorySort,
+    registerSongDetailActions, openPaths,
+    registerPlayerPageSelect, playerPageSelect,
+  }), [query, setQuery, registerActions, openSort, openFilter,
+    registerSuggestionsActions, openSuggestionsFilter,
+    registerPlayerHistoryActions, openPlayerHistorySort,
+    registerSongDetailActions, openPaths,
+    registerPlayerPageSelect, playerPageSelect]);
+
   return (
-    <FabSearchContext.Provider value={{ query, setQuery, registerActions, openSort, openFilter, registerSuggestionsActions, openSuggestionsFilter, registerPlayerHistoryActions, openPlayerHistorySort, registerSongDetailActions, openPaths, registerPlayerPageSelect, playerPageSelect }}>
+    <FabSearchContext.Provider value={value}>
       {children}
     </FabSearchContext.Provider>
   );

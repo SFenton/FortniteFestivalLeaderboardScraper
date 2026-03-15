@@ -2,6 +2,7 @@
  * Instrument icon component using the same PNG assets as the React Native mobile app.
  * Assets are served from /instruments/ in the public folder.
  */
+import { memo } from 'react';
 import type { InstrumentKey } from '@festival/core/instruments';
 import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
 
@@ -26,7 +27,7 @@ const ICON_PATHS: Record<AnyInstrumentKey, string> = {
 
 type IconProps = { size?: number; style?: React.CSSProperties };
 
-export function InstrumentIcon({ instrument, size = 20, style }: IconProps & { instrument: AnyInstrumentKey }) {
+export const InstrumentIcon = memo(function InstrumentIcon({ instrument, size = 20, style }: IconProps & { instrument: AnyInstrumentKey }) {
   return (
     <img
       src={ICON_PATHS[instrument]}
@@ -36,7 +37,7 @@ export function InstrumentIcon({ instrument, size = 20, style }: IconProps & { i
       style={{ objectFit: 'contain', ...style }}
     />
   );
-}
+});
 
 /** Status colors matching the mobile app's instrument badge chips. */
 export const INSTRUMENT_STATUS_COLORS = {

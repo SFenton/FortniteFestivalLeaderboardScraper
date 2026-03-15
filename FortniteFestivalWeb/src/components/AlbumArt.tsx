@@ -1,9 +1,9 @@
-import { useState, useCallback, type CSSProperties } from 'react';
+import { useState, useCallback, memo, type CSSProperties } from 'react';
 import { Colors, Radius } from '../theme';
 
 const spinnerSize = 24;
 
-export default function AlbumArt({ src, size, style }: { src?: string; size: number; style?: CSSProperties }) {
+export default memo(function AlbumArt({ src, size, style }: { src?: string; size: number; style?: CSSProperties }) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
   const handleLoad = useCallback(() => setLoaded(true), []);
@@ -64,4 +64,4 @@ export default function AlbumArt({ src, size, style }: { src?: string; size: num
       />
     </div>
   );
-}
+});
