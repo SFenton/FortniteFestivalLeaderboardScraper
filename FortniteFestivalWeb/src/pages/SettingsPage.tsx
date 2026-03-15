@@ -7,10 +7,11 @@ import { METADATA_SORT_DISPLAY } from '../components/songSettings';
 import ConfirmAlert from '../components/ConfirmAlert';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import type { InstrumentKey } from '../models';
-import { Colors, Font, Gap, Layout, MaxWidth, Radius, frostedCard } from '../theme';
+import { Colors, Font, Gap } from '../theme';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useStaggerRush } from '../hooks/useStaggerRush';
 import { api } from '../api/client';
+import css from './SettingsPage.module.css';
 
 import { APP_VERSION, CORE_VERSION } from '../hooks/useVersions';
 
@@ -195,15 +196,15 @@ export default function SettingsPage() {
   const stagger = (idx: number) => skipAnim ? undefined : idx * 125;
 
   return (
-    <div style={styles.page}>
-      <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
-      <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.md } : {}) }}>
-        <div style={styles.cardColumn}>
+    <div className={css.page}>
+      <div ref={scrollRef} onScroll={handleScroll} className={css.scrollArea}>
+      <div className={css.container} style={isMobile ? { paddingTop: Gap.md } : undefined}>
+        <div className={css.cardColumn}>
 
           {/* ───── App Settings ───── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <div style={styles.sectionTitle}>App Settings</div>
-          <div style={styles.sectionHint}>General Festival Score Tracker app settings.</div>
+          <div className={css.sectionTitle}>App Settings</div>
+          <div className={css.sectionHint}>General Festival Score Tracker app settings.</div>
           <Card>
             <ToggleRow
               label="Show Instrument Icons"
@@ -221,8 +222,8 @@ export default function SettingsPage() {
             />
             {settings.songRowVisualOrderEnabled && (
               <div>
-                <div style={styles.innerSectionTitle}>Song Row Visual Order</div>
-                <div style={styles.sectionHint}>
+                <div className={css.innerSectionTitle}>Song Row Visual Order</div>
+                <div className={css.sectionHint}>
                   When filtering to a single instrument in the song list, extra metadata is displayed. Choose the order it appears in on the bottom row.
                 </div>
                 <div style={{ marginTop: Gap.md }}>
@@ -243,7 +244,7 @@ export default function SettingsPage() {
             <div style={{ display: 'grid', gridTemplateRows: settings.filterInvalidScores ? '1fr' : '0fr', transition: 'grid-template-rows 0.2s ease' }}>
               <div style={{ overflow: 'hidden', minHeight: 0 }}>
                 <div style={{ paddingLeft: Gap.xl, paddingRight: 36 + Gap.xl, paddingBottom: Gap.md }}>
-                  <div style={styles.innerSectionTitle}>Maximum Score Leeway</div>
+                  <div className={css.innerSectionTitle}>Maximum Score Leeway</div>
                   <div style={{ fontSize: isMobile ? Font.md : Font.sm, color: Colors.textMuted, lineHeight: '1.5', marginBottom: Gap.md }}>
                     This slider controls a percentage value that allows for some expanded range of scores to still be
                     valid. For example, a CHOpt path with a max score of 100k and {settings.filterInvalidScoresLeeway}% leeway will allow the app to
@@ -261,8 +262,8 @@ export default function SettingsPage() {
 
           {/* ───── Show Instruments ───── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <div style={styles.sectionTitle}>Show Instruments</div>
-          <div style={styles.sectionHint}>Choose which instruments to display throughout the app.</div>
+          <div className={css.sectionTitle}>Show Instruments</div>
+          <div className={css.sectionHint}>Choose which instruments to display throughout the app.</div>
           <Card>
             {INSTRUMENT_SHOW_MAP.map(inst => (
               <ToggleRow
@@ -280,8 +281,8 @@ export default function SettingsPage() {
 
           {/* ───── Show Instrument Metadata ───── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <div style={styles.sectionTitle}>Show Instrument Metadata</div>
-          <div style={styles.sectionHint}>
+          <div className={css.sectionTitle}>Show Instrument Metadata</div>
+          <div className={css.sectionHint}>
             When filtering songs down to one instrument in the song list, extra metadata for that song can appear. Choose what you'd like to see in the song row here.
           </div>
           <Card>
@@ -299,33 +300,33 @@ export default function SettingsPage() {
 
           {/* ───── Festival Score Tracker Version ───── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <div style={styles.sectionTitle}>Festival Score Tracker Version</div>
-          <div style={styles.sectionHint}>Festival Score Tracker information to help with debugging.</div>
+          <div className={css.sectionTitle}>Festival Score Tracker Version</div>
+          <div className={css.sectionHint}>Festival Score Tracker information to help with debugging.</div>
           <Card>
-            <div style={styles.versionRow}>
+            <div className={css.versionRow}>
               <span>App Version</span>
-              <span style={styles.versionValue}>{APP_VERSION}</span>
+              <span className={css.versionValue}>{APP_VERSION}</span>
             </div>
-            <div style={styles.versionRow}>
+            <div className={css.versionRow}>
               <span>Service Version</span>
-              <span style={styles.versionValue}>{serviceVersion ?? 'Loading…'}</span>
+              <span className={css.versionValue}>{serviceVersion ?? 'Loading…'}</span>
             </div>
-            <div style={styles.versionRow}>
+            <div className={css.versionRow}>
               <span>@festival/core Version</span>
-              <span style={styles.versionValue}>{CORE_VERSION}</span>
+              <span className={css.versionValue}>{CORE_VERSION}</span>
             </div>
           </Card>
           </FadeInDiv>
 
           {/* ───── Reset Settings ───── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <div style={{ ...styles.resetRow, ...(isMobile ? styles.resetRowMobile : {}) }}>
+          <div className={isMobile ? css.resetRowMobile : css.resetRow}>
             <div>
-              <div style={styles.sectionTitle}>{t('settings.resetSection')}</div>
-              <div style={{ ...styles.sectionHint, marginBottom: 0 }}>{t('settings.resetDescription')}</div>
+              <div className={css.sectionTitle}>{t('settings.resetSection')}</div>
+              <div className={css.sectionHint} style={{ marginBottom: 0 }}>{t('settings.resetDescription')}</div>
             </div>
             <button
-              style={{ ...styles.resetButton, ...(isMobile ? styles.resetButtonMobile : {}) }}
+              className={isMobile ? css.resetButtonMobile : css.resetButton}
               onClick={() => setShowResetConfirm(true)}
             >
               {t('settings.resetAll')}
@@ -335,7 +336,7 @@ export default function SettingsPage() {
 
         </div>
       </div>
-      {isMobileChrome && <div style={styles.fabSpacer} />}
+      {isMobileChrome && <div className={css.fabSpacer} />}
       </div>
       {showResetConfirm && (
         <ConfirmAlert
@@ -350,105 +351,6 @@ export default function SettingsPage() {
 }
 
 function Card({ children }: { children: React.ReactNode }) {
-  return <div style={styles.card}>{children}</div>;
+  return <div className={css.card}>{children}</div>;
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  page: {
-    height: '100%',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    color: Colors.textPrimary,
-    fontFamily:
-      "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-  },
-  header: {
-    flexShrink: 0,
-    zIndex: 10,
-  },
-  scrollArea: {
-    flex: 1,
-    overflowY: 'auto' as const,
-  },
-  container: {
-    maxWidth: MaxWidth.card,
-    margin: '0 auto',
-    padding: `${Layout.paddingTop}px ${Layout.paddingHorizontal}px`,
-  },
-  heading: {
-    fontSize: Font.title,
-    fontWeight: 700,
-    margin: 0,
-  },
-  cardColumn: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: Gap.section,
-  },
-  card: {
-    ...frostedCard,
-    borderRadius: Radius.md,
-    padding: 16,
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: Gap.md,
-  },
-  sectionTitle: {
-    fontSize: Font.xl,
-    fontWeight: 700,
-    color: Colors.textPrimary,
-  },
-  innerSectionTitle: {
-    fontSize: Font.md,
-    fontWeight: 700,
-    color: Colors.textPrimary,
-    marginBottom: Gap.sm,
-  },
-  sectionHint: {
-    fontSize: Font.md,
-    color: Colors.textSecondary,
-    lineHeight: '1.5',
-    marginBottom: Gap.md,
-  },
-  resetButton: {
-    padding: `${Gap.md}px ${Gap.xl}px`,
-    borderRadius: Radius.xs,
-    border: `1px solid ${Colors.statusRed}`,
-    backgroundColor: 'rgb(198,40,40)',
-    color: Colors.textPrimary,
-    fontSize: Font.sm,
-    fontWeight: 600,
-    cursor: 'pointer',
-    flexShrink: 0,
-  },
-  resetRow: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: Gap.xl,
-  },
-  resetRowMobile: {
-    flexDirection: 'column' as const,
-    alignItems: 'stretch',
-  },
-  resetButtonMobile: {
-    width: '100%',
-    textAlign: 'center' as const,
-    padding: `${Gap.xl}px ${Gap.xl}px`,
-    fontSize: Font.md,
-  },
-  versionRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: `${Gap.sm}px 0`,
-    fontSize: Font.md,
-  },
-  versionValue: {
-    color: Colors.textSecondary,
-  },
-  fabSpacer: {
-    height: 72,
-    flexShrink: 0,
-  },
-};
