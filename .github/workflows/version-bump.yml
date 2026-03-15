@@ -84,16 +84,7 @@ jobs:
             pkg.version = '$NEW_VERSION';
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
-          # Update the APP_VERSION constant in SettingsPage.tsx
-          sed -i "s|const APP_VERSION = '$CURRENT';|const APP_VERSION = '$NEW_VERSION';|" src/pages/SettingsPage.tsx
           echo "FortniteFestivalWeb: $CURRENT -> $NEW_VERSION"
-
-      - name: Sync CORE_VERSION in web app SettingsPage
-        if: steps.changes.outputs.core_ts == 'true'
-        run: |
-          NEW_CORE=$(node -p "require('./packages/core/package.json').version")
-          sed -i "s|const CORE_VERSION = '.*';|const CORE_VERSION = '$NEW_CORE';|" FortniteFestivalWeb/src/pages/SettingsPage.tsx
-          echo "Updated CORE_VERSION in web SettingsPage to $NEW_CORE"
 
       - name: Bump FortniteFestivalRN version
         if: steps.changes.outputs.mobile == 'true'

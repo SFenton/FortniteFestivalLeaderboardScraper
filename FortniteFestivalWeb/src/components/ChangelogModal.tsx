@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useState, useRef, useCallback } from 'react';
 import { IoClose } from 'react-icons/io5';
-import { APP_VERSION, changelog, type ChangelogEntry } from '../changelog';
+import { APP_VERSION } from '../hooks/useVersions';
+import { changelog, type ChangelogEntry } from '../changelog';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { Colors, Font, Gap, Radius } from '../theme';
 

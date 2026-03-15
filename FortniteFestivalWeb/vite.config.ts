@@ -4,6 +4,7 @@ import path from 'path';
 import { readFileSync } from 'fs';
 
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'));
+const corePkg = JSON.parse(readFileSync(path.resolve(__dirname, '../packages/core/package.json'), 'utf-8'));
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
@@ -14,6 +15,7 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version),
+      __CORE_VERSION__: JSON.stringify(corePkg.version),
     },
     resolve: {
       alias: {

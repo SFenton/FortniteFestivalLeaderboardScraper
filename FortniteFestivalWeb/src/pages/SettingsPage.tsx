@@ -11,8 +11,7 @@ import { useScrollMask } from '../hooks/useScrollMask';
 import { useStaggerRush } from '../hooks/useStaggerRush';
 import { api } from '../api/client';
 
-import { APP_VERSION } from '../changelog';
-const CORE_VERSION = '0.0.2';
+import { APP_VERSION, CORE_VERSION } from '../hooks/useVersions';
 
 /** Track whether settings page has rendered at least once to skip stagger on re-visit. */
 let _hasRendered = false;

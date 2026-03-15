@@ -28,7 +28,8 @@ import { clearLeaderboardCache } from './pages/LeaderboardPage';
 import { clearPlayerPageCache } from './pages/PlayerPage';
 import { IS_IOS, IS_ANDROID, IS_PWA } from './utils/platform';
 import ChangelogModal from './components/ChangelogModal';
-import { APP_VERSION, changelogHash } from './changelog';
+import { APP_VERSION } from './hooks/useVersions';
+import { changelogHash } from './changelog';
 
 export default function App() {
   return (
