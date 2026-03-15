@@ -11,6 +11,8 @@ import type {
   PlayerStatsResponse,
 } from '../models';
 
+import { cachedFetch } from './cache';
+
 const BASE = '';
 
 async function get<T>(path: string): Promise<T> {
@@ -40,7 +42,7 @@ function normalizeDisplayName<T extends { displayName: string }>(data: T): T {
 }
 
 export const api = {
-  getSongs: () => get<SongsResponse>('/api/songs'),
+  getSongs: () => cachedFetch('songs', () => get<SongsResponse>('/api/songs'), 5 * 60 * 1000),
 
   getLeaderboard: (songId: string, instrument: InstrumentKey, top = 100, offset = 0, leeway?: number) =>
     get<LeaderboardResponse>(
@@ -74,9 +76,9 @@ export const api = {
     ),
 
   getPlayerStats: (accountId: string) =>
-    get<PlayerStatsResponse>(
-      `/api/player/${encodeURIComponent(accountId)}/stats`,
-    ),
+    cachedFetch(`playerStats:${accountId}`, () =>
+      get<PlayerStatsResponse>(`/api/player/${encodeURIComponent(accountId)}/stats`),
+    5 * 60 * 1000),
 
-  getVersion: () => get<{ version: string }>('/api/version'),
+  getVersion: () => cachedFetch('version', () => get<{ version: string }>('/api/version'), 30 * 60 * 1000),
 };
