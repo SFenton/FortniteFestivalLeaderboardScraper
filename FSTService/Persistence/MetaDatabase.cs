@@ -619,13 +619,15 @@ public sealed class MetaDatabase : IDisposable
     /// <summary>
     /// Get score history for an account, newest first.
     /// </summary>
-    public List<ScoreHistoryEntry> GetScoreHistory(string accountId, int limit = 100, string? songId = null)
+    public List<ScoreHistoryEntry> GetScoreHistory(string accountId, int limit = 100, string? songId = null, string? instrument = null)
     {
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         var where = "AccountId = @accountId";
         if (songId is not null)
             where += " AND SongId = @songId";
+        if (instrument is not null)
+            where += " AND Instrument = @instrument";
 
         cmd.CommandText = $"""
             SELECT SongId, Instrument, OldScore, NewScore, OldRank, NewRank,
@@ -640,6 +642,8 @@ public sealed class MetaDatabase : IDisposable
         cmd.Parameters.AddWithValue("@limit", limit);
         if (songId is not null)
             cmd.Parameters.AddWithValue("@songId", songId);
+        if (instrument is not null)
+            cmd.Parameters.AddWithValue("@instrument", instrument);
 
         var entries = new List<ScoreHistoryEntry>();
         using var reader = cmd.ExecuteReader();

@@ -297,12 +297,18 @@ public static class ApiEndpoints
         app.MapGet("/api/player/{accountId}", (
             string accountId,
             string? songId,
+            string? instruments,
             GlobalLeaderboardPersistence persistence,
             MetaDatabase metaDb) =>
         {
-            var scores = persistence.GetPlayerProfile(accountId, songId);
+            // Optional instrument filter: ?instruments=Solo_Guitar,Solo_Bass
+            HashSet<string>? instrumentFilter = null;
+            if (!string.IsNullOrWhiteSpace(instruments))
+                instrumentFilter = new HashSet<string>(instruments.Split(','), StringComparer.OrdinalIgnoreCase);
+
+            var scores = persistence.GetPlayerProfile(accountId, songId, instrumentFilter);
             var displayName = metaDb.GetDisplayName(accountId);
-            var rankings = persistence.GetPlayerRankings(accountId, songId);
+            var rankings = persistence.GetPlayerRankings(accountId, songId, instrumentFilter);
             var population = metaDb.GetAllLeaderboardPopulation();
 
             var enriched = scores.Select(s =>
@@ -650,6 +656,7 @@ public static class ApiEndpoints
             string accountId,
             int? limit,
             string? songId,
+            string? instrument,
             MetaDatabase metaDb) =>
         {
             // Check if the account is a registered user
@@ -662,7 +669,7 @@ public static class ApiEndpoints
                 });
             }
 
-            var history = metaDb.GetScoreHistory(accountId, limit ?? 50000, songId);
+            var history = metaDb.GetScoreHistory(accountId, limit ?? 50000, songId, instrument);
             return Results.Ok(new
             {
                 accountId,
