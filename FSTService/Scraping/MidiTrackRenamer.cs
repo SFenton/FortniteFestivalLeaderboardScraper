@@ -8,32 +8,28 @@ namespace FSTService.Scraping;
 /// Port of FNFpaths download.py's replace_tracks_in_midi.
 ///
 /// CHOpt expects standard Rock Band track naming (PART GUITAR, PART BASS, etc.)
-/// but Fortnite Festival uses different track names. We produce three MIDI variants:
+/// but Fortnite Festival uses different track names. We produce two MIDI variants:
 ///
 ///   _pro.mid:     PLASTIC GUITAR → PART GUITAR, PLASTIC BASS → PART BASS
 ///                 (original PART GUITAR/BASS get _FNF suffix to avoid conflicts)
 ///
-///   _drumvox.mid: PART DRUMS → PART GUITAR, PART VOCALS → PART BASS
-///                 (original PART BASS gets _FNF suffix)
-///
-///   _og.mid:      Unchanged (Lead/Bass use the original PART GUITAR/BASS tracks)
+///   _og.mid:      Unchanged (Lead/Bass/Drums/Vocals use native CHOpt FNF support)
 /// </summary>
 public static class MidiTrackRenamer
 {
     /// <summary>
-    /// Results of producing the three MIDI variants.
+    /// Results of producing the MIDI variants.
     /// </summary>
-    public sealed record MidiVariants(byte[] ProMidi, byte[] DrumVoxMidi, byte[] OgMidi);
+    public sealed record MidiVariants(byte[] ProMidi, byte[] OgMidi);
 
     /// <summary>
-    /// Produce all three MIDI variants from a decrypted MIDI file.
+    /// Produce MIDI variants from a decrypted MIDI file.
     /// </summary>
     public static MidiVariants ProduceVariants(byte[] midiData)
     {
         var proMidi = RenameTracksForPro(midiData);
-        var drumvoxMidi = RenameTracksForDrumVox(midiData);
-        // OG is unchanged — Lead and Bass use the original tracks
-        return new MidiVariants(proMidi, drumvoxMidi, (byte[])midiData.Clone());
+        // OG is unchanged — Lead, Bass, Drums, and Vocals use native CHOpt FNF instrument support
+        return new MidiVariants(proMidi, (byte[])midiData.Clone());
     }
 
     /// <summary>
@@ -51,22 +47,6 @@ public static class MidiTrackRenamer
             ["PLASTIC GUITAR"] = "PART GUITAR",
             ["PART BASS"] = "PART BASS_FNF",
             ["PLASTIC BASS"] = "PART BASS",
-        });
-    }
-
-    /// <summary>
-    /// For Drums/Vocals: Rename so CHOpt processes drums track as guitar, vocals as bass.
-    ///   PART DRUMS → PART GUITAR   (drums become guitar for CHOpt)
-    ///   PART BASS → PART BASS_FNF  (hide original bass)
-    ///   PART VOCALS → PART BASS    (vocals become bass for CHOpt)
-    /// </summary>
-    private static byte[] RenameTracksForDrumVox(byte[] midiData)
-    {
-        return RenameTrackNames(midiData, new Dictionary<string, string>
-        {
-            ["PART DRUMS"] = "PART GUITAR",
-            ["PART BASS"] = "PART BASS_FNF",
-            ["PART VOCALS"] = "PART BASS",
         });
     }
 

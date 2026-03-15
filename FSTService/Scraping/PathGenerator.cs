@@ -24,17 +24,17 @@ public sealed class PathGenerator
 
     /// <summary>
     /// Map from our instrument DB names to CHOpt arguments.
-    /// CHOpt processes PART GUITAR as -i guitar and PART BASS as -i bass.
-    /// The MIDI variants are set up so each instrument lands on guitar or bass.
+    /// Pro instruments use a MIDI variant with PLASTIC tracks promoted.
+    /// Other instruments use the original MIDI with native CHOpt instrument names.
     /// </summary>
     private static readonly (string Instrument, string MidiVariant, string CHOptInstrument)[] InstrumentMap =
     [
-        ("Solo_PeripheralGuitar", "pro",     "guitar"),  // Pro Lead
-        ("Solo_PeripheralBass",   "pro",     "bass"),    // Pro Bass
-        ("Solo_Drums",            "drumvox", "guitar"),  // Drums (mapped to guitar track)
-        ("Solo_Vocals",           "drumvox", "bass"),    // Vocals (mapped to bass track)
-        ("Solo_Guitar",           "og",      "guitar"),  // Lead
-        ("Solo_Bass",             "og",      "bass"),    // Bass
+        ("Solo_PeripheralGuitar", "pro",     "guitar"),    // Pro Lead
+        ("Solo_PeripheralBass",   "pro",     "bass"),      // Pro Bass
+        ("Solo_Drums",            "og",      "drums"),     // Drums (native CHOpt FNF drums)
+        ("Solo_Vocals",           "og",      "vocals"),    // Vocals (native CHOpt FNF vocals)
+        ("Solo_Guitar",           "og",      "guitar"),    // Lead
+        ("Solo_Bass",             "og",      "bass"),      // Bass
     ];
 
     private static readonly string[] Difficulties = ["easy", "medium", "hard", "expert"];
@@ -179,11 +179,9 @@ public sealed class PathGenerator
         try
         {
             var proPath = Path.Combine(tempDir, $"{song.SongId}_pro.mid");
-            var drumvoxPath = Path.Combine(tempDir, $"{song.SongId}_drumvox.mid");
             var ogPath = Path.Combine(tempDir, $"{song.SongId}_og.mid");
 
             await File.WriteAllBytesAsync(proPath, variants.ProMidi, ct);
-            await File.WriteAllBytesAsync(drumvoxPath, variants.DrumVoxMidi, ct);
             await File.WriteAllBytesAsync(ogPath, variants.OgMidi, ct);
 
             // Write song.ini so CHOpt renders song metadata in the image header
@@ -201,7 +199,6 @@ public sealed class PathGenerator
                 var midiFile = variant switch
                 {
                     "pro" => proPath,
-                    "drumvox" => drumvoxPath,
                     _ => ogPath, // "og" and any future variants default to original
                 };
 

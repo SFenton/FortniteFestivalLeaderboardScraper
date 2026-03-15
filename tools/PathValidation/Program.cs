@@ -12,7 +12,7 @@ using FSTService.Scraping;
 // Requires: CHOpt.exe in tools/chopt-cli/
 
 var repoRoot = FindRepoRoot(Environment.CurrentDirectory);
-var choptPath = Path.Combine(repoRoot, "tools", "chopt-cli", "CHOpt.exe");
+var choptPath = Path.Combine(repoRoot, "tools", "CHOpt", "CHOpt.exe");
 
 if (!File.Exists(choptPath))
 {
@@ -163,7 +163,6 @@ try
 {
     variants = MidiTrackRenamer.ProduceVariants(midiBytes);
     Console.WriteLine($"✓ _pro.mid:     {variants.ProMidi.Length:N0} bytes");
-    Console.WriteLine($"  _drumvox.mid: {variants.DrumVoxMidi.Length:N0} bytes");
     Console.WriteLine($"  _og.mid:      {variants.OgMidi.Length:N0} bytes");
 }
 catch (Exception ex)
@@ -183,11 +182,9 @@ try
 {
     // Write MIDI variants to temp files
     var proPath = Path.Combine(tempDir, "song_pro.mid");
-    var drumvoxPath = Path.Combine(tempDir, "song_drumvox.mid");
     var ogPath = Path.Combine(tempDir, "song_og.mid");
 
     await File.WriteAllBytesAsync(proPath, variants.ProMidi);
-    await File.WriteAllBytesAsync(drumvoxPath, variants.DrumVoxMidi);
     await File.WriteAllBytesAsync(ogPath, variants.OgMidi);
 
     // Write song.ini so CHOpt renders the title/artist in the image header
@@ -200,8 +197,8 @@ try
     {
         ("Pro Lead",  "Solo_PeripheralGuitar", proPath,     "guitar"),
         ("Pro Bass",  "Solo_PeripheralBass",   proPath,     "bass"),
-        ("Drums",     "Solo_Drums",            drumvoxPath, "guitar"),
-        ("Vocals",    "Solo_Vocals",           drumvoxPath, "bass"),
+        ("Drums",     "Solo_Drums",            ogPath,      "drums"),
+        ("Vocals",    "Solo_Vocals",           ogPath,      "vocals"),
         ("Lead",      "Solo_Guitar",           ogPath,      "guitar"),
         ("Bass",      "Solo_Bass",             ogPath,      "bass"),
     };

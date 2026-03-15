@@ -48,19 +48,18 @@ Compare SHA256 hash with cached .dat
         AES-ECB decrypt → .mid (in-memory or temp file)
             │
             ▼
-        Produce 3 MIDI variants:
+        Produce 2 MIDI variants:
           ├── {songId}_pro.mid    (Pro Lead / Pro Bass)
-          ├── {songId}_drumvox.mid (Drums / Vocals)
-          └── {songId}_og.mid     (Lead / Bass)
+          └── {songId}_og.mid     (Lead / Bass / Drums / Vocals)
             │
             ▼
         Run CHOpt CLI (6 invocations per song):
-          ├── Pro Lead:  CHOpt -f _pro.mid     -i guitar --engine fnf
-          ├── Pro Bass:  CHOpt -f _pro.mid     -i bass   --engine fnf
-          ├── Drums:     CHOpt -f _drumvox.mid -i guitar --engine fnf
-          ├── Vocals:    CHOpt -f _drumvox.mid -i bass   --engine fnf
-          ├── Lead:      CHOpt -f _og.mid      -i guitar --engine fnf
-          └── Bass:      CHOpt -f _og.mid      -i bass   --engine fnf
+          ├── Pro Lead:  CHOpt -f _pro.mid     -i guitar  --engine fnf
+          ├── Pro Bass:  CHOpt -f _pro.mid     -i bass    --engine fnf
+          ├── Drums:     CHOpt -f _og.mid      -i drums   --engine fnf
+          ├── Vocals:    CHOpt -f _og.mid      -i vocals  --engine fnf
+          ├── Lead:      CHOpt -f _og.mid      -i guitar  --engine fnf
+          └── Bass:      CHOpt -f _og.mid      -i bass    --engine fnf
             │
             ▼
         Parse CHOpt stdout for "Total score: NNNNN"
@@ -98,13 +97,12 @@ The key is a secret and must not be committed to source control.
 
 ### MIDI Track Renaming (MidiTrackRenamer.cs)
 
-Port of FNFpaths `download.py`'s `replace_tracks_in_midi`. CHOpt expects standard Guitar Hero/Rock Band track naming, but Festival uses different track names. We produce three MIDI variants:
+Port of FNFpaths `download.py`'s `replace_tracks_in_midi`. CHOpt expects standard Guitar Hero/Rock Band track naming for Pro instruments, but Festival uses different track names (`PLASTIC GUITAR`/`PLASTIC BASS`). For standard instruments (Lead, Bass, Drums, Vocals), CHOpt natively supports Fortnite Festival tracks via `--engine fnf`. We produce two MIDI variants:
 
 | Variant | Renames Applied | Used For |
 |---|---|---|
 | `_pro.mid` | `PLASTIC GUITAR` → `PART GUITAR`, `PLASTIC BASS` → `PART BASS` | Pro Lead, Pro Bass |
-| `_drumvox.mid` | `PART DRUMS` → `PART GUITAR`, `PART VOCALS` → `PART BASS` | Drums, Vocals |
-| `_og.mid` | No renames (original MIDI with standard names) | Lead, Bass |
+| `_og.mid` | No renames (original MIDI with standard names) | Lead, Bass, Drums, Vocals |
 
 Track renaming operates on raw MIDI bytes — rename `track_name` meta events by scanning for the byte pattern.
 

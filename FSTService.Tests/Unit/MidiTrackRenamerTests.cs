@@ -75,13 +75,12 @@ public sealed class MidiTrackRenamerTests
     }
 
     [Fact]
-    public void ProduceVariants_returns_three_variants()
+    public void ProduceVariants_returns_two_variants()
     {
         var midi = BuildMidiWithTrackName("PART GUITAR");
         var variants = MidiTrackRenamer.ProduceVariants(midi);
 
         Assert.NotNull(variants.ProMidi);
-        Assert.NotNull(variants.DrumVoxMidi);
         Assert.NotNull(variants.OgMidi);
     }
 
@@ -114,18 +113,6 @@ public sealed class MidiTrackRenamerTests
         var trackNames = ExtractTrackNames(variants.ProMidi);
         Assert.Contains("PART BASS_FNF", trackNames);  // original hidden
         Assert.Contains("PART BASS", trackNames);       // plastic promoted
-    }
-
-    [Fact]
-    public void DrumVoxVariant_renames_drums_to_guitar()
-    {
-        var midi = BuildMidiWithMultipleTracks("PART DRUMS", "PART VOCALS", "PART BASS");
-        var variants = MidiTrackRenamer.ProduceVariants(midi);
-
-        var trackNames = ExtractTrackNames(variants.DrumVoxMidi);
-        Assert.Contains("PART GUITAR", trackNames);     // drums → guitar
-        Assert.Contains("PART BASS", trackNames);        // vocals → bass
-        Assert.Contains("PART BASS_FNF", trackNames);   // original bass hidden
     }
 
     [Fact]
