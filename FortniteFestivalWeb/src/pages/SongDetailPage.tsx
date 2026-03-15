@@ -757,7 +757,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   viewPathsButton: {
     ...frostedCard,
-    backgroundColor: 'rgba(124,58,237,0.35)',
+    backgroundColor: 'rgb(124,58,237)',
     border: '1px solid rgba(168,120,255,0.3)',
     display: 'inline-flex',
     alignItems: 'center',

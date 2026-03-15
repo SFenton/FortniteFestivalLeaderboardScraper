@@ -709,7 +709,7 @@ public class GlobalLeaderboardScraper
     {
         var instList = (instruments ?? AllInstruments).ToList();
         var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(
-            maxConcurrency, 256, 2048,
+            maxConcurrency, 256, Math.Max(2048, maxConcurrency),
             _log);
 
         // Launch all instruments in parallel
@@ -752,7 +752,7 @@ public class GlobalLeaderboardScraper
         CancellationToken ct = default)
     {
         using var limiter = new AdaptiveConcurrencyLimiter(
-            maxConcurrency, minDop: 256, maxDop: 2048,
+            maxConcurrency, minDop: 256, maxDop: Math.Max(2048, maxConcurrency),
             _log);
         _progress.SetAdaptiveLimiter(limiter);
         var results = new ConcurrentDictionary<string, List<GlobalLeaderboardResult>>();

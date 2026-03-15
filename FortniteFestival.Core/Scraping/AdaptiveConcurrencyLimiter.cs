@@ -47,13 +47,13 @@ namespace FortniteFestival.Core.Scraping
 
         public AdaptiveConcurrencyLimiter(int initialDop, int minDop, int maxDop, ILogger log)
         {
-            _currentDop = initialDop;
             _minDop = Math.Max(1, minDop);
-            _maxDop = maxDop;
+            _maxDop = Math.Max(_minDop, maxDop);
+            _currentDop = Math.Clamp(initialDop, _minDop, _maxDop);
             _log = log;
 
             // Semaphore max is set to maxDop so we have headroom to Release() into.
-            _semaphore = new SemaphoreSlim(initialDop, maxDop);
+            _semaphore = new SemaphoreSlim(_currentDop, _maxDop);
         }
 
         /// <summary>Wait for a concurrency slot (same as SemaphoreSlim.WaitAsync).</summary>

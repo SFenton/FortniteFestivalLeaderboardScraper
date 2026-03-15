@@ -149,6 +149,21 @@ public class AdaptiveConcurrencyLimiterTests : IDisposable
     }
 
     [Fact]
+    public void Constructor_InitialDopExceedsMaxDop_ClampedToMax()
+    {
+        // Simulates the crash when DegreeOfParallelism (4096) > hardcoded maxDop (2048)
+        _limiter = new AdaptiveConcurrencyLimiter(4096, 256, 2048, _log);
+        Assert.Equal(2048, _limiter.CurrentDop);
+    }
+
+    [Fact]
+    public void Constructor_InitialDopBelowMinDop_ClampedToMin()
+    {
+        _limiter = new AdaptiveConcurrencyLimiter(1, 16, 64, _log);
+        Assert.Equal(16, _limiter.CurrentDop);
+    }
+
+    [Fact]
     public async Task HighErrorRate_WithInFlightTokens_LogsPartialDrain()
     {
         _limiter = new AdaptiveConcurrencyLimiter(32, 4, 64, _log);
