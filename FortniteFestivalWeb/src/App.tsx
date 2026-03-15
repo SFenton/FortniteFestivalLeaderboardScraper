@@ -22,6 +22,10 @@ import { resetSongSettingsForDeselect, loadSongSettings, SONG_SETTINGS_CHANGED_E
 import BackLink from './components/BackLink';
 import { InstrumentIcon } from './components/InstrumentIcons';
 import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
+import { useSettings } from './contexts/SettingsContext';
+import { clearSongDetailCache } from './pages/SongDetailPage';
+import { clearLeaderboardCache } from './pages/LeaderboardPage';
+import { clearPlayerPageCache } from './pages/PlayerPage';
 import { IS_IOS, IS_ANDROID, IS_PWA } from './utils/platform';
 
 export default function App() {
@@ -58,6 +62,7 @@ function isAnimatedBgRoute(pathname: string) {
 function AppShell() {
   const { player, setPlayer, clearPlayer } = useTrackedPlayer();
   const { state: { songs } } = useFestival();
+  const { settings } = useSettings();
   const location = useLocation();
   const isMobile = useIsMobileChrome();
   const isNarrow = useIsMobile();
@@ -67,6 +72,18 @@ function AppShell() {
   const [findPlayerOpen, setFindPlayerOpen] = useState(false);
   const navigate = useNavigate();
   const navType = useNavigationType();
+
+  // Clear page caches when score filter settings change so pages restagger
+  const filterRef = useRef({ e: settings.filterInvalidScores, l: settings.filterInvalidScoresLeeway });
+  useEffect(() => {
+    const prev = filterRef.current;
+    if (prev.e !== settings.filterInvalidScores || prev.l !== settings.filterInvalidScoresLeeway) {
+      filterRef.current = { e: settings.filterInvalidScores, l: settings.filterInvalidScoresLeeway };
+      clearSongDetailCache();
+      clearLeaderboardCache();
+      clearPlayerPageCache();
+    }
+  }, [settings.filterInvalidScores, settings.filterInvalidScoresLeeway]);
 
   // --- Per-tab stack (mobile only) ---
   // Each tab remembers the last route the user was on within it.

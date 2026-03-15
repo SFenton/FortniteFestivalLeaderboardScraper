@@ -50,6 +50,7 @@ export type ServerSong = {
   albumArt?: string;
   genres?: string[];
   difficulty?: SongDifficulty;
+  maxScores?: Partial<Record<ServerInstrumentKey, number>>;
 };
 
 export type SongsResponse = {

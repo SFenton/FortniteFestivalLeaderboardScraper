@@ -68,6 +68,81 @@ const METADATA_TOGGLES: { key: MetadataKey; label: string }[] = [
   { key: 'metadataShowStars', label: 'Stars' },
 ];
 
+const LEEWAY_SLIDER_ID = 'fst-leeway-slider';
+const leewaySliderCss = `
+#${LEEWAY_SLIDER_ID} {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+}
+#${LEEWAY_SLIDER_ID}::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: ${Colors.textPrimary};
+  border: 2px solid ${Colors.accentBlue};
+  cursor: pointer;
+  box-shadow: 0 0 4px rgba(0,0,0,0.3);
+}
+#${LEEWAY_SLIDER_ID}::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: ${Colors.textPrimary};
+  border: 2px solid ${Colors.accentBlue};
+  cursor: pointer;
+  box-shadow: 0 0 4px rgba(0,0,0,0.3);
+}
+`;
+
+function leewayTrackBackground(value: number): string {
+  const pct = ((value - (-5)) / (5 - (-5))) * 100;
+  return `linear-gradient(90deg, ${Colors.accentPurple} 0%, ${Colors.accentBlue} ${pct}%, ${Colors.surfaceMuted} ${pct}%)`;
+}
+
+function LeewaySlider({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const styleRef = useRef<HTMLStyleElement | null>(null);
+
+  useEffect(() => {
+    if (!styleRef.current) {
+      const el = document.createElement('style');
+      el.textContent = leewaySliderCss;
+      document.head.appendChild(el);
+      styleRef.current = el;
+    }
+    return () => {
+      if (styleRef.current) {
+        styleRef.current.remove();
+        styleRef.current = null;
+      }
+    };
+  }, []);
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: Gap.md }}>
+      <input
+        id={LEEWAY_SLIDER_ID}
+        type="range"
+        min={-5}
+        max={5}
+        step={0.1}
+        value={value}
+        onChange={e => onChange(Math.round(parseFloat(e.target.value) * 10) / 10)}
+        style={{ flex: 1, background: leewayTrackBackground(value) }}
+      />
+      <span style={{ minWidth: 48, textAlign: 'right', fontSize: Font.md, color: Colors.textSecondary, fontVariantNumeric: 'tabular-nums' }}>
+        {value > 0 ? '+' : ''}{value.toFixed(1)}%
+      </span>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const { settings, updateSettings, resetSettings } = useSettings();
   const isMobile = useIsMobile();
@@ -158,6 +233,29 @@ export default function SettingsPage() {
                 </div>
               </div>
             )}
+            <ToggleRow
+              label="Filter Out Invalid Score Values"
+              description="When enabled, the app will attempt to filter out invalid leaderboard values based on the maximum score derived from the CHOpt path."
+              checked={settings.filterInvalidScores}
+              onToggle={() => updateSettings({ filterInvalidScores: !settings.filterInvalidScores })}
+              large={isMobile}
+            />
+            <div style={{ display: 'grid', gridTemplateRows: settings.filterInvalidScores ? '1fr' : '0fr', transition: 'grid-template-rows 0.2s ease' }}>
+              <div style={{ overflow: 'hidden', minHeight: 0 }}>
+                <div style={{ paddingLeft: Gap.xl, paddingRight: 36 + Gap.xl, paddingBottom: Gap.md }}>
+                  <div style={styles.innerSectionTitle}>Maximum Score Leeway</div>
+                  <div style={{ fontSize: isMobile ? Font.md : Font.sm, color: Colors.textMuted, lineHeight: '1.5', marginBottom: Gap.md }}>
+                    This slider controls a percentage value that allows for some expanded range of scores to still be
+                    valid. For example, a CHOpt path with a max score of 100k and {settings.filterInvalidScoresLeeway}% leeway will allow the app to
+                    accept scores up to {(100000 * (1 + settings.filterInvalidScoresLeeway / 100)).toLocaleString()}  as &ldquo;valid&rdquo;.
+                  </div>
+                  <LeewaySlider
+                    value={settings.filterInvalidScoresLeeway}
+                    onChange={v => updateSettings({ filterInvalidScoresLeeway: v })}
+                  />
+                </div>
+              </div>
+            </div>
           </Card>
           </FadeInDiv>
 

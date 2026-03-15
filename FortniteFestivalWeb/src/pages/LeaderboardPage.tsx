@@ -14,6 +14,7 @@ import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutlin
 import { staggerDelay } from '../utils/stagger';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
+import { useScoreFilter } from '../hooks/useScoreFilter';
 import { IS_PWA } from '../utils/isPwa';
 
 const PAGE_SIZE = 25;
@@ -34,6 +35,10 @@ type LeaderboardCache = {
   scrollTop: number;
 };
 const leaderboardCache = new Map<string, LeaderboardCache>();
+
+export function clearLeaderboardCache() {
+  leaderboardCache.clear();
+}
 
 export default function LeaderboardPage() {
   const { songId, instrument } = useParams<{
@@ -89,6 +94,7 @@ export default function LeaderboardPage() {
   const [page, setPage] = useState(hasCached ? cached.page : 0);
   const [loading, setLoading] = useState(!hasCached);
   const [error, setError] = useState<string | null>(null);
+  const { isScoreValid, leewayParam } = useScoreFilter();
   const playerRowRef = useRef<HTMLAnchorElement | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [headerCollapsed, setHeaderCollapsed] = useState(isNarrow);
@@ -139,6 +145,7 @@ export default function LeaderboardPage() {
           instKey,
           PAGE_SIZE,
           pageNum * PAGE_SIZE,
+          leewayParam,
         );
         setEntries(res.entries);
         setTotalEntries(res.totalEntries);
@@ -150,7 +157,7 @@ export default function LeaderboardPage() {
         setLoading(false);
       }
     },
-    [songId, instrument, instKey],
+    [songId, instrument, instKey, leewayParam],
   );
 
   // Restore scroll position when returning from cache
@@ -497,7 +504,7 @@ export default function LeaderboardPage() {
           );
         })()}
 
-      {playerScore && playerData && (() => {
+      {playerScore && playerData && songId && isScoreValid(songId, instKey, playerScore.score) && (() => {
         return (
         <div
           style={{ ...styles.playerFooter, ...(hasFab ? styles.playerFooterFab : {}), ...(hasFab && IS_PWA ? { bottom: 84 + Gap.section - Gap.md } : {}) }}

@@ -35,9 +35,9 @@ async function post<T>(path: string): Promise<T> {
 export const api = {
   getSongs: () => get<SongsResponse>('/api/songs'),
 
-  getLeaderboard: (songId: string, instrument: InstrumentKey, top = 100, offset = 0) =>
+  getLeaderboard: (songId: string, instrument: InstrumentKey, top = 100, offset = 0, leeway?: number) =>
     get<LeaderboardResponse>(
-      `/api/leaderboard/${encodeURIComponent(songId)}/${encodeURIComponent(instrument)}?top=${top}&offset=${offset}`,
+      `/api/leaderboard/${encodeURIComponent(songId)}/${encodeURIComponent(instrument)}?top=${top}&offset=${offset}${leeway != null ? `&leeway=${leeway}` : ''}`,
     ),
 
   getPlayer: (accountId: string, songId?: string) =>
@@ -61,9 +61,9 @@ export const api = {
       `/api/player/${encodeURIComponent(accountId)}/history${songId ? `?songId=${encodeURIComponent(songId)}` : ''}`,
     ),
 
-  getAllLeaderboards: (songId: string, top = 10) =>
+  getAllLeaderboards: (songId: string, top = 10, leeway?: number) =>
     get<AllLeaderboardsResponse>(
-      `/api/leaderboard/${encodeURIComponent(songId)}/all?top=${top}`,
+      `/api/leaderboard/${encodeURIComponent(songId)}/all?top=${top}${leeway != null ? `&leeway=${leeway}` : ''}`,
     ),
 
   getPlayerStats: (accountId: string) =>

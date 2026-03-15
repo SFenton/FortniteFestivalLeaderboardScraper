@@ -470,18 +470,22 @@ public sealed class InstrumentDatabase : IDisposable
     /// Returns (entries, totalCount) — avoids a separate COUNT(*) round-trip.
     /// </summary>
     public (List<LeaderboardEntryDto> Entries, int TotalCount) GetLeaderboardWithCount(
-        string songId, int? top = null, int offset = 0)
+        string songId, int? top = null, int offset = 0, int? maxScore = null)
     {
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
 
+        var whereClause = maxScore.HasValue
+            ? "WHERE SongId = @songId AND Score <= @maxScore"
+            : "WHERE SongId = @songId";
+
         if (top.HasValue)
         {
-            cmd.CommandText = @"
+            cmd.CommandText = $@"
                 SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime,
                        ROW_NUMBER() OVER (ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC) AS Rank,
                        COUNT(*) OVER () AS TotalCount
-                FROM LeaderboardEntries WHERE SongId = @songId
+                FROM LeaderboardEntries {whereClause}
                 ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC
                 LIMIT @top OFFSET @offset;";
             cmd.Parameters.AddWithValue("@top", top.Value);
@@ -489,14 +493,16 @@ public sealed class InstrumentDatabase : IDisposable
         }
         else
         {
-            cmd.CommandText = @"
+            cmd.CommandText = $@"
                 SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime,
                        ROW_NUMBER() OVER (ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC) AS Rank,
                        COUNT(*) OVER () AS TotalCount
-                FROM LeaderboardEntries WHERE SongId = @songId
+                FROM LeaderboardEntries {whereClause}
                 ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC;";
         }
         cmd.Parameters.AddWithValue("@songId", songId);
+        if (maxScore.HasValue)
+            cmd.Parameters.AddWithValue("@maxScore", maxScore.Value);
 
         var entries = new List<LeaderboardEntryDto>();
         int totalCount = 0;

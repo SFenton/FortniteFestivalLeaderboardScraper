@@ -394,11 +394,11 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// Returns null if the instrument is unknown.
     /// </summary>
     public (List<LeaderboardEntryDto> Entries, int TotalCount)? GetLeaderboardWithCount(
-        string songId, string instrument, int? top = null, int offset = 0)
+        string songId, string instrument, int? top = null, int offset = 0, int? maxScore = null)
     {
         if (!_instrumentDbs.TryGetValue(instrument, out var db))
             return null;
-        return db.GetLeaderboardWithCount(songId, top, offset);
+        return db.GetLeaderboardWithCount(songId, top, offset, maxScore);
     }
 
     /// <summary>

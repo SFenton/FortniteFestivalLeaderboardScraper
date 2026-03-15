@@ -20,6 +20,7 @@ import { loadSongSettings, saveSongSettings, defaultSongFilters } from '../compo
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
+import { useScoreFilter } from '../hooks/useScoreFilter';
 import ConfirmAlert from '../components/ConfirmAlert';
 
 /** Wrapper that fades in via CSS animation, then strips the animation styles
@@ -49,6 +50,10 @@ function FadeInDiv({ delay, children, style }: { delay?: number; children: React
 /** Track whether PlayerContent has rendered at least once for the current account,
  *  so we can skip stagger animation on back-nav. */
 let _hasRenderedAccount: string | null = null;
+
+export function clearPlayerPageCache() {
+  _hasRenderedAccount = null;
+}
 
 export default function PlayerPage({ accountId: propAccountId }: { accountId?: string } = {}) {
   const params = useParams<{ accountId: string }>();
@@ -145,12 +150,14 @@ function PlayerContent({
   const scrollRef = useRef<HTMLDivElement>(null);
   const { player: trackedPlayer, setPlayer } = useTrackedPlayer();
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
+  const { filterPlayerScores } = useScoreFilter();
 
-  const effectiveScores = useMemo(() =>
-    isTrackedPlayer
+  const effectiveScores = useMemo(() => {
+    const visible = isTrackedPlayer
       ? data.scores.filter(s => isInstrumentVisible(settings, s.instrument as InstrumentKey))
-      : data.scores,
-    [isTrackedPlayer, data.scores, settings],
+      : data.scores;
+    return filterPlayerScores(visible);
+  }, [isTrackedPlayer, data.scores, settings, filterPlayerScores],
   );
   const visibleKeys = useMemo(() =>
     isTrackedPlayer

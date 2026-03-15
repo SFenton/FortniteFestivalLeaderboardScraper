@@ -668,6 +668,83 @@ public sealed class InstrumentDatabaseTests : IDisposable
         Assert.Equal(0, total);
     }
 
+    [Fact]
+    public void GetLeaderboardWithCount_maxScore_filters_above_threshold()
+    {
+        Db.UpsertEntries("song_1",
+        [
+            MakeEntry("a", 100_000),
+            MakeEntry("b", 90_000),
+            MakeEntry("c", 80_000),
+            MakeEntry("d", 70_000),
+        ]);
+
+        // maxScore=90000 should exclude the 100k entry
+        var (entries, total) = Db.GetLeaderboardWithCount("song_1", maxScore: 90_000);
+        Assert.Equal(3, entries.Count);
+        Assert.Equal(3, total);
+        Assert.Equal("b", entries[0].AccountId);
+        Assert.Equal(1, entries[0].Rank); // re-ranked within filtered set
+    }
+
+    [Fact]
+    public void GetLeaderboardWithCount_maxScore_with_pagination()
+    {
+        Db.UpsertEntries("song_1",
+        [
+            MakeEntry("a", 100_000),
+            MakeEntry("b", 90_000),
+            MakeEntry("c", 80_000),
+            MakeEntry("d", 70_000),
+            MakeEntry("e", 60_000),
+        ]);
+
+        // maxScore=90000 filters out "a", leaving b/c/d/e
+        var (page1, total1) = Db.GetLeaderboardWithCount("song_1", top: 2, offset: 0, maxScore: 90_000);
+        Assert.Equal(2, page1.Count);
+        Assert.Equal(4, total1);
+        Assert.Equal("b", page1[0].AccountId);
+        Assert.Equal(1, page1[0].Rank);
+        Assert.Equal("c", page1[1].AccountId);
+        Assert.Equal(2, page1[1].Rank);
+
+        var (page2, total2) = Db.GetLeaderboardWithCount("song_1", top: 2, offset: 2, maxScore: 90_000);
+        Assert.Equal(2, page2.Count);
+        Assert.Equal(4, total2);
+        Assert.Equal("d", page2[0].AccountId);
+        Assert.Equal(3, page2[0].Rank);
+        Assert.Equal("e", page2[1].AccountId);
+        Assert.Equal(4, page2[1].Rank);
+    }
+
+    [Fact]
+    public void GetLeaderboardWithCount_maxScore_null_returns_all()
+    {
+        Db.UpsertEntries("song_1",
+        [
+            MakeEntry("a", 100_000),
+            MakeEntry("b", 50_000),
+        ]);
+
+        var (entries, total) = Db.GetLeaderboardWithCount("song_1", maxScore: null);
+        Assert.Equal(2, entries.Count);
+        Assert.Equal(2, total);
+    }
+
+    [Fact]
+    public void GetLeaderboardWithCount_maxScore_filters_all_returns_empty()
+    {
+        Db.UpsertEntries("song_1",
+        [
+            MakeEntry("a", 100_000),
+            MakeEntry("b", 90_000),
+        ]);
+
+        var (entries, total) = Db.GetLeaderboardWithCount("song_1", maxScore: 50_000);
+        Assert.Empty(entries);
+        Assert.Equal(0, total);
+    }
+
     // ═══ GetPlayerStoredRankings ════════════════════════════════
 
     [Fact]

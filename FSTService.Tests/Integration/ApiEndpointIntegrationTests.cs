@@ -159,6 +159,129 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    [Fact]
+    public async Task ApiLeaderboard_Leeway_FiltersInvalidScores()
+    {
+        const string songId = "leewayTestSong";
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var pathStore = scope.ServiceProvider.GetRequiredService<PathDataStore>();
+
+            // Ensure Songs table + row exists for PathDataStore
+            EnsureSongRow(pathStore, songId);
+
+            // Insert max score for the song
+            pathStore.UpdateMaxScores(songId, new SongMaxScores
+            {
+                MaxLeadScore = 90_000,
+            }, "testhash");
+
+            // Insert entries: one valid (85k), one above max (200k)
+            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            db.UpsertEntries(songId, new List<LeaderboardEntry>
+            {
+                new() { AccountId = "valid1",   Score = 85_000, Accuracy = 99, Stars = 6 },
+                new() { AccountId = "valid2",   Score = 80_000, Accuracy = 98, Stars = 5 },
+                new() { AccountId = "cheater1", Score = 200_000, Accuracy = 100, Stars = 6 },
+            });
+        }
+
+        // Without leeway: all 3 entries returned
+        var allResponse = await _client.GetAsync($"/api/leaderboard/{songId}/Solo_Guitar");
+        var allJson = await allResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(3, allJson.GetProperty("count").GetInt32());
+
+        // With leeway=1: maxScore * 1.01 = 90900, so 200k is excluded
+        var filteredResponse = await _client.GetAsync($"/api/leaderboard/{songId}/Solo_Guitar?leeway=1");
+        var filteredJson = await filteredResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(2, filteredJson.GetProperty("count").GetInt32());
+        Assert.Equal(2, filteredJson.GetProperty("localEntries").GetInt32());
+        var entries = filteredJson.GetProperty("entries");
+        Assert.Equal("valid1", entries[0].GetProperty("accountId").GetString());
+        Assert.Equal(1, entries[0].GetProperty("rank").GetInt32());
+        Assert.Equal("valid2", entries[1].GetProperty("accountId").GetString());
+        Assert.Equal(2, entries[1].GetProperty("rank").GetInt32());
+    }
+
+    [Fact]
+    public async Task ApiLeaderboard_NegativeLeeway_IsStricter()
+    {
+        const string songId = "negLeewayTestSong";
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var pathStore = scope.ServiceProvider.GetRequiredService<PathDataStore>();
+
+            EnsureSongRow(pathStore, songId);
+            pathStore.UpdateMaxScores(songId, new SongMaxScores
+            {
+                MaxLeadScore = 100_000,
+            }, "testhash2");
+
+            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            db.UpsertEntries(songId, new List<LeaderboardEntry>
+            {
+                new() { AccountId = "top1",    Score = 100_000, Accuracy = 100, Stars = 6 },
+                new() { AccountId = "top2",    Score = 98_000,  Accuracy = 99,  Stars = 6 },
+                new() { AccountId = "top3",    Score = 95_000,  Accuracy = 98,  Stars = 5 },
+            });
+        }
+
+        // leeway=-5: maxScore * 0.95 = 95000. 100k and 98k are excluded
+        var response = await _client.GetAsync($"/api/leaderboard/{songId}/Solo_Guitar?leeway=-5");
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(1, json.GetProperty("count").GetInt32());
+        var entries = json.GetProperty("entries");
+        Assert.Equal("top3", entries[0].GetProperty("accountId").GetString());
+        Assert.Equal(1, entries[0].GetProperty("rank").GetInt32());
+    }
+
+    [Fact]
+    public async Task ApiLeaderboardAll_Leeway_FiltersPerInstrument()
+    {
+        const string songId = "allLeewayTestSong";
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var pathStore = scope.ServiceProvider.GetRequiredService<PathDataStore>();
+
+            EnsureSongRow(pathStore, songId);
+            pathStore.UpdateMaxScores(songId, new SongMaxScores
+            {
+                MaxLeadScore = 90_000,
+                MaxBassScore = 80_000,
+            }, "testhash3");
+
+            var guitarDb = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            guitarDb.UpsertEntries(songId, new List<LeaderboardEntry>
+            {
+                new() { AccountId = "g1", Score = 200_000, Accuracy = 100, Stars = 6 },
+                new() { AccountId = "g2", Score = 85_000,  Accuracy = 99,  Stars = 5 },
+            });
+
+            var bassDb = persistence.GetOrCreateInstrumentDb("Solo_Bass");
+            bassDb.UpsertEntries(songId, new List<LeaderboardEntry>
+            {
+                new() { AccountId = "b1", Score = 75_000, Accuracy = 98, Stars = 5 },
+            });
+        }
+
+        // leeway=1: guitar max 90900 filters g1; bass max 80800 keeps b1
+        var response = await _client.GetAsync($"/api/leaderboard/{songId}/all?leeway=1");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var instruments = json.GetProperty("instruments");
+        foreach (var inst in instruments.EnumerateArray())
+        {
+            var name = inst.GetProperty("instrument").GetString();
+            if (name == "Solo_Guitar")
+                Assert.Equal(1, inst.GetProperty("count").GetInt32());
+            else if (name == "Solo_Bass")
+                Assert.Equal(1, inst.GetProperty("count").GetInt32());
+        }
+    }
+
     // ─── Player profile ─────────────────────────────────────────
 
     [Fact]
@@ -2305,6 +2428,42 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(2, json.GetProperty("count").GetInt32());
         Assert.Equal(3, json.GetProperty("localEntries").GetInt32());
         Assert.True(json.GetProperty("totalEntries").GetInt32() >= 3);
+    }
+
+    /// <summary>
+    /// Ensures the Songs table and a row for the given songId exist in the PathDataStore database
+    /// so UpdateMaxScores can UPDATE the row.
+    /// </summary>
+    private static void EnsureSongRow(PathDataStore pathStore, string songId)
+    {
+        // PathDataStore exposes its connection string pattern internally;
+        // retrieve the DB path via reflection on the private _connectionString field.
+        var connField = typeof(PathDataStore)
+            .GetField("_connectionString", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var connStr = (string)connField.GetValue(pathStore)!;
+
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection(connStr);
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS Songs (
+                SongId TEXT PRIMARY KEY,
+                Title TEXT,
+                MaxLeadScore INTEGER,
+                MaxBassScore INTEGER,
+                MaxDrumsScore INTEGER,
+                MaxVocalsScore INTEGER,
+                MaxProLeadScore INTEGER,
+                MaxProBassScore INTEGER,
+                DatFileHash TEXT,
+                SongLastModified TEXT,
+                PathsGeneratedAt TEXT,
+                CHOptVersion TEXT
+            );
+            INSERT OR IGNORE INTO Songs (SongId, Title) VALUES (@songId, 'Test Song');
+            """;
+        cmd.Parameters.AddWithValue("@songId", songId);
+        cmd.ExecuteNonQuery();
     }
 
     // ═══════════════════════════════════════════════════════════════

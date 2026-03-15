@@ -18,6 +18,7 @@ import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldOutlineSkew, fro
 import { staggerDelay, estimateVisibleCount } from '../utils/stagger';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useScoreFilter } from '../hooks/useScoreFilter';
 import { IS_IOS, IS_ANDROID, IS_PWA } from '../utils/platform';
 
 function accuracyColor(pct: number): string {
@@ -60,6 +61,7 @@ export default function PlayerHistoryPage() {
   const [history, setHistory] = useState<ScoreHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { filterHistory } = useScoreFilter();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [headerCollapsed, setHeaderCollapsed] = useState(hasFab);
   const [loadPhase, setLoadPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>('loading');
@@ -145,8 +147,13 @@ export default function PlayerHistoryPage() {
     return <div style={styles.center}>Not found</div>;
   }
 
+  const filteredHistory = useMemo(
+    () => songId ? filterHistory(songId, instKey, history) : history,
+    [songId, instKey, history, filterHistory],
+  );
+
   const sortedHistory = useMemo(() => {
-    const arr = [...history];
+    const arr = [...filteredHistory];
     const dir = sortAscending ? 1 : -1;
     arr.sort((a, b) => {
       switch (sortMode) {
@@ -176,15 +183,15 @@ export default function PlayerHistoryPage() {
       }
     });
     return arr;
-  }, [history, sortMode, sortAscending]);
+  }, [filteredHistory, sortMode, sortAscending]);
 
   const scoreWidth = useMemo(() => {
     const maxLen = Math.max(
-      ...history.map((h) => h.newScore.toLocaleString().length),
+      ...filteredHistory.map((h) => h.newScore.toLocaleString().length),
       1,
     );
     return `${maxLen}ch`;
-  }, [history]);
+  }, [filteredHistory]);
 
   const highScoreIndex = useMemo(() => {
     if (sortedHistory.length === 0) return -1;

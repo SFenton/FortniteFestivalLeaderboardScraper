@@ -17,6 +17,8 @@ export type AppSettings = {
   songsHideInstrumentIcons: boolean;
   songRowVisualOrderEnabled: boolean;
   songRowVisualOrder: string[];
+  filterInvalidScores: boolean;
+  filterInvalidScoresLeeway: number;
 
   /* Show instruments */
   showLead: boolean;
@@ -40,6 +42,8 @@ export const defaultAppSettings = (): AppSettings => ({
   songsHideInstrumentIcons: false,
   songRowVisualOrderEnabled: false,
   songRowVisualOrder: [...DEFAULT_METADATA_ORDER],
+  filterInvalidScores: false,
+  filterInvalidScoresLeeway: 1,
 
   showLead: true,
   showBass: true,

@@ -167,10 +167,23 @@ public static class ApiEndpoints
             string instrument,
             int? top,
             int? offset,
+            double? leeway,
             GlobalLeaderboardPersistence persistence,
-            MetaDatabase metaDb) =>
+            MetaDatabase metaDb,
+            PathDataStore pathStore) =>
         {
-            var result = persistence.GetLeaderboardWithCount(songId, instrument, top, offset ?? 0);
+            int? maxScore = null;
+            if (leeway.HasValue)
+            {
+                var allMax = pathStore.GetAllMaxScores();
+                if (allMax.TryGetValue(songId, out var ms))
+                {
+                    var raw = ms.GetByInstrument(instrument);
+                    if (raw.HasValue)
+                        maxScore = (int)(raw.Value * (1.0 + leeway.Value / 100.0));
+                }
+            }
+            var result = persistence.GetLeaderboardWithCount(songId, instrument, top, offset ?? 0, maxScore);
             if (result is null)
                 return Results.NotFound(new { error = $"Unknown instrument: {instrument}" });
 
@@ -208,18 +221,31 @@ public static class ApiEndpoints
         app.MapGet("/api/leaderboard/{songId}/all", (
             string songId,
             int? top,
+            double? leeway,
             GlobalLeaderboardPersistence persistence,
-            MetaDatabase metaDb) =>
+            MetaDatabase metaDb,
+            PathDataStore pathStore) =>
         {
             var instrumentKeys = persistence.GetInstrumentKeys();
             var population = metaDb.GetAllLeaderboardPopulation();
             var allAccountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+            Dictionary<string, SongMaxScores>? maxScoresMap = leeway.HasValue
+                ? pathStore.GetAllMaxScores()
+                : null;
+
             // Collect raw data per instrument
             var rawInstruments = new List<(string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries)>();
             foreach (var instrument in instrumentKeys)
             {
-                var result = persistence.GetLeaderboardWithCount(songId, instrument, top ?? 10);
+                int? maxScore = null;
+                if (maxScoresMap is not null && maxScoresMap.TryGetValue(songId, out var ms))
+                {
+                    var raw = ms.GetByInstrument(instrument);
+                    if (raw.HasValue)
+                        maxScore = (int)(raw.Value * (1.0 + leeway!.Value / 100.0));
+                }
+                var result = persistence.GetLeaderboardWithCount(songId, instrument, top ?? 10, maxScore: maxScore);
                 if (result is null) continue;
 
                 var (entries, dbCount) = result.Value;

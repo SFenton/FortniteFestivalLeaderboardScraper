@@ -21,6 +21,7 @@ import { useScrollMask } from '../hooks/useScrollMask';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { IoFlash } from 'react-icons/io5';
 import { useFabSearch } from '../contexts/FabSearchContext';
+import { useScoreFilter } from '../hooks/useScoreFilter';
 import PathsModal from '../components/PathsModal';
 
 function accuracyColor(pct: number): string {
@@ -46,6 +47,10 @@ type SongDetailCache = {
 };
 const songDetailCache = new Map<string, SongDetailCache>();
 
+export function clearSongDetailCache() {
+  songDetailCache.clear();
+}
+
 export default function SongDetailPage() {
   const { songId } = useParams<{ songId: string }>();
   const [searchParams] = useSearchParams();
@@ -67,6 +72,7 @@ export default function SongDetailPage() {
   const { settings } = useSettings();
   const activeInstruments = visibleInstruments(settings);
   const fabSearch = useFabSearch();
+  const { filterPlayerScores, filterHistory: filterScoreHistory, leewayParam } = useScoreFilter();
   const [pathsOpen, setPathsOpen] = useState(false);
 
   const navType = useNavigationType();
@@ -151,7 +157,7 @@ export default function SongDetailPage() {
         ) as Record<InstrumentKey, InstrumentData>,
       );
     }
-    api.getAllLeaderboards(songId, 10).then((res) => {
+    api.getAllLeaderboards(songId, 10, leewayParam).then((res) => {
       if (cancelled) return;
       const newData = Object.fromEntries(
         INSTRUMENT_KEYS.map((k) => [k, { entries: [], loading: false, error: null }]),
@@ -184,6 +190,22 @@ export default function SongDetailPage() {
   const instrumentsReady = activeInstruments.every((k) => !instrumentData[k].loading);
   const allReady = playerDataReady && instrumentsReady;
 
+  // Apply invalid score filtering
+  const filteredScoreHistory = useMemo(() => {
+    if (!songId) return scoreHistory;
+    // ScoreHistory has per-instrument entries; filter each against its own instrument
+    return scoreHistory.filter(h => {
+      const instMap = songs.find(s => s.songId === songId)?.maxScores;
+      if (!instMap) return true;
+      return filterScoreHistory(songId, h.instrument, [h]).length > 0;
+    });
+  }, [songId, scoreHistory, filterScoreHistory, songs]);
+
+  const filteredPlayerScores = useMemo(
+    () => filterPlayerScores(playerScores),
+    [playerScores, filterPlayerScores],
+  );
+
   // Compute a global score width so season pills align across all sections
   const globalScoreWidth = useMemo(() => {
     let maxLen = 1;
@@ -192,14 +214,14 @@ export default function SongDetailPage() {
         maxLen = Math.max(maxLen, e.score.toLocaleString().length);
       }
     }
-    for (const s of playerScores) {
+    for (const s of filteredPlayerScores) {
       maxLen = Math.max(maxLen, s.score.toLocaleString().length);
     }
-    for (const h of scoreHistory) {
+    for (const h of filteredScoreHistory) {
       maxLen = Math.max(maxLen, h.newScore.toLocaleString().length);
     }
     return `${maxLen}ch`;
-  }, [activeInstruments, instrumentData, playerScores, scoreHistory]);
+  }, [activeInstruments, instrumentData, filteredPlayerScores, filteredScoreHistory]);
 
   // Transition: spinner fade-out → staggered content fade-in
   // phase: 'loading' | 'spinnerOut' | 'contentIn'
@@ -358,7 +380,7 @@ export default function SongDetailPage() {
                 accountId={player.accountId}
                 playerName={player.displayName}
                 defaultInstrument={defaultInstrument}
-                history={scoreHistory}
+                history={filteredScoreHistory}
                 visibleInstruments={activeInstruments}
                 skipAnimation={skipAnim}
                 scoreWidth={globalScoreWidth}
@@ -376,7 +398,7 @@ export default function SongDetailPage() {
                       instrument={inst}
                       baseDelay={baseDelay}
                       windowWidth={windowWidth}
-                      playerScore={playerScores.find((s) => s.instrument === inst)}
+                      playerScore={filteredPlayerScores.find((s) => s.instrument === inst)}
                       playerName={player?.displayName}
                       playerAccountId={player?.accountId}
                       prefetchedEntries={instrumentData[inst].entries}
