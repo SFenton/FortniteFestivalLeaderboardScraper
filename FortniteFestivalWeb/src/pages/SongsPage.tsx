@@ -11,7 +11,7 @@ import { useFabSearch } from '../contexts/FabSearchContext';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useStaggerRush } from '../hooks/useStaggerRush';
 import type { Song, PlayerScore, InstrumentKey } from '../models';
-import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth, goldFill, goldOutline, goldOutlineSkew, frostedCard } from '../theme';
+import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth, goldFill, goldOutline, goldOutlineSkew, frostedCard, frostedCardLight } from '../theme';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../components/InstrumentIcons';
 import SeasonPill from '../components/SeasonPill';
 import AlbumArt from '../components/AlbumArt';
@@ -50,7 +50,9 @@ export default function SongsPage() {
   // only treat it as back-nav if we have a saved scroll position from a prior visit.
   const isBackNav = navType === 'POP' && _savedScrollTop > 0;
 
-  // Restore scroll position on back navigation
+  // Restore scroll position on back navigation or tab switch.
+  // With content-visibility: auto, restoring deep scroll positions is unreliable,
+  // so we only restore on POP (browser back) and reset to top on tab switches.
   useEffect(() => {
     if (!isBackNav) return;
     const el = scrollRef.current;
@@ -1004,6 +1006,7 @@ const styles: Record<string, React.CSSProperties> = {
   scrollArea: {
     flex: 1,
     overflowY: 'auto' as const,
+    willChange: 'scroll-position',
   },
   container: {
     width: '100%',
@@ -1150,22 +1153,22 @@ const styles: Record<string, React.CSSProperties> = {
     padding: `0 ${Gap.xl}px`,
     height: 64,
     borderRadius: Radius.md,
-    ...frostedCard,
+    ...frostedCardLight,
     textDecoration: 'none',
     color: 'inherit',
-    transition: 'background-color 0.15s',
-  },
+    contentVisibility: 'auto',
+  } as CSSProperties,
   rowMobile: {
     display: 'flex',
     flexDirection: 'column' as const,
     gap: Gap.md,
     padding: `${Gap.lg}px ${Gap.xl}px`,
     borderRadius: Radius.md,
-    ...frostedCard,
+    ...frostedCardLight,
     textDecoration: 'none',
     color: 'inherit',
-    transition: 'background-color 0.15s',
-  },
+    contentVisibility: 'auto',
+  } as CSSProperties,
   mobileTopRow: {
     display: 'flex',
     alignItems: 'center',

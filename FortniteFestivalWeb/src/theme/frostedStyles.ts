@@ -29,3 +29,13 @@ export const frostedCard = {
     '0 4px 20px rgba(0,0,0,0.4)',
   ].join(', '),
 } as const;
+
+/**
+ * Lightweight variant for repeated list items (song rows, leaderboard rows).
+ * Same background and border as frostedCard but without box-shadows and
+ * SVG noise — dramatically cheaper to composite when hundreds are in the DOM.
+ */
+export const frostedCardLight = {
+  backgroundColor: Colors.surfaceFrosted,
+  border: `1px solid ${Colors.glassBorder}`,
+} as const;

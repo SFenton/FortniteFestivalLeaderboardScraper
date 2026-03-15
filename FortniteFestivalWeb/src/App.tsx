@@ -203,7 +203,7 @@ function AppShell() {
   const NAV_TITLES: Record<string, string> = {
     '/songs': 'Songs',
     '/suggestions': 'Suggestions',
-    '/statistics': player?.displayName ?? 'Statistics',
+    '/statistics': 'Statistics',
     '/settings': 'Settings',
   };
   const navTitle = NAV_TITLES[location.pathname] ?? null;
@@ -706,6 +706,9 @@ function MobilePlayerSearchModal({
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<AccountSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
+  const [showSpinner, setShowSpinner] = useState(false);
+  const [spinnerOpacity, setSpinnerOpacity] = useState(0);
+  const [resultsReady, setResultsReady] = useState(false);
   const [resultSeq, setResultSeq] = useState(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -737,6 +740,9 @@ function MobilePlayerSearchModal({
       setDismissing(false);
       setQuery('');
       setResults([]);
+      setShowSpinner(false);
+      setSpinnerOpacity(0);
+      setResultsReady(false);
     }
   }, [animIn]);
 
@@ -748,6 +754,26 @@ function MobilePlayerSearchModal({
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
   }, [mounted, onClose]);
+
+  // When loading starts, show spinner immediately and fade it in
+  useEffect(() => {
+    if (loading) {
+      setResultsReady(false);
+      setShowSpinner(true);
+      // RAF to ensure the 0 opacity is painted before transitioning to 1
+      requestAnimationFrame(() => requestAnimationFrame(() => setSpinnerOpacity(1)));
+    } else if (showSpinner) {
+      // Loading finished — fade spinner out, then reveal results
+      setSpinnerOpacity(0);
+    }
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSpinnerTransitionEnd = useCallback(() => {
+    if (spinnerOpacity === 0 && !loading) {
+      setShowSpinner(false);
+      setResultsReady(true);
+    }
+  }, [spinnerOpacity, loading]);
 
   const search = useCallback(async (q: string) => {
     if (q.length < 2) {
@@ -773,6 +799,9 @@ function MobilePlayerSearchModal({
       if (debounceRef.current) clearTimeout(debounceRef.current);
       setResults([]);
       setLoading(false);
+      setShowSpinner(false);
+      setSpinnerOpacity(0);
+      setResultsReady(true);
       return;
     }
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -868,7 +897,8 @@ function MobilePlayerSearchModal({
           )}
           {!player && (
             <>
-              <div style={stagger(0)}>
+              <div style={{ ...styles.modalSearchPill, ...stagger(0) }} onClick={e => { const input = e.currentTarget.querySelector('input'); input?.focus(); }}>
+                <IoSearch size={16} style={{ color: Colors.textTertiary, flexShrink: 0 }} />
                 <input
                   ref={inputRef}
                   style={styles.modalSearchInput}
@@ -880,18 +910,21 @@ function MobilePlayerSearchModal({
                 />
               </div>
               <div style={{ ...styles.modalResults, ...stagger(150) }}>
-                {loading && (
-                  <div style={styles.modalSpinnerWrap}>
+                {showSpinner && (
+                  <div
+                    style={{ ...styles.modalSpinnerWrap, opacity: spinnerOpacity, transition: 'opacity 250ms ease' }}
+                    onTransitionEnd={handleSpinnerTransitionEnd}
+                  >
                     <div style={styles.modalArcSpinner} />
                   </div>
                 )}
-                {!loading && query.length < 2 && (
+                {!showSpinner && !loading && query.length < 2 && (
                   <div style={styles.modalHintCenter}>Enter a username to search for.</div>
                 )}
-                {!loading && query.length >= 2 && results.length === 0 && (
+                {!showSpinner && !loading && query.length >= 2 && results.length === 0 && (
                   <div style={styles.modalHintCenter}>No matching username found.</div>
                 )}
-                {!loading && results.map((r, i) => (
+                {!showSpinner && resultsReady && results.map((r, i) => (
                   <button
                     key={`${resultSeq}-${r.accountId}`}
                     style={{
@@ -1594,7 +1627,7 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     display: 'flex',
     flexDirection: 'column' as const,
-    padding: Gap.section,
+    padding: `${Gap.sm}px ${Gap.section}px ${Gap.section}px`,
     gap: Gap.md,
     overflow: 'hidden',
   },
@@ -1629,17 +1662,26 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center' as const,
     lineHeight: '1.5',
   },
-  modalSearchInput: {
-    width: '100%',
-    padding: `${Gap.xl}px ${Gap.section}px`,
-    borderRadius: Radius.sm,
+  modalSearchPill: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: Gap.sm,
+    height: 48,
+    padding: `0 ${Gap.xl}px`,
+    boxSizing: 'border-box' as const,
+    borderRadius: Radius.full,
     border: `1px solid ${Colors.borderPrimary}`,
     backgroundColor: Colors.backgroundCard,
+    cursor: 'text',
+    flexShrink: 0,
+  },
+  modalSearchInput: {
+    flex: 1,
+    background: 'none',
+    border: 'none',
+    outline: 'none',
     color: Colors.textPrimary,
     fontSize: Font.md,
-    outline: 'none',
-    boxSizing: 'border-box' as const,
-    flexShrink: 0,
   },
   modalResults: {
     flex: 1,
@@ -1652,6 +1694,12 @@ const styles: Record<string, React.CSSProperties> = {
     padding: `${Gap.md}px ${Gap.xl}px`,
     color: Colors.textTertiary,
     fontSize: Font.sm,
+  },
+  modalSpinnerWrap: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 1,
   },
   modalHintCenter: {
     display: 'flex',

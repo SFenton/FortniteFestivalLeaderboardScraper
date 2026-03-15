@@ -26,26 +26,26 @@ export default function AlbumArt({ src, size, style }: { src?: string; size: num
 
   return (
     <div style={base}>
-      {/* Spinner — fades out when loaded */}
-      <div style={{
-        position: 'absolute',
-        inset: 0,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        opacity: loaded ? 0 : 1,
-        transition: 'opacity 200ms ease',
-        pointerEvents: 'none',
-      }}>
+      {/* Spinner — removed from DOM once loaded */}
+      {!loaded && (
         <div style={{
-          width: spinnerSize,
-          height: spinnerSize,
-          border: '2px solid rgba(255,255,255,0.10)',
-          borderTopColor: Colors.accentPurple,
-          borderRadius: '50%',
-          animation: 'spin 0.8s linear infinite',
-        }} />
-      </div>
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          pointerEvents: 'none',
+        }}>
+          <div style={{
+            width: spinnerSize,
+            height: spinnerSize,
+            border: '2px solid rgba(255,255,255,0.10)',
+            borderTopColor: Colors.accentPurple,
+            borderRadius: '50%',
+            animation: 'spin 0.8s linear infinite',
+          }} />
+        </div>
+      )}
       {/* Image — fades in when loaded */}
       <img
         src={src}

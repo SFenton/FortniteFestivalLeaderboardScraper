@@ -24,6 +24,8 @@ export function useScrollMask(
 ): () => void {
   const size = options.size ?? DEFAULT_SIZE;
   const rafId = useRef(0);
+  // Track scroll state to avoid redundant DOM writes: 0=both, 1=top, 2=bottom, 3=middle
+  const lastState = useRef(-1);
 
   const update = useCallback(() => {
     const el = scrollRef.current;
@@ -33,12 +35,16 @@ export function useScrollMask(
     const atTop = scrollTop <= 0;
     const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
 
+    const state = (atTop && atBottom) ? 0 : atTop ? 1 : atBottom ? 2 : 3;
+    if (state === lastState.current) return;
+    lastState.current = state;
+
     let mask: string;
-    if (atTop && atBottom) {
+    if (state === 0) {
       mask = '';
-    } else if (atTop) {
+    } else if (state === 1) {
       mask = `linear-gradient(to bottom, black calc(100% - ${size}px), transparent)`;
-    } else if (atBottom) {
+    } else if (state === 2) {
       mask = `linear-gradient(to bottom, transparent, black ${size}px)`;
     } else {
       mask = `linear-gradient(to bottom, transparent, black ${size}px, black calc(100% - ${size}px), transparent)`;
