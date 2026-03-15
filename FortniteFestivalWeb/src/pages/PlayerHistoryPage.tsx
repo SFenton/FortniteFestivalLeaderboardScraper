@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useParams, useNavigationType } from 'react-router-dom';
 import { IoSwapVerticalSharp } from 'react-icons/io5';
 import { useFestival } from '../contexts/FestivalContext';
@@ -34,6 +35,7 @@ function accuracyColor(pct: number): string {
 }
 
 export default function PlayerHistoryPage() {
+  const { t } = useTranslation();
   const { songId, instrument } = useParams<{
     songId: string;
     instrument: string;
