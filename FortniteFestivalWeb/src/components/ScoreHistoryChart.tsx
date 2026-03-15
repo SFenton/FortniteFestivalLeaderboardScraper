@@ -11,7 +11,6 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from 'recharts';
-import { api } from '../api/client';
 import {
   INSTRUMENT_KEYS,
   INSTRUMENT_LABELS,
@@ -22,38 +21,19 @@ import { InstrumentIcon } from './InstrumentIcons';
 import { Colors, Font, Gap, Radius, goldFill, goldOutlineSkew, frostedCard } from '../theme';
 import { useIsMobile } from '../hooks/useIsMobile';
 import SeasonPill from './SeasonPill';
+import { useChartData, type ChartPoint } from './chart/useChartData';
+import ChartTooltip from './chart/ChartTooltip';
 
 type Props = {
   songId: string;
   accountId: string;
   playerName: string;
   defaultInstrument?: InstrumentKey;
-  /** Pre-fetched history entries. When provided, skips internal fetch. */
   history?: ScoreHistoryEntry[];
-  /** When provided, only these instruments are shown. */
   visibleInstruments?: InstrumentKey[];
-  /** When true, skip chart entry animations (e.g. returning from cache). */
   skipAnimation?: boolean;
-  /** Fixed score column width (e.g. "7ch") for alignment with leaderboard cards. */
   scoreWidth?: string;
 };
-
-type ChartPoint = {
-  date: string;
-  dateLabel: string;
-  timestamp: number;
-  score: number;
-  accuracy: number;
-  isFullCombo: boolean;
-  /** Original accuracy preserved for bar coloring during animations */
-  colorAccuracy?: number;
-  stars?: number;
-  season?: number;
-};
-
-// Simple in-memory cache so navigating between songs doesn't re-fetch
-// Keyed by "accountId:songId"
-const historyCache = new Map<string, ScoreHistoryEntry[]>();
 
 function accuracyColor(pct: number): string {
   const t = Math.min(Math.max(pct / 100, 0), 1);
@@ -73,106 +53,18 @@ export default function ScoreHistoryChart({
   skipAnimation,
   scoreWidth: scoreWidthProp,
 }: Props) {
-  const cacheKey = `${accountId}:${songId}`;
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const [selected, setSelected] = useState<InstrumentKey>(defaultInstrument ?? 'Solo_Guitar');
   const [selectedPoint, setSelectedPoint] = useState<ChartPoint | null>(null);
   const [displayedPoint, setDisplayedPoint] = useState<ChartPoint | null>(null);
-  // Phase: 'closed' → 'growing' → 'open' → 'fading' → 'shrinking' → 'closed'
-  // Swap: 'open' → 'swapOut' → 'swapIn' → 'open'
   const [cardPhase, setCardPhase] = useState<'closed' | 'growing' | 'open' | 'fading' | 'shrinking' | 'swapOut' | 'swapIn'>('closed');
   const cardPhaseRef = useRef(cardPhase);
   cardPhaseRef.current = cardPhase;
   const cardContentRef = useRef<HTMLDivElement>(null);
   const [cardHeight, setCardHeight] = useState(0);
-  const [songHistory, setSongHistory] = useState<ScoreHistoryEntry[]>(
-    () => historyProp ?? historyCache.get(cacheKey) ?? [],
-  );
-  const [loading, setLoading] = useState(!historyProp && !historyCache.has(cacheKey));
 
-  useEffect(() => {
-    // If pre-fetched data was provided, use it directly
-    if (historyProp) {
-      setSongHistory(prev => prev === historyProp ? prev : historyProp);
-      historyCache.set(cacheKey, historyProp);
-      setLoading(false);
-      return;
-    }
-    if (historyCache.has(cacheKey)) {
-      setSongHistory(historyCache.get(cacheKey)!);
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    api
-      .getPlayerHistory(accountId, songId)
-      .then((res) => {
-        if (!cancelled) {
-          historyCache.set(cacheKey, res.history);
-          setSongHistory(res.history);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setSongHistory([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [accountId, songId, cacheKey, historyProp]);
-
-  const filtered = useMemo(
-    () =>
-      songHistory.filter(
-        (h) => h.instrument === selected,
-      ),
-    [songHistory, selected],
-  );
-
-  const chartData: ChartPoint[] = useMemo(() => {
-    const sorted = [...filtered].sort(
-      (a, b) =>
-        new Date(a.scoreAchievedAt ?? a.changedAt).getTime() -
-        new Date(b.scoreAchievedAt ?? b.changedAt).getTime(),
-    );
-    // Build concise date labels: "m/d/yy"
-    // When multiple entries share a day, append index: "3/1/26 (2)"
-    const daySeen = new Map<string, number>();
-    const dayTotal = new Map<string, number>();
-    const formatDay = (d: Date) => {
-      const m = d.getMonth() + 1;
-      const day = d.getDate();
-      const yy = String(d.getFullYear()).slice(-2);
-      return `${m}/${day}/${yy}`;
-    };
-    for (const h of sorted) {
-      const d = new Date(h.scoreAchievedAt ?? h.changedAt);
-      const dayKey = formatDay(d);
-      dayTotal.set(dayKey, (dayTotal.get(dayKey) ?? 0) + 1);
-    }
-    return sorted.map((h) => {
-      const d = new Date(h.scoreAchievedAt ?? h.changedAt);
-      const dayKey = formatDay(d);
-      const total = dayTotal.get(dayKey) ?? 1;
-      const idx = (daySeen.get(dayKey) ?? 0) + 1;
-      daySeen.set(dayKey, idx);
-      const dateLabel = dayKey;
-      return {
-        date: d.toISOString(),
-        dateLabel,
-        timestamp: d.getTime(),
-        score: h.newScore,
-        accuracy: h.accuracy != null ? h.accuracy / 10000 : 0,
-        isFullCombo: h.isFullCombo ?? false,
-        stars: h.stars,
-        season: h.season,
-      };
-    });
-  }, [filtered]);
+  const { songHistory, chartData, loading, instrumentCounts } = useChartData(accountId, songId, selected, historyProp);
 
   // Measure chart container width to determine how many bars fit.
   //
@@ -440,16 +332,6 @@ export default function ScoreHistoryChart({
 
     return () => { listTimers.current.forEach(clearTimeout); };
   }, [visibleCards]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Count per-instrument entries so we can show which instruments have data
-  const instrumentCounts = useMemo(() => {
-    const counts: Partial<Record<InstrumentKey, number>> = {};
-    for (const h of songHistory) {
-      const key = h.instrument as InstrumentKey;
-      counts[key] = (counts[key] ?? 0) + 1;
-    }
-    return counts;
-  }, [songHistory]);
 
   const instrumentPool = visibleInstrumentsProp ?? INSTRUMENT_KEYS;
 
@@ -922,58 +804,6 @@ export default function ScoreHistoryChart({
   );
 }
 
-function CustomTooltip({
-  active,
-  payload,
-}: {
-  active?: boolean;
-  payload?: Array<{ payload: ChartPoint }>;
-}) {
-  if (!active || !payload?.length) return null;
-  const first = payload[0];
-  if (!first) return null;
-  const d = first.payload;
-  return (
-    <div style={styles.tooltip}>
-      <div style={styles.tooltipDate}>
-        {new Date(d.date).toLocaleDateString('en-US', {
-          month: 'long',
-          day: 'numeric',
-          year: 'numeric',
-        })}
-        {' '}
-        {new Date(d.date).toLocaleTimeString('en-US', {
-          hour: 'numeric',
-          minute: '2-digit',
-        })}
-        {d.season != null && (
-          <span style={styles.tooltipSeason}> · S{d.season}</span>
-        )}
-      </div>
-      <div style={styles.tooltipRow}>
-        <span style={{ color: Colors.accentBlueBright, fontWeight: 600 }}>
-          Score:
-        </span>{' '}
-        {d.score.toLocaleString()}
-      </div>
-      <div style={styles.tooltipRow}>
-        <span style={{ color: Colors.accentPurple, fontWeight: 600 }}>
-          Accuracy:
-        </span>{' '}
-        {d.accuracy % 1 === 0 ? `${d.accuracy}%` : `${d.accuracy.toFixed(1)}%`}
-        {d.isFullCombo && (
-          <span style={styles.tooltipFc}>FC</span>
-        )}
-      </div>
-      {d.stars != null && (
-        <div style={styles.tooltipRow}>
-          {'★'.repeat(d.stars)}
-        </div>
-      )}
-    </div>
-  );
-}
-
 const styles: Record<string, React.CSSProperties> = {
   wrapper: {
   },
@@ -1036,35 +866,6 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center' as const,
     padding: `${Gap.section}px 0`,
     width: '100%',
-  },
-  tooltip: {
-    backgroundColor: Colors.surfaceFrosted,
-    border: `1px solid ${Colors.borderPrimary}`,
-    borderRadius: Radius.xs,
-    padding: Gap.xl,
-  },
-  tooltipDate: {
-    fontSize: Font.sm,
-    fontWeight: 600,
-    color: '#fff',
-    marginBottom: Gap.sm,
-  },
-  tooltipSeason: {
-    color: Colors.textMuted,
-    fontWeight: 400,
-  },
-  tooltipRow: {
-    fontSize: Font.sm,
-    color: '#fff',
-    marginBottom: Gap.xs,
-  },
-  tooltipFc: {
-    ...goldFill,
-    marginLeft: Gap.md,
-    fontSize: Font.xs,
-    fontWeight: 700,
-    padding: `0 ${Gap.sm}px`,
-    borderRadius: Radius.xs,
   },
   legend: {
     display: 'flex',
