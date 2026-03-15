@@ -10,8 +10,8 @@ import { Colors, Font, Gap, Layout, MaxWidth, Radius, frostedCard } from '../the
 import { useScrollMask } from '../hooks/useScrollMask';
 import { api } from '../api/client';
 
-const APP_VERSION = '0.1.11';
-const CORE_VERSION = '0.0.1';
+const APP_VERSION = '0.1.12';
+const CORE_VERSION = '0.0.2';
 
 /** Track whether settings page has rendered at least once to skip stagger on re-visit. */
 let _hasRendered = false;

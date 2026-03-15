@@ -33,7 +33,7 @@ export * from './app/formatters';
 export const APP_VERSION = '0.0.2';
 
 /** Current @festival/core package version. Keep in sync with packages/core/package.json. */
-export const CORE_VERSION = '0.0.2';
+export const CORE_VERSION = '0.0.3';
 export * from './app/scoreRows';
 export * from './app/songInfo';
 export * from './app/songFiltering';
