@@ -1,0 +1,121 @@
+.page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  color: #FFFFFF;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+.header {
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.scrollArea {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.container {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 16px 20px;
+}
+
+.heading {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.cardColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.card {
+  background-color: rgba(18, 24, 38, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 0 30px rgba(255, 255, 255, 0.02),
+    0 4px 20px rgba(0, 0, 0, 0.4);
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'200'%20height%3D'200'%3E%3Cfilter%20id%3D'n'%3E%3CfeTurbulence%20type%3D'fractalNoise'%20baseFrequency%3D'0.75'%20numOctaves%3D'4'%20stitchTiles%3D'stitch'%2F%3E%3CfeColorMatrix%20type%3D'saturate'%20values%3D'0'%2F%3E%3C%2Ffilter%3E%3Crect%20width%3D'100%25'%20height%3D'100%25'%20filter%3D'url(%23n)'%20opacity%3D'0.4'%2F%3E%3C%2Fsvg%3E");
+  background-repeat: repeat;
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sectionTitle {
+  font-size: 20px;
+  font-weight: 700;
+  color: #FFFFFF;
+}
+
+.innerSectionTitle {
+  font-size: 14px;
+  font-weight: 700;
+  color: #FFFFFF;
+  margin-bottom: 4px;
+}
+
+.sectionHint {
+  font-size: 14px;
+  color: #D7DEE8;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.resetButton {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #C62828;
+  background-color: rgb(198, 40, 40);
+  color: #FFFFFF;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.resetRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.resetRowMobile {
+  composes: resetRow;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.resetButtonMobile {
+  composes: resetButton;
+  width: 100%;
+  text-align: center;
+  padding: 12px;
+  font-size: 14px;
+}
+
+.versionRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 14px;
+}
+
+.versionValue {
+  color: #D7DEE8;
+}
+
+.fabSpacer {
+  height: 72px;
+  flex-shrink: 0;
+}
