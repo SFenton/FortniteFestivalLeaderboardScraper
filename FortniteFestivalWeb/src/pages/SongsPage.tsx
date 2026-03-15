@@ -416,19 +416,15 @@ export default function SongsPage() {
               <InstrumentIcon instrument={settings.instrument} size={32} />
             )}
             <div style={styles.sortGroup}>
-              <button style={styles.iconBtn} onClick={openSort} title="Sort" aria-label="Sort songs">
-                <IoSwapVerticalSharp size={18} />
-              </button>
+              <ToolbarIconButton icon={<IoSwapVerticalSharp size={18} />} label="Sort" onClick={openSort} />
               {hasPlayer && (
-                <button
-                  style={{ ...styles.iconBtn, ...(filtersActive ? styles.iconBtnActive : {}) }}
+                <ToolbarIconButton
+                  icon={<IoFunnel size={18} />}
+                  label="Filter"
                   onClick={openFilter}
-                  title="Filter"
-                  aria-label="Filter songs"
-                >
-                  <IoFunnel size={18} />
-                  {filtersActive && <span style={styles.filterDot} />}
-                </button>
+                  active={filtersActive}
+                  dot={filtersActive}
+                />
               )}
             </div>
           </div>
@@ -441,7 +437,7 @@ export default function SongsPage() {
       </div>
       )}
       <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
-        <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.sm } : {}) }}>
+        <div style={{ ...styles.container, paddingTop: isMobile ? Gap.sm : Gap.md }}>
         {isSyncing && (
           <div style={styles.syncBanner}>
             <div style={styles.syncSpinner} />
@@ -898,6 +894,34 @@ function compareByMode(mode: SongSortMode, a?: PlayerScore, b?: PlayerScore): nu
   }
 }
 
+function ToolbarIconButton({ icon, label, onClick, active, dot }: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  active?: boolean;
+  dot?: boolean;
+}) {
+  return (
+    <button
+      style={{
+        ...styles.iconBtn,
+        ...(active ? styles.iconBtnActive : {}),
+        width: 'auto',
+        paddingLeft: Gap.xl,
+        paddingRight: Gap.xl,
+        gap: Gap.md,
+      }}
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+    >
+      {icon}
+      <span style={{ fontSize: Font.sm, fontWeight: 600, whiteSpace: 'nowrap' }}>{label}</span>
+      {dot && <span style={styles.filterDot} />}
+    </button>
+  );
+}
+
 const styles: Record<string, React.CSSProperties> = {
   page: {
     height: '100%',
@@ -910,7 +934,6 @@ const styles: Record<string, React.CSSProperties> = {
   header: {
     flexShrink: 0,
     zIndex: 10,
-    paddingBottom: Gap.md,
   },
   headerMobile: {
     flexShrink: 0,
@@ -962,8 +985,10 @@ const styles: Record<string, React.CSSProperties> = {
   searchInput: {
     flex: 1,
     minWidth: 200,
-    padding: `${Gap.md}px ${Gap.xl}px`,
-    borderRadius: Radius.sm,
+    height: 48,
+    padding: `0 ${Gap.xl}px`,
+    boxSizing: 'border-box' as const,
+    borderRadius: Radius.full,
     ...frostedCard,
     color: Colors.textPrimary,
     fontSize: Font.md,
@@ -982,9 +1007,9 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative' as const,
-    width: Size.control,
-    height: Size.control,
-    borderRadius: Radius.xs,
+    width: 48,
+    height: 48,
+    borderRadius: Radius.full,
     ...frostedCard,
     color: Colors.textTertiary,
     cursor: 'pointer',

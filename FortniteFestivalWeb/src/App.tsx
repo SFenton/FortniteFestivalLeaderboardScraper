@@ -234,7 +234,7 @@ function AppShell() {
             <HeaderSearch />
             <button
               style={styles.headerProfileBtn}
-              onClick={() => setPlayerModalOpen(true)}
+              onClick={() => player ? navigate('/statistics') : setPlayerModalOpen(true)}
               aria-label="Profile"
             >
               <span style={player ? styles.headerProfileCircle : styles.headerProfileCircleEmpty}>
@@ -249,7 +249,7 @@ function AppShell() {
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         onDeselect={handleDeselect}
-        onSelect={handleSelect}
+        onSelectPlayer={() => { setSidebarOpen(false); setPlayerModalOpen(true); }}
       />
 
       <div id="main-content" key={player?.accountId ?? 'none'} style={styles.content}>
@@ -432,7 +432,7 @@ function HeaderSearch() {
   return (
     <div ref={containerRef} style={styles.headerSearchContainer}>
       <div style={styles.headerSearchInputWrap}>
-        <IoSearch size={14} style={{ color: Colors.textTertiary, flexShrink: 0 }} />
+        <IoSearch size={16} style={{ color: Colors.textTertiary, flexShrink: 0 }} />
         <input
           style={styles.headerSearchInput}
           placeholder="Search player…"
@@ -470,13 +470,13 @@ function Sidebar({
   open,
   onClose,
   onDeselect,
-  onSelect,
+  onSelectPlayer,
 }: {
   player: TrackedPlayer | null;
   open: boolean;
   onClose: () => void;
   onDeselect: () => void;
-  onSelect: (p: TrackedPlayer) => void;
+  onSelectPlayer: () => void;
 }) {
   const sidebarRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
@@ -578,8 +578,7 @@ function Sidebar({
           {player ? (
             <div style={styles.sidebarPlayerRow}>
               <Link
-                to={`/player/${player.accountId}`}
-                state={{ backTo: location.pathname }}
+                to="/statistics"
                 onClick={onClose}
                 style={{
                   ...styles.sidebarLink,
@@ -601,7 +600,15 @@ function Sidebar({
               </button>
             </div>
           ) : (
-            <SidebarPlayerSearch onSelect={(p) => { onSelect(p); }} />
+            <button
+              style={{ ...styles.sidebarLink, display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer' }}
+              onClick={onSelectPlayer}
+            >
+              <span style={styles.profileCircleEmpty}>
+                <IoPerson size={14} />
+              </span>
+              Select Player
+            </button>
           )}
           <NavLink
             to="/settings"
@@ -616,161 +623,6 @@ function Sidebar({
         </div>
       </div>
     </>
-  );
-}
-
-const ACCORDION_DURATION = 200;
-
-function SidebarPlayerSearch({ onSelect }: { onSelect: (p: TrackedPlayer) => void }) {
-  const [expanded, setExpanded] = useState(false);
-  const [contentReady, setContentReady] = useState(false);
-  const [dismissing, setDismissing] = useState(false);
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<AccountSearchResult[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [resultSeq, setResultSeq] = useState(0);
-  const pendingSelectRef = useRef<TrackedPlayer | null>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const search = useCallback(async (q: string) => {
-    if (q.length < 2) {
-      setResults([]);
-      return;
-    }
-    setLoading(true);
-    setResults([]);
-    try {
-      const res = await api.searchAccounts(q, 10);
-      setResults(res.results);
-      setResultSeq(s => s + 1);
-    } catch {
-      setResults([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const handleChange = (value: string) => {
-    setQuery(value);
-    if (value.trim().length < 2) {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      setResults([]);
-      setLoading(false);
-      return;
-    }
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      void search(value.trim());
-    }, 300);
-  };
-
-  const handleSelect = (r: AccountSearchResult) => {
-    if (dismissing) return;
-    pendingSelectRef.current = { accountId: r.accountId, displayName: r.displayName };
-    setDismissing(true);
-    // Stagger out: results at 0ms, search bar at 150ms, each 400ms anim
-    // After content fades, collapse accordion then fire onSelect
-    setTimeout(() => {
-      setExpanded(false);
-      setContentReady(false);
-      setDismissing(false);
-      setQuery('');
-      setResults([]);
-      setTimeout(() => {
-        if (pendingSelectRef.current) {
-          onSelect(pendingSelectRef.current);
-          pendingSelectRef.current = null;
-        }
-      }, ACCORDION_DURATION);
-    }, 550);
-  };
-
-  const toggle = () => {
-    if (dismissing) return;
-    if (expanded) {
-      // Closing: stagger out then collapse
-      setDismissing(true);
-      setTimeout(() => {
-        setExpanded(false);
-        setContentReady(false);
-        setDismissing(false);
-        setQuery('');
-        setResults([]);
-      }, 550);
-    } else {
-      // Opening
-      setExpanded(true);
-      setTimeout(() => {
-        setContentReady(true);
-        inputRef.current?.focus();
-      }, ACCORDION_DURATION);
-    }
-  };
-
-  const stagger = (delayMs: number, dismissDelayMs?: number): React.CSSProperties =>
-    dismissing
-      ? { animation: `fadeOutDown 400ms ease-in ${dismissDelayMs ?? delayMs}ms forwards` }
-      : contentReady
-        ? { opacity: 0, animation: `fadeInUp 400ms ease-out ${delayMs}ms forwards` }
-        : { opacity: 0 };
-
-  return (
-    <div>
-      <button style={styles.selectPlayerBtn} onClick={toggle}>
-        <span style={styles.profileCircle}>
-          <IoPerson size={14} />
-        </span>
-        Select Player
-        <span style={{
-          ...styles.accordionChevron,
-          transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)',
-        }}>▾</span>
-      </button>
-      <div style={{
-        overflow: 'hidden',
-        maxHeight: expanded ? 360 : 0,
-        transition: `max-height ${ACCORDION_DURATION}ms ease`,
-      }}>
-        <div style={styles.accordionBody}>
-          <div style={stagger(0, 150)}>
-            <input
-              ref={inputRef}
-              style={styles.sidebarSearchInput}
-              placeholder="Search player…"
-              value={query}
-              onChange={(e) => handleChange(e.target.value)}
-            />
-          </div>
-          <div style={{ ...styles.accordionResults, ...stagger(150, 0) }}>
-            {loading && (
-              <div style={styles.sidebarSpinnerWrap}>
-                <div style={styles.sidebarArcSpinner} />
-              </div>
-            )}
-            {!loading && query.length < 2 && (
-              <div style={styles.sidebarSearchHintCentered}>Enter a username to search for.</div>
-            )}
-            {!loading && query.length >= 2 && results.length === 0 && (
-              <div style={styles.sidebarSearchHintCentered}>No matching username found.</div>
-            )}
-            {!loading && results.map((r, i) => (
-              <button
-                key={`${resultSeq}-${r.accountId}`}
-                style={{
-                  ...styles.sidebarSearchResult,
-                  opacity: 0,
-                  animation: `fadeInUp 300ms ease-out ${i * 50}ms forwards`,
-                }}
-                onClick={() => handleSelect(r)}
-              >
-                {r.displayName}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -1279,7 +1131,6 @@ const styles: Record<string, React.CSSProperties> = {
     width: 36,
     height: 36,
     padding: 6,
-    marginLeft: -6,
     background: 'none',
     border: 'none',
     cursor: 'pointer',
@@ -1333,8 +1184,10 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: Gap.sm,
-    padding: `${Gap.md}px ${Gap.xl}px`,
+    height: 48,
+    padding: `0 ${Gap.xl}px`,
     borderRadius: Radius.full,
+    boxSizing: 'border-box' as const,
     ...frostedCard,
   },
   headerSearchInput: {
@@ -1343,7 +1196,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     outline: 'none',
     color: Colors.textPrimary,
-    fontSize: Font.sm,
+    fontSize: Font.md,
   },
   headerSearchDropdown: {
     position: 'absolute' as const,
@@ -1439,6 +1292,19 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     marginRight: Gap.md,
   },
+  profileCircleEmpty: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 28,
+    height: 28,
+    borderRadius: '50%',
+    backgroundColor: '#D0D5DD',
+    border: 'none',
+    color: '#4A5568',
+    flexShrink: 0,
+    marginRight: Gap.md,
+  },
   headerProfileBtn: {
     display: 'flex',
     alignItems: 'center',
@@ -1447,7 +1313,6 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     cursor: 'pointer',
     padding: 0,
-    marginRight: -4,
   },
   headerProfileCircle: {
     display: 'flex',
