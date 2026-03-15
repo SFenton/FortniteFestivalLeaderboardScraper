@@ -10,6 +10,7 @@ import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
 import { useFabSearch } from '../contexts/FabSearchContext';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useStaggerRush } from '../hooks/useStaggerRush';
+import { useScrollRestore, clearScrollCache } from '../hooks/useScrollRestore';
 import type { Song, PlayerScore, InstrumentKey } from '../models';
 import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth, goldFill, goldOutline, goldOutlineSkew, frostedCard, frostedCardLight } from '../theme';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../components/InstrumentIcons';
@@ -31,7 +32,6 @@ import {
   isFilterActive,
 } from '../components/songSettings';
 
-let _savedScrollTop = 0;
 let _songsHasRendered = false;
 
 export default function SongsPage() {
@@ -46,20 +46,10 @@ export default function SongsPage() {
   const navType = useNavigationType();
   const location = useLocation();
   const forceRestagger = !!(location.state as any)?.restagger;
-  // POP fires for both back-nav and fresh page load/refresh;
-  // only treat it as back-nav if we have a saved scroll position from a prior visit.
-  const isBackNav = navType === 'POP' && _savedScrollTop > 0;
+  const isBackNav = navType === 'POP';
 
-  // Restore scroll position on back navigation or tab switch.
-  // With content-visibility: auto, restoring deep scroll positions is unreliable,
-  // so we only restore on POP (browser back) and reset to top on tab switches.
-  useEffect(() => {
-    if (!isBackNav) return;
-    const el = scrollRef.current;
-    if (el && _savedScrollTop > 0) {
-      el.scrollTop = _savedScrollTop;
-    }
-  }, []);
+  // Unified scroll position save/restore
+  const saveScroll = useScrollRestore(scrollRef, 'songs', navType);
 
   const [search, setSearchLocal] = useState(fabSearch.query);
   const setSearch = useCallback((q: string) => {
@@ -421,7 +411,7 @@ export default function SongsPage() {
     if (loadPhase === 'contentIn' && isSettingsChangeRef.current && scrollRef.current) {
       isSettingsChangeRef.current = false;
       scrollRef.current.scrollTop = 0;
-      _savedScrollTop = 0;
+      clearScrollCache('songs');
     }
   }, [loadPhase]);
 
@@ -431,12 +421,10 @@ export default function SongsPage() {
   // Save scroll position continuously + update fade
   const rushOnScroll = useStaggerRush(scrollRef);
   const handleScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    _savedScrollTop = el.scrollTop;
+    saveScroll();
     updateScrollMask();
     rushOnScroll();
-  }, [updateScrollMask, rushOnScroll]);
+  }, [saveScroll, updateScrollMask, rushOnScroll]);
 
   if (error) {
     return <div style={styles.center}>{error}</div>;
