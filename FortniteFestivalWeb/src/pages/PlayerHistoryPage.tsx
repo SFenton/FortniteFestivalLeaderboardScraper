@@ -5,6 +5,7 @@ import { IoSwapVerticalSharp } from 'react-icons/io5';
 import { useFestival } from '../contexts/FestivalContext';
 import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
 import { useFabSearch } from '../contexts/FabSearchContext';
+import { useModalState } from '../hooks/useModalState';
 import { api } from '../api/client';
 import {
   INSTRUMENT_LABELS,
@@ -64,22 +65,17 @@ export default function PlayerHistoryPage() {
   const DEFAULT_SORT: PlayerScoreSortDraft = { sortMode: 'score', sortAscending: false };
   const [sortMode, setSortMode] = useState<PlayerScoreSortMode>('score');
   const [sortAscending, setSortAscending] = useState(false);
-  const [showSort, setShowSort] = useState(false);
-  const [sortDraft, setSortDraft] = useState<PlayerScoreSortDraft>({ sortMode: 'score', sortAscending: false });
+  const sortModal = useModalState(() => DEFAULT_SORT);
   const [staggerKey, setStaggerKey] = useState(0);
 
   const openSort = useCallback(() => {
-    setSortDraft({ sortMode, sortAscending });
-    setShowSort(true);
-  }, [sortMode, sortAscending]);
+    sortModal.open({ sortMode, sortAscending });
+  }, [sortMode, sortAscending, sortModal]);
   const applySort = () => {
-    setSortMode(sortDraft.sortMode);
-    setSortAscending(sortDraft.sortAscending);
-    setShowSort(false);
+    setSortMode(sortModal.draft.sortMode);
+    setSortAscending(sortModal.draft.sortAscending);
+    sortModal.close();
     setStaggerKey(k => k + 1);
-  };
-  const resetSort = () => {
-    setSortDraft({ ...DEFAULT_SORT });
   };
 
   // Register sort action for FAB
@@ -331,12 +327,12 @@ export default function PlayerHistoryPage() {
       </div>
 
       <PlayerScoreSortModal
-        visible={showSort}
-        draft={sortDraft}
+        visible={sortModal.visible}
+        draft={sortModal.draft}
         savedDraft={{ sortMode, sortAscending }}
-        onChange={setSortDraft}
-        onCancel={() => setShowSort(false)}
-        onReset={resetSort}
+        onChange={sortModal.setDraft}
+        onCancel={sortModal.close}
+        onReset={sortModal.reset}
         onApply={applySort}
       />
     </div>

@@ -29,6 +29,7 @@ import { useFabSearch } from '../contexts/FabSearchContext';
 import { useScrollFade } from '../hooks/useScrollFade';
 import { useStaggerRush } from '../hooks/useStaggerRush';
 import { useLoadPhase } from '../hooks/useLoadPhase';
+import { useModalState } from '../hooks/useModalState';
 import FadeInDiv from '../components/FadeInDiv';
 import { CategoryCard } from '../components/suggestions/CategoryCard';
 import type { InstrumentKey as ServerInstrumentKey } from '../models';
@@ -156,24 +157,22 @@ export default function SuggestionsPage({ accountId }: Props) {
 
   // Suggestions filter state
   const [filterSettings, setFilterSettings] = useState<SuggestionsFilterDraft>(loadSuggestionsFilter);
-  const [showFilter, setShowFilter] = useState(false);
-  const [filterDraft, setFilterDraft] = useState<SuggestionsFilterDraft>(() => ({ ...filterSettings }));
+  const filterModal = useModalState<SuggestionsFilterDraft>(defaultSuggestionsFilterDraft);
 
   useEffect(() => { saveSuggestionsFilter(filterSettings); }, [filterSettings]);
 
   const openFilter = () => {
-    setFilterDraft({ ...filterSettings });
-    setShowFilter(true);
+    filterModal.open({ ...filterSettings });
   };
   const applyFilter = () => {
-    setFilterSettings(filterDraft);
-    setShowFilter(false);
+    setFilterSettings(filterModal.draft);
+    filterModal.close();
   };
   const resetFilter = () => {
     const defaults = defaultSuggestionsFilterDraft();
-    setFilterDraft(defaults);
+    filterModal.setDraft(defaults);
     setFilterSettings(defaults);
-    setShowFilter(false);
+    filterModal.close();
   };
 
   const filtersActive = isSuggestionsFilterActive(filterSettings);
@@ -334,12 +333,12 @@ export default function SuggestionsPage({ accountId }: Props) {
           </div>
         </div>
         <SuggestionsFilterModal
-          visible={showFilter}
-          draft={filterDraft}
+          visible={filterModal.visible}
+          draft={filterModal.draft}
           savedDraft={filterSettings}
           instrumentVisibility={instrumentVisibility}
-          onChange={setFilterDraft}
-          onCancel={() => setShowFilter(false)}
+          onChange={filterModal.setDraft}
+          onCancel={filterModal.close}
           onReset={resetFilter}
           onApply={applyFilter}
         />
@@ -423,12 +422,12 @@ export default function SuggestionsPage({ accountId }: Props) {
       </div>
 
       <SuggestionsFilterModal
-        visible={showFilter}
-        draft={filterDraft}
+        visible={filterModal.visible}
+        draft={filterModal.draft}
         savedDraft={filterSettings}
         instrumentVisibility={instrumentVisibility}
-        onChange={setFilterDraft}
-        onCancel={() => setShowFilter(false)}
+        onChange={filterModal.setDraft}
+        onCancel={filterModal.close}
         onReset={resetFilter}
         onApply={applyFilter}
       />
