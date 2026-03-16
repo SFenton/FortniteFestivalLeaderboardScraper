@@ -1,32 +1,8 @@
 import { memo, type CSSProperties } from 'react';
-import { Colors, Size } from '@festival/theme';
+import { Colors } from '@festival/theme';
+import css from './MiniStars.module.css';
 
 const BASE = import.meta.env.BASE_URL;
-
-const miniStarRow: CSSProperties = {
-  display: 'inline-flex',
-  gap: 3,
-  alignItems: 'center',
-  justifyContent: 'flex-end',
-  width: 132,
-};
-
-const miniStarCircle: CSSProperties = {
-  width: Size.iconSm,
-  height: Size.iconSm,
-  borderRadius: '50%',
-  border: '1.5px solid transparent',
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  overflow: 'hidden',
-};
-
-const miniStarIcon: CSSProperties = {
-  width: 20,
-  height: 20,
-  objectFit: 'contain',
-};
 
 /**
  * Compact star display matching the mobile MiniStars component.
@@ -38,10 +14,10 @@ const MiniStars = memo(function MiniStars({ starsCount, isFullCombo }: { starsCo
   const src = allGold ? `${BASE}star_gold.png` : `${BASE}star_white.png`;
   const outline = (isFullCombo || allGold) ? Colors.gold : 'transparent';
   return (
-    <span style={miniStarRow}>
+    <span className={css.row}>
       {Array.from({ length: displayCount }).map((_, i) => (
-        <span key={i} style={{ ...miniStarCircle, borderColor: outline }}>
-          <img src={src} alt="★" style={miniStarIcon} />
+        <span key={i} className={css.circle} style={{ '--star-outline': outline } as CSSProperties}>
+          <img src={src} alt="★" className={css.icon} />
         </span>
       ))}
     </span>

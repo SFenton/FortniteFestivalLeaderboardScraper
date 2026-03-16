@@ -1,5 +1,5 @@
 import { useState, useCallback, memo, type CSSProperties } from 'react';
-import { Colors, Radius } from '../theme';
+import css from './AlbumArt.module.css';
 
 const spinnerSize = 24;
 
@@ -9,58 +9,27 @@ export default memo(function AlbumArt({ src, size, style }: { src?: string; size
   const handleLoad = useCallback(() => setLoaded(true), []);
   const handleError = useCallback(() => { setFailed(true); setLoaded(true); }, []);
 
-  const base: CSSProperties = {
-    width: size,
-    height: size,
-    borderRadius: Radius.xs,
-    flexShrink: 0,
-    position: 'relative',
-    overflow: 'hidden',
-    backgroundColor: 'transparent',
-    ...style,
-  };
+  const sizeVars = { '--album-size': `${size}px`, ...style } as CSSProperties;
 
   if (!src || failed) {
-    return <div style={base} />;
+    return <div className={css.root} style={sizeVars} />;
   }
 
   return (
-    <div style={base}>
-      {/* Spinner — removed from DOM once loaded */}
+    <div className={css.root} style={sizeVars}>
       {!loaded && (
-        <div style={{
-          position: 'absolute',
-          inset: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          pointerEvents: 'none',
-        }}>
-          <div style={{
-            width: spinnerSize,
-            height: spinnerSize,
-            border: '2px solid rgba(255,255,255,0.10)',
-            borderTopColor: Colors.accentPurple,
-            borderRadius: '50%',
-            animation: 'spin 0.8s linear infinite',
-          }} />
+        <div className={css.spinnerWrap}>
+          <div className={css.spinnerCircle} style={{ width: spinnerSize, height: spinnerSize }} />
         </div>
       )}
-      {/* Image — fades in when loaded */}
       <img
         src={src}
         alt=""
         loading="lazy"
         onLoad={handleLoad}
         onError={handleError}
-        style={{
-          width: size,
-          height: size,
-          objectFit: 'cover',
-          borderRadius: Radius.xs,
-          opacity: loaded ? 1 : 0,
-          transition: 'opacity 300ms ease',
-        }}
+        className={css.image}
+        style={{ width: size, height: size, borderRadius: 'var(--radius-xs)', opacity: loaded ? 1 : 0 }}
       />
     </div>
   );

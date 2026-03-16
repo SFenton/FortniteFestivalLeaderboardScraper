@@ -1,0 +1,8 @@
+.wrapper {
+  opacity: var(--fade-opacity, 0);
+  animation: var(--fade-animation, none);
+}
+
+.hidden {
+  opacity: 0;
+}
