@@ -1,0 +1,207 @@
+.page {
+  composes: pageShell from '../styles/shared.module.css';
+  background-color: var(--color-bg-app);
+  color: var(--color-text-primary);
+  position: relative;
+}
+
+.scrollArea {
+  composes: scrollContainer from '../styles/shared.module.css';
+  position: relative;
+}
+
+.bgImage {
+  position: fixed;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.bgDim {
+  position: fixed;
+  inset: 0;
+  background-color: var(--color-overlay-dark);
+  pointer-events: none;
+}
+
+.container {
+  composes: pageContent from '../styles/shared.module.css';
+  position: relative;
+  z-index: 1;
+}
+
+.headerBar {
+  position: relative;
+  z-index: 2;
+  flex-shrink: 0;
+}
+
+.headerContent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-section);
+  min-width: 0;
+}
+
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-md);
+  flex-shrink: 0;
+  padding-right: var(--gap-md);
+}
+
+.sortBtn {
+  composes: frostedCard from '../styles/shared.module.css';
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  width: var(--size-thumb);
+  height: var(--size-thumb);
+  border-radius: var(--radius-xs);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.headerArt {
+  width: 80px;
+  height: 80px;
+  border-radius: var(--radius-md);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.artPlaceholder {
+  composes: headerArt;
+  background-color: var(--color-accent-purple-dark);
+}
+
+.songTitle {
+  font-size: var(--font-title);
+  font-weight: 700;
+  margin-bottom: var(--gap-xs);
+}
+
+.songArtist {
+  font-size: var(--font-md);
+  color: var(--color-text-subtle);
+}
+
+.instLabel {
+  font-size: var(--font-xl);
+  font-weight: 600;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+}
+
+.row {
+  composes: frostedCard from '../styles/shared.module.css';
+  composes: flexRow from '../styles/shared.module.css';
+  gap: var(--gap-xl);
+  padding: 0 var(--gap-xl);
+  height: 48px;
+  border-radius: var(--radius-md);
+  color: inherit;
+  font-size: var(--font-md);
+}
+
+.rowHighlight {
+  composes: row;
+  background-color: rgba(75, 15, 99, 0.75);
+  border: 1px solid rgba(124, 58, 237, 0.5);
+}
+
+.emptyRow {
+  padding: var(--gap-xl);
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.colName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.colScore {
+  flex-shrink: 0;
+  text-align: right;
+  font-weight: 600;
+  font-size: var(--font-lg);
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.seasonScoreGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-md);
+  flex-shrink: 0;
+}
+
+.colAcc {
+  width: 64px;
+  flex-shrink: 0;
+  text-align: center;
+  font-weight: 600;
+  font-size: var(--font-lg);
+  color: var(--color-accent-blue-bright);
+  font-variant-numeric: tabular-nums;
+}
+
+.fcAccBadge {
+  font-size: var(--font-lg);
+  text-align: center;
+  background: linear-gradient(135deg, var(--color-gold) 0%, var(--color-gold-stroke) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: 700;
+  font-style: italic;
+  transform: skewX(-8deg);
+  display: inline-block;
+}
+
+.spinnerContainer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(100vh - 350px);
+}
+
+.arcSpinner {
+  composes: spinner from '../styles/shared.module.css';
+  width: 48px;
+  height: 48px;
+  border-width: 4px;
+  border-top-color: var(--color-accent-purple);
+}
+
+.center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-lg);
+}
+
+.centerError {
+  composes: center;
+  color: var(--color-status-red);
+}
