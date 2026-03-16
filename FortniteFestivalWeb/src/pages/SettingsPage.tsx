@@ -203,18 +203,18 @@ export default function SettingsPage() {
 
           {/* ───── App Settings ───── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <div className={css.sectionTitle}>App Settings</div>
-          <div className={css.sectionHint}>General Festival Score Tracker app settings.</div>
+          <div className={css.sectionTitle}>{t('settings.appSettings')}</div>
+          <div className={css.sectionHint}>{t('settings.appSettingsHint')}</div>
           <Card>
             <ToggleRow
-              label="Show Instrument Icons"
+              label={t('settings.showInstrumentIcons')}
               description="Display instrument icons on each song row showing which parts have leaderboard scores or FCs."
               checked={!settings.songsHideInstrumentIcons}
               onToggle={() => updateSettings({ songsHideInstrumentIcons: !settings.songsHideInstrumentIcons })}
               large={isMobile}
             />
             <ToggleRow
-              label="Enable Independent Song Row Visual Order"
+              label={t('settings.enableVisualOrder')}
               description="When enabled, the metadata display order on song rows is controlled separately from sort priority. When disabled, metadata follows sort priority order."
               checked={settings.songRowVisualOrderEnabled}
               onToggle={() => updateSettings({ songRowVisualOrderEnabled: !settings.songRowVisualOrderEnabled })}
@@ -235,7 +235,7 @@ export default function SettingsPage() {
               </div>
             )}
             <ToggleRow
-              label="Filter Out Invalid Score Values"
+              label={t('settings.filterInvalidScores')}
               description="When enabled, the app will attempt to filter out invalid leaderboard values based on the maximum score derived from the CHOpt path."
               checked={settings.filterInvalidScores}
               onToggle={() => updateSettings({ filterInvalidScores: !settings.filterInvalidScores })}
@@ -262,8 +262,8 @@ export default function SettingsPage() {
 
           {/* ───── Show Instruments ───── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <div className={css.sectionTitle}>Show Instruments</div>
-          <div className={css.sectionHint}>Choose which instruments to display throughout the app.</div>
+          <div className={css.sectionTitle}>{t('settings.showInstruments')}</div>
+          <div className={css.sectionHint}>{t('settings.showInstrumentsHint')}</div>
           <Card>
             {INSTRUMENT_SHOW_MAP.map(inst => (
               <ToggleRow
@@ -281,7 +281,7 @@ export default function SettingsPage() {
 
           {/* ───── Show Instrument Metadata ───── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <div className={css.sectionTitle}>Show Instrument Metadata</div>
+          <div className={css.sectionTitle}>{t('settings.showMetadata')}</div>
           <div className={css.sectionHint}>
             When filtering songs down to one instrument in the song list, extra metadata for that song can appear. Choose what you'd like to see in the song row here.
           </div>
@@ -300,19 +300,19 @@ export default function SettingsPage() {
 
           {/* ───── Festival Score Tracker Version ───── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <div className={css.sectionTitle}>Festival Score Tracker Version</div>
-          <div className={css.sectionHint}>Festival Score Tracker information to help with debugging.</div>
+          <div className={css.sectionTitle}>{t('settings.versionTitle')}</div>
+          <div className={css.sectionHint}>{t('settings.versionHint')}</div>
           <Card>
             <div className={css.versionRow}>
-              <span>App Version</span>
+              <span>{t('settings.appVersion')}</span>
               <span className={css.versionValue}>{APP_VERSION}</span>
             </div>
             <div className={css.versionRow}>
-              <span>Service Version</span>
+              <span>{t('settings.serviceVersion')}</span>
               <span className={css.versionValue}>{serviceVersion ?? 'Loading…'}</span>
             </div>
             <div className={css.versionRow}>
-              <span>@festival/core Version</span>
+              <span>{t('settings.coreVersion')}</span>
               <span className={css.versionValue}>{CORE_VERSION}</span>
             </div>
           </Card>

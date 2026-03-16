@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { IoSearch, IoClose, IoPerson } from 'react-icons/io5';
 import type { TrackedPlayer } from '../../hooks/useTrackedPlayer';
 import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../../hooks/useVisualViewport';
@@ -21,6 +22,7 @@ interface Props {
 export default function MobilePlayerSearchModal({
   visible, onClose, onSelect, player, onDeselect, isMobile, title = 'Select Player Profile',
 }: Props) {
+  const { t } = useTranslation();
   const [mounted, setMounted] = useState(false);
   const [animIn, setAnimIn] = useState(false);
   const [contentReady, setContentReady] = useState(false);
@@ -124,8 +126,8 @@ export default function MobilePlayerSearchModal({
             <div style={styles.playerCard}>
               <span style={{ ...styles.profileCircleLg, ...stagger(dismissing ? 450 : 0) }}><IoPerson size={32} /></span>
               <span style={{ ...styles.playerName, ...stagger(dismissing ? 300 : 150) }}>{player.displayName}</span>
-              <span style={{ ...styles.deselectHint, ...stagger(dismissing ? 150 : 300) }}>Deselecting will hide suggestions, statistics, and per-song scores from the song list.</span>
-              <button style={{ ...styles.deselectBtn, ...stagger(dismissing ? 0 : 450), ...(dismissing ? { pointerEvents: 'none' as const } : {}) }} onClick={handleDeselect}>Deselect Player</button>
+              <span style={{ ...styles.deselectHint, ...stagger(dismissing ? 150 : 300) }}>{t('common.deselectHint')}</span>
+              <button style={{ ...styles.deselectBtn, ...stagger(dismissing ? 0 : 450), ...(dismissing ? { pointerEvents: 'none' as const } : {}) }} onClick={handleDeselect}>{t('common.deselectPlayer')}</button>
             </div>
           )}
           {!player && (
@@ -136,8 +138,8 @@ export default function MobilePlayerSearchModal({
               </div>
               <div style={{ ...styles.results, ...stagger(150) }}>
                 {showSpinner && (<div style={{ ...styles.spinnerWrap, opacity: spinnerOpacity, transition: 'opacity 250ms ease' }} onTransitionEnd={handleSpinnerTransitionEnd}><div style={styles.arcSpinner} /></div>)}
-                {!showSpinner && !loading && query.length < 2 && (<div style={styles.hintCenter}>Enter a username to search for.</div>)}
-                {!showSpinner && !loading && query.length >= 2 && results.length === 0 && (<div style={styles.hintCenter}>No matching username found.</div>)}
+                {!showSpinner && !loading && query.length < 2 && (<div style={styles.hintCenter}>{t('common.enterUsername')}</div>)}
+                {!showSpinner && !loading && query.length >= 2 && results.length === 0 && (<div style={styles.hintCenter}>{t('common.noMatchingUsername')}</div>)}
                 {!showSpinner && resultsReady && results.map((r, i) => (
                   <button key={`${resultSeq}-${r.accountId}`} style={{ ...styles.resultBtn, opacity: 0, animation: `fadeInUp 300ms ease-out ${i * 50}ms forwards` }} onClick={() => handleSelect(r)}>{r.displayName}</button>
                 ))}
