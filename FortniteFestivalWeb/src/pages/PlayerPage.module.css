@@ -1,0 +1,428 @@
+.page {
+  composes: pageShell from '../styles/shared.module.css';
+  color: var(--color-text-primary);
+}
+
+.scrollArea {
+  composes: scrollContainer from '../styles/shared.module.css';
+  overflow-x: hidden;
+}
+
+.container {
+  max-width: var(--max-width-card);
+  margin: 0 auto;
+  padding: var(--layout-padding-top) var(--layout-padding-h);
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.playerNameBar {
+  max-width: var(--max-width-card);
+  margin: 0 auto;
+  width: 100%;
+  padding: var(--gap-lg) var(--layout-padding-h) 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+  min-height: 58px;
+}
+
+.playerName {
+  font-size: 28px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.subtitle {
+  font-size: var(--font-md);
+  color: var(--color-text-subtle);
+  margin-bottom: var(--gap-section);
+}
+
+.sectionTitle {
+  font-size: var(--font-xl);
+  font-weight: 800;
+  color: var(--color-text-primary);
+  margin-bottom: var(--gap-xs);
+  margin-top: 0;
+}
+
+.sectionDesc {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--gap-xl);
+  margin-top: 0;
+  word-wrap: break-word;
+}
+
+.catDesc {
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+  margin-top: var(--gap-xs);
+  opacity: 0.85;
+}
+
+.syncBanner {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  padding: var(--gap-xl) var(--gap-section);
+  background-color: var(--color-accent-purple-dark);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--gap-section);
+}
+
+.syncSpinner {
+  composes: spinner from '../styles/shared.module.css';
+  width: 24px;
+  height: 24px;
+  border-width: 3px;
+  border-top-color: var(--color-accent-purple);
+  flex-shrink: 0;
+}
+
+.syncTitle {
+  font-size: var(--font-lg);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: var(--gap-xs);
+}
+
+.syncSubtitle {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.syncProgressOuter {
+  margin-top: var(--gap-xs);
+  height: 6px;
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.syncProgressInner {
+  height: 100%;
+  background-color: var(--color-accent-purple);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.syncProgressLabel {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--gap-xs);
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--gap-md);
+  margin-bottom: 36px;
+}
+
+.selectProfileBtn {
+  composes: frostedCard from '../styles/shared.module.css';
+  background-color: rgb(124, 58, 237);
+  border: 1px solid rgba(168, 120, 255, 0.3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 32px 0 var(--gap-section);
+  border-radius: var(--radius-full);
+  color: #fff;
+  font-size: var(--font-lg);
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  height: 48px;
+  white-space: nowrap;
+}
+
+.gridList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--gap-md);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.gridFullWidth {
+  grid-column: 1 / -1;
+}
+
+.instCard {
+  composes: frostedCard from '../styles/shared.module.css';
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.instCardHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-md);
+  padding-bottom: var(--gap-sm);
+}
+
+.instCardTitle {
+  font-size: var(--font-xl);
+  font-weight: 600;
+}
+
+.instCardSubtitle {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.instCardBody {
+  padding: var(--gap-xl);
+}
+
+.instSummaryGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--gap-md);
+  margin-bottom: var(--gap-xl);
+}
+
+.pctTablePanel {
+  composes: frostedCard from '../styles/shared.module.css';
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  margin-bottom: var(--gap-xl);
+}
+
+.pctRowHeader {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--gap-md) var(--gap-xl);
+  border-bottom: 1px solid var(--color-glass-border);
+}
+
+.pctHeaderText {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.pctRowItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--gap-md) var(--gap-xl);
+  border-bottom: 1px solid var(--color-glass-border);
+  cursor: pointer;
+  transition: background-color 0.15s;
+  font-size: var(--font-md);
+  color: var(--color-text-primary);
+  min-width: 0;
+}
+
+.pctGoldBadge {
+  background: linear-gradient(135deg, var(--color-gold) 0%, var(--color-gold-stroke) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: 700;
+  font-style: italic;
+  transform: skewX(-8deg);
+  display: inline-block;
+}
+
+.pctGoldPill {
+  background: linear-gradient(135deg, var(--color-gold) 0%, var(--color-gold-stroke) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: 700;
+  display: inline-block;
+}
+
+.pctPlainLabel {
+  padding: var(--gap-xs) var(--gap-sm);
+  border: 2px solid transparent;
+  display: inline-block;
+  font-weight: 600;
+}
+
+.topSongs {
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: var(--gap-xl);
+}
+
+.topSongsTitle {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: block;
+  margin-bottom: var(--gap-md);
+}
+
+.topSongRow {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-md);
+  padding: var(--gap-sm) 0;
+  text-decoration: none;
+  color: inherit;
+}
+
+.topSongThumb {
+  width: var(--size-thumb);
+  height: var(--size-thumb);
+  border-radius: var(--radius-xs);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.topSongText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.topSongName {
+  font-size: var(--font-md);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topSongArtist {
+  font-size: var(--font-sm);
+  color: var(--color-text-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topSongRight {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.topSongScore {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--color-accent-blue-bright);
+  font-variant-numeric: tabular-nums;
+  display: block;
+}
+
+.topSongMeta {
+  font-size: var(--font-xs);
+  color: var(--color-gold);
+}
+
+.songListHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-md);
+  padding: var(--gap-md) var(--gap-xl);
+  border-bottom: 1px solid var(--color-glass-border);
+}
+
+.songListTitle {
+  display: block;
+  font-size: var(--font-md);
+  font-weight: 600;
+}
+
+.songListSubtitle {
+  display: block;
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+}
+
+.songListRow {
+  composes: frostedCard from '../styles/shared.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  padding: 0 var(--gap-xl);
+  height: 64px;
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: inherit;
+  transition: background-color 0.15s;
+}
+
+.percentilePill {
+  font-size: var(--font-lg);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background-color: rgba(255, 255, 255, 0.1);
+  padding: var(--gap-xs) var(--gap-md);
+  border-radius: var(--radius-xs);
+  text-align: center;
+  display: inline-block;
+}
+
+.percentileBadgeTop1 {
+  composes: pctGoldBadge;
+  font-size: var(--font-lg);
+  text-align: center;
+}
+
+.percentileBadgeTop5 {
+  composes: pctGoldPill;
+  font-size: var(--font-lg);
+  text-align: center;
+}
+
+.percentilePillGold {
+  composes: pctGoldPill;
+}
+
+.accuracyPill {
+  font-size: var(--font-lg);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background-color: rgba(255, 255, 255, 0.1);
+  padding: var(--gap-xs) var(--gap-md);
+  border-radius: var(--radius-xs);
+  min-width: 70px;
+  text-align: center;
+  display: inline-block;
+}
+
+.accuracyBadgeFC {
+  composes: pctGoldBadge;
+  font-size: var(--font-lg);
+  text-align: center;
+}
+
+.center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+}
+
+.arcSpinner {
+  composes: spinner from '../styles/shared.module.css';
+  width: 48px;
+  height: 48px;
+  border-width: 4px;
+  border-top-color: var(--color-accent-purple);
+}
+
+.centerError {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  color: var(--color-status-red);
+  background-color: var(--color-bg-app);
+  font-size: var(--font-lg);
+}
