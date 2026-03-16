@@ -1,1 +1,0 @@
-import{r as e}from"./index-DeUDawsO.js";function b(t){const[o,a]=e.useState(!1),[r,s]=e.useState(t),c=e.useCallback(u=>{s(u),a(!0)},[]),l=e.useCallback(()=>{a(!1)},[]),n=e.useCallback(()=>{s(t())},[t]);return{visible:o,draft:r,setDraft:s,open:c,close:l,reset:n}}export{b as u};

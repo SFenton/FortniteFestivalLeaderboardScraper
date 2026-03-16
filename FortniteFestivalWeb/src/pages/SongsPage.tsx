@@ -13,6 +13,8 @@ import { useFabSearch } from '../contexts/FabSearchContext';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useStaggerRush } from '../hooks/useStaggerRush';
 import { useScrollRestore, clearScrollCache } from '../hooks/useScrollRestore';
+import { useFilteredSongs } from '../hooks/useFilteredSongs';
+import { useModalState } from '../hooks/useModalState';
 import type { Song, PlayerScore, InstrumentKey } from '../models';
 import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth, goldFill, goldOutline, goldOutlineSkew, frostedCard, frostedCardLight } from '@festival/theme';
 import s from './SongsPage.module.css';
@@ -87,16 +89,14 @@ export default function SongsPage() {
     () => settings.instrument ?? 'Solo_Guitar',
   );
 
-  // Sort/Filter modal visibility + drafts
-  const [showSort, setShowSort] = useState(false);
-  const [showFilter, setShowFilter] = useState(false);
-  const [sortDraft, setSortDraft] = useState<SortDraft>(() => ({
+  // Sort/Filter modal state
+  const sortModal = useModalState<SortDraft>(() => ({
     sortMode: settings.sortMode,
     sortAscending: settings.sortAscending,
     metadataOrder: settings.metadataOrder,
     instrumentOrder: settings.instrumentOrder,
   }));
-  const [filterDraft, setFilterDraft] = useState<FilterDraft>(() => ({
+  const filterModal = useModalState<FilterDraft>(() => ({
     ...settings.filters,
     instrumentFilter: settings.instrument,
   }));
@@ -105,35 +105,33 @@ export default function SongsPage() {
   useEffect(() => { savingRef.current = true; saveSongSettings(settings); savingRef.current = false; }, [settings]);
 
   const openSort = () => {
-    setSortDraft({
+    sortModal.open({
       sortMode: settings.sortMode,
       sortAscending: settings.sortAscending,
       metadataOrder: settings.metadataOrder,
       instrumentOrder: settings.instrumentOrder,
     });
-    setShowSort(true);
   };
   const applySort = () => {
-    setSettings(s => ({ ...s, ...sortDraft }));
-    setShowSort(false);
+    setSettings(s => ({ ...s, ...sortModal.draft }));
+    sortModal.close();
   };
   const resetSort = () => {
     const d = defaultSongSettings();
-    setSortDraft({ sortMode: d.sortMode, sortAscending: d.sortAscending, metadataOrder: d.metadataOrder, instrumentOrder: d.instrumentOrder });
+    sortModal.setDraft({ sortMode: d.sortMode, sortAscending: d.sortAscending, metadataOrder: d.metadataOrder, instrumentOrder: d.instrumentOrder });
   };
 
   const openFilter = () => {
-    setFilterDraft({ ...settings.filters, instrumentFilter: settings.instrument });
-    setShowFilter(true);
+    filterModal.open({ ...settings.filters, instrumentFilter: settings.instrument });
   };
   const applyFilter = () => {
-    const { instrumentFilter, ...filters } = filterDraft;
+    const { instrumentFilter, ...filters } = filterModal.draft;
     setInstrument(instrumentFilter ?? 'Solo_Guitar');
     setSettings(s => ({ ...s, filters, instrument: instrumentFilter }));
-    setShowFilter(false);
+    filterModal.close();
   };
   const resetFilter = () => {
-    setFilterDraft({ ...defaultSongFilters(), instrumentFilter: null });
+    filterModal.setDraft({ ...defaultSongFilters(), instrumentFilter: null });
   };
 
   const filtersActive = isFilterActive(settings.filters) || settings.instrument != null;
@@ -175,142 +173,16 @@ export default function SongsPage() {
     return map;
   }, [playerData]);
 
-  const filtered = useMemo(() => {
-    const q = debouncedSearch.toLowerCase();
-    const f = settings.filters;
-    const hasPlayerData = allScoreMap.size > 0;
-
-    // Pre-compute which instruments have any missing/has filter active
-    const inst = settings.instrument;
-    const filterInstruments = new Set<InstrumentKey>();
-    for (const [k, v] of Object.entries(f.missingScores)) { if (v) filterInstruments.add(k as InstrumentKey); }
-    for (const [k, v] of Object.entries(f.missingFCs)) { if (v) filterInstruments.add(k as InstrumentKey); }
-    for (const [k, v] of Object.entries(f.hasScores)) { if (v) filterInstruments.add(k as InstrumentKey); }
-    for (const [k, v] of Object.entries(f.hasFCs)) { if (v) filterInstruments.add(k as InstrumentKey); }
-    // When an instrument is selected, only that instrument's filters apply
-    const activeFilterInstruments = inst
-      ? (filterInstruments.has(inst) ? [inst] : [])
-      : [...filterInstruments];
-
-    // Pre-compute which filter checks are active
-    const seasonKeys = Object.keys(f.seasonFilter);
-    const checkSeason = hasPlayerData && seasonKeys.length > 0 && seasonKeys.some(k => f.seasonFilter[Number(k)] === false);
-    const pctKeys = Object.keys(f.percentileFilter);
-    const checkPct = hasPlayerData && pctKeys.length > 0 && pctKeys.some(k => f.percentileFilter[Number(k)] === false);
-    const starKeys = Object.keys(f.starsFilter);
-    const checkStars = hasPlayerData && starKeys.length > 0 && starKeys.some(k => f.starsFilter[Number(k)] === false);
-    const diffKeys = Object.keys(f.difficultyFilter);
-    const checkDiff = hasPlayerData && diffKeys.length > 0 && diffKeys.some(k => f.difficultyFilter[Number(k)] === false);
-    const pctThresholds = [1,2,3,4,5,10,15,20,25,30,40,50,60,70,80,90,100];
-
-    // Single-pass filter: combine all filter conditions into one loop
-    let list = songs.filter(s => {
-      // Text search
-      if (q && !s.title.toLowerCase().includes(q) && !s.artist.toLowerCase().includes(q)) return false;
-
-      if (!hasPlayerData) return true;
-
-      const byInst = allScoreMap.get(s.songId);
-
-      // Per-instrument filters: (MS OR HS) AND (MF OR HF) per instrument, OR'd across instruments
-      if (activeFilterInstruments.length > 0) {
-        let anyInstrumentPassed = false;
-        for (const key of activeFilterInstruments) {
-          const ps = byInst?.get(key);
-          const hasScore = !!ps?.score;
-          const hasFC = !!ps?.isFullCombo;
-
-          const ms = f.missingScores[key];
-          const hs = f.hasScores[key];
-          const mf = f.missingFCs[key];
-          const hf = f.hasFCs[key];
-
-          let passed = true;
-          // Score axis: (MS OR HS) — skip if neither is active for this instrument
-          if (ms || hs) {
-            const passedMS = ms && !hasScore;
-            const passedHS = hs && hasScore;
-            if (!passedMS && !passedHS) passed = false;
-          }
-          // FC axis: (MF OR HF) — skip if neither is active for this instrument
-          if (passed && (mf || hf)) {
-            const passedMF = mf && !hasFC;
-            const passedHF = hf && hasFC;
-            if (!passedMF && !passedHF) passed = false;
-          }
-
-          if (passed) { anyInstrumentPassed = true; break; }
-        }
-        if (!anyInstrumentPassed) return false;
-      }
-
-      const score = scoreMap.get(s.songId);
-
-      // Season filter
-      if (checkSeason) {
-        const season = score?.season ?? 0;
-        if (f.seasonFilter[season] === false) return false;
-      }
-
-      // Percentile filter
-      if (checkPct) {
-        if (!score) {
-          if (f.percentileFilter[0] === false) return false;
-        } else {
-          const pct = score.rank > 0 && (score.totalEntries ?? 0) > 0
-            ? Math.min((score.rank / score.totalEntries!) * 100, 100)
-            : undefined;
-          if (pct == null) {
-            if (f.percentileFilter[0] === false) return false;
-          } else {
-            const bracket = pctThresholds.find(t => pct <= t) ?? 100;
-            if (f.percentileFilter[bracket] === false) return false;
-          }
-        }
-      }
-
-      // Stars filter
-      if (checkStars) {
-        const stars = score?.stars ?? 0;
-        if (f.starsFilter[stars] === false) return false;
-      }
-
-      // Difficulty filter
-      if (checkDiff) {
-        const diff = (s as any).difficulty ?? 0;
-        if (f.difficultyFilter[diff] === false) return false;
-      }
-
-      return true;
-    });
-
-    const dir = settings.sortAscending ? 1 : -1;
-    return list.slice().sort((a, b) => {
-      const mode = settings.sortMode;
-      let cmp = 0;
-      switch (mode) {
-        case 'title':
-          cmp = a.title.localeCompare(b.title);
-          break;
-        case 'artist':
-          cmp = a.artist.localeCompare(b.artist);
-          break;
-        case 'year':
-          cmp = (a.year ?? 0) - (b.year ?? 0);
-          break;
-        default:
-          // For instrument-specific modes we need player data
-          if (scoreMap.size > 0) {
-            const sa = scoreMap.get(a.songId);
-            const sb = scoreMap.get(b.songId);
-            cmp = compareByMode(mode, sa, sb);
-          } else {
-            cmp = a.title.localeCompare(b.title);
-          }
-      }
-      return cmp === 0 ? a.title.localeCompare(b.title) * dir : cmp * dir;
-    });
-  }, [songs, debouncedSearch, settings.sortMode, settings.sortAscending, settings.filters, scoreMap, allScoreMap]);
+  const filtered = useFilteredSongs({
+    songs,
+    search: debouncedSearch,
+    sortMode: settings.sortMode,
+    sortAscending: settings.sortAscending,
+    filters: settings.filters,
+    instrument: settings.instrument,
+    scoreMap,
+    allScoreMap,
+  });
 
   const hasPlayer = !!playerData;
 
@@ -617,8 +489,8 @@ export default function SongsPage() {
       {isMobileChrome && <div className={s.fabSpacer} />}
 
       <SortModal
-        visible={showSort}
-        draft={sortDraft}
+        visible={sortModal.visible}
+        draft={sortModal.draft}
         savedDraft={{
           sortMode: settings.sortMode,
           sortAscending: settings.sortAscending,
@@ -635,18 +507,18 @@ export default function SongsPage() {
           intensity: appSettings.metadataShowDifficulty,
           stars: appSettings.metadataShowStars,
         }}
-        onChange={setSortDraft}
-        onCancel={() => setShowSort(false)}
+        onChange={sortModal.setDraft}
+        onCancel={sortModal.close}
         onReset={resetSort}
         onApply={applySort}
       />
       <FilterModal
-        visible={showFilter}
-        draft={filterDraft}
+        visible={filterModal.visible}
+        draft={filterModal.draft}
         savedDraft={{ ...settings.filters, instrumentFilter: settings.instrument }}
         availableSeasons={availableSeasons}
-        onChange={setFilterDraft}
-        onCancel={() => setShowFilter(false)}
+        onChange={filterModal.setDraft}
+        onCancel={filterModal.close}
         onReset={resetFilter}
         onApply={applyFilter}
       />
