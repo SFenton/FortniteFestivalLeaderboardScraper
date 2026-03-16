@@ -17,6 +17,7 @@ const PlayerPage = lazy(() => import('./pages/PlayerPage'));
 const SuggestionsPage = lazy(() => import('./pages/SuggestionsPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 import { Colors, Font, Gap, Layout, MaxWidth, Radius, Size, frostedCard } from '@festival/theme';
+import appCss from './App.module.css';
 import { resetSongSettingsForDeselect, loadSongSettings, SONG_SETTINGS_CHANGED_EVENT } from './components/songSettings';
 import BackLink from './components/BackLink';
 import { InstrumentIcon } from './components/InstrumentIcons';
@@ -237,7 +238,7 @@ function AppShell() {
 
   return (
     <PlayerDataProvider accountId={player?.accountId}>
-    <div style={styles.shell}>
+    <div className={appCss.shell}>
       <ScrollToTop />
       {showAnimatedBg && <AnimatedBackground songs={songs} />}
 
@@ -245,18 +246,18 @@ function AppShell() {
 
         {isMobile ? (
           navTitle ? (
-            <div key={location.pathname} className="sa-top" style={{ ...styles.mobileHeader, ...(shouldAnimateHeader ? { animation: 'fadeIn 300ms ease-out' } : {}) }}>
+            <div key={location.pathname} className="sa-top" style={{ ...appCss.mobileHeader, ...(shouldAnimateHeader ? { animation: 'fadeIn 300ms ease-out' } : {}) }}>
               {backFallback ? (
                 <a
                   href="#"
                   onClick={(e) => { e.preventDefault(); navigate(-1); }}
-                  style={styles.navTitleBack}
+                  className={appCss.navTitleBack}
                 >
                   <IoChevronBack size={22} />
                   <span>{navTitle}</span>
                 </a>
               ) : (
-                <span style={styles.navTitle}>{navTitle}</span>
+                <span className={appCss.navTitle}>{navTitle}</span>
               )}
               {location.pathname === '/songs' && songInstrument && (
                 <InstrumentIcon instrument={songInstrument} size={36} style={{ marginLeft: 'auto' }} />
@@ -266,25 +267,25 @@ function AppShell() {
             backFallback ? <BackLink key={location.pathname} fallback={backFallback} animate={shouldAnimateHeader} /> : null
           )
         ) : (
-          <nav className="sa-top" style={styles.nav}>
+          <nav className="sa-top" className={appCss.nav}>
             <button
-              style={styles.hamburger}
+              className={appCss.hamburger}
               onClick={() => setSidebarOpen((o) => !o)}
               aria-label="Open navigation"
             >
-              <span style={styles.hamburgerLine} />
-              <span style={styles.hamburgerLine} />
-              <span style={styles.hamburgerLine} />
+              <span className={appCss.hamburgerLine} />
+              <span className={appCss.hamburgerLine} />
+              <span className={appCss.hamburgerLine} />
             </button>
-            <div style={styles.spacer} />
+            <div className={appCss.spacer} />
             <HeaderSearch />
             <button
-              style={styles.headerProfileBtn}
+              className={appCss.headerProfileBtn}
               onClick={() => player ? navigate('/statistics') : setPlayerModalOpen(true)}
               aria-label="Profile"
             >
               <span style={{
-                ...styles.headerProfileCircleBase,
+                ...appCss.headerProfileCircleBase,
                 backgroundColor: player ? Colors.surfaceSubtle : '#D0D5DD',
                 border: player ? `1px solid ${Colors.borderSubtle}` : '1px solid transparent',
                 color: player ? Colors.textSecondary : '#4A5568',
@@ -303,7 +304,7 @@ function AppShell() {
         onSelectPlayer={() => { setSidebarOpen(false); setPlayerModalOpen(true); }}
       />
 
-      <div id="main-content" style={styles.content}>
+      <div id="main-content" className={appCss.content}>
         <Suspense fallback={null}>
         <Routes>
           <Route path="/" element={<Navigate to="/songs" replace />} />
@@ -455,114 +456,3 @@ function ScrollToTop() {
   return null;
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  shell: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    height: '100dvh',
-    overflow: 'hidden',
-  },
-  nav: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.xl,
-    padding: `${Layout.paddingTop}px ${Layout.paddingHorizontal}px ${Gap.md}px`,
-    backgroundColor: 'transparent',
-    flexShrink: 0,
-    zIndex: 100,
-    position: 'relative' as const,
-    touchAction: 'none' as const,
-  },
-  content: {
-    flex: 1,
-    overflowY: 'auto' as const,
-    overscrollBehavior: 'contain' as const,
-    position: 'relative' as const,
-  },
-  hamburger: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    justifyContent: 'center',
-    gap: 5,
-    width: 36,
-    height: 36,
-    padding: 6,
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    borderRadius: Radius.xs,
-  },
-  hamburgerLine: {
-    display: 'block',
-    height: 2,
-    backgroundColor: Colors.textSecondary,
-    borderRadius: 1,
-  },
-  navTitle: {
-    fontSize: Font.title,
-    fontWeight: 700,
-    color: Colors.textPrimary,
-    whiteSpace: 'nowrap' as const,
-  },
-  navTitleBack: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: Gap.sm,
-    fontSize: Font.title,
-    fontWeight: 700,
-    color: Colors.textPrimary,
-    textDecoration: 'none',
-    whiteSpace: 'nowrap' as const,
-    marginLeft: -6,
-  },
-  mobileHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    padding: `${Layout.paddingTop + Gap.md}px ${Layout.paddingHorizontal}px ${Gap.md}px`,
-    maxWidth: MaxWidth.card,
-    margin: '0 auto',
-    width: '100%',
-    boxSizing: 'border-box' as const,
-    flexShrink: 0,
-    zIndex: 100,
-    position: 'relative' as const,
-    touchAction: 'none' as const,
-  },
-  spacer: {
-    flex: 1,
-  },
-  brand: {
-    fontSize: Font.lg,
-    fontWeight: 700,
-    color: Colors.accentPurple,
-  },
-  headerProfileBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    padding: 0,
-  },
-  headerProfileCircleBase: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 48,
-    height: 48,
-    borderRadius: '50%',
-    transition: 'background-color 300ms ease, border-color 300ms ease, color 300ms ease',
-  },
-  deselectBtn: {
-    background: Colors.dangerBg,
-    border: `1px solid ${Colors.statusRed}`,
-    borderRadius: Radius.xs,
-    color: Colors.textPrimary,
-    fontSize: Font.sm,
-    fontWeight: 600,
-    cursor: 'pointer',
-    padding: `${Gap.sm}px ${Gap.xl}px`,
-    whiteSpace: 'nowrap' as const,
-  },
-};

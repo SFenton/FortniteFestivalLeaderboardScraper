@@ -1,0 +1,166 @@
+.container {
+  position: fixed;
+  bottom: 80px;
+  right: var(--layout-padding-h);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--gap-md);
+  z-index: 150;
+  pointer-events: none;
+}
+
+.fab {
+  composes: frostedCard from '../../styles/shared.module.css';
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background-color: rgb(124, 58, 237);
+  border: 1px solid rgba(124, 58, 237, 0.35);
+  color: var(--color-text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  flex-shrink: 0;
+  pointer-events: auto;
+}
+
+.hamburger {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+}
+
+.hamburgerLine {
+  display: block;
+  width: 20px;
+  height: 2px;
+  background-color: var(--color-text-primary);
+  border-radius: 1px;
+}
+
+.popup {
+  position: absolute;
+  bottom: 64px;
+  right: 0;
+  z-index: 1002;
+  pointer-events: auto;
+  background-color: var(--color-bg-card);
+  border-radius: var(--radius-sm);
+  padding: var(--gap-sm) 0;
+  min-width: 200px;
+  white-space: nowrap;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  transform-origin: bottom right;
+}
+
+.popupItem {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  width: 100%;
+  padding: var(--gap-xl) var(--gap-section);
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: var(--font-md);
+  cursor: pointer;
+  text-align: left;
+}
+
+.popupItemIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+}
+
+.popupDivider {
+  height: 1px;
+  background-color: var(--color-glass-border);
+  margin: var(--gap-sm) 0;
+}
+
+.searchBarOuter {
+  position: fixed;
+  bottom: 80px;
+  left: 0;
+  right: 0;
+  max-width: var(--max-width-card);
+  margin: 0 auto;
+  padding: 0 var(--layout-padding-h);
+  box-sizing: border-box;
+  z-index: 150;
+  pointer-events: none;
+}
+
+.searchBar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+  position: relative;
+  pointer-events: auto;
+}
+
+.searchInputWrap {
+  composes: frostedCard from '../../styles/shared.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  width: 100%;
+  height: 56px;
+  padding: 0 var(--gap-section);
+  border-radius: var(--radius-full);
+  box-sizing: border-box;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  cursor: text;
+}
+
+.searchInput {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--color-text-primary);
+  font-size: var(--font-md);
+}
+
+.searchResults {
+  composes: frostedCard from '../../styles/shared.module.css';
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  left: 0;
+  margin-bottom: var(--gap-sm);
+  border-radius: var(--radius-sm);
+  max-height: 360px;
+  overflow-y: auto;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.searchResultBtn {
+  display: block;
+  width: 100%;
+  padding: var(--gap-xl) var(--gap-section);
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: var(--font-md);
+  cursor: pointer;
+  text-align: left;
+}
+
+.searchResultBtnActive {
+  composes: searchResultBtn;
+  background-color: var(--color-surface-subtle);
+}
+
+.searchIcon {
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
