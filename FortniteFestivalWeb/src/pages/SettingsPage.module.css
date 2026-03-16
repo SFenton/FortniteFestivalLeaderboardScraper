@@ -1,8 +1,6 @@
 .page {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  color: #FFFFFF;
+  composes: pageShell from '../styles/shared.module.css';
+  color: var(--color-text-primary);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 }
 
@@ -12,73 +10,59 @@
 }
 
 .scrollArea {
-  flex: 1;
-  overflow-y: auto;
+  composes: scrollContainer from '../styles/shared.module.css';
 }
 
 .container {
-  max-width: 1080px;
-  margin: 0 auto;
-  padding: 16px 20px;
+  composes: pageContent from '../styles/shared.module.css';
+  padding-top: var(--layout-padding-top);
+  padding-bottom: var(--layout-padding-top);
 }
 
 .heading {
-  font-size: 22px;
+  font-size: var(--font-title);
   font-weight: 700;
   margin: 0;
 }
 
 .cardColumn {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
+  composes: flexCol from '../styles/shared.module.css';
+  gap: var(--gap-section);
 }
 
 .card {
-  background-color: rgba(18, 24, 38, 0.78);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    inset 0 0 30px rgba(255, 255, 255, 0.02),
-    0 4px 20px rgba(0, 0, 0, 0.4);
-  background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'200'%20height%3D'200'%3E%3Cfilter%20id%3D'n'%3E%3CfeTurbulence%20type%3D'fractalNoise'%20baseFrequency%3D'0.75'%20numOctaves%3D'4'%20stitchTiles%3D'stitch'%2F%3E%3CfeColorMatrix%20type%3D'saturate'%20values%3D'0'%2F%3E%3C%2Ffilter%3E%3Crect%20width%3D'100%25'%20height%3D'100%25'%20filter%3D'url(%23n)'%20opacity%3D'0.4'%2F%3E%3C%2Fsvg%3E");
-  background-repeat: repeat;
-  border-radius: 12px;
-  padding: 16px;
+  composes: frostedCard from '../styles/shared.module.css';
+  border-radius: var(--radius-md);
+  padding: var(--layout-padding-top);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--gap-md);
 }
 
 .sectionTitle {
-  font-size: 20px;
+  font-size: var(--font-xl);
   font-weight: 700;
-  color: #FFFFFF;
+  color: var(--color-text-primary);
 }
 
 .innerSectionTitle {
-  font-size: 14px;
+  font-size: var(--font-md);
   font-weight: 700;
-  color: #FFFFFF;
-  margin-bottom: 4px;
+  color: var(--color-text-primary);
+  margin-bottom: var(--gap-sm);
 }
 
 .sectionHint {
-  font-size: 14px;
-  color: #D7DEE8;
+  font-size: var(--font-md);
+  color: var(--color-text-secondary);
   line-height: 1.5;
-  margin-bottom: 8px;
+  margin-bottom: var(--gap-md);
 }
 
 .resetButton {
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid #C62828;
-  background-color: rgb(198, 40, 40);
-  color: #FFFFFF;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
+  composes: btnDanger from '../styles/shared.module.css';
+  padding: var(--gap-md) var(--gap-xl);
+  font-size: var(--font-sm);
   flex-shrink: 0;
 }
 
@@ -86,7 +70,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--gap-xl);
 }
 
 .resetRowMobile {
@@ -99,23 +83,22 @@
   composes: resetButton;
   width: 100%;
   text-align: center;
-  padding: 12px;
-  font-size: 14px;
+  padding: var(--gap-xl);
+  font-size: var(--font-md);
 }
 
 .versionRow {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 4px 0;
-  font-size: 14px;
+  padding: var(--gap-sm) 0;
+  font-size: var(--font-md);
 }
 
 .versionValue {
-  color: #D7DEE8;
+  color: var(--color-text-secondary);
 }
 
 .fabSpacer {
-  height: 72px;
-  flex-shrink: 0;
+  composes: fabSpacer from '../styles/shared.module.css';
 }
