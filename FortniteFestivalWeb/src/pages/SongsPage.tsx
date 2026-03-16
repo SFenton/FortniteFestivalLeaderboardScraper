@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { IoSwapVerticalSharp, IoFunnel, IoSearch } from 'react-icons/io5';
 import { Link, useLocation, useNavigationType } from 'react-router-dom';
 import { formatPercentileBucket } from '@festival/core';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { staggerDelay, estimateVisibleCount } from '../utils/stagger';
 import { useFestival } from '../contexts/FestivalContext';
 import { usePlayerData } from '../contexts/PlayerDataContext';
@@ -430,6 +431,17 @@ export default function SongsPage() {
     rushOnScroll();
   }, [saveScroll, updateScrollMask, rushOnScroll]);
 
+  // ── Virtual list ──
+  const ROW_HEIGHT = isMobile ? 122 : 68; // row + 2px gap
+  const listParentRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: loadPhase === 'contentIn' ? filtered.length : 0,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 8,
+    gap: 2,
+  });
+
   if (error) {
     return <div style={styles.center}>{error}</div>;
   }
@@ -557,23 +569,46 @@ export default function SongsPage() {
             </div>
           </div>
         ) : (
-          <div style={styles.list}>
-            {loadPhase === 'contentIn' && filtered.map((song, i) => (
-                <SongRow
-                  key={song.songId}
-                  song={song}
-                  score={hasPlayer ? scoreMap.get(song.songId) : undefined}
-                  instrument={instrument}
-                  instrumentFilter={settings.instrument}
-                  allScoreMap={hasPlayer ? allScoreMap.get(song.songId) : undefined}
-                  showInstrumentIcons={hasPlayer && !appSettings.songsHideInstrumentIcons}
-                  enabledInstruments={enabledInstruments}
-                  metadataOrder={visibleMetadataOrder}
-                  sortMode={settings.sortMode}
-                  isMobile={isMobile}
-                  staggerDelay={shouldStagger ? (staggerDelay(i, 125, maxVisibleSongs) ?? maxVisibleSongs * 125) : undefined}
-                />
-            ))}
+          <div
+            ref={listParentRef}
+            style={{
+              ...styles.list,
+              height: virtualizer.getTotalSize(),
+              position: 'relative',
+            }}
+          >
+            {loadPhase === 'contentIn' && virtualizer.getVirtualItems().map((virtualRow) => {
+                const song = filtered[virtualRow.index]!;
+                const i = virtualRow.index;
+                return (
+                  <div
+                    key={song.songId}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                    ref={virtualizer.measureElement}
+                    data-index={virtualRow.index}
+                  >
+                    <SongRow
+                      song={song}
+                      score={hasPlayer ? scoreMap.get(song.songId) : undefined}
+                      instrument={instrument}
+                      instrumentFilter={settings.instrument}
+                      allScoreMap={hasPlayer ? allScoreMap.get(song.songId) : undefined}
+                      showInstrumentIcons={hasPlayer && !appSettings.songsHideInstrumentIcons}
+                      enabledInstruments={enabledInstruments}
+                      metadataOrder={visibleMetadataOrder}
+                      sortMode={settings.sortMode}
+                      isMobile={isMobile}
+                      staggerDelay={shouldStagger && i < maxVisibleSongs ? (staggerDelay(i, 125, maxVisibleSongs) ?? maxVisibleSongs * 125) : undefined}
+                    />
+                  </div>
+                );
+            })}
           </div>
         )}
         </div>
@@ -1088,9 +1123,6 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: Gap.xs,
   },
   list: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: Gap.xs,
     paddingTop: Gap.lg,
   },
   row: {
@@ -1103,7 +1135,6 @@ const styles: Record<string, React.CSSProperties> = {
     ...frostedCardLight,
     textDecoration: 'none',
     color: 'inherit',
-    contentVisibility: 'auto',
   } as CSSProperties,
   rowMobile: {
     display: 'flex',
@@ -1114,7 +1145,6 @@ const styles: Record<string, React.CSSProperties> = {
     ...frostedCardLight,
     textDecoration: 'none',
     color: 'inherit',
-    contentVisibility: 'auto',
   } as CSSProperties,
   mobileTopRow: {
     display: 'flex',
