@@ -1,0 +1,34 @@
+.box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--gap-md) var(--gap-xl);
+  min-height: 56px;
+}
+
+.value {
+  font-size: var(--font-xl);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.label {
+  font-size: var(--font-xs);
+  color: var(--color-text-muted);
+  margin-top: var(--gap-xs);
+  text-align: center;
+}
+
+.clickable {
+  cursor: pointer;
+  position: relative;
+}
+
+.chevron {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-disabled);
+}

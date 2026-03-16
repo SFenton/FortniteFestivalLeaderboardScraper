@@ -33,6 +33,7 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { IS_IOS, IS_ANDROID, IS_PWA } from '../utils/platform';
 import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
 import { useScoreFilter } from '../hooks/useScoreFilter';
+import StatBox from '../components/player/StatBox';
 import { useFabSearch } from '../contexts/FabSearchContext';
 import AlbumArt from '../components/AlbumArt';
 import ConfirmAlert from '../components/modals/ConfirmAlert';
@@ -704,22 +705,6 @@ function PlayerContent({
       )}
     </div>
   );
-}
-
-function StatBox({ label, value, color, onClick }: { label: string; value: React.ReactNode; color?: string; onClick?: () => void }) {
-  const inner = (
-    <div style={styles.statBox}>
-      <span style={{ ...styles.statValue, ...(color ? { color } : {}) }}>{value}</span>
-      <span style={styles.statLabel}>{label}</span>
-    </div>
-  );
-  if (onClick) return (
-    <div onClick={onClick} style={{ cursor: 'pointer', position: 'relative' as const }}>
-      {inner}
-      <svg style={styles.statChevron} width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1.5 1.5L6.5 7L1.5 12.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-    </div>
-  );
-  return inner;
 }
 
 function GoldStars() {
