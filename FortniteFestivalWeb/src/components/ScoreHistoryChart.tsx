@@ -17,6 +17,7 @@ import {
   type InstrumentKey,
   type ScoreHistoryEntry,
 } from '../models';
+import { accuracyColor } from '@festival/core';
 import { InstrumentIcon } from './InstrumentIcons';
 import { Colors, Font, Gap, Radius, goldFill, goldOutlineSkew, frostedCard } from '../theme';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -34,14 +35,6 @@ type Props = {
   skipAnimation?: boolean;
   scoreWidth?: string;
 };
-
-function accuracyColor(pct: number): string {
-  const t = Math.min(Math.max(pct / 100, 0), 1);
-  const r = Math.round(220 * (1 - t) + 46 * t);
-  const g = Math.round(40 * (1 - t) + 204 * t);
-  const b = Math.round(40 * (1 - t) + 113 * t);
-  return `rgb(${r},${g},${b})`;
-}
 
 export default function ScoreHistoryChart({
   songId,

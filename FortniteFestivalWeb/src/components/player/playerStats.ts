@@ -2,8 +2,10 @@
  * Pure computation functions for PlayerPage statistics.
  * Extracted for readability and potential reuse.
  */
-import { formatPercentileBucket } from '@festival/core';
+import { formatPercentileBucket, accuracyColor } from '@festival/core';
 import type { PlayerScore, InstrumentKey } from '../models';
+
+export { accuracyColor };
 
 export type InstrumentStats = {
   songsPlayed: number;
@@ -126,12 +128,4 @@ export function formatClamped2(val: number): string {
   if (fixed.endsWith('00')) return fixed.slice(0, -3);
   if (fixed.endsWith('0')) return fixed.slice(0, -1);
   return fixed;
-}
-
-export function accuracyColor(pct: number): string {
-  const t = Math.min(Math.max(pct / 100, 0), 1);
-  const r = Math.round(220 * (1 - t) + 46 * t);
-  const g = Math.round(40 * (1 - t) + 204 * t);
-  const b = Math.round(40 * (1 - t) + 113 * t);
-  return `rgb(${r},${g},${b})`;
 }

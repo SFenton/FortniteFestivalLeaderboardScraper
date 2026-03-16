@@ -25,14 +25,7 @@ import { IoFlash } from 'react-icons/io5';
 import { useFabSearch } from '../contexts/FabSearchContext';
 import { useScoreFilter } from '../hooks/useScoreFilter';
 import PathsModal from '../components/PathsModal';
-
-function accuracyColor(pct: number): string {
-  const t = Math.min(Math.max(pct / 100, 0), 1);
-  const r = Math.round(220 * (1 - t) + 46 * t);
-  const g = Math.round(40 * (1 - t) + 204 * t);
-  const b = Math.round(40 * (1 - t) + 113 * t);
-  return `rgb(${r},${g},${b})`;
-}
+import { accuracyColor } from '@festival/core';
 
 type InstrumentData = {
   entries: LeaderboardEntry[];
