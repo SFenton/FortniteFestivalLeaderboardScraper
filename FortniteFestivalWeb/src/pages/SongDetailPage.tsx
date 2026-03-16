@@ -14,6 +14,7 @@ import {
   type ScoreHistoryEntry,
 } from '../models';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, goldOutlineSkew, frostedCard } from '@festival/theme';
+import s from './SongDetailPage.module.css';
 import SeasonPill from '../components/SeasonPill';
 import ScoreHistoryChart from '../components/ScoreHistoryChart';
 import { InstrumentIcon } from '../components/InstrumentIcons';
@@ -310,7 +311,7 @@ export default function SongDetailPage() {
   }, [phase, defaultInstrument]);
 
   if (!songId) {
-    return <div style={styles.center}>{t('songDetail.songNotFound')}</div>;
+    return <div className={s.center}>{t('songDetail.songNotFound')}</div>;
   }
 
   const stagger = (delayMs: number): React.CSSProperties => skipAnim ? {} : ({
@@ -324,31 +325,26 @@ export default function SongDetailPage() {
   }, []);
 
   return (
-    <div style={styles.page}>
+    <div className={s.page}>
       {song?.albumArt && (
         <div
-          style={{
-            ...styles.bgImage,
-            backgroundImage: `url(${song.albumArt})`,
-          }}
+          className={s.bgImage}
+          style={{ backgroundImage: `url(${song.albumArt})` }}
         />
       )}
-      <div style={styles.bgDim} />
+      <div className={s.bgDim} />
       {phase !== 'contentIn' && (
         <div
-          style={{
-            ...styles.spinnerOverlay,
-            ...(phase === 'spinnerOut'
+          className={s.spinnerOverlay}
+          style={phase === 'spinnerOut'
               ? { animation: 'fadeOut 500ms ease-out forwards' }
-              : {}),
-          }}
+              : undefined}
         >
-          <div style={styles.arcSpinner} />
+          <div className={s.arcSpinner} />
         </div>
       )}
       {phase === 'contentIn' && (
-        <div style={{
-          ...styles.stickyHeader,
+        <div className={s.stickyHeader} style={{
           padding: hasFab || headerCollapsed
             ? `${Gap.md}px ${Layout.paddingHorizontal}px ${Gap.section}px`
             : `${Layout.paddingTop}px ${Layout.paddingHorizontal}px ${Gap.section}px`,
@@ -358,9 +354,9 @@ export default function SongDetailPage() {
           </div>
         </div>
       )}
-      <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
+      <div ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
       {phase === 'contentIn' && (
-        <div style={{ ...styles.container, ...(hasFab ? { paddingBottom: 96 } : {}) }}>
+        <div className={s.container} style={hasFab ? { paddingBottom: 96 } : undefined}>
           {player && scoreHistoryReady && filteredScoreHistory.length > 0 && (
             <div style={{ ...stagger(300), marginBottom: Gap.section }} onAnimationEnd={clearAnim}>
               <ScoreHistoryChart
@@ -375,7 +371,7 @@ export default function SongDetailPage() {
               />
             </div>
           )}
-          <div style={styles.instrumentGrid}>
+          <div className={s.instrumentGrid}>
             {activeInstruments.map((inst, idx) => {
               const rowIndex = Math.floor(idx / 2);
               const baseDelay = 450 + rowIndex * 150;
@@ -423,22 +419,22 @@ function SongHeader({
   const artSize = collapsed ? 80 : 120;
   const transition = noTransition ? undefined : 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)';
   return (
-    <div style={{ ...styles.header, marginTop: collapsed ? 0 : Gap.xl, transition }}>
+    <div className={s.header} style={{ marginTop: collapsed ? 0 : Gap.xl, transition }}>
       {song?.albumArt ? (
-        <img src={song.albumArt} alt="" style={{ ...styles.headerArt, width: artSize, height: artSize, borderRadius: collapsed ? Radius.md : Radius.lg, transition }} />
+        <img src={song.albumArt} alt="" className={s.headerArt} style={{ width: artSize, height: artSize, borderRadius: collapsed ? Radius.md : Radius.lg, transition }} />
       ) : (
-        <div style={{ ...styles.headerArt, ...styles.artPlaceholder, width: artSize, height: artSize, borderRadius: collapsed ? Radius.md : Radius.lg, transition }} />
+        <div className={s.artPlaceholder} style={{ width: artSize, height: artSize, borderRadius: collapsed ? Radius.md : Radius.lg, transition }} />
       )}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <h1 style={{ ...styles.songTitle, marginBottom: collapsed ? Gap.xs : Gap.sm, transition }}>{song?.title ?? songId}</h1>
-        <p style={{ ...styles.songArtist, fontSize: collapsed ? Font.md : Font.lg, marginBottom: collapsed ? 0 : Gap.md, transition }}>
+        <h1 className={s.songTitle} style={{ marginBottom: collapsed ? Gap.xs : Gap.sm, transition }}>{song?.title ?? songId}</h1>
+        <p className={s.songArtist} style={{ fontSize: collapsed ? Font.md : Font.lg, marginBottom: collapsed ? 0 : Gap.md, transition }}>
           {song?.artist ?? t('common.unknownArtist')}{song?.year ? ` · ${song.year}` : ''}
         </p>
       </div>
       {!isMobile && (
         <button
           onClick={onOpenPaths}
-          style={styles.viewPathsButton}
+          className={s.viewPathsButton}
         >
           <IoFlash size={16} style={{ marginRight: Gap.md }} />
           View Paths
@@ -514,63 +510,60 @@ function InstrumentCard({
   };
 
   return (
-    <div style={styles.cardWrapper}>
-      <div style={{ ...styles.cardLabel, ...anim(baseDelay) }} onAnimationEnd={clearAnim}>
+    <div className={s.cardWrapper}>
+      <div className={s.cardLabel} style={anim(baseDelay)} onAnimationEnd={clearAnim}>
         <InstrumentIcon instrument={instrument} size={36} />
-        <span style={styles.cardTitle}>{INSTRUMENT_LABELS[instrument]}</span>
+        <span className={s.cardTitle}>{INSTRUMENT_LABELS[instrument]}</span>
       </div>
       <div
-        style={{
-          ...styles.card,
-          cursor: 'pointer',
-        }}
+        className={s.card}
+        style={{ cursor: 'pointer' }}
         onClick={() => {
           navigate(`/songs/${songId}/${instrument}`, { state: { backTo: `/songs/${songId}` } });
         }}
       >
-        <div style={styles.cardBody}>
-        {prefetchedError && <span style={styles.cardError}>{prefetchedError}</span>}
+        <div className={s.cardBody}>
+        {prefetchedError && <span className={s.cardError}>{prefetchedError}</span>}
         {!prefetchedError && prefetchedEntries.length === 0 && (
-          <span style={styles.cardMuted}>{t('songDetail.noEntries')}</span>
+          <span className={s.cardMuted}>{t('songDetail.noEntries')}</span>
         )}
         {!prefetchedError &&
           prefetchedEntries.map((e, i) => {
             const rowStagger = anim(baseDelay + 80 + i * 60);
             const isPlayer = playerInTop && e.accountId === playerAccountId;
-            const rowStyle = isPlayer
-              ? { ...styles.playerEntryRow, ...(isMobile ? styles.entryRowMobile : {}), ...rowStagger }
-              : { ...styles.entryRow, ...(isMobile ? styles.entryRowMobile : {}), ...rowStagger };
+            const rowClass = `${isPlayer ? s.playerEntryRow : s.entryRow} ${isMobile ? s.entryRowMobile : ''}`;
             return (
             <Link
               key={e.accountId}
               id={isPlayer ? `player-score-${instrument}` : undefined}
               to={`/player/${e.accountId}`}
               state={{ backTo: `/songs/${songId}` }}
-              style={rowStyle}
+              className={rowClass}
+              style={rowStagger}
               onClick={(ev) => ev.stopPropagation()}
               onAnimationEnd={clearAnim}
             >
-              <span style={{ ...styles.entryRank, ...(isPlayer ? { fontWeight: 700 } : {}) }}>#{(e.rank ?? i + 1).toLocaleString()}</span>
-              <span style={{ ...styles.entryName, ...(isPlayer ? { fontWeight: 700 } : {}) }}>
+              <span className={s.entryRank} style={isPlayer ? { fontWeight: 700 } : undefined}>#{(e.rank ?? i + 1).toLocaleString()}</span>
+              <span className={s.entryName} style={isPlayer ? { fontWeight: 700 } : undefined}>
                 {e.displayName ?? e.accountId.slice(0, 8)}
               </span>
-              <span style={styles.seasonScoreGroup}>
+              <span className={s.seasonScoreGroup}>
                 {showSeason && e.season != null && (
                   <SeasonPill season={e.season} />
                 )}
-                <span style={{ ...styles.entryScore, width: scoreWidth }}>
+                <span className={s.entryScore} style={{ width: scoreWidth }}>
                   {e.score.toLocaleString()}
                 </span>
               </span>
               {showAccuracy && (
-              <span style={styles.entryAcc}>
+              <span className={s.entryAcc}>
                 {e.accuracy != null
                   ? (() => {
                       const pct = e.accuracy / 10000;
                       const r1 = pct.toFixed(1);
                       const text = r1.endsWith('.0') ? `${Math.round(pct)}%` : `${r1}%`;
                       return e.isFullCombo
-                        ? <span style={styles.fcAccBadge}>{text}</span>
+                        ? <span className={s.fcAccBadge}>{text}</span>
                         : <span style={{ color: accuracyColor(pct) }}>{text}</span>;
                     })()
                   : '—'}
@@ -586,29 +579,30 @@ function InstrumentCard({
           <Link
             id={`player-score-${instrument}`}
             to={`/songs/${songId}/${instrument}?page=${Math.floor((playerScore.rank - 1) / 25) + 1}&navToPlayer=true`}
-            style={{ ...styles.playerEntryRow, ...(isMobile ? styles.entryRowMobile : {}), ...playerStagger }}
+            className={`${s.playerEntryRow} ${isMobile ? s.entryRowMobile : ''}`}
+            style={playerStagger}
             onClick={(ev) => ev.stopPropagation()}
             onAnimationEnd={clearAnim}
           >
-            <span style={{ ...styles.entryRank, fontWeight: 700 }}>#{playerScore.rank.toLocaleString()}</span>
-            <span style={{ ...styles.entryName, fontWeight: 700 }}>{playerName}</span>
-            <span style={styles.seasonScoreGroup}>
+            <span className={s.entryRank} style={{ fontWeight: 700 }}>#{playerScore.rank.toLocaleString()}</span>
+            <span className={s.entryName} style={{ fontWeight: 700 }}>{playerName}</span>
+            <span className={s.seasonScoreGroup}>
               {showSeason && playerScore.season != null && (
                 <SeasonPill season={playerScore.season} />
               )}
-              <span style={{ ...styles.entryScore, width: scoreWidth }}>
+              <span className={s.entryScore} style={{ width: scoreWidth }}>
                 {playerScore.score.toLocaleString()}
               </span>
             </span>
             {showAccuracy && (
-            <span style={styles.entryAcc}>
+            <span className={s.entryAcc}>
               {playerScore.accuracy != null && playerScore.accuracy > 0
                 ? (() => {
                     const pct = playerScore.accuracy / 10000;
                     const r1 = pct.toFixed(1);
                     const text = r1.endsWith('.0') ? `${Math.round(pct)}%` : `${r1}%`;
                     return playerScore.isFullCombo
-                      ? <span style={styles.fcAccBadge}>{text}</span>
+                      ? <span className={s.fcAccBadge}>{text}</span>
                       : <span style={{ color: accuracyColor(pct) }}>{text}</span>;
                   })()
                 : '\u2014'}
@@ -622,7 +616,7 @@ function InstrumentCard({
           const viewAllStagger = anim(viewAllDelay);
           return (
             <div
-              style={{ ...styles.viewAllButton, ...viewAllStagger }}
+              className={s.viewAllButton} style={viewAllStagger}
               onAnimationEnd={clearAnim}
             >
               View full leaderboard
@@ -672,248 +666,3 @@ function DifficultyBadge({ difficulty }: { difficulty: number }) {
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  page: {
-    height: '100%',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    backgroundColor: Colors.backgroundApp,
-    color: Colors.textPrimary,
-    fontFamily:
-      "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-    position: 'relative' as const,
-    overflow: 'hidden' as const,
-  },
-  scrollArea: {
-    flex: 1,
-    overflowY: 'auto' as const,
-    position: 'relative' as const,
-    zIndex: 1,
-  },
-  stickyHeader: {
-    position: 'relative' as const,
-    zIndex: 1,
-    maxWidth: MaxWidth.card,
-    margin: '0 auto',
-    width: '100%',
-    boxSizing: 'border-box' as const,
-    transition: 'padding 300ms cubic-bezier(0.4, 0, 0.2, 1)',
-  },
-  bgImage: {
-    position: 'fixed' as const,
-    inset: 0,
-    backgroundSize: 'cover',
-    backgroundPosition: 'center',
-    opacity: 0.9,
-    pointerEvents: 'none' as const,
-  },
-  bgDim: {
-    position: 'fixed' as const,
-    inset: 0,
-    backgroundColor: Colors.overlayDark,
-    pointerEvents: 'none' as const,
-  },
-  container: {
-    maxWidth: MaxWidth.card,
-    margin: '0 auto',
-    padding: `0 ${Layout.paddingHorizontal}px ${Layout.paddingTop}px`,
-  },
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.section,
-  },
-  headerArt: {
-    width: 120,
-    height: 120,
-    borderRadius: Radius.lg,
-    objectFit: 'cover' as const,
-    flexShrink: 0,
-  },
-  artPlaceholder: {
-    backgroundColor: Colors.purplePlaceholder,
-  },
-  songTitle: {
-    fontSize: Font.title,
-    fontWeight: 700,
-    marginBottom: Gap.sm,
-  },
-  songArtist: {
-    fontSize: Font.lg,
-    color: Colors.textSubtle,
-    marginBottom: Gap.md,
-  },
-  viewPathsButton: {
-    ...frostedCard,
-    backgroundColor: 'rgb(124,58,237)',
-    border: '1px solid rgba(168,120,255,0.3)',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: `0 ${Gap.section + 8}px 0 ${Gap.section}px`,
-    borderRadius: Radius.full,
-    color: '#fff',
-    fontSize: Font.lg,
-    fontWeight: 600,
-    textDecoration: 'none',
-    cursor: 'pointer',
-    flexShrink: 0,
-    alignSelf: 'center',
-    height: 48,
-  } as React.CSSProperties,
-  bpmBadge: {
-    fontSize: Font.sm,
-    color: Colors.textMuted,
-    backgroundColor: Colors.surfaceMuted,
-    padding: `${Gap.xs}px ${Gap.md}px`,
-    borderRadius: Radius.xs,
-  },
-  instrumentGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(min(420px, 100%), 1fr))',
-    gap: `${Gap.section}px ${Gap.md}px`,
-  },
-  card: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    height: '100%',
-  },
-  cardWrapper: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-  },
-  cardLabel: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.md,
-    paddingBottom: Gap.xs,
-  },
-  cardTitle: {
-    fontSize: Font.xl,
-    fontWeight: 600,
-  },
-  cardBody: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: Gap.sm,
-    flex: 1,
-  },
-  cardMuted: {
-    fontSize: Font.sm,
-    color: Colors.textMuted,
-  },
-  cardError: {
-    fontSize: Font.sm,
-    color: Colors.statusRed,
-  },
-  entryRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.xl,
-    padding: `0 ${Gap.xl}px`,
-    height: 48,
-    borderRadius: Radius.md,
-    ...frostedCard,
-    textDecoration: 'none',
-    color: 'inherit',
-    transition: 'background-color 0.15s',
-    fontSize: Font.md,
-  },
-  entryRowMobile: {
-    gap: Gap.md,
-    padding: `0 ${Gap.md}px`,
-    height: 40,
-  },
-  entryRank: {
-    width: 48,
-    flexShrink: 0,
-    color: Colors.textPrimary,
-    fontSize: Font.md,
-  },
-  entryName: {
-    flex: 1,
-    minWidth: 0,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap' as const,
-  },
-  entryScore: {
-    flexShrink: 0,
-    textAlign: 'right' as const,
-    fontWeight: 600,
-    color: Colors.textPrimary,
-    fontVariantNumeric: 'tabular-nums',
-  },
-  seasonScoreGroup: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.sm,
-    flexShrink: 0,
-  },
-  entryAcc: {
-    width: 60,
-    flexShrink: 0,
-    textAlign: 'center' as const,
-    fontWeight: 600,
-    color: Colors.accentBlueBright,
-    fontVariantNumeric: 'tabular-nums',
-  },
-  fcAccBadge: {
-    ...goldOutlineSkew,
-    fontSize: Font.md,
-    textAlign: 'center' as const,
-  },
-  viewAllButton: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 48,
-    borderRadius: Radius.md,
-    ...frostedCard,
-    color: Colors.textPrimary,
-    fontSize: Font.md,
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'background-color 0.15s',
-  },
-  playerEntryRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.xl,
-    padding: `0 ${Gap.xl}px`,
-    height: 48,
-    borderRadius: Radius.md,
-    ...frostedCard,
-    backgroundColor: 'rgba(75, 15, 99, 0.75)',
-    border: `1px solid rgba(124, 58, 237, 0.5)`,
-    textDecoration: 'none',
-    color: 'inherit',
-    transition: 'background-color 0.15s',
-    fontSize: Font.md,
-  },
-  center: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: '100vh',
-    color: Colors.textSecondary,
-    backgroundColor: Colors.backgroundApp,
-    fontSize: Font.lg,
-  },
-  spinnerOverlay: {
-    position: 'fixed' as const,
-    inset: 0,
-    zIndex: 2,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  arcSpinner: {
-    width: 48,
-    height: 48,
-    border: '4px solid rgba(255,255,255,0.10)',
-    borderTopColor: Colors.accentPurple,
-    borderRadius: '50%',
-    animation: 'spin 0.8s linear infinite',
-  },
-};
