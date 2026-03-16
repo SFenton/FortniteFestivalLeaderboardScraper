@@ -15,6 +15,7 @@ import { useStaggerRush } from '../hooks/useStaggerRush';
 import { useScrollRestore, clearScrollCache } from '../hooks/useScrollRestore';
 import type { Song, PlayerScore, InstrumentKey } from '../models';
 import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth, goldFill, goldOutline, goldOutlineSkew, frostedCard, frostedCardLight } from '@festival/theme';
+import s from './SongsPage.module.css';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../components/InstrumentIcons';
 import SeasonPill from '../components/SeasonPill';
 import AlbumArt from '../components/AlbumArt';
@@ -443,33 +444,32 @@ export default function SongsPage() {
   });
 
   if (error) {
-    return <div style={styles.center}>{error}</div>;
+    return <div className={s.center}>{error}</div>;
   }
 
   return (
-    <div style={styles.page}>
+    <div className={s.page}>
       {/* Spinner overlay — visible during loading & spinnerOut */}
       {loadPhase !== 'contentIn' && (
         <div
-          style={{
-            ...styles.spinnerOverlay,
+          className={s.spinnerOverlay} style={{
             ...(loadPhase === 'spinnerOut'
               ? { animation: 'fadeOut 500ms ease-out forwards' }
               : {}),
           }}
         >
-          <div style={styles.arcSpinner} />
+          <div className={s.arcSpinner} />
         </div>
       )}
       {!isMobileChrome && (
-      <div style={styles.header}>
-        <div style={styles.container}>
+      <div className={s.header}>
+        <div className={s.container}>
           <div style={{ visibility: (toolbarShownRef.current || loadPhase === 'contentIn') ? 'visible' : 'hidden' } as CSSProperties}>
-          <div style={styles.toolbar}>
-            <div style={styles.searchWrap} onClick={e => { const input = e.currentTarget.querySelector('input'); input?.focus(); }}>
+          <div className={s.toolbar}>
+            <div style={s.searchWrap} onClick={e => { const input = e.currentTarget.querySelector('input'); input?.focus(); }}>
               <IoSearch size={16} style={{ color: Colors.textTertiary, flexShrink: 0 }} />
               <input
-                style={styles.searchInput}
+                style={s.searchInput}
                 placeholder={t('songs.searchPlaceholder')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -478,7 +478,7 @@ export default function SongsPage() {
             {settings.instrument && (
               <InstrumentIcon instrument={settings.instrument} size={32} />
             )}
-            <div style={styles.sortGroup}>
+            <div className={s.sortGroup}>
               <ToolbarIconButton icon={<IoSwapVerticalSharp size={18} />} label="Sort" onClick={openSort} />
               {hasPlayer && (
                 <ToolbarIconButton
@@ -491,36 +491,36 @@ export default function SongsPage() {
             </div>
           </div>
           {filtersActive && filtered.length !== songs.length && (
-            <div style={styles.count}>{filtered.length} of {songs.length} songs</div>
+            <div className={s.count}>{filtered.length} of {songs.length} songs</div>
           )}
           </div>
         </div>
       </div>
       )}
-      <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
-        <div style={{ ...styles.container, paddingTop: isMobile ? Gap.sm : Gap.md }}>
+      <div ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
+        <div className={s.container} style={{ paddingTop: isMobile ? Gap.sm : Gap.md }}>
         {isSyncing && (
-          <div style={styles.syncBanner}>
-            <div style={styles.syncSpinner} />
+          <div style={s.syncBanner}>
+            <div style={s.syncSpinner} />
             <div style={{ flex: 1 }}>
-              <div style={styles.syncTitle}>
+              <div style={s.syncTitle}>
                 {syncPhase === 'backfill' ? 'Syncing Data' : 'Building Score History'}
               </div>
-              <div style={styles.syncSubtitle}>
+              <div style={s.syncSubtitle}>
                 {syncPhase === 'backfill'
                   ? 'Fetching scores from leaderboards…'
                   : 'Reconstructing score history across seasons…'}
               </div>
               {syncPhase === 'backfill' && backfillProgress > 0 && (
                 <div style={{ marginTop: Gap.md }}>
-                  <div style={styles.syncProgressLabel}>
+                  <div style={s.syncProgressLabel}>
                     <span>{t('player.syncingScores')}</span>
                     <span>{(backfillProgress * 100).toFixed(1)}%</span>
                   </div>
-                  <div style={styles.syncProgressOuter}>
+                  <div style={s.syncProgressOuter}>
                     <div
                       style={{
-                        ...styles.syncProgressInner,
+                        ...s.syncProgressInner,
                         width: `${Math.round(backfillProgress * 100)}%`,
                       }}
                     />
@@ -530,24 +530,24 @@ export default function SongsPage() {
               {syncPhase === 'history' && (
                 <>
                   <div style={{ marginTop: Gap.md }}>
-                    <div style={styles.syncProgressLabel}>
+                    <div style={s.syncProgressLabel}>
                       <span>{t('player.syncingScores')}</span>
                       <span>100.0%</span>
                     </div>
-                    <div style={styles.syncProgressOuter}>
-                      <div style={{ ...styles.syncProgressInner, width: '100%' }} />
+                    <div style={s.syncProgressOuter}>
+                      <div className={s.syncProgressInner} style={{ width: '100%' }} />
                     </div>
                   </div>
                   {historyProgress > 0 && (
                     <div style={{ marginTop: Gap.sm }}>
-                      <div style={styles.syncProgressLabel}>
+                      <div style={s.syncProgressLabel}>
                         <span>{t('player.buildingHistory')}</span>
                         <span>{(historyProgress * 100).toFixed(1)}%</span>
                       </div>
-                      <div style={styles.syncProgressOuter}>
+                      <div style={s.syncProgressOuter}>
                         <div
                           style={{
-                            ...styles.syncProgressInner,
+                            ...s.syncProgressInner,
                             width: `${Math.round(historyProgress * 100)}%`,
                           }}
                         />
@@ -560,9 +560,9 @@ export default function SongsPage() {
           </div>
         )}
         {loadPhase === 'contentIn' && filtered.length === 0 ? (
-          <div style={styles.emptyState}>
-            <div style={styles.emptyTitle}>{t('songs.noResults')}</div>
-            <div style={styles.emptySubtitle}>
+          <div className={s.emptyState}>
+            <div className={s.emptyTitle}>{t('songs.noResults')}</div>
+            <div className={s.emptySubtitle}>
               {filtersActive
                 ? t('songs.noResultsSubtitle')
                 : t('common.serviceDown')}
@@ -571,8 +571,7 @@ export default function SongsPage() {
         ) : (
           <div
             ref={listParentRef}
-            style={{
-              ...styles.list,
+            className={s.list} style={{
               height: virtualizer.getTotalSize(),
               position: 'relative',
             }}
@@ -614,7 +613,7 @@ export default function SongsPage() {
         </div>
       </div>
 
-      {isMobileChrome && <div style={styles.fabSpacer} />}
+      {isMobileChrome && <div className={s.fabSpacer} />}
 
       <SortModal
         visible={showSort}
@@ -672,13 +671,13 @@ function renderMetadataElement(
   switch (key) {
     case 'score':
       return score.score > 0 ? (
-        <span style={styles.scoreValue}>{score.score.toLocaleString()}</span>
+        <span style={s.scoreValue}>{score.score.toLocaleString()}</span>
       ) : null;
 
     case 'percentage':
       return accuracy ? (
         <span
-          style={score.isFullCombo ? styles.accuracyBadgeFC : styles.accuracyPill}
+          style={score.isFullCombo ? s.accuracyBadgeFC : s.accuracyPill}
         >
           {accuracy}
         </span>
@@ -704,10 +703,10 @@ function renderMetadataElement(
       const isTop1 = pct <= 1;
       const isTop5 = pct <= 5;
       const pctStyle = isTop1
-        ? styles.percentileBadgeTop1
+        ? s.percentileBadgeTop1
         : isTop5
-          ? styles.percentileBadgeTop5
-          : styles.percentilePill;
+          ? s.percentileBadgeTop5
+          : s.percentilePill;
       return <span style={pctStyle}>{display}</span>;
     }
 
@@ -725,7 +724,7 @@ type MetadataEntry = { key: string; el: React.ReactNode };
 function MetadataBottomRow({ entries }: { entries: MetadataEntry[] }) {
   if (entries.length === 0) return null;
   return (
-    <div style={styles.metadataWrap}>
+    <div className={s.metadataWrap}>
       {entries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}
     </div>
   );
@@ -812,9 +811,9 @@ const SongRow = memo(function SongRow({
   const thumb = <AlbumArt src={song.albumArt} size={Size.thumb} />;
 
   const chipRow = instrumentChips && instrumentChips.length > 0 ? (
-    <div style={styles.instrumentStatusRow}>
+    <div className={s.instrumentStatusRow}>
       {instrumentChips.map(c => (
-        <div key={c.key} style={{ ...styles.instrumentStatusChip, backgroundColor: c.fill, borderColor: c.stroke }}>
+        <div key={c.key} className={s.instrumentStatusChip} style={{ backgroundColor: c.fill, borderColor: c.stroke }}>
           <InstrumentIcon instrument={c.key} size={24} />
         </div>
       ))}
@@ -827,15 +826,15 @@ const SongRow = memo(function SongRow({
     const scoreEntry = primaryKey ? entries.find(e => e.key === primaryKey) : null;
     const bottomEntries = primaryKey ? entries.filter(e => e.key !== primaryKey) : entries;
     return (
-      <Link ref={linkRef} to={`/songs/${song.songId}${instrumentFilter != null ? `?instrument=${encodeURIComponent(instrument)}` : ''}`} state={{ backTo: location.pathname }} style={{ ...styles.rowMobile, ...animStyle }} onAnimationEnd={handleAnimEnd}>
-        <div style={styles.mobileTopRow}>
+      <Link ref={linkRef} to={`/songs/${song.songId}${instrumentFilter != null ? `?instrument=${encodeURIComponent(instrument)}` : ''}`} state={{ backTo: location.pathname }} className={s.rowMobile} style={animStyle} onAnimationEnd={handleAnimEnd}>
+        <div className={s.mobileTopRow}>
           {thumb}
-          <div style={styles.rowText}>
-            <span style={styles.rowTitle}>{song.title}</span>
-            <span style={styles.rowArtist}>{song.artist}{song.year ? ` · ${song.year}` : ''}</span>
+          <div className={s.rowText}>
+            <span className={s.rowTitle}>{song.title}</span>
+            <span className={s.rowArtist}>{song.artist}{song.year ? ` · ${song.year}` : ''}</span>
           </div>
           {scoreEntry && (
-            <div style={styles.detailStrip}>
+            <div className={s.detailStrip}>
               {scoreEntry.el}
             </div>
           )}
@@ -849,17 +848,17 @@ const SongRow = memo(function SongRow({
 
   if (isMobile && chipRow) {
     return (
-      <Link ref={linkRef} to={`/songs/${song.songId}`} state={{ backTo: location.pathname }} style={{ ...styles.rowMobile, ...animStyle }} onAnimationEnd={handleAnimEnd}>
-        <div style={styles.mobileTopRow}>
+      <Link ref={linkRef} to={`/songs/${song.songId}`} state={{ backTo: location.pathname }} className={s.rowMobile} style={animStyle} onAnimationEnd={handleAnimEnd}>
+        <div className={s.mobileTopRow}>
           {thumb}
-          <div style={styles.rowText}>
-            <span style={styles.rowTitle}>{song.title}</span>
-            <span style={styles.rowArtist}>{song.artist}{song.year ? ` · ${song.year}` : ''}</span>
+          <div className={s.rowText}>
+            <span className={s.rowTitle}>{song.title}</span>
+            <span className={s.rowArtist}>{song.artist}{song.year ? ` · ${song.year}` : ''}</span>
           </div>
         </div>
-        <div style={{ ...styles.instrumentStatusRow, justifyContent: 'center' }}>
+        <div className={s.instrumentStatusRow} style={{ justifyContent: 'center' }}>
           {instrumentChips!.map(c => (
-            <div key={c.key} style={{ ...styles.instrumentStatusChip, backgroundColor: c.fill, borderColor: c.stroke }}>
+            <div key={c.key} className={s.instrumentStatusChip} style={{ backgroundColor: c.fill, borderColor: c.stroke }}>
               <InstrumentIcon instrument={c.key} size={24} />
             </div>
           ))}
@@ -869,15 +868,15 @@ const SongRow = memo(function SongRow({
   }
 
   return (
-    <Link ref={linkRef} to={`/songs/${song.songId}${instrumentFilter != null ? `?instrument=${encodeURIComponent(instrument)}` : ''}`} state={{ backTo: location.pathname }} style={{ ...styles.row, ...animStyle }} onAnimationEnd={handleAnimEnd}>
+    <Link ref={linkRef} to={`/songs/${song.songId}${instrumentFilter != null ? `?instrument=${encodeURIComponent(instrument)}` : ''}`} state={{ backTo: location.pathname }} className={s.row} style={animStyle} onAnimationEnd={handleAnimEnd}>
       {thumb}
-      <div style={styles.rowText}>
-        <span style={styles.rowTitle}>{song.title}</span>
-        <span style={styles.rowArtist}>{song.artist}{song.year ? ` · ${song.year}` : ''}</span>
+      <div className={s.rowText}>
+        <span className={s.rowTitle}>{song.title}</span>
+        <span className={s.rowArtist}>{song.artist}{song.year ? ` · ${song.year}` : ''}</span>
       </div>
       {chipRow}
       {entries.length > 0 && (
-        <div style={styles.scoreMeta}>
+        <div className={s.scoreMeta}>
           {entries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}
         </div>
       )}
@@ -930,8 +929,8 @@ function ToolbarIconButton({ icon, label, onClick, active, dot }: {
   return (
     <button
       style={{
-        ...styles.iconBtn,
-        ...(active ? styles.iconBtnActive : {}),
+        ...s.iconBtn,
+        ...(active ? s.iconBtnActive : {}),
         width: 'auto',
         paddingLeft: Gap.xl,
         paddingRight: Gap.xl,
@@ -943,409 +942,8 @@ function ToolbarIconButton({ icon, label, onClick, active, dot }: {
     >
       {icon}
       <span style={{ fontSize: Font.sm, fontWeight: 600, whiteSpace: 'nowrap' }}>{label}</span>
-      {dot && <span style={styles.filterDot} />}
+      {dot && <span style={s.filterDot} />}
     </button>
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  page: {
-    height: '100%',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    color: Colors.textPrimary,
-    fontFamily:
-      "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-  },
-  header: {
-    flexShrink: 0,
-    zIndex: 10,
-  },
-  headerMobile: {
-    flexShrink: 0,
-    zIndex: 10,
-  },
-  bottomToolbar: {
-    flexShrink: 0,
-    zIndex: 10,
-  },
-  fabSpacer: {
-    height: 80,
-    flexShrink: 0,
-  },
-  bottomToolbarInner: {
-    width: '100%',
-    maxWidth: MaxWidth.card,
-    margin: '0 auto',
-    padding: `${Gap.md}px ${Layout.paddingHorizontal}px`,
-    boxSizing: 'border-box' as const,
-  },
-  bottomCount: {
-    fontSize: Font.sm,
-    color: Colors.textTertiary,
-    marginBottom: Gap.sm,
-  },
-  scrollArea: {
-    flex: 1,
-    overflowY: 'auto' as const,
-    willChange: 'scroll-position',
-  },
-  container: {
-    width: '100%',
-    maxWidth: MaxWidth.card,
-    margin: '0 auto',
-    padding: `${Layout.paddingTop}px ${Layout.paddingHorizontal}px`,
-    boxSizing: 'border-box' as const,
-  },
-  heading: {
-    fontSize: Font.title,
-    fontWeight: 700,
-    marginBottom: Gap.xl,
-  },
-  toolbar: {
-    display: 'flex',
-    gap: Gap.xl,
-    alignItems: 'center',
-    flexWrap: 'wrap' as const,
-    marginBottom: Gap.md,
-  },
-  searchWrap: {
-    flex: 1,
-    minWidth: 200,
-    height: 48,
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.sm,
-    padding: `0 ${Gap.xl}px`,
-    boxSizing: 'border-box' as const,
-    borderRadius: Radius.full,
-    ...frostedCard,
-    cursor: 'text',
-  },
-  searchInput: {
-    flex: 1,
-    background: 'none',
-    border: 'none',
-    outline: 'none',
-    color: Colors.textPrimary,
-    fontSize: Font.md,
-  },
-  searchInputMobile: {
-    padding: `${Gap.xl}px ${Gap.section}px`,
-    fontSize: Font.lg,
-  },
-  sortGroup: {
-    display: 'flex',
-    gap: Gap.sm,
-  },
-  iconBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative' as const,
-    width: 48,
-    height: 48,
-    borderRadius: Radius.full,
-    ...frostedCard,
-    color: Colors.textTertiary,
-    cursor: 'pointer',
-  },
-  iconBtnMobile: {
-    width: 44,
-    height: 44,
-  },
-  iconBtnActive: {
-    border: 'none',
-    color: '#FFFFFF',
-    backgroundColor: Colors.accentBlue,
-  },
-  filterDot: {
-    position: 'absolute' as const,
-    top: 4,
-    right: 4,
-    width: 6,
-    height: 6,
-    borderRadius: '50%',
-    backgroundColor: Colors.accentBlue,
-  },
-  count: {
-    fontSize: Font.sm,
-    color: Colors.textTertiary,
-    marginBottom: Gap.md,
-  },
-  syncBanner: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.xl,
-    padding: `${Gap.xl}px ${Gap.section}px`,
-    backgroundColor: Colors.accentPurpleDark,
-    border: `1px solid ${Colors.borderPrimary}`,
-    borderRadius: Radius.lg,
-    marginBottom: Gap.md,
-  },
-  syncSpinner: {
-    width: 24,
-    height: 24,
-    border: '3px solid rgba(255,255,255,0.15)',
-    borderTopColor: Colors.accentPurple,
-    borderRadius: '50%',
-    animation: 'spin 0.8s linear infinite',
-    flexShrink: 0,
-  },
-  syncTitle: {
-    fontSize: Font.lg,
-    fontWeight: 700,
-    color: Colors.textPrimary,
-    marginBottom: Gap.xs,
-  },
-  syncSubtitle: {
-    fontSize: Font.sm,
-    color: Colors.textSecondary,
-  },
-  syncProgressOuter: {
-    marginTop: Gap.xs,
-    height: 6,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  syncProgressInner: {
-    height: '100%',
-    backgroundColor: Colors.accentPurple,
-    borderRadius: 3,
-    transition: 'width 0.3s ease',
-  },
-  syncProgressLabel: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    fontSize: Font.xs,
-    color: Colors.textSecondary,
-    marginBottom: Gap.xs,
-  },
-  list: {
-    paddingTop: Gap.lg,
-  },
-  row: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.xl,
-    padding: `0 ${Gap.xl}px`,
-    height: 64,
-    borderRadius: Radius.md,
-    ...frostedCardLight,
-    textDecoration: 'none',
-    color: 'inherit',
-  } as CSSProperties,
-  rowMobile: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: Gap.md,
-    padding: `${Gap.lg}px ${Gap.xl}px`,
-    borderRadius: Radius.md,
-    ...frostedCardLight,
-    textDecoration: 'none',
-    color: 'inherit',
-  } as CSSProperties,
-  mobileTopRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.xl,
-  },
-  detailStrip: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.xl,
-    flexShrink: 0,
-    marginLeft: 'auto',
-  },
-  metadataWrap: {
-    display: 'flex',
-    flexWrap: 'wrap' as const,
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: Gap.lg,
-  },
-  instrumentStatusRow: {
-    display: 'flex',
-    gap: Gap.sm,
-    alignItems: 'center',
-    flexShrink: 0,
-  },
-  instrumentStatusChip: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    borderWidth: 2,
-    borderStyle: 'solid',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  thumb: {
-    width: Size.thumb,
-    height: Size.thumb,
-    borderRadius: Radius.xs,
-    objectFit: 'cover' as const,
-    flexShrink: 0,
-  },
-  thumbPlaceholder: {
-    backgroundColor: Colors.purplePlaceholder,
-  },
-  rowText: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: Gap.xs,
-    minWidth: 0,
-    flex: 1,
-  },
-  rowTitle: {
-    fontSize: Font.md,
-    fontWeight: 600,
-    whiteSpace: 'nowrap' as const,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  },
-  rowArtist: {
-    fontSize: Font.sm,
-    color: Colors.textSubtle,
-    whiteSpace: 'nowrap' as const,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  },
-  rowBpm: {
-    fontSize: Font.xs,
-    color: Colors.textMuted,
-    flexShrink: 0,
-  },
-  instrumentBar: {
-    display: 'flex',
-    gap: Gap.sm,
-    alignItems: 'center',
-    flexWrap: 'wrap' as const,
-    marginBottom: Gap.md,
-  },
-  instrumentChip: {
-    padding: `${Gap.sm}px ${Gap.xl}px`,
-    borderRadius: Radius.xs,
-    border: `1px solid ${Colors.borderPrimary}`,
-    backgroundColor: Colors.transparent,
-    color: Colors.textTertiary,
-    fontSize: Font.sm,
-    cursor: 'pointer',
-  },
-  instrumentChipActive: {
-    backgroundColor: Colors.chipSelectedBg,
-    color: Colors.accentBlue,
-    borderColor: Colors.accentBlue,
-  },
-  loadingDot: {
-    fontSize: Font.xs,
-    color: Colors.textMuted,
-    marginLeft: Gap.sm,
-  },
-  scoreMeta: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.xl,
-    flexShrink: 0,
-  },
-  scoreValue: {
-    fontSize: Font.lg,
-    fontWeight: 700,
-    color: Colors.textPrimary,
-    fontVariantNumeric: 'tabular-nums',
-    width: 78,
-    textAlign: 'right' as const,
-    display: 'inline-block',
-  },
-  accuracyPill: {
-    fontSize: Font.lg,
-    fontWeight: 600,
-    color: Colors.textSecondary,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    padding: `${Gap.xs}px ${Gap.sm}px`,
-    borderRadius: Radius.xs,
-    border: '2px solid transparent',
-    minWidth: 58,
-    textAlign: 'center' as const,
-    display: 'inline-block',
-    boxSizing: 'border-box' as const,
-  },
-  accuracyBadgeFC: {
-    ...goldOutlineSkew,
-    fontSize: Font.lg,
-    minWidth: 58,
-    textAlign: 'center' as const,
-    boxSizing: 'border-box' as const,
-  },
-  percentilePill: {
-    fontSize: Font.lg,
-    fontWeight: 600,
-    color: Colors.textSecondary,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    padding: `${Gap.xs}px ${Gap.sm}px`,
-    borderRadius: Radius.xs,
-    border: '2px solid transparent',
-    minWidth: 82,
-    textAlign: 'center' as const,
-    display: 'inline-block',
-    boxSizing: 'border-box' as const,
-  },
-  percentileBadgeTop1: {
-    ...goldOutlineSkew,
-    fontSize: Font.lg,
-    minWidth: 82,
-    textAlign: 'center' as const,
-    boxSizing: 'border-box' as const,
-  },
-  percentileBadgeTop5: {
-    ...goldOutline,
-    fontSize: Font.lg,
-    minWidth: 82,
-    textAlign: 'center' as const,
-    boxSizing: 'border-box' as const,
-  },
-  center: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: '100vh',
-    color: Colors.textSecondary,
-    backgroundColor: Colors.backgroundApp,
-    fontSize: Font.lg,
-  },
-  arcSpinner: {
-    width: 48,
-    height: 48,
-    border: '4px solid rgba(255,255,255,0.10)',
-    borderTopColor: Colors.accentPurple,
-    borderRadius: '50%',
-    animation: 'spin 0.8s linear infinite',
-  },
-  spinnerOverlay: {
-    position: 'fixed' as const,
-    inset: 0,
-    zIndex: 2,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyState: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 'calc(100dvh - 250px)',
-    textAlign: 'center' as const,
-  },
-  emptyTitle: {
-    fontSize: Font.xl,
-    fontWeight: 700,
-    color: Colors.textPrimary,
-    marginBottom: Gap.md,
-  },
-  emptySubtitle: {
-    fontSize: Font.md,
-    color: Colors.textMuted,
-  },
-};
