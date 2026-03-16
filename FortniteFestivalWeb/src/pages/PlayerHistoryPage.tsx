@@ -16,6 +16,7 @@ import SeasonPill from '../components/SeasonPill';
 import PlayerScoreSortModal from '../components/modals/PlayerScoreSortModal';
 import type { PlayerScoreSortMode, PlayerScoreSortDraft } from '../components/modals/PlayerScoreSortModal';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldOutlineSkew, frostedCard } from '@festival/theme';
+import s from './PlayerHistoryPage.module.css';
 import { staggerDelay, estimateVisibleCount } from '../utils/stagger';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useStaggerRush } from '../hooks/useStaggerRush';
@@ -123,7 +124,7 @@ export default function PlayerHistoryPage() {
   }, [player, songId, instKey]);
 
   if (!songId || !instrument) {
-    return <div style={styles.center}>{t('history.notFound')}</div>;
+    return <div className={s.center}>{t('history.notFound')}</div>;
   }
 
   const filteredHistory = useMemo(
@@ -182,41 +183,34 @@ export default function PlayerHistoryPage() {
   }, [sortedHistory]);
 
   return (
-    <div style={styles.page}>
+    <div className={s.page}>
         {song?.albumArt && (
           <div
-            style={{
-              ...styles.bgImage,
-              backgroundImage: `url(${song.albumArt})`,
-            }}
+            className={s.bgImage}
+            style={{ backgroundImage: `url(${song.albumArt})` }}
           />
         )}
-        <div style={styles.bgDim} />
+        <div className={s.bgDim} />
 
-        <div style={{
-          ...styles.headerBar,
+        <div className={s.headerBar} style={{
           paddingTop: hasFab || headerCollapsed ? Gap.md : Layout.paddingTop,
           paddingBottom: Gap.section,
           ...(!hasFab ? { transition: 'padding 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
         }}>
-          <div style={styles.container}>
-            <div style={{
-              ...styles.headerContent,
+          <div className={s.container}>
+            <div className={s.headerContent} style={{
               ...(!hasFab ? { transition: 'margin 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
             }}>
-              <div style={styles.headerLeft}>
+              <div className={s.headerLeft}>
                 {song?.albumArt ? (
-                  <img src={song.albumArt} alt="" style={{
-                    ...styles.headerArt,
+                  <img src={song.albumArt} alt="" className={s.headerArt} style={{
                     width: hasFab || headerCollapsed ? 80 : 120,
                     height: hasFab || headerCollapsed ? 80 : 120,
                     borderRadius: hasFab || headerCollapsed ? Radius.md : Radius.lg,
                     ...(!hasFab ? { transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
                   }} />
                 ) : (
-                  <div style={{
-                    ...styles.headerArt,
-                    ...styles.artPlaceholder,
+                  <div className={s.artPlaceholder} style={{
                     width: hasFab || headerCollapsed ? 80 : 120,
                     height: hasFab || headerCollapsed ? 80 : 120,
                     borderRadius: hasFab || headerCollapsed ? Radius.md : Radius.lg,
@@ -224,21 +218,19 @@ export default function PlayerHistoryPage() {
                   }} />
                 )}
                 <div>
-                  <h1 style={{
-                    ...styles.songTitle,
+                  <h1 className={s.songTitle} style={{
                     marginBottom: hasFab || headerCollapsed ? Gap.xs : Gap.sm,
                     ...(!hasFab ? { transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
                   }}>{song?.title ?? songId}</h1>
-                  <p style={{
-                    ...styles.songArtist,
+                  <p className={s.songArtist} style={{
                     fontSize: hasFab || headerCollapsed ? Font.md : Font.lg,
                     ...(!hasFab ? { transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
                   }}>{song?.artist ?? t('common.unknownArtist')}{song?.year ? ` · ${song.year}` : ''}</p>
                 </div>
               </div>
-              <div style={styles.headerRight}>
+              <div className={s.headerRight}>
                 {!hasFab && !IS_IOS && !IS_ANDROID && !IS_PWA && (
-                  <button style={styles.sortBtn} onClick={openSort} title={t('common.sort')} aria-label={t('common.sortPlayerScores')}>
+                  <button className={s.sortBtn} onClick={openSort} title={t('common.sort')} aria-label={t('common.sortPlayerScores')}>
                     <IoSwapVerticalSharp size={18} />
                   </button>
                 )}
@@ -253,37 +245,35 @@ export default function PlayerHistoryPage() {
                 }}>
                   <InstrumentIcon instrument={instKey} size={56} />
                 </div>
-                <span style={styles.instLabel}>{instLabel}</span>
+                <span className={s.instLabel}>{instLabel}</span>
               </div>
             </div>
           </div>
         </div>
 
-      <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
-        <div style={styles.container}>
+      <div ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
+        <div className={s.container}>
 
-        {error && <div style={styles.centerError}>{error}</div>}
+        {error && <div className={s.centerError}>{error}</div>}
 
         {!error && !player && !loading && (
-          <div style={styles.center}>{t('history.selectPlayer')}</div>
+          <div className={s.center}>{t('history.selectPlayer')}</div>
         )}
 
         {!error && player && (
           <>
             {loadPhase !== 'contentIn' && (
               <div
-                style={{
-                  ...styles.spinnerContainer,
-                  ...(loadPhase === 'spinnerOut'
+                className={s.spinnerContainer}
+                style={loadPhase === 'spinnerOut'
                     ? { animation: 'fadeOut 500ms ease-out forwards' }
-                    : {}),
-                }}
+                    : undefined}
               >
-                <div style={styles.arcSpinner} />
+                <div className={s.arcSpinner} />
               </div>
             )}
             {loadPhase === 'contentIn' && (
-            <div key={staggerKey} style={{ ...styles.list, ...(hasFab ? { paddingBottom: 96 } : {}) }}>
+            <div key={staggerKey} className={s.list} style={hasFab ? { paddingBottom: 96 } : undefined}>
               {sortedHistory.map((h, i) => {
                 const delay = staggerDelay(i, 125, estimateVisibleCount(56));
                 const staggerStyle: React.CSSProperties | undefined = delay != null
@@ -293,36 +283,35 @@ export default function PlayerHistoryPage() {
                 const dateStr = new Date(h.scoreAchievedAt ?? h.changedAt)
                   .toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                 const isHighScore = i === highScoreIndex;
-                const baseRow = isHighScore ? { ...styles.row, ...styles.rowHighlight } : styles.row;
-                const rowStyle = isMobile
-                  ? { ...baseRow, gap: Gap.md, padding: `0 ${Gap.md}px`, height: 40 }
-                  : baseRow;
+                const rowClass = isHighScore ? s.rowHighlight : s.row;
+                const mobileStyle: React.CSSProperties | undefined = isMobile ? { gap: Gap.md, padding: `0 ${Gap.md}px`, height: 40 } : undefined;
                 return (
                 <div
                   key={`${h.changedAt}-${h.newScore}`}
-                  style={{ ...rowStyle, ...staggerStyle }}
+                  className={rowClass}
+                  style={{ ...mobileStyle, ...staggerStyle }}
                   onAnimationEnd={(ev) => {
                     ev.currentTarget.style.opacity = '';
                     ev.currentTarget.style.animation = '';
                   }}
                 >
-                  <span style={{ ...styles.colName, ...(isHighScore ? { fontWeight: 700 } : {}) }}>{dateStr}</span>
-                  <span style={styles.seasonScoreGroup}>
+                  <span className={s.colName} style={isHighScore ? { fontWeight: 700 } : undefined}>{dateStr}</span>
+                  <span className={s.seasonScoreGroup}>
                     {showSeason && h.season != null && (
                       <SeasonPill season={h.season} />
                     )}
-                    <span style={{ ...styles.colScore, width: scoreWidth }}>
+                    <span className={s.colScore} style={{ width: scoreWidth }}>
                       {h.newScore.toLocaleString()}
                     </span>
                   </span>
                   {showAccuracy && (
-                  <span style={styles.colAcc}>
+                  <span className={s.colAcc}>
                     {pct != null
                       ? (() => {
                           const r1 = pct.toFixed(1);
                           const text = r1.endsWith('.0') ? `${Math.round(pct)}%` : `${r1}%`;
                           return h.isFullCombo
-                            ? <span style={styles.fcAccBadge}>{text}</span>
+                            ? <span className={s.fcAccBadge}>{text}</span>
                             : <span style={{ color: accuracyColor(pct) }}>{text}</span>;
                         })()
                       : '\u2014'}
@@ -332,7 +321,7 @@ export default function PlayerHistoryPage() {
                 );
               })}
               {sortedHistory.length === 0 && (
-                <div style={styles.emptyRow}>{t('history.noHistoryForInstrument')}</div>
+                <div className={s.emptyRow}>{t('history.noHistoryForInstrument')}</div>
               )}
             </div>
             )}
@@ -354,189 +343,3 @@ export default function PlayerHistoryPage() {
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  page: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    height: '100%',
-    backgroundColor: Colors.backgroundApp,
-    color: Colors.textPrimary,
-    fontFamily:
-      "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-    position: 'relative' as const,
-  },
-  scrollArea: {
-    flex: 1,
-    overflowY: 'auto' as const,
-    position: 'relative' as const,
-  },
-  bgImage: {
-    position: 'fixed' as const,
-    inset: 0,
-    backgroundSize: 'cover',
-    backgroundPosition: 'center',
-    opacity: 0.9,
-    pointerEvents: 'none' as const,
-  },
-  bgDim: {
-    position: 'fixed' as const,
-    inset: 0,
-    backgroundColor: Colors.overlayDark,
-    pointerEvents: 'none' as const,
-  },
-  container: {
-    position: 'relative' as const,
-    zIndex: 1,
-    maxWidth: MaxWidth.card,
-    margin: '0 auto',
-    padding: `0 ${Layout.paddingHorizontal}px`,
-  },
-  headerBar: {
-    position: 'relative' as const,
-    zIndex: 2,
-    flexShrink: 0,
-  },
-  headerContent: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  headerLeft: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.section,
-    minWidth: 0,
-  },
-  headerRight: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.md,
-    flexShrink: 0,
-    paddingRight: Gap.md,
-  },
-  sortBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative' as const,
-    width: Size.control,
-    height: Size.control,
-    borderRadius: Radius.xs,
-    ...frostedCard,
-    color: Colors.textTertiary,
-    cursor: 'pointer',
-  },
-  headerArt: {
-    width: 80,
-    height: 80,
-    borderRadius: Radius.md,
-    objectFit: 'cover' as const,
-    flexShrink: 0,
-  },
-  artPlaceholder: {
-    backgroundColor: Colors.purplePlaceholder,
-  },
-  songTitle: {
-    fontSize: Font.title,
-    fontWeight: 700,
-    marginBottom: Gap.xs,
-  },
-  songArtist: {
-    fontSize: Font.md,
-    color: Colors.textSubtle,
-  },
-  instLabel: {
-    fontSize: Font.xl,
-    fontWeight: 600,
-  },
-  list: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: Gap.sm,
-  },
-  row: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.xl,
-    padding: `0 ${Gap.xl}px`,
-    height: 48,
-    borderRadius: Radius.md,
-    ...frostedCard,
-    color: 'inherit',
-    fontSize: Font.md,
-  },
-  rowHighlight: {
-    backgroundColor: 'rgba(75, 15, 99, 0.75)',
-    border: `1px solid rgba(124, 58, 237, 0.5)`,
-  },
-  emptyRow: {
-    padding: `${Gap.xl}px`,
-    textAlign: 'center' as const,
-    color: Colors.textMuted,
-  },
-  colName: {
-    flex: 1,
-    minWidth: 0,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap' as const,
-  },
-  colScore: {
-    flexShrink: 0,
-    textAlign: 'right' as const,
-    fontWeight: 600,
-    fontSize: Font.lg,
-    color: Colors.textPrimary,
-    fontVariantNumeric: 'tabular-nums',
-  },
-  seasonScoreGroup: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.md,
-    flexShrink: 0,
-  },
-  colAcc: {
-    width: 64,
-    flexShrink: 0,
-    textAlign: 'center' as const,
-    fontWeight: 600,
-    fontSize: Font.lg,
-    color: Colors.accentBlueBright,
-    fontVariantNumeric: 'tabular-nums',
-  },
-  fcAccBadge: {
-    ...goldOutlineSkew,
-    fontSize: Font.lg,
-    textAlign: 'center' as const,
-  },
-  spinnerContainer: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 'calc(100vh - 350px)',
-  },
-  arcSpinner: {
-    width: 48,
-    height: 48,
-    border: '4px solid rgba(255,255,255,0.10)',
-    borderTopColor: Colors.accentPurple,
-    borderRadius: '50%',
-    animation: 'spin 0.8s linear infinite',
-  },
-  center: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: `${Gap.section * 2}px 0`,
-    color: Colors.textSecondary,
-    fontSize: Font.lg,
-  },
-  centerError: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: `${Gap.section * 2}px 0`,
-    color: Colors.statusRed,
-    fontSize: Font.lg,
-  },
-};
