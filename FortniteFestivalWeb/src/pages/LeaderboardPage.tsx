@@ -362,14 +362,15 @@ export default function LeaderboardPage() {
                   ? { opacity: 0, animation: `fadeInUp 300ms ease-out ${delay}ms forwards` }
                   : undefined;
                 const rowClass = isPlayer ? s.rowHighlight : s.row;
-                const rowStyle = isMobile ? { ...baseStyle, gap: Gap.md, padding: `0 ${Gap.md}px`, height: 40 } : baseStyle;
+                const mobileRowStyle: React.CSSProperties | undefined = isMobile ? { gap: Gap.md, padding: `0 ${Gap.md}px`, height: 40 } : undefined;
                 return (
                 <Link
                   key={e.accountId}
                   ref={isPlayer ? playerRowRef : undefined}
                   to={isPlayer ? '/statistics' : `/player/${e.accountId}`}
                   state={{ backTo: location.pathname }}
-                  style={{ ...rowStyle, ...staggerStyle }}
+                  className={rowClass}
+                  style={{ ...mobileRowStyle, ...staggerStyle }}
                   onAnimationEnd={(ev) => {
                     const el = ev.currentTarget;
                     el.style.opacity = '';
@@ -452,24 +453,14 @@ export default function LeaderboardPage() {
             <span className={s.pageInfoBadge}>{page + 1} / {totalPages}</span>
           </span>
           <button
-            style={{
-              ...s.pageButton,
-              ...(page >= totalPages - 1
-                ? s.pageButtonDisabled
-                : {}),
-            }}
+            className={page >= totalPages - 1 ? s.pageButtonDisabled : s.pageButton}
             disabled={page >= totalPages - 1}
             onClick={() => void fetchPage(page + 1)}
           >
             Next ›
           </button>
           <button
-            style={{
-              ...s.pageButton,
-              ...(page >= totalPages - 1
-                ? s.pageButtonDisabled
-                : {}),
-            }}
+            className={page >= totalPages - 1 ? s.pageButtonDisabled : s.pageButton}
             disabled={page >= totalPages - 1}
             onClick={() => void fetchPage(totalPages - 1)}
           >
@@ -485,7 +476,7 @@ export default function LeaderboardPage() {
           className={hasFab ? s.playerFooterFab : s.playerFooter} style={hasFab && IS_PWA ? { bottom: 84 + Gap.section - Gap.md } : undefined}
           onClick={() => navigate('/statistics')} role="button" tabIndex={0}
         >
-          <div className={hasFab ? 'fab-player-footer' : undefined} className={s.playerFooterRow} style={{ cursor: 'pointer', ...(isMobile ? { gap: Gap.md, paddingLeft: Gap.md, paddingRight: Gap.md } : {}) }}>
+          <div className={`${hasFab ? 'fab-player-footer' : ''} ${s.playerFooterRow}`} style={{ cursor: 'pointer', ...(isMobile ? { gap: Gap.md, paddingLeft: Gap.md, paddingRight: Gap.md } : {}) }}>
             <span className={s.colRank} style={{ fontWeight: 700 }}>#{playerScore.rank.toLocaleString()}</span>
             <span className={s.colName} style={{ fontWeight: 700 }}>{playerData.displayName}</span>
             <span className={s.seasonScoreGroup}>

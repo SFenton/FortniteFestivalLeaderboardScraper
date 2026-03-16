@@ -1,27 +1,20 @@
-import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoFunnel } from 'react-icons/io5';
-import { Link } from 'react-router-dom';
 import InfiniteScroll from 'react-infinite-scroll-component';
 import { useFestival } from '../contexts/FestivalContext';
 import { usePlayerData } from '../contexts/PlayerDataContext';
 import { useSuggestions } from '../hooks/useSuggestions';
 import { serverSongToCore, buildScoresIndex } from '../utils/suggestionAdapter';
-import { InstrumentIcon, getInstrumentStatusVisual } from '../components/InstrumentIcons';
-import AlbumArt from '../components/AlbumArt';
-import SeasonPill from '../components/SeasonPill';
 import SuggestionsFilterModal from '../components/modals/SuggestionsFilterModal';
 import type { SuggestionsFilterDraft } from '../components/modals/SuggestionsFilterModal';
 import { defaultSuggestionsFilterDraft, isSuggestionsFilterActive } from '../components/modals/SuggestionsFilterModal';
-import { InstrumentKeys } from '@festival/core/instruments';
-import type { LeaderboardData } from '@festival/core/models';
-import type { SuggestionCategory, SuggestionSongItem } from '@festival/core/suggestions/types';
-import type { InstrumentKey } from '@festival/core/instruments';
 import { shouldShowCategory, filterCategoryForInstruments } from '@festival/core/instrumentFilters';
 import { globalKeyFor, getCategoryTypeId, getCategoryInstrument, perInstrumentKeyFor } from '@festival/core/suggestions/suggestionFilterConfig';
 import { useSettings } from '../contexts/SettingsContext';
 import type { AppSettings } from '../contexts/SettingsContext';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutline, goldOutlineSkew, frostedCard } from '@festival/theme';
+import type { SuggestionCategory } from '@festival/core/suggestions/types';
+import { Font, Gap } from '@festival/theme';
 import s from './SuggestionsPage.module.css';
 import { estimateVisibleCount } from '../utils/stagger';
 import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
@@ -32,16 +25,6 @@ import { useLoadPhase } from '../hooks/useLoadPhase';
 import { useModalState } from '../hooks/useModalState';
 import FadeInDiv from '../components/FadeInDiv';
 import { CategoryCard } from '../components/suggestions/CategoryCard';
-import type { InstrumentKey as ServerInstrumentKey } from '../models';
-
-const CORE_TO_SERVER_INSTRUMENT: Record<InstrumentKey, ServerInstrumentKey> = {
-  guitar: 'Solo_Guitar',
-  bass: 'Solo_Bass',
-  drums: 'Solo_Drums',
-  vocals: 'Solo_Vocals',
-  pro_guitar: 'Solo_PeripheralGuitar',
-  pro_bass: 'Solo_PeripheralBass',
-};
 
 const FILTER_STORAGE_KEY = 'fst-suggestions-filter';
 
@@ -367,9 +350,9 @@ export default function SuggestionsPage({ accountId }: Props) {
       {!isMobileChrome && (
       <div className={s.header}>
         <div className={s.container}>
-          <div style={{ ...s.headerRow, ...headerStagger }}>
+          <div className={s.headerRow} style={headerStagger}>
             <button
-              style={{ ...s.iconBtn, ...(filtersActive ? s.iconBtnActive : {}), width: 'auto', paddingLeft: Gap.xl, paddingRight: Gap.xl, gap: Gap.md }}
+              className={`${s.iconBtn}${filtersActive ? ` ${s.iconBtnActive}` : ''}`} style={{ width: 'auto', paddingLeft: Gap.xl, paddingRight: Gap.xl, gap: Gap.md }}
               onClick={openFilter}
               title={t('common.filter')}
               aria-label={t('common.filterSuggestions')}
@@ -382,7 +365,7 @@ export default function SuggestionsPage({ accountId }: Props) {
       </div>
       )}
       <div id="suggestions-scroll" ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
-      <div style={{ ...s.container, ...(isMobile ? { paddingTop: Gap.sm } : {}) }}>
+      <div style={{ ...(isMobile ? { paddingTop: Gap.sm } : {}) }} className={s.container}>
         {visibleCategories.length === 0 && (categories.length > 0 || !effectiveHasMore) ? (
           <div className={s.emptyState}>
             <div className={s.emptyTitle}>{t('suggestions.noSuggestions')}</div>

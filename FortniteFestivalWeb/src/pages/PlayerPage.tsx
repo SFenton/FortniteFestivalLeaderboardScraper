@@ -4,7 +4,6 @@ import { useParams, useNavigate, useNavigationType, useLocation } from 'react-ro
 import { IoPerson } from 'react-icons/io5';
 import { formatPercentileBucket } from '@festival/core';
 import {
-  type InstrumentStats,
   computeInstrumentStats,
   computeOverallStats,
   groupByInstrument,
@@ -21,7 +20,6 @@ import {
   INSTRUMENT_LABELS,
   type InstrumentKey,
   type PlayerResponse,
-  type PlayerScore,
   type Song,
 } from '../models';
 import { Colors, Font, Gap, Radius, Size, frostedCard } from '@festival/theme';
@@ -58,7 +56,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   const { t } = useTranslation();
   const params = useParams<{ accountId: string }>();
   const accountId = propAccountId ?? params.accountId;
-  const navType = useNavigationType();
+  useNavigationType();
   const {
     state: { songs },
   } = useFestival();
@@ -68,7 +66,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   const isTrackedPlayer = !!propAccountId;
 
   // Local state for when viewing an arbitrary player via URL
-  const cachedData = _cachedPlayerData?.accountId === accountId ? _cachedPlayerData.data : null;
+  const cachedData = _cachedPlayerData && _cachedPlayerData.accountId === accountId ? _cachedPlayerData.data : null;
   const [localData, setLocalData] = useState<PlayerResponse | null>(cachedData);
   const [localLoading, setLocalLoading] = useState(!isTrackedPlayer && !cachedData);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -387,7 +385,7 @@ function PlayerContent({
     } });
 
     for (let ci = 0; ci < cards.length; ci++) {
-      const c = cards[ci];
+      const c = cards[ci]!;
       items.push({ key: `${inst}-card-${ci}`, span: false, heightEstimate: 100, style: cardStyle, node: <StatBox label={c.label} value={c.value} color={c.color} onClick={c.onClick} /> });
     }
 
@@ -403,7 +401,7 @@ function PlayerContent({
           <div>
             <div className={s.pctRowHeader}>
               <span className={s.pctHeaderText}>{t('player.percentileHeader')}</span>
-              <span style={{ ...s.pctHeaderText, textAlign: 'right' }}>{t('player.songsHeader')}</span>
+              <span className={s.pctHeaderText} style={{ textAlign: 'right' }}>{t('player.songsHeader')}</span>
             </div>
             {stats.percentileBuckets.map((b, pi) => {
               const isLast = pi === stats.percentileBuckets.length - 1;
@@ -427,7 +425,7 @@ function PlayerContent({
                 >
                   <span>
                     {badgeStyle
-                      ? <span style={badgeStyle}>Top {b.pct}%</span>
+                      ? <span className={badgeStyle}>Top {b.pct}%</span>
                       : <span className={s.pctPlainLabel}>Top {b.pct}%</span>}
                   </span>
                   <span style={{ fontWeight: 600 }}>{b.count}</span>
@@ -463,20 +461,20 @@ function PlayerContent({
     const topScores = sorted.slice(0, 5);
     const bottomScores = sorted.length > 5 ? sorted.slice(-5).reverse() : [];
 
-    const renderSongRow = (s: typeof topScores[0], _isLast: boolean) => {
-      const song = songMap.get(s.songId);
-      const pct = s.rank > 0 && (s.totalEntries ?? 0) > 0
-        ? Math.min((s.rank / s.totalEntries!) * 100, 100)
+    const renderSongRow = (sc: typeof topScores[0], _isLast: boolean) => {
+      const song = songMap.get(sc.songId);
+      const pct = sc.rank > 0 && (sc.totalEntries ?? 0) > 0
+        ? Math.min((sc.rank / sc.totalEntries!) * 100, 100)
         : undefined;
       const handleClick = (e: React.MouseEvent) => {
         e.preventDefault();
-        withProfileSwitch(() => navigate(`/songs/${s.songId}?instrument=${encodeURIComponent(inst)}`, { state: { backTo: location.pathname, autoScroll: true } }));
+        withProfileSwitch(() => navigate(`/songs/${sc.songId}?instrument=${encodeURIComponent(inst)}`, { state: { backTo: location.pathname, autoScroll: true } }));
       };
       return (
-        <a key={s.songId} href={`#/songs/${s.songId}?instrument=${encodeURIComponent(inst)}`} onClick={handleClick} className={s.songListRow}>
+        <a key={sc.songId} href={`#/songs/${sc.songId}?instrument=${encodeURIComponent(inst)}`} onClick={handleClick} className={s.songListRow}>
           <AlbumArt src={song?.albumArt} size={Size.thumb} />
           <div className={s.topSongText}>
-            <span className={s.topSongName}>{song?.title ?? s.songId.slice(0, 8)}</span>
+            <span className={s.topSongName}>{song?.title ?? sc.songId.slice(0, 8)}</span>
             <span className={s.topSongArtist}>{song?.artist ?? ''}{song?.year ? ` · ${song.year}` : ''}</span>
           </div>
           <div className={s.topSongRight}>
@@ -488,7 +486,7 @@ function PlayerContent({
                 : isTop5
                   ? s.percentileBadgeTop5
                   : s.percentilePill;
-              return <span style={pctStyle}>{formatPercentileBucket(pct)}</span>;
+              return <span className={pctStyle}>{formatPercentileBucket(pct)}</span>;
             })()}
           </div>
         </a>
@@ -505,7 +503,7 @@ function PlayerContent({
           <InstrumentIcon instrument={inst} size={48} />
           <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: 48 }}>
             <span className={s.instCardTitle}>{t('player.topFiveSongs')}</span>
-            <span style={{ ...s.sectionDesc, margin: 0, fontSize: Font.md }}>{`${data.displayName}'s highest-ranked songs for ${INSTRUMENT_LABELS[inst]}.`}</span>
+            <span className={s.sectionDesc} style={{ margin: 0, fontSize: Font.md }}>{`${data.displayName}'s highest-ranked songs for ${INSTRUMENT_LABELS[inst]}.`}</span>
           </div>
         </div>
       ),
@@ -518,7 +516,7 @@ function PlayerContent({
       heightEstimate: topScores.length * 72,
       node: (
         <div style={{ display: 'flex', flexDirection: 'column', gap: Gap.sm, marginBottom: Gap.section }}>
-          {topScores.map((s, si) => renderSongRow(s, si === topScores.length - 1))}
+          {topScores.map((sc, si) => renderSongRow(sc, si === topScores.length - 1))}
         </div>
       ),
     });
@@ -530,11 +528,11 @@ function PlayerContent({
         span: true,
         heightEstimate: 64,
         node: (
-          <div style={{ ...s.instCardHeader, marginTop: Gap.md }}>
+          <div className={s.instCardHeader} style={{ marginTop: Gap.md }}>
             <InstrumentIcon instrument={inst} size={48} />
             <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: 48 }}>
               <span className={s.instCardTitle}>{t('player.bottomFiveSongs')}</span>
-              <span style={{ ...s.sectionDesc, margin: 0, fontSize: Font.md }}>{`${data.displayName}'s lowest-ranked songs for ${INSTRUMENT_LABELS[inst]}.`}</span>
+              <span className={s.sectionDesc} style={{ margin: 0, fontSize: Font.md }}>{`${data.displayName}'s lowest-ranked songs for ${INSTRUMENT_LABELS[inst]}.`}</span>
             </div>
           </div>
         ),
@@ -547,7 +545,7 @@ function PlayerContent({
         heightEstimate: bottomScores.length * 72,
         node: (
           <div style={{ display: 'flex', flexDirection: 'column', gap: Gap.sm, marginBottom: Gap.section }}>
-            {bottomScores.map((s, si) => renderSongRow(s, si === bottomScores.length - 1))}
+            {bottomScores.map((sc, si) => renderSongRow(sc, si === bottomScores.length - 1))}
           </div>
         ),
       });
@@ -585,8 +583,7 @@ function PlayerContent({
         <h1 className={s.playerName}>{data.displayName}</h1>
         {canShowSelectBtn && (
           <button
-            style={{
-              ...s.selectProfileBtn,
+            className={s.selectProfileBtn} style={{
               opacity: selectBtnVisible ? 1 : 0,
               transform: selectBtnVisible ? 'scale(1)' : 'scale(0.9)',
               pointerEvents: selectBtnVisible ? 'auto' as const : 'none' as const,
@@ -606,7 +603,7 @@ function PlayerContent({
         )}
       </div>
       <div ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
-        <div style={{ ...s.container, ...(hasFab ? { paddingBottom: 72 } : {}) }}>
+        <div className={s.container} style={{ ...(hasFab ? { paddingBottom: 72 } : {}) }}>
           <div className={s.gridList} style={{ ...(isNarrowGrid ? { gridTemplateColumns: 'minmax(0, 1fr)' } : {}) }}>
             {(() => {
               // Compute which items are in the initial viewport by accumulating
@@ -620,7 +617,7 @@ function PlayerContent({
               let visibleCount = items.length; // default: animate all
 
               for (let i = 0; i < items.length; i++) {
-                const item = items[i];
+                const item = items[i]!;
                 if (item.span) {
                   // Flush any pending half-row
                   if (col === 1) {
@@ -647,7 +644,7 @@ function PlayerContent({
               return items.map((item, i) => {
                 const delay = skipAnim ? undefined : (i < visibleCount ? (i + 1) * 80 : lastVisibleDelay);
                 return (
-                  <FadeInDiv key={item.key} delay={delay} style={{ ...(item.span ? s.gridFullWidth : {}), ...item.style }}>
+                  <FadeInDiv key={item.key} delay={delay} className={item.span ? s.gridFullWidth : undefined} style={item.style}>
                     {item.node}
                   </FadeInDiv>
                 );

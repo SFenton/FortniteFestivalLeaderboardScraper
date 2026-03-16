@@ -9,6 +9,7 @@ interface FadeInDivProps {
   hidden?: boolean;
   children: ReactNode;
   style?: CSSProperties;
+  className?: string;
 }
 
 /**
@@ -16,7 +17,7 @@ interface FadeInDivProps {
  * Cleans up inline animation styles after completion so they don't interfere
  * with subsequent re-renders or `useStaggerRush`.
  */
-const FadeInDiv = memo(function FadeInDiv({ delay, hidden, children, style }: FadeInDivProps) {
+const FadeInDiv = memo(function FadeInDiv({ delay, hidden, children, style, className }: FadeInDivProps) {
   const ref = useRef<HTMLDivElement>(null);
   const handleEnd = useCallback(() => {
     const el = ref.current;
@@ -25,14 +26,14 @@ const FadeInDiv = memo(function FadeInDiv({ delay, hidden, children, style }: Fa
     el.style.animation = '';
   }, []);
 
-  if (delay == null) return <div style={style}>{children}</div>;
+  if (delay == null) return <div className={className} style={style}>{children}</div>;
 
-  if (hidden) return <div className={css.hidden} style={style}>{children}</div>;
+  if (hidden) return <div className={[css.hidden, className].filter(Boolean).join(' ')} style={style}>{children}</div>;
 
   return (
     <div
       ref={ref}
-      className={css.wrapper}
+      className={className ? `${css.wrapper} ${className}` : css.wrapper}
       style={{ '--fade-animation': `fadeInUp ${FADE_DURATION}ms ease-out ${delay}ms forwards`, ...style } as CSSProperties}
       onAnimationEnd={handleEnd}
     >
