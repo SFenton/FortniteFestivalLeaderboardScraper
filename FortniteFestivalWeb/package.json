@@ -17,6 +17,7 @@
     "@festival/core": "portal:../packages/core",
     "@festival/theme": "portal:../packages/theme",
     "@festival/ui-utils": "portal:../packages/ui-utils",
+    "@tanstack/react-virtual": "^3.13.22",
     "i18next": "^25.8.18",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
