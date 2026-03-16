@@ -376,8 +376,8 @@ export default function LeaderboardPage() {
                     el.style.animation = '';
                   }}
                 >
-                  <span style={{ ...s.colRank, ...(isPlayer ? { fontWeight: 700 } : {}) }}>#{(e.rank ?? startRank + i + 1).toLocaleString()}</span>
-                  <span style={{ ...s.colName, ...(isPlayer ? { fontWeight: 700 } : {}) }}>
+                  <span className={s.colRank} style={isPlayer ? { fontWeight: 700 } : undefined}>#{(e.rank ?? startRank + i + 1).toLocaleString()}</span>
+                  <span className={s.colName} style={isPlayer ? { fontWeight: 700 } : undefined}>
                     {e.displayName || t('common.unknownUser')}
                   </span>
                   <span className={s.seasonScoreGroup}>
@@ -432,23 +432,17 @@ export default function LeaderboardPage() {
         {hasLoadedOnce.current && !error && totalPages > 1 && (() => {
           return (
         <div
-          style={{ ...s.pagination, ...(isMobile ? { justifyContent: 'space-between', gap: 0 } : {}), ...(hasFab ? { paddingBottom: 96 } : {}) }}
+          className={s.pagination} style={{ ...(isMobile ? { justifyContent: 'space-between' as const, gap: 0 } : {}), ...(hasFab ? { paddingBottom: 96 } : {}) }}
         >
           <button
-            style={{
-              ...s.pageButton,
-              ...(page === 0 ? s.pageButtonDisabled : {}),
-            }}
+            className={page === 0 ? s.pageButtonDisabled : s.pageButton}
             disabled={page === 0}
             onClick={() => void fetchPage(0)}
           >
             « First
           </button>
           <button
-            style={{
-              ...s.pageButton,
-              ...(page === 0 ? s.pageButtonDisabled : {}),
-            }}
+            className={page === 0 ? s.pageButtonDisabled : s.pageButton}
             disabled={page === 0}
             onClick={() => void fetchPage(page - 1)}
           >
@@ -488,12 +482,12 @@ export default function LeaderboardPage() {
       {playerScore && playerData && songId && isScoreValid(songId, instKey, playerScore.score) && (() => {
         return (
         <div
-          style={{ ...s.playerFooter, ...(hasFab ? s.playerFooterFab : {}), ...(hasFab && IS_PWA ? { bottom: 84 + Gap.section - Gap.md } : {}) }}
+          className={hasFab ? s.playerFooterFab : s.playerFooter} style={hasFab && IS_PWA ? { bottom: 84 + Gap.section - Gap.md } : undefined}
           onClick={() => navigate('/statistics')} role="button" tabIndex={0}
         >
-          <div className={hasFab ? 'fab-player-footer' : undefined} style={{ ...s.playerFooterRow, cursor: 'pointer', ...(isMobile ? { gap: Gap.md, paddingLeft: Gap.md, paddingRight: Gap.md } : {}) }}>
-            <span style={{ ...s.colRank, fontWeight: 700 }}>#{playerScore.rank.toLocaleString()}</span>
-            <span style={{ ...s.colName, fontWeight: 700 }}>{playerData.displayName}</span>
+          <div className={hasFab ? 'fab-player-footer' : undefined} className={s.playerFooterRow} style={{ cursor: 'pointer', ...(isMobile ? { gap: Gap.md, paddingLeft: Gap.md, paddingRight: Gap.md } : {}) }}>
+            <span className={s.colRank} style={{ fontWeight: 700 }}>#{playerScore.rank.toLocaleString()}</span>
+            <span className={s.colName} style={{ fontWeight: 700 }}>{playerData.displayName}</span>
             <span className={s.seasonScoreGroup}>
               {showSeason && playerScore.season != null && (
                 <SeasonPill season={playerScore.season} />

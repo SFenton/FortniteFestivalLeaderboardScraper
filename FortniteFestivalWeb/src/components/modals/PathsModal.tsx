@@ -168,7 +168,7 @@ export default function PathsModal({ visible, songId, onClose }: Props) {
               </button>
             </div>
             <div style={{ ...css.accordion, maxHeight: instOpen ? 160 : 0 }}>
-              <div style={{ ...css.instrumentRow, paddingTop: Gap.md }}>
+              <div className={css.instrumentRow} style={{ paddingTop: Gap.md }}>
                 {instruments.map(key => {
                   const active = selected === key;
                   return (
@@ -188,7 +188,7 @@ export default function PathsModal({ visible, songId, onClose }: Props) {
               </div>
             </div>
             <div style={{ ...css.accordion, maxHeight: diffOpen ? 120 : 0 }}>
-              <div style={{ ...css.diffGridMobile, paddingTop: Gap.md }}>
+              <div className={css.diffGridMobile} style={{ paddingTop: Gap.md }}>
                 {DIFFICULTIES.map(d => (
                   <button
                     key={d}

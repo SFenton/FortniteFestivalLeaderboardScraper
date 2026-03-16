@@ -405,8 +405,7 @@ export default function ScoreHistoryChart({
                   <button
                     key={inst}
                     onClick={() => setSelected(inst)}
-                    className={s.iconButton} style={{
-                      ...(isActive ? s.iconButtonActive : {}),
+                    className={isActive ? s.iconButtonActive : s.iconButton} style={{
                     }}
                   >
                     <InstrumentIcon instrument={inst} size={48} />
@@ -639,8 +638,7 @@ export default function ScoreHistoryChart({
         {!loading && needsPagination && (
           <div className={s.chartPagination}>
             <button
-              className={s.chartPageButton} style={{
-                ...(backDisabled ? s.chartPageButtonDisabled : {}),
+              className={backDisabled ? s.chartPageButtonDisabled : s.chartPageButton} style={{
               }}
               disabled={backDisabled}
               onClick={() => {
@@ -659,8 +657,7 @@ export default function ScoreHistoryChart({
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M9 3L4 8L9 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M14 3L9 8L14 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
             <button
-              className={s.chartPageButton} style={{
-                ...(backDisabled ? s.chartPageButtonDisabled : {}),
+              className={backDisabled ? s.chartPageButtonDisabled : s.chartPageButton} style={{
               }}
               disabled={backDisabled}
               onClick={() => {
@@ -679,8 +676,7 @@ export default function ScoreHistoryChart({
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
             <button
-              className={s.chartPageButton} style={{
-                ...(forwardDisabled ? s.chartPageButtonDisabled : {}),
+              className={forwardDisabled ? s.chartPageButtonDisabled : s.chartPageButton} style={{
                 marginLeft: Gap.md,
               }}
               disabled={forwardDisabled}
@@ -700,8 +696,7 @@ export default function ScoreHistoryChart({
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
             <button
-              className={s.chartPageButton} style={{
-                ...(forwardDisabled ? s.chartPageButtonDisabled : {}),
+              className={forwardDisabled ? s.chartPageButtonDisabled : s.chartPageButton} style={{
               }}
               disabled={forwardDisabled}
               onClick={() => {
