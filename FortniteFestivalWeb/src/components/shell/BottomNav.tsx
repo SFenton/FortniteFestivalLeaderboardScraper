@@ -4,7 +4,7 @@ import type { TrackedPlayer } from '../../hooks/useTrackedPlayer';
 import { IS_PWA } from '../../utils/platform';
 import css from './BottomNav.module.css';
 
-type TabKey = 'songs' | 'suggestions' | 'statistics' | 'settings';
+import type { TabKey } from '../../hooks/useTabNavigation';
 
 export default function BottomNav({ player, activeTab, onTabClick }: {
   player: TrackedPlayer | null;
