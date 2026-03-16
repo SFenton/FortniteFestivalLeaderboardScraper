@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { api } from '../../api/client';
 import type { InstrumentKey, ScoreHistoryEntry } from '../../models';
 

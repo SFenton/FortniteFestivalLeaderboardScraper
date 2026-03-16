@@ -19,12 +19,11 @@ import {
 } from '../models';
 import { accuracyColor } from '@festival/core';
 import { InstrumentIcon } from './InstrumentIcons';
-import { Colors, Font, Gap, Radius, goldFill, goldOutlineSkew, frostedCard } from '@festival/theme';
+import { Colors, Font, Gap } from '@festival/theme';
 import s from './ScoreHistoryChart.module.css';
 import { useIsMobile } from '../hooks/useIsMobile';
 import SeasonPill from './SeasonPill';
 import { useChartData, type ChartPoint } from './chart/useChartData';
-import ChartTooltip from './chart/ChartTooltip';
 import ScoreCardList from './chart/ScoreCardList';
 
 type Props = {
@@ -381,7 +380,7 @@ export default function ScoreHistoryChart({
               <>
                 <button
                   onClick={() => cycleInstrument(-1)}
-                  style={s.arrowButton}
+                  className={s.arrowButton}
                   aria-label="Previous instrument"
                 >
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -393,7 +392,7 @@ export default function ScoreHistoryChart({
                 </button>
                 <button
                   onClick={() => cycleInstrument(1)}
-                  style={s.arrowButton}
+                  className={s.arrowButton}
                   aria-label="Next instrument"
                 >
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -627,7 +626,7 @@ export default function ScoreHistoryChart({
                       const pct = displayedPoint.accuracy;
                       const text = pct % 1 === 0 ? `${pct}%` : `${pct.toFixed(1)}%`;
                       return displayedPoint.isFullCombo
-                        ? <span style={s.fcAccBadge}>{text}</span>
+                        ? <span className={s.fcAccBadge}>{text}</span>
                         : <span style={{ color: accuracyColor(pct) }}>{text}</span>;
                     })()}
                   </span>

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useParams, Link, useNavigate, useSearchParams, useNavigationType } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, useNavigationType } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
 import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
 import { api } from '../api/client';
@@ -13,11 +13,9 @@ import {
   type PlayerScore,
   type ScoreHistoryEntry,
 } from '../models';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, goldOutlineSkew, frostedCard } from '@festival/theme';
+import { Colors, Font, Gap, Radius, Layout } from '@festival/theme';
 import s from './SongDetailPage.module.css';
-import SeasonPill from '../components/SeasonPill';
 import ScoreHistoryChart from '../components/ScoreHistoryChart';
-import { InstrumentIcon } from '../components/InstrumentIcons';
 import { useSettings, visibleInstruments } from '../contexts/SettingsContext';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useStaggerRush } from '../hooks/useStaggerRush';
@@ -28,7 +26,6 @@ import { useScoreFilter } from '../hooks/useScoreFilter';
 import { useLoadPhase } from '../hooks/useLoadPhase';
 import PathsModal from '../components/modals/PathsModal';
 import InstrumentCard from '../components/songs/InstrumentCard';
-import { accuracyColor } from '@festival/core';
 
 type InstrumentData = {
   entries: LeaderboardEntry[];

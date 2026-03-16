@@ -11,7 +11,7 @@ import {
 } from '../models';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import SeasonPill from '../components/SeasonPill';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutlineSkew, frostedCard } from '@festival/theme';
+import { Font, Gap, Radius, Layout } from '@festival/theme';
 import s from './LeaderboardPage.module.css';
 import { staggerDelay } from '../utils/stagger';
 import { useScrollMask } from '../hooks/useScrollMask';
@@ -380,7 +380,7 @@ export default function LeaderboardPage() {
                   <span style={{ ...s.colName, ...(isPlayer ? { fontWeight: 700 } : {}) }}>
                     {e.displayName || t('common.unknownUser')}
                   </span>
-                  <span style={s.seasonScoreGroup}>
+                  <span className={s.seasonScoreGroup}>
                     {showSeason && e.season != null && (
                       <SeasonPill season={e.season} />
                     )}
@@ -389,28 +389,28 @@ export default function LeaderboardPage() {
                     </span>
                   </span>
                   {showAccuracy && (
-                  <span style={s.colAcc}>
+                  <span className={s.colAcc}>
                     {e.accuracy != null
                       ? (() => {
                           const pct = e.accuracy / 10000;
                           const r1 = pct.toFixed(1);
                           const text = r1.endsWith('.0') ? `${Math.round(pct)}%` : `${r1}%`;
                           return e.isFullCombo
-                            ? <span style={s.fcAccBadge}>{text}</span>
+                            ? <span className={s.fcAccBadge}>{text}</span>
                             : <span style={{ color: accuracyColor(pct) }}>{text}</span>;
                         })()
                       : '—'}
                   </span>
                   )}
                   {showStars && (
-                  <span style={s.colStars}>
+                  <span className={s.colStars}>
                     {e.stars != null && e.stars > 0
                       ? (() => {
                           const allGold = e.stars >= 6;
                           const count = allGold ? 5 : e.stars;
                           const src = allGold ? `${import.meta.env.BASE_URL}star_gold.png` : `${import.meta.env.BASE_URL}star_white.png`;
                           return Array.from({ length: count }, (_, i) => (
-                            <img key={i} src={src} alt="★" style={s.starImg} />
+                            <img key={i} src={src} alt="★" className={s.starImg} />
                           ));
                         })()
                       : '—'}
@@ -494,7 +494,7 @@ export default function LeaderboardPage() {
           <div className={hasFab ? 'fab-player-footer' : undefined} style={{ ...s.playerFooterRow, cursor: 'pointer', ...(isMobile ? { gap: Gap.md, paddingLeft: Gap.md, paddingRight: Gap.md } : {}) }}>
             <span style={{ ...s.colRank, fontWeight: 700 }}>#{playerScore.rank.toLocaleString()}</span>
             <span style={{ ...s.colName, fontWeight: 700 }}>{playerData.displayName}</span>
-            <span style={s.seasonScoreGroup}>
+            <span className={s.seasonScoreGroup}>
               {showSeason && playerScore.season != null && (
                 <SeasonPill season={playerScore.season} />
               )}
@@ -503,28 +503,28 @@ export default function LeaderboardPage() {
               </span>
             </span>
             {showAccuracy && (
-            <span style={s.colAcc}>
+            <span className={s.colAcc}>
               {playerScore.accuracy != null
                 ? (() => {
                     const pct = playerScore.accuracy / 10000;
                     const r1 = pct.toFixed(1);
                     const text = r1.endsWith('.0') ? `${Math.round(pct)}%` : `${r1}%`;
                     return playerScore.isFullCombo
-                      ? <span style={s.fcAccBadge}>{text}</span>
+                      ? <span className={s.fcAccBadge}>{text}</span>
                       : text;
                   })()
                 : '\u2014'}
             </span>
             )}
             {showStars && (
-            <span style={s.colStars}>
+            <span className={s.colStars}>
               {playerScore.stars != null && playerScore.stars > 0
                 ? (() => {
                     const allGold = playerScore.stars >= 6;
                     const count = allGold ? 5 : playerScore.stars;
                     const src = allGold ? `${import.meta.env.BASE_URL}star_gold.png` : `${import.meta.env.BASE_URL}star_white.png`;
                     return Array.from({ length: count }, (_, i) => (
-                      <img key={i} src={src} alt="\u2605" style={s.starImg} />
+                      <img key={i} src={src} alt="\u2605" className={s.starImg} />
                     ));
                   })()
                 : '\u2014'}

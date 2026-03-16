@@ -10,7 +10,7 @@ import {
   perInstrumentKeyFor,
 } from '@festival/core/suggestions/suggestionFilterConfig';
 import type { SuggestionTypeId } from '@festival/core/suggestions/suggestionFilterConfig';
-import { Colors, Font, Gap } from '@festival/theme';
+import { Gap } from '@festival/theme';
 
 // ---------------------------------------------------------------------------
 // Filter draft type – mirrors the RN SuggestionsInstrumentFilters

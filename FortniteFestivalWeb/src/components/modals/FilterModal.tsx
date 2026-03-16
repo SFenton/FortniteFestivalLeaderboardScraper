@@ -7,7 +7,7 @@ import { INSTRUMENT_KEYS, INSTRUMENT_LABELS } from '../../models';
 import type { SongFilters } from '../songSettings';
 import { useSettings, isInstrumentVisible } from '../../contexts/SettingsContext';
 import DifficultyBars from '../songs/DifficultyBars';
-import { Colors, Font, Gap, Radius } from '@festival/theme';
+import { Gap } from '@festival/theme';
 
 export type FilterDraft = SongFilters & {
   instrumentFilter: InstrumentKey | null;

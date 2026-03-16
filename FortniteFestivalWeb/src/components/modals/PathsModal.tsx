@@ -6,7 +6,7 @@ import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../../hooks
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
 import { INSTRUMENT_LABELS, type InstrumentKey } from '../../models';
 import { InstrumentIcon } from '../InstrumentIcons';
-import { Colors, Radius, Font, Gap, frostedCard } from '@festival/theme';
+import { Colors, Radius, Font, Gap } from '@festival/theme';
 import css from './PathsModal.module.css';
 
 const TRANSITION_MS = 300;
@@ -157,12 +157,12 @@ export default function PathsModal({ visible, songId, onClose }: Props) {
         {isMobile ? (
           <div className={css.controls}>
             <div className={css.mobileRow}>
-              <button style={css.mobileSelector} onClick={toggleInst}>
+              <button className={css.mobileSelector} onClick={toggleInst}>
                 <InstrumentIcon instrument={selected} size={28} />
                 <span className={css.mobileSelectorLabel}>{INSTRUMENT_LABELS[selected]}</span>
                 <IoChevronDown size={16} className={css.chevron} style={{ transform: instOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
               </button>
-              <button style={css.mobileSelector} onClick={toggleDiff}>
+              <button className={css.mobileSelector} onClick={toggleDiff}>
                 <span className={css.mobileSelectorLabel}>{DIFFICULTY_LABELS[difficulty]}</span>
                 <IoChevronDown size={16} className={css.chevron} style={{ transform: diffOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
               </button>

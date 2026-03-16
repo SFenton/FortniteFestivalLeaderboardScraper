@@ -6,7 +6,7 @@ import { api } from '../../api/client';
 import type { AccountSearchResult } from '../../models';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { IS_PWA } from '../../utils/platform';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, frostedCard } from '@festival/theme';
+import { Gap } from '@festival/theme';
 import css from './FloatingActionButton.module.css';
 
 export interface ActionItem {

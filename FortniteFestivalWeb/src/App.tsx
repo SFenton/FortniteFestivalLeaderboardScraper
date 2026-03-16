@@ -1,14 +1,12 @@
-import { HashRouter, Routes, Route, Link, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { IoPerson, IoPersonAdd, IoSearch, IoSwapVerticalSharp, IoFunnel, IoChevronBack, IoFlash } from 'react-icons/io5';
 import { useEffect, useState, useMemo, useRef, useCallback, Suspense, lazy } from 'react';
-import { useTranslation } from 'react-i18next';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import { AnimatedBackground } from './components/AnimatedBackground';
 import { useTrackedPlayer, type TrackedPlayer } from './hooks/useTrackedPlayer';
 import { PlayerDataProvider } from './contexts/PlayerDataContext';
 import { useIsMobile, useIsMobileChrome } from './hooks/useIsMobile';
-import { useVisualViewportHeight, useVisualViewportOffsetTop } from './hooks/useVisualViewport';
 import SongsPage from './pages/SongsPage';
 const SongDetailPage = lazy(() => import('./pages/SongDetailPage'));
 const LeaderboardPage = lazy(() => import('./pages/LeaderboardPage'));
@@ -16,7 +14,7 @@ const PlayerHistoryPage = lazy(() => import('./pages/PlayerHistoryPage'));
 const PlayerPage = lazy(() => import('./pages/PlayerPage'));
 const SuggestionsPage = lazy(() => import('./pages/SuggestionsPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
-import { Colors, Font, Gap, Layout, MaxWidth, Radius, Size, frostedCard } from '@festival/theme';
+import { Colors } from '@festival/theme';
 import appCss from './App.module.css';
 import { resetSongSettingsForDeselect, loadSongSettings, SONG_SETTINGS_CHANGED_EVENT } from './components/songSettings';
 import BackLink from './components/BackLink';
@@ -246,7 +244,7 @@ function AppShell() {
 
         {isMobile ? (
           navTitle ? (
-            <div key={location.pathname} className="sa-top" style={{ ...appCss.mobileHeader, ...(shouldAnimateHeader ? { animation: 'fadeIn 300ms ease-out' } : {}) }}>
+            <div key={location.pathname} className={`sa-top ${appCss.mobileHeader}`} style={shouldAnimateHeader ? { animation: 'fadeIn 300ms ease-out' } : undefined}>
               {backFallback ? (
                 <a
                   href="#"
@@ -267,7 +265,7 @@ function AppShell() {
             backFallback ? <BackLink key={location.pathname} fallback={backFallback} animate={shouldAnimateHeader} /> : null
           )
         ) : (
-          <nav className="sa-top" className={appCss.nav}>
+          <nav className={`sa-top ${appCss.nav}`}>
             <button
               className={appCss.hamburger}
               onClick={() => setSidebarOpen((o) => !o)}
@@ -284,8 +282,7 @@ function AppShell() {
               onClick={() => player ? navigate('/statistics') : setPlayerModalOpen(true)}
               aria-label="Profile"
             >
-              <span style={{
-                ...appCss.headerProfileCircleBase,
+              <span className={appCss.headerProfileCircleBase} style={{
                 backgroundColor: player ? Colors.surfaceSubtle : '#D0D5DD',
                 border: player ? `1px solid ${Colors.borderSubtle}` : '1px solid transparent',
                 color: player ? Colors.textSecondary : '#4A5568',

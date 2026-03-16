@@ -3,7 +3,7 @@
  * Extracted for readability and potential reuse.
  */
 import { formatPercentileBucket, accuracyColor } from '@festival/core';
-import type { PlayerScore, InstrumentKey } from '../models';
+import type { PlayerScore, InstrumentKey } from '../../models';
 
 export { accuracyColor };
 

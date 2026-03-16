@@ -5,7 +5,7 @@ import type { TrackedPlayer } from '../../hooks/useTrackedPlayer';
 import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../../hooks/useVisualViewport';
 import { api } from '../../api/client';
 import type { AccountSearchResult } from '../../models';
-import { Colors, Font, Gap, Radius } from '@festival/theme';
+import { Colors, Radius } from '@festival/theme';
 import css from './MobilePlayerSearchModal.module.css';
 
 const MODAL_TRANSITION_MS = 250;
@@ -126,24 +126,24 @@ export default function MobilePlayerSearchModal({
         <div className={css.body}>
           {player && (
             <div className={css.playerCard}>
-              <span style={{ ...styles.profileCircleLg, ...stagger(dismissing ? 450 : 0) }}><IoPerson size={32} /></span>
-              <span style={{ ...styles.playerName, ...stagger(dismissing ? 300 : 150) }}>{player.displayName}</span>
-              <span style={{ ...styles.deselectHint, ...stagger(dismissing ? 150 : 300) }}>{t('common.deselectHint')}</span>
-              <button style={{ ...styles.deselectBtn, ...stagger(dismissing ? 0 : 450), ...(dismissing ? { pointerEvents: 'none' as const } : {}) }} onClick={handleDeselect}>{t('common.deselectPlayer')}</button>
+              <span className={css.profileCircleLg} style={stagger(dismissing ? 450 : 0)}><IoPerson size={32} /></span>
+              <span className={css.playerName} style={stagger(dismissing ? 300 : 150)}>{player.displayName}</span>
+              <span className={css.deselectHint} style={stagger(dismissing ? 150 : 300)}>{t('common.deselectHint')}</span>
+              <button className={css.deselectBtn} style={{ ...stagger(dismissing ? 0 : 450), ...(dismissing ? { pointerEvents: 'none' as const } : {}) }} onClick={handleDeselect}>{t('common.deselectPlayer')}</button>
             </div>
           )}
           {!player && (
             <>
-              <div style={{ ...styles.searchPill, ...stagger(0) }} onClick={e => { e.currentTarget.querySelector('input')?.focus(); }}>
+              <div className={css.searchPill} style={stagger(0)} onClick={e => { e.currentTarget.querySelector('input')?.focus(); }}>
                 <IoSearch size={16} style={{ color: Colors.textTertiary, flexShrink: 0 }} />
                 <input ref={inputRef} className={css.searchInput} placeholder="Search player…" value={query} onChange={e => handleChange(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} enterKeyHint="done" />
               </div>
-              <div style={{ ...styles.results, ...stagger(150) }}>
-                {showSpinner && (<div style={{ ...styles.spinnerWrap, opacity: spinnerOpacity, transition: 'opacity 250ms ease' }} onTransitionEnd={handleSpinnerTransitionEnd}><div className={css.arcSpinner} /></div>)}
+              <div className={css.results} style={stagger(150)}>
+                <div style={{ opacity: showSpinner ? spinnerOpacity : 0, transition: 'opacity 250ms ease' }} onTransitionEnd={handleSpinnerTransitionEnd}>{showSpinner && <div className={css.arcSpinner} />}</div>
                 {!showSpinner && !loading && query.length < 2 && (<div className={css.hintCenter}>{t('common.enterUsername')}</div>)}
                 {!showSpinner && !loading && query.length >= 2 && results.length === 0 && (<div className={css.hintCenter}>{t('common.noMatchingUsername')}</div>)}
                 {!showSpinner && resultsReady && results.map((r, i) => (
-                  <button key={`${resultSeq}-${r.accountId}`} style={{ ...css.resultBtn, opacity: 0, animation: `fadeInUp 300ms ease-out ${i * 50}ms forwards` }} onClick={() => handleSelect(r)}>{r.displayName}</button>
+                  <button key={`${resultSeq}-${r.accountId}`} className={css.resultBtn} style={{ opacity: 0, animation: `fadeInUp 300ms ease-out ${i * 50}ms forwards` }} onClick={() => handleSelect(r)}>{r.displayName}</button>
                 ))}
               </div>
             </>
