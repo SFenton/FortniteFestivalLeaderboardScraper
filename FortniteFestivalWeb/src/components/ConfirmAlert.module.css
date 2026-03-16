@@ -1,65 +1,44 @@
 .overlay {
-  position: fixed;
-  inset: 0;
-  background-color: rgba(0, 0, 0, 0.6);
+  composes: modalOverlay from '../styles/shared.module.css';
   z-index: 1100;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 .card {
-  background-color: rgba(18, 24, 38, 0.78);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border-radius: 12px;
-  padding: 24px;
+  composes: modalCard from '../styles/shared.module.css';
+  border-radius: var(--radius-md);
+  padding: var(--gap-section);
   max-width: 340px;
   width: 90%;
-  color: #FFFFFF;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
 .title {
-  font-size: 16px;
+  font-size: var(--font-lg);
   font-weight: 700;
-  margin-bottom: 8px;
+  margin-bottom: var(--gap-md);
 }
 
 .message {
-  font-size: 14px;
-  color: #D7DEE8;
-  margin-bottom: 24px;
+  font-size: var(--font-md);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--gap-section);
   line-height: 1.4;
 }
 
 .buttons {
   display: flex;
-  gap: 8px;
+  gap: var(--gap-md);
 }
 
 .btnNo {
+  composes: btnPrimary from '../styles/shared.module.css';
   flex: 1;
-  padding: 12px;
-  border-radius: 8px;
-  border: 1px solid #2D82E6;
-  background-color: rgba(45, 130, 230, 0.4);
-  color: #FFFFFF;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  text-align: center;
+  padding: var(--gap-xl);
+  font-size: var(--font-md);
 }
 
 .btnYes {
+  composes: btnDanger from '../styles/shared.module.css';
   flex: 1;
-  padding: 12px;
-  border-radius: 8px;
-  border: none;
-  background-color: #C62828;
-  color: #FFFFFF;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  text-align: center;
+  padding: var(--gap-xl);
+  font-size: var(--font-md);
 }

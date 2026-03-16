@@ -1,8 +1,9 @@
 /*
- * Shared CSS classes for frosted-glass surfaces.
- * Use via `composes: frostedCard from '…/styles/shared.module.css';`
- * or `className={shared.frostedCard}` directly.
+ * Shared CSS utility classes.
+ * Compose into component .module.css files or use via className directly.
  */
+
+/* ── Frosted surfaces ── */
 
 .frostedCard {
   background-color: var(--color-surface-frosted);
@@ -18,4 +19,94 @@
 .frostedCardLight {
   background-color: var(--color-surface-frosted);
   border: 1px solid var(--color-glass-border);
+}
+
+/* ── Modal overlay ── */
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Modal card (frosted glass dialog body) ── */
+
+.modalCard {
+  background-color: var(--color-surface-frosted);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  color: var(--color-text-primary);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+/* ── Buttons ── */
+
+.btn {
+  border-radius: var(--radius-xs);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  font-weight: 600;
+  text-align: center;
+}
+
+.btnPrimary {
+  composes: btn;
+  background: var(--color-chip-selected);
+  border: 1px solid var(--color-accent-blue);
+}
+
+.btnDanger {
+  composes: btn;
+  background-color: var(--color-status-red);
+  border: 1px solid var(--color-status-red);
+}
+
+/* ── Spinner ── */
+
+.spinner {
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* ── Layout ── */
+
+.pageShell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.scrollContainer {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.pageContent {
+  max-width: var(--max-width-card);
+  margin: 0 auto;
+  width: 100%;
+  padding: 0 var(--layout-padding-h);
+}
+
+.flexRow {
+  display: flex;
+  align-items: center;
+}
+
+.flexCol {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Spacer for FAB overlap ── */
+
+.fabSpacer {
+  height: 72px;
+  flex-shrink: 0;
 }

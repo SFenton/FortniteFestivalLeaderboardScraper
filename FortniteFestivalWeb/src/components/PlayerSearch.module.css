@@ -1,23 +1,21 @@
 .selectedContainer {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--gap-md);
 }
 
 .headerSpinner {
+  composes: spinner from '../styles/shared.module.css';
   display: inline-block;
   width: 14px;
   height: 14px;
-  border: 2px solid rgba(255, 255, 255, 0.15);
-  border-top-color: #7C3AED;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  border-top-color: var(--color-accent-purple);
 }
 
 .selectedName {
-  font-size: 14px;
+  font-size: var(--font-md);
   font-weight: 600;
-  color: #FFFFFF;
+  color: var(--color-text-primary);
   text-decoration: none;
 }
 
@@ -28,10 +26,10 @@
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  border: 1px solid #2B3B55;
-  background-color: #0B1220;
-  color: #9AA6B2;
-  font-size: 11px;
+  border: 1px solid var(--color-border-primary);
+  background-color: var(--color-bg-card);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-xs);
   cursor: pointer;
   padding: 0;
   line-height: 1;
@@ -43,26 +41,24 @@
 
 .searchInput {
   width: 200px;
-  padding: 4px 12px;
-  border-radius: 10px;
-  border: 1px solid #2B3B55;
-  background-color: #0B1220;
-  color: #FFFFFF;
-  font-size: 12px;
+  padding: var(--gap-sm) var(--gap-xl);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-primary);
+  background-color: var(--color-bg-card);
+  color: var(--color-text-primary);
+  font-size: var(--font-sm);
   outline: none;
 }
 
 .spinner {
+  composes: spinner from '../styles/shared.module.css';
   position: absolute;
   right: 8px;
   top: 50%;
   margin-top: -6px;
   width: 12px;
   height: 12px;
-  border: 2px solid rgba(255, 255, 255, 0.15);
-  border-top-color: #8899AA;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  border-top-color: var(--color-text-muted);
 }
 
 .dropdown {
@@ -70,10 +66,10 @@
   top: 100%;
   left: 0;
   right: 0;
-  margin-top: 4px;
-  background-color: #0B1220;
-  border: 1px solid #2B3B55;
-  border-radius: 10px;
+  margin-top: var(--gap-sm);
+  background-color: var(--color-bg-card);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-sm);
   overflow: hidden;
   z-index: 200;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
@@ -82,16 +78,16 @@
 .dropdownItem {
   display: block;
   width: 100%;
-  padding: 8px 12px;
+  padding: var(--gap-md) var(--gap-xl);
   border: none;
   background-color: transparent;
-  color: #FFFFFF;
-  font-size: 12px;
+  color: var(--color-text-primary);
+  font-size: var(--font-sm);
   text-align: left;
   cursor: pointer;
 }
 
 .dropdownItemActive {
   composes: dropdownItem;
-  background-color: #4B0F63;
+  background-color: var(--color-accent-purple-dark);
 }

@@ -1,8 +1,7 @@
 .wrapper {
-  display: flex;
-  align-items: center;
-  padding: 24px 20px 8px; /* Layout.paddingTop + Gap.md, Layout.paddingHorizontal, Gap.md */
-  max-width: 1080px; /* MaxWidth.card */
+  composes: flexRow from '../styles/shared.module.css';
+  padding: calc(var(--layout-padding-top) + var(--gap-md)) var(--layout-padding-h) var(--gap-md);
+  max-width: var(--max-width-card);
   margin: 0 auto;
   width: 100%;
   box-sizing: border-box;
@@ -18,10 +17,10 @@
 .backLink {
   display: inline-flex;
   align-items: center;
-  gap: 4px; /* Gap.sm */
-  color: #FFFFFF; /* Colors.textPrimary */
+  gap: var(--gap-sm);
+  color: var(--color-text-primary);
   text-decoration: none;
-  font-size: 22px; /* Font.title */
+  font-size: var(--font-title);
   font-weight: 700;
   margin-left: -6px;
 }
