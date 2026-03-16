@@ -400,8 +400,8 @@ export default function SuggestionsPage({ accountId }: Props) {
             <div style={styles.emptyTitle}>{t('suggestions.noSuggestions')}</div>
             <div style={styles.emptySubtitle}>
               {filtersActive
-                ? 'Try changing your filters to see more suggestions.'
-                : 'Play some songs first!'}
+                ? t('suggestions.noSuggestionsFiltered')
+                : t('suggestions.playSongsFirst')}
             </div>
           </div>
         ) : (

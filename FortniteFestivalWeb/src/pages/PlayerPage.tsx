@@ -243,7 +243,7 @@ function PlayerContent({
             {syncPhase === 'backfill' && backfillProgress > 0 && (
               <div style={{ marginTop: Gap.md }}>
                 <div style={styles.syncProgressLabel}>
-                  <span>Syncing scores</span>
+                  <span>{t('player.syncingScores')}</span>
                   <span>{(backfillProgress * 100).toFixed(1)}%</span>
                 </div>
                 <div style={styles.syncProgressOuter}>
@@ -255,7 +255,7 @@ function PlayerContent({
               <>
                 <div style={{ marginTop: Gap.md }}>
                   <div style={styles.syncProgressLabel}>
-                    <span>Syncing scores</span><span>100.0%</span>
+                    <span>{t('player.syncingScores')}</span><span>100.0%</span>
                   </div>
                   <div style={styles.syncProgressOuter}>
                     <div style={{ ...styles.syncProgressInner, width: '100%' }} />
@@ -264,7 +264,7 @@ function PlayerContent({
                 {historyProgress > 0 && (
                   <div style={{ marginTop: Gap.sm }}>
                     <div style={styles.syncProgressLabel}>
-                      <span>Building history</span>
+                      <span>{t('player.buildingHistory')}</span>
                       <span>{(historyProgress * 100).toFixed(1)}%</span>
                     </div>
                     <div style={styles.syncProgressOuter}>
@@ -293,7 +293,7 @@ function PlayerContent({
     : `${overallStats.fcCount} (${formatClamped(parseFloat(overallStats.fcPercent))}%)`;
 
   const summaryBoxes: { label: string; value: React.ReactNode; color?: string; onClick?: () => void }[] = [
-    { label: 'Songs Played', value: overallStats.songsPlayed.toLocaleString(), color: overallSongsAllPlayed ? Colors.statusGreen : undefined, onClick: () => {
+    { label: t('player.songsPlayed'), value: overallStats.songsPlayed.toLocaleString(), color: overallSongsAllPlayed ? Colors.statusGreen : undefined, onClick: () => {
       withProfileSwitch(() => {
         const s = loadSongSettings();
         const hasScores: Record<string, boolean> = {};
@@ -302,7 +302,7 @@ function PlayerContent({
         navigate('/songs', { state: { backTo: location.pathname, restagger: true } });
       });
     } },
-    { label: 'Full Combos', value: overallFcValue, color: overallFcIs100 ? Colors.gold : undefined, onClick: () => {
+    { label: t('player.fullCombos'), value: overallFcValue, color: overallFcIs100 ? Colors.gold : undefined, onClick: () => {
       withProfileSwitch(() => {
         const s = loadSongSettings();
         const hasFCs: Record<string, boolean> = {};
@@ -311,9 +311,9 @@ function PlayerContent({
         navigate('/songs', { state: { backTo: location.pathname, restagger: true } });
       });
     } },
-    { label: 'Gold Stars', value: overallStats.goldStarCount.toLocaleString(), color: Colors.gold },
-    { label: 'Avg Accuracy', value: overallStats.avgAccuracy > 0 ? formatClamped(overallStats.avgAccuracy / 10000) + '%' : '—', color: overallAccColor },
-    { label: 'Best Rank', value: overallStats.bestRank > 0 ? `#${overallStats.bestRank.toLocaleString()}` : '—', onClick: overallStats.bestRankSongId ? () => withProfileSwitch(() => navigate(`/songs/${overallStats.bestRankSongId}?instrument=${encodeURIComponent(overallStats.bestRankInstrument!)}`, { state: { backTo: location.pathname, autoScroll: true } })) : undefined },
+    { label: t('player.goldStars'), value: overallStats.goldStarCount.toLocaleString(), color: Colors.gold },
+    { label: t('player.avgAccuracy'), value: overallStats.avgAccuracy > 0 ? formatClamped(overallStats.avgAccuracy / 10000) + '%' : '—', color: overallAccColor },
+    { label: t('player.bestRank'), value: overallStats.bestRank > 0 ? `#${overallStats.bestRank.toLocaleString()}` : '—', onClick: overallStats.bestRankSongId ? () => withProfileSwitch(() => navigate(`/songs/${overallStats.bestRankSongId}?instrument=${encodeURIComponent(overallStats.bestRankInstrument!)}`, { state: { backTo: location.pathname, autoScroll: true } })) : undefined },
   ];
   for (const box of summaryBoxes) {
     items.push({ key: `sum-${box.label}`, span: false, heightEstimate: 100, style: cardStyle, node: <StatBox label={box.label} value={box.value} color={box.color} onClick={box.onClick} /> });
@@ -353,14 +353,14 @@ function PlayerContent({
 
     // Stat boxes (each is its own grid item)
     const cards: { label: string; value: React.ReactNode; color?: string; to?: string; onClick?: () => void }[] = [];
-    if (stats.songsPlayed > 0) cards.push({ label: 'Songs Played', value: stats.songsPlayed.toLocaleString(), color: stats.songsPlayed >= songs.length ? Colors.statusGreen : undefined, onClick: () => {
+    if (stats.songsPlayed > 0) cards.push({ label: t('player.songsPlayed'), value: stats.songsPlayed.toLocaleString(), color: stats.songsPlayed >= songs.length ? Colors.statusGreen : undefined, onClick: () => {
       withProfileSwitch(() => {
         const s = loadSongSettings();
         saveSongSettings({ ...s, instrument: inst, sortMode: 'score', sortAscending: true, filters: { ...cleanFilters(s), hasScores: { ...s.filters.hasScores, [inst]: true } } });
         navigate('/songs', { state: { backTo: location.pathname, restagger: true } });
       });
     } });
-    if (stats.fcCount > 0) cards.push({ label: 'FCs', value: stats.fcPercent === '100.0' ? stats.fcCount.toLocaleString() : `${stats.fcCount} (${stats.fcPercent}%)`, color: stats.fcPercent === '100.0' ? Colors.gold : undefined, onClick: () => {
+    if (stats.fcCount > 0) cards.push({ label: t('player.fcs'), value: stats.fcPercent === '100.0' ? stats.fcCount.toLocaleString() : `${stats.fcCount} (${stats.fcPercent}%)`, color: stats.fcPercent === '100.0' ? Colors.gold : undefined, onClick: () => {
       withProfileSwitch(() => {
         const s = loadSongSettings();
         saveSongSettings({ ...s, instrument: inst, sortMode: 'score', sortAscending: true, filters: { ...cleanFilters(s), hasFCs: { ...s.filters.hasFCs, [inst]: true } } });
@@ -370,12 +370,12 @@ function PlayerContent({
 
     // Star count cards — clickable to filter songs by star level
     const STAR_CARDS: { count: number; label: string; starKey: number; color?: string }[] = [
-      { count: stats.goldStarCount, label: 'Gold Stars', starKey: 6, color: Colors.gold },
-      { count: stats.fiveStarCount, label: '5 Stars', starKey: 5 },
-      { count: stats.fourStarCount, label: '4 Stars', starKey: 4 },
-      { count: stats.threeStarCount, label: '3 Stars', starKey: 3 },
-      { count: stats.twoStarCount, label: '2 Stars', starKey: 2 },
-      { count: stats.oneStarCount, label: '1 Star', starKey: 1 },
+      { count: stats.goldStarCount, label: t('player.goldStars'), starKey: 6, color: Colors.gold },
+      { count: stats.fiveStarCount, label: t('player.fiveStars'), starKey: 5 },
+      { count: stats.fourStarCount, label: t('player.fourStars'), starKey: 4 },
+      { count: stats.threeStarCount, label: t('player.threeStars'), starKey: 3 },
+      { count: stats.twoStarCount, label: t('player.twoStars'), starKey: 2 },
+      { count: stats.oneStarCount, label: t('player.oneStar'), starKey: 1 },
     ];
     // Build clean filters: preserve other instruments' missing/has, clear current instrument's, reset instrument-specific filters
     const cleanFilters = (s: ReturnType<typeof loadSongSettings>) => ({
@@ -404,18 +404,18 @@ function PlayerContent({
     const accPct = stats.avgAccuracy / 10000;
     const isGoldAcc = accPct >= 100 && stats.fcPercent === '100.0';
     const accColor = stats.avgAccuracy > 0 ? (isGoldAcc ? Colors.gold : accuracyColor(accPct)) : undefined;
-    cards.push({ label: 'Avg Accuracy', value: stats.avgAccuracy > 0 ? formatClamped(accPct) + '%' : '—', color: accColor });
-    cards.push({ label: 'Avg Stars', value: stats.averageStars === 6 ? <GoldStars /> : (stats.averageStars > 0 ? formatClamped2(stats.averageStars) : '—') });
-    cards.push({ label: 'Best Rank', value: stats.bestRank > 0 ? `#${stats.bestRank.toLocaleString()}` : '—', onClick: stats.bestRankSongId ? () => withProfileSwitch(() => navigate(`/songs/${stats.bestRankSongId}?instrument=${encodeURIComponent(inst)}`, { state: { backTo: location.pathname, autoScroll: true } })) : undefined });
+    cards.push({ label: t('player.avgAccuracy'), value: stats.avgAccuracy > 0 ? formatClamped(accPct) + '%' : '—', color: accColor });
+    cards.push({ label: t('player.avgStars'), value: stats.averageStars === 6 ? <GoldStars /> : (stats.averageStars > 0 ? formatClamped2(stats.averageStars) : '—') });
+    cards.push({ label: t('player.bestRank'), value: stats.bestRank > 0 ? `#${stats.bestRank.toLocaleString()}` : '—', onClick: stats.bestRankSongId ? () => withProfileSwitch(() => navigate(`/songs/${stats.bestRankSongId}?instrument=${encodeURIComponent(inst)}`, { state: { backTo: location.pathname, autoScroll: true } })) : undefined });
     const pctGold = (v: string) => /^Top [1-5]%$/.test(v) ? Colors.gold : undefined;
-    cards.push({ label: 'Percentile', value: stats.overallPercentile, color: pctGold(stats.overallPercentile), onClick: () => {
+    cards.push({ label: t('player.percentile'), value: stats.overallPercentile, color: pctGold(stats.overallPercentile), onClick: () => {
       withProfileSwitch(() => {
         const s = loadSongSettings();
         saveSongSettings({ ...s, instrument: inst, sortMode: 'percentile', sortAscending: true, filters: cleanFilters(s) });
         navigate('/songs', { state: { backTo: location.pathname, restagger: true } });
       });
     } });
-    cards.push({ label: 'Songs Played', value: stats.avgPercentile, color: pctGold(stats.avgPercentile), onClick: () => {
+    cards.push({ label: t('player.songsPlayed'), value: stats.avgPercentile, color: pctGold(stats.avgPercentile), onClick: () => {
       withProfileSwitch(() => {
         const s = loadSongSettings();
         saveSongSettings({ ...s, instrument: inst, sortMode: 'percentile', sortAscending: true, filters: { ...cleanFilters(s), hasScores: { ...s.filters.hasScores, [inst]: true } } });
