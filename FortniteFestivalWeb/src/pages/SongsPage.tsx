@@ -25,7 +25,6 @@ import type { SortDraft } from '../components/modals/SortModal';
 import FilterModal from '../components/modals/FilterModal';
 import type { FilterDraft } from '../components/modals/FilterModal';
 import {
-  type SongSortMode,
   type SongSettings,
   defaultSongSettings,
   defaultSongFilters,
@@ -155,15 +154,15 @@ export default function SongsPage() {
 
   // Build a per-song, per-instrument lookup for filter logic
   const allScoreMap = useMemo(() => {
-    if (!playerData) return new Map<string, Map<string, PlayerScore>>();
-    const map = new Map<string, Map<string, PlayerScore>>();
-    for (const s of playerData.scores) {
-      let byInst = map.get(s.songId);
+    if (!playerData) return new Map<string, Map<InstrumentKey, PlayerScore>>();
+    const map = new Map<string, Map<InstrumentKey, PlayerScore>>();
+    for (const sc of playerData.scores) {
+      let byInst = map.get(sc.songId);
       if (!byInst) {
         byInst = new Map();
-        map.set(s.songId, byInst);
+        map.set(sc.songId, byInst);
       }
-      byInst.set(s.instrument, s);
+      byInst.set(sc.instrument as InstrumentKey, sc);
     }
     return map;
   }, [playerData]);
@@ -387,8 +386,7 @@ export default function SongsPage() {
                   </div>
                   <div className={s.syncProgressOuter}>
                     <div
-                      style={{
-                        ...s.syncProgressInner,
+                      className={s.syncProgressInner} style={{
                         width: `${Math.round(backfillProgress * 100)}%`,
                       }}
                     />
@@ -414,8 +412,7 @@ export default function SongsPage() {
                       </div>
                       <div className={s.syncProgressOuter}>
                         <div
-                          style={{
-                            ...s.syncProgressInner,
+                          className={s.syncProgressInner} style={{
                             width: `${Math.round(historyProgress * 100)}%`,
                           }}
                         />
@@ -532,9 +529,7 @@ function ToolbarIconButton({ icon, label, onClick, active, dot }: {
 }) {
   return (
     <button
-      style={{
-        ...s.iconBtn,
-        ...(active ? s.iconBtnActive : {}),
+      className={`${s.iconBtn}${active ? ` ${s.iconBtnActive}` : ''}`} style={{
         width: 'auto',
         paddingLeft: Gap.xl,
         paddingRight: Gap.xl,

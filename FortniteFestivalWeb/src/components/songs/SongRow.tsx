@@ -3,8 +3,8 @@
  */
 import { memo, useMemo, useRef, useCallback, Fragment, type CSSProperties } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { formatPercentileBucket, type InstrumentKey } from '@festival/core';
-import type { Song, PlayerScore, SongDifficulty } from '../../models';
+import { formatPercentileBucket } from '@festival/core';
+import type { Song, PlayerScore, SongDifficulty, InstrumentKey } from '../../models';
 import { Size } from '@festival/theme';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../InstrumentIcons';
 import AlbumArt from '../AlbumArt';

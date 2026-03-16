@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { render, screen, fireEvent } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import {
   SettingsProvider,

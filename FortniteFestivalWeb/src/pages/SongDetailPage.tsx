@@ -1,19 +1,18 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useParams, useNavigate, useSearchParams, useNavigationType } from 'react-router-dom';
+import { useParams, useSearchParams, useNavigationType, useLocation } from 'react-router-dom';
 import { useFestival } from '../contexts/FestivalContext';
 import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
 import { api } from '../api/client';
 import {
   INSTRUMENT_KEYS,
-  INSTRUMENT_LABELS,
   type Song,
   type InstrumentKey,
   type LeaderboardEntry,
   type PlayerScore,
   type ScoreHistoryEntry,
 } from '../models';
-import { Colors, Font, Gap, Radius, Layout } from '@festival/theme';
+import { Font, Gap, Radius, Layout } from '@festival/theme';
 import s from './SongDetailPage.module.css';
 import ScoreHistoryChart from '../components/ScoreHistoryChart';
 import { useSettings, visibleInstruments } from '../contexts/SettingsContext';
@@ -72,6 +71,7 @@ export default function SongDetailPage() {
   const [pathsOpen, setPathsOpen] = useState(false);
 
   const navType = useNavigationType();
+  const location = useLocation();
   const cached = songId ? songDetailCache.get(songId) : undefined;
   const hasCachedPlayer = cached && cached.accountId === player?.accountId;
 
@@ -84,7 +84,7 @@ export default function SongDetailPage() {
       ? cached.instrumentData
       : Object.fromEntries(
           INSTRUMENT_KEYS.map((k) => [k, { entries: [], loading: true, error: null }]),
-        ) as Record<InstrumentKey, InstrumentData>,
+        ) as unknown as Record<InstrumentKey, InstrumentData>,
   );
 
   // Track whether the component mounted with cached data so effects can skip the initial fetch.
@@ -150,14 +150,14 @@ export default function SongDetailPage() {
       setInstrumentData(
         Object.fromEntries(
           INSTRUMENT_KEYS.map((k) => [k, { entries: [], loading: true, error: null }]),
-        ) as Record<InstrumentKey, InstrumentData>,
+        ) as unknown as Record<InstrumentKey, InstrumentData>,
       );
     }
     api.getAllLeaderboards(songId, 10, leewayParam).then((res) => {
       if (cancelled) return;
       const newData = Object.fromEntries(
         INSTRUMENT_KEYS.map((k) => [k, { entries: [], loading: false, error: null }]),
-      ) as Record<InstrumentKey, InstrumentData>;
+      ) as unknown as Record<InstrumentKey, InstrumentData>;
       for (const inst of res.instruments) {
         const key = inst.instrument as InstrumentKey;
         if (key in newData) {
@@ -171,7 +171,7 @@ export default function SongDetailPage() {
       setInstrumentData(
         Object.fromEntries(
           INSTRUMENT_KEYS.map((k) => [k, { entries: [], loading: false, error: errMsg }]),
-        ) as Record<InstrumentKey, InstrumentData>,
+        ) as unknown as Record<InstrumentKey, InstrumentData>,
       );
     });
     return () => { cancelled = true; };
@@ -348,7 +348,7 @@ export default function SongDetailPage() {
             : `${Layout.paddingTop}px ${Layout.paddingHorizontal}px ${Gap.section}px`,
         }}>
           <div style={stagger(150)} onAnimationEnd={clearAnim}>
-            <SongHeader song={song} songId={songId} collapsed={hasFab || headerCollapsed} noTransition={hasFab} onOpenPaths={() => setPathsOpen(true)} />
+            <SongHeader song={song} songId={songId} collapsed={!!(hasFab || headerCollapsed)} noTransition={hasFab} onOpenPaths={() => setPathsOpen(true)} />
           </div>
         </div>
       )}
@@ -413,6 +413,7 @@ function SongHeader({
   noTransition?: boolean;
   onOpenPaths: () => void;
 }) {
+  const { t } = useTranslation();
   const isMobile = useIsMobile();
   const artSize = collapsed ? 80 : 120;
   const transition = noTransition ? undefined : 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)';
@@ -439,59 +440,6 @@ function SongHeader({
         </button>
       )}
     </div>
-  );
-}
-
-function getDifficulty(
-  song: Song | undefined,
-  instrument: InstrumentKey,
-): number | undefined {
-  if (!song?.difficulty) return undefined;
-  const map: Record<InstrumentKey, keyof NonNullable<Song['difficulty']>> = {
-    Solo_Guitar: 'guitar',
-    Solo_Bass: 'bass',
-    Solo_Drums: 'drums',
-    Solo_Vocals: 'vocals',
-    Solo_PeripheralGuitar: 'proGuitar',
-    Solo_PeripheralBass: 'proBass',
-  };
-  return song.difficulty[map[instrument]];
-}
-
-function DifficultyBadge({ difficulty }: { difficulty: number }) {
-  let label: string;
-  let bg: string;
-  let accent: string;
-  if (difficulty <= 1) {
-    label = 'Easy';
-    bg = Colors.diffEasyBg;
-    accent = Colors.diffEasyAccent;
-  } else if (difficulty <= 3) {
-    label = 'Medium';
-    bg = Colors.diffMediumBg;
-    accent = Colors.diffMediumAccent;
-  } else if (difficulty <= 5) {
-    label = 'Hard';
-    bg = Colors.diffHardBg;
-    accent = Colors.diffHardAccent;
-  } else {
-    label = 'Expert';
-    bg = Colors.diffExpertBg;
-    accent = Colors.diffExpertAccent;
-  }
-  return (
-    <span
-      style={{
-        fontSize: Font.xs,
-        padding: `${Gap.xs}px ${Gap.md}px`,
-        borderRadius: Radius.xs,
-        backgroundColor: bg,
-        color: accent,
-        fontWeight: 600,
-      }}
-    >
-      {label}
-    </span>
   );
 }
 

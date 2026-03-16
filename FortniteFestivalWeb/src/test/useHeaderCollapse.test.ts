@@ -3,10 +3,6 @@ import { renderHook, act } from '@testing-library/react';
 import { useHeaderCollapse } from '../hooks/useHeaderCollapse';
 import { useRef } from 'react';
 
-function mockScrollRef(scrollTop: number) {
-  return { current: { scrollTop } as unknown as HTMLElement };
-}
-
 describe('useHeaderCollapse', () => {
   it('returns false initially', () => {
     const { result } = renderHook(() => {

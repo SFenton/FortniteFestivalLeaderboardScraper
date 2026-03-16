@@ -40,7 +40,7 @@ type Props = {
 export default function ScoreHistoryChart({
   songId,
   accountId,
-  playerName,
+  playerName: _playerName,
   defaultInstrument,
   history: historyProp,
   visibleInstruments: visibleInstrumentsProp,
@@ -58,7 +58,7 @@ export default function ScoreHistoryChart({
   const cardContentRef = useRef<HTMLDivElement>(null);
   const [cardHeight, setCardHeight] = useState(0);
 
-  const { songHistory, chartData, loading, instrumentCounts } = useChartData(accountId, songId, selected, historyProp);
+  const { songHistory: _songHistory, chartData, loading, instrumentCounts } = useChartData(accountId, songId, selected, historyProp);
 
   // Measure chart container width to determine how many bars fit.
   //
@@ -75,7 +75,9 @@ export default function ScoreHistoryChart({
   useEffect(() => {
     const el = chartContainerRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(([entry]) => {
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
       const w = entry.contentRect.width;
       setContainerWidth(w);
       // Re-learn overhead if we don't have it yet
@@ -148,7 +150,7 @@ export default function ScoreHistoryChart({
   const navigatePoint = useCallback((targetIdx: number) => {
     const clamped = Math.max(0, Math.min(targetIdx, chartData.length - 1));
     const point = chartData[clamped];
-    setSelectedPoint(point);
+    setSelectedPoint(point ?? null);
     // Ensure the target index is within the visible window.
     // visible window covers indices [pageStart, pageEnd) where
     //   pageEnd = chartData.length - offset
@@ -353,7 +355,9 @@ export default function ScoreHistoryChart({
   useEffect(() => {
     const el = iconRowRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(([entry]) => {
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
       const width = entry.contentRect.width;
       // Each button is 64px + gap (10px). Need room for all icons.
       const needed = availableInstruments.length * 64 + (availableInstruments.length - 1) * 10;
@@ -366,7 +370,7 @@ export default function ScoreHistoryChart({
   const cycleInstrument = useCallback((dir: 1 | -1) => {
     const idx = availableInstruments.indexOf(selected);
     const next = (idx + dir + availableInstruments.length) % availableInstruments.length;
-    setSelected(availableInstruments[next]);
+    setSelected(availableInstruments[next]!);
   }, [availableInstruments, selected]);
 
   return (
@@ -517,6 +521,7 @@ export default function ScoreHistoryChart({
                   );
                 }}
               />
+              {/* @ts-expect-error Recharts Bar shape/onClick types are overly strict */}
               <Bar
                 yAxisId="accuracy"
                 dataKey="accuracy"
@@ -526,6 +531,7 @@ export default function ScoreHistoryChart({
                 animationDuration={400}
                 onClick={(_data: Record<string, unknown>, index: number) => {
                   const point = visibleChartData[index];
+                  if (!point) return;
                   setSelectedPoint(prev => prev === point ? null : point);
                 }}
                 shape={(props: Record<string, unknown>) => {
@@ -537,13 +543,9 @@ export default function ScoreHistoryChart({
                     && point.payload.score === selectedPoint.score;
                   let fill: string;
                   let fillOp: number;
-                  let strokeColor: string;
-                  let strokeOp: number;
                   if (isGold) {
                     fill = Colors.gold;
                     fillOp = 1;
-                    strokeColor = Colors.gold;
-                    strokeOp = 0.9;
                   } else {
                     // Linear red→green based on accuracy (0–100%)
                     const t = Math.min(Math.max(acc / 100, 0), 1);
@@ -552,8 +554,6 @@ export default function ScoreHistoryChart({
                     const b = Math.round(40 * (1 - t) + 113 * t);
                     fill = `rgb(${r},${g},${b})`;
                     fillOp = 1;
-                    strokeColor = fill;
-                    strokeOp = 0.9;
                   }
                   const rad = 4;
                   const { x, y, width: w, height: h } = point;
@@ -594,8 +594,7 @@ export default function ScoreHistoryChart({
             ...(!isMobile ? { width: '50%', marginLeft: 'auto', marginRight: 'auto' } : {}),
           }}>
             {displayedPoint && (
-              <div className={s.scoreCard} style={{
-                ...(!isMobile ? s.scoreListCard : {}),
+              <div className={`${s.scoreCard}${!isMobile ? ` ${s.scoreListCard}` : ''}`} style={{
                 opacity: (cardPhase === 'open' || cardPhase === 'swapOut' || cardPhase === 'swapIn') ? 1 : 0,
                 transform: (cardPhase === 'open' || cardPhase === 'swapOut' || cardPhase === 'swapIn') ? 'translateY(0)' : 'translateY(-8px)',
                 transition: 'opacity 0.15s ease, transform 0.15s ease',

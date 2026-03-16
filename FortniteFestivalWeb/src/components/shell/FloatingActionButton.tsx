@@ -130,7 +130,7 @@ export default function FloatingActionButton({
     <div ref={searchContainerRef}>
       {searchVisible && (
         <div className={css.searchBarOuter} style={{ ...(IS_PWA ? { bottom: 80 + Gap.section - Gap.md } : {}) }}>
-          <div className="fab-search-bar" className={css.searchBar}>
+          <div className={`fab-search-bar ${css.searchBar}`}>
             <div className={css.searchInputWrap} onClick={() => inputRef.current?.focus()}>
               <IoSearch size={16} className={css.searchIcon} />
               <input
@@ -169,9 +169,7 @@ export default function FloatingActionButton({
         </button>
         {popupMounted && (
           <div
-            style={{
-              ...css.popup,
-              ...frostedCard,
+            className={css.popup} style={{
               transform: popupVisible ? 'scale(1)' : 'scale(0)',
               opacity: popupVisible ? 1 : 0,
               transition: popupVisible
