@@ -51,17 +51,7 @@ export default function App() {
   );
 }
 
-type TabKey = 'songs' | 'suggestions' | 'statistics' | 'settings';
-const TAB_ROOTS: Record<TabKey, string> = { songs: '/songs', suggestions: '/suggestions', statistics: '/statistics', settings: '/settings' };
-
-/** Infer which tab owns a route. Detail pages under /songs belong to songs; /player belongs to the active tab. */
-function inferTab(pathname: string): TabKey | null {
-  if (pathname === '/songs' || pathname.startsWith('/songs/')) return 'songs';
-  if (pathname === '/suggestions') return 'suggestions';
-  if (pathname === '/statistics') return 'statistics';
-  if (pathname === '/settings') return 'settings';
-  return null; // /player/:id — ambiguous, owned by the currently active tab
-}
+import { useTabNavigation } from './hooks/useTabNavigation';
 
 const ANIMATED_BG_ROUTES = new Set(['/', '/songs', '/suggestions', '/statistics', '/settings']);
 function isAnimatedBgRoute(pathname: string) {
@@ -115,69 +105,7 @@ function AppShell() {
   }, [settings.filterInvalidScores, settings.filterInvalidScoresLeeway]);
 
   // --- Per-tab stack (mobile only) ---
-  // Each tab remembers the last route the user was on within it.
-  const [activeTab, setActiveTab] = useState<TabKey>(() => inferTab(location.pathname) ?? 'songs');
-  const [tabRoutes, setTabRoutes] = useState<Record<TabKey, string>>(() => ({
-    songs: '/songs',
-    suggestions: '/suggestions',
-    statistics: '/statistics',
-    settings: '/settings',
-  }));
-
-  // Keep tabRoutes in sync: as the user drills deeper, save the current URL to the active tab.
-  const prevPathRef = useRef(location.pathname);
-  useEffect(() => {
-    if (location.pathname === prevPathRef.current) return;
-    const previousPath = prevPathRef.current;
-    prevPathRef.current = location.pathname;
-
-    // On POP navigation, check if we landed on a route that belongs to a different tab
-    if (navType === 'POP') {
-      const landedTab = inferTab(location.pathname);
-      if (landedTab && landedTab !== activeTab) {
-        setActiveTab(landedTab);
-        setTabRoutes(prev => ({ ...prev, [landedTab]: location.pathname }));
-        return;
-      }
-    }
-
-    // For PUSH/REPLACE that crosses to a different tab, switch the active tab
-    // and save the previous tab's route so switching back resumes where the user was.
-    const landedTab = inferTab(location.pathname);
-    if (landedTab && landedTab !== activeTab && navType !== 'POP') {
-      setActiveTab(landedTab);
-      setTabRoutes(prev => ({
-        ...prev,
-        [activeTab]: previousPath,
-        [landedTab]: location.pathname,
-      }));
-      return;
-    }
-
-    // For PUSH/REPLACE within the current tab, update the saved route
-    setTabRoutes(prev => ({ ...prev, [activeTab]: location.pathname }));
-  }, [location.pathname, navType, activeTab]);
-
-  const handleTabClick = useCallback((tab: TabKey) => {
-    if (tab === activeTab) {
-      // Re-tap: pop to tab root
-      const root = TAB_ROOTS[tab];
-      if (location.pathname !== root) {
-        navigate(root, { replace: true });
-        setTabRoutes(prev => ({ ...prev, [tab]: root }));
-      }
-      return;
-    }
-    // Save current location to current tab (except Statistics — always reset to root)
-    setTabRoutes(prev => ({
-      ...prev,
-      [activeTab]: activeTab === 'statistics' ? TAB_ROOTS.statistics : location.pathname,
-    }));
-    setActiveTab(tab);
-    // Statistics always navigates to root
-    const target = tab === 'statistics' ? TAB_ROOTS.statistics : tabRoutes[tab];
-    navigate(target, { replace: true });
-  }, [activeTab, location.pathname, navigate, tabRoutes]);
+  const { activeTab, handleTabClick } = useTabNavigation();
 
   const handleSelect = (p: TrackedPlayer) => {
     setPlayer(p);
