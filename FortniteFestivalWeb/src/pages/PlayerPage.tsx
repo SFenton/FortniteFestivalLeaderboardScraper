@@ -27,6 +27,7 @@ import {
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutline, goldOutlineSkew, frostedCard } from '@festival/theme';
 import s from './PlayerPage.module.css';
 import { InstrumentIcon } from '../components/InstrumentIcons';
+import SyncBanner from '../components/player/SyncBanner';
 import { useSettings, isInstrumentVisible } from '../contexts/SettingsContext';
 import { loadSongSettings, saveSongSettings, defaultSongFilters } from '../components/songSettings';
 import { useScrollMask } from '../hooks/useScrollMask';
@@ -232,53 +233,12 @@ function PlayerContent({
       span: true,
       heightEstimate: 150,
       node: (
-        <div className={s.syncBanner}>
-          <div className={s.syncSpinner} />
-          <div style={{ flex: 1 }}>
-            <div className={s.syncTitle}>
-              {syncPhase === 'backfill' ? t('player.syncInProgress') : t('player.syncInProgress')}
-            </div>
-            <div className={s.syncSubtitle}>
-              {syncPhase === 'backfill'
-                ? `Syncing ${data.displayName}'s scores…`
-                : `Reconstructing ${data.displayName}'s score history across seasons…`}
-            </div>
-            {syncPhase === 'backfill' && backfillProgress > 0 && (
-              <div style={{ marginTop: Gap.md }}>
-                <div className={s.syncProgressLabel}>
-                  <span>{t('player.syncingScores')}</span>
-                  <span>{(backfillProgress * 100).toFixed(1)}%</span>
-                </div>
-                <div className={s.syncProgressOuter}>
-                  <div className={s.syncProgressInner} style={{ width: `${Math.round(backfillProgress * 100)}%` }} />
-                </div>
-              </div>
-            )}
-            {syncPhase === 'history' && (
-              <>
-                <div style={{ marginTop: Gap.md }}>
-                  <div className={s.syncProgressLabel}>
-                    <span>{t('player.syncingScores')}</span><span>100.0%</span>
-                  </div>
-                  <div className={s.syncProgressOuter}>
-                    <div className={s.syncProgressInner} style={{ width: '100%' }} />
-                  </div>
-                </div>
-                {historyProgress > 0 && (
-                  <div style={{ marginTop: Gap.sm }}>
-                    <div className={s.syncProgressLabel}>
-                      <span>{t('player.buildingHistory')}</span>
-                      <span>{(historyProgress * 100).toFixed(1)}%</span>
-                    </div>
-                    <div className={s.syncProgressOuter}>
-                      <div className={s.syncProgressInner} style={{ width: `${Math.round(historyProgress * 100)}%` }} />
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        </div>
+        <SyncBanner
+          displayName={data.displayName}
+          phase={syncPhase}
+          backfillProgress={backfillProgress}
+          historyProgress={historyProgress}
+        />
       ),
     });
   }
