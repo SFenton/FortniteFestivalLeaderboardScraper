@@ -19,7 +19,7 @@ import {
 } from '../models';
 import { accuracyColor } from '@festival/core';
 import { InstrumentIcon } from './InstrumentIcons';
-import { Colors, Font, Gap, Radius, goldFill, goldOutlineSkew, frostedCard } from '../theme';
+import { Colors, Font, Gap, Radius, goldFill, goldOutlineSkew, frostedCard } from '@festival/theme';
 import { useIsMobile } from '../hooks/useIsMobile';
 import SeasonPill from './SeasonPill';
 import { useChartData, type ChartPoint } from './chart/useChartData';

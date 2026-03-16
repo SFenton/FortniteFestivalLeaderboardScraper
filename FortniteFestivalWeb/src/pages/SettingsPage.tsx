@@ -2,12 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { useTranslation } from 'react-i18next';
 import { useSettings } from '../contexts/SettingsContext';
 import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
-import { ToggleRow, ReorderList } from '../components/Modal';
+import { ToggleRow, ReorderList } from '../components/modals/Modal';
 import { METADATA_SORT_DISPLAY } from '../components/songSettings';
-import ConfirmAlert from '../components/ConfirmAlert';
+import ConfirmAlert from '../components/modals/ConfirmAlert';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import type { InstrumentKey } from '../models';
-import { Colors, Font, Gap } from '../theme';
+import { Colors, Font, Gap } from '@festival/theme';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useStaggerRush } from '../hooks/useStaggerRush';
 import { api } from '../api/client';

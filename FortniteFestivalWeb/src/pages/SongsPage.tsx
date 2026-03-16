@@ -14,17 +14,17 @@ import { useScrollMask } from '../hooks/useScrollMask';
 import { useStaggerRush } from '../hooks/useStaggerRush';
 import { useScrollRestore, clearScrollCache } from '../hooks/useScrollRestore';
 import type { Song, PlayerScore, InstrumentKey } from '../models';
-import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth, goldFill, goldOutline, goldOutlineSkew, frostedCard, frostedCardLight } from '../theme';
+import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth, goldFill, goldOutline, goldOutlineSkew, frostedCard, frostedCardLight } from '@festival/theme';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../components/InstrumentIcons';
 import SeasonPill from '../components/SeasonPill';
 import AlbumArt from '../components/AlbumArt';
 import DifficultyBars from '../components/songs/DifficultyBars';
 import MiniStars from '../components/songs/MiniStars';
 import { visibleInstruments } from '../contexts/SettingsContext';
-import SortModal from '../components/SortModal';
-import type { SortDraft } from '../components/SortModal';
-import FilterModal from '../components/FilterModal';
-import type { FilterDraft } from '../components/FilterModal';
+import SortModal from '../components/modals/SortModal';
+import type { SortDraft } from '../components/modals/SortModal';
+import FilterModal from '../components/modals/FilterModal';
+import type { FilterDraft } from '../components/modals/FilterModal';
 import {
   type SongSortMode,
   type SongSettings,

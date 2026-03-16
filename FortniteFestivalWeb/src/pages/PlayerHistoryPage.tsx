@@ -13,9 +13,9 @@ import {
 } from '../models';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import SeasonPill from '../components/SeasonPill';
-import PlayerScoreSortModal from '../components/PlayerScoreSortModal';
-import type { PlayerScoreSortMode, PlayerScoreSortDraft } from '../components/PlayerScoreSortModal';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldOutlineSkew, frostedCard } from '../theme';
+import PlayerScoreSortModal from '../components/modals/PlayerScoreSortModal';
+import type { PlayerScoreSortMode, PlayerScoreSortDraft } from '../components/modals/PlayerScoreSortModal';
+import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldOutlineSkew, frostedCard } from '@festival/theme';
 import { staggerDelay, estimateVisibleCount } from '../utils/stagger';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useStaggerRush } from '../hooks/useStaggerRush';

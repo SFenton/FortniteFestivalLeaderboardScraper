@@ -1,11 +1,11 @@
 import { useMemo, useCallback, useState } from 'react';
 import Modal, { ModalSection, RadioRow, ReorderList, Accordion } from './Modal';
 import ConfirmAlert from './ConfirmAlert';
-import type { InstrumentKey } from '../models';
-import { INSTRUMENT_LABELS } from '../models';
-import type { SongSortMode } from './songSettings';
-import { INSTRUMENT_SORT_MODES, METADATA_SORT_DISPLAY } from './songSettings';
-import { Colors, Font, Gap } from '../theme';
+import type { InstrumentKey } from '../../models';
+import { INSTRUMENT_LABELS } from '../../models';
+import type { SongSortMode } from '../songSettings';
+import { INSTRUMENT_SORT_MODES, METADATA_SORT_DISPLAY } from '../songSettings';
+import { Colors, Font, Gap } from '@festival/theme';
 import { IoArrowUp, IoArrowDown } from 'react-icons/io5';
 
 export type SortDraft = {

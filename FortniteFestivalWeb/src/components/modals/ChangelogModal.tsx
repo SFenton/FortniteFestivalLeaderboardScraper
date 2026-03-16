@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useState, useRef, useCallback } from 'react';
 import { IoClose } from 'react-icons/io5';
-import { APP_VERSION } from '../hooks/useVersions';
-import { changelog, type ChangelogEntry } from '../changelog';
-import { useScrollMask } from '../hooks/useScrollMask';
+import { APP_VERSION } from '../../hooks/useVersions';
+import { changelog, type ChangelogEntry } from '../../changelog';
+import { useScrollMask } from '../../hooks/useScrollMask';
 import css from './ChangelogModal.module.css';
 
 const TRANSITION_MS = 300;

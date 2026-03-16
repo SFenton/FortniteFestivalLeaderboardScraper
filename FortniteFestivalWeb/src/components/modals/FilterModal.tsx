@@ -1,13 +1,13 @@
 import { useMemo, useCallback, useState } from 'react';
 import Modal, { ModalSection, ToggleRow, Accordion, BulkActions } from './Modal';
 import ConfirmAlert from './ConfirmAlert';
-import { InstrumentIcon } from './InstrumentIcons';
-import type { InstrumentKey } from '../models';
-import { INSTRUMENT_KEYS, INSTRUMENT_LABELS } from '../models';
-import type { SongFilters } from './songSettings';
-import { useSettings, isInstrumentVisible } from '../contexts/SettingsContext';
-import DifficultyBars from './songs/DifficultyBars';
-import { Colors, Font, Gap, Radius } from '../theme';
+import { InstrumentIcon } from '../InstrumentIcons';
+import type { InstrumentKey } from '../../models';
+import { INSTRUMENT_KEYS, INSTRUMENT_LABELS } from '../../models';
+import type { SongFilters } from '../songSettings';
+import { useSettings, isInstrumentVisible } from '../../contexts/SettingsContext';
+import DifficultyBars from '../songs/DifficultyBars';
+import { Colors, Font, Gap, Radius } from '@festival/theme';
 
 export type FilterDraft = SongFilters & {
   instrumentFilter: InstrumentKey | null;

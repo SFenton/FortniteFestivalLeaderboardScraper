@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { ToggleRow } from '../components/Modal';
+import { ToggleRow } from '../components/modals/Modal';
 
 describe('ToggleRow', () => {
   it('renders label and toggle', () => {

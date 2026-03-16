@@ -13,7 +13,7 @@ import {
   type PlayerScore,
   type ScoreHistoryEntry,
 } from '../models';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, goldOutlineSkew, frostedCard } from '../theme';
+import { Colors, Font, Gap, Radius, Layout, MaxWidth, goldOutlineSkew, frostedCard } from '@festival/theme';
 import SeasonPill from '../components/SeasonPill';
 import ScoreHistoryChart from '../components/ScoreHistoryChart';
 import { InstrumentIcon } from '../components/InstrumentIcons';
@@ -25,7 +25,7 @@ import { IoFlash } from 'react-icons/io5';
 import { useFabSearch } from '../contexts/FabSearchContext';
 import { useScoreFilter } from '../hooks/useScoreFilter';
 import { useLoadPhase } from '../hooks/useLoadPhase';
-import PathsModal from '../components/PathsModal';
+import PathsModal from '../components/modals/PathsModal';
 import { accuracyColor } from '@festival/core';
 
 type InstrumentData = {
