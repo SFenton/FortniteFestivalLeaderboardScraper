@@ -22,6 +22,7 @@ import { globalKeyFor, getCategoryTypeId, getCategoryInstrument, perInstrumentKe
 import { useSettings } from '../contexts/SettingsContext';
 import type { AppSettings } from '../contexts/SettingsContext';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutline, goldOutlineSkew, frostedCard } from '@festival/theme';
+import s from './SuggestionsPage.module.css';
 import { estimateVisibleCount } from '../utils/stagger';
 import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
 import { useFabSearch } from '../contexts/FabSearchContext';
@@ -317,16 +318,16 @@ export default function SuggestionsPage({ accountId }: Props) {
   }, [visibleCategories.length, phase]);
 
   if (!playerData && !playerLoading && categories.length === 0) {
-    return <div style={styles.center}>{t('common.couldNotLoadPlayer')}</div>;
+    return <div className={s.center}>{t('common.couldNotLoadPlayer')}</div>;
   }
 
   if (categories.length === 0 && !hasMore) {
     return (
-      <div style={styles.page}>
-        <div style={styles.container}>
-          <div style={styles.emptyState}>
-            <div style={styles.emptyTitle}>{t('suggestions.noSuggestions')}</div>
-            <div style={styles.emptySubtitle}>
+      <div className={s.page}>
+        <div className={s.container}>
+          <div className={s.emptyState}>
+            <div className={s.emptyTitle}>{t('suggestions.noSuggestions')}</div>
+            <div className={s.emptySubtitle}>
               The service may be down unexpectedly. Please refresh to try again.
             </div>
           </div>
@@ -350,26 +351,25 @@ export default function SuggestionsPage({ accountId }: Props) {
     : skipAnim ? {} : { opacity: 0 };
 
   return (
-    <div style={styles.page}>
+    <div className={s.page}>
       {/* Spinner overlay — visible during loading & spinnerOut */}
       {phase !== 'contentIn' && (
         <div
-          style={{
-            ...styles.spinnerOverlay,
+          className={s.spinnerOverlay} style={{
             ...(phase === 'spinnerOut'
               ? { animation: 'fadeOut 500ms ease-out forwards' }
               : {}),
           }}
         >
-          <div style={styles.arcSpinner} />
+          <div className={s.arcSpinner} />
         </div>
       )}
       {!isMobileChrome && (
-      <div style={styles.header}>
-        <div style={styles.container}>
-          <div style={{ ...styles.headerRow, ...headerStagger }}>
+      <div className={s.header}>
+        <div className={s.container}>
+          <div style={{ ...s.headerRow, ...headerStagger }}>
             <button
-              style={{ ...styles.iconBtn, ...(filtersActive ? styles.iconBtnActive : {}), width: 'auto', paddingLeft: Gap.xl, paddingRight: Gap.xl, gap: Gap.md }}
+              style={{ ...s.iconBtn, ...(filtersActive ? s.iconBtnActive : {}), width: 'auto', paddingLeft: Gap.xl, paddingRight: Gap.xl, gap: Gap.md }}
               onClick={openFilter}
               title={t('common.filter')}
               aria-label={t('common.filterSuggestions')}
@@ -381,12 +381,12 @@ export default function SuggestionsPage({ accountId }: Props) {
         </div>
       </div>
       )}
-      <div id="suggestions-scroll" ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
-      <div style={{ ...styles.container, ...(isMobile ? { paddingTop: Gap.sm } : {}) }}>
+      <div id="suggestions-scroll" ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
+      <div style={{ ...s.container, ...(isMobile ? { paddingTop: Gap.sm } : {}) }}>
         {visibleCategories.length === 0 && (categories.length > 0 || !effectiveHasMore) ? (
-          <div style={styles.emptyState}>
-            <div style={styles.emptyTitle}>{t('suggestions.noSuggestions')}</div>
-            <div style={styles.emptySubtitle}>
+          <div className={s.emptyState}>
+            <div className={s.emptyTitle}>{t('suggestions.noSuggestions')}</div>
+            <div className={s.emptySubtitle}>
               {filtersActive
                 ? t('suggestions.noSuggestionsFiltered')
                 : t('suggestions.playSongsFirst')}
@@ -397,7 +397,7 @@ export default function SuggestionsPage({ accountId }: Props) {
             dataLength={visibleCategories.length}
             next={filteredLoadMore}
             hasMore={effectiveHasMore}
-            loader={phase === 'contentIn' ? <div style={styles.loader}><div style={styles.loaderSpinner} /></div> : <></>}
+            loader={phase === 'contentIn' ? <div className={s.loader}><div className={s.loaderSpinner} /></div> : <></>}
             scrollThreshold="600px"
             scrollableTarget="suggestions-scroll"
             style={{ overflow: 'visible' }}
@@ -446,19 +446,19 @@ function CategoryCard({
 }) {
   const catInstrument = getCatInstrument(category.key);
   return (
-    <div style={styles.card}>
-      <div style={styles.cardHeader}>
-        <div style={styles.cardHeaderRow}>
+    <div style={s.card}>
+      <div className={s.cardHeader}>
+        <div className={s.cardHeaderRow}>
           <div>
-            <span style={styles.cardTitle}>{category.title}</span>
-            <span style={styles.cardDesc}>{category.description}</span>
+            <span className={s.cardTitle}>{category.title}</span>
+            <span className={s.cardDesc}>{category.description}</span>
           </div>
           {catInstrument && (
             <InstrumentIcon instrument={catInstrument} size={36} />
           )}
         </div>
       </div>
-      <div style={styles.songList}>
+      <div className={s.songList}>
         {category.songs.map((song) => (
           <SongRow
             key={`${song.songId}-${song.instrumentKey ?? 'any'}`}
@@ -544,20 +544,20 @@ function SongRow({
   const starSrc = isGold ? `${import.meta.env.BASE_URL}star_gold.png` : `${import.meta.env.BASE_URL}star_white.png`;
 
   return (
-    <Link to={songUrl} style={showStarPngs ? { ...styles.row, flexDirection: 'column' as const, alignItems: 'stretch' as const } : styles.row}>
-      <div style={showStarPngs ? styles.rowMainLine : { display: 'contents' }}>
+    <Link to={songUrl} style={showStarPngs ? { ...s.row, flexDirection: 'column' as const, alignItems: 'stretch' as const } : s.row}>
+      <div style={showStarPngs ? s.rowMainLine : { display: 'contents' }}>
         <AlbumArt src={albumArt} size={Size.thumb} />
-        <div style={styles.rowText}>
-          <span style={styles.rowTitle}>{song.title}</span>
-          <span style={styles.rowArtist}>{song.artist}{song.year ? ` · ${song.year}` : ''}</span>
+        <div className={s.rowText}>
+          <span className={s.rowTitle}>{song.title}</span>
+          <span className={s.rowArtist}>{song.artist}{song.year ? ` · ${song.year}` : ''}</span>
         </div>
         <RightContent song={song} layout={layout} leaderboardData={leaderboardData} starCount={showStars && !showStarPngs ? displayStars : 0} starSrc={starSrc} />
       </div>
       {/* Star gains: PNG stars centered below on mobile */}
       {showStarPngs && (
-        <div style={styles.starPngRow}>
+        <div className={s.starPngRow}>
           {Array.from({ length: displayStars }, (_, i) => (
-            <img key={i} src={starSrc} alt="★" style={styles.starPngImg} />
+            <img key={i} src={starSrc} alt="★" className={s.starPngImg} />
           ))}
         </div>
       )}
@@ -590,7 +590,7 @@ function RightContent({
     const r = Math.round(220 * (1 - t) + 46 * t);
     const g = Math.round(40 * (1 - t) + 204 * t);
     const b = Math.round(40 * (1 - t) + 113 * t);
-    return <span style={{ ...styles.unfcPct, color: `rgb(${r},${g},${b})` }}>{display}</span>;
+    return <span style={{ ...s.unfcPct, color: `rgb(${r},${g},${b})` }}>{display}</span>;
   }
 
   if (layout === 'season') {
@@ -614,9 +614,9 @@ function RightContent({
     const display = song.percentileDisplay;
     const isTop1 = display === 'Top 1%';
     const isTop5 = display === 'Top 2%' || display === 'Top 3%' || display === 'Top 4%' || display === 'Top 5%';
-    const pillStyle = isTop1 ? styles.percentileBadgeTop1 : isTop5 ? styles.percentileBadgeTop5 : styles.percentilePill;
+    const pillStyle = isTop1 ? s.percentileBadgeTop1 : isTop5 ? s.percentileBadgeTop5 : s.percentilePill;
     return (
-      <div style={styles.badges}>
+      <div className={s.badges}>
         {display && (
           <span style={pillStyle}>
             {display}
@@ -631,11 +631,11 @@ function RightContent({
 
   if (layout === 'singleInstrument') {
     return song.instrumentKey ? (
-      <div style={styles.badges}>
+      <div className={s.badges}>
         {starCount > 0 && starSrc && (
-          <span style={styles.starPngInlineRow}>
+          <span className={s.starPngInlineRow}>
             {Array.from({ length: starCount }, (_, i) => (
-              <img key={i} src={starSrc} alt="★" style={styles.starPngImg} />
+              <img key={i} src={starSrc} alt="★" className={s.starPngImg} />
             ))}
           </span>
         )}
@@ -646,7 +646,7 @@ function RightContent({
 
   // instrumentChips: show 6 colored circles
   return (
-    <div style={styles.instrumentChipsRow}>
+    <div className={s.instrumentChipsRow}>
       {InstrumentKeys.map((ins) => {
         const tr = leaderboardData ? (leaderboardData as Record<string, unknown>)[ins] as { numStars?: number; isFullCombo?: boolean } | undefined : undefined;
         const hasScore = !!tr && (tr.numStars ?? 0) > 0;
@@ -656,7 +656,7 @@ function RightContent({
           <div
             key={ins}
             style={{
-              ...styles.instrumentChip,
+              ...s.instrumentChip,
               backgroundColor: fill,
               borderColor: stroke,
             }}
@@ -669,278 +669,3 @@ function RightContent({
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  page: {
-    height: '100%',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    color: Colors.textPrimary,
-    fontFamily:
-      "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-  },
-  header: {
-    flexShrink: 0,
-    zIndex: 10,
-  },
-  bottomToolbar: {
-    flexShrink: 0,
-    zIndex: 10,
-  },
-  bottomToolbarInner: {
-    display: 'flex',
-    width: '100%',
-    maxWidth: MaxWidth.card,
-    margin: '0 auto',
-    padding: `${Gap.md}px ${Layout.paddingHorizontal}px`,
-    boxSizing: 'border-box' as const,
-  },
-  scrollArea: {
-    flex: 1,
-    overflowY: 'auto' as const,
-  },
-  container: {
-    maxWidth: MaxWidth.card,
-    margin: '0 auto',
-    padding: `${Layout.paddingTop}px ${Layout.paddingHorizontal}px`,
-  },
-  center: {
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    minHeight: '100vh',
-  },
-  arcSpinner: {
-    width: 48,
-    height: 48,
-    border: '4px solid rgba(255,255,255,0.10)',
-    borderTopColor: Colors.accentPurple,
-    borderRadius: '50%',
-    animation: 'spin 0.8s linear infinite',
-  },
-  spinnerOverlay: {
-    position: 'fixed' as const,
-    inset: 0,
-    zIndex: 2,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  heading: {
-    fontSize: Font.title,
-    fontWeight: 700,
-    margin: 0,
-  },
-  headerRow: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    marginBottom: Gap.md,
-  },
-  iconBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative' as const,
-    width: 48,
-    height: 48,
-    borderRadius: Radius.full,
-    ...frostedCard,
-    color: Colors.textTertiary,
-    cursor: 'pointer',
-  },
-  iconBtnMobile: {
-    width: 44,
-    height: 44,
-  },
-  iconBtnActive: {
-    border: 'none',
-    color: '#FFFFFF',
-    backgroundColor: Colors.accentBlue,
-  },
-  filterDot: {
-    position: 'absolute' as const,
-    top: 4,
-    right: 4,
-    width: 6,
-    height: 6,
-    borderRadius: '50%',
-    backgroundColor: Colors.accentBlue,
-  },
-  empty: {
-    color: Colors.textTertiary,
-    fontSize: Font.md,
-  },
-  emptyState: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 'calc(100dvh - 250px)',
-    textAlign: 'center' as const,
-  },
-  emptyTitle: {
-    fontSize: Font.xl,
-    fontWeight: 700,
-    color: Colors.textPrimary,
-    marginBottom: Gap.md,
-  },
-  emptySubtitle: {
-    fontSize: Font.md,
-    color: Colors.textMuted,
-  },
-  loader: {
-    display: 'flex',
-    justifyContent: 'center',
-    padding: `${Gap.section}px 0`,
-  },
-  loaderSpinner: {
-    width: 28,
-    height: 28,
-    border: '3px solid rgba(255,255,255,0.10)',
-    borderTopColor: Colors.accentPurple,
-    borderRadius: '50%',
-    animation: 'spin 0.8s linear infinite',
-  },
-  card: {
-    ...frostedCard,
-    borderRadius: Radius.lg,
-    marginBottom: Gap.section,
-    overflow: 'hidden',
-  },
-  cardHeader: {
-    padding: `${Gap.xl}px ${Gap.section}px`,
-    borderBottom: `1px solid ${Colors.borderSubtle}`,
-  },
-  cardHeaderRow: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: Gap.xl,
-  },
-  cardTitle: {
-    display: 'block',
-    fontSize: Font.lg,
-    fontWeight: 700,
-    color: Colors.textPrimary,
-    marginBottom: Gap.xs,
-  },
-  cardDesc: {
-    display: 'block',
-    fontSize: Font.sm,
-    color: Colors.textTertiary,
-  },
-  songList: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-  },
-  row: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.xl,
-    padding: `${Gap.lg}px ${Gap.section}px`,
-    borderBottom: `1px solid ${Colors.borderSubtle}`,
-    textDecoration: 'none',
-    color: 'inherit',
-    transition: 'background-color 0.12s',
-  },
-  rowText: {
-    flex: 1,
-    minWidth: 0,
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: Gap.xs,
-  },
-  rowTitle: {
-    fontSize: Font.md,
-    fontWeight: 600,
-    color: Colors.textPrimary,
-    whiteSpace: 'nowrap' as const,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  },
-  rowArtist: {
-    fontSize: Font.sm,
-    color: Colors.textTertiary,
-  },
-  badges: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.md,
-    flexShrink: 0,
-  },
-  instrumentChipsRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 6,
-    flexShrink: 0,
-  },
-  instrumentChip: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    border: '2px solid',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  unfcPct: {
-    fontSize: Font.lg,
-    fontWeight: 600,
-    minWidth: 48,
-    textAlign: 'center' as const,
-    flexShrink: 0,
-    fontVariantNumeric: 'tabular-nums',
-  },
-  rowMainLine: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.xl,
-  },
-  starPngRow: {
-    display: 'flex',
-    justifyContent: 'center',
-    gap: 3,
-    paddingTop: Gap.sm,
-  },
-  starPngImg: {
-    width: 20,
-    height: 20,
-    objectFit: 'contain' as const,
-  },
-  starPngInlineRow: {
-    display: 'inline-flex',
-    gap: 3,
-    alignItems: 'center',
-  },
-  percentilePill: {
-    fontSize: Font.lg,
-    fontWeight: 600,
-    padding: `${Gap.xs}px ${Gap.md}px`,
-    borderRadius: Radius.xs,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    color: Colors.textSecondary,
-    display: 'inline-block',
-    textAlign: 'center' as const,
-  },
-  percentileBadgeTop1: {
-    ...goldOutlineSkew,
-    fontSize: Font.lg,
-    textAlign: 'center' as const,
-  },
-  percentileBadgeTop5: {
-    ...goldOutline,
-    fontSize: Font.lg,
-    textAlign: 'center' as const,
-  },
-  percentilePillGold: goldFill,
-  thumb: {
-    width: Size.thumb,
-    height: Size.thumb,
-    borderRadius: Radius.xs,
-    objectFit: 'cover' as const,
-    flexShrink: 0,
-  },
-  thumbPlaceholder: {
-    backgroundColor: Colors.purplePlaceholder,
-  },
-};
