@@ -1,8 +1,6 @@
 import { createContext, useContext, useState, useCallback, useRef, useMemo, type ReactNode } from 'react';
 
 type FabSearchContextType = {
-  query: string;
-  setQuery: (q: string) => void;
   registerActions: (actions: { openSort: () => void; openFilter: () => void }) => void;
   openSort: () => void;
   openFilter: () => void;
@@ -17,7 +15,6 @@ type FabSearchContextType = {
 };
 
 const FabSearchContext = createContext<FabSearchContextType>({
-  query: '', setQuery: () => {},
   registerActions: () => {}, openSort: () => {}, openFilter: () => {},
   registerSuggestionsActions: () => {}, openSuggestionsFilter: () => {},
   registerPlayerHistoryActions: () => {}, openPlayerHistorySort: () => {},
@@ -26,8 +23,6 @@ const FabSearchContext = createContext<FabSearchContextType>({
 });
 
 export function FabSearchProvider({ children }: { children: ReactNode }) {
-  const [query, setQueryState] = useState('');
-  const setQuery = useCallback((q: string) => setQueryState(q), []);
   const actionsRef = useRef<{ openSort: () => void; openFilter: () => void }>({ openSort: () => {}, openFilter: () => {} });
   const suggestionsActionsRef = useRef<{ openFilter: () => void }>({ openFilter: () => {} });
   const playerHistoryActionsRef = useRef<{ openSort: () => void }>({ openSort: () => {} });
@@ -61,12 +56,12 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<FabSearchContextType>(() => ({
-    query, setQuery, registerActions, openSort, openFilter,
+    registerActions, openSort, openFilter,
     registerSuggestionsActions, openSuggestionsFilter,
     registerPlayerHistoryActions, openPlayerHistorySort,
     registerSongDetailActions, openPaths,
     registerPlayerPageSelect, playerPageSelect,
-  }), [query, setQuery, registerActions, openSort, openFilter,
+  }), [registerActions, openSort, openFilter,
     registerSuggestionsActions, openSuggestionsFilter,
     registerPlayerHistoryActions, openPlayerHistorySort,
     registerSongDetailActions, openPaths,

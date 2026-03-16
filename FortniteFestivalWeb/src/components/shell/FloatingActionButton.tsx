@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { IoSearch } from 'react-icons/io5';
 import { api } from '../../api/client';
 import type { AccountSearchResult } from '../../models';
-import { useFabSearch } from '../../contexts/FabSearchContext';
+import { useSearchQuery } from '../../contexts/SearchQueryContext';
 import { IS_PWA } from '../../utils/platform';
 import { Gap } from '@festival/theme';
 import css from './FloatingActionButton.module.css';
@@ -50,8 +50,8 @@ export default function FloatingActionButton({
     setTimeout(() => { setPopupMounted(false); }, 300);
   }, []);
 
-  const fabSearch = useFabSearch();
-  const [query, setQuery] = useState(mode === 'songs' ? fabSearch.query : '');
+  const searchQuery = useSearchQuery();
+  const [query, setQuery] = useState(mode === 'songs' ? searchQuery.query : '');
   const [results, setResults] = useState<AccountSearchResult[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
@@ -71,7 +71,7 @@ export default function FloatingActionButton({
   const handleChange = (value: string) => {
     setQuery(value);
     if (mode === 'songs') {
-      fabSearch.setQuery(value);
+      searchQuery.setQuery(value);
     } else {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => { void searchPlayers(value.trim()); }, 300);

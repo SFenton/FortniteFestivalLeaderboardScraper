@@ -20,6 +20,7 @@ import { resetSongSettingsForDeselect, loadSongSettings, SONG_SETTINGS_CHANGED_E
 import BackLink from './components/BackLink';
 import { InstrumentIcon } from './components/InstrumentIcons';
 import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
+import { SearchQueryProvider } from './contexts/SearchQueryContext';
 import { useSettings } from './contexts/SettingsContext';
 import HeaderSearch from './components/shell/HeaderSearch';
 import BottomNav from './components/shell/BottomNav';
@@ -39,9 +40,11 @@ export default function App() {
     <SettingsProvider>
       <FestivalProvider>
         <FabSearchProvider>
-          <HashRouter>
-            <AppShell />
-          </HashRouter>
+          <SearchQueryProvider>
+            <HashRouter>
+              <AppShell />
+            </HashRouter>
+          </SearchQueryProvider>
         </FabSearchProvider>
       </FestivalProvider>
     </SettingsProvider>
