@@ -9,6 +9,7 @@ import { usePlayerData } from '../contexts/PlayerDataContext';
 import { useSettings } from '../contexts/SettingsContext';
 import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
 import { useFabSearch } from '../contexts/FabSearchContext';
+import { useSearchQuery } from '../contexts/SearchQueryContext';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useStaggerRush } from '../hooks/useStaggerRush';
 import { useScrollRestore, clearScrollCache } from '../hooks/useScrollRestore';
@@ -45,6 +46,7 @@ export default function SongsPage() {
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
   const fabSearch = useFabSearch();
+  const searchQuery = useSearchQuery();
   const scrollRef = useRef<HTMLDivElement>(null);
   const navType = useNavigationType();
   const location = useLocation();
@@ -54,12 +56,12 @@ export default function SongsPage() {
   // Unified scroll position save/restore
   const saveScroll = useScrollRestore(scrollRef, 'songs', navType);
 
-  const [search, setSearchLocal] = useState(fabSearch.query);
+  const [search, setSearchLocal] = useState(searchQuery.query);
   const setSearch = useCallback((q: string) => {
     setSearchLocal(q);
-    fabSearch.setQuery(q);
+    searchQuery.setQuery(q);
   }, [fabSearch]);
-  const effectiveSearch = isMobileChrome ? fabSearch.query : search;
+  const effectiveSearch = isMobileChrome ? searchQuery.query : search;
   const [debouncedSearch, setDebouncedSearch] = useState(effectiveSearch);
   useEffect(() => {
     const id = setTimeout(() => setDebouncedSearch(effectiveSearch), 250);
