@@ -25,6 +25,7 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import SeasonPill from './SeasonPill';
 import { useChartData, type ChartPoint } from './chart/useChartData';
 import ChartTooltip from './chart/ChartTooltip';
+import ScoreCardList from './chart/ScoreCardList';
 
 type Props = {
   songId: string;
@@ -722,66 +723,12 @@ export default function ScoreHistoryChart({
           </div>
         )}
       </div>
-      {/* Player score cards beneath chart */}
-      {(displayedCards.length > 0 || listHeight > 0) && (
-        <div style={{
-          overflow: 'hidden',
-          height: listHeight,
-          transition: 'height 0.3s ease',
-          marginTop: Gap.xl,
-        }}>
-          <div className={s.scoreCardList}>
-          {displayedCards.map((point, i) => {
-            const pct = point.accuracy;
-            const text = pct % 1 === 0 ? `${pct}%` : `${pct.toFixed(1)}%`;
-            const count = displayedCards.length;
-
-            let animStyle: React.CSSProperties = {};
-            if (listPhase === 'out') {
-              // Stagger out top-down: first card fades first
-              animStyle = {
-                opacity: 0,
-                transform: 'translateY(-8px)',
-                transition: `opacity 0.15s ease-in ${i * 40}ms, transform 0.15s ease-in ${i * 40}ms`,
-              };
-            } else if (listPhase === 'in') {
-              // Stagger in top-down: matches leaderboard card animation
-              animStyle = {
-                opacity: 0,
-                animation: `fadeInUp 300ms ease-out ${i * 60}ms forwards`,
-              };
-            }
-
-            return (
-              <div
-                key={point.date}
-                className={s.scoreListCard} style={{
-                  ...animStyle,
-                }}
-              >
-                <span className={s.scoreCardDate}>
-                  {new Date(point.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                </span>
-                <span className={s.scoreCardMiddle}>
-                  {point.season != null && (
-                    <SeasonPill season={point.season} />
-                  )}
-                  <span className={s.scoreCardScore} style={{ width: scoreWidthProp }}>
-                    {point.score.toLocaleString()}
-                  </span>
-                </span>
-                <span className={s.scoreCardAcc}>
-                  {point.isFullCombo
-                    ? <span style={s.fcAccBadge}>{text}</span>
-                    : <span style={{ color: accuracyColor(pct) }}>{text}</span>
-                  }
-                </span>
-              </div>
-            );
-          })}
-        </div>
-        </div>
-      )}
+      <ScoreCardList
+        displayedCards={displayedCards}
+        listHeight={listHeight}
+        listPhase={listPhase}
+        scoreWidth={scoreWidthProp}
+      />
       {chartData.length > 5 && (
         <button className={s.viewAllButton} onClick={() => navigate(`/songs/${songId}/${selected}/history`)}>
           View all available player scores
