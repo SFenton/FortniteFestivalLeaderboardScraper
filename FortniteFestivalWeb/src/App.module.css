@@ -1,0 +1,116 @@
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.nav {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  padding: var(--layout-padding-top) var(--layout-padding-h) var(--gap-md);
+  background-color: transparent;
+  flex-shrink: 0;
+  z-index: 100;
+  position: relative;
+  touch-action: none;
+}
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  position: relative;
+}
+
+.hamburger {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 36px;
+  height: 36px;
+  padding: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+
+.hamburgerLine {
+  display: block;
+  height: 2px;
+  background-color: var(--color-text-secondary);
+  border-radius: 1px;
+}
+
+.navTitle {
+  font-size: var(--font-title);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.navTitleBack {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  font-size: var(--font-title);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  text-decoration: none;
+  white-space: nowrap;
+  margin-left: -6px;
+}
+
+.mobileHeader {
+  display: flex;
+  align-items: center;
+  padding: calc(var(--layout-padding-top) + var(--gap-md)) var(--layout-padding-h) var(--gap-md);
+  max-width: var(--max-width-card);
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  z-index: 100;
+  position: relative;
+  touch-action: none;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.brand {
+  font-size: var(--font-lg);
+  font-weight: 700;
+  color: var(--color-accent-purple);
+}
+
+.headerProfileBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.headerProfileCircleBase {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  transition: background-color 300ms ease, border-color 300ms ease, color 300ms ease;
+}
+
+.deselectBtn {
+  composes: btnDanger from './styles/shared.module.css';
+  font-size: var(--font-sm);
+  padding: var(--gap-sm) var(--gap-xl);
+  white-space: nowrap;
+}

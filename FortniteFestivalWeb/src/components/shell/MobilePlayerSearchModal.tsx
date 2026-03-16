@@ -6,6 +6,7 @@ import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../../hooks
 import { api } from '../../api/client';
 import type { AccountSearchResult } from '../../models';
 import { Colors, Font, Gap, Radius } from '@festival/theme';
+import css from './MobilePlayerSearchModal.module.css';
 
 const MODAL_TRANSITION_MS = 250;
 
@@ -121,10 +122,10 @@ export default function MobilePlayerSearchModal({
         }}
         onTransitionEnd={handleTransitionEnd}
       >
-        <div style={styles.header}><h2 style={styles.title}>{effectiveTitle}</h2><button style={styles.closeBtn} onClick={onClose} aria-label={t('common.dismiss')}><IoClose size={18} /></button></div>
-        <div style={styles.body}>
+        <div className={css.header}><h2 className={css.title}>{effectiveTitle}</h2><button className={css.closeBtn} onClick={onClose} aria-label={t('common.dismiss')}><IoClose size={18} /></button></div>
+        <div className={css.body}>
           {player && (
-            <div style={styles.playerCard}>
+            <div className={css.playerCard}>
               <span style={{ ...styles.profileCircleLg, ...stagger(dismissing ? 450 : 0) }}><IoPerson size={32} /></span>
               <span style={{ ...styles.playerName, ...stagger(dismissing ? 300 : 150) }}>{player.displayName}</span>
               <span style={{ ...styles.deselectHint, ...stagger(dismissing ? 150 : 300) }}>{t('common.deselectHint')}</span>
@@ -135,14 +136,14 @@ export default function MobilePlayerSearchModal({
             <>
               <div style={{ ...styles.searchPill, ...stagger(0) }} onClick={e => { e.currentTarget.querySelector('input')?.focus(); }}>
                 <IoSearch size={16} style={{ color: Colors.textTertiary, flexShrink: 0 }} />
-                <input ref={inputRef} style={styles.searchInput} placeholder="Search player…" value={query} onChange={e => handleChange(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} enterKeyHint="done" />
+                <input ref={inputRef} className={css.searchInput} placeholder="Search player…" value={query} onChange={e => handleChange(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} enterKeyHint="done" />
               </div>
               <div style={{ ...styles.results, ...stagger(150) }}>
-                {showSpinner && (<div style={{ ...styles.spinnerWrap, opacity: spinnerOpacity, transition: 'opacity 250ms ease' }} onTransitionEnd={handleSpinnerTransitionEnd}><div style={styles.arcSpinner} /></div>)}
-                {!showSpinner && !loading && query.length < 2 && (<div style={styles.hintCenter}>{t('common.enterUsername')}</div>)}
-                {!showSpinner && !loading && query.length >= 2 && results.length === 0 && (<div style={styles.hintCenter}>{t('common.noMatchingUsername')}</div>)}
+                {showSpinner && (<div style={{ ...styles.spinnerWrap, opacity: spinnerOpacity, transition: 'opacity 250ms ease' }} onTransitionEnd={handleSpinnerTransitionEnd}><div className={css.arcSpinner} /></div>)}
+                {!showSpinner && !loading && query.length < 2 && (<div className={css.hintCenter}>{t('common.enterUsername')}</div>)}
+                {!showSpinner && !loading && query.length >= 2 && results.length === 0 && (<div className={css.hintCenter}>{t('common.noMatchingUsername')}</div>)}
                 {!showSpinner && resultsReady && results.map((r, i) => (
-                  <button key={`${resultSeq}-${r.accountId}`} style={{ ...styles.resultBtn, opacity: 0, animation: `fadeInUp 300ms ease-out ${i * 50}ms forwards` }} onClick={() => handleSelect(r)}>{r.displayName}</button>
+                  <button key={`${resultSeq}-${r.accountId}`} style={{ ...css.resultBtn, opacity: 0, animation: `fadeInUp 300ms ease-out ${i * 50}ms forwards` }} onClick={() => handleSelect(r)}>{r.displayName}</button>
                 ))}
               </div>
             </>
@@ -153,21 +154,3 @@ export default function MobilePlayerSearchModal({
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: `${Gap.xl}px 16px ${Gap.xl}px ${Gap.section}px`, flexShrink: 0 },
-  title: { fontSize: Font.xl, fontWeight: 700, margin: 0 },
-  closeBtn: { width: 32, height: 32, borderRadius: '50%', background: Colors.surfaceElevated, border: `1px solid ${Colors.borderPrimary}`, color: Colors.textSecondary, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 },
-  body: { flex: 1, display: 'flex', flexDirection: 'column' as const, padding: `${Gap.sm}px ${Gap.section}px ${Gap.section}px`, gap: Gap.md, overflow: 'hidden' },
-  playerCard: { display: 'flex', flexDirection: 'column' as const, alignItems: 'center', gap: Gap.xl, padding: `${Gap.section * 2}px ${Gap.section}px`, flex: 1, justifyContent: 'center' },
-  profileCircleLg: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: 64, height: 64, borderRadius: '50%', backgroundColor: Colors.surfaceSubtle, border: `1px solid ${Colors.borderSubtle}`, flexShrink: 0 },
-  playerName: { fontSize: Font.xl, fontWeight: 700, color: Colors.textPrimary },
-  deselectHint: { fontSize: Font.sm, color: Colors.textTertiary, textAlign: 'center' as const, lineHeight: '1.5' },
-  deselectBtn: { background: Colors.dangerBg, border: `1px solid ${Colors.statusRed}`, borderRadius: Radius.xs, color: Colors.textPrimary, fontSize: Font.sm, fontWeight: 600, cursor: 'pointer', padding: `${Gap.sm}px ${Gap.xl}px`, whiteSpace: 'nowrap' as const },
-  searchPill: { display: 'flex', alignItems: 'center', gap: Gap.sm, height: 48, padding: `0 ${Gap.xl}px`, boxSizing: 'border-box' as const, borderRadius: Radius.full, border: `1px solid ${Colors.borderPrimary}`, backgroundColor: Colors.backgroundCard, cursor: 'text', flexShrink: 0 },
-  searchInput: { flex: 1, background: 'none', border: 'none', outline: 'none', color: Colors.textPrimary, fontSize: Font.md },
-  results: { flex: 1, overflowY: 'auto' as const, display: 'flex', flexDirection: 'column' as const, gap: Gap.xs },
-  spinnerWrap: { display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 },
-  hintCenter: { display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: Colors.textTertiary, fontSize: Font.lg, textAlign: 'center' as const },
-  arcSpinner: { width: 36, height: 36, border: '3px solid rgba(255,255,255,0.10)', borderTopColor: Colors.accentPurple, borderRadius: '50%', animation: 'spin 0.8s linear infinite' },
-  resultBtn: { display: 'block', width: '100%', padding: `${Gap.xl}px ${Gap.section}px`, background: 'none', border: 'none', borderRadius: Radius.xs, color: Colors.textSecondary, fontSize: Font.md, cursor: 'pointer', textAlign: 'left' as const },
-};

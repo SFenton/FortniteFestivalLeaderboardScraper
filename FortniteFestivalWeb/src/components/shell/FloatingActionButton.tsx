@@ -7,6 +7,7 @@ import type { AccountSearchResult } from '../../models';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { IS_PWA } from '../../utils/platform';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, frostedCard } from '@festival/theme';
+import css from './FloatingActionButton.module.css';
 
 export interface ActionItem {
   label: string;
@@ -128,13 +129,13 @@ export default function FloatingActionButton({
   return (
     <div ref={searchContainerRef}>
       {searchVisible && (
-        <div style={{ ...styles.searchBarOuter, ...(IS_PWA ? { bottom: 80 + Gap.section - Gap.md } : {}) }}>
-          <div className="fab-search-bar" style={styles.searchBar}>
-            <div style={styles.searchInputWrap} onClick={() => inputRef.current?.focus()}>
-              <IoSearch size={16} style={{ color: Colors.textTertiary, flexShrink: 0 }} />
+        <div className={css.searchBarOuter} style={{ ...(IS_PWA ? { bottom: 80 + Gap.section - Gap.md } : {}) }}>
+          <div className="fab-search-bar" className={css.searchBar}>
+            <div className={css.searchInputWrap} onClick={() => inputRef.current?.focus()}>
+              <IoSearch size={16} className={css.searchIcon} />
               <input
                 ref={inputRef}
-                style={styles.searchInput}
+                className={css.searchInput}
                 placeholder={placeholder ?? 'Search player\u2026'}
                 value={query}
                 onChange={e => handleChange(e.target.value)}
@@ -143,11 +144,11 @@ export default function FloatingActionButton({
               />
             </div>
             {mode === 'players' && results.length > 0 && (
-              <div style={styles.searchResults}>
+              <div className={css.searchResults}>
                 {results.map((r, i) => (
                   <button
                     key={r.accountId}
-                    style={{ ...styles.searchResultBtn, ...(i === activeIndex ? { backgroundColor: Colors.surfaceSubtle } : {}) }}
+                    className={i === activeIndex ? css.searchResultBtnActive : css.searchResultBtn}
                     onClick={() => handleSelectPlayer(r)}
                   >
                     {r.displayName}
@@ -158,18 +159,18 @@ export default function FloatingActionButton({
           </div>
         </div>
       )}
-      <div style={{ ...styles.container, ...(IS_PWA ? { bottom: 80 + Gap.section - Gap.md } : {}) }}>
+      <div className={css.container} style={{ ...(IS_PWA ? { bottom: 80 + Gap.section - Gap.md } : {}) }}>
         <button
-          style={styles.fab}
+          className={css.fab}
           onClick={() => actionsOpen ? closeActions() : openActions()}
           aria-label={t('common.actions')}
         >
-          {icon ?? <span style={styles.hamburger}><span style={styles.hamburgerLine} /><span style={styles.hamburgerLine} /><span style={styles.hamburgerLine} /></span>}
+          {icon ?? <span className={css.hamburger}><span className={css.hamburgerLine} /><span className={css.hamburgerLine} /><span className={css.hamburgerLine} /></span>}
         </button>
         {popupMounted && (
           <div
             style={{
-              ...styles.popup,
+              ...css.popup,
               ...frostedCard,
               transform: popupVisible ? 'scale(1)' : 'scale(0)',
               opacity: popupVisible ? 1 : 0,
@@ -180,10 +181,10 @@ export default function FloatingActionButton({
           >
             {(actionGroups ?? []).map((group, gi) => (
               <Fragment key={gi}>
-                {gi > 0 && <div style={styles.popupDivider} />}
+                {gi > 0 && <div className={css.popupDivider} />}
                 {group.map((action) => (
-                  <button key={action.label} style={styles.popupItem} onClick={() => { closeActions(); action.onPress(); }}>
-                    <span style={styles.popupItemIcon}>{action.icon}</span>
+                  <button key={action.label} className={css.popupItem} onClick={() => { closeActions(); action.onPress(); }}>
+                    <span className={css.popupItemIcon}>{action.icon}</span>
                     {action.label}
                   </button>
                 ))}
@@ -196,113 +197,3 @@ export default function FloatingActionButton({
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    position: 'fixed',
-    bottom: 80,
-    right: Layout.paddingHorizontal,
-    display: 'flex',
-    flexDirection: 'column' as const,
-    alignItems: 'flex-end',
-    gap: Gap.md,
-    zIndex: 150,
-    pointerEvents: 'none',
-  },
-  fab: {
-    width: 56,
-    height: 56,
-    borderRadius: '50%',
-    ...frostedCard,
-    backgroundColor: 'rgb(124, 58, 237)',
-    border: '1px solid rgba(124, 58, 237, 0.35)',
-    color: Colors.textPrimary,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'pointer',
-    boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-    flexShrink: 0,
-    pointerEvents: 'auto',
-  },
-  hamburger: { display: 'flex', flexDirection: 'column' as const, justifyContent: 'center', gap: 5 },
-  hamburgerLine: { display: 'block', width: 20, height: 2, backgroundColor: Colors.textPrimary, borderRadius: 1 },
-  popup: {
-    position: 'absolute',
-    bottom: 64,
-    right: 0,
-    zIndex: 1002,
-    pointerEvents: 'auto',
-    backgroundColor: Colors.backgroundCard,
-    borderRadius: Radius.sm,
-    padding: `${Gap.sm}px 0`,
-    minWidth: 200,
-    whiteSpace: 'nowrap' as const,
-    boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
-    transformOrigin: 'bottom right',
-  },
-  popupItem: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.xl,
-    width: '100%',
-    padding: `${Gap.xl}px ${Gap.section}px`,
-    background: 'none',
-    border: 'none',
-    color: Colors.textSecondary,
-    fontSize: Font.md,
-    cursor: 'pointer',
-    textAlign: 'left' as const,
-  },
-  popupItemIcon: { display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, flexShrink: 0, color: Colors.textTertiary },
-  popupDivider: { height: 1, backgroundColor: Colors.glassBorder, margin: `${Gap.sm}px 0` },
-  searchBarOuter: {
-    position: 'fixed',
-    bottom: 80,
-    left: 0,
-    right: 0,
-    maxWidth: MaxWidth.card,
-    margin: '0 auto',
-    padding: `0 ${Layout.paddingHorizontal}px`,
-    boxSizing: 'border-box' as const,
-    zIndex: 150,
-    pointerEvents: 'none',
-  },
-  searchBar: { display: 'flex', flexDirection: 'column' as const, gap: Gap.sm, position: 'relative', pointerEvents: 'auto' },
-  searchInputWrap: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.sm,
-    width: '100%',
-    height: 56,
-    padding: `0 ${Gap.section}px`,
-    borderRadius: Radius.full,
-    ...frostedCard,
-    boxSizing: 'border-box' as const,
-    boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
-    cursor: 'text',
-  },
-  searchInput: { flex: 1, background: 'none', border: 'none', outline: 'none', color: Colors.textPrimary, fontSize: Font.md },
-  searchResults: {
-    position: 'absolute',
-    bottom: '100%',
-    right: 0,
-    left: 0,
-    marginBottom: Gap.sm,
-    ...frostedCard,
-    borderRadius: Radius.sm,
-    maxHeight: 360,
-    overflowY: 'auto' as const,
-    boxShadow: '0 -4px 16px rgba(0,0,0,0.3)',
-  },
-  searchResultBtn: {
-    display: 'block',
-    width: '100%',
-    padding: `${Gap.xl}px ${Gap.section}px`,
-    background: 'none',
-    border: 'none',
-    color: Colors.textSecondary,
-    fontSize: Font.md,
-    cursor: 'pointer',
-    textAlign: 'left' as const,
-  },
-};
