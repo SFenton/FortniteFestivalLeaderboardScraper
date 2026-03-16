@@ -18,7 +18,7 @@ import { useStaggerRush } from '../hooks/useStaggerRush';
 import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
 import { useScoreFilter } from '../hooks/useScoreFilter';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import { IS_PWA } from '../utils/isPwa';
+import { IS_PWA } from '../utils/platform';
 import { accuracyColor } from '@festival/core';
 
 const PAGE_SIZE = 25;
