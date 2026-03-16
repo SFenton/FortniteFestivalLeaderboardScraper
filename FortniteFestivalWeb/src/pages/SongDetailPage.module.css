@@ -1,0 +1,278 @@
+.page {
+  composes: pageShell from '../styles/shared.module.css';
+  background-color: var(--color-bg-app);
+  color: var(--color-text-primary);
+  position: relative;
+  overflow: hidden;
+}
+
+.scrollArea {
+  composes: scrollContainer from '../styles/shared.module.css';
+  position: relative;
+  z-index: 1;
+}
+
+.stickyHeader {
+  position: relative;
+  z-index: 1;
+  max-width: var(--max-width-card);
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+  transition: padding 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.bgImage {
+  position: fixed;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.bgDim {
+  position: fixed;
+  inset: 0;
+  background-color: var(--color-overlay-dark);
+  pointer-events: none;
+}
+
+.container {
+  max-width: var(--max-width-card);
+  margin: 0 auto;
+  padding: 0 var(--layout-padding-h) var(--layout-padding-top);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-section);
+}
+
+.headerArt {
+  width: 120px;
+  height: 120px;
+  border-radius: var(--radius-lg);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.artPlaceholder {
+  composes: headerArt;
+  background-color: var(--color-accent-purple-dark);
+}
+
+.songTitle {
+  font-size: var(--font-title);
+  font-weight: 700;
+  margin-bottom: var(--gap-sm);
+}
+
+.songArtist {
+  font-size: var(--font-lg);
+  color: var(--color-text-subtle);
+  margin-bottom: var(--gap-md);
+}
+
+.viewPathsButton {
+  composes: frostedCard from '../styles/shared.module.css';
+  background-color: rgb(124, 58, 237);
+  border: 1px solid rgba(168, 120, 255, 0.3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 32px 0 var(--gap-section);
+  border-radius: var(--radius-full);
+  color: #fff;
+  font-size: var(--font-lg);
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  align-self: center;
+  height: 48px;
+}
+
+.bpmBadge {
+  font-size: var(--font-sm);
+  color: var(--color-text-muted);
+  background-color: var(--color-surface-muted);
+  padding: var(--gap-xs) var(--gap-md);
+  border-radius: var(--radius-xs);
+}
+
+.instrumentGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr));
+  gap: var(--gap-section) var(--gap-md);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.cardWrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.cardLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-md);
+  padding-bottom: var(--gap-xs);
+}
+
+.cardTitle {
+  font-size: var(--font-xl);
+  font-weight: 600;
+}
+
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+  flex: 1;
+}
+
+.cardMuted {
+  font-size: var(--font-sm);
+  color: var(--color-text-muted);
+}
+
+.cardError {
+  font-size: var(--font-sm);
+  color: var(--color-status-red);
+}
+
+.entryRow {
+  composes: frostedCard from '../styles/shared.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  padding: 0 var(--gap-xl);
+  height: 48px;
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: inherit;
+  transition: background-color 0.15s;
+  font-size: var(--font-md);
+}
+
+.entryRowMobile {
+  gap: var(--gap-md);
+  padding: 0 var(--gap-md);
+  height: 40px;
+}
+
+.entryRank {
+  width: 48px;
+  flex-shrink: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-md);
+}
+
+.entryName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entryScore {
+  flex-shrink: 0;
+  text-align: right;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.seasonScoreGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  flex-shrink: 0;
+}
+
+.entryAcc {
+  width: 60px;
+  flex-shrink: 0;
+  text-align: center;
+  font-weight: 600;
+  color: var(--color-accent-blue-bright);
+  font-variant-numeric: tabular-nums;
+}
+
+.fcAccBadge {
+  font-size: var(--font-md);
+  text-align: center;
+  background: linear-gradient(135deg, var(--color-gold) 0%, var(--color-gold-stroke) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: 700;
+  font-style: italic;
+  transform: skewX(-8deg);
+  display: inline-block;
+}
+
+.viewAllButton {
+  composes: frostedCard from '../styles/shared.module.css';
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 48px;
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  font-size: var(--font-md);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.playerEntryRow {
+  composes: frostedCard from '../styles/shared.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  padding: 0 var(--gap-xl);
+  height: 48px;
+  border-radius: var(--radius-md);
+  background-color: rgba(75, 15, 99, 0.75);
+  border: 1px solid rgba(124, 58, 237, 0.5);
+  text-decoration: none;
+  color: inherit;
+  transition: background-color 0.15s;
+  font-size: var(--font-md);
+}
+
+.center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  color: var(--color-text-secondary);
+  background-color: var(--color-bg-app);
+  font-size: var(--font-lg);
+}
+
+.spinnerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.arcSpinner {
+  composes: spinner from '../styles/shared.module.css';
+  width: 48px;
+  height: 48px;
+  border-width: 4px;
+  border-top-color: var(--color-accent-purple);
+}
