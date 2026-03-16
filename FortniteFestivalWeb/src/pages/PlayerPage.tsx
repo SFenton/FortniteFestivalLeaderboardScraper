@@ -25,6 +25,7 @@ import {
   type Song,
 } from '../models';
 import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutline, goldOutlineSkew, frostedCard } from '@festival/theme';
+import s from './PlayerPage.module.css';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import { useSettings, isInstrumentVisible } from '../contexts/SettingsContext';
 import { loadSongSettings, saveSongSettings, defaultSongFilters } from '../components/songSettings';
@@ -132,9 +133,9 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
     else _renderedPlayerAccount = accountId!;
   }
 
-  if (loading) return <div style={styles.page}><div style={styles.center}><div style={styles.arcSpinner} /></div></div>;
-  if (error) return <div style={styles.page}><div style={styles.centerError}>{error}</div></div>;
-  if (!data) return <div style={styles.page}><div style={styles.center}>{t('player.playerNotFound')}</div></div>;
+  if (loading) return <div className={s.page}><div className={s.center}><div className={s.arcSpinner} /></div></div>;
+  if (error) return <div className={s.page}><div className={s.centerError}>{error}</div></div>;
+  if (!data) return <div className={s.page}><div className={s.center}>{t('player.playerNotFound')}</div></div>;
 
   return <PlayerContent key={accountId} data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} isTrackedPlayer={isTrackedPlayer} skipAnim={skipAnim} />;
 }
@@ -231,46 +232,46 @@ function PlayerContent({
       span: true,
       heightEstimate: 150,
       node: (
-        <div style={styles.syncBanner}>
-          <div style={styles.syncSpinner} />
+        <div className={s.syncBanner}>
+          <div className={s.syncSpinner} />
           <div style={{ flex: 1 }}>
-            <div style={styles.syncTitle}>
+            <div className={s.syncTitle}>
               {syncPhase === 'backfill' ? t('player.syncInProgress') : t('player.syncInProgress')}
             </div>
-            <div style={styles.syncSubtitle}>
+            <div className={s.syncSubtitle}>
               {syncPhase === 'backfill'
                 ? `Syncing ${data.displayName}'s scores…`
                 : `Reconstructing ${data.displayName}'s score history across seasons…`}
             </div>
             {syncPhase === 'backfill' && backfillProgress > 0 && (
               <div style={{ marginTop: Gap.md }}>
-                <div style={styles.syncProgressLabel}>
+                <div className={s.syncProgressLabel}>
                   <span>{t('player.syncingScores')}</span>
                   <span>{(backfillProgress * 100).toFixed(1)}%</span>
                 </div>
-                <div style={styles.syncProgressOuter}>
-                  <div style={{ ...styles.syncProgressInner, width: `${Math.round(backfillProgress * 100)}%` }} />
+                <div className={s.syncProgressOuter}>
+                  <div className={s.syncProgressInner} style={{ width: `${Math.round(backfillProgress * 100)}%` }} />
                 </div>
               </div>
             )}
             {syncPhase === 'history' && (
               <>
                 <div style={{ marginTop: Gap.md }}>
-                  <div style={styles.syncProgressLabel}>
+                  <div className={s.syncProgressLabel}>
                     <span>{t('player.syncingScores')}</span><span>100.0%</span>
                   </div>
-                  <div style={styles.syncProgressOuter}>
-                    <div style={{ ...styles.syncProgressInner, width: '100%' }} />
+                  <div className={s.syncProgressOuter}>
+                    <div className={s.syncProgressInner} style={{ width: '100%' }} />
                   </div>
                 </div>
                 {historyProgress > 0 && (
                   <div style={{ marginTop: Gap.sm }}>
-                    <div style={styles.syncProgressLabel}>
+                    <div className={s.syncProgressLabel}>
                       <span>{t('player.buildingHistory')}</span>
                       <span>{(historyProgress * 100).toFixed(1)}%</span>
                     </div>
-                    <div style={styles.syncProgressOuter}>
-                      <div style={{ ...styles.syncProgressInner, width: `${Math.round(historyProgress * 100)}%` }} />
+                    <div className={s.syncProgressOuter}>
+                      <div className={s.syncProgressInner} style={{ width: `${Math.round(historyProgress * 100)}%` }} />
                     </div>
                   </div>
                 )}
@@ -328,8 +329,8 @@ function PlayerContent({
     heightEstimate: 80,
     node: (
       <div style={{ marginTop: Gap.section }}>
-        <h2 style={styles.sectionTitle}>{t('player.instrumentStats')}</h2>
-        <p style={styles.sectionDesc}>A quick look at {data.displayName}'s overall Festival statistics per instrument.</p>
+        <h2 className={s.sectionTitle}>{t('player.instrumentStats')}</h2>
+        <p className={s.sectionDesc}>A quick look at {data.displayName}'s overall Festival statistics per instrument.</p>
       </div>
     ),
   });
@@ -346,9 +347,9 @@ function PlayerContent({
       span: true,
       heightEstimate: 64,
       node: (
-        <div style={styles.instCardHeader}>
+        <div className={s.instCardHeader}>
           <InstrumentIcon instrument={inst} size={48} />
-          <span style={styles.instCardTitle}>{INSTRUMENT_LABELS[inst]}</span>
+          <span className={s.instCardTitle}>{INSTRUMENT_LABELS[inst]}</span>
         </div>
       ),
     });
@@ -440,19 +441,19 @@ function PlayerContent({
         style: { ...cardStyle, overflow: 'hidden' as const, marginBottom: Gap.md },
         node: (
           <div>
-            <div style={styles.pctRowHeader}>
-              <span style={styles.pctHeaderText}>{t('player.percentileHeader')}</span>
-              <span style={{ ...styles.pctHeaderText, textAlign: 'right' }}>{t('player.songsHeader')}</span>
+            <div className={s.pctRowHeader}>
+              <span className={s.pctHeaderText}>{t('player.percentileHeader')}</span>
+              <span style={{ ...s.pctHeaderText, textAlign: 'right' }}>{t('player.songsHeader')}</span>
             </div>
             {stats.percentileBuckets.map((b, pi) => {
               const isLast = pi === stats.percentileBuckets.length - 1;
               const isTop1 = b.pct <= 1;
               const isGold = b.pct <= 5;
-              const badgeStyle = isTop1 ? styles.pctGoldBadge : isGold ? styles.pctGoldPill : undefined;
+              const badgeStyle = isTop1 ? s.pctGoldBadge : isGold ? s.pctGoldPill : undefined;
               return (
                 <div
                   key={b.pct}
-                  style={{ ...styles.pctRowItem, ...(isLast ? { borderBottom: 'none' } : {}) }}
+                  className={s.pctRowItem} style={{ ...(isLast ? { borderBottom: 'none' } : {}) }}
                   onClick={() => {
                     withProfileSwitch(() => {
                       const s = loadSongSettings();
@@ -467,7 +468,7 @@ function PlayerContent({
                   <span>
                     {badgeStyle
                       ? <span style={badgeStyle}>Top {b.pct}%</span>
-                      : <span style={styles.pctPlainLabel}>Top {b.pct}%</span>}
+                      : <span className={s.pctPlainLabel}>Top {b.pct}%</span>}
                   </span>
                   <span style={{ fontWeight: 600 }}>{b.count}</span>
                 </div>
@@ -486,8 +487,8 @@ function PlayerContent({
     heightEstimate: 80,
     node: (
       <div style={{ marginTop: Gap.section }}>
-        <h2 style={styles.sectionTitle}>{t('player.topSongsPerInstrument')}</h2>
-        <p style={styles.sectionDesc}>{data.displayName}'s highest and lowest-ranked competitive songs per instrument, sorted by percentile.</p>
+        <h2 className={s.sectionTitle}>{t('player.topSongsPerInstrument')}</h2>
+        <p className={s.sectionDesc}>{data.displayName}'s highest and lowest-ranked competitive songs per instrument, sorted by percentile.</p>
       </div>
     ),
   });
@@ -512,21 +513,21 @@ function PlayerContent({
         withProfileSwitch(() => navigate(`/songs/${s.songId}?instrument=${encodeURIComponent(inst)}`, { state: { backTo: location.pathname, autoScroll: true } }));
       };
       return (
-        <a key={s.songId} href={`#/songs/${s.songId}?instrument=${encodeURIComponent(inst)}`} onClick={handleClick} style={styles.songListRow}>
+        <a key={s.songId} href={`#/songs/${s.songId}?instrument=${encodeURIComponent(inst)}`} onClick={handleClick} style={s.songListRow}>
           <AlbumArt src={song?.albumArt} size={Size.thumb} />
-          <div style={styles.topSongText}>
-            <span style={styles.topSongName}>{song?.title ?? s.songId.slice(0, 8)}</span>
-            <span style={styles.topSongArtist}>{song?.artist ?? ''}{song?.year ? ` · ${song.year}` : ''}</span>
+          <div className={s.topSongText}>
+            <span className={s.topSongName}>{song?.title ?? s.songId.slice(0, 8)}</span>
+            <span className={s.topSongArtist}>{song?.artist ?? ''}{song?.year ? ` · ${song.year}` : ''}</span>
           </div>
-          <div style={styles.topSongRight}>
+          <div className={s.topSongRight}>
             {pct != null && (() => {
               const isTop1 = pct <= 1;
               const isTop5 = pct <= 5;
               const pctStyle = isTop1
-                ? styles.percentileBadgeTop1
+                ? s.percentileBadgeTop1
                 : isTop5
-                  ? styles.percentileBadgeTop5
-                  : styles.percentilePill;
+                  ? s.percentileBadgeTop5
+                  : s.percentilePill;
               return <span style={pctStyle}>{formatPercentileBucket(pct)}</span>;
             })()}
           </div>
@@ -540,11 +541,11 @@ function PlayerContent({
       span: true,
       heightEstimate: 64,
       node: (
-        <div style={styles.instCardHeader}>
+        <div className={s.instCardHeader}>
           <InstrumentIcon instrument={inst} size={48} />
           <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: 48 }}>
-            <span style={styles.instCardTitle}>{t('player.topFiveSongs')}</span>
-            <span style={{ ...styles.sectionDesc, margin: 0, fontSize: Font.md }}>{`${data.displayName}'s highest-ranked songs for ${INSTRUMENT_LABELS[inst]}.`}</span>
+            <span className={s.instCardTitle}>{t('player.topFiveSongs')}</span>
+            <span style={{ ...s.sectionDesc, margin: 0, fontSize: Font.md }}>{`${data.displayName}'s highest-ranked songs for ${INSTRUMENT_LABELS[inst]}.`}</span>
           </div>
         </div>
       ),
@@ -569,11 +570,11 @@ function PlayerContent({
         span: true,
         heightEstimate: 64,
         node: (
-          <div style={{ ...styles.instCardHeader, marginTop: Gap.md }}>
+          <div style={{ ...s.instCardHeader, marginTop: Gap.md }}>
             <InstrumentIcon instrument={inst} size={48} />
             <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: 48 }}>
-              <span style={styles.instCardTitle}>{t('player.bottomFiveSongs')}</span>
-              <span style={{ ...styles.sectionDesc, margin: 0, fontSize: Font.md }}>{`${data.displayName}'s lowest-ranked songs for ${INSTRUMENT_LABELS[inst]}.`}</span>
+              <span className={s.instCardTitle}>{t('player.bottomFiveSongs')}</span>
+              <span style={{ ...s.sectionDesc, margin: 0, fontSize: Font.md }}>{`${data.displayName}'s lowest-ranked songs for ${INSTRUMENT_LABELS[inst]}.`}</span>
             </div>
           </div>
         ),
@@ -619,13 +620,13 @@ function PlayerContent({
   const selectBtnVisible = canShowSelectBtn && !isTrackedPlayer && trackedPlayer?.accountId !== data.accountId;
 
   return (
-    <div style={styles.page}>
-      <div style={styles.playerNameBar}>
-        <h1 style={styles.playerName}>{data.displayName}</h1>
+    <div className={s.page}>
+      <div className={s.playerNameBar}>
+        <h1 className={s.playerName}>{data.displayName}</h1>
         {canShowSelectBtn && (
           <button
             style={{
-              ...styles.selectProfileBtn,
+              ...s.selectProfileBtn,
               opacity: selectBtnVisible ? 1 : 0,
               transform: selectBtnVisible ? 'scale(1)' : 'scale(0.9)',
               pointerEvents: selectBtnVisible ? 'auto' as const : 'none' as const,
@@ -644,9 +645,9 @@ function PlayerContent({
           </button>
         )}
       </div>
-      <div ref={scrollRef} onScroll={handleScroll} style={styles.scrollArea}>
-        <div style={{ ...styles.container, ...(hasFab ? { paddingBottom: 72 } : {}) }}>
-          <div style={{ ...styles.gridList, ...(isNarrowGrid ? { gridTemplateColumns: 'minmax(0, 1fr)' } : {}) }}>
+      <div ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
+        <div style={{ ...s.container, ...(hasFab ? { paddingBottom: 72 } : {}) }}>
+          <div className={s.gridList} style={{ ...(isNarrowGrid ? { gridTemplateColumns: 'minmax(0, 1fr)' } : {}) }}>
             {(() => {
               // Compute which items are in the initial viewport by accumulating
               // estimated row heights.  The grid is 2-col: span items take a full
@@ -686,7 +687,7 @@ function PlayerContent({
               return items.map((item, i) => {
                 const delay = skipAnim ? undefined : (i < visibleCount ? (i + 1) * 80 : lastVisibleDelay);
                 return (
-                  <FadeInDiv key={item.key} delay={delay} style={{ ...(item.span ? styles.gridFullWidth : {}), ...item.style }}>
+                  <FadeInDiv key={item.key} delay={delay} style={{ ...(item.span ? s.gridFullWidth : {}), ...item.style }}>
                     {item.node}
                   </FadeInDiv>
                 );
@@ -721,433 +722,3 @@ function GoldStars() {
 
 // ─── Styles ─────────────────────────────────────────────────
 
-const styles: Record<string, React.CSSProperties> = {
-  page: {
-    height: '100%',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    color: Colors.textPrimary,
-    fontFamily:
-      "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-  },
-  scrollArea: {
-    flex: 1,
-    overflowY: 'auto' as const,
-    overflowX: 'hidden' as const,
-  },
-  container: {
-    maxWidth: MaxWidth.card,
-    margin: '0 auto',
-    padding: `${Layout.paddingTop}px ${Layout.paddingHorizontal}px`,
-    boxSizing: 'border-box' as const,
-    width: '100%',
-  },
-  playerNameBar: {
-    maxWidth: MaxWidth.card,
-    margin: '0 auto',
-    width: '100%',
-    padding: `${Gap.lg}px ${Layout.paddingHorizontal}px 0`,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    boxSizing: 'border-box' as const,
-    minHeight: 48 + Gap.lg,
-  },
-  playerName: {
-    fontSize: 28,
-    fontWeight: 700,
-    margin: 0,
-  },
-  subtitle: {
-    fontSize: Font.md,
-    color: Colors.textSubtle,
-    marginBottom: Gap.section,
-  },
-  sectionTitle: {
-    fontSize: Font.xl,
-    fontWeight: 800,
-    color: Colors.textPrimary,
-    marginBottom: Gap.xs,
-    marginTop: 0,
-  },
-  sectionDesc: {
-    fontSize: Font.sm,
-    color: Colors.textSecondary,
-    marginBottom: Gap.xl,
-    marginTop: 0,
-    wordWrap: 'break-word' as const,
-  },
-  catDesc: {
-    fontSize: Font.xs,
-    color: Colors.textSecondary,
-    marginTop: Gap.xs,
-    opacity: 0.85,
-  },
-  syncBanner: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.xl,
-    padding: `${Gap.xl}px ${Gap.section}px`,
-    backgroundColor: Colors.accentPurpleDark,
-    border: `1px solid ${Colors.borderPrimary}`,
-    borderRadius: Radius.lg,
-    marginBottom: Gap.section,
-  },
-  syncSpinner: {
-    width: 24,
-    height: 24,
-    border: '3px solid rgba(255,255,255,0.15)',
-    borderTopColor: Colors.accentPurple,
-    borderRadius: '50%',
-    animation: 'spin 0.8s linear infinite',
-    flexShrink: 0,
-  },
-  syncTitle: {
-    fontSize: Font.lg,
-    fontWeight: 700,
-    color: Colors.textPrimary,
-    marginBottom: Gap.xs,
-  },
-  syncSubtitle: {
-    fontSize: Font.sm,
-    color: Colors.textSecondary,
-  },
-  syncProgressOuter: {
-    marginTop: Gap.xs,
-    height: 6,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  syncProgressInner: {
-    height: '100%',
-    backgroundColor: Colors.accentPurple,
-    borderRadius: 3,
-    transition: 'width 0.3s ease',
-  },
-  syncProgressLabel: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    fontSize: Font.xs,
-    color: Colors.textSecondary,
-    marginBottom: Gap.xs,
-  },
-  // Overall summary
-  summaryGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(2, 1fr)',
-    gap: Gap.md,
-    marginBottom: Gap.section * 1.5,
-  },
-  statBox: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    alignItems: 'center',
-    padding: `${Gap.xl}px ${Gap.md}px`,
-    minWidth: 0,
-    overflow: 'hidden',
-  },
-  statValue: {
-    fontSize: Font.xl,
-    fontWeight: 700,
-    color: Colors.accentBlueBright,
-    marginBottom: Gap.xs,
-    wordBreak: 'break-word' as const,
-    textAlign: 'center' as const,
-  },
-  statLabel: {
-    fontSize: Font.xs,
-    color: Colors.textTertiary,
-    textTransform: 'uppercase' as const,
-    letterSpacing: 0.5,
-  },
-  statChevron: {
-    position: 'absolute' as const,
-    right: Gap.xl,
-    top: '50%',
-    transform: 'translateY(-50%)',
-    color: Colors.textPrimary,
-  },
-  selectProfileBtn: {
-    ...frostedCard,
-    backgroundColor: 'rgb(124,58,237)',
-    border: '1px solid rgba(168,120,255,0.3)',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: `0 ${Gap.section + 8}px 0 ${Gap.section}px`,
-    borderRadius: Radius.full,
-    color: '#fff',
-    fontSize: Font.lg,
-    fontWeight: 600,
-    cursor: 'pointer',
-    flexShrink: 0,
-    height: 48,
-    whiteSpace: 'nowrap' as const,
-  },
-  // Per-instrument cards
-  gridList: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-    gap: Gap.md,
-    minWidth: 0,
-    overflow: 'hidden',
-  },
-  gridFullWidth: {
-    gridColumn: '1 / -1',
-  },
-  instCard: {
-    ...frostedCard,
-    borderRadius: Radius.lg,
-    overflow: 'hidden',
-  },
-  instCardHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.md,
-    paddingBottom: Gap.sm,
-  },
-  instCardTitle: {
-    fontSize: Font.xl,
-    fontWeight: 600,
-  },
-  instCardSubtitle: {
-    fontSize: Font.sm,
-    color: Colors.textSecondary,
-  },
-  instCardBody: {
-    padding: Gap.xl,
-  },
-  // Per-instrument stat card grid
-  instSummaryGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(2, 1fr)',
-    gap: Gap.md,
-    marginBottom: Gap.xl,
-  },
-  // Percentile table
-  pctTablePanel: {
-    ...frostedCard,
-    borderRadius: Radius.lg,
-    overflow: 'hidden',
-    marginBottom: Gap.xl,
-  },
-  pctTable: {
-    width: '100%',
-    borderCollapse: 'collapse' as const,
-  },
-  pctRow: {
-    cursor: 'pointer',
-    transition: 'background-color 0.15s',
-  },
-  pctTh: {
-    padding: `${Gap.xl}px ${Gap.xl}px`,
-    fontSize: Font.sm,
-    fontWeight: 600,
-    color: Colors.textTertiary,
-    textTransform: 'uppercase' as const,
-    letterSpacing: 0.5,
-    borderBottom: `1px solid ${Colors.glassBorder}`,
-    textAlign: 'left' as const,
-  },
-  pctTd: {
-    padding: `${Gap.xl}px ${Gap.xl}px`,
-    fontSize: Font.md,
-    color: Colors.textPrimary,
-    borderBottom: `1px solid ${Colors.glassBorder}`,
-  },
-  pctGoldBadge: goldOutlineSkew,
-  pctGoldPill: goldOutline,
-  pctPlainLabel: {
-    padding: `${Gap.xs}px ${Gap.sm}px`,
-    border: '2px solid transparent',
-    display: 'inline-block',
-    fontWeight: 600,
-  },
-  pctRowHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    padding: `${Gap.md}px ${Gap.xl}px`,
-    borderBottom: `1px solid ${Colors.glassBorder}`,
-  },
-  pctHeaderText: {
-    fontSize: Font.sm,
-    fontWeight: 600,
-    color: Colors.textTertiary,
-    textTransform: 'uppercase' as const,
-    letterSpacing: 0.5,
-  },
-  pctRowItem: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: `${Gap.md}px ${Gap.xl}px`,
-    borderBottom: `1px solid ${Colors.glassBorder}`,
-    cursor: 'pointer',
-    transition: 'background-color 0.15s',
-    fontSize: Font.md,
-    color: Colors.textPrimary,
-    minWidth: 0,
-  },
-  // Top songs
-  topSongs: {
-    borderTop: `1px solid ${Colors.borderSubtle}`,
-    paddingTop: Gap.xl,
-  },
-  topSongsTitle: {
-    fontSize: Font.sm,
-    fontWeight: 600,
-    color: Colors.textSecondary,
-    textTransform: 'uppercase' as const,
-    letterSpacing: 0.5,
-    display: 'block',
-    marginBottom: Gap.md,
-  },
-  topSongRowGlass: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.md,
-    padding: `${Gap.sm}px ${Gap.xl}px`,
-    textDecoration: 'none',
-    color: 'inherit',
-  },
-  songListHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.md,
-    padding: `${Gap.md}px ${Gap.xl}px`,
-    borderBottom: `1px solid ${Colors.glassBorder}`,
-  },
-  songListTitle: {
-    display: 'block',
-    fontSize: Font.md,
-    fontWeight: 600,
-  },
-  songListSubtitle: {
-    display: 'block',
-    fontSize: Font.xs,
-    color: Colors.textSecondary,
-  },
-  songListRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.xl,
-    padding: `0 ${Gap.xl}px`,
-    height: 64,
-    borderRadius: Radius.md,
-    ...frostedCard,
-    textDecoration: 'none',
-    color: 'inherit',
-    transition: 'background-color 0.15s',
-  },
-  topSongRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.md,
-    padding: `${Gap.sm}px 0`,
-    textDecoration: 'none',
-    color: 'inherit',
-  },
-  topSongThumb: {
-    width: Size.thumb,
-    height: Size.thumb,
-    borderRadius: Radius.xs,
-    objectFit: 'cover' as const,
-    flexShrink: 0,
-  },
-  topSongText: {
-    flex: 1,
-    minWidth: 0,
-    display: 'flex',
-    flexDirection: 'column' as const,
-  },
-  topSongName: {
-    fontSize: Font.md,
-    fontWeight: 600,
-    whiteSpace: 'nowrap' as const,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  },
-  topSongArtist: {
-    fontSize: Font.sm,
-    color: Colors.textSubtle,
-    whiteSpace: 'nowrap' as const,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  },
-  topSongRight: {
-    textAlign: 'right' as const,
-    flexShrink: 0,
-  },
-  topSongScore: {
-    fontSize: Font.sm,
-    fontWeight: 600,
-    color: Colors.accentBlueBright,
-    fontVariantNumeric: 'tabular-nums',
-    display: 'block',
-  },
-  topSongMeta: {
-    fontSize: Font.xs,
-    color: Colors.gold,
-  },
-  percentilePill: {
-    fontSize: Font.lg,
-    fontWeight: 600,
-    color: Colors.textSecondary,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    padding: `${Gap.xs}px ${Gap.md}px`,
-    borderRadius: Radius.xs,
-    textAlign: 'center' as const,
-    display: 'inline-block',
-  },
-  percentileBadgeTop1: {
-    ...goldOutlineSkew,
-    fontSize: Font.lg,
-    textAlign: 'center' as const,
-  },
-  percentileBadgeTop5: {
-    ...goldOutline,
-    fontSize: Font.lg,
-    textAlign: 'center' as const,
-  },
-  percentilePillGold: goldFill,
-  accuracyPill: {
-    fontSize: Font.lg,
-    fontWeight: 600,
-    color: Colors.textSecondary,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    padding: `${Gap.xs}px ${Gap.md}px`,
-    borderRadius: Radius.xs,
-    minWidth: 70,
-    textAlign: 'center' as const,
-    display: 'inline-block',
-  },
-  accuracyBadgeFC: {
-    ...goldOutlineSkew,
-    fontSize: Font.lg,
-    textAlign: 'center' as const,
-  },
-  center: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-  },
-  arcSpinner: {
-    width: 48,
-    height: 48,
-    border: '4px solid rgba(255,255,255,0.10)',
-    borderTopColor: Colors.accentPurple,
-    borderRadius: '50%',
-    animation: 'spin 0.8s linear infinite',
-  },
-  centerError: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: '100vh',
-    color: Colors.statusRed,
-    backgroundColor: Colors.backgroundApp,
-    fontSize: Font.lg,
-  },
-};
