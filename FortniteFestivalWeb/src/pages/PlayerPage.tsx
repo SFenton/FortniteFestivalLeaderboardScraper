@@ -14,7 +14,7 @@ import {
 } from '../components/player/playerStats';
 import { useFestival } from '../contexts/FestivalContext';
 import { usePlayerData } from '../contexts/PlayerDataContext';
-import { useSyncStatus } from '../hooks/useSyncStatus';
+import { useSyncStatus, type SyncPhase } from '../hooks/useSyncStatus';
 import { api } from '../api/client';
 import {
   INSTRUMENT_KEYS,
@@ -151,12 +151,13 @@ function PlayerContent({
   data: PlayerResponse;
   songs: Song[];
   isSyncing: boolean;
-  phase: string | null;
+  phase: SyncPhase;
   backfillProgress: number;
   historyProgress: number;
   isTrackedPlayer: boolean;
   skipAnim: boolean;
 }) {
+  const { t } = useTranslation();
   const { settings } = useSettings();
   const location = useLocation();
   const navigate = useNavigate();
