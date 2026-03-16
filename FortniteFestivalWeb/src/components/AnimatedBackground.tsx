@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
 import type { Song } from '../models';
+import css from './AnimatedBackground.module.css';
 
 const FADE_DURATION = 1000; // 1s crossfade
 const DISPLAY_DURATION = 5000; // 5s per image
@@ -176,54 +177,20 @@ export function AnimatedBackground({
   if (!uriA) return null;
 
   return (
-    <div style={{ ...containerStyle, opacity: containerVisible ? 1 : 0, transition: 'opacity 800ms ease' }}>
+    <div className={css.container} style={{ '--fade-ms': `${FADE_DURATION}ms`, opacity: containerVisible ? 1 : 0 } as CSSProperties}>
       <div
         ref={layerARef}
-        style={{
-          ...layerStyle,
-          opacity: opacityA,
-          backgroundImage: `url(${uriA})`,
-        }}
+        className={css.layer}
+        style={{ opacity: opacityA, backgroundImage: `url(${uriA})` }}
       />
       {uriB && imageUris.length > 1 && (
         <div
           ref={layerBRef}
-          style={{
-            ...layerStyle,
-            opacity: opacityB,
-            backgroundImage: `url(${uriB})`,
-          }}
+          className={css.layer}
+          style={{ opacity: opacityB, backgroundImage: `url(${uriB})` }}
         />
       )}
-      <div style={{ ...dimStyle, opacity: dimOpacity }} />
+      <div className={css.dim} style={{ opacity: dimOpacity }} />
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
-
-const containerStyle: React.CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  overflow: 'hidden',
-  zIndex: 0,
-  pointerEvents: 'none',
-};
-
-const layerStyle: React.CSSProperties = {
-  position: 'absolute',
-  inset: 0,
-  backgroundSize: 'cover',
-  backgroundPosition: 'center',
-  backgroundRepeat: 'no-repeat',
-  willChange: 'transform, opacity',
-  transition: `opacity ${FADE_DURATION}ms ease`,
-};
-
-const dimStyle: React.CSSProperties = {
-  position: 'absolute',
-  inset: 0,
-  backgroundColor: '#000000',
-};

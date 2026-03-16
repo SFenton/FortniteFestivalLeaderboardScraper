@@ -1,5 +1,6 @@
 import { useRef, useCallback, memo, type CSSProperties, type ReactNode } from 'react';
 import { FADE_DURATION } from '@festival/theme';
+import css from './FadeInDiv.module.css';
 
 interface FadeInDivProps {
   /** Stagger delay in ms.  `undefined` → render children without animation. */
@@ -26,12 +27,13 @@ const FadeInDiv = memo(function FadeInDiv({ delay, hidden, children, style }: Fa
 
   if (delay == null) return <div style={style}>{children}</div>;
 
-  if (hidden) return <div style={{ ...style, opacity: 0 }}>{children}</div>;
+  if (hidden) return <div className={css.hidden} style={style}>{children}</div>;
 
   return (
     <div
       ref={ref}
-      style={{ opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${delay}ms forwards`, ...style }}
+      className={css.wrapper}
+      style={{ '--fade-animation': `fadeInUp ${FADE_DURATION}ms ease-out ${delay}ms forwards`, ...style } as CSSProperties}
       onAnimationEnd={handleEnd}
     >
       {children}

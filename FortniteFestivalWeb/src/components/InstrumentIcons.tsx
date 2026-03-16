@@ -5,6 +5,7 @@
 import { memo } from 'react';
 import type { InstrumentKey } from '@festival/core/instruments';
 import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import iconCss from './InstrumentIcons.module.css';
 
 type AnyInstrumentKey = InstrumentKey | ServerInstrumentKey;
 
@@ -34,7 +35,8 @@ export const InstrumentIcon = memo(function InstrumentIcon({ instrument, size = 
       alt={instrument}
       width={size}
       height={size}
-      style={{ objectFit: 'contain', ...style }}
+      className={iconCss.icon}
+      style={style}
     />
   );
 });
