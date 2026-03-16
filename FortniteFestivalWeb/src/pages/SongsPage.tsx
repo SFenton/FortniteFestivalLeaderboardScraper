@@ -502,7 +502,7 @@ export default function SongsPage() {
               {syncPhase === 'backfill' && backfillProgress > 0 && (
                 <div style={{ marginTop: Gap.md }}>
                   <div style={styles.syncProgressLabel}>
-                    <span>Syncing scores</span>
+                    <span>{t('player.syncingScores')}</span>
                     <span>{(backfillProgress * 100).toFixed(1)}%</span>
                   </div>
                   <div style={styles.syncProgressOuter}>
@@ -519,7 +519,7 @@ export default function SongsPage() {
                 <>
                   <div style={{ marginTop: Gap.md }}>
                     <div style={styles.syncProgressLabel}>
-                      <span>Syncing scores</span>
+                      <span>{t('player.syncingScores')}</span>
                       <span>100.0%</span>
                     </div>
                     <div style={styles.syncProgressOuter}>
@@ -529,7 +529,7 @@ export default function SongsPage() {
                   {historyProgress > 0 && (
                     <div style={{ marginTop: Gap.sm }}>
                       <div style={styles.syncProgressLabel}>
-                        <span>Building history</span>
+                        <span>{t('player.buildingHistory')}</span>
                         <span>{(historyProgress * 100).toFixed(1)}%</span>
                       </div>
                       <div style={styles.syncProgressOuter}>
@@ -553,7 +553,7 @@ export default function SongsPage() {
             <div style={styles.emptySubtitle}>
               {filtersActive
                 ? t('songs.noResultsSubtitle')
-                : 'The service may be down unexpectedly. Please refresh to try again.'}
+                : t('common.serviceDown')}
             </div>
           </div>
         ) : (

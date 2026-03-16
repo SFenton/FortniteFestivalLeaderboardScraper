@@ -27,7 +27,13 @@
     "filterSongs": "Filter Songs",
     "filterSuggestions": "Filter Suggestions",
     "sortPlayerScores": "Sort Player Scores",
-    "viewPaths": "View Paths"
+    "viewPaths": "View Paths",
+    "actions": "Actions",
+    "sort": "Sort",
+    "filter": "Filter",
+    "brandName": "Festival Score Tracker",
+    "couldNotLoadPlayer": "Could not load player data.",
+    "serviceDown": "The service may be down unexpectedly. Please refresh to try again."
   },
   "songs": {
     "title": "Songs",
@@ -41,14 +47,19 @@
   "songDetail": {
     "leaderboard": "Leaderboard",
     "scoreHistory": "Score History",
-    "noScores": "No scores recorded yet."
+    "noScores": "No scores recorded yet.",
+    "songNotFound": "Song not found",
+    "noEntries": "No entries"
   },
   "leaderboard": {
     "title": "Leaderboard",
     "page": "Page {{current}} of {{total}}",
     "totalEntries": "{{count}} total entries",
     "localEntries": "{{count}} tracked",
-    "noEntries": "No leaderboard entries found."
+    "noEntries": "No leaderboard entries found.",
+    "noEntriesOnPage": "No entries on this page",
+    "notFound": "Not found",
+    "failedToLoad": "Failed to load leaderboard"
   },
   "player": {
     "title": "Statistics",
@@ -81,7 +92,14 @@
     "percentile": "Percentile",
     "topSongs": "Top Songs",
     "bottomSongs": "Needs Work",
-    "percentileDistribution": "Percentile Distribution"
+    "percentileDistribution": "Percentile Distribution",
+    "playerNotFound": "Player not found",
+    "failedToLoad": "Failed to load player",
+    "percentileHeader": "Percentile",
+    "songsHeader": "Songs",
+    "topSongsPerInstrument": "Top Songs Per Instrument",
+    "topFiveSongs": "Top Five Songs",
+    "bottomFiveSongs": "Bottom Five Songs"
   },
   "suggestions": {
     "title": "Suggestions",
@@ -100,12 +118,15 @@
     "showInstrumentIcons": "Show Instrument Icons",
     "showInstrumentIconsDesc": "Display instrument icons on each song row showing which parts have leaderboard scores or FCs.",
     "enableVisualOrder": "Enable Independent Song Row Visual Order",
+    "enableVisualOrderDesc": "When enabled, the metadata display order on song rows is controlled separately from sort priority. When disabled, metadata follows sort priority order.",
     "songRowVisualOrder": "Song Row Visual Order",
+    "songRowVisualOrderHint": "Drag to reorder metadata items on song rows.",
     "maxScoreLeeway": "Maximum Score Leeway",
+    "filterInvalidScoresDesc": "Hide song scores that exceed the mathematical maximum by more than the leeway percentage.",
     "showInstruments": "Show Instruments",
     "showInstrumentsHint": "Choose which instruments to display throughout the app.",
     "showMetadata": "Show Instrument Metadata",
-    "showMetadataHint": "Choose which metadata to display for each instrument.",
+    "showMetadataHint": "When filtering songs down to one instrument in the song list, extra metadata for that song can appear. Choose what you'd like to see in the song row here.",
     "instruments": "Instruments",
     "metadata": "Song Metadata",
     "metadataOrder": "Metadata Display Order",
@@ -129,6 +150,10 @@
     "title": "Score History",
     "sortBy": "Sort By",
     "noHistory": "No score history available.",
+    "noHistoryForInstrument": "No score history for this instrument",
+    "selectPlayer": "Select a player to view score history",
+    "notFound": "Not found",
+    "failedToLoad": "Failed to load history",
     "date": "Date",
     "score": "Score",
     "accuracy": "Accuracy",

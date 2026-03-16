@@ -20,9 +20,10 @@ interface Props {
 }
 
 export default function MobilePlayerSearchModal({
-  visible, onClose, onSelect, player, onDeselect, isMobile, title = 'Select Player Profile',
+  visible, onClose, onSelect, player, onDeselect, isMobile, title,
 }: Props) {
   const { t } = useTranslation();
+  const effectiveTitle = title ?? t('common.selectPlayerProfile');
   const [mounted, setMounted] = useState(false);
   const [animIn, setAnimIn] = useState(false);
   const [contentReady, setContentReady] = useState(false);
@@ -120,7 +121,7 @@ export default function MobilePlayerSearchModal({
         }}
         onTransitionEnd={handleTransitionEnd}
       >
-        <div style={styles.header}><h2 style={styles.title}>{title}</h2><button style={styles.closeBtn} onClick={onClose} aria-label="Close"><IoClose size={18} /></button></div>
+        <div style={styles.header}><h2 style={styles.title}>{effectiveTitle}</h2><button style={styles.closeBtn} onClick={onClose} aria-label={t('common.dismiss')}><IoClose size={18} /></button></div>
         <div style={styles.body}>
           {player && (
             <div style={styles.playerCard}>

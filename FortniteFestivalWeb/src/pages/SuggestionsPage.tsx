@@ -329,7 +329,7 @@ export default function SuggestionsPage({ accountId }: Props) {
   }, [visibleCategories.length, phase]);
 
   if (!playerData && !playerLoading && categories.length === 0) {
-    return <div style={styles.center}>Could not load player data.</div>;
+    return <div style={styles.center}>{t('common.couldNotLoadPlayer')}</div>;
   }
 
   if (categories.length === 0 && !hasMore) {
@@ -383,11 +383,11 @@ export default function SuggestionsPage({ accountId }: Props) {
             <button
               style={{ ...styles.iconBtn, ...(filtersActive ? styles.iconBtnActive : {}), width: 'auto', paddingLeft: Gap.xl, paddingRight: Gap.xl, gap: Gap.md }}
               onClick={openFilter}
-              title="Filter"
-              aria-label="Filter suggestions"
+              title={t('common.filter')}
+              aria-label={t('common.filterSuggestions')}
             >
               <IoFunnel size={18} />
-              <span style={{ fontSize: Font.sm, fontWeight: 600, whiteSpace: 'nowrap' }}>Filter</span>
+              <span style={{ fontSize: Font.sm, fontWeight: 600, whiteSpace: 'nowrap' }}>{t('common.filter')}</span>
             </button>
           </div>
         </div>

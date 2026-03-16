@@ -1,4 +1,5 @@
 import { useRef, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { IoSearch } from 'react-icons/io5';
 import { useAccountSearch } from '../../hooks/useAccountSearch';
@@ -10,6 +11,7 @@ import type { AccountSearchResult } from '../../models';
  * to their player page on selection.
  */
 export default function HeaderSearch() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
 

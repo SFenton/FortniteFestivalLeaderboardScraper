@@ -328,7 +328,7 @@ export default function SongDetailPage() {
   }, [phase, defaultInstrument]);
 
   if (!songId) {
-    return <div style={styles.center}>Song not found</div>;
+    return <div style={styles.center}>{t('songDetail.songNotFound')}</div>;
   }
 
   const stagger = (delayMs: number): React.CSSProperties => skipAnim ? {} : ({
@@ -450,7 +450,7 @@ function SongHeader({
       <div style={{ flex: 1, minWidth: 0 }}>
         <h1 style={{ ...styles.songTitle, marginBottom: collapsed ? Gap.xs : Gap.sm, transition }}>{song?.title ?? songId}</h1>
         <p style={{ ...styles.songArtist, fontSize: collapsed ? Font.md : Font.lg, marginBottom: collapsed ? 0 : Gap.md, transition }}>
-          {song?.artist ?? 'Unknown Artist'}{song?.year ? ` · ${song.year}` : ''}
+          {song?.artist ?? t('common.unknownArtist')}{song?.year ? ` · ${song.year}` : ''}
         </p>
       </div>
       {!isMobile && (
@@ -549,7 +549,7 @@ function InstrumentCard({
         <div style={styles.cardBody}>
         {prefetchedError && <span style={styles.cardError}>{prefetchedError}</span>}
         {!prefetchedError && prefetchedEntries.length === 0 && (
-          <span style={styles.cardMuted}>No entries</span>
+          <span style={styles.cardMuted}>{t('songDetail.noEntries')}</span>
         )}
         {!prefetchedError &&
           prefetchedEntries.map((e, i) => {
