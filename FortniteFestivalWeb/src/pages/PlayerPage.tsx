@@ -84,7 +84,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
       _cachedPlayerData = { accountId, data: res };
       hasDataRef.current = true;
     } catch (e) {
-      setLocalError(e instanceof Error ? e.message : 'Failed to load player');
+      setLocalError(e instanceof Error ? e.message : t('player.failedToLoad'));
     } finally {
       setLocalLoading(false);
     }
@@ -133,7 +133,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
 
   if (loading) return <div style={styles.page}><div style={styles.center}><div style={styles.arcSpinner} /></div></div>;
   if (error) return <div style={styles.page}><div style={styles.centerError}>{error}</div></div>;
-  if (!data) return <div style={styles.page}><div style={styles.center}>Player not found</div></div>;
+  if (!data) return <div style={styles.page}><div style={styles.center}>{t('player.playerNotFound')}</div></div>;
 
   return <PlayerContent key={accountId} data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} isTrackedPlayer={isTrackedPlayer} skipAnim={skipAnim} />;
 }
@@ -326,7 +326,7 @@ function PlayerContent({
     heightEstimate: 80,
     node: (
       <div style={{ marginTop: Gap.section }}>
-        <h2 style={styles.sectionTitle}>Instrument Statistics</h2>
+        <h2 style={styles.sectionTitle}>{t('player.instrumentStats')}</h2>
         <p style={styles.sectionDesc}>A quick look at {data.displayName}'s overall Festival statistics per instrument.</p>
       </div>
     ),
@@ -439,8 +439,8 @@ function PlayerContent({
         node: (
           <div>
             <div style={styles.pctRowHeader}>
-              <span style={styles.pctHeaderText}>Percentile</span>
-              <span style={{ ...styles.pctHeaderText, textAlign: 'right' }}>Songs</span>
+              <span style={styles.pctHeaderText}>{t('player.percentileHeader')}</span>
+              <span style={{ ...styles.pctHeaderText, textAlign: 'right' }}>{t('player.songsHeader')}</span>
             </div>
             {stats.percentileBuckets.map((b, pi) => {
               const isLast = pi === stats.percentileBuckets.length - 1;
@@ -484,7 +484,7 @@ function PlayerContent({
     heightEstimate: 80,
     node: (
       <div style={{ marginTop: Gap.section }}>
-        <h2 style={styles.sectionTitle}>Top Songs Per Instrument</h2>
+        <h2 style={styles.sectionTitle}>{t('player.topSongsPerInstrument')}</h2>
         <p style={styles.sectionDesc}>{data.displayName}'s highest and lowest-ranked competitive songs per instrument, sorted by percentile.</p>
       </div>
     ),
@@ -541,7 +541,7 @@ function PlayerContent({
         <div style={styles.instCardHeader}>
           <InstrumentIcon instrument={inst} size={48} />
           <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: 48 }}>
-            <span style={styles.instCardTitle}>Top Five Songs</span>
+            <span style={styles.instCardTitle}>{t('player.topFiveSongs')}</span>
             <span style={{ ...styles.sectionDesc, margin: 0, fontSize: Font.md }}>{`${data.displayName}'s highest-ranked songs for ${INSTRUMENT_LABELS[inst]}.`}</span>
           </div>
         </div>
@@ -570,7 +570,7 @@ function PlayerContent({
           <div style={{ ...styles.instCardHeader, marginTop: Gap.md }}>
             <InstrumentIcon instrument={inst} size={48} />
             <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', height: 48 }}>
-              <span style={styles.instCardTitle}>Bottom Five Songs</span>
+              <span style={styles.instCardTitle}>{t('player.bottomFiveSongs')}</span>
               <span style={{ ...styles.sectionDesc, margin: 0, fontSize: Font.md }}>{`${data.displayName}'s lowest-ranked songs for ${INSTRUMENT_LABELS[inst]}.`}</span>
             </div>
           </div>

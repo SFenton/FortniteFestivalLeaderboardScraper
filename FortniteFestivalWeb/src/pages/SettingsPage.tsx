@@ -208,14 +208,14 @@ export default function SettingsPage() {
           <Card>
             <ToggleRow
               label={t('settings.showInstrumentIcons')}
-              description="Display instrument icons on each song row showing which parts have leaderboard scores or FCs."
+              description={t('settings.showInstrumentIconsDesc')}
               checked={!settings.songsHideInstrumentIcons}
               onToggle={() => updateSettings({ songsHideInstrumentIcons: !settings.songsHideInstrumentIcons })}
               large={isMobile}
             />
             <ToggleRow
               label={t('settings.enableVisualOrder')}
-              description="When enabled, the metadata display order on song rows is controlled separately from sort priority. When disabled, metadata follows sort priority order."
+              description={t('settings.enableVisualOrderDesc')}
               checked={settings.songRowVisualOrderEnabled}
               onToggle={() => updateSettings({ songRowVisualOrderEnabled: !settings.songRowVisualOrderEnabled })}
               large={isMobile}

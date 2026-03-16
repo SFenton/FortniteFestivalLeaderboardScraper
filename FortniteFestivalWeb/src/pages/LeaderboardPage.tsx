@@ -148,7 +148,7 @@ export default function LeaderboardPage() {
         setLocalEntries(res.localEntries ?? res.totalEntries);
         setPage(pageNum);
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to load leaderboard');
+        setError(e instanceof Error ? e.message : t('leaderboard.failedToLoad'));
       } finally {
         setLoading(false);
       }
@@ -245,7 +245,7 @@ export default function LeaderboardPage() {
   }, [loadPhase, entries, playerData, searchParams, setSearchParams]);
 
   if (!songId || !instrument) {
-    return <div style={styles.center}>Not found</div>;
+    return <div style={styles.center}>{t('leaderboard.notFound')}</div>;
   }
 
   const startRank = page * PAGE_SIZE;
@@ -327,7 +327,7 @@ export default function LeaderboardPage() {
                     ...styles.songArtist,
                     fontSize: isNarrow || headerCollapsed ? Font.md : Font.lg,
                     ...(!isNarrow ? { transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
-                  }}>{song?.artist ?? 'Unknown Artist'}{song?.year ? ` · ${song.year}` : ''}</p>
+                  }}>{song?.artist ?? t('common.unknownArtist')}{song?.year ? ` · ${song.year}` : ''}</p>
                 </div>
               </div>
               <div style={styles.headerRight}>
@@ -393,7 +393,7 @@ export default function LeaderboardPage() {
                 >
                   <span style={{ ...styles.colRank, ...(isPlayer ? { fontWeight: 700 } : {}) }}>#{(e.rank ?? startRank + i + 1).toLocaleString()}</span>
                   <span style={{ ...styles.colName, ...(isPlayer ? { fontWeight: 700 } : {}) }}>
-                    {e.displayName || 'Unknown User'}
+                    {e.displayName || t('common.unknownUser')}
                   </span>
                   <span style={styles.seasonScoreGroup}>
                     {showSeason && e.season != null && (
@@ -435,7 +435,7 @@ export default function LeaderboardPage() {
                 );
               })}
               {entries.length === 0 && (
-                <div style={styles.emptyRow}>No entries on this page</div>
+                <div style={styles.emptyRow}>{t('leaderboard.noEntriesOnPage')}</div>
               )}
             </div>
             )}

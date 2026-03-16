@@ -120,7 +120,7 @@ export default function PlayerHistoryPage() {
         }
       })
       .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load history');
+        if (!cancelled) setError(e instanceof Error ? e.message : t('history.failedToLoad'));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -141,7 +141,7 @@ export default function PlayerHistoryPage() {
   }, [loading, error]);
 
   if (!songId || !instrument) {
-    return <div style={styles.center}>Not found</div>;
+    return <div style={styles.center}>{t('history.notFound')}</div>;
   }
 
   const filteredHistory = useMemo(
@@ -251,12 +251,12 @@ export default function PlayerHistoryPage() {
                     ...styles.songArtist,
                     fontSize: hasFab || headerCollapsed ? Font.md : Font.lg,
                     ...(!hasFab ? { transition: 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)' } : {}),
-                  }}>{song?.artist ?? 'Unknown Artist'}{song?.year ? ` · ${song.year}` : ''}</p>
+                  }}>{song?.artist ?? t('common.unknownArtist')}{song?.year ? ` · ${song.year}` : ''}</p>
                 </div>
               </div>
               <div style={styles.headerRight}>
                 {!hasFab && !IS_IOS && !IS_ANDROID && !IS_PWA && (
-                  <button style={styles.sortBtn} onClick={openSort} title="Sort" aria-label="Sort player scores">
+                  <button style={styles.sortBtn} onClick={openSort} title={t('common.sort')} aria-label={t('common.sortPlayerScores')}>
                     <IoSwapVerticalSharp size={18} />
                   </button>
                 )}
@@ -283,7 +283,7 @@ export default function PlayerHistoryPage() {
         {error && <div style={styles.centerError}>{error}</div>}
 
         {!error && !player && !loading && (
-          <div style={styles.center}>Select a player to view score history</div>
+          <div style={styles.center}>{t('history.selectPlayer')}</div>
         )}
 
         {!error && player && (
@@ -350,7 +350,7 @@ export default function PlayerHistoryPage() {
                 );
               })}
               {sortedHistory.length === 0 && (
-                <div style={styles.emptyRow}>No score history for this instrument</div>
+                <div style={styles.emptyRow}>{t('history.noHistoryForInstrument')}</div>
               )}
             </div>
             )}

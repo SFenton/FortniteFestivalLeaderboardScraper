@@ -62,7 +62,7 @@ export default function Sidebar({ player, open, onClose, onDeselect, onSelectPla
         onTransitionEnd={handleTransitionEnd}
       >
         <div style={styles.sidebarHeader}>
-          <span style={styles.brand}>Festival Score Tracker</span>
+          <span style={styles.brand}>{t('common.brandName')}</span>
         </div>
         <nav style={styles.sidebarNav}>
           <NavLink to="/songs" onClick={onClose} style={({ isActive }) => ({ ...styles.sidebarLink, ...(isActive ? styles.sidebarLinkActive : {}) })}>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, Fragment } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { IoSearch } from 'react-icons/io5';
 import { api } from '../../api/client';
@@ -30,6 +31,7 @@ export default function FloatingActionButton({
   actionGroups,
   onPress: _onPress,
 }: Props) {
+  const { t } = useTranslation();
   const searchVisible = !!defaultOpen;
   const [actionsOpen, setActionsOpen] = useState(false);
   const [popupMounted, setPopupMounted] = useState(false);
@@ -160,7 +162,7 @@ export default function FloatingActionButton({
         <button
           style={styles.fab}
           onClick={() => actionsOpen ? closeActions() : openActions()}
-          aria-label="Actions"
+          aria-label={t('common.actions')}
         >
           {icon ?? <span style={styles.hamburger}><span style={styles.hamburgerLine} /><span style={styles.hamburgerLine} /><span style={styles.hamburgerLine} /></span>}
         </button>
