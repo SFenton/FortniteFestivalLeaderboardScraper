@@ -118,3 +118,24 @@ export const instrumentKeyToColorHex = (key: InstrumentKey): string => {
       return '#7f8c8d';
   }
 };
+
+/**
+ * Interpolate an accuracy percentage (0-100) to an RGB color string.
+ * 0% → red (220,40,40), 100% → green (46,204,113).
+ */
+export function accuracyColor(pct: number): string {
+  const t = clamp(pct / 100, 0, 1);
+  const r = Math.round(220 * (1 - t) + 46 * t);
+  const g = Math.round(40 * (1 - t) + 204 * t);
+  const b = Math.round(40 * (1 - t) + 113 * t);
+  return `rgb(${r},${g},${b})`;
+}
+
+/**
+ * Calculate the CSS `ch` width needed to display the largest score in a list.
+ */
+export function calculateScoreWidth(scores: { score: number }[]): string {
+  if (scores.length === 0) return '1ch';
+  const maxLen = Math.max(...scores.map((s) => s.score.toLocaleString().length), 1);
+  return `${maxLen}ch`;
+}

@@ -4,6 +4,8 @@ import {
   formatScoreCompact,
   instrumentKeyToColorHex,
   instrumentKeyToLabel,
+  accuracyColor,
+  calculateScoreWidth,
 } from '../formatters';
 
 describe('app/format/formatters', () => {
@@ -87,6 +89,40 @@ describe('app/format/formatters', () => {
     test('maps keys to colors', () => {
       expect(instrumentKeyToColorHex('guitar')).toBe('#b35cd6');
       expect(instrumentKeyToColorHex('vocals')).toBe('#27ae60');
+    });
+  });
+
+  describe('accuracyColor', () => {
+    test('returns red at 0%', () => {
+      expect(accuracyColor(0)).toBe('rgb(220,40,40)');
+    });
+
+    test('returns green at 100%', () => {
+      expect(accuracyColor(100)).toBe('rgb(46,204,113)');
+    });
+
+    test('returns interpolated color at 50%', () => {
+      expect(accuracyColor(50)).toBe('rgb(133,122,77)');
+    });
+
+    test('clamps below 0', () => {
+      expect(accuracyColor(-10)).toBe('rgb(220,40,40)');
+    });
+
+    test('clamps above 100', () => {
+      expect(accuracyColor(150)).toBe('rgb(46,204,113)');
+    });
+  });
+
+  describe('calculateScoreWidth', () => {
+    test('returns ch width for longest formatted score', () => {
+      const scores = [{ score: 100 }, { score: 1000 }, { score: 999999 }];
+      const result = calculateScoreWidth(scores);
+      expect(result).toMatch(/^\d+ch$/);
+    });
+
+    test('returns 1ch minimum for empty array', () => {
+      expect(calculateScoreWidth([])).toBe('1ch');
     });
   });
 });

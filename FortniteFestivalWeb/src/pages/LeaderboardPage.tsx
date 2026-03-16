@@ -19,16 +19,9 @@ import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
 import { useScoreFilter } from '../hooks/useScoreFilter';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { IS_PWA } from '../utils/isPwa';
+import { accuracyColor } from '@festival/core';
 
 const PAGE_SIZE = 25;
-
-function accuracyColor(pct: number): string {
-  const t = Math.min(Math.max(pct / 100, 0), 1);
-  const r = Math.round(220 * (1 - t) + 46 * t);
-  const g = Math.round(40 * (1 - t) + 204 * t);
-  const b = Math.round(40 * (1 - t) + 113 * t);
-  return `rgb(${r},${g},${b})`;
-}
 
 type LeaderboardCache = {
   entries: LeaderboardEntry[];
