@@ -20,6 +20,7 @@ import {
 import { accuracyColor } from '@festival/core';
 import { InstrumentIcon } from './InstrumentIcons';
 import { Colors, Font, Gap, Radius, goldFill, goldOutlineSkew, frostedCard } from '@festival/theme';
+import s from './ScoreHistoryChart.module.css';
 import { useIsMobile } from '../hooks/useIsMobile';
 import SeasonPill from './SeasonPill';
 import { useChartData, type ChartPoint } from './chart/useChartData';
@@ -369,29 +370,29 @@ export default function ScoreHistoryChart({
   }, [availableInstruments, selected]);
 
   return (
-    <div style={styles.wrapper}>
+    <div className={s.wrapper}>
       {/* Chart area */}
-      <div style={styles.chartContainer} ref={chartContainerRef}>
+      <div className={s.chartContainer} ref={chartContainerRef}>
         {/* Instrument icons */}
         {availableInstruments.length > 1 && (
-          <div ref={iconRowRef} style={styles.iconRow}>
+          <div ref={iconRowRef} className={s.iconRow}>
             {compact ? (
               <>
                 <button
                   onClick={() => cycleInstrument(-1)}
-                  style={styles.arrowButton}
+                  style={s.arrowButton}
                   aria-label="Previous instrument"
                 >
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
                 </button>
                 <button
-                  style={{ ...styles.iconButton, ...styles.iconButtonActive }}
+                  className={s.iconButtonActive}
                 >
                   <InstrumentIcon instrument={selected} size={48} />
                 </button>
                 <button
                   onClick={() => cycleInstrument(1)}
-                  style={styles.arrowButton}
+                  style={s.arrowButton}
                   aria-label="Next instrument"
                 >
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -404,9 +405,8 @@ export default function ScoreHistoryChart({
                   <button
                     key={inst}
                     onClick={() => setSelected(inst)}
-                    style={{
-                      ...styles.iconButton,
-                      ...(isActive ? styles.iconButtonActive : {}),
+                    className={s.iconButton} style={{
+                      ...(isActive ? s.iconButtonActive : {}),
                     }}
                   >
                     <InstrumentIcon instrument={inst} size={48} />
@@ -416,15 +416,15 @@ export default function ScoreHistoryChart({
             )}
           </div>
         )}
-        <div style={styles.chartHeader}>
-          <div style={styles.chartTitle}>Score History</div>
-          <div style={styles.chartSubtitle}>Select a bar to see more score details.</div>
+        <div className={s.chartHeader}>
+          <div className={s.chartTitle}>Score History</div>
+          <div className={s.chartSubtitle}>Select a bar to see more score details.</div>
         </div>
         {loading && (
-          <div style={styles.placeholder}>Loading history…</div>
+          <div className={s.placeholder}>Loading history…</div>
         )}
         {!loading && chartData.length === 0 && (
-          <div style={styles.placeholder}>
+          <div className={s.placeholder}>
             No history for {INSTRUMENT_LABELS[selected]}
           </div>
         )}
@@ -494,20 +494,20 @@ export default function ScoreHistoryChart({
                   const hasFc = visibleChartData.some(p => p.accuracy >= 100 && p.isFullCombo);
                   const hasNonFc = visibleChartData.some(p => !(p.accuracy >= 100 && p.isFullCombo));
                   return (
-                  <div style={styles.legend}>
+                  <div className={s.legend}>
                     {hasNonFc && (
-                    <span style={styles.legendItem}>
-                      <span style={styles.legendGradient} />
+                    <span className={s.legendItem}>
+                      <span className={s.legendGradient} />
                       Accuracy
                     </span>
                     )}
                     {hasFc && (
-                    <span style={styles.legendItem}>
-                      <span style={styles.legendGold} />
+                    <span className={s.legendItem}>
+                      <span className={s.legendGold} />
                       Accuracy (FC)
                     </span>
                     )}
-                    <span style={styles.legendItem}>
+                    <span className={s.legendItem}>
                       <svg width={24} height={12} style={{ verticalAlign: 'middle' }}>
                         <line x1={0} y1={6} x2={18} y2={6} stroke={Colors.accentBlueBright} strokeWidth={2} />
                         <circle cx={18} cy={6} r={3} fill={Colors.accentBlueBright} />
@@ -595,9 +595,8 @@ export default function ScoreHistoryChart({
             ...(!isMobile ? { width: '50%', marginLeft: 'auto', marginRight: 'auto' } : {}),
           }}>
             {displayedPoint && (
-              <div style={{
-                ...styles.scoreCard,
-                ...(!isMobile ? styles.scoreListCard : {}),
+              <div className={s.scoreCard} style={{
+                ...(!isMobile ? s.scoreListCard : {}),
                 opacity: (cardPhase === 'open' || cardPhase === 'swapOut' || cardPhase === 'swapIn') ? 1 : 0,
                 transform: (cardPhase === 'open' || cardPhase === 'swapOut' || cardPhase === 'swapIn') ? 'translateY(0)' : 'translateY(-8px)',
                 transition: 'opacity 0.15s ease, transform 0.15s ease',
@@ -611,23 +610,23 @@ export default function ScoreHistoryChart({
                   transform: (cardPhase === 'open' || cardPhase === 'swapIn') ? 'translateY(0)' : (cardPhase === 'swapOut' ? 'translateY(-6px)' : undefined),
                   transition: (cardPhase === 'swapOut' || cardPhase === 'swapIn') ? 'opacity 0.12s ease, transform 0.12s ease' : 'none',
                 }}>
-                  <span style={styles.scoreCardDate}>
+                  <span className={s.scoreCardDate}>
                     {new Date(displayedPoint.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                   </span>
-                  <span style={styles.scoreCardMiddle}>
+                  <span className={s.scoreCardMiddle}>
                     {displayedPoint.season != null && (
                       <SeasonPill season={displayedPoint.season} />
                     )}
-                    <span style={{ ...styles.scoreCardScore, width: scoreWidthProp }}>
+                    <span className={s.scoreCardScore} style={{ width: scoreWidthProp }}>
                       {displayedPoint.score.toLocaleString()}
                     </span>
                   </span>
-                  <span style={styles.scoreCardAcc}>
+                  <span className={s.scoreCardAcc}>
                     {(() => {
                       const pct = displayedPoint.accuracy;
                       const text = pct % 1 === 0 ? `${pct}%` : `${pct.toFixed(1)}%`;
                       return displayedPoint.isFullCombo
-                        ? <span style={styles.fcAccBadge}>{text}</span>
+                        ? <span style={s.fcAccBadge}>{text}</span>
                         : <span style={{ color: accuracyColor(pct) }}>{text}</span>;
                     })()}
                   </span>
@@ -638,11 +637,10 @@ export default function ScoreHistoryChart({
         )}
         {/* Chart pagination controls */}
         {!loading && needsPagination && (
-          <div style={styles.chartPagination}>
+          <div className={s.chartPagination}>
             <button
-              style={{
-                ...styles.chartPageButton,
-                ...(backDisabled ? styles.chartPageButtonDisabled : {}),
+              className={s.chartPageButton} style={{
+                ...(backDisabled ? s.chartPageButtonDisabled : {}),
               }}
               disabled={backDisabled}
               onClick={() => {
@@ -661,9 +659,8 @@ export default function ScoreHistoryChart({
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M9 3L4 8L9 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M14 3L9 8L14 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
             <button
-              style={{
-                ...styles.chartPageButton,
-                ...(backDisabled ? styles.chartPageButtonDisabled : {}),
+              className={s.chartPageButton} style={{
+                ...(backDisabled ? s.chartPageButtonDisabled : {}),
               }}
               disabled={backDisabled}
               onClick={() => {
@@ -682,9 +679,8 @@ export default function ScoreHistoryChart({
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
             <button
-              style={{
-                ...styles.chartPageButton,
-                ...(forwardDisabled ? styles.chartPageButtonDisabled : {}),
+              className={s.chartPageButton} style={{
+                ...(forwardDisabled ? s.chartPageButtonDisabled : {}),
                 marginLeft: Gap.md,
               }}
               disabled={forwardDisabled}
@@ -704,9 +700,8 @@ export default function ScoreHistoryChart({
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
             <button
-              style={{
-                ...styles.chartPageButton,
-                ...(forwardDisabled ? styles.chartPageButtonDisabled : {}),
+              className={s.chartPageButton} style={{
+                ...(forwardDisabled ? s.chartPageButtonDisabled : {}),
               }}
               disabled={forwardDisabled}
               onClick={() => {
@@ -735,7 +730,7 @@ export default function ScoreHistoryChart({
           transition: 'height 0.3s ease',
           marginTop: Gap.xl,
         }}>
-          <div style={styles.scoreCardList}>
+          <div className={s.scoreCardList}>
           {displayedCards.map((point, i) => {
             const pct = point.accuracy;
             const text = pct % 1 === 0 ? `${pct}%` : `${pct.toFixed(1)}%`;
@@ -760,25 +755,24 @@ export default function ScoreHistoryChart({
             return (
               <div
                 key={point.date}
-                style={{
-                  ...styles.scoreListCard,
+                className={s.scoreListCard} style={{
                   ...animStyle,
                 }}
               >
-                <span style={styles.scoreCardDate}>
+                <span className={s.scoreCardDate}>
                   {new Date(point.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                 </span>
-                <span style={styles.scoreCardMiddle}>
+                <span className={s.scoreCardMiddle}>
                   {point.season != null && (
                     <SeasonPill season={point.season} />
                   )}
-                  <span style={{ ...styles.scoreCardScore, width: scoreWidthProp }}>
+                  <span className={s.scoreCardScore} style={{ width: scoreWidthProp }}>
                     {point.score.toLocaleString()}
                   </span>
                 </span>
-                <span style={styles.scoreCardAcc}>
+                <span className={s.scoreCardAcc}>
                   {point.isFullCombo
-                    ? <span style={styles.fcAccBadge}>{text}</span>
+                    ? <span style={s.fcAccBadge}>{text}</span>
                     : <span style={{ color: accuracyColor(pct) }}>{text}</span>
                   }
                 </span>
@@ -789,7 +783,7 @@ export default function ScoreHistoryChart({
         </div>
       )}
       {chartData.length > 5 && (
-        <button style={styles.viewAllButton} onClick={() => navigate(`/songs/${songId}/${selected}/history`)}>
+        <button className={s.viewAllButton} onClick={() => navigate(`/songs/${songId}/${selected}/history`)}>
           View all available player scores
         </button>
       )}
@@ -797,214 +791,3 @@ export default function ScoreHistoryChart({
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  wrapper: {
-  },
-  iconRow: {
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: Gap.lg,
-    paddingTop: Gap.md,
-    paddingBottom: Gap.xs,
-    width: '100%',
-  },
-  iconButton: {
-    background: 'none',
-    border: 'none',
-    borderRadius: '50%',
-    width: 64,
-    height: 64,
-    padding: 0,
-    cursor: 'pointer',
-    transition: 'all 0.15s ease',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    opacity: 0.5,
-  },
-  iconButtonActive: {
-    backgroundColor: '#2ECC71',
-    opacity: 1,
-  },
-  arrowButton: {
-    background: 'none',
-    border: `1px solid ${Colors.borderPrimary}`,
-    borderRadius: '50%',
-    width: 40,
-    height: 40,
-    padding: 0,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: Colors.textSecondary,
-    fontSize: 24,
-    fontWeight: 700,
-    lineHeight: 1,
-    transition: 'all 0.15s ease',
-  },
-  chartContainer: {
-    ...frostedCard,
-    borderRadius: Radius.lg,
-    padding: `${Gap.sm}px ${Gap.xl}px ${Gap.xl}px`,
-    display: 'flex',
-    flexDirection: 'column' as const,
-    alignItems: 'center',
-  },
-  placeholder: {
-    color: Colors.textMuted,
-    fontSize: Font.md,
-    fontStyle: 'italic',
-    textAlign: 'center' as const,
-    padding: `${Gap.section}px 0`,
-    width: '100%',
-  },
-  legend: {
-    display: 'flex',
-    justifyContent: 'center',
-    gap: Gap.xl,
-    fontSize: Font.md,
-    color: '#fff',
-    paddingTop: 36,
-  },
-  legendItem: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: Gap.sm,
-  },
-  legendGradient: {
-    display: 'inline-block',
-    width: 20,
-    height: 12,
-    borderRadius: 2,
-    background: 'linear-gradient(to right, rgb(220,40,40), rgb(46,204,113))',
-  },
-  legendGold: {
-    display: 'inline-block',
-    width: 20,
-    height: 12,
-    borderRadius: 2,
-    backgroundColor: Colors.gold,
-  },
-  chartHeader: {
-    textAlign: 'center' as const,
-    marginBottom: Gap.md,
-  },
-  chartTitle: {
-    color: '#fff',
-    fontSize: Font.title,
-    fontWeight: 700,
-  },
-  chartSubtitle: {
-    color: Colors.textMuted,
-    fontSize: Font.lg,
-    marginTop: Gap.xs,
-  },
-  scoreCard: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.xl,
-    padding: `0 0`,
-    height: 48,
-    fontSize: Font.md,
-    color: 'inherit',
-    width: '100%',
-    boxSizing: 'border-box' as const,
-  },
-  scoreCardDate: {
-    flex: 1,
-    minWidth: 0,
-    color: Colors.textPrimary,
-    fontSize: Font.md,
-  },
-  scoreCardMiddle: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.sm,
-    flexShrink: 0,
-  },
-  scoreCardScore: {
-    flexShrink: 0,
-    textAlign: 'right' as const,
-    fontWeight: 600,
-    fontSize: Font.md,
-    color: Colors.textPrimary,
-    fontVariantNumeric: 'tabular-nums',
-  },
-  scoreCardAcc: {
-    width: 60,
-    flexShrink: 0,
-    textAlign: 'center' as const,
-    fontWeight: 600,
-    fontSize: Font.md,
-    color: Colors.accentBlueBright,
-    fontVariantNumeric: 'tabular-nums',
-  },
-  fcAccBadge: {
-    ...goldOutlineSkew,
-    fontSize: Font.md,
-    textAlign: 'center' as const,
-  },
-  scoreCardList: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: Gap.sm,
-  },
-  scoreListCard: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.xl,
-    padding: `0 ${Gap.xl}px`,
-    height: 48,
-    borderRadius: Radius.md,
-    ...frostedCard,
-    fontSize: Font.md,
-    color: 'inherit',
-    transition: 'border-color 0.15s',
-  },
-  scoreListCardActive: {
-    borderColor: Colors.accentBlueBright,
-  },
-  chartPagination: {
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: Gap.md,
-    paddingTop: Gap.xl,
-    paddingBottom: Gap.md,
-  },
-  chartPageButton: {
-    background: 'none',
-    border: `1px solid ${Colors.borderPrimary}`,
-    borderRadius: '50%',
-    width: 40,
-    height: 40,
-    padding: 0,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: Colors.textSecondary,
-    transition: 'all 0.15s ease',
-  },
-  chartPageButtonDisabled: {
-    opacity: 0.3,
-    cursor: 'default',
-  },
-  viewAllButton: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
-    height: 48,
-    marginTop: Gap.sm,
-    borderRadius: Radius.md,
-    ...frostedCard,
-    color: Colors.textPrimary,
-    fontSize: Font.md,
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'background-color 0.15s',
-  },
-};
