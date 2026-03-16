@@ -1,0 +1,37 @@
+.tooltip {
+  background-color: var(--color-bg-card);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-xs);
+  padding: var(--gap-md) var(--gap-xl);
+  font-size: var(--font-sm);
+  color: var(--color-text-primary);
+  line-height: 1.5;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.date {
+  font-weight: 600;
+  margin-bottom: var(--gap-xs);
+}
+
+.season {
+  color: var(--color-text-tertiary);
+  font-weight: 400;
+}
+
+.scoreLabel {
+  color: var(--color-accent-blue-bright);
+  font-weight: 600;
+}
+
+.accLabel {
+  color: var(--color-accent-purple);
+  font-weight: 600;
+}
+
+.fc {
+  margin-left: var(--gap-sm);
+  color: var(--color-gold);
+  font-weight: 700;
+  font-size: var(--font-xs);
+}

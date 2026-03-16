@@ -7,6 +7,7 @@ import { useSettings, visibleInstruments } from '../../contexts/SettingsContext'
 import { INSTRUMENT_LABELS, type InstrumentKey } from '../../models';
 import { InstrumentIcon } from '../InstrumentIcons';
 import { Colors, Radius, Font, Gap, frostedCard } from '@festival/theme';
+import css from './PathsModal.module.css';
 
 const TRANSITION_MS = 300;
 const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const;
@@ -149,35 +150,35 @@ export default function PathsModal({ visible, songId, onClose }: Props) {
         style={isMobile ? mobilePanel : desktopPanel}
         onTransitionEnd={handleTransitionEnd}
       >
-        <div style={styles.header}>
-          <h2 style={styles.title}>Paths</h2>
-          <button style={styles.closeBtn} onClick={onClose} aria-label="Close"><IoClose size={18} /></button>
+        <div className={css.header}>
+          <h2 className={css.title}>Paths</h2>
+          <button className={css.closeBtn} onClick={onClose} aria-label="Close"><IoClose size={18} /></button>
         </div>
         {isMobile ? (
-          <div style={styles.controls}>
-            <div style={styles.mobileRow}>
-              <button style={styles.mobileSelector} onClick={toggleInst}>
+          <div className={css.controls}>
+            <div className={css.mobileRow}>
+              <button style={css.mobileSelector} onClick={toggleInst}>
                 <InstrumentIcon instrument={selected} size={28} />
-                <span style={styles.mobileSelectorLabel}>{INSTRUMENT_LABELS[selected]}</span>
-                <IoChevronDown size={16} style={{ ...styles.chevron, transform: instOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
+                <span className={css.mobileSelectorLabel}>{INSTRUMENT_LABELS[selected]}</span>
+                <IoChevronDown size={16} className={css.chevron} style={{ transform: instOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
               </button>
-              <button style={styles.mobileSelector} onClick={toggleDiff}>
-                <span style={styles.mobileSelectorLabel}>{DIFFICULTY_LABELS[difficulty]}</span>
-                <IoChevronDown size={16} style={{ ...styles.chevron, transform: diffOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
+              <button style={css.mobileSelector} onClick={toggleDiff}>
+                <span className={css.mobileSelectorLabel}>{DIFFICULTY_LABELS[difficulty]}</span>
+                <IoChevronDown size={16} className={css.chevron} style={{ transform: diffOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
               </button>
             </div>
-            <div style={{ ...styles.accordion, maxHeight: instOpen ? 160 : 0 }}>
-              <div style={{ ...styles.instrumentRow, paddingTop: Gap.md }}>
+            <div style={{ ...css.accordion, maxHeight: instOpen ? 160 : 0 }}>
+              <div style={{ ...css.instrumentRow, paddingTop: Gap.md }}>
                 {instruments.map(key => {
                   const active = selected === key;
                   return (
                     <button
                       key={key}
-                      style={styles.instrumentBtn}
+                      className={css.instrumentBtn}
                       onClick={() => { setSelected(key); setInstOpen(false); }}
                       title={INSTRUMENT_LABELS[key]}
                     >
-                      <div style={{ ...styles.instrumentCircle, ...(active ? styles.instrumentCircleActive : {}) }} />
+                      <div className={css.instrumentCircle} style={{ ...(active ? css.instrumentCircleActive : {}) }} />
                       <div style={{ position: 'relative' as const, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         <InstrumentIcon instrument={key} size={48} />
                       </div>
@@ -186,12 +187,12 @@ export default function PathsModal({ visible, songId, onClose }: Props) {
                 })}
               </div>
             </div>
-            <div style={{ ...styles.accordion, maxHeight: diffOpen ? 120 : 0 }}>
-              <div style={{ ...styles.diffGridMobile, paddingTop: Gap.md }}>
+            <div style={{ ...css.accordion, maxHeight: diffOpen ? 120 : 0 }}>
+              <div style={{ ...css.diffGridMobile, paddingTop: Gap.md }}>
                 {DIFFICULTIES.map(d => (
                   <button
                     key={d}
-                    style={{ ...styles.diffBtnSmall, ...(difficulty === d ? styles.diffBtnActive : {}) }}
+                    className={css.diffBtnSmall} style={{ ...(difficulty === d ? css.diffBtnActive : {}) }}
                     onClick={() => { setDifficulty(d); setDiffOpen(false); }}
                   >
                     {DIFFICULTY_LABELS[d]}
@@ -201,18 +202,18 @@ export default function PathsModal({ visible, songId, onClose }: Props) {
             </div>
           </div>
         ) : (
-          <div style={styles.controls}>
-            <div style={styles.instrumentRow}>
+          <div className={css.controls}>
+            <div className={css.instrumentRow}>
               {instruments.map(key => {
                 const active = selected === key;
                 return (
                   <button
                     key={key}
-                    style={styles.instrumentBtn}
+                    className={css.instrumentBtn}
                     onClick={() => setSelected(key)}
                     title={INSTRUMENT_LABELS[key]}
                   >
-                    <div style={{ ...styles.instrumentCircle, ...(active ? styles.instrumentCircleActive : {}) }} />
+                    <div className={css.instrumentCircle} style={{ ...(active ? css.instrumentCircleActive : {}) }} />
                     <div style={{ position: 'relative' as const, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <InstrumentIcon instrument={key} size={48} />
                     </div>
@@ -220,11 +221,11 @@ export default function PathsModal({ visible, songId, onClose }: Props) {
                 );
               })}
             </div>
-            <div style={styles.diffGridDesktop}>
+            <div className={css.diffGridDesktop}>
               {DIFFICULTIES.map(d => (
                 <button
                   key={d}
-                  style={{ ...styles.diffBtn, ...(difficulty === d ? styles.diffBtnActive : {}) }}
+                  className={css.diffBtn} style={{ ...(difficulty === d ? css.diffBtnActive : {}) }}
                   onClick={() => setDifficulty(d)}
                 >
                   {DIFFICULTY_LABELS[d]}
@@ -328,18 +329,18 @@ function PathImage({ songId, instrument, difficulty }: { songId: string; instrum
   const handleScroll = useCallback(() => { updateScrollMask(); }, [updateScrollMask]);
 
   return (
-    <div ref={scrollRef} onScroll={handleScroll} style={styles.imageArea}>
+    <div ref={scrollRef} onScroll={handleScroll} className={css.imageArea}>
       {spinnerMounted && (
         <div style={{
-          ...styles.spinnerWrap,
+          ...css.spinnerWrap,
           opacity: spinnerVisible ? 1 : 0,
           transition: `opacity ${FADE_MS}ms ease`,
         }}>
-          <div style={styles.spinner} />
+          <div className={css.spinner} />
         </div>
       )}
       {error && phase === 'idle' && (
-        <div style={styles.spinnerWrap}>
+        <div className={css.spinnerWrap}>
           <p style={{ color: Colors.textMuted, fontSize: Font.md }}>Path not available</p>
         </div>
       )}
@@ -449,7 +450,7 @@ const ZoomableImage = forwardRef<HTMLImageElement, { src: string; alt: string; v
           alt={alt}
           draggable={false}
           style={{
-            ...styles.pathImg,
+            ...css.pathImg,
             opacity: visible ? 1 : 0,
             transform: visible ? transform : `translateY(16px) ${transform}`,
             transformOrigin: 'center top',
@@ -463,163 +464,3 @@ const ZoomableImage = forwardRef<HTMLImageElement, { src: string; alt: string; v
   },
 );
 
-const styles: Record<string, React.CSSProperties> = {
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: `${Gap.xl}px 16px ${Gap.xl}px ${Gap.section}px`,
-    flexShrink: 0,
-  },
-  title: {
-    fontSize: Font.xl,
-    fontWeight: 700,
-    margin: 0,
-  },
-  closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: '50%',
-    background: Colors.surfaceElevated,
-    border: `1px solid ${Colors.borderPrimary}`,
-    color: Colors.textSecondary,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'pointer',
-    flexShrink: 0,
-  },
-  controls: {
-    flexShrink: 0,
-    padding: `${Gap.xl}px ${Gap.section}px`,
-  },
-  imageArea: {
-    flex: 1,
-    overflow: 'auto',
-    position: 'relative' as const,
-    display: 'flex',
-    alignItems: 'flex-start',
-    justifyContent: 'center',
-    padding: Gap.section,
-  },
-  spinnerWrap: {
-    position: 'absolute' as const,
-    inset: 0,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  spinner: {
-    width: 48,
-    height: 48,
-    border: '4px solid rgba(255,255,255,0.10)',
-    borderTopColor: Colors.accentPurple,
-    borderRadius: '50%',
-    animation: 'spin 0.8s linear infinite',
-  },
-  pathImg: {
-    maxWidth: '100%',
-    height: 'auto',
-    borderRadius: Radius.md,
-    transition: 'opacity 400ms ease, transform 400ms ease',
-    userSelect: 'none' as const,
-  },
-  instrumentRow: {
-    display: 'flex',
-    gap: Gap.md,
-    flexWrap: 'wrap' as const,
-    justifyContent: 'center',
-  },
-  instrumentBtn: {
-    width: 64,
-    height: 64,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: '50%',
-    border: 'none',
-    backgroundColor: 'transparent',
-    cursor: 'pointer',
-    position: 'relative' as const,
-    overflow: 'hidden' as const,
-  },
-  instrumentCircle: {
-    position: 'absolute' as const,
-    inset: 0,
-    borderRadius: '50%',
-    backgroundColor: '#2ECC71',
-    transform: 'scale(0)',
-    transition: 'transform 250ms ease',
-  },
-  instrumentCircleActive: {
-    transform: 'scale(1)',
-  },
-  mobileRow: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: Gap.md,
-  },
-  mobileSelector: {
-    ...frostedCard,
-    display: 'flex',
-    alignItems: 'center',
-    gap: Gap.md,
-    padding: `${Gap.lg}px ${Gap.md + 4}px`,
-    borderRadius: Radius.md,
-    color: Colors.textPrimary,
-    fontSize: Font.md,
-    fontWeight: 600,
-    cursor: 'pointer',
-  } as React.CSSProperties,
-  mobileSelectorLabel: {
-    flex: 1,
-    textAlign: 'left' as const,
-  },
-  chevron: {
-    flexShrink: 0,
-    color: Colors.textMuted,
-    transition: 'transform 250ms ease',
-  },
-  accordion: {
-    overflow: 'hidden' as const,
-    transition: 'max-height 300ms cubic-bezier(0.4, 0, 0.2, 1)',
-  },
-  diffGridMobile: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: Gap.sm,
-  },
-  diffBtnSmall: {
-    ...frostedCard,
-    padding: `${Gap.lg}px ${Gap.md + 4}px`,
-    borderRadius: Radius.md,
-    color: Colors.textSecondary,
-    fontSize: Font.md,
-    fontWeight: 600,
-    cursor: 'pointer',
-    textAlign: 'center' as const,
-    transition: 'background-color 200ms ease, border-color 200ms ease, color 200ms ease',
-  } as React.CSSProperties,
-  diffGridDesktop: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))',
-    gap: Gap.md,
-    marginTop: Gap.section,
-  },
-  diffBtn: {
-    ...frostedCard,
-    padding: `${Gap.xl}px ${Gap.md}px`,
-    borderRadius: Radius.md,
-    color: Colors.textSecondary,
-    fontSize: Font.md,
-    fontWeight: 600,
-    cursor: 'pointer',
-    textAlign: 'center' as const,
-    transition: 'background-color 200ms ease, border-color 200ms ease, color 200ms ease',
-  } as React.CSSProperties,
-  diffBtnActive: {
-    backgroundColor: 'rgba(124,58,237,0.5)',
-    border: '1px solid rgba(168,120,255,0.4)',
-    color: '#fff',
-  },
-};
