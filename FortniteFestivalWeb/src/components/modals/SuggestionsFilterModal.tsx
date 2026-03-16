@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import Modal, { ModalSection, ToggleRow, Accordion } from './Modal';
 import ConfirmAlert from './ConfirmAlert';
-import { InstrumentIcon } from './InstrumentIcons';
+import { InstrumentIcon } from '../InstrumentIcons';
 import type { InstrumentKey } from '@festival/core/instruments';
 import { InstrumentKeys } from '@festival/core/instruments';
 import {
@@ -10,7 +10,7 @@ import {
   perInstrumentKeyFor,
 } from '@festival/core/suggestions/suggestionFilterConfig';
 import type { SuggestionTypeId } from '@festival/core/suggestions/suggestionFilterConfig';
-import { Colors, Font, Gap } from '../theme';
+import { Colors, Font, Gap } from '@festival/theme';
 
 // ---------------------------------------------------------------------------
 // Filter draft type – mirrors the RN SuggestionsInstrumentFilters

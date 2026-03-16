@@ -16,7 +16,7 @@ const PlayerHistoryPage = lazy(() => import('./pages/PlayerHistoryPage'));
 const PlayerPage = lazy(() => import('./pages/PlayerPage'));
 const SuggestionsPage = lazy(() => import('./pages/SuggestionsPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
-import { Colors, Font, Gap, Layout, MaxWidth, Radius, Size, frostedCard } from './theme';
+import { Colors, Font, Gap, Layout, MaxWidth, Radius, Size, frostedCard } from '@festival/theme';
 import { resetSongSettingsForDeselect, loadSongSettings, SONG_SETTINGS_CHANGED_EVENT } from './components/songSettings';
 import BackLink from './components/BackLink';
 import { InstrumentIcon } from './components/InstrumentIcons';
@@ -31,7 +31,7 @@ import { clearSongDetailCache } from './pages/SongDetailPage';
 import { clearLeaderboardCache } from './pages/LeaderboardPage';
 import { clearPlayerPageCache } from './pages/PlayerPage';
 import { IS_IOS, IS_ANDROID, IS_PWA } from './utils/platform';
-import ChangelogModal from './components/ChangelogModal';
+import ChangelogModal from './components/modals/ChangelogModal';
 import { APP_VERSION } from './hooks/useVersions';
 import { changelogHash } from './changelog';
 

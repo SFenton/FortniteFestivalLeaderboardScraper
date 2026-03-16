@@ -1,11 +1,11 @@
 .overlay {
-  composes: modalOverlay from '../styles/shared.module.css';
+  composes: modalOverlay from '../../styles/shared.module.css';
   z-index: 1200;
   padding: var(--gap-section);
 }
 
 .card {
-  composes: modalCard from '../styles/shared.module.css';
+  composes: modalCard from '../../styles/shared.module.css';
   border-radius: var(--radius-lg);
   width: 100%;
   max-width: 520px;
@@ -85,7 +85,7 @@
 }
 
 .dismissBtn {
-  composes: btnPrimary from '../styles/shared.module.css';
+  composes: btnPrimary from '../../styles/shared.module.css';
   width: 100%;
   font-size: var(--font-lg);
   font-weight: 700;

@@ -1,7 +1,7 @@
 import { useMemo, useCallback, useState } from 'react';
 import Modal, { ModalSection, RadioRow } from './Modal';
 import ConfirmAlert from './ConfirmAlert';
-import { Colors, Font, Gap } from '../theme';
+import { Colors, Font, Gap } from '@festival/theme';
 import { IoArrowUp, IoArrowDown } from 'react-icons/io5';
 
 export type PlayerScoreSortMode = 'date' | 'score' | 'accuracy' | 'season';

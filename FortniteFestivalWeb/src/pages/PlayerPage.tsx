@@ -24,7 +24,7 @@ import {
   type PlayerScore,
   type Song,
 } from '../models';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutline, goldOutlineSkew, frostedCard } from '../theme';
+import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutline, goldOutlineSkew, frostedCard } from '@festival/theme';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import { useSettings, isInstrumentVisible } from '../contexts/SettingsContext';
 import { loadSongSettings, saveSongSettings, defaultSongFilters } from '../components/songSettings';
@@ -35,7 +35,7 @@ import { useTrackedPlayer } from '../hooks/useTrackedPlayer';
 import { useScoreFilter } from '../hooks/useScoreFilter';
 import { useFabSearch } from '../contexts/FabSearchContext';
 import AlbumArt from '../components/AlbumArt';
-import ConfirmAlert from '../components/ConfirmAlert';
+import ConfirmAlert from '../components/modals/ConfirmAlert';
 import FadeInDiv from '../components/FadeInDiv';
 import { useStaggerRush } from '../hooks/useStaggerRush';
 

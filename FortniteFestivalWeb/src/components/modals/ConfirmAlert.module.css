@@ -1,10 +1,10 @@
 .overlay {
-  composes: modalOverlay from '../styles/shared.module.css';
+  composes: modalOverlay from '../../styles/shared.module.css';
   z-index: 1100;
 }
 
 .card {
-  composes: modalCard from '../styles/shared.module.css';
+  composes: modalCard from '../../styles/shared.module.css';
   border-radius: var(--radius-md);
   padding: var(--gap-section);
   max-width: 340px;
@@ -30,14 +30,14 @@
 }
 
 .btnNo {
-  composes: btnPrimary from '../styles/shared.module.css';
+  composes: btnPrimary from '../../styles/shared.module.css';
   flex: 1;
   padding: var(--gap-xl);
   font-size: var(--font-md);
 }
 
 .btnYes {
-  composes: btnDanger from '../styles/shared.module.css';
+  composes: btnDanger from '../../styles/shared.module.css';
   flex: 1;
   padding: var(--gap-xl);
   font-size: var(--font-md);

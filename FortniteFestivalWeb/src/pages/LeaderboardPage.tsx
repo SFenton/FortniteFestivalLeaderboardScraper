@@ -11,7 +11,7 @@ import {
 } from '../models';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import SeasonPill from '../components/SeasonPill';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutlineSkew, frostedCard } from '../theme';
+import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutlineSkew, frostedCard } from '@festival/theme';
 import { staggerDelay } from '../utils/stagger';
 import { useScrollMask } from '../hooks/useScrollMask';
 import { useStaggerRush } from '../hooks/useStaggerRush';

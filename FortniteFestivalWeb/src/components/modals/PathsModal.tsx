@@ -1,12 +1,12 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, forwardRef } from 'react';
 import { IoClose, IoChevronDown } from 'react-icons/io5';
-import { useIsMobile } from '../hooks/useIsMobile';
-import { useScrollMask } from '../hooks/useScrollMask';
-import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../hooks/useVisualViewport';
-import { useSettings, visibleInstruments } from '../contexts/SettingsContext';
-import { INSTRUMENT_LABELS, type InstrumentKey } from '../models';
-import { InstrumentIcon } from './InstrumentIcons';
-import { Colors, Radius, Font, Gap, frostedCard } from '../theme';
+import { useIsMobile } from '../../hooks/useIsMobile';
+import { useScrollMask } from '../../hooks/useScrollMask';
+import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../../hooks/useVisualViewport';
+import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
+import { INSTRUMENT_LABELS, type InstrumentKey } from '../../models';
+import { InstrumentIcon } from '../InstrumentIcons';
+import { Colors, Radius, Font, Gap, frostedCard } from '@festival/theme';
 
 const TRANSITION_MS = 300;
 const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const;

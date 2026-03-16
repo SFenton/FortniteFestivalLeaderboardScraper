@@ -18,10 +18,10 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { useIsMobile } from '../hooks/useIsMobile';
-import { useScrollMask } from '../hooks/useScrollMask';
-import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../hooks/useVisualViewport';
-import { Colors, Radius, Font, Gap } from '../theme';
+import { useIsMobile } from '../../hooks/useIsMobile';
+import { useScrollMask } from '../../hooks/useScrollMask';
+import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../../hooks/useVisualViewport';
+import { Colors, Radius, Font, Gap } from '@festival/theme';
 
 const TRANSITION_MS = 300;
 
