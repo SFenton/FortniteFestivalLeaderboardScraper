@@ -1,0 +1,112 @@
+.overlay {
+  composes: modalOverlay from '../../styles/shared.module.css';
+  z-index: 200;
+  background-color: var(--color-overlay-dark);
+}
+
+.sidebar {
+  composes: frostedCard from '../../styles/shared.module.css';
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 280px;
+  background-color: var(--color-bg-card);
+  border-right: 1px solid var(--color-glass-border);
+  z-index: 201;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebarHeader {
+  padding: var(--gap-section) var(--gap-section) var(--gap-xl);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.brand {
+  font-size: var(--font-lg);
+  font-weight: 700;
+  color: var(--color-accent-purple);
+}
+
+.sidebarNav {
+  display: flex;
+  flex-direction: column;
+  padding: var(--gap-md) 0;
+  flex: 1;
+}
+
+.sidebarFooter {
+  border-top: 1px solid var(--color-border-subtle);
+  padding: var(--gap-md) 0;
+}
+
+.sidebarLink {
+  display: block;
+  padding: var(--gap-xl) var(--gap-section);
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  font-size: var(--font-md);
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.sidebarLinkActive {
+  composes: sidebarLink;
+  color: var(--color-text-primary);
+  background-color: var(--color-surface-subtle);
+  border-left: 3px solid var(--color-accent-purple);
+}
+
+.sidebarPlayerRow {
+  display: flex;
+  align-items: center;
+}
+
+.playerLink {
+  composes: sidebarLink;
+  flex: 1;
+  display: flex;
+  align-items: center;
+}
+
+.profileCircle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background-color: var(--color-surface-subtle);
+  border: 1px solid var(--color-border-subtle);
+  flex-shrink: 0;
+  margin-right: var(--gap-md);
+}
+
+.profileCircleEmpty {
+  composes: profileCircle;
+  background-color: #D0D5DD;
+  border: none;
+  color: #4A5568;
+}
+
+.deselectBtn {
+  padding: var(--gap-sm) var(--gap-xl);
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--color-border-primary);
+  background-color: var(--color-danger-bg);
+  color: var(--color-text-secondary);
+  font-size: var(--font-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  margin-right: var(--gap-section);
+}
+
+.selectPlayerBtn {
+  composes: sidebarLink;
+  display: flex;
+  align-items: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
