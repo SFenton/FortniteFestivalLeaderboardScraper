@@ -24,6 +24,7 @@ import { useScoreFilter } from '../hooks/useScoreFilter';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useHeaderCollapse } from '../hooks/useHeaderCollapse';
 import { useScrollRestore } from '../hooks/useScrollRestore';
+import { useLoadPhase } from '../hooks/useLoadPhase';
 import { IS_IOS, IS_ANDROID, IS_PWA } from '../utils/platform';
 import { accuracyColor } from '@festival/core';
 
@@ -55,7 +56,7 @@ export default function PlayerHistoryPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const saveScroll = useScrollRestore(scrollRef, `history:${songId}:${instKey}`, navType);
   const [headerCollapsed, updateHeaderCollapse] = useHeaderCollapse(scrollRef, { disabled: hasFab, forcedValue: hasFab });
-  const [loadPhase, setLoadPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>('loading');
+  const { phase: loadPhase } = useLoadPhase(!loading && !error);
   const updateScrollMask = useScrollMask(scrollRef, [loadPhase, history.length]);
 
   // Sort state
@@ -120,18 +121,6 @@ export default function PlayerHistoryPage() {
       });
     return () => { cancelled = true; };
   }, [player, songId, instKey]);
-
-  useEffect(() => {
-    if (loading || error) {
-      setLoadPhase('loading');
-      return;
-    }
-    setLoadPhase('spinnerOut');
-    const id = setTimeout(() => {
-      setLoadPhase('contentIn');
-    }, 500);
-    return () => clearTimeout(id);
-  }, [loading, error]);
 
   if (!songId || !instrument) {
     return <div style={styles.center}>{t('history.notFound')}</div>;

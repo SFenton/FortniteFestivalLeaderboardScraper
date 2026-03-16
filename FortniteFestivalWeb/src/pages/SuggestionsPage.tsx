@@ -27,6 +27,7 @@ import { useIsMobile, useIsMobileChrome } from '../hooks/useIsMobile';
 import { useFabSearch } from '../contexts/FabSearchContext';
 import { useScrollFade } from '../hooks/useScrollFade';
 import { useStaggerRush } from '../hooks/useStaggerRush';
+import { useLoadPhase } from '../hooks/useLoadPhase';
 import FadeInDiv from '../components/FadeInDiv';
 import type { InstrumentKey as ServerInstrumentKey } from '../models';
 
@@ -283,20 +284,7 @@ export default function SuggestionsPage({ accountId }: Props) {
   const skipAnimRef = useRef(_suggestionsHasRendered);
   const skipAnim = skipAnimRef.current;
   _suggestionsHasRendered = true;
-  const [phase, setPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>(
-    (skipAnim || dataReady) ? 'contentIn' : 'loading',
-  );
-
-  useEffect(() => {
-    if (!dataReady || phase !== 'loading') return;
-    setPhase('spinnerOut');
-  }, [dataReady, phase]);
-
-  useEffect(() => {
-    if (phase !== 'spinnerOut') return;
-    const id = setTimeout(() => setPhase('contentIn'), 500);
-    return () => clearTimeout(id);
-  }, [phase]);
+  const { phase } = useLoadPhase(dataReady, { skipAnimation: skipAnim });
 
   // Per-card scroll fade
   const updateCardFade = useScrollFade(scrollRef, listRef, [phase, visibleCategories]);

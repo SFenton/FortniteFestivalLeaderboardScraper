@@ -24,6 +24,7 @@ import { useIsMobile } from '../hooks/useIsMobile';
 import { IoFlash } from 'react-icons/io5';
 import { useFabSearch } from '../contexts/FabSearchContext';
 import { useScoreFilter } from '../hooks/useScoreFilter';
+import { useLoadPhase } from '../hooks/useLoadPhase';
 import PathsModal from '../components/PathsModal';
 import { accuracyColor } from '@festival/core';
 
@@ -226,7 +227,7 @@ export default function SongDetailPage() {
   // Frozen at mount time — the cache getting written mid-lifecycle should not flip this.
   const skipAnimRef = useRef(allCached && navType !== 'PUSH');
   const skipAnim = skipAnimRef.current;
-  const [phase, setPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>(allCached ? 'contentIn' : 'loading');
+  const { phase } = useLoadPhase(allReady, { skipAnimation: allCached });
   const hasFab = useIsMobile();
   const [headerCollapsed, setHeaderCollapsed] = useState(hasFab || (skipAnim && (cached?.scrollTop ?? 0) > 40));
   const updateScrollMask = useScrollMask(scrollRef, [phase, activeInstruments.length]);
@@ -252,18 +253,6 @@ export default function SongDetailPage() {
     hasScrolled.current = false;
     userScrolledRef.current = false;
   }, [songId, defaultInstrument]);
-
-  useEffect(() => {
-    if (!allReady) return;
-    if (phase === 'contentIn') return;
-    setPhase('spinnerOut');
-    const id = setTimeout(() => {
-      setPhase('contentIn');
-    }, 500);
-    return () => {
-      clearTimeout(id);
-    };
-  }, [allReady, phase]);
 
   // Update cache when data is ready
   useEffect(() => {
