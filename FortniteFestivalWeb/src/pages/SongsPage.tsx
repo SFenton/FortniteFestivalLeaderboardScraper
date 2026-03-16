@@ -1,8 +1,7 @@
-import { useState, useMemo, useEffect, useRef, useCallback, Fragment, memo, type CSSProperties } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoSwapVerticalSharp, IoFunnel, IoSearch } from 'react-icons/io5';
-import { Link, useLocation, useNavigationType } from 'react-router-dom';
-import { formatPercentileBucket } from '@festival/core';
+import { useLocation, useNavigationType } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { staggerDelay, estimateVisibleCount } from '../utils/stagger';
 import { useFestival } from '../contexts/FestivalContext';
@@ -15,15 +14,11 @@ import { useStaggerRush } from '../hooks/useStaggerRush';
 import { useScrollRestore, clearScrollCache } from '../hooks/useScrollRestore';
 import { useFilteredSongs } from '../hooks/useFilteredSongs';
 import { useModalState } from '../hooks/useModalState';
-import type { Song, PlayerScore, InstrumentKey } from '../models';
-import { Colors, Font, Gap, Radius, Layout, Size, MaxWidth, goldFill, goldOutline, goldOutlineSkew, frostedCard, frostedCardLight } from '@festival/theme';
+import type { PlayerScore, InstrumentKey } from '../models';
+import { Colors, Font, Gap } from '@festival/theme';
 import s from './SongsPage.module.css';
-import { InstrumentIcon, getInstrumentStatusVisual } from '../components/InstrumentIcons';
-import SeasonPill from '../components/SeasonPill';
-import AlbumArt from '../components/AlbumArt';
-import DifficultyBars from '../components/songs/DifficultyBars';
-import MiniStars from '../components/songs/MiniStars';
-import { SongRow, compareByMode } from '../components/songs/SongRow';
+import { InstrumentIcon } from '../components/InstrumentIcons';
+import { SongRow } from '../components/songs/SongRow';
 import { visibleInstruments } from '../contexts/SettingsContext';
 import SortModal from '../components/modals/SortModal';
 import type { SortDraft } from '../components/modals/SortModal';
@@ -339,10 +334,10 @@ export default function SongsPage() {
         <div className={s.container}>
           <div style={{ visibility: (toolbarShownRef.current || loadPhase === 'contentIn') ? 'visible' : 'hidden' } as CSSProperties}>
           <div className={s.toolbar}>
-            <div style={s.searchWrap} onClick={e => { const input = e.currentTarget.querySelector('input'); input?.focus(); }}>
+            <div className={s.searchWrap} onClick={e => { const input = e.currentTarget.querySelector('input'); input?.focus(); }}>
               <IoSearch size={16} style={{ color: Colors.textTertiary, flexShrink: 0 }} />
               <input
-                style={s.searchInput}
+                className={s.searchInput}
                 placeholder={t('songs.searchPlaceholder')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -373,24 +368,24 @@ export default function SongsPage() {
       <div ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
         <div className={s.container} style={{ paddingTop: isMobile ? Gap.sm : Gap.md }}>
         {isSyncing && (
-          <div style={s.syncBanner}>
-            <div style={s.syncSpinner} />
+          <div className={s.syncBanner}>
+            <div className={s.syncSpinner} />
             <div style={{ flex: 1 }}>
-              <div style={s.syncTitle}>
+              <div className={s.syncTitle}>
                 {syncPhase === 'backfill' ? 'Syncing Data' : 'Building Score History'}
               </div>
-              <div style={s.syncSubtitle}>
+              <div className={s.syncSubtitle}>
                 {syncPhase === 'backfill'
                   ? 'Fetching scores from leaderboards…'
                   : 'Reconstructing score history across seasons…'}
               </div>
               {syncPhase === 'backfill' && backfillProgress > 0 && (
                 <div style={{ marginTop: Gap.md }}>
-                  <div style={s.syncProgressLabel}>
+                  <div className={s.syncProgressLabel}>
                     <span>{t('player.syncingScores')}</span>
                     <span>{(backfillProgress * 100).toFixed(1)}%</span>
                   </div>
-                  <div style={s.syncProgressOuter}>
+                  <div className={s.syncProgressOuter}>
                     <div
                       style={{
                         ...s.syncProgressInner,
@@ -403,21 +398,21 @@ export default function SongsPage() {
               {syncPhase === 'history' && (
                 <>
                   <div style={{ marginTop: Gap.md }}>
-                    <div style={s.syncProgressLabel}>
+                    <div className={s.syncProgressLabel}>
                       <span>{t('player.syncingScores')}</span>
                       <span>100.0%</span>
                     </div>
-                    <div style={s.syncProgressOuter}>
+                    <div className={s.syncProgressOuter}>
                       <div className={s.syncProgressInner} style={{ width: '100%' }} />
                     </div>
                   </div>
                   {historyProgress > 0 && (
                     <div style={{ marginTop: Gap.sm }}>
-                      <div style={s.syncProgressLabel}>
+                      <div className={s.syncProgressLabel}>
                         <span>{t('player.buildingHistory')}</span>
                         <span>{(historyProgress * 100).toFixed(1)}%</span>
                       </div>
-                      <div style={s.syncProgressOuter}>
+                      <div className={s.syncProgressOuter}>
                         <div
                           style={{
                             ...s.syncProgressInner,
@@ -551,7 +546,7 @@ function ToolbarIconButton({ icon, label, onClick, active, dot }: {
     >
       {icon}
       <span style={{ fontSize: Font.sm, fontWeight: 600, whiteSpace: 'nowrap' }}>{label}</span>
-      {dot && <span style={s.filterDot} />}
+      {dot && <span className={s.filterDot} />}
     </button>
   );
 }

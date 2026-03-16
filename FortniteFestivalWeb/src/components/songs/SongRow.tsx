@@ -27,7 +27,7 @@ const INSTRUMENT_DIFFICULTY_KEY: Record<string, keyof SongDifficulty> = {
 function renderMetadataElement(
   key: string,
   score: PlayerScore,
-  allKeys: string[],
+  _allKeys: string[],
   songIntensityRaw?: number,
 ): React.ReactNode | null {
   const rawAcc = score.accuracy ?? 0;

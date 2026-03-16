@@ -1,5 +1,4 @@
 import { useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import type { TrackedPlayer } from '../hooks/useTrackedPlayer';
 import { useAccountSearch } from '../hooks/useAccountSearch';
@@ -13,7 +12,6 @@ type Props = {
 };
 
 export default function PlayerSearch({ player, onSelect, onClear, isSyncing }: Props) {
-  const { t } = useTranslation();
   if (player) {
     return (
       <div className={css.selectedContainer}>

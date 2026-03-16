@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useParams, Link, useNavigate, useNavigationType, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useNavigationType, useLocation } from 'react-router-dom';
 import { IoPerson } from 'react-icons/io5';
 import { formatPercentileBucket } from '@festival/core';
 import {
@@ -24,7 +24,7 @@ import {
   type PlayerScore,
   type Song,
 } from '../models';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldFill, goldOutline, goldOutlineSkew, frostedCard } from '@festival/theme';
+import { Colors, Font, Gap, Radius, Size, frostedCard } from '@festival/theme';
 import s from './PlayerPage.module.css';
 import { InstrumentIcon } from '../components/InstrumentIcons';
 import SyncBanner from '../components/player/SyncBanner';
@@ -473,7 +473,7 @@ function PlayerContent({
         withProfileSwitch(() => navigate(`/songs/${s.songId}?instrument=${encodeURIComponent(inst)}`, { state: { backTo: location.pathname, autoScroll: true } }));
       };
       return (
-        <a key={s.songId} href={`#/songs/${s.songId}?instrument=${encodeURIComponent(inst)}`} onClick={handleClick} style={s.songListRow}>
+        <a key={s.songId} href={`#/songs/${s.songId}?instrument=${encodeURIComponent(inst)}`} onClick={handleClick} className={s.songListRow}>
           <AlbumArt src={song?.albumArt} size={Size.thumb} />
           <div className={s.topSongText}>
             <span className={s.topSongName}>{song?.title ?? s.songId.slice(0, 8)}</span>

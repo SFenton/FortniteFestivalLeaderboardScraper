@@ -16,7 +16,7 @@ import { InstrumentIcon } from '../components/InstrumentIcons';
 import SeasonPill from '../components/SeasonPill';
 import PlayerScoreSortModal from '../components/modals/PlayerScoreSortModal';
 import type { PlayerScoreSortMode, PlayerScoreSortDraft } from '../components/modals/PlayerScoreSortModal';
-import { Colors, Font, Gap, Radius, Layout, MaxWidth, Size, goldOutlineSkew, frostedCard } from '@festival/theme';
+import { Font, Gap, Radius, Layout } from '@festival/theme';
 import s from './PlayerHistoryPage.module.css';
 import { staggerDelay, estimateVisibleCount } from '../utils/stagger';
 import { useScrollMask } from '../hooks/useScrollMask';

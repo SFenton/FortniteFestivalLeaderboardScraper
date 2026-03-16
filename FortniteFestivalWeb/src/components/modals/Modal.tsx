@@ -220,7 +220,7 @@ export function ReorderList({ items, onReorder }: { items: { key: string; label:
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
       <SortableContext items={items.map(i => i.key)} strategy={verticalListSortingStrategy}>
-        <div style={reorderStyles.list}>
+        <div className={css.reorderList}>
           {items.map((item) => (
             <SortableRow key={item.key} item={item} />
           ))}
