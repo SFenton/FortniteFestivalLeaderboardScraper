@@ -89,7 +89,7 @@ export default tseslint.config(
 
   // ── Test files — relaxed rules ──
   {
-    files: ['src/test/**/*.{ts,tsx}'],
+    files: ['__test__/**/*.{ts,tsx}'],
     rules: {
       'no-magic-numbers': 'off',
       '@typescript-eslint/no-explicit-any': 'off',
