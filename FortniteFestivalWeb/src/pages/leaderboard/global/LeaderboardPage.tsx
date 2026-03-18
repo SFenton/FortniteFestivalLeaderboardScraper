@@ -13,6 +13,7 @@ import SeasonPill from '../../../components/songs/metadata/SeasonPill';
 import AccuracyDisplay from '../../../components/songs/metadata/AccuracyDisplay';
 import { Gap, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, QUERY_SHOW_STARS } from '@festival/theme';
 import ArcSpinner from '../../../components/common/ArcSpinner';
+import { PaginationButton } from '../../../components/common/PaginationButton';
 import s from './LeaderboardPage.module.css';
 import { staggerDelay } from '@festival/ui-utils';
 import { useScrollMask } from '../../../hooks/ui/useScrollMask';
@@ -374,41 +375,26 @@ export default function LeaderboardPage() {
 
         {/* v8 ignore start — pagination UI tested by LeaderboardPage integration tests */}
         {hasLoadedOnce.current && !error && totalPages > 1 && (() => {
+          const paginationClass = isMobile
+            ? (hasFab ? s.paginationMobileFab : s.paginationMobile)
+            : (hasFab ? s.paginationFab : s.pagination);
           return (
-        <div
-          className={s.pagination} style={{ ...(isMobile ? { justifyContent: 'space-between' as const, gap: 0 } : {}), ...(hasFab ? { paddingBottom: 96 } : {}) }}
-        >
-          <button
-            className={page === 0 ? s.pageButtonDisabled : s.pageButton}
-            disabled={page === 0}
-            onClick={() => void fetchPage(0)}
-          >
-            Â« First
-          </button>
-          <button
-            className={page === 0 ? s.pageButtonDisabled : s.pageButton}
-            disabled={page === 0}
-            onClick={() => void fetchPage(page - 1)}
-          >
-            â€¹ Prev
-          </button>
+        <div className={paginationClass}>
+          <PaginationButton disabled={page === 0} onClick={() => void fetchPage(0)}>
+            {t('leaderboard.first')}
+          </PaginationButton>
+          <PaginationButton disabled={page === 0} onClick={() => void fetchPage(page - 1)}>
+            {t('leaderboard.prev')}
+          </PaginationButton>
           <span className={s.pageInfo}>
             <span className={s.pageInfoBadge}>{page + 1} / {totalPages}</span>
           </span>
-          <button
-            className={page >= totalPages - 1 ? s.pageButtonDisabled : s.pageButton}
-            disabled={page >= totalPages - 1}
-            onClick={() => void fetchPage(page + 1)}
-          >
-            Next â€º
-          </button>
-          <button
-            className={page >= totalPages - 1 ? s.pageButtonDisabled : s.pageButton}
-            disabled={page >= totalPages - 1}
-            onClick={() => void fetchPage(totalPages - 1)}
-          >
-            Last Â»
-          </button>
+          <PaginationButton disabled={page >= totalPages - 1} onClick={() => void fetchPage(page + 1)}>
+            {t('leaderboard.next')}
+          </PaginationButton>
+          <PaginationButton disabled={page >= totalPages - 1} onClick={() => void fetchPage(totalPages - 1)}>
+            {t('leaderboard.last')}
+          </PaginationButton>
         </div>
           );
         })()}
