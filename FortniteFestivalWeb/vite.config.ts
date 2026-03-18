@@ -29,13 +29,13 @@ export default defineConfig(({ mode }) => {
     test: {
       environment: 'jsdom',
       globals: true,
-      setupFiles: ['./src/test/setup.ts'],
+      setupFiles: ['./__test__/setup.ts'],
       coverage: {
         provider: 'v8',
         reporter: ['text', 'json', 'lcov'],
         include: ['src/**/*.{ts,tsx}'],
         exclude: [
-          'src/test/**',
+          '__test__/**',
           'src/vite-env.d.ts',
           'src/main.tsx',
           'src/stubs/**',
