@@ -5,8 +5,8 @@ import {
   groupByInstrument,
   formatClamped,
   formatClamped2,
-} from '../components/player/playerStats';
-import type { PlayerScore } from '../models';
+} from '../pages/player/helpers/playerStats';
+import type { PlayerScore } from '@festival/core/api/serverTypes';
 
 const makeScore = (overrides: Partial<PlayerScore> = {}): PlayerScore => ({
   songId: 'song-1',

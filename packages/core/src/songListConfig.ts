@@ -230,7 +230,7 @@ export const reorderPIOForVisibilityChange = (
   // find the last preceding instrument that is visible and exists in `without`.
   let insertAfter = -1;
   for (let i = defaultIndex - 1; i >= 0; i--) {
-    const pred = defaults[i];
+    const pred = defaults[i]!;
     // Skip predecessors that are themselves hidden
     if (!showSettings[showSettingKeyForInstrument(pred)]) continue;
     const idx = without.indexOf(pred);

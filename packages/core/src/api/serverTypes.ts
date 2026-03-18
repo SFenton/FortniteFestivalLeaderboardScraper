@@ -30,6 +30,15 @@ export const SERVER_INSTRUMENT_LABELS: Record<ServerInstrumentKey, string> = {
   Solo_PeripheralBass: 'Pro Bass',
 };
 
+/** Look up the display label for a server instrument key. */
+export function serverInstrumentLabel(key: ServerInstrumentKey): string {
+  return SERVER_INSTRUMENT_LABELS[key] ?? key;
+}
+
+// Convenience aliases used by web layer
+export const INSTRUMENT_KEYS = SERVER_INSTRUMENT_KEYS;
+export const INSTRUMENT_LABELS = SERVER_INSTRUMENT_LABELS;
+
 export type SongDifficulty = {
   guitar?: number;
   bass?: number;

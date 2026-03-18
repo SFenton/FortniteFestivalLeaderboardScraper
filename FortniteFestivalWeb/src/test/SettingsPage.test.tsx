@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SettingsProvider } from '../contexts/SettingsContext';
-import SettingsPage from '../pages/SettingsPage';
+import SettingsPage from '../pages/settings/SettingsPage';
 
 beforeEach(() => {
   localStorage.clear();
@@ -49,7 +49,7 @@ describe('SettingsPage', () => {
       dispatchEvent: vi.fn(),
     }));
     renderSettings();
-    expect(screen.getByRole('heading', { name: 'Settings' })).toBeDefined();
+    expect(screen.getByText('App Settings')).toBeDefined();
   });
 
   it('renders App Settings section', () => {
@@ -155,6 +155,10 @@ describe('SettingsPage', () => {
 
     const resetBtn = screen.getByText('Reset All Settings');
     fireEvent.click(resetBtn);
+
+    // ConfirmAlert dialog appears — click Yes
+    const yesBtn = screen.getByText('Yes');
+    fireEvent.click(yesBtn);
 
     const stored = JSON.parse(localStorage.getItem('fst:appSettings')!);
     expect(stored.showLead).toBe(true);

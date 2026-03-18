@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useScrollRestore, clearScrollCache } from '../hooks/useScrollRestore';
+import { useScrollRestore, clearScrollCache } from '../hooks/ui/useScrollRestore';
 
 function createMockScrollEl(initial = 0) {
   return {

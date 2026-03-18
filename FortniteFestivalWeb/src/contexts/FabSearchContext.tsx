@@ -77,3 +77,8 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
 export function useFabSearch() {
   return useContext(FabSearchContext);
 }
+
+export function usePlayerPageSelect() {
+  const { playerPageSelect, registerPlayerPageSelect } = useContext(FabSearchContext);
+  return { playerPageSelect, registerPlayerPageSelect };
+}

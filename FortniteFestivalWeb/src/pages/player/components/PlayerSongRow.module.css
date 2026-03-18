@@ -1,0 +1,42 @@
+/* Styles for PlayerSongRow — song row card + percentile badges. */
+
+.songListRow {
+  composes: frostedCard from '../../../styles/shared.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  padding: 0 var(--gap-xl);
+  height: var(--size-3xl);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: inherit;
+  transition: background-color 0.15s;
+}
+
+.topSongText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.topSongName {
+  font-size: var(--font-md);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topSongArtist {
+  font-size: var(--font-sm);
+  color: var(--color-text-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topSongRight {
+  text-align: right;
+  flex-shrink: 0;
+}

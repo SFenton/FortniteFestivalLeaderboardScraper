@@ -4,7 +4,6 @@
  * These complement `isInstrumentVisible` / `InstrumentShowSettings` already
  * exported from `songListConfig.ts`.
  */
-import type {InstrumentKey} from './instruments';
 import type {InstrumentShowSettings} from './songListConfig';
 import {isInstrumentVisible} from './songListConfig';
 import type {SuggestionCategory} from './suggestions/types';

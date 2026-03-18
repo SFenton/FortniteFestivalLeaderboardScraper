@@ -1,0 +1,35 @@
+/* Styles for PlayerHistoryEntry — single row in the score history table. */
+
+.colName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seasonScoreGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-md);
+  flex-shrink: 0;
+}
+
+.colScore {
+  flex-shrink: 0;
+  text-align: right;
+  font-weight: var(--weight-semibold);
+  font-size: var(--font-lg);
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.colAcc {
+  width: var(--size-3xl);
+  flex-shrink: 0;
+  text-align: center;
+  font-weight: var(--weight-semibold);
+  font-size: var(--font-lg);
+  color: var(--color-accent-blue-bright);
+  font-variant-numeric: tabular-nums;
+}

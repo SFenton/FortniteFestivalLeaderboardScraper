@@ -1,0 +1,54 @@
+﻿/* Player page layout — used by PlayerPage.tsx and PlayerContent.tsx. */
+
+.scrollArea {
+  overflow-x: hidden;
+}
+
+.container {
+  max-width: var(--max-width-card);
+  margin: 0 auto;
+  padding: var(--layout-padding-top) var(--layout-padding-h);
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.playerNameBar {
+  max-width: var(--max-width-card);
+  margin: 0 auto;
+  width: 100%;
+  padding: var(--gap-lg) var(--layout-padding-h) 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+  min-height: 58px;
+}
+
+.playerName {
+  font-size: var(--font-2xl);
+  font-weight: var(--weight-bold);
+  margin: 0;
+}
+
+.gridList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--gap-md);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.gridFullWidth {
+  grid-column: 1 / -1;
+}
+
+.center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+}
+
+.arcSpinner {
+  composes: arcSpinner from '../../pages/Page.module.css';
+}

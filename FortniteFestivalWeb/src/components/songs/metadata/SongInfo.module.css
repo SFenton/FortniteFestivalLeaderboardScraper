@@ -1,0 +1,33 @@
+/* Shared song info block: album art + title + artist · year */
+
+.wrapper {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  min-width: 0;
+  flex: 1;
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-xs);
+  min-width: 0;
+  flex: 1;
+}
+
+.title {
+  font-size: var(--font-md);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.artist {
+  font-size: var(--font-sm);
+  color: var(--color-text-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

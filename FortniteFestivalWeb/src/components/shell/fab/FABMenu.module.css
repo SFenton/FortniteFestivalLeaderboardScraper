@@ -1,0 +1,45 @@
+/* Styles for FABMenu — the popup actions menu above the FAB button. */
+
+.menu {
+  position: absolute;
+  bottom: 64px;
+  right: 0;
+  z-index: 1002;
+  pointer-events: auto;
+  background-color: var(--color-bg-card);
+  border-radius: var(--radius-sm);
+  padding: var(--gap-sm) 0;
+  min-width: 200px;
+  white-space: nowrap;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  transform-origin: bottom right;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  width: 100%;
+  padding: var(--gap-xl) var(--gap-section);
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: var(--font-md);
+  cursor: pointer;
+  text-align: left;
+}
+
+.itemIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+}
+
+.divider {
+  height: 1px;
+  background-color: var(--color-glass-border);
+  margin: var(--gap-sm) 0;
+}

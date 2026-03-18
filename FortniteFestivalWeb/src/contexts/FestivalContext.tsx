@@ -1,14 +1,14 @@
 import {
   createContext,
   useContext,
-  useState,
-  useEffect,
   useCallback,
   useMemo,
   type ReactNode,
 } from 'react';
-import type { Song } from '../models';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import type { ServerSong as Song } from '@festival/core/api/serverTypes';
 import { api } from '../api/client';
+import { queryKeys } from '../api/queryKeys';
 
 type FestivalState = {
   songs: Song[];
@@ -29,33 +29,26 @@ type FestivalContextValue = {
 const FestivalContext = createContext<FestivalContextValue | null>(null);
 
 export function FestivalProvider({ children }: { children: ReactNode }) {
-  const [songs, setSongs] = useState<Song[]>([]);
-  const [currentSeason, setCurrentSeason] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const qc = useQueryClient();
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: queryKeys.songs(),
+    queryFn: () => api.getSongs(),
+  });
 
   const refresh = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const res = await api.getSongs();
-      setSongs(res.songs);
-      setCurrentSeason(res.currentSeason ?? 0);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load songs');
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    await qc.invalidateQueries({ queryKey: queryKeys.songs() });
+  }, [qc]);
 
   const value = useMemo<FestivalContextValue>(() => ({
-    state: { songs, currentSeason, isLoading, error },
+    state: {
+      songs: data?.songs ?? [],
+      currentSeason: data?.currentSeason ?? 0,
+      isLoading,
+      error: error ? (error instanceof Error ? error.message : 'Failed to load songs') : null,
+    },
     actions: { refresh },
-  }), [songs, currentSeason, isLoading, error, refresh]);
+  }), [data, isLoading, error, refresh]);
 
   return (
     <FestivalContext.Provider value={value}>

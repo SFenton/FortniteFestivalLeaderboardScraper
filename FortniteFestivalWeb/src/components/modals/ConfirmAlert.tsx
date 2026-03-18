@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import css from './ConfirmAlert.module.css';
 
 const TRANSITION_MS = 250;
@@ -14,6 +15,7 @@ export default function ConfirmAlert({
   onNo: () => void;
   onYes: () => void;
 }) {
+  const { t } = useTranslation();
   const [animIn, setAnimIn] = useState(false);
 
   useLayoutEffect(() => {
@@ -45,8 +47,8 @@ export default function ConfirmAlert({
         <div className={css.title} style={{ opacity: 0, animation: animIn ? 'fadeInUp 300ms ease-out 100ms forwards' : 'none' }}>{title}</div>
         <div className={css.message} style={{ opacity: 0, animation: animIn ? 'fadeInUp 300ms ease-out 200ms forwards' : 'none' }}>{message}</div>
         <div className={css.buttons} style={{ opacity: 0, animation: animIn ? 'fadeInUp 300ms ease-out 300ms forwards' : 'none' }}>
-          <button className={css.btnNo} onClick={onNo}>No</button>
-          <button className={css.btnYes} onClick={onYes}>Yes</button>
+          <button className={css.btnNo} onClick={onNo}>{t('common.no')}</button>
+          <button className={css.btnYes} onClick={onYes}>{t('common.yes')}</button>
         </div>
       </div>
     </div>

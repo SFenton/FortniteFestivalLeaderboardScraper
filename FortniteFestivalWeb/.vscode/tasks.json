@@ -1,0 +1,10 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "run page tests",
+			"type": "shell",
+			"command": "npx vitest run src/test/pages/"
+		}
+	]
+}

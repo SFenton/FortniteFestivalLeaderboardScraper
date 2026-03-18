@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useMediaQuery } from '../hooks/useMediaQuery';
+import { useMediaQuery } from '../hooks/ui/useMediaQuery';
 
 describe('useMediaQuery', () => {
   let originalMatchMedia: typeof window.matchMedia;

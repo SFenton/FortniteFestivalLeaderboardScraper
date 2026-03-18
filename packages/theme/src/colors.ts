@@ -96,6 +96,10 @@ export const Colors = {
   purplePlaceholder: 'rgba(122,43,149,0.3)',
   cardOverlay: 'rgba(34,48,71,0.6)',
   purpleTabActive: '#7A2B95',
+
+  // Profile
+  profileInactive: '#D0D5DD',
+  profileInactiveText: '#4A5568',
 } as const;
 
 export type ColorKey = keyof typeof Colors;

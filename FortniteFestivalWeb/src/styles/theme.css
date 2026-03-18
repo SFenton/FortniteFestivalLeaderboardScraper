@@ -83,12 +83,29 @@
   --font-lg: 16px;
   --font-xl: 20px;
   --font-title: 22px;
+  --font-2xl: 24px;
+  --font-display: 28px;
+  --line-height-tight: 1.2;
 
   /* ── Size ── */
+  --size-xs: 20px;
+  --size-sm: 24px;
+  --size-md: 28px;
+  --size-lg: 40px;
+  --size-xl: 48px;
+  --size-3xl: 64px;
+  --size-4xl: 80px;
+  --size-5xl: 120px;
   --size-thumb: 44px;
   --size-icon-lg: 40px;
   --size-icon-md: 28px;
   --size-icon-sm: 24px;
+  --album-size: 100px;
+
+  /* ── Font Weights ── */
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --weight-heavy: 800;
 
   /* ── Layout ── */
   --layout-padding-h: 20px;
@@ -96,4 +113,26 @@
   --max-width-card: 1080px;
   --max-width-grid: 2170px;
   --max-width-narrow: 600px;
+
+  /* ── Duration ── */
+  --duration-quick: 150ms;
+  --duration-normal: 300ms;
+  --duration-fade: 400ms;
+  --duration-confirm: 200ms;
+  --duration-bg: 300ms;
+
+  /* ── Z-Index ── */
+  --z-background: -1;
+  --z-base: 1;
+  --z-dropdown: 10;
+  --z-popover: 100;
+  --z-modal-overlay: 1000;
+
+  /* ── Opacity ── */
+  --opacity-muted: 0.5;
+
+  /* ── Colors (additional) ── */
+  --color-bg-card-purple: #2D1B3A;
+  --color-accent-purple-soft: rgba(124, 58, 237, 0.4);
+  --color-purple-border-subtle: rgba(124, 58, 237, 0.2);
 }

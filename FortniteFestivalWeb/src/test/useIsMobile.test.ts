@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useIsMobile } from '../hooks/useIsMobile';
+import { useIsMobile } from '../hooks/ui/useIsMobile';
 
 type ChangeListener = (e: { matches: boolean }) => void;
 

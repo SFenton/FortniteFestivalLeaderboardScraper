@@ -2,22 +2,26 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: var(--gap-md) var(--gap-xl);
-  min-height: 56px;
+  padding: var(--gap-xl) var(--gap-md);
+  min-width: 0;
+  overflow: hidden;
 }
 
 .value {
   font-size: var(--font-xl);
   font-weight: 700;
+  color: var(--color-accent-blue-bright);
+  margin-bottom: var(--gap-xs);
+  word-break: break-word;
+  text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
 .label {
   font-size: var(--font-xs);
-  color: var(--color-text-muted);
-  margin-top: var(--gap-xs);
-  text-align: center;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .clickable {
@@ -27,8 +31,8 @@
 
 .chevron {
   position: absolute;
-  right: 6px;
+  right: var(--gap-xl);
   top: 50%;
   transform: translateY(-50%);
-  color: var(--color-text-disabled);
+  color: var(--color-text-primary);
 }

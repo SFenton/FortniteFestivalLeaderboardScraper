@@ -5,7 +5,7 @@
 import { ScoreTracker } from '@festival/core/models';
 import type { Song as CoreSong, LeaderboardData } from '@festival/core/models';
 import type { InstrumentKey } from '@festival/core/instruments';
-import type { Song as ServerSong, PlayerScore, InstrumentKey as ServerInstrumentKey } from '../models';
+import type { ServerSong, PlayerScore, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 
 const SERVER_TO_CORE_INSTRUMENT: Record<ServerInstrumentKey, InstrumentKey> = {
   Solo_Guitar: 'guitar',

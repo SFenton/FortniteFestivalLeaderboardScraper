@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useAccountSearch } from '../hooks/useAccountSearch';
+import { useAccountSearch } from '../hooks/data/useAccountSearch';
 
 // Mock the API module
 vi.mock('../api/client', () => ({

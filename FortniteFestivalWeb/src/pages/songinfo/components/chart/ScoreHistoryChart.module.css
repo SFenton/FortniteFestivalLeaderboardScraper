@@ -1,0 +1,232 @@
+.wrapper {}
+
+.iconRow {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: var(--gap-lg);
+  padding-top: var(--gap-md);
+  padding-bottom: var(--gap-xs);
+  width: 100%;
+}
+
+.iconButton {
+  background: none;
+  border: none;
+  border-radius: 50%;
+  width: var(--size-3xl);
+  height: var(--size-3xl);
+  padding: 0;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.5;
+  position: relative;
+  overflow: hidden;
+}
+
+.iconButtonActive {
+  composes: iconButton;
+  background-color: var(--color-status-green);
+  opacity: 1;
+}
+
+.arrowButton {
+  background: none;
+  border: 1px solid var(--color-border-primary);
+  border-radius: 50%;
+  width: var(--size-lg);
+  height: var(--size-lg);
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  font-size: var(--font-display);
+  font-weight: var(--weight-bold);
+  line-height: var(--line-height-tight);
+  transition: all 0.15s ease;
+}
+
+.chartContainer {
+  composes: frostedCard from '../../../../styles/shared.module.css';
+  border-radius: var(--radius-lg);
+  padding: var(--gap-sm) var(--gap-xl) var(--gap-xl);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.placeholder {
+  color: var(--color-text-muted);
+  font-size: var(--font-md);
+  font-style: italic;
+  text-align: center;
+  padding: var(--gap-section) 0;
+  width: 100%;
+}
+
+.legend {
+  display: flex;
+  justify-content: center;
+  gap: var(--gap-xl);
+  font-size: var(--font-md);
+  color: #fff;
+  padding-top: 36px;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-sm);
+}
+
+.legendGradient {
+  display: inline-block;
+  width: var(--size-xs);
+  height: 12px;
+  border-radius: 2px;
+  background: linear-gradient(to right, rgb(220,40,40), rgb(46,204,113));
+}
+
+.legendGold {
+  display: inline-block;
+  width: var(--size-xs);
+  height: 12px;
+  border-radius: 2px;
+  background-color: var(--color-gold);
+}
+
+.chartHeader {
+  text-align: center;
+  margin-bottom: var(--gap-md);
+}
+
+.chartTitle {
+  color: #fff;
+  font-size: var(--font-title);
+  font-weight: var(--weight-bold);
+}
+
+.chartSubtitle {
+  color: var(--color-text-muted);
+  font-size: var(--font-lg);
+  margin-top: var(--gap-xs);
+}
+
+.scoreCard {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  height: var(--size-xl);
+  font-size: var(--font-md);
+  color: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.scoreCardDate {
+  flex: 1;
+  min-width: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-md);
+}
+
+.scoreCardMiddle {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  flex-shrink: 0;
+}
+
+.scoreCardScore {
+  flex-shrink: 0;
+  text-align: right;
+  font-weight: var(--weight-semibold);
+  font-size: var(--font-md);
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.scoreCardAcc {
+  width: 60px;
+  flex-shrink: 0;
+  text-align: center;
+  font-weight: var(--weight-semibold);
+  font-size: var(--font-md);
+  color: var(--color-accent-blue-bright);
+  font-variant-numeric: tabular-nums;
+}
+
+.scoreCardList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+}
+
+.scoreListCard {
+  composes: frostedCard from '../../../../styles/shared.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  padding: 0 var(--gap-xl);
+  height: var(--size-xl);
+  border-radius: var(--radius-md);
+  font-size: var(--font-md);
+  color: inherit;
+  transition: border-color 0.15s;
+}
+
+.scoreListCardActive {
+  composes: scoreListCard;
+  border-color: var(--color-accent-blue-bright);
+}
+
+.chartPagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: var(--gap-md);
+  padding-top: var(--gap-xl);
+  padding-bottom: var(--gap-md);
+}
+
+.chartPageButton {
+  background: none;
+  border: 1px solid var(--color-border-primary);
+  border-radius: 50%;
+  width: var(--size-lg);
+  height: var(--size-lg);
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  transition: all 0.15s ease;
+}
+
+.chartPageButtonDisabled {
+  composes: chartPageButton;
+  opacity: 0.3;
+  cursor: default;
+}
+
+.viewAllButton {
+  composes: frostedCard from '../../../../styles/shared.module.css';
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: var(--size-xl);
+  margin-top: var(--gap-sm);
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  font-size: var(--font-md);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: background-color 0.15s;
+}

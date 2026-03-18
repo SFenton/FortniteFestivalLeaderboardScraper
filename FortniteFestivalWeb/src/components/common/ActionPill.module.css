@@ -1,0 +1,43 @@
+/* ── Base pill layout ── */
+.pillBase {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  width: auto;
+  gap: var(--gap-md);
+  height: var(--size-xl);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+
+/* ── Action variant (sort/filter) ── */
+.pill {
+  composes: pillBase;
+  composes: frostedCard from '../../styles/shared.module.css';
+  padding-left: var(--gap-xl);
+  padding-right: var(--gap-xl);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-sm);
+}
+
+.pillActive {
+  composes: pillBase;
+  padding-left: var(--gap-xl);
+  padding-right: var(--gap-xl);
+  border: none;
+  background-color: var(--color-accent-blue);
+  background-image: none;
+  box-shadow: none;
+  color: #FFFFFF;
+  font-size: var(--font-sm);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--color-accent-blue-bright);
+}

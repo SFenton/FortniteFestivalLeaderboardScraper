@@ -1,0 +1,104 @@
+.page {
+  composes: pageShell from '../../styles/shared.module.css';
+  color: var(--color-text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+.header {
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.scrollArea {
+  composes: scrollContainer from '../../styles/shared.module.css';
+}
+
+.container {
+  composes: pageContent from '../../styles/shared.module.css';
+  padding-top: var(--layout-padding-top);
+  padding-bottom: var(--layout-padding-top);
+}
+
+.heading {
+  font-size: var(--font-title);
+  font-weight: 700;
+  margin: 0;
+}
+
+.cardColumn {
+  composes: flexCol from '../../styles/shared.module.css';
+  gap: var(--gap-section);
+}
+
+.card {
+  composes: frostedCard from '../../styles/shared.module.css';
+  border-radius: var(--radius-md);
+  padding: var(--layout-padding-top);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+}
+
+.sectionTitle {
+  font-size: var(--font-xl);
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.innerSectionTitle {
+  font-size: var(--font-md);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: var(--gap-sm);
+}
+
+.sectionHint {
+  font-size: var(--font-md);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  margin-bottom: var(--gap-md);
+}
+
+.resetButton {
+  composes: btnDanger from '../../styles/shared.module.css';
+  padding: var(--gap-md) var(--gap-xl);
+  font-size: var(--font-sm);
+  flex-shrink: 0;
+}
+
+.resetRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-xl);
+}
+
+.resetRowMobile {
+  composes: resetRow;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.resetButtonMobile {
+  composes: resetButton;
+  width: 100%;
+  text-align: center;
+  padding: var(--gap-xl);
+  font-size: var(--font-md);
+}
+
+.versionRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--gap-sm) 0;
+  font-size: var(--font-md);
+}
+
+.versionValue {
+  color: var(--color-text-secondary);
+}
+
+.fabSpacer {
+  composes: fabSpacer from '../../styles/shared.module.css';
+}

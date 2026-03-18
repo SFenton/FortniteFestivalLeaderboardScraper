@@ -1,0 +1,15 @@
+.button {
+  composes: frostedCard from '../../styles/shared.module.css';
+  border-radius: var(--radius-xs);
+  padding: var(--gap-md) var(--gap-xl);
+  font-size: var(--font-md);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.disabled {
+  composes: button;
+  opacity: var(--opacity-muted);
+  cursor: default;
+}
