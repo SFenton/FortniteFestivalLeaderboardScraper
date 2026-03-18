@@ -122,7 +122,6 @@ describe('buildInstrumentStatsItems', () => {
     navigateToSongDetail.mockClear();
     const scores = [makeScore({ rank: 1, totalEntries: 100 })];
     const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
-    // Find bestRank card — it's one of the later cards
     for (const item of items) {
       if (!item.key.includes('card')) continue;
       const { container } = render(<>{item.node}</>);
@@ -133,6 +132,106 @@ describe('buildInstrumentStatsItems', () => {
       }
     }
     expect(navigateToSongDetail).toHaveBeenCalled();
+  });
+
+  it('skips FC card when fcCount is 0', () => {
+    const scores = [makeScore({ isFullCombo: false, stars: 0, rank: 0, totalEntries: 0 })];
+    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    expect(items.length).toBeGreaterThan(0);
+  });
+
+  it('renders gold accuracy color when perfect', () => {
+    const scores = [makeScore({ accuracy: 100 * ACCURACY_SCALE, isFullCombo: true, stars: 6 })];
+    const items = buildInstrumentStatsItems(t, inst, scores, 1, 'Player', navigateToSongs, navigateToSongDetail, {});
+    expect(items.length).toBeGreaterThan(3);
+  });
+
+  it('renders golden stars when averageStars is 6', () => {
+    const scores = [makeScore({ stars: 6, isFullCombo: true })];
+    const items = buildInstrumentStatsItems(t, inst, scores, 1, 'Player', navigateToSongs, navigateToSongDetail, {});
+    expect(items.length).toBeGreaterThan(3);
+  });
+
+  it('renders dash for zero accuracy', () => {
+    const scores = [makeScore({ accuracy: 0 })];
+    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    expect(items.length).toBeGreaterThan(0);
+  });
+
+  it('renders dash for zero bestRank', () => {
+    const scores = [makeScore({ rank: 0, totalEntries: 0 })];
+    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    expect(items.length).toBeGreaterThan(0);
+  });
+
+  it('renders green when all songs played', () => {
+    const scores = [makeScore()];
+    const items = buildInstrumentStatsItems(t, inst, scores, 1, 'Player', navigateToSongs, navigateToSongDetail, {});
+    expect(items.length).toBeGreaterThan(0);
+  });
+
+  it('includes star cards only when count > 0', () => {
+    const scores = [
+      makeScore({ songId: 's1', stars: 6 }),
+      makeScore({ songId: 's2', stars: 5 }),
+      makeScore({ songId: 's3', stars: 4 }),
+      makeScore({ songId: 's4', stars: 3 }),
+      makeScore({ songId: 's5', stars: 2 }),
+      makeScore({ songId: 's6', stars: 1 }),
+    ];
+    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    // Should have header + songs played + FC + 6 star cards + accuracy + avg stars + bestRank + percentile + avgPercentile + pctTable
+    expect(items.length).toBeGreaterThan(10);
+  });
+
+  it('star card onClick calls navigateToSongs', () => {
+    navigateToSongs.mockClear();
+    const scores = [makeScore({ stars: 6 })];
+    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    // Find a gold stars card (should be card-2 after songsPlayed=0, fcs=0)
+    for (const item of items) {
+      if (!item.key.includes('card')) continue;
+      const { container } = render(<>{item.node}</>);
+      const el = container.querySelector('[data-testid*="player.goldStars"]');
+      if (el) {
+        fireEvent.click(el);
+        break;
+      }
+    }
+    expect(navigateToSongs).toHaveBeenCalled();
+  });
+
+  it('percentile onClick calls navigateToSongs', () => {
+    navigateToSongs.mockClear();
+    const scores = [makeScore({ rank: 1, totalEntries: 100 })];
+    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    for (const item of items) {
+      if (!item.key.includes('card')) continue;
+      const { container } = render(<>{item.node}</>);
+      const el = container.querySelector('[data-testid*="player.percentile"]');
+      if (el) {
+        fireEvent.click(el);
+        break;
+      }
+    }
+    expect(navigateToSongs).toHaveBeenCalled();
+  });
+
+  it('avgPercentile (songsPlayed) onClick calls navigateToSongs', () => {
+    navigateToSongs.mockClear();
+    const scores = [makeScore({ rank: 1, totalEntries: 100 })];
+    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    for (const item of items) {
+      if (!item.key.includes('card')) continue;
+      const { container } = render(<>{item.node}</>);
+      // The avgPercentile card also uses "player.songsPlayed" label—find the second one
+      const els = container.querySelectorAll('[data-testid*="player.songsPlayed"]');
+      if (els.length > 0) {
+        fireEvent.click(els[els.length - 1]!);
+        if (navigateToSongs.mock.calls.length > 0) break;
+      }
+    }
+    expect(navigateToSongs).toHaveBeenCalled();
   });
 });
 

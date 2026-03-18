@@ -173,4 +173,48 @@ describe('songSettings', () => {
       expect(loaded.sortMode).toBe('title');
     });
   });
+
+  describe('isFilterActive — all branch paths', () => {
+    it('returns true when hasScores has a true value', () => {
+      const f = { ...defaultSongFilters(), hasScores: { Solo_Guitar: true } };
+      expect(isFilterActive(f)).toBe(true);
+    });
+
+    it('returns true when hasFCs has a true value', () => {
+      const f = { ...defaultSongFilters(), hasFCs: { Solo_Bass: true } };
+      expect(isFilterActive(f)).toBe(true);
+    });
+
+    it('returns true when percentileFilter has a false value', () => {
+      const f = { ...defaultSongFilters(), percentileFilter: { 1: false } };
+      expect(isFilterActive(f)).toBe(true);
+    });
+
+    it('returns true when starsFilter has a false value', () => {
+      const f = { ...defaultSongFilters(), starsFilter: { 6: false } };
+      expect(isFilterActive(f)).toBe(true);
+    });
+
+    it('returns true when difficultyFilter has a false value', () => {
+      const f = { ...defaultSongFilters(), difficultyFilter: { 3: false } };
+      expect(isFilterActive(f)).toBe(true);
+    });
+
+    it('returns true when missingFCs has a true value', () => {
+      const f = { ...defaultSongFilters(), missingFCs: { Solo_Guitar: true } };
+      expect(isFilterActive(f)).toBe(true);
+    });
+
+    it('returns false when all filter records only have false/true defaults', () => {
+      const f = {
+        ...defaultSongFilters(),
+        hasScores: { Solo_Guitar: false },
+        hasFCs: { Solo_Bass: false },
+        percentileFilter: { 1: true },
+        starsFilter: { 6: true },
+        difficultyFilter: { 3: true },
+      };
+      expect(isFilterActive(f)).toBe(false);
+    });
+  });
 });
