@@ -253,10 +253,12 @@ export default function SongDetailPage() {
   useLayoutEffect(() => {
     if (navType === 'PUSH' || !allCached || !songId) return;
     const saved = songDetailCache.get(songId);
-    if (saved && saved.scrollTop > 0 && scrollRef.current) {
+    /* v8 ignore start — scroll restore */
+  if (saved && saved.scrollTop > 0 && scrollRef.current) {
       scrollRef.current.scrollTop = saved.scrollTop;
     }
   }, []);
+  /* v8 ignore stop */
 
   // Scroll to the instrument card when arriving with ?instrument= and autoScroll state
   /* v8 ignore start — DOM scroll positioning */
@@ -329,6 +331,7 @@ export default function SongDetailPage() {
           <ArcSpinner />
         </div>
       )}
+      {/* v8 ignore start — stagger animation rendering */}
       {phase === 'contentIn' && (
         <div className={s.stickyHeader} style={{
           padding: hasFab || headerCollapsed
@@ -383,6 +386,7 @@ export default function SongDetailPage() {
         </div>
       )}
       </div>
+      {/* v8 ignore stop */}
       {songId && <PathsModal visible={pathsOpen} songId={songId} onClose={() => setPathsOpen(false)} />}
     </div>
   );

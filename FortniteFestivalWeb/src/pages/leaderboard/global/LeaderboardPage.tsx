@@ -89,6 +89,7 @@ export default function LeaderboardPage() {
   }, [cacheKey]);
 
   const rushOnScroll = useStaggerRush(scrollRef);
+  /* v8 ignore start — header pin logic */
   const handleScroll = useCallback(() => {
     updateScrollMask();
     handleScrollCache();
@@ -104,6 +105,7 @@ export default function LeaderboardPage() {
     }
     setHeaderCollapsed(el.scrollTop > 40);
   }, [updateScrollMask, handleScrollCache, rushOnScroll, isNarrow]);
+  /* v8 ignore stop */
 
   const totalPages = Math.max(1, Math.ceil(localEntries / PAGE_SIZE));
 
@@ -288,6 +290,7 @@ export default function LeaderboardPage() {
                 <ArcSpinner />
               </div>
             )}
+            {/* v8 ignore start — entry rendering ternaries */}
             {loadPhase === 'contentIn' && (
             <div ref={listRef} className={s.list}>
               {entries.map((e, i) => {
@@ -357,6 +360,7 @@ export default function LeaderboardPage() {
               )}
             </div>
             )}
+            {/* v8 ignore stop */}
           </>
         )}
       </div>

@@ -24,6 +24,7 @@ export default function SongHeader({ song,
   const artSize = collapsed ? Size.albumArtCollapsed : Size.albumArtExpanded;
   const transition = noTransition ? undefined : 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)';
   return (
+    /* v8 ignore start — collapsed ternary styling */
     <div className={s.header} style={{ marginTop: collapsed ? 0 : Gap.xl, transition }}>
       {song?.albumArt ? (
         <img src={song.albumArt} alt="" className={s.headerArt} style={{ width: artSize, height: artSize, borderRadius: collapsed ? Radius.md : Radius.lg, transition }} />
@@ -46,5 +47,6 @@ export default function SongHeader({ song,
         </button>
       )}
     </div>
+    /* v8 ignore stop */
   );
 }

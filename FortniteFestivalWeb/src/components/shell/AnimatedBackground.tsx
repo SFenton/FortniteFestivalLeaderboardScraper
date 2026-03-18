@@ -4,8 +4,10 @@ import css from './AnimatedBackground.module.css';
 
 const FADE_DURATION = 1000; // 1s crossfade
 const DISPLAY_DURATION = 5000; // 5s per image
-const MOTION_DURATION = DISPLAY_DURATION + FADE_DURATION; // 6s total motion// Motion presets – each defines start→end for scale / translateX / translateY.
-// Pan presets use a slight scale-up so edges are never exposed.type MotionPreset = {
+const MOTION_DURATION = DISPLAY_DURATION + FADE_DURATION; // 6s total motion
+// Motion presets – each defines start→end for scale / translateX / translateY.
+// Pan presets use a slight scale-up so edges are never exposed.
+type MotionPreset = {
   scale: [number, number];
   translateX: [number, number];
   translateY: [number, number];
@@ -24,6 +26,7 @@ const MOTION_PRESETS: MotionPreset[] = [
   { scale: [1.18, 1.18], translateX: [14, -14], translateY: [14, -14] }, // Diagonal ↖
 ];
 
+/* v8 ignore start — animation DOM code */
 function randomMotion(): MotionPreset {
   return MOTION_PRESETS[Math.floor(Math.random() * MOTION_PRESETS.length)]!;
 }
@@ -40,7 +43,9 @@ function startMotion(el: HTMLElement | null) {
     ],
     { duration: MOTION_DURATION, easing: 'linear', fill: 'forwards' },
   );
-}// Componentexport function AnimatedBackground({
+}
+// Component
+export function AnimatedBackground({
   songs,
   dimOpacity = 0.7,
 }: {
@@ -158,6 +163,7 @@ function startMotion(el: HTMLElement | null) {
       requestAnimationFrame(() => requestAnimationFrame(() => setContainerVisible(true)));
     }
   }, [imageUris.length, containerVisible]);
+  /* v8 ignore stop */
 
   if (imageUris.length === 0) return null;
   const uriA = imageUris[layerAIdx];

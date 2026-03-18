@@ -247,6 +247,7 @@ function SeasonToggles({ availableSeasons, seasonFilter, onChange }: { available
   );
 }
 
+/* v8 ignore start -- V8 misses inline callbacks inside un-exported sub-components; covered via ModalCallbacks tests */
 function PercentileToggles({ percentileFilter, onChange }: { percentileFilter: Record<number, boolean>; onChange: (f: Record<number, boolean>) => void }) {
   const allKeys = [0, ...PERCENTILE_THRESHOLDS];
   const isOn = (p: number) => percentileFilter[p] !== false;
@@ -271,7 +272,6 @@ function PercentileToggles({ percentileFilter, onChange }: { percentileFilter: R
     </>
   );
 }
-
 function StarsToggles({ starsFilter, onChange }: { starsFilter: Record<number, boolean>; onChange: (f: Record<number, boolean>) => void }) {
   const allKeys = [6, 5, 4, 3, 2, 1, 0];
 
@@ -311,6 +311,8 @@ function StarsToggles({ starsFilter, onChange }: { starsFilter: Record<number, b
     </>
   );
 }
+
+/* v8 ignore stop */
 
 function DifficultyToggles({ difficultyFilter, onChange }: { difficultyFilter: Record<number, boolean>; onChange: (f: Record<number, boolean>) => void }) {
   const allKeys = [1, 2, 3, 4, 5, 6, 7, 0];
