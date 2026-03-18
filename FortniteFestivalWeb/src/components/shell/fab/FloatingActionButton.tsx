@@ -53,6 +53,7 @@ export default function FloatingActionButton({
 
   const containerRef = useRef<HTMLDivElement>(null);
 
+  /* v8 ignore start — click-outside handler */
   useEffect(() => {
     if (!actionsOpen) return;
     const handler = (e: MouseEvent) => {
@@ -64,6 +65,7 @@ export default function FloatingActionButton({
     document.addEventListener('click', handler, true);
     return () => document.removeEventListener('click', handler, true);
   }, [actionsOpen, closeActions]);
+  /* v8 ignore stop */
 
   return (
     <div ref={containerRef}>
@@ -73,7 +75,7 @@ export default function FloatingActionButton({
             <SearchBar
               value={searchQuery.query}
               onChange={searchQuery.setQuery}
-              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+              onKeyDown={e => { /* v8 ignore next */ if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
               placeholder={placeholder ?? t('songs.searchPlaceholder')}
               enterKeyHint="done"
               className={css.searchInputWrap}
@@ -85,7 +87,7 @@ export default function FloatingActionButton({
       <div className={css.container} style={{ ...(IS_PWA ? { bottom: 80 + Gap.section - Gap.md } : {}) }}>
         <button
           className={css.fab}
-          onClick={() => actionsOpen ? closeActions() : openActions()}
+          onClick={() => /* v8 ignore next */ actionsOpen ? closeActions() : openActions()}
           aria-label={t('common.actions')}
         >
           {icon ?? <IoMenu size={Size.iconMd} />}

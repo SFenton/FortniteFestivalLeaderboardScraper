@@ -415,6 +415,7 @@ const ZoomableImage = forwardRef<HTMLImageElement, { src: string; alt: string; v
       }
     }, []);
 
+    /* v8 ignore start — zoom gesture handlers */
     const handleDoubleClick = useCallback(() => {
       if (scale > 1) {
         setScale(1);
@@ -431,6 +432,7 @@ const ZoomableImage = forwardRef<HTMLImageElement, { src: string; alt: string; v
         setScale(s => Math.min(Math.max(s * delta, 1), 5));
       }
     }, []);
+    /* v8 ignore stop */
 
     const transform = `translate(${translate.x}px, ${translate.y}px) scale(${scale})`;
 

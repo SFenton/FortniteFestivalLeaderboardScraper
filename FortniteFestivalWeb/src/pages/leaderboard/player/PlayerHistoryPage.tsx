@@ -25,6 +25,8 @@ import { useScrollMask } from '../../../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../../../hooks/ui/useStaggerRush';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import { useScoreFilter } from '../../../hooks/data/useScoreFilter';
+import { useSortedScoreHistory } from '../../../hooks/data/useSortedScoreHistory';
+import { PlayerScoreSortMode as CoreSortMode } from '@festival/core';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
 import { useHeaderCollapse } from '../../../hooks/ui/useHeaderCollapse';
 import { useScrollRestore } from '../../../hooks/ui/useScrollRestore';
@@ -128,38 +130,7 @@ export default function PlayerHistoryPage() {
     [songId, instKey, history, filterHistory],
   );
 
-  const sortedHistory = useMemo(() => {
-    const arr = [...filteredHistory];
-    const dir = sortAscending ? 1 : -1;
-    arr.sort((a, b) => {
-      switch (sortMode) {
-        case 'date': {
-          const da = a.scoreAchievedAt ?? a.changedAt ?? '';
-          const db = b.scoreAchievedAt ?? b.changedAt ?? '';
-          return dir * da.localeCompare(db);
-        }
-        case 'score':
-          return dir * (a.newScore - b.newScore);
-        case 'accuracy': {
-          const cmp = dir * ((a.accuracy ?? 0) - (b.accuracy ?? 0));
-          if (cmp !== 0) return cmp;
-          // Tiebreakers: FC first, then score, then date
-          const fcA = a.isFullCombo ? 1 : 0;
-          const fcB = b.isFullCombo ? 1 : 0;
-          if (fcA !== fcB) return dir * (fcA - fcB);
-          if (a.newScore !== b.newScore) return dir * (a.newScore - b.newScore);
-          const da = a.scoreAchievedAt ?? a.changedAt ?? '';
-          const db = b.scoreAchievedAt ?? b.changedAt ?? '';
-          return dir * da.localeCompare(db);
-        }
-        case 'season':
-          return dir * ((a.season ?? 0) - (b.season ?? 0));
-        default:
-          return 0;
-      }
-    });
-    return arr;
-  }, [filteredHistory, sortMode, sortAscending]);
+  const sortedHistory = useSortedScoreHistory(filteredHistory, sortMode as CoreSortMode, sortAscending);
 
   const scoreWidth = useMemo(() => {
     const maxLen = Math.max(

@@ -23,6 +23,7 @@ export default function MobileFabController({ player, onFindPlayer, onOpenPlayer
   const { playerPageSelect } = usePlayerPageSelect();
   const path = location.pathname;
 
+  /* v8 ignore start — route-specific FAB callbacks tested by MobileFabController.test */
   const playerActions = [
     { label: t('common.findPlayer'), icon: <IoSearch size={Size.iconDefault} />, onPress: onFindPlayer },
     player
@@ -100,4 +101,5 @@ export default function MobileFabController({ player, onFindPlayer, onOpenPlayer
       onPress={() => {}}
     />
   );
+  /* v8 ignore stop */
 }

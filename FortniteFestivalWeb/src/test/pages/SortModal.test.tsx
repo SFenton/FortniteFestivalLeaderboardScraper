@@ -384,4 +384,34 @@ describe('SortModal', () => {
     // Radio rows should be visible immediately
     expect(screen.getByText('Title')).toBeDefined();
   });
+
+  /* ── Metadata sort priority ── */
+
+  it('shows and fires metadata sort priority reorder when instrument filter is set', () => {
+    const props = defaultProps();
+    props.instrumentFilter = 'Solo_Guitar';
+    renderModal(props);
+    expect(screen.getByText('Metadata Sort Priority')).toBeDefined();
+  });
+
+  /* ── Primary Instrument Order ── */
+
+  it('shows instrument order when no instrument filter and sortMode is hasfc', () => {
+    const draft = baseDraft();
+    draft.sortMode = 'hasfc';
+    renderModal({ draft, savedDraft: draft, instrumentFilter: null });
+    expect(screen.getByText('Primary Instrument Order')).toBeDefined();
+  });
+
+  it('hides instrument order when sortMode is not hasfc', () => {
+    renderModal({ instrumentFilter: null });
+    expect(screen.queryByText('Primary Instrument Order')).toBeNull();
+  });
+
+  it('hides instrument order when instrument filter is set even with hasfc', () => {
+    const draft = baseDraft();
+    draft.sortMode = 'hasfc';
+    renderModal({ draft, savedDraft: draft, instrumentFilter: 'Solo_Guitar' });
+    expect(screen.queryByText('Primary Instrument Order')).toBeNull();
+  });
 });

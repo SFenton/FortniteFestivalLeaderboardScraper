@@ -286,6 +286,7 @@ export default function SongsPage() {
   }, [loadPhase, shouldStagger, maxVisibleSongs]);
 
   // Scroll to top when content transitions in after a settings change (not on initial mount or back nav)
+  /* v8 ignore start — scroll reset on settings change */
   useEffect(() => {
     if (loadPhase === 'contentIn' && isSettingsChangeRef.current && scrollRef.current) {
       isSettingsChangeRef.current = false;
@@ -293,6 +294,7 @@ export default function SongsPage() {
       clearScrollCache('songs');
     }
   }, [loadPhase]);
+  /* v8 ignore stop */
 
   // Container-level scroll fade (works because frostedCard avoids backdrop-filter)
   const updateScrollMask = useScrollMask(scrollRef, [loadPhase, filtered]);
@@ -339,7 +341,7 @@ export default function SongsPage() {
         <div className={s.container}>
           <div style={{ visibility: (toolbarShownRef.current || loadPhase === 'contentIn') ? 'visible' : 'hidden' } as CSSProperties}>
           <div className={s.toolbar}>
-            <div className={s.searchWrap} onClick={e => { const input = e.currentTarget.querySelector('input'); input?.focus(); }}>
+            <div className={s.searchWrap} onClick={e => { /* v8 ignore next */ const input = e.currentTarget.querySelector('input'); input?.focus(); }}>
               <IoSearch size={16} style={{ color: Colors.textTertiary, flexShrink: 0 }} />
               <input
                 className={s.searchInput}

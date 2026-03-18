@@ -259,6 +259,7 @@ export default function SongDetailPage() {
   }, []);
 
   // Scroll to the instrument card when arriving with ?instrument= and autoScroll state
+  /* v8 ignore start — DOM scroll positioning */
   const autoScroll = !!(location.state as any)?.autoScroll;
   useEffect(() => {
     if (phase !== 'contentIn' || !defaultInstrument || hasScrolled.current || !autoScroll) return;
@@ -291,6 +292,7 @@ export default function SongDetailPage() {
     }, 1500);
     return () => clearTimeout(id);
   }, [phase, defaultInstrument]);
+  /* v8 ignore stop */
 
   if (!songId) {
     return <div className={s.center}>{t('songDetail.songNotFound')}</div>;

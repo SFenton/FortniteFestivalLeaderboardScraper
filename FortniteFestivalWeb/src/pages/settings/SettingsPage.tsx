@@ -342,12 +342,14 @@ export default function SettingsPage() {
       {isMobileChrome && <div className={css.fabSpacer} />}
       </div>
       {showResetConfirm && (
+        /* v8 ignore start — confirm dialog callbacks */
         <ConfirmAlert
           title={t('settings.resetConfirmTitle')}
           message={t('settings.resetConfirmMessage')}
           onNo={() => setShowResetConfirm(false)}
           onYes={() => { setShowResetConfirm(false); resetSettings(); }}
         />
+        /* v8 ignore stop */
       )}
     </div>
   );

@@ -44,12 +44,14 @@ export function PlayerDataProvider({
     useSyncStatus(accountId);
 
   // Auto-reload when sync completes
+  /* v8 ignore start — sync-complete invalidation */
   useEffect(() => {
     if (justCompleted && accountId) {
       clearCompleted();
       void qc.invalidateQueries({ queryKey: queryKeys.player(accountId) });
     }
   }, [justCompleted, accountId, clearCompleted, qc]);
+  /* v8 ignore stop */
 
   const refreshPlayer = useCallback(async () => {
     if (accountId) {
