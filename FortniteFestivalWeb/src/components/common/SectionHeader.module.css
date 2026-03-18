@@ -1,0 +1,19 @@
+/* Reusable section title + optional description. */
+
+.title {
+  font-size: var(--font-xl);
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.description {
+  font-size: var(--font-md);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  margin-bottom: var(--gap-md);
+}
+
+.descriptionFlush {
+  composes: description;
+  margin-bottom: 0;
+}
