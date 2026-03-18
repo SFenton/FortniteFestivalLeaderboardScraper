@@ -39,12 +39,6 @@
   gap: var(--gap-md);
 }
 
-.sectionTitle {
-  font-size: var(--font-xl);
-  font-weight: 700;
-  color: var(--color-text-primary);
-}
-
 .innerSectionTitle {
   font-size: var(--font-md);
   font-weight: 700;
@@ -97,6 +91,53 @@
 
 .versionValue {
   color: var(--color-text-secondary);
+}
+
+.containerMobile {
+  composes: container;
+  padding-top: var(--gap-md);
+}
+
+.reorderListWrap {
+  margin-top: var(--gap-md);
+}
+
+.collapseGrid {
+  display: grid;
+  transition: grid-template-rows 0.2s ease;
+}
+
+.collapseGridOpen {
+  composes: collapseGrid;
+  grid-template-rows: 1fr;
+}
+
+.collapseGridClosed {
+  composes: collapseGrid;
+  grid-template-rows: 0fr;
+}
+
+.collapseInner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.leewayContent {
+  padding-left: var(--gap-xl);
+  padding-right: calc(36px + var(--gap-xl));
+  padding-bottom: var(--gap-md);
+}
+
+.leewayDesc {
+  font-size: var(--font-sm);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  margin-bottom: var(--gap-md);
+}
+
+.leewayDescMobile {
+  composes: leewayDesc;
+  font-size: var(--font-md);
 }
 
 .fabSpacer {

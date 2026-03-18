@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { ToggleRow } from '../../components/common/ToggleRow';
+import SectionHeader from '../../components/common/SectionHeader';
 import { ReorderList } from '../../components/sort/ReorderList';
 import { METADATA_SORT_DISPLAY } from '../../utils/songSettings';
 import ConfirmAlert from '../../components/modals/ConfirmAlert';
@@ -45,13 +46,13 @@ function FadeInDiv({ delay, children, style }: { delay?: number; children: React
 
 type ShowKey = 'showLead' | 'showBass' | 'showDrums' | 'showVocals' | 'showProLead' | 'showProBass';
 
-const INSTRUMENT_SHOW_MAP: { key: InstrumentKey; showKey: ShowKey; label: string }[] = [
-  { key: 'Solo_Guitar', showKey: 'showLead', label: 'Lead' },
-  { key: 'Solo_Bass', showKey: 'showBass', label: 'Bass' },
-  { key: 'Solo_Drums', showKey: 'showDrums', label: 'Drums' },
-  { key: 'Solo_Vocals', showKey: 'showVocals', label: 'Vocals' },
-  { key: 'Solo_PeripheralGuitar', showKey: 'showProLead', label: 'Pro Lead' },
-  { key: 'Solo_PeripheralBass', showKey: 'showProBass', label: 'Pro Bass' },
+const INSTRUMENT_SHOW_MAP: { key: InstrumentKey; showKey: ShowKey; i18nKey: string }[] = [
+  { key: 'Solo_Guitar', showKey: 'showLead', i18nKey: 'instruments.lead' },
+  { key: 'Solo_Bass', showKey: 'showBass', i18nKey: 'instruments.bass' },
+  { key: 'Solo_Drums', showKey: 'showDrums', i18nKey: 'instruments.drums' },
+  { key: 'Solo_Vocals', showKey: 'showVocals', i18nKey: 'instruments.vocals' },
+  { key: 'Solo_PeripheralGuitar', showKey: 'showProLead', i18nKey: 'instruments.proLead' },
+  { key: 'Solo_PeripheralBass', showKey: 'showProBass', i18nKey: 'instruments.proBass' },
 ];
 
 type MetadataKey =
@@ -62,13 +63,13 @@ type MetadataKey =
   | 'metadataShowDifficulty'
   | 'metadataShowStars';
 
-const METADATA_TOGGLES: { key: MetadataKey; label: string }[] = [
-  { key: 'metadataShowScore', label: 'Score' },
-  { key: 'metadataShowPercentage', label: 'Percentage' },
-  { key: 'metadataShowPercentile', label: 'Percentile' },
-  { key: 'metadataShowSeasonAchieved', label: 'Season Achieved' },
-  { key: 'metadataShowDifficulty', label: 'Song Intensity' },
-  { key: 'metadataShowStars', label: 'Stars' },
+const METADATA_TOGGLES: { key: MetadataKey; i18nKey: string }[] = [
+  { key: 'metadataShowScore', i18nKey: 'metadata.score' },
+  { key: 'metadataShowPercentage', i18nKey: 'metadata.percentage' },
+  { key: 'metadataShowPercentile', i18nKey: 'metadata.percentile' },
+  { key: 'metadataShowSeasonAchieved', i18nKey: 'metadata.seasonAchieved' },
+  { key: 'metadataShowDifficulty', i18nKey: 'metadata.intensity' },
+  { key: 'metadataShowStars', i18nKey: 'metadata.stars' },
 ];
 
 const LEEWAY_SLIDER_ID = 'fst-leeway-slider';
@@ -209,13 +210,12 @@ export default function SettingsPage() {
   return (
     <div className={css.page}>
       <div ref={scrollRef} onScroll={handleScroll} className={css.scrollArea}>
-      <div className={css.container} style={isMobile ? { paddingTop: Gap.md } : undefined}>
+      <div className={isMobile ? css.containerMobile : css.container}>
         <div className={css.cardColumn}>
 
           {/* ── App Settings ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <div className={css.sectionTitle}>{t('settings.appSettings')}</div>
-          <div className={css.sectionHint}>{t('settings.appSettingsHint')}</div>
+          <SectionHeader title={t('settings.appSettings')} description={t('settings.appSettingsHint')} />
           <Card>
             <ToggleRow
               label={t('settings.showInstrumentIcons')}
@@ -233,11 +233,11 @@ export default function SettingsPage() {
             />
             {settings.songRowVisualOrderEnabled && (
               <div>
-                <div className={css.innerSectionTitle}>Song Row Visual Order</div>
+                <div className={css.innerSectionTitle}>{t('settings.songRowVisualOrder')}</div>
                 <div className={css.sectionHint}>
-                  When filtering to a single instrument in the song list, extra metadata is displayed. Choose the order it appears in on the bottom row.
+                  {t('settings.songRowVisualOrderDesc')}
                 </div>
-                <div style={{ marginTop: Gap.md }}>
+                <div className={css.reorderListWrap}>
                   <ReorderList
                     items={visualOrderItems}
                     /* v8 ignore start -- DnD reorder callback; can't fire in jsdom */
@@ -249,19 +249,17 @@ export default function SettingsPage() {
             )}
             <ToggleRow
               label={t('settings.filterInvalidScores')}
-              description="When enabled, the app will attempt to filter out invalid leaderboard values based on the maximum score derived from the CHOpt path."
+              description={t('settings.filterInvalidScoresToggleDesc')}
               checked={settings.filterInvalidScores}
               onToggle={() => updateSettings({ filterInvalidScores: !settings.filterInvalidScores })}
               large={isMobile}
             />
-            <div style={{ display: 'grid', gridTemplateRows: settings.filterInvalidScores ? '1fr' : '0fr', transition: 'grid-template-rows 0.2s ease' }}>
-              <div style={{ overflow: 'hidden', minHeight: 0 }}>
-                <div style={{ paddingLeft: Gap.xl, paddingRight: 36 + Gap.xl, paddingBottom: Gap.md }}>
-                  <div className={css.innerSectionTitle}>Maximum Score Leeway</div>
-                  <div style={{ fontSize: isMobile ? Font.md : Font.sm, color: Colors.textMuted, lineHeight: '1.5', marginBottom: Gap.md }}>
-                    This slider controls a percentage value that allows for some expanded range of scores to still be
-                    valid. For example, a CHOpt path with a max score of 100k and {settings.filterInvalidScoresLeeway}% leeway will allow the app to
-                    accept scores up to {(100000 * (1 + settings.filterInvalidScoresLeeway / 100)).toLocaleString()}  as &ldquo;valid&rdquo;.
+            <div className={settings.filterInvalidScores ? css.collapseGridOpen : css.collapseGridClosed}>
+              <div className={css.collapseInner}>
+                <div className={css.leewayContent}>
+                  <div className={css.innerSectionTitle}>{t('settings.maxScoreLeeway')}</div>
+                  <div className={isMobile ? css.leewayDescMobile : css.leewayDesc}>
+                    {t('settings.maxScoreLeewayDesc', { leeway: settings.filterInvalidScoresLeeway, maxScore: (100000 * (1 + settings.filterInvalidScoresLeeway / 100)).toLocaleString() })}
                   </div>
                   <LeewaySlider
                     value={settings.filterInvalidScoresLeeway}
@@ -275,13 +273,12 @@ export default function SettingsPage() {
 
           {/* ── Instruments ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <div className={css.sectionTitle}>{t('settings.showInstruments')}</div>
-          <div className={css.sectionHint}>{t('settings.showInstrumentsHint')}</div>
+          <SectionHeader title={t('settings.showInstruments')} description={t('settings.showInstrumentsHint')} />
           <Card>
             {INSTRUMENT_SHOW_MAP.map(inst => (
               <ToggleRow
                 key={inst.showKey}
-                label={inst.label}
+                label={t(inst.i18nKey)}
                 icon={<InstrumentIcon instrument={inst.key} size={isMobile ? 28 : 24} />}
                 checked={settings[inst.showKey]}
                 onToggle={() => toggleShow(inst.showKey)}
@@ -294,15 +291,12 @@ export default function SettingsPage() {
 
           {/* ── Instrument Metadata ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <div className={css.sectionTitle}>{t('settings.showMetadata')}</div>
-          <div className={css.sectionHint}>
-            When filtering songs down to one instrument in the song list, extra metadata for that song can appear. Choose what you'd like to see in the song row here.
-          </div>
+          <SectionHeader title={t('settings.showMetadata')} description={t('settings.showMetadataHint')} />
           <Card>
             {METADATA_TOGGLES.map(m => (
               <ToggleRow
                 key={m.key}
-                label={m.label}
+                label={t(m.i18nKey)}
                 checked={settings[m.key]}
                 onToggle={() => toggleMetadata(m.key)}
                 large={isMobile}
@@ -313,8 +307,7 @@ export default function SettingsPage() {
 
           {/* ── Version ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
-          <div className={css.sectionTitle}>{t('settings.versionTitle')}</div>
-          <div className={css.sectionHint}>{t('settings.versionHint')}</div>
+          <SectionHeader title={t('settings.versionTitle')} description={t('settings.versionHint')} />
           <Card>
             <div className={css.versionRow}>
               <span>{t('settings.appVersion')}</span>
@@ -335,8 +328,7 @@ export default function SettingsPage() {
           <FadeInDiv delay={stagger(staggerIndex++)}>
           <div className={isMobile ? css.resetRowMobile : css.resetRow}>
             <div>
-              <div className={css.sectionTitle}>{t('settings.resetSection')}</div>
-              <div className={css.sectionHint} style={{ marginBottom: 0 }}>{t('settings.resetDescription')}</div>
+              <SectionHeader title={t('settings.resetSection')} description={t('settings.resetDescription')} flush />
             </div>
             <button
               className={isMobile ? css.resetButtonMobile : css.resetButton}
