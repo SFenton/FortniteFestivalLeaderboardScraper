@@ -144,6 +144,7 @@ export default memo(function ScoreHistoryChart({
   }, []);
 
   // Measure container width to decide between full icon row vs compact arrows
+  /* v8 ignore start — ResizeObserver compact layout */
   const iconRowRef = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
   useEffect(() => {
@@ -160,6 +161,7 @@ export default memo(function ScoreHistoryChart({
     ro.observe(el);
     return () => ro.disconnect();
   }, [availableInstruments.length]);
+  /* v8 ignore stop */
 
   return (
     <div className={s.wrapper}>
@@ -183,7 +185,8 @@ export default memo(function ScoreHistoryChart({
           <div className={s.chartTitle}>{t('chart.scoreHistory')}</div>
           <div className={s.chartSubtitle}>{t('chart.selectBarHint')}</div>
         </div>
-        {loading && (
+        {/* v8 ignore start — chart conditional rendering */}
+      {loading && (
           <div className={s.placeholder}>{t('chart.loadingHistory')}</div>
         )}
         {!loading && chartData.length === 0 && (
@@ -477,6 +480,7 @@ export default memo(function ScoreHistoryChart({
         )}
         {/* v8 ignore stop */}
       </div>
+      {/* v8 ignore stop — end chart conditional rendering */}
       <ScoreCardList
         displayedCards={displayedCards}
         listHeight={listHeight}

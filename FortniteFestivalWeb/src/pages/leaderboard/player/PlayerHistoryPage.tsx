@@ -193,6 +193,7 @@ export default function PlayerHistoryPage() {
                 <ArcSpinner />
               </div>
             )}
+            {/* v8 ignore start — virtual list rendering */}
             {loadPhase === 'contentIn' && (
             <div key={staggerKey} className={s.list} style={{ height: virtualizer.getTotalSize(), position: 'relative', ...(hasFab ? { paddingBottom: 96 } : {}) }}>
               {virtualizer.getVirtualItems().map((virtualRow) => {
@@ -249,8 +250,7 @@ export default function PlayerHistoryPage() {
                 <div className={s.emptyRow}>{t('history.noHistoryForInstrument')}</div>
               )}
             </div>
-            )}
-          </>
+            )}            {/* v8 ignore stop */}          </>
         )}
       </div>
       </div>

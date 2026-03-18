@@ -2,7 +2,7 @@
  * InstrumentCard tests — exercises rendering with entries, player scores,
  * error states, and responsive column widths.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import InstrumentCard from '../../pages/songinfo/components/InstrumentCard';
@@ -43,6 +43,9 @@ const baseProps = {
   prefetchedError: null as string | null,
   skipAnimation: true,
   scoreWidth: '8ch',
+  playerScore: undefined as PlayerScore | undefined,
+  playerName: undefined as string | undefined,
+  playerAccountId: undefined as string | undefined,
 };
 
 function renderCard(overrides: Partial<typeof baseProps> = {}) {

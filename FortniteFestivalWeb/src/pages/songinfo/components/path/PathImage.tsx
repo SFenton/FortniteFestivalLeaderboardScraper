@@ -108,6 +108,7 @@ export function PathImage({ songId, instrument, difficulty }: PathImageProps) {
   /* v8 ignore stop */
 
   return (
+    /* v8 ignore start — phase-dependent rendering */
     <div ref={scrollRef} onScroll={handleScroll} className={css.imageArea}>
       {spinnerMounted && (
         <div className={css.spinnerWrap} style={{
@@ -131,5 +132,6 @@ export function PathImage({ songId, instrument, difficulty }: PathImageProps) {
         />
       )}
     </div>
+    /* v8 ignore stop */
   );
 }

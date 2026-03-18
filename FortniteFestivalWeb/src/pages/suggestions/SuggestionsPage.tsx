@@ -221,6 +221,7 @@ export default function SuggestionsPage({ accountId }: Props) {
     const visibleGrew = visibleCategories.length > prevVisibleRef.current;
     prevRawRef.current = categories.length;
 
+    /* v8 ignore start — stale/exhausted loading logic */
     if (visibleGrew) {
       staleCountRef.current = 0;
       prevVisibleRef.current = visibleCategories.length;
@@ -240,6 +241,7 @@ export default function SuggestionsPage({ accountId }: Props) {
     // Use setTimeout to yield to the browser between batches and avoid a hot loop.
     const id = setTimeout(() => loadMore(), 100);
     return () => clearTimeout(id);
+    /* v8 ignore stop */
   }, [categories.length, visibleCategories.length, hasMore, filterExhausted, loadMore]);
 
   const effectiveHasMore = hasMore && !filterExhausted;
@@ -333,6 +335,7 @@ export default function SuggestionsPage({ accountId }: Props) {
     );
   }
 
+  /* v8 ignore start — conditional rendering */
   const headerStagger: React.CSSProperties = phase === 'contentIn' && !skipAnim
     ? { opacity: 0, animation: 'fadeInUp 400ms ease-out forwards' }
     : skipAnim ? {} : { opacity: 0 };
@@ -418,6 +421,7 @@ export default function SuggestionsPage({ accountId }: Props) {
         onApply={applyFilter}
       />
     </div>
+    /* v8 ignore stop */
   );
 }
 

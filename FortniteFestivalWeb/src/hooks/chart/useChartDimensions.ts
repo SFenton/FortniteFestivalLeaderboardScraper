@@ -9,6 +9,7 @@ export function useChartDimensions(chartContainerRef: React.RefObject<HTMLDivEle
   const [containerWidth, setContainerWidth] = useState(0);
   const axesOverheadRef = useRef<number | null>(null);
 
+  /* v8 ignore start — ResizeObserver DOM measurement */
   useEffect(() => {
     const el = chartContainerRef.current;
     if (!el) return;
@@ -47,6 +48,7 @@ export function useChartDimensions(chartContainerRef: React.RefObject<HTMLDivEle
     });
     return () => cancelAnimationFrame(raf);
   });
+  /* v8 ignore stop */
 
   const overhead = axesOverheadRef.current ?? FALLBACK_OVERHEAD;
   const plotWidth = Math.max(0, containerWidth - overhead);

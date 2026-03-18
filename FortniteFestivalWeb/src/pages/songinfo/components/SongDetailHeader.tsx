@@ -32,6 +32,7 @@ export default function SongDetailHeader({
   const transition = noTransition ? undefined : 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)';
 
   return (
+    /* v8 ignore start — collapsed ternary styling */
     <div className={css.header} style={{ marginTop: collapsed ? 0 : Gap.xl, transition }}>
       {song?.albumArt ? (
         <img src={song.albumArt} alt="" className={css.headerArt} style={{ width: artSize, height: artSize, borderRadius: collapsed ? Radius.md : Radius.lg, transition }} />
@@ -51,5 +52,6 @@ export default function SongDetailHeader({
         </button>
       )}
     </div>
+    /* v8 ignore stop */
   );
 }

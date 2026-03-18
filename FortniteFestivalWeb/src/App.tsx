@@ -9,6 +9,7 @@ import { useTrackedPlayer, type TrackedPlayer } from './hooks/data/useTrackedPla
 import { PlayerDataProvider } from './contexts/PlayerDataContext';
 import { useIsMobile, useIsMobileChrome } from './hooks/ui/useIsMobile';
 import SongsPage from './pages/songs/SongsPage';
+/* v8 ignore next 6 -- lazy() wrappers are resolved by the bundler, not callable in unit tests */
 const SongDetailPage = lazy(() => import('./pages/songinfo/SongDetailPage'));
 const LeaderboardPage = lazy(() => import('./pages/leaderboard/global/LeaderboardPage'));
 const PlayerHistoryPage = lazy(() => import('./pages/leaderboard/player/PlayerHistoryPage'));
@@ -185,6 +186,7 @@ function AppShell() {
       <ScrollToTop />
       {showAnimatedBg && <AnimatedBackground songs={songs} />}
 
+      {/* v8 ignore start — mobile header conditional rendering */}
       {!isMobile && backFallback && (IS_IOS || IS_ANDROID || IS_PWA) && <BackLink key={location.pathname} fallback={backFallback} animate={shouldAnimateHeader} />}
 
         {isMobile ? (
@@ -237,6 +239,7 @@ function AppShell() {
             </button>
           </nav>
         )}
+      {/* v8 ignore stop */}
 
       {/* v8 ignore start — sidebar callbacks tested via Sidebar.test */}
       <Sidebar

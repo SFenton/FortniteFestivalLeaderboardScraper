@@ -386,6 +386,7 @@ const ZoomableImage = forwardRef<HTMLImageElement, { src: string; alt: string; v
       y: (t[0]!.clientY + t[1]!.clientY) / 2,
     });
 
+    /* v8 ignore start — touch gesture handlers */
     const handleTouchStart = useCallback((e: React.TouchEvent) => {
       if (e.touches.length === 2) {
         e.preventDefault();
@@ -414,6 +415,7 @@ const ZoomableImage = forwardRef<HTMLImageElement, { src: string; alt: string; v
         setTranslate({ x: g.startTx + dx, y: g.startTy + dy });
       }
     }, []);
+    /* v8 ignore stop */
 
     /* v8 ignore start — zoom gesture handlers */
     const handleDoubleClick = useCallback(() => {

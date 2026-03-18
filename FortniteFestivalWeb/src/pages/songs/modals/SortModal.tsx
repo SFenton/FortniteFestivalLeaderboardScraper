@@ -155,6 +155,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
         <ModalSection title="Metadata Sort Priority" hint="When two songs have the same value for the selected sort mode, songs are sorted by comparing these properties in order from top to bottom.">
           <ReorderList
             items={visibleMetadataOrder.map(k => ({ key: k, label: METADATA_SORT_DISPLAY[k] ?? k }))}
+            /* v8 ignore next -- DnD reorder callback; can't fire in jsdom (DnD handler is v8-ignored) */
             onReorder={(items) => onChange({ ...draft, metadataOrder: items.map(i => i.key) })}
           />
         </ModalSection>
@@ -166,6 +167,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
           <Accordion title="Primary Instrument Order" hint="Instruments are checked in this order when sorting by Has FC." defaultOpen>
             <ReorderList
               items={draft.instrumentOrder.map(k => ({ key: k, label: INSTRUMENT_LABELS[k] }))}
+              /* v8 ignore next -- DnD reorder callback; can't fire in jsdom */
               onReorder={(items) => onChange({ ...draft, instrumentOrder: items.map(i => i.key) as InstrumentKey[] })}
             />
           </Accordion>
