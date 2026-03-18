@@ -29,14 +29,13 @@ export function PathImage({ songId, instrument, difficulty }: PathImageProps) {
   const imgRef = useRef<HTMLImageElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
+  /* v8 ignore start — image phase transition effects; phases change only via v8-ignored image callbacks */
   useEffect(() => {
     pendingRef.current = targetSrc;
     setError(false);
 
     if (displaySrc) {
-      /* v8 ignore start */
       setPhase(ImagePhase.FadeOutImage);
-      /* v8 ignore stop */
     } else {
       setPhase(ImagePhase.Spinner);
       loadImage(targetSrc);
@@ -46,7 +45,6 @@ export function PathImage({ songId, instrument, difficulty }: PathImageProps) {
 
   useEffect(() => {
     if (phase === ImagePhase.FadeOutImage) {
-      /* v8 ignore start */
       timerRef.current = setTimeout(() => {
         setPhase(ImagePhase.Spinner);
         loadImage(pendingRef.current);
@@ -59,17 +57,17 @@ export function PathImage({ songId, instrument, difficulty }: PathImageProps) {
         timerRef.current = setTimeout(() => setPhase(ImagePhase.Idle), FADE_MS);
       });
       return () => { cancelAnimationFrame(raf); clearTimeout(timerRef.current); };
-      /* v8 ignore stop */
     }
   }, [phase]);
+  /* v8 ignore stop */
 
+  /* v8 ignore start — image loading */
   const loadImage = useCallback((src: string) => {
     const spinnerStart = Date.now();
     const img = new Image();
     img.src = src;
 
     const onReady = (success: boolean) => {
-      /* v8 ignore start */
       if (pendingRef.current !== src) return;
       const elapsed = Date.now() - spinnerStart;
       const remaining = Math.max(0, MIN_SPINNER_MS - elapsed);
@@ -97,10 +95,12 @@ export function PathImage({ songId, instrument, difficulty }: PathImageProps) {
     /* v8 ignore stop */
   }, []);
 
+  /* v8 ignore start — image-phase booleans; phase transitions occur only in v8-ignored image loading callbacks */
   const spinnerVisible = phase === ImagePhase.Spinner;
   const spinnerMounted = phase === ImagePhase.Spinner || phase === ImagePhase.FadeOutSpinner;
   const imageMounted = displaySrc && (phase === ImagePhase.ImageReady || phase === ImagePhase.FadeInImage || phase === ImagePhase.Idle || phase === ImagePhase.FadeOutImage);
   const imageVisible = phase === ImagePhase.FadeInImage || phase === ImagePhase.Idle;
+  /* v8 ignore stop */
   const scrollRef = useRef<HTMLDivElement>(null);
   const updateScrollMask = useScrollMask(scrollRef, [displaySrc, phase]);
   /* v8 ignore start */

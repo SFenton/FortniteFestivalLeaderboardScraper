@@ -12,6 +12,7 @@ vi.mock('../../api/client', () => ({
       songs: [
         { songId: 's1', title: 'Song 1', artist: 'A', maxScores: { Solo_Guitar: 100000, Solo_Bass: 80000 } },
         { songId: 's2', title: 'Song 2', artist: 'B', maxScores: null },
+        { songId: 's3', title: 'Song 3', artist: 'C', maxScores: { Solo_Guitar: 0 } },
       ],
       season: 1,
     }),
@@ -121,5 +122,12 @@ describe('useScoreFilter (enabled)', () => {
     ] as any[];
     const filtered = result.current.filterLeaderboard('s1', 'solo_guitar', entries, 5);
     expect(filtered[0]!.rank).toBe(5);
+  });
+
+  it('isScoreValid returns true for song with zero maxScore (skipped threshold)', async () => {
+    const { result } = renderHook(() => useScoreFilter(), { wrapper: TestWrapper });
+    await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+    // s3 has maxScore: 0 → not added to thresholds → always valid
+    expect(result.current.isScoreValid('s3', 'solo_guitar', 999999)).toBe(true);
   });
 });

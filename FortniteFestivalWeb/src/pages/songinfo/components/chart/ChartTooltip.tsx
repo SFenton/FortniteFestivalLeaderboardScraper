@@ -9,7 +9,9 @@ interface Props {
 export default function ChartTooltip({ active, payload }: Props) {
   if (!active || !payload?.length) return null;
   const first = payload[0];
+  /* v8 ignore start -- dead guard: payload.length > 0 guarantees payload[0] exists */
   if (!first) return null;
+  /* v8 ignore stop */
   const d = first.payload;
   return (
     <div className={css.tooltip}>

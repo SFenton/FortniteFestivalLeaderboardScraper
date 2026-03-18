@@ -34,8 +34,8 @@ function FadeInInner<T extends ElementType = 'div'>({
   className,
   ...rest
 }: FadeInProps<T>) {
+  /* v8 ignore start — animation cleanup */
   const handleEnd = useCallback((e: { currentTarget: unknown }) => {
-    /* v8 ignore start */
     const el = e.currentTarget as HTMLElement;
     el.style.opacity = '';
     el.style.animation = '';

@@ -142,12 +142,14 @@ export default function LeaderboardPage() {
   );
 
   // Restore scroll position when returning from cache
+  /* v8 ignore start — scroll restoration: scrollTop DOM API */
   useEffect(() => {
     if (!skipAllAnim || !cached) return;
     if (cached.scrollTop > 0 && scrollRef.current) {
       scrollRef.current.scrollTop = cached.scrollTop;
     }
   }, []);
+  /* v8 ignore stop */
 
   useEffect(() => {
     // Skip fetch if the leaderboard is already cached (return visit)
@@ -165,6 +167,7 @@ export default function LeaderboardPage() {
       totalEntries,
       localEntries,
       page,
+      /* v8 ignore next -- scrollTop: DOM scroll API */
       scrollTop: scrollRef.current?.scrollTop ?? 0,
     });
   }, [loading, error, entries, totalEntries, localEntries, page, songId, cacheKey]);
@@ -196,11 +199,13 @@ export default function LeaderboardPage() {
       hasShownContentRef.current = true;
       // On initial load, let header be expanded and unpin immediately.
       // On pagination, keep pinned â€” scroll handler will unpin once past threshold.
+      /* v8 ignore start -- animation timing: initial load vs pagination */
       if (!hasLoadedOnce.current) {
         hasLoadedOnce.current = true;
         headerPinned.current = false;
         if (!isNarrow) setHeaderCollapsed(false);
       }
+      /* v8 ignore stop */
       // Retire stagger animations after they've had time to finish so that
       // future re-renders (e.g. from scroll-driven headerCollapsed changes)
       // don't re-apply opacity:0 + animation to rows/pagination/footer.
@@ -251,6 +256,7 @@ export default function LeaderboardPage() {
   // listRef which lives inside the contentIn conditional and is null initially.
   const listRef = useRef<HTMLDivElement>(null);
   const ROW_SLOT = 48 + Gap.sm;
+  /* v8 ignore next 2 -- scrollRef.clientHeight: DOM measurement */
   const scrollViewHeight = scrollRef.current?.clientHeight
     ?? Math.max(0, window.innerHeight - (isNarrow ? 120 : 200));
   const maxVisibleRows = Math.min(

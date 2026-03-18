@@ -52,4 +52,10 @@ describe('useTrackedPlayer', () => {
     const { result } = renderHook(() => useTrackedPlayer());
     expect(result.current.player).toBeNull();
   });
+
+  it('defaults displayName to Unknown User when loaded with empty name', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ accountId: 'abc', displayName: '' }));
+    const { result } = renderHook(() => useTrackedPlayer());
+    expect(result.current.player).toEqual({ accountId: 'abc', displayName: 'Unknown User' });
+  });
 });

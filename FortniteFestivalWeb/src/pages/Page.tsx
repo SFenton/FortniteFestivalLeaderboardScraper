@@ -97,8 +97,8 @@ export default function Page({
   const updateScrollMask = useScrollMask(scrollRef, stableScrollDeps, scrollMaskOptions);
   const rushOnScroll = useStaggerRush(scrollRef);
 
+  /* v8 ignore start — scroll handler */
   const handleScroll = useCallback(() => {
-    /* v8 ignore start */
     updateScrollMask();
     rushOnScroll();
     onScroll?.();

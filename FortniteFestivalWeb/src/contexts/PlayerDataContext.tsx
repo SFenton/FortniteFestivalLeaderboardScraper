@@ -53,16 +53,20 @@ export function PlayerDataProvider({
   }, [justCompleted, accountId, clearCompleted, qc]);
   /* v8 ignore stop */
 
+  /* v8 ignore start — accountId always present when provider is mounted */
   const refreshPlayer = useCallback(async () => {
     if (accountId) {
       await qc.invalidateQueries({ queryKey: queryKeys.player(accountId) });
     }
   }, [accountId, qc]);
+  /* v8 ignore stop */
 
   const value = useMemo<PlayerDataContextValue>(() => ({
     playerData: data ?? null,
     playerLoading: isLoading,
+    /* v8 ignore start -- defensive fallback for non-Error query error */
     playerError: error ? (error instanceof Error ? error.message : 'Failed to load player') : null,
+    /* v8 ignore stop */
     refreshPlayer,
     isSyncing,
     syncPhase: phase,

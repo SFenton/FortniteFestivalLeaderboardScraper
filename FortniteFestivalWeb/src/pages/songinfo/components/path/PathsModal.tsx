@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, forwardRef } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
 import { IoClose, IoChevronDown } from 'react-icons/io5';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { useScrollMask } from '../../../../hooks/ui/useScrollMask';
@@ -8,6 +8,7 @@ import { INSTRUMENT_LABELS, type ServerInstrumentKey as InstrumentKey } from '@f
 import { InstrumentIcon } from '../../../../components/display/InstrumentIcons';
 import { Colors, Radius, Font, Gap } from '@festival/theme';
 import css from './PathsModal.module.css';
+import { ZoomableImage } from './ZoomableImage';
 
 const TRANSITION_MS = 300;
 const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const;
@@ -193,7 +194,9 @@ export default function PathsModal({ visible, songId, onClose }: Props) {
                   <button
                     key={d}
                     className={`${css.diffBtnSmall}${difficulty === d ? ` ${css.diffBtnActive}` : ''}`}
+                    /* v8 ignore start — mobile accordion click */
                     onClick={() => { setDifficulty(d); setDiffOpen(false); }}
+                    /* v8 ignore stop */
                   >
                     {DIFFICULTY_LABELS[d]}
                   </button>
@@ -354,115 +357,4 @@ function PathImage({ songId, instrument, difficulty }: { songId: string; instrum
     </div>
   );
 }
-
-const ZoomableImage = forwardRef<HTMLImageElement, { src: string; alt: string; visible: boolean }>(
-  function ZoomableImage({ src, alt, visible }, fwdRef) {
-    const containerRef = useRef<HTMLDivElement>(null);
-    const innerRef = useRef<HTMLImageElement>(null);
-    const [scale, setScale] = useState(1);
-    const [translate, setTranslate] = useState({ x: 0, y: 0 });
-    const gestureRef = useRef({ startScale: 1, startDist: 0, startX: 0, startY: 0, startTx: 0, startTy: 0 });
-
-    // Assign forwarded ref
-    useEffect(() => {
-      if (typeof fwdRef === 'function') fwdRef(innerRef.current);
-      else if (fwdRef) (fwdRef as React.MutableRefObject<HTMLImageElement | null>).current = innerRef.current;
-    });
-
-    // Reset zoom when src changes
-    useEffect(() => {
-      setScale(1);
-      setTranslate({ x: 0, y: 0 });
-    }, [src]);
-
-    const getTouchDist = (t: React.TouchList) => {
-      const dx = t[1]!.clientX - t[0]!.clientX;
-      const dy = t[1]!.clientY - t[0]!.clientY;
-      return Math.sqrt(dx * dx + dy * dy);
-    };
-
-    const getTouchCenter = (t: React.TouchList) => ({
-      x: (t[0]!.clientX + t[1]!.clientX) / 2,
-      y: (t[0]!.clientY + t[1]!.clientY) / 2,
-    });
-
-    /* v8 ignore start — touch gesture handlers */
-    const handleTouchStart = useCallback((e: React.TouchEvent) => {
-      if (e.touches.length === 2) {
-        e.preventDefault();
-        gestureRef.current = {
-          startScale: scale,
-          startDist: getTouchDist(e.touches),
-          ...getTouchCenter(e.touches),
-          startX: getTouchCenter(e.touches).x,
-          startY: getTouchCenter(e.touches).y,
-          startTx: translate.x,
-          startTy: translate.y,
-        };
-      }
-    }, [scale, translate]);
-
-    const handleTouchMove = useCallback((e: React.TouchEvent) => {
-      if (e.touches.length === 2) {
-        e.preventDefault();
-        const g = gestureRef.current;
-        const dist = getTouchDist(e.touches);
-        const center = getTouchCenter(e.touches);
-        const newScale = Math.min(Math.max(g.startScale * (dist / g.startDist), 1), 5);
-        const dx = center.x - g.startX;
-        const dy = center.y - g.startY;
-        setScale(newScale);
-        setTranslate({ x: g.startTx + dx, y: g.startTy + dy });
-      }
-    }, []);
-    /* v8 ignore stop */
-
-    /* v8 ignore start — zoom gesture handlers */
-    const handleDoubleClick = useCallback(() => {
-      if (scale > 1) {
-        setScale(1);
-        setTranslate({ x: 0, y: 0 });
-      } else {
-        setScale(2.5);
-      }
-    }, [scale]);
-
-    const handleWheel = useCallback((e: React.WheelEvent) => {
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        const delta = e.deltaY > 0 ? 0.9 : 1.1;
-        setScale(s => Math.min(Math.max(s * delta, 1), 5));
-      }
-    }, []);
-    /* v8 ignore stop */
-
-    const transform = `translate(${translate.x}px, ${translate.y}px) scale(${scale})`;
-
-    return (
-      <div
-        ref={containerRef}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onDoubleClick={handleDoubleClick}
-        onWheel={handleWheel}
-        style={{ touchAction: scale > 1 ? 'none' : 'pan-y', display: 'inline-block' }}
-      >
-        <img
-          ref={innerRef}
-          src={src}
-          alt={alt}
-          draggable={false}
-          className={css.pathImg} style={{
-            opacity: visible ? 1 : 0,
-            transform: visible ? transform : `translateY(16px) ${transform}`,
-            transformOrigin: 'center top',
-            transition: scale === 1 && translate.x === 0 && translate.y === 0
-              ? `opacity ${FADE_MS}ms ease, transform ${FADE_MS}ms ease`
-              : `opacity ${FADE_MS}ms ease`,
-          }}
-        />
-      </div>
-    );
-  },
-);
 

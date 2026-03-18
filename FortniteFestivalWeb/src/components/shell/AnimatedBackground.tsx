@@ -168,7 +168,9 @@ export function AnimatedBackground({
   if (imageUris.length === 0) return null;
   const uriA = imageUris[layerAIdx];
   const uriB = imageUris[layerBIdx];
+  /* v8 ignore start -- defensive guard; imageUris.length > 0 checked above */
   if (!uriA) return null;
+  /* v8 ignore stop */
 
   return (
     <div className={css.container} style={{ '--fade-ms': `${FADE_DURATION}ms`, opacity: containerVisible ? 1 : 0 } as CSSProperties}>

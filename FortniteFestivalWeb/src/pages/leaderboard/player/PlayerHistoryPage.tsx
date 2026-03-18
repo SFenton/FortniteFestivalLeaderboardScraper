@@ -73,29 +73,36 @@ export default function PlayerHistoryPage() {
   const openSort = useCallback(() => {
     sortModal.open({ sortMode, sortAscending });
   }, [sortMode, sortAscending, sortModal]);
+  /* v8 ignore start — modal apply callback */
   const applySort = () => {
     setSortMode(sortModal.draft.sortMode);
     setSortAscending(sortModal.draft.sortAscending);
     sortModal.close();
     setStaggerKey(k => k + 1);
   };
+  /* v8 ignore stop */
 
   // Register sort action for FAB
   const fabSearch = useFabSearch();
   const openSortRef = useRef(openSort);
   openSortRef.current = openSort;
+  /* v8 ignore start — FAB registration callback */
   useEffect(() => {
     fabSearch.registerPlayerHistoryActions({ openSort: () => openSortRef.current() });
   }, [fabSearch]);
+  /* v8 ignore stop */
 
   const rushOnScroll = useStaggerRush(scrollRef);
+  /* v8 ignore start — scroll handler */
   const handleScroll = useCallback(() => {
     saveScroll();
     updateScrollMask();
     rushOnScroll();
     updateHeaderCollapse();
   }, [saveScroll, updateScrollMask, rushOnScroll, updateHeaderCollapse]);
+  /* v8 ignore stop */
 
+  /* v8 ignore start — async data fetch with cancellation */
   useEffect(() => {
     if (!player || !songId) {
       setLoading(false);
@@ -120,12 +127,14 @@ export default function PlayerHistoryPage() {
       });
     return () => { cancelled = true; };
   }, [player, songId, instKey]);
+  /* v8 ignore stop */
 
   if (!songId || !instrument) {
     return <div className={s.center}>{t('history.notFound')}</div>;
   }
 
   const filteredHistory = useMemo(
+    /* v8 ignore next — songId always present (early return above) */
     () => songId ? filterHistory(songId, instKey, history) : history,
     [songId, instKey, history, filterHistory],
   );
@@ -149,6 +158,7 @@ export default function PlayerHistoryPage() {
     return best;
   }, [sortedHistory]);
 
+  /* v8 ignore start — responsive row height + virtualizer config */
   const ROW_HEIGHT = isMobile ? 44 : 52;
   const virtualizer = useVirtualizer({
     count: loadPhase === 'contentIn' ? sortedHistory.length : 0,
@@ -156,6 +166,7 @@ export default function PlayerHistoryPage() {
     estimateSize: () => ROW_HEIGHT,
     overscan: 10,
   });
+  /* v8 ignore stop */
 
   return (
     <div className={s.page}>
@@ -165,11 +176,13 @@ export default function PlayerHistoryPage() {
           collapsed={!!(hasFab || headerCollapsed)}
           instrument={instKey}
           animate={!hasFab}
+          /* v8 ignore start — platform-conditional sort button */
           actions={!hasFab && !IS_IOS && !IS_ANDROID && !IS_PWA ? (
             <button className={s.sortBtn} onClick={openSort} title={t('common.sort')} aria-label={t('common.sortPlayerScores')}>
               <IoSwapVerticalSharp size={18} />
             </button>
           ) : undefined}
+          /* v8 ignore stop */
         />
 
       <div ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>

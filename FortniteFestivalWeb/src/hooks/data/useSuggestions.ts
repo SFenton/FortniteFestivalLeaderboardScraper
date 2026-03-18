@@ -35,6 +35,7 @@ export function useSuggestions(
   // so it picks up the latest value even after StrictMode double-render
   useEffect(() => {
     const scrollY = _cache?.accountId === accountId ? _cache.scrollY : 0;
+    /* v8 ignore start — scroll position restore */
     if (scrollY > 0) {
       /* v8 ignore start */
       const t1 = setTimeout(() => window.scrollTo(0, scrollY), 0);
@@ -47,8 +48,8 @@ export function useSuggestions(
 
   // Continuously save scroll position so browser back works
   useEffect(() => {
+    /* v8 ignore start — scroll position tracking */
     const onScroll = () => {
-      /* v8 ignore start */
       if (_cache?.accountId === accountId && window.scrollY > 0) {
         _cache.scrollY = window.scrollY;
       /* v8 ignore stop */

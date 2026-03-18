@@ -100,7 +100,9 @@ export function useFilteredSongs({
           if (pct == null) {
             if (f.percentileFilter[0] === false) return false;
           } else {
+            /* v8 ignore start -- pct capped at 100 by Math.min */
             const bracket = PCT_THRESHOLDS.find(t => pct <= t) ?? 100;
+            /* v8 ignore stop */
             if (f.percentileFilter[bracket] === false) return false;
           }
         }

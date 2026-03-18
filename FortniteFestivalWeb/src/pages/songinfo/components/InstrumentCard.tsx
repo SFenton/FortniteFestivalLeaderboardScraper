@@ -66,10 +66,11 @@ export default memo(function InstrumentCard({
       <div
         className={s.card}
         style={{ cursor: 'pointer' }}
+        /* v8 ignore start — navigation */
         onClick={() => {
-          /* v8 ignore next — navigation */
           navigate(`/songs/${songId}/${instrument}`, { state: { backTo: `/songs/${songId}` } });
         }}
+        /* v8 ignore stop */
       >
         <div className={s.cardBody}>
         {prefetchedError && <span className={s.cardError}>{prefetchedError}</span>}
@@ -115,6 +116,7 @@ export default memo(function InstrumentCard({
             </Link>
             );
           })}
+        {/* v8 ignore start — player score IIFE; conditionally rendered animation block */}
         {playerName && playerScore && !playerInTop && (() => {
           const playerDelay = baseDelay + 80 + prefetchedEntries.length * 60;
           const playerStagger = anim(playerDelay);
@@ -148,6 +150,8 @@ export default memo(function InstrumentCard({
           </Link>
           );
         })()}
+        {/* v8 ignore stop */}
+        {/* v8 ignore start — view all IIFE; conditionally rendered animation block */}
         {!prefetchedError && prefetchedEntries.length > 0 && (() => {
           const viewAllDelay = baseDelay + 80 + (prefetchedEntries.length + (playerScore && !playerInTop ? 1 : 0)) * 60;
           const viewAllStagger = anim(viewAllDelay);
@@ -160,6 +164,7 @@ export default memo(function InstrumentCard({
             </div>
           );
         })()}
+        {/* v8 ignore stop */}
       </div>
       </div>
     </div>

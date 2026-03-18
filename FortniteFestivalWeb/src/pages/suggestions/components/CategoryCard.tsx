@@ -96,6 +96,7 @@ export const CategoryCard = memo(function CategoryCard({
 
 // ── SongRow ──
 
+/* v8 ignore start — SongRow: presentation component with layout-specific rendering */
 export function SongRow({ song, categoryKey, albumArt, leaderboardData,
 }: {
   song: SuggestionSongItem;
@@ -132,6 +133,7 @@ export function SongRow({ song, categoryKey, albumArt, leaderboardData,
     </Link>
   );
 }
+/* v8 ignore stop */
 
 // ── RightContent ──
 

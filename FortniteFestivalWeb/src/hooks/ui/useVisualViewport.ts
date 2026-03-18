@@ -10,6 +10,7 @@ import { useSyncExternalStore } from 'react';
  * unavailable.
  */
 
+/* v8 ignore start — VisualViewport API not available in jsdom */
 function subscribe(callback: () => void) {
   const vv = window.visualViewport;
   if (vv) {
@@ -23,16 +24,17 @@ function subscribe(callback: () => void) {
   window.addEventListener('resize', callback);
   return () => window.removeEventListener('resize', callback);
 }
+/* v8 ignore stop */
 
 function getSnapshot(): number {
   return window.visualViewport?.height ?? window.innerHeight;
 }
 
+/* v8 ignore start — SSR-only: never called in jsdom */
 function getServerSnapshot(): number {
-  /* v8 ignore start */
   return 900;
-  /* v8 ignore stop */
 }
+/* v8 ignore stop */
 
 export function useVisualViewportHeight(): number {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
@@ -42,11 +44,11 @@ function getOffsetTopSnapshot(): number {
   return window.visualViewport?.offsetTop ?? 0;
 }
 
+/* v8 ignore start — SSR-only: never called in jsdom */
 function getOffsetTopServerSnapshot(): number {
-  /* v8 ignore start */
   return 0;
-  /* v8 ignore stop */
 }
+/* v8 ignore stop */
 
 /**
  * Returns the current visual viewport offsetTop in pixels.

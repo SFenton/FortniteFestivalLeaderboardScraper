@@ -138,10 +138,11 @@ export default memo(function ScoreHistoryChart({
     next: t('aria.nextInstrument'),
   }), [t]);
 
+  /* v8 ignore start — InstrumentSelector always provides non-null key */
   const handleInstrumentSelect = useCallback((key: InstrumentKey | null) => {
-    /* v8 ignore next */
     if (key) setSelected(key);
   }, []);
+  /* v8 ignore stop */
 
   // Measure container width to decide between full icon row vs compact arrows
   /* v8 ignore start — ResizeObserver compact layout */

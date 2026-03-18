@@ -32,7 +32,9 @@ export default memo(function AlbumArt({ src, size, style, priority }: { src?: st
         onLoad={handleLoad}
         onError={handleError}
         className={css.image}
+        /* v8 ignore start — loaded state depends on image onLoad (not available in jsdom) */
         style={{ width: size, height: size, borderRadius: 'var(--radius-xs)', opacity: loaded ? 1 : 0 }}
+        /* v8 ignore stop */
       />
     </div>
   );

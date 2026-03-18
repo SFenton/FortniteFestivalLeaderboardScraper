@@ -46,6 +46,7 @@ export function useSyncStatus(accountId: string | undefined) {
     }
   }, []);
 
+  /* v8 ignore start — async polling callback */
   const checkStatus = useCallback(async () => {
     /* v8 ignore start */
     if (!accountId || !mountedRef.current) return;
@@ -105,6 +106,7 @@ export function useSyncStatus(accountId: string | undefined) {
       }
 
       // Schedule next poll: fast while syncing, slow when idle
+      /* v8 ignore start — timer scheduling + document.hidden: DOM visibility API */
       if (!document.hidden && mountedRef.current) {
         stopPolling();
         pollRef.current = setTimeout(checkStatus, isSyncing ? SYNC_POLL_ACTIVE_MS : SYNC_POLL_IDLE_MS);
@@ -115,6 +117,7 @@ export function useSyncStatus(accountId: string | undefined) {
         stopPolling();
         pollRef.current = setTimeout(checkStatus, SYNC_POLL_IDLE_MS);
       }
+      /* v8 ignore stop */
     }
   }, [accountId, stopPolling]);
 

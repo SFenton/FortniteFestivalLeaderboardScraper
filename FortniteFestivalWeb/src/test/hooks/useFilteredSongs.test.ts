@@ -239,4 +239,111 @@ describe('useFilteredSongs', () => {
     // s1 has rank 0 → bracket 0 → filtered out; s2 and s3 have no score → bracket 0 → filtered out
     expect(result.current).toHaveLength(0);
   });
+
+  it('sorts by score mode with scoreMap data', () => {
+    const scoreMap = new Map([
+      ['s1', score('s1', { score: 5000 })],
+      ['s2', score('s2', { score: 9000 })],
+      ['s3', score('s3', { score: 1000 })],
+    ]);
+    const allScoreMap = new Map(
+      Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([['guitar' as InstrumentKey, s]])])
+    );
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'score' as any, sortAscending: false,
+      filters: emptyFilters as any, instrument: null,
+      scoreMap, allScoreMap,
+    }));
+    expect(result.current.map(s => s.songId)).toEqual(['s2', 's1', 's3']);
+  });
+
+  it('filters by hasScores per instrument', () => {
+    const scoreMap = new Map([['s1', score('s1')]]);
+    const allScoreMap = new Map([['s1', new Map([['guitar' as InstrumentKey, score('s1')]])]]);
+    const filters = { ...emptyFilters, hasScores: { guitar: true } };
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: filters as any, instrument: null,
+      scoreMap, allScoreMap,
+    }));
+    // Only s1 has a guitar score
+    expect(result.current).toHaveLength(1);
+    expect(result.current[0]!.songId).toBe('s1');
+  });
+
+  it('filters by season when season filter is active', () => {
+    const scoreMap = new Map([
+      ['s1', score('s1', { season: 1 })],
+      ['s2', score('s2', { season: 2 })],
+      ['s3', score('s3', { season: 1 })],
+    ]);
+    const allScoreMap = new Map(
+      Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([['guitar' as InstrumentKey, s]])])
+    );
+    const filters = { ...emptyFilters, seasonFilter: { 1: false, 2: true } };
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: filters as any, instrument: null,
+      scoreMap, allScoreMap,
+    }));
+    // Season 1 is filtered out, only s2 (season 2) should remain
+    expect(result.current).toHaveLength(1);
+    expect(result.current[0]!.songId).toBe('s2');
+  });
+
+  it('skips filter instruments with false entries', () => {
+    const scoreMap = new Map([['s1', score('s1')]]);
+    const allScoreMap = new Map([['s1', new Map([['guitar' as InstrumentKey, score('s1')]])]]);
+    const filters = {
+      missingScores: { guitar: true, bass: false },
+      missingFCs: { guitar: false },
+      hasScores: { bass: false },
+      hasFCs: { guitar: false },
+      seasonFilter: {}, percentileFilter: {}, starsFilter: {}, difficultyFilter: {},
+    };
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: filters as any, instrument: null,
+      scoreMap, allScoreMap,
+    }));
+    // Only missingScores guitar=true is active; s2 and s3 have no guitar score
+    expect(result.current.map(s => s.songId)).toEqual(['s2', 's3']);
+  });
+
+  it('passes songs with null percentile when bracket 0 is not filtered', () => {
+    const scoreMap = new Map([
+      ['s1', score('s1', { rank: 0, totalEntries: 0 })],
+      ['s2', score('s2', { rank: 5, totalEntries: 100 })],
+    ]);
+    const allScoreMap = new Map(
+      Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([['guitar' as InstrumentKey, s]])])
+    );
+    const filters = { ...emptyFilters, percentileFilter: { 5: false } };
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: filters as any, instrument: null,
+      scoreMap, allScoreMap,
+    }));
+    // s1 has null pct, bracket 0 not filtered → passes
+    // s2 has pct=5%, bracket 5 is filtered out → excluded
+    // s3 has no score, bracket 0 not filtered → passes
+    expect(result.current.map(s => s.songId)).toContain('s1');
+    expect(result.current.map(s => s.songId)).toContain('s3');
+    expect(result.current.map(s => s.songId)).not.toContain('s2');
+  });
+
+  it('sorts by year with undefined year using fallback', () => {
+    const songsWithUndef = [
+      song('s1', 'Alpha', 'Artist A', 2020),
+      { ...song('s2', 'Beta', 'Artist B'), year: undefined } as unknown as Song,
+      song('s3', 'Gamma', 'Artist C', 2022),
+    ];
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: songsWithUndef, search: '', sortMode: 'year' as any, sortAscending: true,
+      filters: emptyFilters as any, instrument: null,
+      scoreMap: new Map(), allScoreMap: new Map(),
+    }));
+    // undefined year → 0 via ?? fallback, sorts first
+    expect(result.current[0]!.songId).toBe('s2');
+  });
 });
