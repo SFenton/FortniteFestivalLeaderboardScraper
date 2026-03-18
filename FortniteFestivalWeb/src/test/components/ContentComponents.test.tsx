@@ -69,7 +69,7 @@ function Providers({ children, accountId }: { children: React.ReactNode; account
 }
 
 // ── PlayerContent ──
-import PlayerContent from '../../components/player/PlayerContent';
+import PlayerContent from '../../pages/leaderboard/player/components/PlayerContent';
 import { SyncPhase } from '@festival/core';
 
 describe('PlayerContent', () => {
