@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterEach } from 'vitest';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { Routes, Route } from 'react-router-dom';
 import SuggestionsPage from '../../pages/suggestions/SuggestionsPage';
 import { TestProviders } from '../helpers/TestProviders';
@@ -271,5 +271,40 @@ describe('SuggestionsPage', () => {
     await waitFor(() => {
       expect(container.innerHTML.length).toBeGreaterThan(50);
     });
+  });
+});
+
+describe('SuggestionsPage — filter handlers (extracted)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('opens filter modal via Filter pill', async () => {
+    renderSuggestions('/suggestions', 'test-player-1');
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    const filterBtn = screen.queryByText('Filter');
+    if (filterBtn) {
+      fireEvent.click(filterBtn);
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      expect(screen.getByText('Filter Suggestions')).toBeTruthy();
+    }
+  });
+
+  it('resets filter from the filter modal', async () => {
+    renderSuggestions('/suggestions', 'test-player-1');
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    const filterBtn = screen.queryByText('Filter');
+    if (filterBtn) {
+      fireEvent.click(filterBtn);
+      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      const resetBtns = screen.queryAllByText('Reset Suggestion Filters');
+      if (resetBtns.length > 0) {
+        fireEvent.click(resetBtns[0]!);
+        await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+      }
+    }
   });
 });

@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 
 import RouteErrorFallback from '../../components/page/RouteErrorFallback';
 
@@ -19,5 +19,16 @@ describe('RouteErrorFallback', () => {
   it('renders Reload button', () => {
     render(<RouteErrorFallback />);
     expect(screen.getByText('Reload')).toBeTruthy();
+  });
+
+  it('reload button calls window.location.reload', () => {
+    const reloadMock = vi.fn();
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, reload: reloadMock },
+      writable: true,
+    });
+    render(<RouteErrorFallback />);
+    fireEvent.click(screen.getByText('Reload'));
+    expect(reloadMock).toHaveBeenCalled();
   });
 });

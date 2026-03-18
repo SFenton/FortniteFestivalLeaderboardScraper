@@ -77,3 +77,23 @@ describe('SongHeader', () => {
     expect(buttons.length).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe('SongHeader — noTransition branches', () => {
+  it('renders with noTransition=true and collapsed=true', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <SongHeader song={MOCK_SONG as any} songId="song-1" collapsed noTransition onOpenPaths={vi.fn()} />
+      </MemoryRouter>,
+    );
+    expect(container.firstElementChild).toBeTruthy();
+  });
+
+  it('renders with noTransition=false and collapsed=false', () => {
+    render(
+      <MemoryRouter>
+        <SongHeader song={MOCK_SONG as any} songId="song-1" collapsed={false} noTransition={false} onOpenPaths={vi.fn()} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('Test Song')).toBeTruthy();
+  });
+});

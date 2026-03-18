@@ -9,6 +9,7 @@ import {
 import type { SuggestionsFilterDraft } from '../../pages/suggestions/modals/SuggestionsFilterModal';
 import type { AppSettings } from '../../contexts/SettingsContext';
 import type { SuggestionCategory } from '@festival/core/suggestions/types';
+import { globalKeyFor } from '@festival/core/suggestions/suggestionFilterConfig';
 
 function mockFilterDraft(overrides: Partial<SuggestionsFilterDraft> = {}): SuggestionsFilterDraft {
   return {
@@ -195,5 +196,96 @@ describe('filterCategoryForInstrumentTypes', () => {
     const result = filterCategoryForInstrumentTypes(cat, draft);
     expect(result).not.toBeNull();
     expect(result!.songs).toHaveLength(1); // only the one without instrumentKey
+  });
+});
+
+/* Tests extracted from hooks/AllBranches.test.tsx */
+describe('suggestionsFilter additional branches', () => {
+  it('shouldShowCategoryType: type with global key false → false', () => {
+    expect(shouldShowCategoryType('unfc_guitar', { [globalKeyFor('NearFC')]: false } as any)).toBe(false);
+  });
+
+  it('shouldShowCategoryType: type with global key true → true', () => {
+    expect(shouldShowCategoryType('unfc_guitar', { [globalKeyFor('NearFC')]: true } as any)).toBe(true);
+  });
+
+  it('shouldShowCategoryType: type with global key undefined → ?? true', () => {
+    expect(shouldShowCategoryType('unfc_guitar', {} as any)).toBe(true);
+  });
+
+  it('filterCategory: catInstrument=null + no instrumentKey songs → all pass', () => {
+    const cat = { key: 'near_fc_mixed', label: 'near_fc_mixed', songs: [{ songId: 's1', title: 'T', artist: 'A' }, { songId: 's2', title: 'T', artist: 'A' }] } as any;
+    const r = filterCategoryForInstrumentTypes(cat, {} as any);
+    expect(r).toBe(cat);
+  });
+
+  it('filterCategory: per-instrument key undefined → ?? true keeps song', () => {
+    const cat = { key: 'unplayed_mixed', label: 'unplayed_mixed', songs: [{ songId: 's1', title: 'T', artist: 'A', instrumentKey: 'guitar' }] } as any;
+    const r = filterCategoryForInstrumentTypes(cat, {} as any);
+    expect(r).toBe(cat);
+  });
+});
+
+/* Tests extracted from hooks/CoverageGaps3.test.tsx */
+describe('suggestionsFilter — category key variants', () => {
+  it('filterCategoryForInstrumentTypes handles per-instrument category (guitar)', () => {
+    const cat = { key: 'unfc_guitar', songs: [{ songId: 's1' }] } as any;
+    const result = filterCategoryForInstrumentTypes(cat, {} as any);
+    expect(result).toBe(cat);
+  });
+
+  it('filterCategoryForInstrumentTypes filters out per-instrument when false', () => {
+    const cat = { key: 'unfc_guitar', songs: [{ songId: 's1' }] } as any;
+    const result = filterCategoryForInstrumentTypes(cat, { suggestionsLeadNearFC: false } as any);
+    expect(result).toBeNull();
+  });
+
+  it('filterCategoryForInstrumentTypes filters songs by instrumentKey', () => {
+    const cat = {
+      key: 'near_fc_any',
+      songs: [
+        { songId: 's1', instrumentKey: 'guitar' },
+        { songId: 's2', instrumentKey: 'bass' },
+      ],
+    } as any;
+    const result = filterCategoryForInstrumentTypes(cat, { suggestionsLeadNearFC: false } as any);
+    expect(result).not.toBeNull();
+    expect(result!.songs).toHaveLength(1);
+    expect(result!.songs[0]!.instrumentKey).toBe('bass');
+  });
+
+  it('filterCategoryForInstrumentTypes returns null when all songs filtered', () => {
+    const cat = {
+      key: 'near_fc_any',
+      songs: [{ songId: 's1', instrumentKey: 'guitar' }],
+    } as any;
+    const result = filterCategoryForInstrumentTypes(cat, { suggestionsLeadNearFC: false } as any);
+    expect(result).toBeNull();
+  });
+
+  it('filterCategoryForInstrumentTypes returns same cat when no songs filtered', () => {
+    const cat = {
+      key: 'near_fc_any',
+      songs: [
+        { songId: 's1', instrumentKey: 'guitar' },
+        { songId: 's2', instrumentKey: 'bass' },
+      ],
+    } as any;
+    const result = filterCategoryForInstrumentTypes(cat, {} as any);
+    expect(result).toBe(cat);
+  });
+
+  it('filterCategoryForInstrumentTypes keeps songs without instrumentKey', () => {
+    const cat = {
+      key: 'near_fc_any',
+      songs: [
+        { songId: 's1' },
+        { songId: 's2', instrumentKey: 'guitar' },
+      ],
+    } as any;
+    const result = filterCategoryForInstrumentTypes(cat, { suggestionsLeadNearFC: false } as any);
+    expect(result).not.toBeNull();
+    expect(result!.songs).toHaveLength(1);
+    expect(result!.songs[0]!.songId).toBe('s1');
   });
 });

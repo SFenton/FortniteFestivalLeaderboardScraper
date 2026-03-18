@@ -24,3 +24,34 @@ describe('AlbumArt', () => {
     expect(img).toBeTruthy();
   });
 });
+
+describe('AlbumArt — branch coverage', () => {
+  it('renders placeholder when src is empty string', () => {
+    const { container } = render(<AlbumArt src="" size={64} />);
+    expect(container.querySelector('img')).toBeNull();
+  });
+
+  it('renders with src and shows spinner', () => {
+    const { container } = render(<AlbumArt src="https://example.com/art.jpg" size={40} />);
+    expect(container.querySelector('img')).toBeTruthy();
+    expect(container.querySelector('[class*="spinnerWrap"]')).toBeTruthy();
+  });
+
+  it('renders with priority loading', () => {
+    const { container } = render(<AlbumArt src="https://example.com/art.jpg" size={40} priority />);
+    const img = container.querySelector('img');
+    expect(img?.getAttribute('loading')).toBe('eager');
+    expect(img?.getAttribute('fetchpriority')).toBe('high');
+  });
+
+  it('renders with lazy loading by default', () => {
+    const { container } = render(<AlbumArt src="https://example.com/art.jpg" size={40} />);
+    const img = container.querySelector('img');
+    expect(img?.getAttribute('loading')).toBe('lazy');
+  });
+
+  it('renders with custom style', () => {
+    const { container } = render(<AlbumArt src="https://example.com/art.jpg" size={60} style={{ margin: 5 }} />);
+    expect(container.firstElementChild).toBeTruthy();
+  });
+});

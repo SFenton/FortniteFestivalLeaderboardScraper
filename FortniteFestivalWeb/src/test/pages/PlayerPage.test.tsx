@@ -194,3 +194,35 @@ describe('PlayerPage', () => {
     });
   });
 });
+
+describe('PlayerPage — branch coverage (extracted)', () => {
+  beforeEach(() => {
+    clearPlayerPageCache();
+  });
+
+  it('renders as tracked player with propAccountId', async () => {
+    localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player-1', displayName: 'TrackedP' }));
+    mockApi.getPlayer.mockResolvedValue({
+      accountId: 'test-player-1', displayName: 'TrackedP', totalScores: 0, scores: [],
+    });
+    renderPlayerPage('/statistics', 'test-player-1');
+    await waitFor(() => {
+      expect(mockApi.getPlayer).toHaveBeenCalled();
+    });
+  });
+
+  it('renders player page with backfill completed status', async () => {
+    mockApi.getPlayer.mockResolvedValue({
+      accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 0, scores: [],
+    });
+    mockApi.getSyncStatus.mockResolvedValue({
+      accountId: 'test-player-1', isTracked: true,
+      backfill: { status: 'completed', progress: 100 },
+      historyRecon: null,
+    });
+    renderPlayerPage('/player/test-player-1');
+    await waitFor(() => {
+      expect(mockApi.getPlayer).toHaveBeenCalled();
+    });
+  });
+});

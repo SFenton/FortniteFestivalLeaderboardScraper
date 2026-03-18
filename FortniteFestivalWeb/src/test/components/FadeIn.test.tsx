@@ -30,4 +30,22 @@ describe('FadeIn', () => {
     const div = container.firstElementChild as HTMLElement;
     expect(div.style.marginTop).toBe('10px');
   });
+
+  it('renders with custom className', () => {
+    const { container } = render(<FadeIn delay={100} className="custom">Content</FadeIn>);
+    const wrapper = container.firstElementChild;
+    expect(wrapper?.className).toContain('custom');
+  });
+
+  it('renders as different element type', () => {
+    const { container } = render(<FadeIn as="span">Span</FadeIn>);
+    expect(container.querySelector('span')).toBeTruthy();
+  });
+
+  it('hidden with custom className', () => {
+    const { container } = render(<FadeIn delay={100} hidden className="custom">X</FadeIn>);
+    const el = container.firstElementChild!;
+    expect(el.className).toContain('hidden');
+    expect(el.className).toContain('custom');
+  });
 });

@@ -63,4 +63,11 @@ describe('FestivalContext', () => {
   it('throws when used outside provider', () => {
     expect(() => renderHook(() => useFestival())).toThrow('useFestival must be used within a FestivalProvider');
   });
+
+  it('shows fallback message for non-Error rejection', async () => {
+    mockGetSongs.mockRejectedValue('string-error');
+    const { result } = renderHook(() => useFestival(), { wrapper });
+    await waitFor(() => expect(result.current.state.isLoading).toBe(false));
+    expect(result.current.state.error).toBe('Failed to load songs');
+  });
 });

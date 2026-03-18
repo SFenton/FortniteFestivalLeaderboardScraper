@@ -112,3 +112,46 @@ describe('Sidebar', () => {
     expect(screen.getByText('Settings')).toBeTruthy();
   });
 });
+
+describe('Sidebar — route-specific active styling', () => {
+  it('calls onClose when nav link is clicked', () => {
+    const { props } = renderSidebar({ player: { accountId: 'p1', displayName: 'P' } });
+    fireEvent.click(screen.getByText('Songs'));
+    expect(props.onClose).toHaveBeenCalled();
+  });
+
+  it('shows active styling on settings route', () => {
+    render(
+      <MemoryRouter initialEntries={['/settings']}>
+        <Sidebar player={null} open={true} onClose={vi.fn()} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} />
+      </MemoryRouter>,
+    );
+    const settingsLink = screen.getByText('Settings');
+    expect(settingsLink.closest('a')?.className).toContain('sidebarLinkActive');
+  });
+
+  it('shows player name as link', () => {
+    renderSidebar({ player: { accountId: 'p1', displayName: 'TestP' } });
+    expect(screen.getByText('TestP').closest('a')).toBeTruthy();
+  });
+
+  it('renders with active styling on suggestions route', () => {
+    render(
+      <MemoryRouter initialEntries={['/suggestions']}>
+        <Sidebar player={{ accountId: 'p1', displayName: 'P' } as any} open={true} onClose={vi.fn()} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} />
+      </MemoryRouter>,
+    );
+    const link = screen.getByText('Suggestions');
+    expect(link.closest('a')?.className).toContain('sidebarLinkActive');
+  });
+
+  it('renders with active styling on statistics route', () => {
+    render(
+      <MemoryRouter initialEntries={['/statistics']}>
+        <Sidebar player={{ accountId: 'p1', displayName: 'P' } as any} open={true} onClose={vi.fn()} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} />
+      </MemoryRouter>,
+    );
+    const link = screen.getByText('Statistics');
+    expect(link.closest('a')?.className).toContain('sidebarLinkActive');
+  });
+});

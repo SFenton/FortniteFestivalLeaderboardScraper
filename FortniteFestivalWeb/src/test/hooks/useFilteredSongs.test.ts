@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useFilteredSongs } from '../../hooks/data/useFilteredSongs';
+import { compareByMode } from '../../pages/songs/components/SongRow';
 import type { ServerSong as Song, PlayerScore, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 
 function song(id: string, title: string, artist: string, year?: number): Song {
@@ -345,5 +346,234 @@ describe('useFilteredSongs', () => {
     }));
     // undefined year → 0 via ?? fallback, sorts first
     expect(result.current[0]!.songId).toBe('s2');
+  });
+});
+
+describe('compareByMode — branch coverage', () => {
+  const a = score('s1', { score: 100, accuracy: 900, isFullCombo: false, rank: 5, totalEntries: 100, stars: 4, season: 3 });
+  const b = score('s2', { score: 200, accuracy: 950, isFullCombo: true, rank: 2, totalEntries: 100, stars: 5, season: 5 });
+
+  it('score: compares by score', () => {
+    expect(compareByMode('score' as any, a, b)).toBeLessThan(0);
+  });
+
+  it('percentage: compares by accuracy then FC tiebreaker', () => {
+    expect(compareByMode('percentage' as any, a, b)).toBeLessThan(0);
+    const x = score('s1', { accuracy: 900, isFullCombo: false });
+    const y = score('s2', { accuracy: 900, isFullCombo: true });
+    expect(compareByMode('percentage' as any, x, y)).toBeLessThan(0);
+  });
+
+  it('percentile: compares by rank/totalEntries ratio', () => {
+    expect(compareByMode('percentile' as any, a, b)).toBeGreaterThan(0);
+  });
+
+  it('percentile: Infinity fallback when rank=0 or totalEntries=0', () => {
+    const noRank = score('s1', { rank: 0, totalEntries: 0 });
+    expect(compareByMode('percentile' as any, noRank, b)).toBeGreaterThan(0);
+    expect(compareByMode('percentile' as any, a, noRank)).toBeLessThan(0);
+  });
+
+  it('percentile: Infinity fallback when only totalEntries=0', () => {
+    const noTotal = score('s1', { totalEntries: 0 });
+    expect(compareByMode('percentile' as any, noTotal, b)).toBeGreaterThan(0);
+  });
+
+  it('stars: compares by star count with null fallback', () => {
+    expect(compareByMode('stars' as any, a, b)).toBeLessThan(0);
+    const noStars = score('s1', { stars: undefined as any });
+    expect(compareByMode('stars' as any, noStars, b)).toBeLessThan(0);
+  });
+
+  it('seasonachieved: compares by season with null fallback', () => {
+    expect(compareByMode('seasonachieved' as any, a, b)).toBeLessThan(0);
+    const noSeason = score('s1', { season: undefined as any });
+    expect(compareByMode('seasonachieved' as any, noSeason, b)).toBeLessThan(0);
+  });
+
+  it('hasfc: compares by isFullCombo boolean', () => {
+    expect(compareByMode('hasfc' as any, a, b)).toBeLessThan(0);
+  });
+
+  it('default: returns 0 for unknown mode', () => {
+    expect(compareByMode('unknown' as any, a, b)).toBe(0);
+  });
+
+  it('undefined a sorts last', () => {
+    expect(compareByMode('score' as any, undefined, b)).toBe(1);
+  });
+
+  it('undefined b sorts last', () => {
+    expect(compareByMode('score' as any, a, undefined)).toBe(-1);
+  });
+
+  it('both undefined returns 0', () => {
+    expect(compareByMode('score' as any, undefined, undefined)).toBe(0);
+  });
+});
+
+describe('useFilteredSongs — additional sort modes', () => {
+  it('sorts by percentile mode', () => {
+    const scoreMap = new Map([
+      ['s1', score('s1', { rank: 1, totalEntries: 100 })],
+      ['s2', score('s2', { rank: 50, totalEntries: 100 })],
+    ]);
+    const allScoreMap = new Map(
+      Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([['guitar' as InstrumentKey, s]])])
+    );
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'percentile' as any, sortAscending: true,
+      filters: emptyFilters as any, instrument: null,
+      scoreMap, allScoreMap,
+    }));
+    const ids = result.current.map(s => s.songId);
+    const idx1 = ids.indexOf('s1');
+    const idx2 = ids.indexOf('s2');
+    expect(idx1).toBeLessThan(idx2);
+  });
+
+  it('sorts by stars mode', () => {
+    const scoreMap = new Map([
+      ['s1', score('s1', { stars: 6 })],
+      ['s2', score('s2', { stars: 3 })],
+    ]);
+    const allScoreMap = new Map(
+      Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([['guitar' as InstrumentKey, s]])])
+    );
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'stars' as any, sortAscending: false,
+      filters: emptyFilters as any, instrument: null,
+      scoreMap, allScoreMap,
+    }));
+    const ids = result.current.map(s => s.songId);
+    const idx1 = ids.indexOf('s1');
+    const idx2 = ids.indexOf('s2');
+    expect(idx1).toBeLessThan(idx2);
+  });
+
+  it('sorts by seasonachieved mode', () => {
+    const scoreMap = new Map([
+      ['s1', score('s1', { season: 5 })],
+      ['s2', score('s2', { season: 3 })],
+    ]);
+    const allScoreMap = new Map(
+      Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([['guitar' as InstrumentKey, s]])])
+    );
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'seasonachieved' as any, sortAscending: false,
+      filters: emptyFilters as any, instrument: null,
+      scoreMap, allScoreMap,
+    }));
+    const ids = result.current.map(s => s.songId);
+    const idx1 = ids.indexOf('s1');
+    const idx2 = ids.indexOf('s2');
+    expect(idx1).toBeLessThan(idx2);
+  });
+
+  it('sorts by hasfc mode', () => {
+    const scoreMap = new Map([
+      ['s1', score('s1', { isFullCombo: true })],
+      ['s2', score('s2', { isFullCombo: false })],
+    ]);
+    const allScoreMap = new Map(
+      Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([['guitar' as InstrumentKey, s]])])
+    );
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'hasfc' as any, sortAscending: false,
+      filters: emptyFilters as any, instrument: null,
+      scoreMap, allScoreMap,
+    }));
+    const ids = result.current.map(s => s.songId);
+    const idx1 = ids.indexOf('s1');
+    const idx2 = ids.indexOf('s2');
+    expect(idx1).toBeLessThan(idx2);
+  });
+
+  it('sorts by percentage mode', () => {
+    const scoreMap = new Map([
+      ['s1', score('s1', { accuracy: 900 })],
+      ['s2', score('s2', { accuracy: 950 })],
+    ]);
+    const allScoreMap = new Map(
+      Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([['guitar' as InstrumentKey, s]])])
+    );
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'percentage' as any, sortAscending: true,
+      filters: emptyFilters as any, instrument: null,
+      scoreMap, allScoreMap,
+    }));
+    const ids = result.current.map(s => s.songId);
+    const idx1 = ids.indexOf('s1');
+    const idx2 = ids.indexOf('s2');
+    expect(idx1).toBeLessThan(idx2);
+  });
+});
+
+describe('useFilteredSongs — additional filter branches', () => {
+  it('percentile bracket 100: rank equals totalEntries', () => {
+    const scoreMap = new Map([['s1', score('s1', { rank: 100, totalEntries: 100 })]]);
+    const allScoreMap = new Map([['s1', new Map([['guitar' as InstrumentKey, score('s1')]])]]);
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: { ...emptyFilters, percentileFilter: { 100: true } } as any, instrument: 'guitar' as InstrumentKey,
+      scoreMap, allScoreMap,
+    }));
+    expect(result.current.some(s => s.songId === 's1')).toBe(true);
+  });
+
+  it('missingScores filter with allScoreMap entry but empty instrument map', () => {
+    const allScoreMap = new Map<string, Map<InstrumentKey, PlayerScore>>([
+      ['s1', new Map()],
+    ]);
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: { ...emptyFilters, missingScores: { guitar: true } } as any, instrument: null,
+      scoreMap: new Map(), allScoreMap,
+    }));
+    expect(result.current.length).toBeGreaterThan(0);
+  });
+
+  it('score with undefined totalEntries in percentile calc', () => {
+    const scoreMap = new Map([['s1', score('s1', { rank: 5, totalEntries: undefined as any })]]);
+    const allScoreMap = new Map([['s1', new Map([['guitar' as InstrumentKey, score('s1')]])]]);
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: { ...emptyFilters, percentileFilter: { 0: false } } as any, instrument: null,
+      scoreMap, allScoreMap,
+    }));
+    expect(result.current.length).toBeLessThanOrEqual(3);
+  });
+
+  it('instrument-specific filter with non-matching instrument is no-op', () => {
+    const allScoreMap = new Map([['s1', new Map([['guitar' as InstrumentKey, score('s1')]])]]);
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: { ...emptyFilters, hasScores: { bass: true } } as any, instrument: 'guitar' as InstrumentKey,
+      scoreMap: new Map(), allScoreMap,
+    }));
+    expect(result.current.length).toBe(3);
+  });
+
+  it('combined hasScores + hasFCs both must pass', () => {
+    const allScoreMap = new Map<string, Map<InstrumentKey, PlayerScore>>([
+      ['s1', new Map([['guitar' as InstrumentKey, score('s1', { isFullCombo: true })]])],
+      ['s2', new Map([['guitar' as InstrumentKey, score('s2', { isFullCombo: false })]])],
+    ]);
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: { ...emptyFilters, hasScores: { guitar: true }, hasFCs: { guitar: true } } as any, instrument: null,
+      scoreMap: new Map(), allScoreMap,
+    }));
+    expect(result.current.length).toBe(1);
+    expect(result.current[0]!.songId).toBe('s1');
+  });
+
+  it('sort by hasfc with empty scoreMap returns all songs', () => {
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'hasfc' as any, sortAscending: true,
+      filters: emptyFilters as any, instrument: null,
+      scoreMap: new Map(), allScoreMap: new Map(),
+    }));
+    expect(result.current.length).toBe(3);
   });
 });

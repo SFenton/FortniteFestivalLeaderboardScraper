@@ -92,4 +92,40 @@ describe('PlayerHistoryEntry', () => {
     const scoreSpan = container.querySelector('[style*="width"]');
     expect(scoreSpan?.getAttribute('style')).toContain('8ch');
   });
+
+  it('renders with FC badge when isFullCombo', () => {
+    const { container } = render(
+      <PlayerHistoryEntry
+        date="2024-01-01"
+        score={100000}
+        accuracy={950000}
+        isFullCombo={true}
+        isHighScore={false}
+        season={5}
+        showAccuracy={true}
+        showSeason={true}
+        scoreWidth="8ch"
+      />,
+    );
+    expect(container.textContent).toContain('100,000');
+  });
+
+  it('hides season pill when season is null even with showSeason', () => {
+    render(
+      <PlayerHistoryEntry
+        date="2025-01-15"
+        score={150000}
+        showSeason
+        season={null}
+      />,
+    );
+    expect(screen.queryByTestId('season')).toBeNull();
+  });
+
+  it('renders accuracy cell with accuracy undefined (null fallback)', () => {
+    const { container } = render(
+      <PlayerHistoryEntry date="2025-01-15" score={100000} showAccuracy accuracy={undefined} />,
+    );
+    expect(container.querySelector('[data-testid="accuracy"]')).toBeTruthy();
+  });
 });

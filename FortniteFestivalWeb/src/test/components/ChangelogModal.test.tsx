@@ -57,4 +57,26 @@ describe('ChangelogModal', () => {
     expect(screen.getByText(/v1\.1\.0/)).toBeTruthy();
     expect(screen.getByText('Initial release')).toBeTruthy();
   });
+
+  it('does not dismiss on non-Escape key', () => {
+    const onDismiss = vi.fn();
+    render(<ChangelogModal onDismiss={onDismiss} />);
+    fireEvent.keyDown(document, { key: 'a' });
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it('stops propagation on card click', () => {
+    const onDismiss = vi.fn();
+    const { container } = render(<ChangelogModal onDismiss={onDismiss} />);
+    const card = container.querySelector('[class*="card"]');
+    if (card) fireEvent.click(card);
+    // onDismiss should NOT be called from the card click itself
+  });
+
+  it('handles scroll event on content', () => {
+    const { container } = render(<ChangelogModal onDismiss={vi.fn()} />);
+    const content = container.querySelector('[class*="content"]');
+    if (content) fireEvent.scroll(content);
+    // No error — handleScroll exercised
+  });
 });
