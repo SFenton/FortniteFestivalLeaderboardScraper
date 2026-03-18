@@ -57,4 +57,15 @@ describe('ChartTooltip', () => {
     render(<ChartTooltip active payload={[{ payload: noSeason }]} />);
     expect(screen.queryByText(/· S/)).toBeNull();
   });
+
+  it('returns null when payload is undefined', () => {
+    const { container } = render(<ChartTooltip active />);
+    expect(container.innerHTML).toBe('');
+  });
+
+  it('renders without stars when stars is null', () => {
+    const noStars = { ...MOCK_POINT, stars: null, isFullCombo: false };
+    const { container } = render(<ChartTooltip active payload={[{ payload: noStars as any }]} />);
+    expect(container.textContent).not.toContain('★');
+  });
 });

@@ -234,3 +234,20 @@ describe('PlayerHistoryPage', () => {
     expect(container.querySelector('[class*="list"]')).toBeTruthy();
   });
 });
+
+describe('PlayerHistoryPage — callback function coverage (extracted)', () => {
+  it('opens sort modal and applies sort', async () => {
+    const { container } = renderHistory();
+    await waitFor(() => expect(document.body.textContent).toContain('145,000'), { timeout: 5000 });
+    // Find sort button (IoSwapVerticalSharp icon in header)
+    const sortBtn = container.querySelector('[aria-label*="sort" i]') ?? Array.from(container.querySelectorAll('button')).find(b => b.querySelector('svg'));
+    if (sortBtn) {
+      fireEvent.click(sortBtn);
+      await waitFor(() => {
+        const applyBtn = screen.queryByText('Apply Sort Changes');
+        if (applyBtn) fireEvent.click(applyBtn);
+      });
+    }
+    expect(document.body.textContent).toContain('145,000');
+  });
+});

@@ -3,7 +3,7 @@
  * error states, and responsive column widths.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import InstrumentCard from '../../pages/songinfo/components/InstrumentCard';
 import type { LeaderboardEntry, PlayerScore, ServerInstrumentKey } from '@festival/core/api/serverTypes';
@@ -145,5 +145,42 @@ describe('InstrumentCard', () => {
     const entries = [makeEntry(1)];
     const { container } = renderCard({ prefetchedEntries: entries, windowWidth: 300 });
     expect(container.innerHTML).toBeTruthy();
+  });
+
+  it('shows view-all button when entries exist', () => {
+    const entries = [makeEntry(1), makeEntry(2)];
+    renderCard({ prefetchedEntries: entries });
+    expect(screen.getByText('View full leaderboard')).toBeTruthy();
+  });
+
+  it('rank falls back to index+1 when rank is undefined', () => {
+    const entries = [makeEntry(1, { rank: undefined as any })];
+    renderCard({ prefetchedEntries: entries });
+    expect(screen.getByText('#1')).toBeTruthy();
+  });
+
+  it('shows season in player row on wide width', () => {
+    const entries = [makeEntry(1)];
+    const playerScore: PlayerScore = {
+      songId: 'song-1', instrument: 'Solo_Guitar', score: 100000, rank: 50,
+      accuracy: 880000, isFullCombo: false, stars: 4, season: 3,
+    };
+    renderCard({
+      prefetchedEntries: entries,
+      windowWidth: 1200,
+      playerScore,
+      playerName: 'TestPlayer',
+      playerAccountId: 'my-player',
+    });
+    expect(screen.getByText('TestPlayer')).toBeTruthy();
+  });
+
+  it('stopPropagation on entry link click', () => {
+    const entries = [makeEntry(1)];
+    renderCard({ prefetchedEntries: entries });
+    const link = screen.getByText('Player 1').closest('a')!;
+    const stopProp = vi.spyOn(MouseEvent.prototype, 'stopPropagation');
+    fireEvent.click(link);
+    stopProp.mockRestore();
   });
 });

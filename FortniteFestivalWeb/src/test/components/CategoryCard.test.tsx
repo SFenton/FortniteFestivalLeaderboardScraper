@@ -238,4 +238,35 @@ describe('SongRow (CategoryCard)', () => {
     const img = container.querySelector('img[src*="art.jpg"]');
     expect(img).toBeTruthy();
   });
+
+  it('renders hidden layout for artist_sampler_ category', () => {
+    const { container } = renderSongRow({ categoryKey: 'artist_sampler_drake' });
+    expect(container.querySelector('[class*="badges"]')).toBeNull();
+    expect(container.querySelector('[class*="instrumentChipsRow"]')).toBeNull();
+  });
+
+  it('renders hidden layout for artist_unplayed_ category', () => {
+    const { container } = renderSongRow({ categoryKey: 'artist_unplayed_billie' });
+    expect(container.querySelector('[class*="badges"]')).toBeNull();
+    expect(container.querySelector('[class*="instrumentChipsRow"]')).toBeNull();
+  });
+
+  it('renders no season pill when leaderboardData is absent in stale_ category', () => {
+    renderSongRow({
+      song: makeSong('s1', { instrumentKey: 'guitar' as any }),
+      categoryKey: 'stale_guitar',
+      leaderboardData: undefined,
+    });
+    expect(screen.queryByText(/S\d/)).toBeNull();
+  });
+
+  it('renders instrumentChips without leaderboardData', () => {
+    const { container } = renderSongRow({
+      categoryKey: 'some_generic_cat',
+      leaderboardData: undefined,
+    });
+    // All chips should render with no-score styling
+    const chips = container.querySelectorAll('[class*="instrumentChip"]');
+    expect(chips.length).toBeGreaterThan(0);
+  });
 });

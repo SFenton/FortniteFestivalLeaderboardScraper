@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { SongsToolbar } from '../../pages/songs/components/SongsToolbar';
 import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
 
@@ -46,5 +47,40 @@ describe('SongsToolbar', () => {
   it('hides count when filtersActive but counts are equal', () => {
     render(<SongsToolbar {...defaults} filtersActive hasPlayer filteredCount={100} totalCount={100} />);
     expect(screen.queryByText(/of.*songs/)).toBeNull();
+  });
+});
+
+describe('SongsToolbar — instrument & filter branches', () => {
+  const baseProps = {
+    search: '',
+    onSearchChange: vi.fn(),
+    instrument: null as ServerInstrumentKey | null,
+    filtersActive: false,
+    hasPlayer: false,
+    filteredCount: 10,
+    totalCount: 10,
+    onOpenSort: vi.fn(),
+    onOpenFilter: vi.fn(),
+  };
+
+  it('renders without instrument icon when instrument is null', () => {
+    const { container } = render(
+      <MemoryRouter><SongsToolbar {...baseProps} /></MemoryRouter>,
+    );
+    expect(container.querySelector('[data-testid="instrument-icon"]')).toBeFalsy();
+  });
+
+  it('renders with instrument icon when instrument is set', () => {
+    render(
+      <MemoryRouter><SongsToolbar {...baseProps} instrument={'Solo_Guitar' as ServerInstrumentKey} /></MemoryRouter>,
+    );
+    expect(document.querySelector('img, svg')).toBeTruthy();
+  });
+
+  it('hides count when filtersActive is false', () => {
+    render(
+      <MemoryRouter><SongsToolbar {...baseProps} filtersActive={false} filteredCount={5} totalCount={10} /></MemoryRouter>,
+    );
+    expect(screen.queryByText(/of.*songs/)).toBeFalsy();
   });
 });

@@ -58,4 +58,16 @@ describe('useTrackedPlayer', () => {
     const { result } = renderHook(() => useTrackedPlayer());
     expect(result.current.player).toEqual({ accountId: 'abc', displayName: 'Unknown User' });
   });
+
+  it('returns null when stored object has no accountId', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ foo: 'bar' }));
+    const { result } = renderHook(() => useTrackedPlayer());
+    expect(result.current.player).toBeNull();
+  });
+
+  it('returns null when stored value is JSON null', () => {
+    localStorage.setItem(STORAGE_KEY, 'null');
+    const { result } = renderHook(() => useTrackedPlayer());
+    expect(result.current.player).toBeNull();
+  });
 });

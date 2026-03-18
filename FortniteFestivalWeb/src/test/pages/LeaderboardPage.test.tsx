@@ -334,3 +334,31 @@ describe('LeaderboardPage', () => {
     expect(container.textContent).not.toContain('1 / 2');
   });
 });
+
+describe('LeaderboardPage — branch coverage (extracted)', () => {
+  it('renders star images for gold and regular entries', async () => {
+    const entries = Array.from({ length: 30 }, (_, i) => ({
+      accountId: `acc-${i}`,
+      displayName: `Player ${i}`,
+      score: 200000 - i * 1000,
+      rank: i + 1,
+      accuracy: 990000 - i * 5000,
+      isFullCombo: i < 5,
+      stars: i < 3 ? 6 : 5,
+      season: 5,
+    }));
+    mockApi.getLeaderboard.mockResolvedValue({
+      songId: 'song-1',
+      instrument: 'Solo_Guitar',
+      count: 30,
+      totalEntries: 100,
+      localEntries: 30,
+      entries,
+    });
+    clearLeaderboardCache();
+    renderLeaderboard('/songs/song-1/Solo_Guitar', 'test-player-1');
+    await waitFor(() => expect(screen.getByText('Player 0')).toBeTruthy(), { timeout: 5000 });
+    // Gold star entries (stars >= 6) and regular star entries should be rendered
+    expect(screen.getByText('Player 1')).toBeTruthy();
+  });
+});

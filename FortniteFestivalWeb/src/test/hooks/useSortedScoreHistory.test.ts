@@ -148,3 +148,42 @@ describe('useSortedScoreHistory', () => {
     expect(result.current).toHaveLength(3);
   });
 });
+
+describe('useSortedScoreHistory — ?? fallback branches', () => {
+  it('date sort: both scoreAchievedAt and changedAt undefined fires ?? fallback', () => {
+    const a = entry({ scoreAchievedAt: undefined, changedAt: undefined as any });
+    const b = entry({ scoreAchievedAt: '2025-01-01T00:00:00Z' });
+    const { result } = renderHook(() => useSortedScoreHistory([a, b], PlayerScoreSortMode.Date, true));
+    expect(result.current.length).toBe(2);
+  });
+
+  it('accuracy tiebreaker date uses changedAt when scoreAchievedAt is undefined', () => {
+    const a = entry({ accuracy: 950000, isFullCombo: false, newScore: 100000, scoreAchievedAt: undefined, changedAt: '2025-02-01T00:00:00Z' });
+    const b = entry({ accuracy: 950000, isFullCombo: false, newScore: 100000, scoreAchievedAt: undefined, changedAt: '2025-01-01T00:00:00Z' });
+    const { result } = renderHook(() => useSortedScoreHistory([a, b], PlayerScoreSortMode.Accuracy, true));
+    expect(result.current[0]!.changedAt).toBe('2025-01-01T00:00:00Z');
+  });
+
+  it('accuracy with all fields undefined fires all ?? fallbacks simultaneously', () => {
+    const a = entry({ accuracy: undefined as any, isFullCombo: undefined as any, newScore: 100000, scoreAchievedAt: undefined, changedAt: undefined as any });
+    const b = entry({ accuracy: undefined as any, isFullCombo: undefined as any, newScore: 100000, scoreAchievedAt: undefined, changedAt: undefined as any });
+    const { result } = renderHook(() => useSortedScoreHistory([a, b], PlayerScoreSortMode.Accuracy, true));
+    expect(result.current.length).toBe(2);
+  });
+
+  it('date sort: b with both scoreAchievedAt and changedAt undefined', () => {
+    const a = entry({ scoreAchievedAt: '2025-01-01T00:00:00Z' });
+    const b = entry({ scoreAchievedAt: undefined, changedAt: undefined as any });
+    const { result } = renderHook(() => useSortedScoreHistory([a, b], PlayerScoreSortMode.Date, true));
+    // b falls back to '' which sorts before a's defined date
+    expect(result.current[0]!.scoreAchievedAt).toBeUndefined();
+  });
+
+  it('season sort: b.season undefined fires ?? 0 fallback', () => {
+    const a = entry({ season: 2, newScore: 1 });
+    const b = entry({ season: undefined as any, newScore: 2 });
+    const { result } = renderHook(() => useSortedScoreHistory([a, b], PlayerScoreSortMode.Season, true));
+    // b (season ?? 0 = 0) sorts before a (season 2)
+    expect(result.current[0]!.newScore).toBe(2);
+  });
+});

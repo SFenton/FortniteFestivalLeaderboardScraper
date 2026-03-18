@@ -343,6 +343,13 @@ describe('isSuggestionsFilterActive', () => {
     d[perInstrumentKeyFor('guitar', 'NearFC')] = false;
     expect(isSuggestionsFilterActive(d)).toBe(true);
   });
+
+  it('returns false when draft has undefined keys that fall back to defaults', () => {
+    const d = defaultSuggestionsFilterDraft();
+    // Remove a key to trigger the ?? fallback
+    delete (d as any).suggestionsLeadFilter;
+    expect(isSuggestionsFilterActive(d)).toBe(false);
+  });
 });
 
 describe('defaultSuggestionsFilterDraft', () => {

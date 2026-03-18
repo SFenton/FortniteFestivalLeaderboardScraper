@@ -415,3 +415,38 @@ describe('SortModal', () => {
     expect(screen.queryByText('Primary Instrument Order')).toBeNull();
   });
 });
+
+describe('SortModal — hasPlayer accordion onSelect coverage', () => {
+  it('selects Artist mode via accordion when hasPlayer is true', () => {
+    const props = defaultProps();
+    props.hasPlayer = true;
+    renderModal(props);
+    // Accordion defaultOpen={!instrumentFilter} = true; RadioRows visible immediately
+    fireEvent.click(screen.getByText('Artist'));
+    expect(props.onChange).toHaveBeenCalledWith(expect.objectContaining({ sortMode: 'artist' }));
+  });
+
+  it('selects Year mode via accordion when hasPlayer is true', () => {
+    const props = defaultProps();
+    props.hasPlayer = true;
+    renderModal(props);
+    fireEvent.click(screen.getByText('Year'));
+    expect(props.onChange).toHaveBeenCalledWith(expect.objectContaining({ sortMode: 'year' }));
+  });
+
+  it('selects Has FC mode via accordion when hasPlayer is true', () => {
+    const props = defaultProps();
+    props.hasPlayer = true;
+    renderModal(props);
+    fireEvent.click(screen.getByText('Has FC'));
+    expect(props.onChange).toHaveBeenCalledWith(expect.objectContaining({ sortMode: 'hasfc' }));
+  });
+
+  it('selects Title mode via accordion when hasPlayer is true', () => {
+    const props = defaultProps();
+    props.hasPlayer = true;
+    renderModal(props);
+    fireEvent.click(screen.getByText('Title'));
+    expect(props.onChange).toHaveBeenCalledWith(expect.objectContaining({ sortMode: 'title' }));
+  });
+});

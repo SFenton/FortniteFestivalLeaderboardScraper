@@ -73,4 +73,188 @@ describe('useAccountSearch', () => {
     act(() => { result.current.close(); });
     expect(result.current.isOpen).toBe(false);
   });
+
+  it('opens results when search succeeds', async () => {
+    mockSearch.mockResolvedValue({ results: [{ accountId: 'a1', displayName: 'Player' }] });
+    const onSelect = vi.fn();
+    const { result } = renderHook(() => useAccountSearch(onSelect, { debounceMs: 10 }));
+
+    act(() => { result.current.handleChange('Pla'); });
+    await act(async () => { vi.advanceTimersByTime(10); });
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    expect(result.current.isOpen).toBe(true);
+    expect(result.current.results).toHaveLength(1);
+  });
+
+  it('handles search error gracefully', async () => {
+    mockSearch.mockRejectedValue(new Error('Network error'));
+    const onSelect = vi.fn();
+    const { result } = renderHook(() => useAccountSearch(onSelect, { debounceMs: 10 }));
+
+    act(() => { result.current.handleChange('Test'); });
+    await act(async () => { vi.advanceTimersByTime(10); });
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    expect(result.current.isOpen).toBe(false);
+    expect(result.current.results).toEqual([]);
+  });
+
+  it('handleKeyDown ArrowDown increments activeIndex', async () => {
+    mockSearch.mockResolvedValue({ results: [{ accountId: 'a1', displayName: 'A' }, { accountId: 'a2', displayName: 'B' }] });
+    const onSelect = vi.fn();
+    const { result } = renderHook(() => useAccountSearch(onSelect, { debounceMs: 10 }));
+
+    act(() => { result.current.handleChange('AB'); });
+    await act(async () => { vi.advanceTimersByTime(10); });
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    const prevent = vi.fn();
+    act(() => { result.current.handleKeyDown({ key: 'ArrowDown', preventDefault: prevent } as any); });
+    expect(result.current.activeIndex).toBe(0);
+    expect(prevent).toHaveBeenCalled();
+  });
+
+  it('handleKeyDown ArrowUp decrements activeIndex', async () => {
+    mockSearch.mockResolvedValue({ results: [{ accountId: 'a1', displayName: 'A' }, { accountId: 'a2', displayName: 'B' }] });
+    const onSelect = vi.fn();
+    const { result } = renderHook(() => useAccountSearch(onSelect, { debounceMs: 10 }));
+
+    act(() => { result.current.handleChange('AB'); });
+    await act(async () => { vi.advanceTimersByTime(10); });
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    // Go down, then up
+    act(() => { result.current.handleKeyDown({ key: 'ArrowDown', preventDefault: vi.fn() } as any); });
+    act(() => { result.current.handleKeyDown({ key: 'ArrowUp', preventDefault: vi.fn() } as any); });
+    expect(result.current.activeIndex).toBe(1); // wraps to last
+  });
+
+  it('handleKeyDown Enter selects active result', async () => {
+    const item = { accountId: 'a1', displayName: 'A' };
+    mockSearch.mockResolvedValue({ results: [item] });
+    const onSelect = vi.fn();
+    const { result } = renderHook(() => useAccountSearch(onSelect, { debounceMs: 10 }));
+
+    act(() => { result.current.handleChange('AB'); });
+    await act(async () => { vi.advanceTimersByTime(10); });
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    act(() => { result.current.handleKeyDown({ key: 'ArrowDown', preventDefault: vi.fn() } as any); });
+    act(() => { result.current.handleKeyDown({ key: 'Enter', preventDefault: vi.fn() } as any); });
+    expect(onSelect).toHaveBeenCalledWith(item);
+  });
+
+  it('handleKeyDown Escape closes', async () => {
+    mockSearch.mockResolvedValue({ results: [{ accountId: 'a1', displayName: 'A' }] });
+    const onSelect = vi.fn();
+    const { result } = renderHook(() => useAccountSearch(onSelect, { debounceMs: 10 }));
+
+    act(() => { result.current.handleChange('AB'); });
+    await act(async () => { vi.advanceTimersByTime(10); });
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    act(() => { result.current.handleKeyDown({ key: 'Escape' } as any); });
+    expect(result.current.isOpen).toBe(false);
+  });
+
+  it('does nothing on keydown when closed', () => {
+    const onSelect = vi.fn();
+    const { result } = renderHook(() => useAccountSearch(onSelect));
+    act(() => { result.current.handleKeyDown({ key: 'ArrowDown', preventDefault: vi.fn() } as any); });
+    expect(result.current.activeIndex).toBe(-1);
+  });
+});
+
+describe('useAccountSearch — additional branch coverage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('ArrowDown wraps around at end of results', async () => {
+    mockSearch.mockResolvedValue({ results: [
+      { accountId: 'a1', displayName: 'A' },
+      { accountId: 'a2', displayName: 'B' },
+    ] });
+    const onSelect = vi.fn();
+    const { result } = renderHook(() => useAccountSearch(onSelect, { debounceMs: 10 }));
+
+    act(() => { result.current.handleChange('AB'); });
+    await act(async () => { vi.advanceTimersByTime(10); });
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    // Press ArrowDown 3 times with 2 results → wraps to 0
+    act(() => { result.current.handleKeyDown({ key: 'ArrowDown', preventDefault: vi.fn() } as any); });
+    act(() => { result.current.handleKeyDown({ key: 'ArrowDown', preventDefault: vi.fn() } as any); });
+    act(() => { result.current.handleKeyDown({ key: 'ArrowDown', preventDefault: vi.fn() } as any); });
+    expect(result.current.activeIndex).toBe(0);
+  });
+
+  it('Enter does nothing when activeIndex < 0', async () => {
+    mockSearch.mockResolvedValue({ results: [{ accountId: 'a1', displayName: 'A' }] });
+    const onSelect = vi.fn();
+    const { result } = renderHook(() => useAccountSearch(onSelect, { debounceMs: 10 }));
+
+    act(() => { result.current.handleChange('AB'); });
+    await act(async () => { vi.advanceTimersByTime(10); });
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    // Don't press ArrowDown first → activeIndex stays at -1
+    act(() => { result.current.handleKeyDown({ key: 'Enter', preventDefault: vi.fn() } as any); });
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('unrecognized key does nothing while dropdown is open', async () => {
+    mockSearch.mockResolvedValue({ results: [{ accountId: 'a1', displayName: 'A' }] });
+    const onSelect = vi.fn();
+    const { result } = renderHook(() => useAccountSearch(onSelect, { debounceMs: 10 }));
+
+    act(() => { result.current.handleChange('AB'); });
+    await act(async () => { vi.advanceTimersByTime(10); });
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    const prevent = vi.fn();
+    act(() => { result.current.handleKeyDown({ key: 'a', preventDefault: prevent } as any); });
+    expect(prevent).not.toHaveBeenCalled();
+    expect(result.current.isOpen).toBe(true);
+  });
+
+  it('uses custom limit when explicitly provided', async () => {
+    mockSearch.mockResolvedValue({ results: [{ accountId: 'a1', displayName: 'A' }] });
+    const onSelect = vi.fn();
+    const { result } = renderHook(() => useAccountSearch(onSelect, { debounceMs: 10, limit: 5 }));
+
+    act(() => { result.current.handleChange('test'); });
+    await act(async () => { vi.advanceTimersByTime(10); });
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    expect(mockSearch).toHaveBeenCalledWith('test', 5);
+  });
+
+  it('ArrowUp decrements from non-zero index without wrapping', async () => {
+    mockSearch.mockResolvedValue({ results: [
+      { accountId: 'a1', displayName: 'A' },
+      { accountId: 'a2', displayName: 'B' },
+    ] });
+    const onSelect = vi.fn();
+    const { result } = renderHook(() => useAccountSearch(onSelect, { debounceMs: 10 }));
+
+    act(() => { result.current.handleChange('AB'); });
+    await act(async () => { vi.advanceTimersByTime(10); });
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    // Move to index 1
+    act(() => { result.current.handleKeyDown({ key: 'ArrowDown', preventDefault: vi.fn() } as any); });
+    act(() => { result.current.handleKeyDown({ key: 'ArrowDown', preventDefault: vi.fn() } as any); });
+    expect(result.current.activeIndex).toBe(1);
+
+    // ArrowUp from 1 → 0 (decrement, not wrap)
+    act(() => { result.current.handleKeyDown({ key: 'ArrowUp', preventDefault: vi.fn() } as any); });
+    expect(result.current.activeIndex).toBe(0);
+  });
 });

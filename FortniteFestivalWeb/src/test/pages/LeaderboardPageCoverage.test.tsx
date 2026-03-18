@@ -239,3 +239,24 @@ describe('LeaderboardPage — coverage: scroll cache and header collapse', () =>
     expect(screen.getByText('Player One')).toBeDefined();
   });
 });
+
+describe('LeaderboardPage — coverage: localEntries fallback', () => {
+  it('falls back to totalEntries when localEntries is undefined', async () => {
+    mockApi.getLeaderboard.mockResolvedValue({
+      songId: 'song-1', instrument: 'Solo_Guitar', count: 2, totalEntries: 50,
+      // localEntries intentionally omitted — triggers ?? fallback
+      entries: [
+        { accountId: 'acc-1', displayName: 'Player One', score: 145000, rank: 1 },
+        { accountId: 'acc-2', displayName: 'Player Two', score: 140000, rank: 2 },
+      ],
+    });
+    renderLeaderboard();
+    await waitFor(() => {
+      expect(screen.getByText('Player One')).toBeDefined();
+    });
+    // totalPages should use totalEntries (50) as fallback → 2 pages
+    await waitFor(() => {
+      expect(document.body.textContent).toContain('1 / 2');
+    });
+  });
+});

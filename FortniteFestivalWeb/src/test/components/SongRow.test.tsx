@@ -29,6 +29,26 @@ vi.mock('@festival/core', async (importOriginal) => {
   };
 });
 
+vi.mock('../../components/songs/metadata/AccuracyDisplay', () => ({
+  default: ({ accuracy }: any) => <span data-testid="accuracy">{accuracy}</span>,
+}));
+
+vi.mock('../../components/songs/metadata/PercentilePill', () => ({
+  default: ({ display }: any) => <span data-testid="percentile">{display}</span>,
+}));
+
+vi.mock('../../components/songs/metadata/SeasonPill', () => ({
+  default: ({ season }: any) => <span data-testid="season">S{season}</span>,
+}));
+
+vi.mock('../../components/songs/metadata/MiniStars', () => ({
+  default: ({ starsCount }: any) => <span data-testid="mini-stars">{starsCount}</span>,
+}));
+
+vi.mock('../../components/songs/metadata/DifficultyBars', () => ({
+  default: ({ level }: any) => <span data-testid="difficulty">{level}</span>,
+}));
+
 beforeEach(() => {
   vi.clearAllMocks();
   Object.defineProperty(window, 'matchMedia', {
@@ -82,6 +102,10 @@ function renderSongRow(overrides: Partial<typeof defaultProps> = {}) {
       <SongRow {...defaultProps} {...overrides} />
     </MemoryRouter>,
   );
+}
+
+function ps(o: Partial<PlayerScore> = {}): PlayerScore {
+  return { ...baseScore, ...o };
 }
 
 describe('SongRow', () => {
@@ -297,5 +321,147 @@ describe('compareByMode', () => {
     const a = { ...baseScore, isFullCombo: true };
     const b = { ...baseScore, isFullCombo: false };
     expect(compareByMode('hasfc', a, b)).toBeGreaterThan(0);
+  });
+});
+
+describe('SongRow false-path branches', () => {
+  it('score=0 → no score rendered', () => {
+    renderSongRow({ score: ps({ score: 0 }), metadataOrder: ['score'] });
+    expect(screen.queryByText('0')).toBeNull();
+  });
+
+  it('accuracy=0 → no accuracy rendered', () => {
+    renderSongRow({ score: ps({ accuracy: 0 }), metadataOrder: ['percentage'] });
+    expect(screen.queryByTestId('accuracy')).toBeNull();
+  });
+
+  it('stars=0 → no stars rendered', () => {
+    renderSongRow({ score: ps({ stars: 0 }), metadataOrder: ['stars'] });
+    expect(screen.queryByTestId('mini-stars')).toBeNull();
+  });
+
+  it('season=null → no season rendered', () => {
+    renderSongRow({ score: ps({ season: undefined }), metadataOrder: ['seasonachieved'] });
+    expect(screen.queryByTestId('season')).toBeNull();
+  });
+
+  it('season=0 → no season rendered', () => {
+    renderSongRow({ score: ps({ season: 0 }), metadataOrder: ['seasonachieved'] });
+    expect(screen.queryByTestId('season')).toBeNull();
+  });
+
+  it('rank=0 → no percentile rendered', () => {
+    renderSongRow({ score: ps({ rank: 0 }), metadataOrder: ['percentile'] });
+    expect(screen.queryByTestId('percentile')).toBeNull();
+  });
+
+  it('totalEntries=0 → no percentile rendered', () => {
+    renderSongRow({ score: ps({ totalEntries: 0 }), metadataOrder: ['percentile'] });
+    expect(screen.queryByTestId('percentile')).toBeNull();
+  });
+
+  it('no difficulty → no intensity rendered', () => {
+    renderSongRow({ song: { ...baseSong, difficulty: undefined }, metadataOrder: ['intensity'] });
+    expect(screen.queryByTestId('difficulty')).toBeNull();
+  });
+
+  it('unknown metadata key → nothing crashes', () => {
+    renderSongRow({ metadataOrder: ['xyz'] });
+    expect(screen.getByText('Test Song')).toBeTruthy();
+  });
+});
+
+describe('SongRow ?? fallback branches', () => {
+  it('accuracy=undefined triggers ?? 0 fallback', () => {
+    renderSongRow({ score: ps({ accuracy: undefined }), metadataOrder: ['percentage'] });
+    expect(screen.queryByTestId('accuracy')).toBeNull();
+  });
+
+  it('stars=undefined triggers ?? 0 fallback', () => {
+    renderSongRow({ score: ps({ stars: undefined }), metadataOrder: ['stars'] });
+    expect(screen.queryByTestId('mini-stars')).toBeNull();
+  });
+
+  it('totalEntries=undefined triggers ?? 0 in percentile', () => {
+    renderSongRow({ score: ps({ totalEntries: undefined }), metadataOrder: ['percentile'] });
+    expect(screen.queryByTestId('percentile')).toBeNull();
+  });
+
+  it('intensity with undefined difficulty key', () => {
+    renderSongRow({ instrument: 'Solo_PeripheralGuitar' as any, metadataOrder: ['intensity'] });
+    expect(screen.getByText('Test Song')).toBeTruthy();
+  });
+});
+
+describe('SongRow — rendering branches', () => {
+  it('promotes percentage to first metadata element', () => {
+    renderSongRow({ sortMode: 'percentage' as SongSortMode });
+    expect(screen.getByTestId('accuracy')).toBeTruthy();
+  });
+
+  it('does not promote general sort modes (title, artist)', () => {
+    renderSongRow({ sortMode: 'title' as SongSortMode });
+    expect(screen.getByText('150,000')).toBeTruthy();
+  });
+
+  it('no staggerDelay: no animation style', () => {
+    const { container } = renderSongRow();
+    const link = container.querySelector('a');
+    expect(link?.style.animation).toBe('');
+  });
+});
+
+describe('SongRow — diffKey null branch', () => {
+  it('renders without instrumentFilter (diffKey is null)', () => {
+    const { container } = renderSongRow({
+      score: undefined,
+      instrument: undefined as any,
+      instrumentFilter: null,
+      allScoreMap: new Map(),
+      showInstrumentIcons: true,
+      metadataOrder: [],
+      sortMode: 'title' as SongSortMode,
+    });
+    expect(container.querySelector('a')).toBeTruthy();
+  });
+});
+
+describe('compareByMode — b-side ?? fallback branches', () => {
+  it('b.accuracy undefined in percentage mode', () => {
+    const a = { ...baseScore, accuracy: 80 };
+    const b = { ...baseScore, accuracy: undefined } as unknown as PlayerScore;
+    expect(compareByMode('percentage', a, b)).toBeGreaterThan(0);
+  });
+
+  it('percentage mode: a.isFullCombo true, b.isFullCombo false', () => {
+    const a = { ...baseScore, accuracy: 95, isFullCombo: true };
+    const b = { ...baseScore, accuracy: 95, isFullCombo: false };
+    expect(compareByMode('percentage', a, b)).toBeGreaterThan(0);
+  });
+
+  it('b.totalEntries undefined in percentile mode', () => {
+    const a = { ...baseScore, rank: 5, totalEntries: 100 };
+    const b = { ...baseScore, rank: 1, totalEntries: undefined } as unknown as PlayerScore;
+    expect(compareByMode('percentile', a, b)).toBeLessThan(0);
+  });
+
+  it('b.stars undefined in stars mode', () => {
+    const a = { ...baseScore, stars: 3 };
+    const b = { ...baseScore, stars: undefined } as unknown as PlayerScore;
+    expect(compareByMode('stars', a, b)).toBeGreaterThan(0);
+  });
+
+  it('b.season undefined in seasonachieved mode', () => {
+    const a = { ...baseScore, season: 2 };
+    const b = { ...baseScore, season: undefined } as unknown as PlayerScore;
+    expect(compareByMode('seasonachieved', a, b)).toBeGreaterThan(0);
+  });
+});
+
+describe('SongRow — mobile with instrumentFilter', () => {
+  it('renders mobile layout with instrumentFilter and entries', () => {
+    const { container } = renderSongRow({ isMobile: true, instrumentFilter: 'Solo_Guitar' as InstrumentKey });
+    const link = container.querySelector('a');
+    expect(link?.getAttribute('href')).toContain('instrument=Solo_Guitar');
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 
@@ -77,5 +77,16 @@ describe('PlayerDataContext', () => {
     expect(() => {
       renderHook(() => usePlayerData());
     }).toThrow('usePlayerData must be used within a PlayerDataProvider');
+  });
+
+  it('refreshPlayer is a no-op when accountId is undefined', async () => {
+    const { result } = renderHook(() => usePlayerData(), {
+      wrapper: createWrapper(undefined),
+    });
+    // Call refreshPlayer — should not throw
+    await act(async () => {
+      await result.current.refreshPlayer();
+    });
+    expect(result.current.playerData).toBeNull();
   });
 });
