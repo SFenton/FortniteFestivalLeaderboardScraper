@@ -102,8 +102,11 @@
     "percentileHeader": "Percentile",
     "songsHeader": "Songs",
     "topSongsPerInstrument": "Top Songs Per Instrument",
+    "topSongsPerInstrumentDesc": "{{name}}'s highest and lowest-ranked competitive songs per instrument, sorted by percentile.",
     "topFiveSongs": "Top Five Songs",
-    "bottomFiveSongs": "Bottom Five Songs"
+    "bottomFiveSongs": "Bottom Five Songs",
+    "switchTo": "Switch to {{name}}",
+    "switchConfirmMessage": "In order to see {{name}}'s scores, you will have to set them as your selected profile. Would you like to continue?"
   },
   "suggestions": {
     "title": "Suggestions",

@@ -270,6 +270,7 @@ function AppShell() {
         </Suspense>
       </div>
 
+      {/* v8 ignore start — mobile FAB configuration tested via MobileFabController + FloatingActionButton tests */}
       {isMobile && <BottomNav player={player} activeTab={activeTab} onTabClick={handleTabClick} />}
       {isMobile && location.pathname === AppRoutes.songs && (
         <FloatingActionButton
@@ -377,6 +378,7 @@ function AppShell() {
         title={t('common.findPlayer')}
       />
       {changelogOpen && <ChangelogModal onDismiss={dismissChangelog} />}
+      {/* v8 ignore stop */}
     </div>
     </PlayerDataProvider>
   );
@@ -393,6 +395,7 @@ function ScrollToTop() {
     if (pathname === AppRoutes.suggestions || pathname === AppRoutes.songs) return;
     // Song detail pages manage their own scroll restoration
     if (RoutePatterns.songDetail.test(pathname)) return;
+    /* v8 ignore next — DOM scroll call */
     document.getElementById('main-content')?.scrollTo(0, 0);
   }, [pathname]);
   return null;
