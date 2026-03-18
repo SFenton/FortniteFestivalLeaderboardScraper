@@ -1,0 +1,105 @@
+/* Styles for SongRow — song list row on the songs page. */
+
+.row {
+  composes: frostedCardLight from '../../../styles/shared.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  padding: 0 var(--gap-xl);
+  height: 64px;
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: inherit;
+}
+
+.rowMobile {
+  composes: frostedCardLight from '../../../styles/shared.module.css';
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+  padding: var(--gap-lg) var(--gap-xl);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: inherit;
+}
+
+.mobileTopRow {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+}
+
+.detailStrip {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.metadataWrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--gap-lg);
+}
+
+.instrumentStatusRow {
+  display: flex;
+  gap: var(--gap-sm);
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.instrumentStatusChip {
+  width: 34px;
+  height: 34px;
+  border-radius: 17px;
+  border-width: 2px;
+  border-style: solid;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.rowText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-xs);
+  min-width: 0;
+  flex: 1;
+}
+
+.rowTitle {
+  font-size: var(--font-md);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rowArtist {
+  font-size: var(--font-sm);
+  color: var(--color-text-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scoreMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  flex-shrink: 0;
+}
+
+.scoreValue {
+  font-size: var(--font-lg);
+  font-weight: var(--weight-bold);
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+  width: 78px;
+  text-align: right;
+  display: inline-block;
+}

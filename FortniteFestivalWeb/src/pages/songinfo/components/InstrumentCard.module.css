@@ -1,0 +1,130 @@
+/* Styles for InstrumentCard — instrument leaderboard card on song detail page. */
+
+.cardWrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.cardLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-md);
+  padding-bottom: var(--gap-xs);
+}
+
+.cardTitle {
+  font-size: var(--font-xl);
+  font-weight: var(--weight-semibold);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+  flex: 1;
+}
+
+.cardMuted {
+  font-size: var(--font-sm);
+  color: var(--color-text-muted);
+}
+
+.cardError {
+  font-size: var(--font-sm);
+  color: var(--color-status-red);
+}
+
+.entryRow {
+  composes: frostedCard from '../../../styles/shared.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  padding: 0 var(--gap-xl);
+  height: var(--size-xl);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: inherit;
+  transition: background-color 0.15s;
+  font-size: var(--font-md);
+}
+
+.entryRowMobile {
+  gap: var(--gap-md);
+  padding: 0 var(--gap-md);
+  height: var(--size-lg);
+}
+
+.playerEntryRow {
+  composes: frostedCard from '../../../styles/shared.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  padding: 0 var(--gap-xl);
+  height: var(--size-xl);
+  border-radius: var(--radius-md);
+  background-color: var(--color-bg-card-purple);
+  border: 1px solid var(--color-accent-purple-soft);
+  text-decoration: none;
+  color: inherit;
+  transition: background-color 0.15s;
+  font-size: var(--font-md);
+}
+
+.entryRank {
+  width: var(--size-xl);
+  flex-shrink: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-md);
+}
+
+.entryName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seasonScoreGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  flex-shrink: 0;
+}
+
+.entryScore {
+  flex-shrink: 0;
+  text-align: right;
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.entryAcc {
+  width: 60px;
+  flex-shrink: 0;
+  text-align: center;
+  font-weight: var(--weight-semibold);
+  color: var(--color-accent-blue-bright);
+  font-variant-numeric: tabular-nums;
+}
+
+.viewAllButton {
+  composes: frostedCard from '../../../styles/shared.module.css';
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--size-xl);
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  font-size: var(--font-md);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: background-color 0.15s;
+}

@@ -1,0 +1,16 @@
+/* Shared gold FC badge for AccuracyDisplay.
+   Font-size is inherited from the parent container. */
+
+.fcBadge {
+  color: var(--color-gold);
+  background-color: transparent;
+  padding: var(--gap-xs) var(--gap-sm);
+  border-radius: var(--radius-xs);
+  border: 2px solid var(--color-gold-stroke);
+  font-weight: var(--weight-bold);
+  font-style: italic;
+  transform: skewX(-8deg);
+  display: inline-block;
+  text-align: center;
+  box-sizing: border-box;
+}

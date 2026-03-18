@@ -1,0 +1,85 @@
+.page {
+  composes: pageShell from '../../styles/shared.module.css';
+  color: var(--color-text-primary);
+}
+
+.header {
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.scrollArea {
+  composes: scrollContainer from '../../styles/shared.module.css';
+}
+
+.container {
+  max-width: var(--max-width-card);
+  margin: 0 auto;
+  padding: var(--layout-padding-top) var(--layout-padding-h);
+}
+
+.center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+}
+
+.arcSpinner {
+  composes: spinner from '../../styles/shared.module.css';
+  width: 48px;
+  height: 48px;
+  border-width: 4px;
+  border-top-color: var(--color-accent-purple);
+}
+
+.spinnerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-bottom: var(--gap-md);
+}
+
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: calc(100dvh - 250px);
+  text-align: center;
+}
+
+.emptyTitle {
+  font-size: var(--font-xl);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: var(--gap-md);
+}
+
+.emptySubtitle {
+  font-size: var(--font-md);
+  color: var(--color-text-muted);
+}
+
+.loader {
+  display: flex;
+  justify-content: center;
+  padding: var(--gap-section) 0;
+}
+
+.loaderSpinner {
+  composes: spinner from '../../styles/shared.module.css';
+  width: 28px;
+  height: 28px;
+  border-width: 3px;
+  border-top-color: var(--color-accent-purple);
+}

@@ -6,12 +6,10 @@ import type {
   TrackPlayerResponse,
   SyncStatusResponse,
   PlayerHistoryResponse,
-  InstrumentKey,
+  ServerInstrumentKey as InstrumentKey,
   AllLeaderboardsResponse,
   PlayerStatsResponse,
-} from '../models';
-
-import { cachedFetch } from './cache';
+} from '@festival/core/api/serverTypes';
 
 const BASE = '';
 
@@ -42,7 +40,7 @@ function normalizeDisplayName<T extends { displayName: string }>(data: T): T {
 }
 
 export const api = {
-  getSongs: () => cachedFetch('songs', () => get<SongsResponse>('/api/songs'), 5 * 60 * 1000),
+  getSongs: () => get<SongsResponse>('/api/songs'),
 
   getLeaderboard: (songId: string, instrument: InstrumentKey, top = 100, offset = 0, leeway?: number) =>
     get<LeaderboardResponse>(
@@ -86,9 +84,7 @@ export const api = {
     ),
 
   getPlayerStats: (accountId: string) =>
-    cachedFetch(`playerStats:${accountId}`, () =>
-      get<PlayerStatsResponse>(`/api/player/${encodeURIComponent(accountId)}/stats`),
-    5 * 60 * 1000),
+    get<PlayerStatsResponse>(`/api/player/${encodeURIComponent(accountId)}/stats`),
 
-  getVersion: () => cachedFetch('version', () => get<{ version: string }>('/api/version'), 30 * 60 * 1000),
+  getVersion: () => get<{ version: string }>('/api/version'),
 };

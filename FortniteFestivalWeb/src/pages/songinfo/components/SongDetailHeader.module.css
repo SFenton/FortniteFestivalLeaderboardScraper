@@ -1,0 +1,54 @@
+/* Styles for SongDetailHeader — song detail page header with art, title, and paths button. */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-section);
+}
+
+.headerArt {
+  width: 120px;
+  height: 120px;
+  border-radius: var(--radius-lg);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.artPlaceholder {
+  composes: headerArt;
+  background-color: var(--color-accent-purple-dark);
+}
+
+.songTitle {
+  font-size: var(--font-title);
+  font-weight: var(--weight-bold);
+  margin-bottom: var(--gap-sm);
+}
+
+.songArtist {
+  font-size: var(--font-lg);
+  color: var(--color-text-subtle);
+  margin-bottom: var(--gap-md);
+}
+
+.viewPathsButton {
+  background-color: var(--color-accent-purple);
+  border: 1px solid rgba(168, 120, 255, 0.3);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 0 30px rgba(255, 255, 255, 0.02),
+    0 4px 20px rgba(0, 0, 0, 0.4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 32px 0 var(--gap-section);
+  border-radius: var(--radius-full);
+  color: #fff;
+  font-size: var(--font-lg);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  align-self: center;
+  height: 48px;
+}

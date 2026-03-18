@@ -1,16 +1,16 @@
 import {
   createContext,
   useContext,
-  useState,
-  useEffect,
   useCallback,
-  useRef,
+  useEffect,
   useMemo,
   type ReactNode,
 } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import { useSyncStatus, type SyncPhase } from '../hooks/useSyncStatus';
-import type { PlayerResponse } from '../models';
+import { queryKeys } from '../api/queryKeys';
+import { useSyncStatus, type SyncPhase } from '../hooks/data/useSyncStatus';
+import type { PlayerResponse } from '@festival/core/api/serverTypes';
 
 type PlayerDataContextValue = {
   playerData: PlayerResponse | null;
@@ -32,73 +32,41 @@ export function PlayerDataProvider({
   accountId: string | undefined;
   children: ReactNode;
 }) {
-  const [data, setData] = useState<PlayerResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const cachedIdRef = useRef<string | undefined>(undefined);
-  const hasDataRef = useRef(false);
+  const qc = useQueryClient();
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: queryKeys.player(accountId ?? ''),
+    queryFn: () => api.getPlayer(accountId!),
+    enabled: !!accountId,
+  });
 
   const { isSyncing, phase, backfillProgress, historyProgress, justCompleted, clearCompleted } =
     useSyncStatus(accountId);
-
-  const fetchPlayer = useCallback(async (id: string, isRefresh: boolean) => {
-    if (!isRefresh) setLoading(true);
-    setError(null);
-    try {
-      const res = await api.getPlayer(id);
-      setData(res);
-      hasDataRef.current = true;
-    } catch (e) {
-      if (!isRefresh) {
-        setError(e instanceof Error ? e.message : 'Failed to load player');
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // Fetch when accountId changes
-  useEffect(() => {
-    if (!accountId) {
-      setData(null);
-      setLoading(false);
-      setError(null);
-      hasDataRef.current = false;
-      cachedIdRef.current = undefined;
-      return;
-    }
-    if (accountId !== cachedIdRef.current) {
-      hasDataRef.current = false;
-      cachedIdRef.current = accountId;
-      void fetchPlayer(accountId, false);
-    }
-  }, [accountId, fetchPlayer]);
 
   // Auto-reload when sync completes
   useEffect(() => {
     if (justCompleted && accountId) {
       clearCompleted();
-      void fetchPlayer(accountId, hasDataRef.current);
+      void qc.invalidateQueries({ queryKey: queryKeys.player(accountId) });
     }
-  }, [justCompleted, clearCompleted, accountId, fetchPlayer]);
+  }, [justCompleted, accountId, clearCompleted, qc]);
 
-  // Exposed refresh — silently reloads without clearing existing data
   const refreshPlayer = useCallback(async () => {
     if (accountId) {
-      await fetchPlayer(accountId, hasDataRef.current);
+      await qc.invalidateQueries({ queryKey: queryKeys.player(accountId) });
     }
-  }, [accountId, fetchPlayer]);
+  }, [accountId, qc]);
 
   const value = useMemo<PlayerDataContextValue>(() => ({
-    playerData: data,
-    playerLoading: loading,
-    playerError: error,
+    playerData: data ?? null,
+    playerLoading: isLoading,
+    playerError: error ? (error instanceof Error ? error.message : 'Failed to load player') : null,
     refreshPlayer,
     isSyncing,
     syncPhase: phase,
     backfillProgress,
     historyProgress,
-  }), [data, loading, error, refreshPlayer, isSyncing, phase, backfillProgress, historyProgress]);
+  }), [data, isLoading, error, refreshPlayer, isSyncing, phase, backfillProgress, historyProgress]);
 
   return (
     <PlayerDataContext.Provider value={value}>

@@ -7,9 +7,9 @@ import {
   useMemo,
   type ReactNode,
 } from 'react';
-import type { InstrumentKey } from '../models';
-import { INSTRUMENT_KEYS } from '../models';
-import { DEFAULT_METADATA_ORDER } from '../components/songSettings';
+import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { INSTRUMENT_KEYS } from '@festival/core/api/serverTypes';
+import { DEFAULT_METADATA_ORDER } from '../utils/songSettings';
 
 /* ── Settings shape ── */
 

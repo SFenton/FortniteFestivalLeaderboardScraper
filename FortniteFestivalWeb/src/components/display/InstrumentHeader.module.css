@@ -1,0 +1,54 @@
+.header {
+  display: flex;
+  align-items: center;
+}
+
+/* ── XS: chip/inline (20px icon, 11px label) ── */
+.xs {
+  gap: var(--gap-xs);
+}
+.labelXs {
+  font-size: var(--font-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-secondary);
+}
+
+/* ── SM: card label (36px icon, 14px label) ── */
+.sm {
+  gap: var(--gap-md);
+}
+.labelSm {
+  font-size: var(--font-md);
+  font-weight: var(--weight-bold);
+  color: var(--color-text-primary);
+}
+
+/* ── MD: section header (48px icon, 16px label) ── */
+.md {
+  gap: var(--gap-lg);
+}
+.labelMd {
+  font-size: var(--font-lg);
+  font-weight: var(--weight-bold);
+  color: var(--color-text-primary);
+}
+
+/* ── LG: page sub-header (56px icon, 16px label) ── */
+.lg {
+  gap: var(--gap-lg);
+}
+.labelLg {
+  font-size: var(--font-lg);
+  font-weight: var(--weight-bold);
+  color: var(--color-text-secondary);
+}
+
+/* ── XL: hero header (56px icon, 20px label) ── */
+.xl {
+  gap: var(--gap-xl);
+}
+.labelXl {
+  font-size: var(--font-xl);
+  font-weight: var(--weight-bold);
+  color: var(--color-text-primary);
+}

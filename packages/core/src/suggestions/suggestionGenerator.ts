@@ -113,14 +113,8 @@ export class SuggestionGenerator {
   private shuffleInPlace<T>(arr: T[]): void {
     for (let i = arr.length - 1; i > 0; i--) {
       const j = this.rng.nextInt(i + 1);
-      [arr[i], arr[j]] = [arr[j], arr[i]];
+      [arr[i], arr[j]] = [arr[j]!, arr[i]!];
     }
-  }
-
-  private shuffleAndTake<T>(source: T[], max: number): T[] {
-    const list = [...source];
-    this.shuffleInPlace(list);
-    return list.length > max ? list.slice(0, max) : list;
   }
 
   private getDisplayCount(): number {
@@ -350,7 +344,7 @@ export class SuggestionGenerator {
     if (decadeGroups.length === 0) return [];
 
     this.shuffleInPlace(decadeGroups);
-    const [decadeStart, chosen] = decadeGroups[0];
+    const [decadeStart, chosen] = decadeGroups[0]!;
     const label = decadeLabel(decadeStart);
     const take = this.getDisplayCount();
     const variantKey = `${baseKey}_decade_${String(decadeStart % 100).padStart(2, '0')}`;
@@ -848,9 +842,9 @@ export class SuggestionGenerator {
     const artistGroups = [...groups.entries()].filter(([, items]) => items.length >= 3);
     if (artistGroups.length === 0) return [];
     this.shuffleInPlace(artistGroups);
-    const chosen = artistGroups[0];
+    const chosen = artistGroups[0]!;
     this.enqueueRecentArtist(chosen[0]);
-    let picked = chosen[1].slice().sort((a, b) => a.track.su.localeCompare(b.track.su)).slice(0, 10);
+    let picked = chosen[1].slice().sort((a: Song, b: Song) => a.track.su.localeCompare(b.track.su)).slice(0, 10);
     this.shuffleInPlace(picked);
     if (picked.length > 5) picked = picked.slice(0, this.getDisplayCount());
 
@@ -973,8 +967,8 @@ export class SuggestionGenerator {
     }
     const entries = [...groups.entries()];
     this.shuffleInPlace(entries);
-    const [artistKey, songs] = entries[0];
-    const displayName = songs[0].track.an ?? 'Unknown Artist';
+    const [artistKey, songs] = entries[0]!;
+    const displayName = songs[0]!.track.an ?? 'Unknown Artist';
 
     const picked = this.selectNewFirst(
       `artist_unplayed_${artistKey}`,
@@ -1002,10 +996,10 @@ export class SuggestionGenerator {
     const dupGroups = [...groups.entries()].filter(([, items]) => items.length >= 2);
     if (dupGroups.length === 0) return [];
     this.shuffleInPlace(dupGroups);
-    const [, groupSongs] = dupGroups[0];
-    const selected = this.selectNewFirst('samename', groupSongs.map(s => ({song: s, tracker: null})), this.getDisplayCount());
+    const [, groupSongs] = dupGroups[0]!;
+    const selected = this.selectNewFirst('samename', groupSongs.map((s: Song) => ({song: s, tracker: null})), this.getDisplayCount());
     const songs = selected.map(p => p.song);
-    const displayTitle = (songs[0].track.tt ?? songs[0]._title ?? '').trim();
+    const displayTitle = (songs[0]!.track.tt ?? songs[0]!._title ?? '').trim();
 
     return [
       {
@@ -1253,8 +1247,8 @@ export class SuggestionGenerator {
     if (groups.length === 0) return [];
     this.shuffleInPlace(groups);
 
-    const pickedGroup = groups[0];
-    const disp = (pickedGroup[1][0].song.track.tt ?? pickedGroup[1][0].song._title ?? '').trim();
+    const pickedGroup = groups[0]!;
+    const disp = (pickedGroup[1][0]!.song.track.tt ?? pickedGroup[1][0]!.song._title ?? '').trim();
 
     const poolAll: SongPair[] = [];
     for (const x of pickedGroup[1]) {
@@ -1378,7 +1372,7 @@ export class SuggestionGenerator {
           if (b != null) buckets.push(b);
         }
       }
-      if (buckets.length >= 2 && buckets.every(b => b === buckets[0]) && buckets[0] > 1) {
+      if (buckets.length >= 2 && buckets.every(b => b === buckets[0]) && buckets[0]! > 1) {
         pool.push({song: s, tracker: null});
       }
     }
@@ -1508,7 +1502,7 @@ export class SuggestionGenerator {
     const candidates: SongPair[] = [];
     for (const [, pairs] of byBucket) {
       this.shuffleInPlace(pairs);
-      candidates.push(pairs[0]);
+      candidates.push(pairs[0]!);
     }
     this.shuffleInPlace(candidates);
 

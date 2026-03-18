@@ -1,0 +1,90 @@
+/*
+ * Shared page shell layout classes.
+ * Every page composes from these rather than re-declaring the same layout.
+ */
+
+/* ── Shell ── */
+
+.page {
+  composes: pageShell from '../styles/shared.module.css';
+  color: var(--color-text-primary);
+}
+
+.pageWithBg {
+  composes: page;
+  background-color: var(--color-bg-app);
+  position: relative;
+}
+
+.pageWithBgClip {
+  composes: pageWithBg;
+  overflow: hidden;
+}
+
+.scrollArea {
+  composes: scrollContainer from '../styles/shared.module.css';
+}
+
+.scrollAreaRelative {
+  composes: scrollArea;
+  position: relative;
+}
+
+.scrollAreaRelativeZ {
+  composes: scrollAreaRelative;
+  z-index: var(--z-base);
+}
+
+.container {
+  composes: pageContent from '../styles/shared.module.css';
+}
+
+.containerZ {
+  composes: container;
+  position: relative;
+  z-index: var(--z-base);
+}
+
+/* ── Background image + dim overlay ── */
+
+.bgImage {
+  position: fixed;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.bgDim {
+  position: fixed;
+  inset: 0;
+  background-color: var(--color-overlay-dark);
+  pointer-events: none;
+}
+
+/* ── Loading states ── */
+
+.spinnerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dropdown);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.spinnerContainer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: calc(100vh - 200px);
+}
+
+.arcSpinner {
+  composes: spinner from '../styles/shared.module.css';
+  width: var(--size-xl);
+  height: var(--size-xl);
+  border-width: 4px;
+  border-top-color: var(--color-accent-purple);
+}

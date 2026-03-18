@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useModalState } from '../hooks/useModalState';
+import { useModalState } from '../hooks/ui/useModalState';
 
 describe('useModalState', () => {
   const defaults = () => ({ sortMode: 'title', ascending: true });
