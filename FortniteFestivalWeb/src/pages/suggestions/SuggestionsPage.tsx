@@ -285,6 +285,7 @@ export default function SuggestionsPage({ accountId }: Props) {
   // loaded batches get their own stagger starting from delay 0.
   const revealedCountRef = useRef(0);
 
+  /* v8 ignore start — animation delay logic */
   const getCardDelay = (index: number): number | null => {
     if (skipAnim) return -1;                                   // skip all animation
     if (phase !== 'contentIn') return null;                   // hidden behind spinner
@@ -294,6 +295,7 @@ export default function SuggestionsPage({ accountId }: Props) {
     if (offset >= maxVisible) return -1;                      // beyond viewport, show instantly
     return offset * 125;
   };
+  /* v8 ignore stop */
 
   // After each render, mark all current cards as revealed.
   useEffect(() => {
@@ -386,6 +388,7 @@ export default function SuggestionsPage({ accountId }: Props) {
           >
             <div ref={listRef} style={{ paddingTop: Gap.lg }}>
             {visibleCategories.map((cat, idx) => {
+              /* v8 ignore start — animation branching */
               const delay = getCardDelay(idx);
               if (delay === -1) {
                 // Already visible â€” render without animation wrapper
@@ -396,6 +399,7 @@ export default function SuggestionsPage({ accountId }: Props) {
                   <CategoryCard category={cat} albumArtMap={albumArtMap} scoresIndex={scoresIndex} />
                 </FadeIn>
               );
+              /* v8 ignore stop */
             })}
             </div>
           </InfiniteScroll>

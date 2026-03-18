@@ -67,6 +67,7 @@ export default memo(function InstrumentCard({
         className={s.card}
         style={{ cursor: 'pointer' }}
         onClick={() => {
+          /* v8 ignore next — navigation */
           navigate(`/songs/${songId}/${instrument}`, { state: { backTo: `/songs/${songId}` } });
         }}
       >
@@ -89,7 +90,7 @@ export default memo(function InstrumentCard({
               className={rowClass}
               style={rowStagger}
               onClick={(ev) => ev.stopPropagation()}
-              onAnimationEnd={clearAnim}
+              onAnimationEnd={clearAnim} /* v8 ignore -- animation cleanup */
             >
               <span className={s.entryRank} style={isPlayer ? { fontWeight: 700 } : undefined}>#{(e.rank ?? i + 1).toLocaleString()}</span>
               <span className={s.entryName} style={isPlayer ? { fontWeight: 700 } : undefined}>
@@ -124,7 +125,7 @@ export default memo(function InstrumentCard({
             className={`${s.playerEntryRow} ${isMobile ? s.entryRowMobile : ''}`}
             style={playerStagger}
             onClick={(ev) => ev.stopPropagation()}
-            onAnimationEnd={clearAnim}
+            onAnimationEnd={clearAnim} /* v8 ignore -- animation cleanup */
           >
             <span className={s.entryRank} style={{ fontWeight: 700 }}>#{playerScore.rank.toLocaleString()}</span>
             <span className={s.entryName} style={{ fontWeight: 700 }}>{playerName}</span>

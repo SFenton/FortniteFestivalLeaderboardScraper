@@ -27,6 +27,7 @@ export default function MobileHeader({
 }: MobileHeaderProps) {
   const navigate = useNavigate();
 
+  /* v8 ignore start — conditional rendering tested via AppMobile integration */
   if (navTitle) {
     return (
       <div key={locationKey} className={`sa-top ${appCss.mobileHeader}`} style={shouldAnimate ? { animation: `fadeIn ${TRANSITION_MS}ms ease-out` } : undefined}>
@@ -56,4 +57,5 @@ export default function MobileHeader({
   }
 
   return null;
+  /* v8 ignore stop */
 }
