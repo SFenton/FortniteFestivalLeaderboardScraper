@@ -45,6 +45,7 @@ export function useScrollRestore(
 
     // content-visibility: auto can delay element sizing.
     // Try immediately, then retry after a frame if scrollHeight is too small.
+    /* v8 ignore start -- scrollTop/rAF: DOM scroll APIs not available in jsdom */
     const tryRestore = () => {
       const target = scrollRef.current;
       /* v8 ignore start */
@@ -57,10 +58,12 @@ export function useScrollRestore(
     tryRestore();
     const raf = requestAnimationFrame(tryRestore);
     return () => cancelAnimationFrame(raf);
+    /* v8 ignore stop */
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- mount-only
 
   const saveScroll = useCallback(() => {
     const el = scrollRef.current;
+    /* v8 ignore next -- scrollTop: DOM API */
     if (el) scrollStore.set(cacheKey, el.scrollTop);
   }, [scrollRef, cacheKey]);
 

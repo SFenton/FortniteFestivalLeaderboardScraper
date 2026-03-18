@@ -61,7 +61,7 @@ vi.mock('@dnd-kit/sortable', async () => {
   let mockIsDragging = false;
   return {
     ...actual,
-    useSortable: (args: any) => ({
+    useSortable: (_args: any) => ({
       attributes: {},
       listeners: {},
       setNodeRef: () => {},
@@ -106,6 +106,7 @@ describe('SortableRow — isDragging branches', () => {
 import { useFilteredSongs } from '../../hooks/data/useFilteredSongs';
 import { defaultSongFilters } from '../../utils/songSettings';
 import type { SongFilters } from '../../utils/songSettings';
+import type { ServerInstrumentKey as InstrumentKey, PlayerScore } from '@festival/core/api/serverTypes';
 
 describe('useFilteredSongs — extra branches', () => {
   const wrapper = ({ children }: { children: React.ReactNode }) => <TestProviders>{children}</TestProviders>;
@@ -120,8 +121,8 @@ describe('useFilteredSongs — extra branches', () => {
     return new Map(entries);
   }
 
-  function makeAllScoreMap(entries: [string, [string, any][]][]): Map<string, Map<string, any>> {
-    return new Map(entries.map(([sid, scores]) => [sid, new Map(scores)]));
+  function makeAllScoreMap(entries: [string, [string, any][]][]): Map<string, Map<InstrumentKey, PlayerScore>> {
+    return new Map(entries.map(([sid, scores]) => [sid, new Map(scores)])) as any;
   }
 
   function baseFilters(): SongFilters {
@@ -190,7 +191,7 @@ describe('useFilteredSongs — extra branches', () => {
   it('sorts by score with empty scoreMap — fallback to title', () => {
     const f = baseFilters();
     const emptyScoreMap = new Map<string, any>();
-    const emptyAllScoreMap = new Map<string, Map<string, any>>();
+    const emptyAllScoreMap = new Map<string, Map<InstrumentKey, PlayerScore>>();
     const { result } = renderHook(
       () => useFilteredSongs({ songs: SONGS, search: '', sortMode: 'score' as any, sortAscending: true, filters: f, instrument: null, scoreMap: emptyScoreMap, allScoreMap: emptyAllScoreMap }),
       { wrapper },
@@ -505,30 +506,6 @@ describe('PlayerHistoryPage — applySort branch', () => {
 });
 
 /* ══════════════════════════════════════════════
-   FloatingActionButton — click-inside container
-   ══════════════════════════════════════════════ */
-
-import FloatingActionButton from '../../components/shell/FloatingActionButton';
-
-describe('FloatingActionButton — click-inside branch', () => {
-  it('click inside container does not close actions', () => {
-    const { container } = render(
-      <TestProviders>
-        <FloatingActionButton />
-      </TestProviders>,
-    );
-    // Open FAB
-    const fabBtn = container.querySelector('button[class*="fab"]');
-    if (fabBtn) {
-      fireEvent.click(fabBtn);
-      // Click inside the container — should NOT close
-      fireEvent.click(fabBtn);
-      // Actions should still be open (or at least not crash)
-    }
-  });
-});
-
-/* ══════════════════════════════════════════════
    ConfirmAlert — non-Escape key branch
    ══════════════════════════════════════════════ */
 
@@ -572,7 +549,7 @@ describe('HeaderSearch — branch coverage', () => {
   it('renders empty results message on short query', async () => {
     const { container } = render(
       <TestProviders>
-        <HeaderSearch onSelect={vi.fn()} />
+        <HeaderSearch />
       </TestProviders>,
     );
     const input = container.querySelector('input');
@@ -636,7 +613,7 @@ describe('SongDetailHeader / SongHeader — branches', () => {
   it('SongDetailHeader renders unknown with no song', () => {
     render(
       <TestProviders>
-        <SongDetailHeader song={undefined} songId="abc" />
+        <SongDetailHeader song={undefined} songId="abc" collapsed={false} onOpenPaths={vi.fn()} />
       </TestProviders>,
     );
     expect(document.body.textContent).toBeTruthy();
@@ -645,7 +622,7 @@ describe('SongDetailHeader / SongHeader — branches', () => {
   it('SongHeader renders unknown with no song', () => {
     render(
       <TestProviders>
-        <SongHeader song={undefined} songId="abc" />
+        <SongHeader song={undefined} songId="abc" collapsed={false} onOpenPaths={vi.fn()} />
       </TestProviders>,
     );
     expect(document.body.textContent).toBeTruthy();

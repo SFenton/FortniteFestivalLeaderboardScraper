@@ -268,4 +268,34 @@ describe('compareByMode', () => {
   it('returns 0 for unknown sort mode', () => {
     expect(compareByMode('unknown' as any, baseScore, baseScore)).toBe(0);
   });
+
+  it('uses 0 fallback when accuracy is undefined (percentage mode)', () => {
+    const a = { ...baseScore, accuracy: undefined } as unknown as PlayerScore;
+    const b = { ...baseScore, accuracy: 80 };
+    expect(compareByMode('percentage', a, b)).toBeLessThan(0);
+  });
+
+  it('uses Infinity fallback when totalEntries is undefined (percentile mode)', () => {
+    const a = { ...baseScore, rank: 1, totalEntries: undefined } as unknown as PlayerScore;
+    const b = { ...baseScore, rank: 1, totalEntries: 100 };
+    expect(compareByMode('percentile', a, b)).toBeGreaterThan(0);
+  });
+
+  it('uses 0 fallback when stars is undefined', () => {
+    const a = { ...baseScore, stars: undefined } as unknown as PlayerScore;
+    const b = { ...baseScore, stars: 3 };
+    expect(compareByMode('stars', a, b)).toBeLessThan(0);
+  });
+
+  it('uses 0 fallback when season is undefined', () => {
+    const a = { ...baseScore, season: undefined } as unknown as PlayerScore;
+    const b = { ...baseScore, season: 2 };
+    expect(compareByMode('seasonachieved', a, b)).toBeLessThan(0);
+  });
+
+  it('compares hasfc with both true and false values', () => {
+    const a = { ...baseScore, isFullCombo: true };
+    const b = { ...baseScore, isFullCombo: false };
+    expect(compareByMode('hasfc', a, b)).toBeGreaterThan(0);
+  });
 });

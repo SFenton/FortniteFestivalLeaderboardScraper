@@ -14,9 +14,11 @@ export interface DesktopNavProps {
 
 export default function DesktopNav({ hasPlayer, onOpenSidebar, onProfileClick }: DesktopNavProps) {
   const navigate = useNavigate();
+  /* v8 ignore start — navigation callback */
   const handleSelect = useCallback((r: { accountId: string }) => {
     navigate(`/player/${r.accountId}`);
   }, [navigate]);
+  /* v8 ignore stop */
 
   return (
     <nav className={`sa-top ${appCss.nav}`}>

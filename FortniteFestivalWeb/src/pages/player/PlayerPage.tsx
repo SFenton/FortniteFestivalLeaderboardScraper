@@ -70,6 +70,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   const prevAccountRef = useRef(accountId);
   const skipAnimRef = useRef(hasRendered);
   // When accountId changes within the same component instance, re-evaluate skip
+  /* v8 ignore start -- animation: skip-stagger state for re-renders */
   if (prevAccountRef.current !== accountId) {
     prevAccountRef.current = accountId;
     const alreadyRendered = isTrackedPlayer
@@ -77,6 +78,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
       : _renderedPlayerAccount === accountId;
     skipAnimRef.current = alreadyRendered;
   }
+  /* v8 ignore stop */
   const skipAnim = skipAnimRef.current;
   const dataReady = !loading && !error && !!data;
   const { phase: loadPhase } = useLoadPhase(dataReady, { skipAnimation: skipAnim });

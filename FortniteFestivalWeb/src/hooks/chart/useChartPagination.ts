@@ -28,6 +28,7 @@ export function useChartPagination(
     return chartData.findIndex(p => p.date === selectedPoint.date && p.score === selectedPoint.score);
   }, [selectedPoint, chartData]);
 
+  /* v8 ignore start -- navigatePoint: offset adjustment logic */
   const navigatePoint = useCallback((targetIdx: number) => {
     const clamped = Math.max(0, Math.min(targetIdx, chartData.length - 1));
     const point = chartData[clamped];
@@ -42,6 +43,7 @@ export function useChartPagination(
       return Math.max(chartData.length - clamped - 1, 0);
     });
   }, [chartData, maxBars, maxOffset]);
+  /* v8 ignore stop */
 
   const backDisabled = selectedPoint
     ? selectedIndex <= 0

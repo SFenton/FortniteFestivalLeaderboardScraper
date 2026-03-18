@@ -6,9 +6,8 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, fireEvent, renderHook, waitFor, act } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
-import { TestProviders, createTestQueryClient } from '../helpers/TestProviders';
-import { QueryClientProvider } from '@tanstack/react-query';
+import { Routes, Route } from 'react-router-dom';
+import { TestProviders } from '../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver } from '../helpers/browserStubs';
 
 /* ── Mocks ── */
@@ -302,7 +301,7 @@ describe('useSortedScoreHistory — ?? branches', () => {
    ══════════════════════════════════════════════ */
 
 import { shouldShowCategoryType, filterCategoryForInstrumentTypes } from '../../utils/suggestionsFilter';
-import type { SuggestionCategory } from '@festival/core/suggestions/types';
+
 
 describe('suggestionsFilter — branches', () => {
   it('shouldShowCategoryType returns true for unknown key', () => {
@@ -349,7 +348,7 @@ describe('suggestionsFilter — branches', () => {
     const result = filterCategoryForInstrumentTypes(cat, { suggestionsLeadNearFC: false } as any);
     expect(result).not.toBeNull();
     expect(result!.songs).toHaveLength(1);
-    expect(result!.songs[0].instrumentKey).toBe('bass');
+    expect(result!.songs[0]!.instrumentKey).toBe('bass');
   });
 
   it('filterCategoryForInstrumentTypes returns null when all songs filtered', () => {
@@ -384,7 +383,7 @@ describe('suggestionsFilter — branches', () => {
     const result = filterCategoryForInstrumentTypes(cat, { suggestionsLeadNearFC: false } as any);
     expect(result).not.toBeNull();
     expect(result!.songs).toHaveLength(1);
-    expect(result!.songs[0].songId).toBe('s1');
+    expect(result!.songs[0]!.songId).toBe('s1');
   });
 });
 

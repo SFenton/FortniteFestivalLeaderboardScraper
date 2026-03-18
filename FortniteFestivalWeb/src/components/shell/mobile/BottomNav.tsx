@@ -20,7 +20,9 @@ export default function BottomNav({ player, activeTab, onTabClick }: {
   ];
 
   return (
+    /* v8 ignore start -- IS_PWA: PWA detection not available in jsdom */
     <nav className={css.nav} style={IS_PWA ? { paddingBottom: 24 } : undefined}>
+    {/* v8 ignore stop */}
       {tabs.map((tab) => (
         <button
           key={tab.key}

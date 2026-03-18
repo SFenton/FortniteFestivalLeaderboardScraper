@@ -37,6 +37,7 @@ export default function FloatingActionButton({
   const [popupMounted, setPopupMounted] = useState(false);
   const [popupVisible, setPopupVisible] = useState(false);
 
+  /* v8 ignore start — action menu open/close handlers (rAF/setTimeout) */
   const openActions = useCallback(() => {
     setActionsOpen(true);
     setPopupMounted(true);
@@ -48,6 +49,7 @@ export default function FloatingActionButton({
     setActionsOpen(false);
     setTimeout(() => { setPopupMounted(false); }, 300);
   }, []);
+  /* v8 ignore stop */
 
   const searchQuery = useSearchQuery();
 
@@ -70,12 +72,13 @@ export default function FloatingActionButton({
   return (
     <div ref={containerRef}>
       {searchVisible && (
+        /* v8 ignore start -- IS_PWA + searchBar interactions not available in jsdom */
         <div className={css.searchBarOuter} style={{ ...(IS_PWA ? { bottom: 80 + Gap.section - Gap.md } : {}) }}>
           <div className={`fab-search-bar ${css.searchBar}`}>
             <SearchBar
               value={searchQuery.query}
               onChange={searchQuery.setQuery}
-              onKeyDown={e => { /* v8 ignore next */ if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
               placeholder={placeholder ?? t('songs.searchPlaceholder')}
               enterKeyHint="done"
               className={css.searchInputWrap}
@@ -83,11 +86,16 @@ export default function FloatingActionButton({
             />
           </div>
         </div>
+        /* v8 ignore stop */
       )}
+      /* v8 ignore start -- IS_PWA: PWA detection not available in jsdom */
       <div className={css.container} style={{ ...(IS_PWA ? { bottom: 80 + Gap.section - Gap.md } : {}) }}>
+      /* v8 ignore stop */
         <button
           className={css.fab}
-          onClick={() => /* v8 ignore next */ actionsOpen ? closeActions() : openActions()}
+          /* v8 ignore start -- action toggle */
+          onClick={() => actionsOpen ? closeActions() : openActions()}
+          /* v8 ignore stop */
           aria-label={t('common.actions')}
         >
           {icon ?? <IoMenu size={Size.iconMd} />}

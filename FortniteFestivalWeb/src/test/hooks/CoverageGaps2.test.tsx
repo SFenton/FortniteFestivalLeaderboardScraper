@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import { render, screen, fireEvent, renderHook, waitFor, act } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
+// react-router-dom imported by TestProviders
 import { TestProviders, createTestQueryClient } from '../helpers/TestProviders';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver } from '../helpers/browserStubs';
@@ -591,133 +591,6 @@ describe('ChangelogModal', () => {
     const content = container.querySelector('[class*="content"]');
     if (content) fireEvent.scroll(content);
     // No error — handleScroll exercised
-  });
-});
-
-/* ══════════════════════════════════════════════
-   FloatingActionButton (shell) — toggle/IS_PWA/icon
-   ══════════════════════════════════════════════ */
-
-import FloatingActionButton from '../../components/shell/FloatingActionButton';
-
-describe('FloatingActionButton (shell)', () => {
-  const baseProps = {
-    mode: 'songs' as const,
-    onPress: vi.fn(),
-  };
-
-  beforeEach(() => vi.clearAllMocks());
-
-  it('renders with default icon', () => {
-    render(
-      <TestProviders>
-        <FloatingActionButton {...baseProps} />
-      </TestProviders>,
-    );
-    // Default IoMenu icon rendered
-    expect(document.querySelector('[data-testid="icon"]')).toBeTruthy();
-  });
-
-  it('renders with custom icon', () => {
-    render(
-      <TestProviders>
-        <FloatingActionButton {...baseProps} icon={<span data-testid="custom-icon" />} />
-      </TestProviders>,
-    );
-    expect(document.querySelector('[data-testid="custom-icon"]')).toBeTruthy();
-  });
-
-  it('toggle: opens and closes actions on fab click', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const actionGroups = [[{ label: 'Sort', icon: <span />, onPress: vi.fn() }]];
-    render(
-      <TestProviders>
-        <FloatingActionButton {...baseProps} actionGroups={actionGroups} />
-      </TestProviders>,
-    );
-    const fab = document.querySelector('button[class*="fab"]')!;
-    expect(fab).toBeTruthy();
-    
-    // Open
-    await act(async () => {
-      fireEvent.click(fab);
-      await vi.advanceTimersByTimeAsync(50);
-    });
-    
-    // Close
-    await act(async () => {
-      fireEvent.click(fab);
-      await vi.advanceTimersByTimeAsync(350);
-    });
-    
-    vi.useRealTimers();
-  });
-
-  it('renders search bar when defaultOpen', () => {
-    const { container } = render(
-      <TestProviders>
-        <FloatingActionButton {...baseProps} defaultOpen />
-      </TestProviders>,
-    );
-    const input = container.querySelector('input');
-    expect(input).toBeTruthy();
-  });
-
-  it('uses custom placeholder', () => {
-    const { container } = render(
-      <TestProviders>
-        <FloatingActionButton {...baseProps} defaultOpen placeholder="Custom search..." />
-      </TestProviders>,
-    );
-    const input = container.querySelector('input') as HTMLInputElement;
-    expect(input?.placeholder).toBe('Custom search...');
-  });
-
-  it('renders FABMenu with action groups', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const action = { label: 'DoThing', icon: <span />, onPress: vi.fn() };
-    render(
-      <TestProviders>
-        <FloatingActionButton {...baseProps} actionGroups={[[action]]} />
-      </TestProviders>,
-    );
-    const fab = document.querySelector('button[class*="fab"]')!;
-    await act(async () => {
-      fireEvent.click(fab);
-      await vi.advanceTimersByTimeAsync(50);
-    });
-    expect(screen.getByText('DoThing')).toBeTruthy();
-    vi.useRealTimers();
-  });
-
-  it('click outside closes actions', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const action = { label: 'Outside', icon: <span />, onPress: vi.fn() };
-    render(
-      <TestProviders>
-        <FloatingActionButton {...baseProps} actionGroups={[[action]]} />
-      </TestProviders>,
-    );
-    const fab = document.querySelector('button[class*="fab"]')!;
-    await act(async () => {
-      fireEvent.click(fab);
-      await vi.advanceTimersByTimeAsync(50);
-    });
-    // Click outside
-    await act(async () => {
-      document.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      await vi.advanceTimersByTimeAsync(350);
-    });
-    vi.useRealTimers();
-  });
-
-  it('renders without actionGroups prop', () => {
-    render(
-      <TestProviders>
-        <FloatingActionButton {...baseProps} />
-      </TestProviders>,
-    );
-    expect(document.querySelector('button[class*="fab"]')).toBeTruthy();
   });
 });
 

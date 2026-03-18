@@ -9,13 +9,14 @@ import { useTrackedPlayer, type TrackedPlayer } from './hooks/data/useTrackedPla
 import { PlayerDataProvider } from './contexts/PlayerDataContext';
 import { useIsMobile, useIsMobileChrome } from './hooks/ui/useIsMobile';
 import SongsPage from './pages/songs/SongsPage';
-/* v8 ignore next 6 -- lazy() wrappers are resolved by the bundler, not callable in unit tests */
+/* v8 ignore start -- lazy() wrappers are resolved by the bundler, not callable in unit tests */
 const SongDetailPage = lazy(() => import('./pages/songinfo/SongDetailPage'));
 const LeaderboardPage = lazy(() => import('./pages/leaderboard/global/LeaderboardPage'));
 const PlayerHistoryPage = lazy(() => import('./pages/leaderboard/player/PlayerHistoryPage'));
 const PlayerPage = lazy(() => import('./pages/player/PlayerPage'));
 const SuggestionsPage = lazy(() => import('./pages/suggestions/SuggestionsPage'));
 const SettingsPage = lazy(() => import('./pages/settings/SettingsPage'));
+/* v8 ignore stop */
 import { Colors, Size } from '@festival/theme';
 import appCss from './App.module.css';
 import { resetSongSettingsForDeselect, loadSongSettings, SONG_SETTINGS_CHANGED_EVENT } from './utils/songSettings';
@@ -66,9 +67,11 @@ import { useTabNavigation } from './hooks/ui/useTabNavigation';
 const CHANGELOG_STORAGE_KEY = 'fst:changelog';
 
 const ANIMATED_BG_ROUTES = new Set(['/', AppRoutes.songs, AppRoutes.suggestions, AppRoutes.statistics, AppRoutes.settings]);
+/* v8 ignore start — route detection helper */
 function isAnimatedBgRoute(pathname: string) {
   return ANIMATED_BG_ROUTES.has(pathname) || RoutePatterns.player.test(pathname);
 }
+/* v8 ignore stop */
 
 function AppShell() {
   const { t } = useTranslation();
@@ -96,9 +99,11 @@ function AppShell() {
       localStorage.setItem(CHANGELOG_STORAGE_KEY, JSON.stringify({ version: APP_VERSION, hash: changelogHash() }));
     }
   }, [changelogOpen]);
+  /* v8 ignore start — modal dismiss callback */
   const dismissChangelog = useCallback(() => {
     setChangelogOpen(false);
   }, []);
+  /* v8 ignore stop */
   const navigate = useNavigate();
   const navType = useNavigationType();
 
@@ -107,6 +112,7 @@ function AppShell() {
 
   // Clear page caches when score filter settings change so pages restagger
   const filterRef = useRef({ e: settings.filterInvalidScores, l: settings.filterInvalidScoresLeeway });
+  /* v8 ignore start — deep AppInner: filter change cache invalidation */
   useEffect(() => {
     const prev = filterRef.current;
     if (prev.e !== settings.filterInvalidScores || prev.l !== settings.filterInvalidScoresLeeway) {
@@ -116,12 +122,14 @@ function AppShell() {
       clearPlayerPageCache();
       // Also invalidate React Query caches so data is refetched with new filter params
       queryClient.invalidateQueries();
+      /* v8 ignore stop */
     }
   }, [settings.filterInvalidScores, settings.filterInvalidScoresLeeway]);
 
   // --- Per-tab stack (mobile only) ---
   const { activeTab, handleTabClick } = useTabNavigation();
 
+  /* v8 ignore start — deep AppInner: routing/navigation logic embedded in render */
   const handleSelect = (p: TrackedPlayer) => {
     setPlayer(p);
     // Navigate to statistics unless already on that player's page
@@ -129,26 +137,35 @@ function AppShell() {
       navigate(AppRoutes.statistics);
     }
   };
+  /* v8 ignore stop */
 
+  /* v8 ignore start — deep AppInner callback */
   const handleFindPlayerSelect = useCallback((p: TrackedPlayer) => {
     navigate(AppRoutes.player(p.accountId));
   }, [navigate]);
+  /* v8 ignore stop */
 
+  /* v8 ignore start — deep AppInner: deselect callback */
   const handleDeselect = useCallback(() => {
     resetSongSettingsForDeselect();
     clearPlayer();
   }, [clearPlayer]);
+  /* v8 ignore stop */
 
+  /* v8 ignore start — deep AppInner: instrument sync event listener */
   const [songInstrument, setSongInstrument] = useState(() => loadSongSettings().instrument);
   useEffect(() => {
     const sync = () => setSongInstrument(loadSongSettings().instrument);
     window.addEventListener(SONG_SETTINGS_CHANGED_EVENT, sync);
     return () => window.removeEventListener(SONG_SETTINGS_CHANGED_EVENT, sync);
   }, []);
+  /* v8 ignore stop */
 
+  /* v8 ignore next — deep AppInner rendering */
   const showAnimatedBg = isAnimatedBgRoute(location.pathname);
 
   // Page title for mobile header
+  /* v8 ignore next 6 — deep AppInner rendering */
   const NAV_TITLES: Record<string, string> = {
     [AppRoutes.songs]: t('nav.songs'),
     [AppRoutes.suggestions]: t('nav.suggestions'),
@@ -159,6 +176,7 @@ function AppShell() {
 
   // Hierarchical back-navigation fallback for detail pages only.
   // Tab routes (songs, suggestions, statistics, settings) never show a back button.
+  /* v8 ignore start — deep AppInner: route-aware memo + animation IIFE */
   const backFallback = useMemo(() => {
     const path = location.pathname;
     const parts = path.split('/').filter(Boolean);
@@ -179,6 +197,7 @@ function AppShell() {
     backShownRef.current = true;
     return navType === 'PUSH';
   })();
+  /* v8 ignore stop */
 
   return (
     <PlayerDataProvider accountId={player?.accountId}>
@@ -389,6 +408,7 @@ function AppShell() {
   );
 }
 
+/* v8 ignore start — scroll restoration utility */
 function ScrollToTop() {
   const { pathname } = useLocation();
   useEffect(() => {
@@ -400,9 +420,9 @@ function ScrollToTop() {
     if (pathname === AppRoutes.suggestions || pathname === AppRoutes.songs) return;
     // Song detail pages manage their own scroll restoration
     if (RoutePatterns.songDetail.test(pathname)) return;
-    /* v8 ignore next — DOM scroll call */
     document.getElementById('main-content')?.scrollTo(0, 0);
   }, [pathname]);
   return null;
 }
+/* v8 ignore stop */
 

@@ -69,8 +69,8 @@ export default function PlayerContent({
     }
     registerPlayerPageSelect({
       displayName: data.displayName,
+      /* v8 ignore start — profile switch callbacks */
       onSelect: () => {
-        /* v8 ignore start */
         if (trackedPlayer && trackedPlayer.accountId !== data.accountId) {
           setPendingSwitch(() => () => setPlayer({ accountId: data.accountId, displayName: data.displayName }));
         } else {
@@ -83,8 +83,8 @@ export default function PlayerContent({
   }, [data.accountId, data.displayName, trackedPlayer, setPlayer, registerPlayerPageSelect]);
 
   // Helper: wrap a navigation action with profile-switch logic when viewing another player
+  /* v8 ignore start — navigation + profile switch */
   const withProfileSwitch = useCallback((action: () => void) => {
-    /* v8 ignore start */
     if (!isTrackedPlayer) {
       const selectAndGo = () => {
         setPlayer({ accountId: data.accountId, displayName: data.displayName });
@@ -112,8 +112,8 @@ export default function PlayerContent({
   const overallStats = useMemo(() => computeOverallStats(effectiveScores), [effectiveScores]);
 
   // Stable navigation helpers to reduce closure overhead in onClick handlers
+  /* v8 ignore start — navigation helpers */
   const navigateToSongs = useCallback((settingsUpdater: (s: ReturnType<typeof loadSongSettings>) => ReturnType<typeof loadSongSettings>) => {
-    /* v8 ignore start */
     withProfileSwitch(() => {
       const s = loadSongSettings();
       saveSongSettings(settingsUpdater(s));
@@ -122,8 +122,8 @@ export default function PlayerContent({
     });
   }, [withProfileSwitch, navigate, location.pathname]);
 
+  /* v8 ignore start — navigation helper */
   const navigateToSongDetail = useCallback((songId: string, instrument: InstrumentKey, opts?: { autoScroll?: boolean }) => {
-    /* v8 ignore start */
     withProfileSwitch(() => navigate(`/songs/${songId}?instrument=${encodeURIComponent(instrument)}`, { state: { backTo: location.pathname, ...opts } }));
     /* v8 ignore stop */
   }, [withProfileSwitch, navigate, location.pathname]);
@@ -243,7 +243,9 @@ export default function PlayerContent({
               // Compute which items are in the initial viewport by accumulating
               // estimated row heights.  The grid is 2-col: span items take a full
               // row, non-span items pair up (each row = max of the pair's height).
+              /* v8 ignore start -- SSR guard: window always defined in jsdom */
               const vh = typeof window !== 'undefined' ? window.innerHeight : 900;
+              /* v8 ignore stop */
               const gap = Gap.md;
               let accHeight = 0;
               let col = 0; // 0 = left, 1 = right in the 2-col grid

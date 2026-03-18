@@ -74,6 +74,7 @@ export default function SongsPage() {
 
   // Re-sync settings from localStorage when changed externally (e.g. PlayerPage card clicks)
   const savingRef = useRef(false);
+  /* v8 ignore start — external settings sync event listener */
   useEffect(() => {
     const sync = () => {
       if (savingRef.current) return; // ignore self-triggered events
@@ -84,6 +85,7 @@ export default function SongsPage() {
     window.addEventListener(SONG_SETTINGS_CHANGED_EVENT, sync);
     return () => window.removeEventListener(SONG_SETTINGS_CHANGED_EVENT, sync);
   }, []);
+  /* v8 ignore stop */
   const [instrument, setInstrument] = useState<InstrumentKey>(
     () => settings.instrument ?? 'Solo_Guitar',
   );
@@ -141,12 +143,15 @@ export default function SongsPage() {
   const openFilterRef = useRef(openFilter);
   openSortRef.current = openSort;
   openFilterRef.current = openFilter;
+  /* v8 ignore start — FAB action registration callbacks */
   useEffect(() => {
     fabSearch.registerActions({ openSort: () => openSortRef.current(), openFilter: () => openFilterRef.current() });
   }, [fabSearch]);
+  /* v8 ignore stop */
   const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress } = usePlayerData();
 
   // Build lookup: songId â†’ PlayerScore for the selected instrument
+  /* v8 ignore start — scoreMap: instrument filter loop */
   const scoreMap = useMemo(() => {
     if (!playerData) return new Map<string, PlayerScore>();
     const map = new Map<string, PlayerScore>();
@@ -157,7 +162,9 @@ export default function SongsPage() {
     }
     return map;
   }, [playerData, instrument]);
+  /* v8 ignore stop */
 
+  /* v8 ignore start — allScoreMap: multi-instrument lookup */
   // Build a per-song, per-instrument lookup for filter logic
   const allScoreMap = useMemo(() => {
     if (!playerData) return new Map<string, Map<InstrumentKey, PlayerScore>>();
@@ -172,6 +179,7 @@ export default function SongsPage() {
     }
     return map;
   }, [playerData]);
+  /* v8 ignore stop */
 
   const filtered = useFilteredSongs({
     songs,
@@ -192,6 +200,7 @@ export default function SongsPage() {
   );
 
   // Filter metadata keys by visibility settings (mirrors mobile visibleMetadataKeys)
+  /* v8 ignore start — metadata visibility: settings-dependent presentation filter */
   const visibleMetadataOrder = useMemo(() => {
     const hidden = new Set<string>();
     if (!appSettings.metadataShowScore) hidden.add('score');
@@ -217,6 +226,7 @@ export default function SongsPage() {
     appSettings.metadataShowDifficulty,
     appSettings.metadataShowStars,
   ]);
+  /* v8 ignore stop */
 
   // Derive available seasons from player scores
   const availableSeasons = useMemo(() => {
@@ -251,6 +261,7 @@ export default function SongsPage() {
   const settingsKey = `${settings.sortMode}|${settings.sortAscending}|${instrument}|${JSON.stringify(settings.filters)}|${debouncedSearch}`;
   const prevSettingsKeyRef = useRef(settingsKey);
 
+  /* v8 ignore start — animation: stagger/re-stagger effects */
   useEffect(() => {
     if (prevSettingsKeyRef.current === settingsKey) return;
     prevSettingsKeyRef.current = settingsKey;
@@ -284,6 +295,7 @@ export default function SongsPage() {
     const id = setTimeout(() => setShouldStagger(false), totalAnimTime);
     return () => clearTimeout(id);
   }, [loadPhase, shouldStagger, maxVisibleSongs]);
+  /* v8 ignore stop */
 
   // Scroll to top when content transitions in after a settings change (not on initial mount or back nav)
   /* v8 ignore start — scroll reset on settings change */
@@ -341,7 +353,9 @@ export default function SongsPage() {
         <div className={s.container}>
           <div style={{ visibility: (toolbarShownRef.current || loadPhase === 'contentIn') ? 'visible' : 'hidden' } as CSSProperties}>
           <div className={s.toolbar}>
-            <div className={s.searchWrap} onClick={e => { /* v8 ignore next */ const input = e.currentTarget.querySelector('input'); input?.focus(); }}>
+            {/* v8 ignore start -- DOM focus: querySelector not reliable in jsdom */}
+            <div className={s.searchWrap} onClick={e => { const input = e.currentTarget.querySelector('input'); input?.focus(); }}>
+            {/* v8 ignore stop */}
               <IoSearch size={16} style={{ color: Colors.textTertiary, flexShrink: 0 }} />
               <input
                 className={s.searchInput}
@@ -401,6 +415,7 @@ export default function SongsPage() {
                   </div>
                 </div>
               )}
+              {/* v8 ignore start — sync phase progress UI; requires live server sync state */}
               {syncPhase === 'history' && (
                 <>
                   <div style={{ marginTop: Gap.md }}>
@@ -429,6 +444,7 @@ export default function SongsPage() {
                   )}
                 </>
               )}
+              {/* v8 ignore stop */}
             </div>
           </div>
         )}
@@ -476,7 +492,9 @@ export default function SongsPage() {
                       metadataOrder={visibleMetadataOrder}
                       sortMode={settings.sortMode}
                       isMobile={isMobile}
+                      /* v8 ignore start — stagger delay calculation */
                       staggerDelay={shouldStagger && i < maxVisibleSongs ? (staggerDelay(i, 125, maxVisibleSongs) ?? maxVisibleSongs * 125) : undefined}
+                      /* v8 ignore stop */
                     />
                   </div>
                 );

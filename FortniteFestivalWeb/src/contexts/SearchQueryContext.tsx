@@ -9,9 +9,11 @@ type SearchQueryContextType = {
   setQuery: (q: string) => void;
 };
 
+/* v8 ignore start — unreachable default context factory */
 const SearchQueryContext = createContext<SearchQueryContextType>({
   query: '', setQuery: () => {},
 });
+/* v8 ignore stop */
 
 export function SearchQueryProvider({ children }: { children: ReactNode }) {
   const [query, setQueryState] = useState('');

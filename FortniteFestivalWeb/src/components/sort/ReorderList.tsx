@@ -31,8 +31,8 @@ export function ReorderList({ items, onReorder }: ReorderListProps) {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  /* v8 ignore start — DnD handler */
   const handleDragEnd = (event: DragEndEvent) => {
-    /* v8 ignore start */
     const { active, over } = event;
     if (!over || active.id === over.id) return;
     const oldIndex = items.findIndex(i => i.key === active.id);

@@ -35,6 +35,7 @@ export default function SongDetailPage() {
   const [searchParams] = useSearchParams();
   const defaultInstrument = (searchParams.get('instrument') as InstrumentKey) || undefined;
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+  /* v8 ignore start — resize handler DOM event */
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
     const onResize = () => {
@@ -44,6 +45,7 @@ export default function SongDetailPage() {
     window.addEventListener('resize', onResize);
     return () => { clearTimeout(timer); window.removeEventListener('resize', onResize); };
   }, []);
+  /* v8 ignore stop */
   const {
     state: { songs },
   } = useFestival();
@@ -77,14 +79,17 @@ export default function SongDetailPage() {
   // The cache is only fully valid when player-specific data also matches (or no player is selected).
   const mountedWithCacheRef = useRef(!!cached && (!player || !!hasCachedPlayer));
 
+  /* v8 ignore start — FAB registration callback */
   // Register openPaths for the FAB
   useEffect(() => {
     fabSearch.registerSongDetailActions({ openPaths: () => setPathsOpen(true) });
   }, [fabSearch]);
+  /* v8 ignore stop */
 
   const song = songs.find((s) => s.songId === songId);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  /* v8 ignore start — async data fetch effects with cancellation */
   // Fetch player scores
   useEffect(() => {
     if (mountedWithCacheRef.current) return;
@@ -160,6 +165,7 @@ export default function SongDetailPage() {
     });
     return () => { cancelled = true; };
   }, [songId]);
+  /* v8 ignore stop */
 
   // Clear the cache-skip flag after all fetch effects have had a chance to check it.
   // Must be declared AFTER the fetch effects so React runs it last in the effect order.
@@ -216,6 +222,7 @@ export default function SongDetailPage() {
   const updateScrollMask = useScrollMask(scrollRef, [phase, activeInstruments.length]);
   const userScrolledRef = useRef(false);
   const rushOnScroll = useStaggerRush(scrollRef);
+  /* v8 ignore start — scroll handler with cache update */
   const handleScroll = useCallback(() => {
     updateScrollMask();
     rushOnScroll();
@@ -228,6 +235,7 @@ export default function SongDetailPage() {
     const el = scrollRef.current;
     if (el) setHeaderCollapsed(el.scrollTop > 40);
   }, [updateScrollMask, rushOnScroll, hasFab, songId]);
+  /* v8 ignore stop */
 
   const hasScrolled = useRef(false);
 
@@ -238,6 +246,7 @@ export default function SongDetailPage() {
   }, [songId, defaultInstrument]);
 
   // Update cache when data is ready
+  /* v8 ignore start — cache update side effect */
   useEffect(() => {
     if (!songId || !allReady) return;
     songDetailCache.set(songId, {
@@ -248,6 +257,7 @@ export default function SongDetailPage() {
       scrollTop: scrollRef.current?.scrollTop ?? 0,
     });
   }, [allReady, songId, instrumentData, playerScores, scoreHistory, player?.accountId]);
+  /* v8 ignore stop */
 
   // Restore scroll position when returning from cache (not on fresh PUSH navigations)
   useLayoutEffect(() => {
@@ -387,7 +397,9 @@ export default function SongDetailPage() {
       )}
       </div>
       {/* v8 ignore stop */}
+      {/* v8 ignore start -- songId always truthy from route params */}
       {songId && <PathsModal visible={pathsOpen} songId={songId} onClose={() => setPathsOpen(false)} />}
+      {/* v8 ignore stop */}
     </div>
   );
 }

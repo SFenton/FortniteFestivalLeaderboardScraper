@@ -113,4 +113,39 @@ describe('HeaderSearch', () => {
     fireEvent.focus(screen.getByPlaceholderText(/search player/i));
     expect(mockHandleChange).toHaveBeenCalledWith('Test');
   });
+
+  it('does not call handleChange on focus when no results', () => {
+    mockState = { query: 'Test', results: [], isOpen: false, activeIndex: -1 };
+    render(<MemoryRouter><HeaderSearch /></MemoryRouter>);
+    fireEvent.focus(screen.getByPlaceholderText(/search player/i));
+    expect(mockHandleChange).not.toHaveBeenCalled();
+  });
+
+  it('does not call handleChange on focus when already open', () => {
+    mockState = {
+      query: 'Test',
+      results: [{ accountId: 'acc-1', displayName: 'TestPlayer' }],
+      isOpen: true,
+      activeIndex: -1,
+    };
+    render(<MemoryRouter><HeaderSearch /></MemoryRouter>);
+    fireEvent.focus(screen.getByPlaceholderText(/search player/i));
+    expect(mockHandleChange).not.toHaveBeenCalled();
+  });
+
+  it('highlights the active result', () => {
+    mockState = {
+      query: 'Test',
+      results: [
+        { accountId: 'acc-1', displayName: 'Player1' },
+        { accountId: 'acc-2', displayName: 'Player2' },
+      ],
+      isOpen: true,
+      activeIndex: 0,
+    };
+    render(<MemoryRouter><HeaderSearch /></MemoryRouter>);
+    // First result should have active class
+    const buttons = screen.getAllByRole('button');
+    expect(buttons[0]?.className).toContain('Active');
+  });
 });

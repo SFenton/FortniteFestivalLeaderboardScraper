@@ -24,6 +24,7 @@ export function buildTopSongsItems(
   const topScores = sorted.slice(0, 5);
   const bottomScores = sorted.length > 5 ? sorted.slice(-5).reverse() : [];
 
+  /* v8 ignore start — renderSongRow: navigation callbacks + defensive branches */
   const renderSongRow = (sc: PlayerScore) => {
     const song = songMap.get(sc.songId);
     const pct = sc.rank > 0 && (sc.totalEntries ?? 0) > 0
@@ -40,14 +41,13 @@ export function buildTopSongsItems(
         year={song?.year}
         percentile={pct}
         onClick={(e) => {
-          /* v8 ignore start */
           e.preventDefault();
           navigateToSongDetail(sc.songId, inst, { autoScroll: true });
-          /* v8 ignore stop */
         }}
       />
     );
   };
+  /* v8 ignore stop */
 
   // Top songs header
   items.push({

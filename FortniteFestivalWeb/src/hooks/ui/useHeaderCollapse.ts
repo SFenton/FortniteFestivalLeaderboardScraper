@@ -24,8 +24,10 @@ export function useHeaderCollapse(
 
   const update = useCallback(() => {
     if (disabled) return;
+    /* v8 ignore start -- scrollTop: DOM scroll API not available in jsdom */
     const el = scrollRef.current;
     if (el) setCollapsed(el.scrollTop > threshold);
+    /* v8 ignore stop */
   }, [scrollRef, threshold, disabled]);
 
   return [disabled ? forcedValue : collapsed, update];

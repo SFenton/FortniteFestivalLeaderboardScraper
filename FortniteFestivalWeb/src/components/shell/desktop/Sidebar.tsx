@@ -26,6 +26,7 @@ export default function Sidebar({ player, open, onClose, onDeselect, onSelectPla
     else setVisible(false);
   }, [open]);
 
+  /* v8 ignore start -- animation: rAF + getBoundingClientRect */
   useLayoutEffect(() => {
     if (mounted && open) {
       sidebarRef.current?.getBoundingClientRect();
@@ -37,6 +38,7 @@ export default function Sidebar({ player, open, onClose, onDeselect, onSelectPla
   const handleTransitionEnd = useCallback(() => {
     if (!visible) setMounted(false);
   }, [visible]);
+  /* v8 ignore stop */
 
   useEffect(() => {
     if (!mounted) return;

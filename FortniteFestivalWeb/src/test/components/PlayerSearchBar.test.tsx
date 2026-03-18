@@ -85,4 +85,22 @@ describe('PlayerSearchBar', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(container.querySelectorAll('button')).toHaveLength(0);
   });
+
+  it('highlights active result on ArrowDown keyboard navigation', async () => {
+    mockSearch.mockResolvedValue({ results: [
+      { accountId: 'a1', displayName: 'Player1' },
+      { accountId: 'a2', displayName: 'Player2' },
+    ] });
+    const { container } = render(
+      React.createElement(PlayerSearchBar, { onSelect: vi.fn() }),
+    );
+    const input = container.querySelector('input')!;
+    fireEvent.change(input, { target: { value: 'Player' } });
+    await act(async () => { vi.advanceTimersByTime(300); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    // Press ArrowDown to activate first result
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    const buttons = container.querySelectorAll('button');
+    expect(buttons[0]!.className).toContain('Active');
+  });
 });
