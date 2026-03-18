@@ -62,6 +62,10 @@
     "localEntries": "{{count}} tracked",
     "noEntries": "No leaderboard entries found.",
     "noEntriesOnPage": "No entries on this page",
+    "first": "« First",
+    "prev": "‹ Prev",
+    "next": "Next ›",
+    "last": "Last »",
     "notFound": "Not found",
     "failedToLoad": "Failed to load leaderboard"
   },

@@ -88,9 +88,9 @@ export default function FloatingActionButton({
         </div>
         /* v8 ignore stop */
       )}
-      /* v8 ignore start -- IS_PWA: PWA detection not available in jsdom */
+      {/* v8 ignore start -- IS_PWA: PWA detection not available in jsdom */}
       <div className={css.container} style={{ ...(IS_PWA ? { bottom: 80 + Gap.section - Gap.md } : {}) }}>
-      /* v8 ignore stop */
+      {/* v8 ignore stop */}
         <button
           className={css.fab}
           /* v8 ignore start -- action toggle */

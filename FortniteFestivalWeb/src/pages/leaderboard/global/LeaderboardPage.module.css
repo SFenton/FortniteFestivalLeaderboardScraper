@@ -191,21 +191,20 @@
   z-index: 1;
 }
 
-.pageButton {
-  composes: frostedCard from '../../../styles/shared.module.css';
-  padding: var(--gap-md) var(--gap-xl);
-  border-radius: var(--radius-sm);
-  background-color: var(--color-bg-card);
-  color: var(--color-text-primary);
-  font-size: var(--font-sm);
-  cursor: pointer;
-  transition: background-color 0.15s;
+.paginationMobile {
+  composes: pagination;
+  justify-content: space-between;
+  gap: 0;
 }
 
-.pageButtonDisabled {
-  composes: pageButton;
-  opacity: 0.4;
-  cursor: default;
+.paginationFab {
+  composes: pagination;
+  padding-bottom: 96px;
+}
+
+.paginationMobileFab {
+  composes: paginationMobile;
+  padding-bottom: 96px;
 }
 
 .pageInfo {
