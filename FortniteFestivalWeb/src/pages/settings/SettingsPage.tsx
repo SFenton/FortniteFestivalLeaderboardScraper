@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigationType } from 'react-router-dom';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { ToggleRow } from '../../components/common/ToggleRow';
@@ -12,6 +13,7 @@ import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/se
 import { Colors, Font, Gap } from '@festival/theme';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
+import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
 import { api } from '../../api/client';
 import css from './SettingsPage.module.css';
 
@@ -151,14 +153,16 @@ function LeewaySlider({ value, onChange }: { value: number; onChange: (v: number
 
 export default function SettingsPage() {
   const { t } = useTranslation();
+  const navType = useNavigationType();
   const { settings, updateSettings, resetSettings } = useSettings();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const saveScroll = useScrollRestore(scrollRef, 'settings', navType);
   const updateScrollMask = useScrollMask(scrollRef, []);
   const rushOnScroll = useStaggerRush(scrollRef);
   /* v8 ignore start — scroll handler */
-  const handleScroll = useCallback(() => { updateScrollMask(); rushOnScroll(); }, [updateScrollMask, rushOnScroll]);
+  const handleScroll = useCallback(() => { saveScroll(); updateScrollMask(); rushOnScroll(); }, [saveScroll, updateScrollMask, rushOnScroll]);
   /* v8 ignore stop */
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [serviceVersion, setServiceVersion] = useState<string | null>(null);

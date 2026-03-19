@@ -29,13 +29,11 @@ export function useScrollRestore(
   cacheKey: string,
   navType: string,
 ): () => void {
-  // Restore on mount for back-navigation
+  // Restore scroll position on mount when revisiting a page.
+  // The saveScroll callback persists position on every scroll, so if a cached
+  // value exists it means the user was here before — restore it regardless of
+  // whether this is a POP (back) or PUSH (tab switch).
   useEffect(() => {
-    if (navType !== 'POP') {
-      // PUSH / REPLACE: reset stored position so next back-nav starts fresh
-      scrollStore.delete(cacheKey);
-      return;
-    }
     const saved = scrollStore.get(cacheKey);
     if (saved == null || saved <= 0) return;
     const el = scrollRef.current;
