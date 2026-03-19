@@ -2,9 +2,9 @@
 
 .toolbar {
   display: flex;
-  gap: var(--gap-xl);
   align-items: center;
   flex-wrap: wrap;
+  gap: 0;
   margin-bottom: var(--gap-md);
 }
 
@@ -20,6 +20,7 @@
   box-sizing: border-box;
   border-radius: var(--radius-full);
   cursor: text;
+  margin-right: var(--gap-xl);
 }
 
 .searchInput {
@@ -34,6 +35,26 @@
 .sortGroup {
   display: flex;
   gap: var(--gap-sm);
+}
+
+.instSlot {
+  width: var(--size-xl);
+  margin-right: var(--gap-xl);
+  opacity: 1;
+  overflow: hidden;
+  flex-shrink: 0;
+  transition: opacity var(--duration-fast) ease, width var(--duration-fast) ease, margin-right var(--duration-fast) ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.instSlotHidden {
+  composes: instSlot;
+  width: 0;
+  margin-right: 0;
+  opacity: 0;
+  transition: opacity var(--duration-fast) ease, width var(--duration-fast) ease var(--duration-fast), margin-right var(--duration-fast) ease var(--duration-fast);
 }
 
 .count {

@@ -117,6 +117,7 @@
 
   /* ── Duration ── */
   --duration-quick: 150ms;
+  --duration-fast: 200ms;
   --duration-normal: 300ms;
   --duration-fade: 400ms;
   --duration-confirm: 200ms;
