@@ -23,14 +23,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  animation: spinnerFadeIn 300ms ease;
 }
 
-.spinner {
-  composes: spinner from '../../../../styles/shared.module.css';
-  width: 48px;
-  height: 48px;
-  border-width: 4px;
-  border-top-color: var(--color-accent-purple);
+@keyframes spinnerFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .pathImg {
@@ -149,7 +147,31 @@
 }
 
 .diffBtnActive {
-  background-color: rgba(124, 58, 237, 0.5);
-  border: 1px solid rgba(168, 120, 255, 0.4);
-  color: #fff;
+  padding: var(--gap-xl) var(--gap-md);
+  border-radius: var(--radius-md);
+  font-size: var(--font-md);
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  background-color: var(--color-purple-highlight);
+  background-image: none;
+  border: 1px solid var(--color-purple-highlight-border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 4px 20px rgba(0, 0, 0, 0.4);
+  color: var(--color-text-primary);
+  transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease;
+}
+
+.diffBtnSmallActive {
+  padding: var(--gap-lg) calc(var(--gap-md) + 4px);
+  border-radius: var(--radius-md);
+  font-size: var(--font-md);
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  background-color: var(--color-purple-highlight);
+  background-image: none;
+  border: 1px solid var(--color-purple-highlight-border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 4px 20px rgba(0, 0, 0, 0.4);
+  color: var(--color-text-primary);
+  transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease;
 }

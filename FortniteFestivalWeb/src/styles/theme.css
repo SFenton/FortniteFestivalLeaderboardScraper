@@ -137,4 +137,6 @@
   --color-accent-purple-soft: rgba(124, 58, 237, 0.4);
   --color-purple-border-subtle: rgba(124, 58, 237, 0.2);
   --color-purple-border-glass: rgba(168, 120, 255, 0.3);
+  --color-purple-highlight: rgba(75, 15, 99, 0.75);
+  --color-purple-highlight-border: rgba(124, 58, 237, 0.5);
 }
