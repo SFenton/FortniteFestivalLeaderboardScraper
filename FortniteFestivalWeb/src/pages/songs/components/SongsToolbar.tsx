@@ -73,6 +73,27 @@ export function SongsToolbar({
 
   const showIconSlot = !!displayedInst || !!instrument;
 
+  // Track filter button for fade transitions
+  const [filterMounted, setFilterMounted] = useState(hasPlayer);
+  const [filterVisible, setFilterVisible] = useState(hasPlayer);
+  const prevHasPlayer = useRef(hasPlayer);
+
+  useEffect(() => {
+    const prev = prevHasPlayer.current;
+    prevHasPlayer.current = hasPlayer;
+
+    if (!prev && hasPlayer) {
+      setFilterMounted(true);
+      requestAnimationFrame(() => requestAnimationFrame(() => setFilterVisible(true)));
+    } else if (prev && !hasPlayer) {
+      setFilterVisible(false);
+      const timer = setTimeout(() => setFilterMounted(false), INST_LEAVE_MS);
+      return () => clearTimeout(timer);
+    }
+  }, [hasPlayer]);
+
+  const showFilterSlot = filterMounted || hasPlayer;
+
   return (
     <>
       <div className={s.toolbar}>
@@ -90,13 +111,15 @@ export function SongsToolbar({
         )}
         <div className={s.sortGroup}>
           <ActionPill icon={<IoSwapVerticalSharp size={Size.iconAction} />} label={t('common.sort')} onClick={onOpenSort} active={sortActive} />
-          {hasPlayer && (
-            <ActionPill
-              icon={<IoFunnel size={Size.iconAction} />}
-              label={t('common.filter')}
-              onClick={onOpenFilter}
-              active={filtersActive}
-            />
+          {showFilterSlot && (
+            <div className={filterVisible ? s.filterSlot : s.filterSlotHidden}>
+              <ActionPill
+                icon={<IoFunnel size={Size.iconAction} />}
+                label={t('common.filter')}
+                onClick={onOpenFilter}
+                active={filtersActive}
+              />
+            </div>
           )}
         </div>
       </div>
