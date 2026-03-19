@@ -6,6 +6,7 @@ import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../../../..
 import { useSettings, visibleInstruments } from '../../../../contexts/SettingsContext';
 import { INSTRUMENT_LABELS, DEFAULT_INSTRUMENT, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { InstrumentIcon } from '../../../../components/display/InstrumentIcons';
+import ArcSpinner from '../../../../components/common/ArcSpinner';
 import { Colors, Radius, Font, Gap } from '@festival/theme';
 import css from './PathsModal.module.css';
 import { ZoomableImage } from './ZoomableImage';
@@ -193,7 +194,7 @@ export default function PathsModal({ visible, songId, onClose }: Props) {
                 {DIFFICULTIES.map(d => (
                   <button
                     key={d}
-                    className={`${css.diffBtnSmall}${difficulty === d ? ` ${css.diffBtnActive}` : ''}`}
+                    className={difficulty === d ? css.diffBtnSmallActive : css.diffBtnSmall}
                     /* v8 ignore start — mobile accordion click */
                     onClick={() => { setDifficulty(d); setDiffOpen(false); }}
                     /* v8 ignore stop */
@@ -228,7 +229,7 @@ export default function PathsModal({ visible, songId, onClose }: Props) {
               {DIFFICULTIES.map(d => (
                 <button
                   key={d}
-                  className={`${css.diffBtn}${difficulty === d ? ` ${css.diffBtnActive}` : ''}`}
+                  className={difficulty === d ? css.diffBtnActive : css.diffBtn}
                   onClick={() => setDifficulty(d)}
                 >
                   {DIFFICULTY_LABELS[d]}
@@ -338,7 +339,7 @@ function PathImage({ songId, instrument, difficulty }: { songId: string; instrum
           opacity: spinnerVisible ? 1 : 0,
           transition: `opacity ${FADE_MS}ms ease`,
         }}>
-          <div className={css.spinner} />
+          <ArcSpinner />
         </div>
       )}
       {error && phase === 'idle' && (
