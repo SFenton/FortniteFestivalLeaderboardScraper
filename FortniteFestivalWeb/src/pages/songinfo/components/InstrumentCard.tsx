@@ -1,9 +1,10 @@
 import { memo, type CSSProperties } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
+import { InstrumentHeaderSize } from '@festival/core';
+import InstrumentHeader from '../../../components/display/InstrumentHeader';
 import { LeaderboardEntry } from '../../leaderboard/global/components/LeaderboardEntry';
-import { INSTRUMENT_LABELS, type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore } from '@festival/core/api/serverTypes';
+import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore } from '@festival/core/api/serverTypes';
 import { QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON } from '@festival/theme';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
 import s from './InstrumentCard.module.css';
@@ -61,8 +62,7 @@ export default memo(function InstrumentCard({
   return (
     <div className={s.cardWrapper}>
       <div className={s.cardLabel} style={anim(baseDelay)} onAnimationEnd={clearAnim}>
-        <InstrumentIcon instrument={instrument} size={36} />
-        <span className={s.cardTitle}>{INSTRUMENT_LABELS[instrument]}</span>
+        <InstrumentHeader instrument={instrument} size={InstrumentHeaderSize.MD} />
       </div>
       <div
         className={s.card}

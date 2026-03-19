@@ -23,12 +23,12 @@
   color: var(--color-text-primary);
 }
 
-/* ── MD: section header (48px icon, 16px label) ── */
+/* ── MD: section header (48px icon, 20px label) ── */
 .md {
   gap: var(--gap-lg);
 }
 .labelMd {
-  font-size: var(--font-lg);
+  font-size: var(--font-xl);
   font-weight: var(--weight-bold);
   color: var(--color-text-primary);
 }
