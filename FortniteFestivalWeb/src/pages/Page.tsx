@@ -125,17 +125,13 @@ export default function Page({
   );
 }
 
+import BackgroundImage from '../components/page/BackgroundImage';
+
 /* ── Convenience sub-components for common patterns ── */
 
-/** Album-art background with dim overlay. */
+/** Album-art background with dim overlay that fades in once the image loads. */
 export function PageBackground({ src }: { src: string | undefined }) {
-  if (!src) return null;
-  return (
-    <>
-      <div className={css.bgImage} style={{ backgroundImage: `url(${src})` }} />
-      <div className={css.bgDim} />
-    </>
-  );
+  return <BackgroundImage src={src} />;
 }
 
 /**

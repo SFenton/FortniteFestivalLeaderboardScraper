@@ -1,0 +1,19 @@
+.probe {
+  display: none;
+}
+
+.bg {
+  position: fixed;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  pointer-events: none;
+  transition: opacity var(--duration-bg) ease;
+}
+
+.dim {
+  position: fixed;
+  inset: 0;
+  background-color: var(--color-overlay-dark);
+  pointer-events: none;
+}

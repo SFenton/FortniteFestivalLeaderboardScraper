@@ -12,6 +12,7 @@ import {
 } from '@festival/core/api/serverTypes';
 import { Gap, Layout } from '@festival/theme';
 import ArcSpinner from '../../components/common/ArcSpinner';
+import BackgroundImage from '../../components/page/BackgroundImage';
 import s from './SongDetailPage.module.css';
 import ScoreHistoryChart from './components/chart/ScoreHistoryChart';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
@@ -324,13 +325,7 @@ export default function SongDetailPage() {
 
   return (
     <div className={s.page}>
-      {song?.albumArt && (
-        <div
-          className={s.bgImage}
-          style={{ backgroundImage: `url(${song.albumArt})` }}
-        />
-      )}
-      <div className={s.bgDim} />
+      <BackgroundImage src={song?.albumArt} />
       {phase !== 'contentIn' && (
         <div
           className={s.spinnerOverlay}

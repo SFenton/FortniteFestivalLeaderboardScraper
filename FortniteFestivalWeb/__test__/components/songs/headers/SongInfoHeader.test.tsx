@@ -62,7 +62,7 @@ describe('SongInfoHeader', () => {
         <SongInfoHeader song={baseSong as any} songId="s1" collapsed={true} />
       </TestProviders>,
     );
-    const img = container.querySelector('img');
+    const img = container.querySelector('[class*="headerArt"]') as HTMLImageElement;
     expect(img?.style.width).toBe('80px');
   });
 
@@ -72,7 +72,7 @@ describe('SongInfoHeader', () => {
         <SongInfoHeader song={baseSong as any} songId="s1" collapsed={false} />
       </TestProviders>,
     );
-    const img = container.querySelector('img');
+    const img = container.querySelector('[class*="headerArt"]') as HTMLImageElement;
     expect(img?.style.width).toBe('120px');
   });
 
@@ -149,7 +149,7 @@ describe('SongInfoHeader', () => {
         <SongInfoHeader song={baseSong as any} songId="s1" collapsed={true} animate />
       </TestProviders>,
     );
-    const img = container.querySelector('img');
+    const img = container.querySelector('[class*="headerArt"]') as HTMLImageElement;
     expect(img?.style.transition).toBeTruthy();
   });
 
