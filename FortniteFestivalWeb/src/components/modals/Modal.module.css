@@ -285,6 +285,11 @@
   transition: background-color 0.15s;
 }
 
+.toggleTrackLargeOn {
+  composes: toggleTrackLarge;
+  background-color: var(--color-accent-blue);
+}
+
 .toggleThumbLarge {
   width: 20px;
   height: 20px;

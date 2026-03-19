@@ -13,7 +13,9 @@ export interface ToggleRowProps {
 
 export const ToggleRow = memo(function ToggleRow({ label, description, checked, onToggle, disabled, icon, large }: ToggleRowProps) {
   const rowClass = `${large ? css.toggleRowLarge : css.toggleRow} ${disabled ? css.toggleRowDisabled : ''}`;
-  const trackClass = `${large ? css.toggleTrackLarge : css.toggleTrack} ${checked ? css.toggleTrackOn : ''} ${disabled ? css.toggleTrackDisabled : ''}`;
+  const trackClass = large
+    ? `${checked ? css.toggleTrackLargeOn : css.toggleTrackLarge} ${disabled ? css.toggleTrackDisabled : ''}`
+    : `${css.toggleTrack} ${checked ? css.toggleTrackOn : ''} ${disabled ? css.toggleTrackDisabled : ''}`;
   const thumbClass = `${large ? css.toggleThumbLarge : css.toggleThumb} ${checked ? (large ? css.toggleThumbLargeOn : css.toggleThumbOn) : ''}`;
 
   return (
