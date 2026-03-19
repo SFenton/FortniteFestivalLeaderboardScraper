@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoPerson } from 'react-icons/io5';
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
@@ -6,6 +6,7 @@ import { api } from '../../../api/client';
 import type { AccountSearchResult } from '@festival/core/api/serverTypes';
 import SearchBar, { type SearchBarRef } from '../../common/SearchBar';
 import ArcSpinner from '../../common/ArcSpinner';
+import { useFadeSpinner } from '../../../hooks/ui/useFadeSpinner';
 import ModalShell from '../../modals/components/ModalShell';
 import css from './MobilePlayerSearchModal.module.css';
 
@@ -32,8 +33,7 @@ export default function MobilePlayerSearchModal({
   const [results, setResults] = useState<AccountSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [debouncing, setDebouncing] = useState(false);
-  const [showSpinner, setShowSpinner] = useState(false);
-  const [spinnerOpacity, setSpinnerOpacity] = useState(0);
+  const spinner = useFadeSpinner(loading || debouncing);
   const [resultSeq, setResultSeq] = useState(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const inputRef = useRef<SearchBarRef>(null);
@@ -50,18 +50,8 @@ export default function MobilePlayerSearchModal({
     setResults([]);
     setLoading(false);
     setDebouncing(false);
-    setShowSpinner(false);
-    setSpinnerOpacity(0);
+    spinner.reset();
     }, []);
-
-  useEffect(() => {
-    if (loading || debouncing) { setShowSpinner(true); requestAnimationFrame(() => requestAnimationFrame(() => setSpinnerOpacity(1))); }
-    else if (showSpinner) { setSpinnerOpacity(0); }
-  }, [loading, debouncing]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleSpinnerTransitionEnd = useCallback(() => {
-    if (spinnerOpacity === 0 && !loading && !debouncing) { setShowSpinner(false); }
-  }, [spinnerOpacity, loading, debouncing]);
 
   const search = useCallback(async (q: string) => {
     if (q.length < 2) { setResults([]); return; }
@@ -73,7 +63,7 @@ export default function MobilePlayerSearchModal({
 
   const handleChange = (value: string) => {
     setQuery(value);
-    if (value.trim().length < 2) { if (debounceRef.current) clearTimeout(debounceRef.current); setResults([]); setLoading(false); setDebouncing(false); setShowSpinner(false); setSpinnerOpacity(0); return; }
+    if (value.trim().length < 2) { if (debounceRef.current) clearTimeout(debounceRef.current); setResults([]); setLoading(false); setDebouncing(false); spinner.reset(); return; }
     if (debounceRef.current) clearTimeout(debounceRef.current);
     setDebouncing(true);
     debounceRef.current = setTimeout(() => { void search(value.trim()); }, 300);
@@ -124,10 +114,10 @@ export default function MobilePlayerSearchModal({
               style={stagger(0)}
             />
             <div className={css.results} style={stagger(150)}>
-              {showSpinner && <div className={css.spinnerWrap} style={{ opacity: spinnerOpacity, transition: 'opacity 250ms ease' }} onTransitionEnd={handleSpinnerTransitionEnd}><ArcSpinner size="md" /></div>}
-              {!showSpinner && !loading && !debouncing && query.length < 2 && results.length === 0 && (<div className={css.hintCenter}>{t('common.enterUsername')}</div>)}
-              {!showSpinner && !loading && !debouncing && query.length >= 2 && results.length === 0 && (<div className={css.hintCenter}>{t('common.noMatchingUsername')}</div>)}
-              {!showSpinner && !loading && !debouncing && results.length > 0 && results.map((r, i) => (
+              {spinner.visible && <div className={css.spinnerWrap} style={{ opacity: spinner.opacity, transition: 'opacity 250ms ease' }} onTransitionEnd={spinner.onTransitionEnd}><ArcSpinner size="md" /></div>}
+              {!spinner.visible && !loading && !debouncing && query.length < 2 && results.length === 0 && (<div className={css.hintCenter}>{t('common.enterUsername')}</div>)}
+              {!spinner.visible && !loading && !debouncing && query.length >= 2 && results.length === 0 && (<div className={css.hintCenter}>{t('common.noMatchingUsername')}</div>)}
+              {!spinner.visible && !loading && !debouncing && results.length > 0 && results.map((r, i) => (
                 <button key={`${resultSeq}-${r.accountId}`} className={css.resultBtn} style={{ opacity: 0, animation: `fadeInUp 300ms ease-out ${i * 50}ms forwards` }} onClick={() => handleSelect(r)}>{r.displayName}</button>
               ))}
             </div>
