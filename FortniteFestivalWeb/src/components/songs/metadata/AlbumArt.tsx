@@ -9,6 +9,9 @@ export default memo(function AlbumArt({ src, size, style, priority }: { src?: st
   /* v8 ignore start */
   const handleLoad = useCallback(() => setLoaded(true), []);
   const handleError = useCallback(() => { setFailed(true); setLoaded(true); }, []);
+  const imgRef = useCallback((img: HTMLImageElement | null) => {
+    if (img?.complete && img.naturalWidth > 0) setLoaded(true);
+  }, []);
   /* v8 ignore stop */
 
   const sizeVars = { '--album-size': `${size}px`, ...style } as CSSProperties;
@@ -25,6 +28,7 @@ export default memo(function AlbumArt({ src, size, style, priority }: { src?: st
         </div>
       )}
       <img
+        ref={imgRef}
         src={src}
         alt=""
         loading={priority ? 'eager' : 'lazy'}
