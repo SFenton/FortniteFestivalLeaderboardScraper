@@ -19,7 +19,7 @@ import { type ReactNode } from 'react';
 import { LoadPhase } from '@festival/core';
 import { SPINNER_FADE_MS } from '@festival/theme';
 import ArcSpinner from './ArcSpinner';
-import css from './Page.module.css';
+import css from '../page/LoadGate.module.css';
 
 export interface LoadGateProps {
   /** Current load phase from useLoadPhase or manual state. */

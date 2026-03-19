@@ -542,6 +542,6 @@ describe('SongsPage — filter callback coverage (explicit desktop)', () => {
     });
     const { container } = renderSongsPage('/songs', 'test-player-1');
     await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
-    expect(container.textContent).toContain('Building Score History');
+    expect(container.textContent).toContain('Reconstructing');
   });
 });

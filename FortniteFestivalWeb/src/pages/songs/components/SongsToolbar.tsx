@@ -15,6 +15,7 @@ interface SongsToolbarProps {
   search: string;
   onSearchChange: (q: string) => void;
   instrument: InstrumentKey | null;
+  sortActive?: boolean;
   filtersActive: boolean;
   hasPlayer: boolean;
   filteredCount: number;
@@ -27,6 +28,7 @@ export function SongsToolbar({
   search,
   onSearchChange,
   instrument,
+  sortActive,
   filtersActive,
   hasPlayer,
   filteredCount,
@@ -47,10 +49,10 @@ export function SongsToolbar({
           inputClassName={s.searchInput}
         />
         {instrument && (
-          <InstrumentIcon instrument={instrument} size={Size.iconInstrumentXs} />
+          <InstrumentIcon instrument={instrument} size={Size.iconInstrument} />
         )}
         <div className={s.sortGroup}>
-          <ActionPill icon={<IoSwapVerticalSharp size={Size.iconAction} />} label={t('common.sort')} onClick={onOpenSort} />
+          <ActionPill icon={<IoSwapVerticalSharp size={Size.iconAction} />} label={t('common.sort')} onClick={onOpenSort} active={sortActive} />
           {hasPlayer && (
             <ActionPill
               icon={<IoFunnel size={Size.iconAction} />}
@@ -62,7 +64,7 @@ export function SongsToolbar({
         </div>
       </div>
       {filtersActive && filteredCount !== totalCount && (
-        <div className={s.count}>{filteredCount} of {totalCount} songs</div>
+        <div className={s.count}>{t('songs.count', { filtered: filteredCount, total: totalCount })}</div>
       )}
     </>
   );

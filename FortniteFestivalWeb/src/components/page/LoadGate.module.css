@@ -1,0 +1,17 @@
+/* Styles for LoadGate — spinner overlay and container used during page loading. */
+
+.spinnerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dropdown);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.spinnerContainer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: calc(100vh - 200px);
+}
