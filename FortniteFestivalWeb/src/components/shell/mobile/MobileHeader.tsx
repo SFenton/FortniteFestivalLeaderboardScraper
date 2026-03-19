@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { IoChevronBack } from 'react-icons/io5';
 import { InstrumentIcon } from '../../display/InstrumentIcons';
 import BackLink from './BackLink';
-import appCss from '../../../App.module.css';
+import css from './MobileHeader.module.css';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { Size, TRANSITION_MS } from '@festival/theme';
 
@@ -30,20 +30,20 @@ export default function MobileHeader({
   /* v8 ignore start — conditional rendering tested via AppMobile integration */
   if (navTitle) {
     return (
-      <div key={locationKey} className={`sa-top ${appCss.mobileHeader}`} style={shouldAnimate ? { animation: `fadeIn ${TRANSITION_MS}ms ease-out` } : undefined}>
+      <div key={locationKey} className={`sa-top ${css.header}`} style={shouldAnimate ? { animation: `fadeIn ${TRANSITION_MS}ms ease-out` } : undefined}>
         {backFallback ? (
           <a
             href="#"
             /* v8 ignore start */
             onClick={(e) => { e.preventDefault(); navigate(-1); }}
             /* v8 ignore stop */
-            className={appCss.navTitleBack}
+            className={css.titleBack}
           >
             <IoChevronBack size={Size.iconNav} />
             <span>{navTitle}</span>
           </a>
         ) : (
-          <span className={appCss.navTitle}>{navTitle}</span>
+          <span className={css.title}>{navTitle}</span>
         )}
         {isSongsRoute && songInstrument && (
           <InstrumentIcon instrument={songInstrument} size={Size.iconInstrumentSm} style={{ marginLeft: 'auto' }} />

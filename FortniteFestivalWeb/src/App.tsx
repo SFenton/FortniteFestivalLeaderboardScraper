@@ -1,5 +1,5 @@
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
-import { IoPerson, IoPersonAdd, IoSearch, IoSwapVerticalSharp, IoFunnel, IoChevronBack, IoFlash } from 'react-icons/io5';
+import { IoPerson, IoPersonAdd, IoSearch, IoSwapVerticalSharp, IoFunnel, IoFlash } from 'react-icons/io5';
 import { useEffect, useState, useMemo, useRef, useCallback, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
@@ -21,7 +21,7 @@ import { Size } from '@festival/theme';
 import appCss from './App.module.css';
 import { resetSongSettingsForDeselect, loadSongSettings, SONG_SETTINGS_CHANGED_EVENT } from './utils/songSettings';
 import BackLink from './components/shell/mobile/BackLink';
-import { InstrumentIcon } from './components/display/InstrumentIcons';
+import MobileHeader from './components/shell/mobile/MobileHeader';
 import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
 import { SearchQueryProvider } from './contexts/SearchQueryContext';
 import { useSettings } from './contexts/SettingsContext';
@@ -209,27 +209,14 @@ function AppShell() {
       {!isMobile && backFallback && (IS_IOS || IS_ANDROID || IS_PWA) && <BackLink key={location.pathname} fallback={backFallback} animate={shouldAnimateHeader} />}
 
         {isMobile ? (
-          navTitle ? (
-            <div key={location.pathname} className={`sa-top ${appCss.mobileHeader}`} style={shouldAnimateHeader ? { animation: 'fadeIn 300ms ease-out' } : undefined}>
-              {backFallback ? (
-                <a
-                  href="#"
-                  onClick={(e) => { e.preventDefault(); navigate(-1); }}
-                  className={appCss.navTitleBack}
-                >
-                  <IoChevronBack size={22} />
-                  <span>{navTitle}</span>
-                </a>
-              ) : (
-                <span className={appCss.navTitle}>{navTitle}</span>
-              )}
-              {location.pathname === AppRoutes.songs && songInstrument && (
-                <InstrumentIcon instrument={songInstrument} size={36} style={{ marginLeft: 'auto' }} />
-              )}
-            </div>
-          ) : (
-            backFallback ? <BackLink key={location.pathname} fallback={backFallback} animate={shouldAnimateHeader} /> : null
-          )
+          <MobileHeader
+            navTitle={navTitle}
+            backFallback={backFallback}
+            shouldAnimate={shouldAnimateHeader}
+            locationKey={location.pathname}
+            songInstrument={songInstrument}
+            isSongsRoute={location.pathname === AppRoutes.songs}
+          />
         ) : (
           <DesktopNav
             hasPlayer={!!player}
