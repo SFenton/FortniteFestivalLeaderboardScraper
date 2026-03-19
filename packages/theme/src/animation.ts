@@ -10,3 +10,5 @@ export const TRANSITION_MS = 300;
 export const MIN_SPINNER_MS = 400;
 export const STAGGER_ENTRY_OFFSET = 80;
 export const ACCORDION_DELAY_MS = 300;
+export const CHART_ANIM_DURATION = 400;
+export const CHART_ANIM_SETTLE = 600;

@@ -39,6 +39,9 @@ export function serverInstrumentLabel(key: ServerInstrumentKey): string {
 export const INSTRUMENT_KEYS = SERVER_INSTRUMENT_KEYS;
 export const INSTRUMENT_LABELS = SERVER_INSTRUMENT_LABELS;
 
+/** The preferred default instrument when none is specified. */
+export const DEFAULT_INSTRUMENT: ServerInstrumentKey = 'Solo_Guitar';
+
 export type SongDifficulty = {
   guitar?: number;
   bass?: number;

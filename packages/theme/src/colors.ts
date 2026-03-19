@@ -72,6 +72,10 @@ export const Colors = {
   chartTop50: '#e74c3c',
   chartBelow50: '#7f8c8d',
 
+  // Accuracy gradient (low → high)
+  accuracyLow: { r: 220, g: 40, b: 40 },
+  accuracyHigh: { r: 46, g: 204, b: 113 },
+
   // Difficulty Badges
   diffEasyBg: '#1B3A2F',
   diffEasyAccent: '#34D399',

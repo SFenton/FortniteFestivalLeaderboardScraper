@@ -4,7 +4,7 @@ import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { useScrollMask } from '../../../../hooks/ui/useScrollMask';
 import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../../../../hooks/ui/useVisualViewport';
 import { useSettings, visibleInstruments } from '../../../../contexts/SettingsContext';
-import { INSTRUMENT_LABELS, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { INSTRUMENT_LABELS, DEFAULT_INSTRUMENT, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { InstrumentIcon } from '../../../../components/display/InstrumentIcons';
 import { Colors, Radius, Font, Gap } from '@festival/theme';
 import css from './PathsModal.module.css';
@@ -30,7 +30,7 @@ export default function PathsModal({ visible, songId, onClose }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const { settings } = useSettings();
   const instruments = visibleInstruments(settings);
-  const [selected, setSelected] = useState<InstrumentKey>('Solo_Guitar');
+  const [selected, setSelected] = useState<InstrumentKey>(DEFAULT_INSTRUMENT);
   const [difficulty, setDifficulty] = useState<Difficulty>('expert');
   const [instOpen, setInstOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
@@ -65,7 +65,7 @@ export default function PathsModal({ visible, songId, onClose }: Props) {
       setMounted(true);
     } else {
       setAnimIn(false);
-      setSelected('Solo_Guitar');
+      setSelected(DEFAULT_INSTRUMENT);
       setDifficulty('expert');
       setInstOpen(false);
       setDiffOpen(false);

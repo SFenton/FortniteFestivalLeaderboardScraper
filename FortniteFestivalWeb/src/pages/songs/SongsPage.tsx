@@ -17,7 +17,7 @@ import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
 import { useScrollRestore, clearScrollCache } from '../../hooks/ui/useScrollRestore';
 import { useFilteredSongs } from '../../hooks/data/useFilteredSongs';
 import { useModalState } from '../../hooks/ui/useModalState';
-import type { PlayerScore, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { type PlayerScore, type ServerInstrumentKey as InstrumentKey, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
 import { Colors, Gap } from '@festival/theme';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import s from './SongsPage.module.css';
@@ -80,14 +80,14 @@ export default function SongsPage() {
       if (savingRef.current) return; // ignore self-triggered events
       const fresh = loadSongSettings();
       setSettings(fresh);
-      setInstrument(fresh.instrument ?? 'Solo_Guitar');
+      setInstrument(fresh.instrument ?? DEFAULT_INSTRUMENT);
     };
     window.addEventListener(SONG_SETTINGS_CHANGED_EVENT, sync);
     return () => window.removeEventListener(SONG_SETTINGS_CHANGED_EVENT, sync);
   }, []);
   /* v8 ignore stop */
   const [instrument, setInstrument] = useState<InstrumentKey>(
-    () => settings.instrument ?? 'Solo_Guitar',
+    () => settings.instrument ?? DEFAULT_INSTRUMENT,
   );
 
   // Sort/Filter modal state
@@ -127,7 +127,7 @@ export default function SongsPage() {
   };
   const applyFilter = () => {
     const { instrumentFilter, ...filters } = filterModal.draft;
-    setInstrument(instrumentFilter ?? 'Solo_Guitar');
+    setInstrument(instrumentFilter ?? DEFAULT_INSTRUMENT);
     setSettings(s => ({ ...s, filters, instrument: instrumentFilter }));
     filterModal.close();
   };
