@@ -22,8 +22,8 @@ describe('DesktopNav', () => {
   });
 
   it('renders hamburger button', () => {
-    const { container } = renderWithRouter(<DesktopNav hasPlayer={false} onOpenSidebar={() => {}} onProfileClick={() => {}} />);
-    expect(container.querySelector('[class*="hamburger"]')).toBeTruthy();
+    renderWithRouter(<DesktopNav hasPlayer={false} onOpenSidebar={() => {}} onProfileClick={() => {}} />);
+    expect(screen.getByLabelText('Open navigation')).toBeTruthy();
   });
 
   it('renders profile button', () => {

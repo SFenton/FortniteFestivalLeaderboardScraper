@@ -1,0 +1,21 @@
+/* Styles for HeaderProfileButton — circular profile icon in the desktop nav. */
+
+.button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.circle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-xl);
+  height: var(--size-xl);
+  border-radius: 50%;
+  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+}

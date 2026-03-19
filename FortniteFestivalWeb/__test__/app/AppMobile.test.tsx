@@ -148,11 +148,11 @@ describe('App — mobile FAB branches', () => {
     setDesktop();
     const { container } = render(<App />);
     await waitFor(() => {
-      const profileBtn = container.querySelector('[class*="headerProfile"]');
+      const profileBtn = container.querySelector('[aria-label="Profile"]');
       expect(profileBtn).toBeTruthy();
     });
     // Click profile button — should open player modal
-    const profileBtn = container.querySelector('[class*="headerProfile"]') as HTMLElement;
+    const profileBtn = container.querySelector('[aria-label="Profile"]') as HTMLElement;
     if (profileBtn) fireEvent.click(profileBtn);
     // Modal should appear or something should change
     expect(container.innerHTML.length).toBeGreaterThan(200);
@@ -163,10 +163,10 @@ describe('App — mobile FAB branches', () => {
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'p1', displayName: 'TrackedP' }));
     const { container } = render(<App />);
     await waitFor(() => {
-      const profileBtn = container.querySelector('[class*="headerProfile"]');
+      const profileBtn = container.querySelector('[aria-label="Profile"]');
       expect(profileBtn).toBeTruthy();
     });
-    const profileBtn = container.querySelector('[class*="headerProfile"]') as HTMLElement;
+    const profileBtn = container.querySelector('[aria-label="Profile"]') as HTMLElement;
     if (profileBtn) fireEvent.click(profileBtn);
     expect(container.innerHTML.length).toBeGreaterThan(200);
   });
