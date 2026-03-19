@@ -4,7 +4,6 @@
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { SyncPhase } from '../../hooks/data/useSyncStatus';
-import { Gap } from '@festival/theme';
 import ArcSpinner from '../common/ArcSpinner';
 import s from './SyncBanner.module.css';
 

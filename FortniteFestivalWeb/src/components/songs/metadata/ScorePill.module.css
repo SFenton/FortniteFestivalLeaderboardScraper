@@ -1,0 +1,14 @@
+.base {
+  text-align: right;
+  font-size: var(--font-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.bold {
+  composes: base;
+  font-weight: var(--weight-bold);
+}

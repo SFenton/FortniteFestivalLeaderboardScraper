@@ -22,15 +22,6 @@
   flex-shrink: 0;
 }
 
-.colScore {
-  flex-shrink: 0;
-  text-align: right;
-  font-weight: var(--weight-semibold);
-  font-size: var(--font-lg);
-  color: var(--color-text-primary);
-  font-variant-numeric: tabular-nums;
-}
-
 .colAcc {
   width: var(--size-3xl);
   flex-shrink: 0;
