@@ -128,39 +128,6 @@
   box-sizing: border-box;
 }
 
-.scoreCardDate {
-  flex: 1;
-  min-width: 0;
-  color: var(--color-text-primary);
-  font-size: var(--font-md);
-}
-
-.scoreCardMiddle {
-  display: flex;
-  align-items: center;
-  gap: var(--gap-sm);
-  flex-shrink: 0;
-}
-
-.scoreCardScore {
-  flex-shrink: 0;
-  text-align: right;
-  font-weight: var(--weight-semibold);
-  font-size: var(--font-md);
-  color: var(--color-text-primary);
-  font-variant-numeric: tabular-nums;
-}
-
-.scoreCardAcc {
-  width: 60px;
-  flex-shrink: 0;
-  text-align: center;
-  font-weight: var(--weight-semibold);
-  font-size: var(--font-md);
-  color: var(--color-accent-blue-bright);
-  font-variant-numeric: tabular-nums;
-}
-
 .scoreCardList {
   display: flex;
   flex-direction: column;

@@ -13,8 +13,7 @@ import {
   type ServerScoreHistoryEntry as ScoreHistoryEntry,
 } from '@festival/core/api/serverTypes';
 import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
-import SeasonPill from '../../../components/songs/metadata/SeasonPill';
-import AccuracyDisplay from '../../../components/songs/metadata/AccuracyDisplay';
+import { LeaderboardEntry } from '../global/components/LeaderboardEntry';
 import PlayerScoreSortModal from './modals/PlayerScoreSortModal';
 import type { PlayerScoreSortMode, PlayerScoreSortDraft } from './modals/PlayerScoreSortModal';
 import { Gap, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON } from '@festival/theme';
@@ -220,7 +219,7 @@ export default function PlayerHistoryPage() {
                   .toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                 const isHighScore = i === highScoreIndex;
                 const rowClass = isHighScore ? s.rowHighlight : s.row;
-                const mobileStyle: React.CSSProperties | undefined = isMobile ? { gap: Gap.md, padding: `0 ${Gap.md}px`, height: 40 } : undefined;
+                const mobileStyle: React.CSSProperties | undefined = isMobile ? { gap: Gap.md, padding: `0 ${Gap.md}px` } : undefined;
                 return (
                 <div
                   key={`${h.changedAt}-${h.newScore}`}
@@ -238,23 +237,18 @@ export default function PlayerHistoryPage() {
                     /* v8 ignore stop */
                   }}
                 >
-                  <span className={s.colName} style={isHighScore ? { fontWeight: 700 } : undefined}>{dateStr}</span>
-                  <span className={s.seasonScoreGroup}>
-                    {showSeason && h.season != null && (
-                      <SeasonPill season={h.season} />
-                    )}
-                    <span className={s.colScore} style={{ width: scoreWidth }}>
-                      {h.newScore.toLocaleString()}
-                    </span>
-                  </span>
-                  {showAccuracy && (
-                  <span className={s.colAcc}>
-                    <AccuracyDisplay
-                      accuracy={h.accuracy}
-                      isFullCombo={!!h.isFullCombo}
-                    />
-                  </span>
-                  )}
+                  <LeaderboardEntry
+                    label={dateStr}
+                    displayName={dateStr}
+                    score={h.newScore}
+                    season={h.season}
+                    accuracy={h.accuracy}
+                    isFullCombo={!!h.isFullCombo}
+                    isPlayer={isHighScore}
+                    showSeason={showSeason}
+                    showAccuracy={showAccuracy}
+                    scoreWidth={scoreWidth}
+                  />
                 </div>
                 </div>
                 );

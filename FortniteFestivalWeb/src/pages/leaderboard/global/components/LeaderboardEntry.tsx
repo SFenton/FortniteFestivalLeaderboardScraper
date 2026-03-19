@@ -1,22 +1,29 @@
 /**
- * A single leaderboard row's column content (rank, name, season, score, accuracy, stars).
- * Used by both the scrollable list rows and the sticky player footer in LeaderboardPage.
+ * A single row's column content (rank/label, name, season, score, accuracy, stars).
+ * Used by LeaderboardPage, InstrumentCard, and PlayerHistoryPage.
+ *
+ * Provide `rank` for leaderboard rows (#1, #2, …) or `label` for freeform first
+ * columns (e.g. date strings in score history). Exactly one should be given.
  */
 import { memo } from 'react';
 import SeasonPill from '../../../../components/songs/metadata/SeasonPill';
 import AccuracyDisplay from '../../../../components/songs/metadata/AccuracyDisplay';
+import MiniStars from '../../../../components/songs/metadata/MiniStars';
 import shared from '../../../../styles/shared.module.css';
 import s from './LeaderboardEntry.module.css';
 
 export interface LeaderboardEntryProps {
-  rank: number;
+  /** Numeric rank displayed as "#1", "#2", etc. */
+  rank?: number;
+  /** Freeform first-column text (e.g. a date). Mutually exclusive with rank. */
+  label?: string;
   displayName: string;
   score: number;
   season?: number | null;
   accuracy?: number | null;
   isFullCombo?: boolean;
   stars?: number | null;
-  /** Whether this entry belongs to the tracked player (bold styling). */
+  /** Whether this entry should use bold styling (tracked player or high score). */
   isPlayer?: boolean;
   /** Show the season pill column. */
   showSeason?: boolean;
@@ -30,6 +37,7 @@ export interface LeaderboardEntryProps {
 
 export const LeaderboardEntry = memo(function LeaderboardEntry({
   rank,
+  label,
   displayName,
   score,
   season,
@@ -46,8 +54,10 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
 
   return (
     <>
-      <span className={`${s.colRank}${bold}`}>#{rank.toLocaleString()}</span>
-      <span className={`${s.colName}${bold}`}>{displayName}</span>
+      {rank != null
+        ? <span className={`${s.colRank}${bold}`}>#{rank.toLocaleString()}</span>
+        : null}
+      <span className={`${s.colName}${bold}`}>{label ?? displayName}</span>
       <span className={s.seasonScoreGroup}>
         {showSeason && season != null && <SeasonPill season={season} />}
         <span className={s.colScore} style={scoreWidth ? { width: scoreWidth } : undefined}>
@@ -61,18 +71,8 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
       )}
       {showStars && (
         <span className={s.colStars}>
-          {/* v8 ignore start — star rendering ternary */}
           {stars != null && stars > 0
-            ? (() => {
-                const allGold = stars >= 6;
-                const count = allGold ? 5 : stars;
-                const src = allGold
-                  ? `${import.meta.env.BASE_URL}star_gold.png`
-                  : `${import.meta.env.BASE_URL}star_white.png`;
-                return Array.from({ length: count }, (_, i) => (
-                  <img key={i} src={src} alt="Ã¢Ëœâ€¦" className={s.starImg} />
-                ));
-              })()
+            ? <MiniStars starsCount={stars} isFullCombo={!!isFullCombo} />
             : '\u2014'}
         </span>
       )}
