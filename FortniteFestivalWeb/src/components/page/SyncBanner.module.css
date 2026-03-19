@@ -1,22 +1,22 @@
 .syncBanner {
-  composes: frostedCardLight from '../../styles/shared.module.css';
+  composes: frostedCard from '../../styles/shared.module.css';
   display: flex;
-  align-items: flex-start;
-  gap: var(--gap-xl);
+  flex-direction: column;
+  gap: var(--gap-md);
   padding: var(--gap-xl);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-md);
   margin-bottom: var(--gap-md);
 }
 
+.syncHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  margin-bottom: var(--gap-lg);
+}
+
 .syncSpinner {
-  width: var(--size-sm);
-  height: var(--size-sm);
-  border: 3px solid var(--color-border-primary);
-  border-top-color: var(--color-accent-blue);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
   flex-shrink: 0;
-  margin-top: 2px;
 }
 
 .syncBody {
@@ -24,36 +24,29 @@
 }
 
 .syncTitle {
-  font-size: var(--font-md);
+  font-size: var(--font-lg);
   font-weight: var(--weight-bold);
   color: var(--color-text-primary);
 }
 
-.syncSubtitle {
-  font-size: var(--font-sm);
-  color: var(--color-text-muted);
-  margin-top: var(--gap-xs);
-}
-
 .syncProgressLabel {
-  display: flex;
-  justify-content: space-between;
-  font-size: var(--font-xs);
-  color: var(--color-text-muted);
-  margin-bottom: var(--gap-xs);
+  font-size: var(--font-md);
+  color: var(--color-text-primary);
+  margin-bottom: var(--gap-sm);
 }
 
-.syncProgressOuter {
-  height: 4px;
+.syncProgressBar {
+  flex: 1;
+  height: 6px;
   background: var(--color-border-primary);
-  border-radius: 2px;
+  border-radius: 3px;
   overflow: hidden;
 }
 
 .syncProgressInner {
   height: 100%;
   background: var(--color-accent-blue);
-  border-radius: 2px;
+  border-radius: 3px;
   transition: width var(--duration-normal) ease;
 }
 
