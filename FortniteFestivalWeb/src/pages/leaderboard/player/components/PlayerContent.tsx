@@ -188,10 +188,14 @@ export default function PlayerContent({
   });
 
   // --- Top/Bottom song rows ---
-  for (const inst of visibleKeys) {
+  const instrumentsWithScores = visibleKeys.filter(inst => {
     const scores = byInstrument.get(inst);
-    if (!scores || scores.length === 0) continue;
-    items.push(...buildTopSongsItems(t, inst, scores, songMap, data.displayName, navigateToSongDetail));
+    return scores && scores.length > 0;
+  });
+  for (let i = 0; i < instrumentsWithScores.length; i++) {
+    const inst = instrumentsWithScores[i]!;
+    const scores = byInstrument.get(inst)!;
+    items.push(...buildTopSongsItems(t, inst, scores, songMap, data.displayName, navigateToSongDetail, i === instrumentsWithScores.length - 1));
   }
 
   // Wire up container-level scroll fade

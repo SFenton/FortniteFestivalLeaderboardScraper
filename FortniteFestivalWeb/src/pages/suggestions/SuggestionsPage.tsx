@@ -421,6 +421,7 @@ export default function SuggestionsPage({ accountId }: Props) {
           </InfiniteScroll>
         )}
       </div>
+      {isMobileChrome && <div className={s.fabSpacer} />}
       </div>
 
       <SuggestionsFilterModal

@@ -3,6 +3,10 @@
   color: var(--color-text-primary);
 }
 
+.fabSpacer {
+  composes: fabSpacer from '../../styles/shared.module.css';
+}
+
 .header {
   flex-shrink: 0;
   z-index: 10;

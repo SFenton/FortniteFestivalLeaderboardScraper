@@ -10,7 +10,6 @@
 
 .fabSpacer {
   composes: fabSpacer from '../../styles/shared.module.css';
-  height: 80px;
 }
 
 .scrollArea {

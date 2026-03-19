@@ -76,6 +76,8 @@ export const Layout = {
   paddingTop: 16,
   paddingBottom: 4,
   fabPaddingBottom: 96,
+  sectionHeadingHeight: 64,
+  songRowHeight: 72,
   chartMargin: { top: 16, right: 24, bottom: 0, left: 24 },
   axisLabelOffset: 8,
 } as const;
