@@ -120,62 +120,6 @@
   color: var(--color-text-muted);
 }
 
-.colRank {
-  width: 48px;
-  flex-shrink: 0;
-  color: var(--color-text-primary);
-  font-size: var(--font-md);
-}
-
-.colName {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.colScore {
-  flex-shrink: 0;
-  text-align: center;
-  font-weight: 600;
-  font-size: var(--font-lg);
-  color: var(--color-text-primary);
-  font-variant-numeric: tabular-nums;
-}
-
-.seasonScoreGroup {
-  display: flex;
-  align-items: center;
-  gap: var(--gap-md);
-  flex-shrink: 0;
-}
-
-.colAcc {
-  width: 64px;
-  flex-shrink: 0;
-  text-align: center;
-  font-weight: 600;
-  font-size: var(--font-lg);
-  color: var(--color-accent-blue-bright);
-  font-variant-numeric: tabular-nums;
-}
-
-.colStars {
-  width: 110px;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 3px;
-}
-
-.starImg {
-  width: 20px;
-  height: 20px;
-  object-fit: contain;
-}
-
 .pagination {
   display: flex;
   align-items: center;

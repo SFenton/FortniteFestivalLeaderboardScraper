@@ -6,11 +6,10 @@ import { usePlayerData } from '../../../contexts/PlayerDataContext';
 import { api } from '../../../api/client';
 import {
   type ServerInstrumentKey as InstrumentKey,
-  type LeaderboardEntry,
+  type LeaderboardEntry as LeaderboardEntryType,
 } from '@festival/core/api/serverTypes';
 import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
-import SeasonPill from '../../../components/songs/metadata/SeasonPill';
-import AccuracyDisplay from '../../../components/songs/metadata/AccuracyDisplay';
+import { LeaderboardEntry } from './components/LeaderboardEntry';
 import { Gap, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, QUERY_SHOW_STARS } from '@festival/theme';
 import ArcSpinner from '../../../components/common/ArcSpinner';
 import { PaginationButton } from '../../../components/common/PaginationButton';
@@ -66,7 +65,7 @@ export default function LeaderboardPage() {
     ) ?? null;
   }, [playerData, songId, instKey]);
 
-  const [entries, setEntries] = useState<LeaderboardEntry[]>(hasCached ? cached.entries : []);
+  const [entries, setEntries] = useState<LeaderboardEntryType[]>(hasCached ? cached.entries : []);
   const [totalEntries, setTotalEntries] = useState(hasCached ? cached.totalEntries : 0);
   const [localEntries, setLocalEntries] = useState(hasCached ? cached.localEntries : 0);
   const [page, setPage] = useState(hasCached ? cached.page : 0);
@@ -308,7 +307,6 @@ export default function LeaderboardPage() {
                   ? { opacity: 0, animation: `fadeInUp 300ms ease-out ${delay}ms forwards` }
                   : undefined;
                 const rowClass = isPlayer ? s.rowHighlight : s.row;
-                const mobileRowStyle: React.CSSProperties | undefined = isMobile ? { gap: Gap.md, padding: `0 ${Gap.md}px`, height: 40 } : undefined;
                 return (
                 <Link
                   key={e.accountId}
@@ -316,7 +314,7 @@ export default function LeaderboardPage() {
                   to={isPlayer ? '/statistics' : `/player/${e.accountId}`}
                   state={{ backTo: location.pathname }}
                   className={rowClass}
-                  style={{ ...mobileRowStyle, ...staggerStyle }}
+                  style={staggerStyle}
                   onAnimationEnd={(ev) => {
                     /* v8 ignore start — animation cleanup */
                     const el = ev.currentTarget;
@@ -325,40 +323,20 @@ export default function LeaderboardPage() {
                     /* v8 ignore stop */
                   }}
                 >
-                  <span className={s.colRank} style={isPlayer ? { fontWeight: 700 } : undefined}>#{(e.rank ?? startRank + i + 1).toLocaleString()}</span>
-                  <span className={s.colName} style={isPlayer ? { fontWeight: 700 } : undefined}>
-                    {e.displayName || t('common.unknownUser')}
-                  </span>
-                  <span className={s.seasonScoreGroup}>
-                    {showSeason && e.season != null && (
-                      <SeasonPill season={e.season} />
-                    )}
-                    <span className={s.colScore} style={{ width: scoreWidth }}>
-                      {e.score.toLocaleString()}
-                    </span>
-                  </span>
-                  {showAccuracy && (
-                  <span className={s.colAcc}>
-                    <AccuracyDisplay
-                      accuracy={e.accuracy}
-                      isFullCombo={!!e.isFullCombo}
-                    />
-                  </span>
-                  )}
-                  {showStars && (
-                  <span className={s.colStars}>
-                    {/* v8 ignore start — star rendering IIFE */}
-                    {e.stars != null && e.stars > 0
-                      ? (() => {
-                          const allGold = e.stars >= 6;
-                          const count = allGold ? 5 : e.stars;
-                          const src = allGold ? `${import.meta.env.BASE_URL}star_gold.png` : `${import.meta.env.BASE_URL}star_white.png`;
-                          return Array.from({ length: count }, (_, i) => (
-                            <img key={i} src={src} alt="â˜…" className={s.starImg} />
-                          ));
-                        })()
-                      : 'â€”'}                    {/* v8 ignore stop */}                  </span>
-                  )}
+                  <LeaderboardEntry
+                    rank={e.rank ?? startRank + i + 1}
+                    displayName={e.displayName || t('common.unknownUser')}
+                    score={e.score}
+                    season={e.season}
+                    accuracy={e.accuracy}
+                    isFullCombo={!!e.isFullCombo}
+                    stars={e.stars}
+                    isPlayer={isPlayer}
+                    showSeason={showSeason}
+                    showAccuracy={showAccuracy}
+                    showStars={showStars}
+                    scoreWidth={scoreWidth}
+                  />
                 </Link>
                 );
               })}
@@ -407,39 +385,21 @@ export default function LeaderboardPage() {
           className={hasFab ? s.playerFooterFab : s.playerFooter} style={hasFab && IS_PWA ? { bottom: 84 + Gap.section - Gap.md } : undefined}
           onClick={() => navigate('/statistics')} role="button" tabIndex={0}
         >
-          <div className={`${hasFab ? 'fab-player-footer' : ''} ${s.playerFooterRow}`} style={{ cursor: 'pointer', ...(isMobile ? { gap: Gap.md, paddingLeft: Gap.md, paddingRight: Gap.md } : {}) }}>
-            <span className={s.colRank} style={{ fontWeight: 700 }}>#{playerScore.rank.toLocaleString()}</span>
-            <span className={s.colName} style={{ fontWeight: 700 }}>{playerData.displayName}</span>
-            <span className={s.seasonScoreGroup}>
-              {showSeason && playerScore.season != null && (
-                <SeasonPill season={playerScore.season} />
-              )}
-              <span className={s.colScore} style={{ width: scoreWidth }}>
-                {playerScore.score.toLocaleString()}
-              </span>
-            </span>
-            {showAccuracy && (
-            <span className={s.colAcc}>
-              <AccuracyDisplay
-                accuracy={playerScore.accuracy}
-                isFullCombo={!!playerScore.isFullCombo}
-              />
-            </span>
-            )}
-            {showStars && (
-            <span className={s.colStars}>
-              {playerScore.stars != null && playerScore.stars > 0
-                ? (() => {
-                    const allGold = playerScore.stars >= 6;
-                    const count = allGold ? 5 : playerScore.stars;
-                    const src = allGold ? `${import.meta.env.BASE_URL}star_gold.png` : `${import.meta.env.BASE_URL}star_white.png`;
-                    return Array.from({ length: count }, (_, i) => (
-                      <img key={i} src={src} alt="\u2605" className={s.starImg} />
-                    ));
-                  })()
-                : '\u2014'}
-            </span>
-            )}
+          <div className={`${hasFab ? 'fab-player-footer' : ''} ${s.playerFooterRow}`} style={{ cursor: 'pointer' }}>
+            <LeaderboardEntry
+              rank={playerScore.rank}
+              displayName={playerData.displayName}
+              score={playerScore.score}
+              season={playerScore.season}
+              accuracy={playerScore.accuracy}
+              isFullCombo={!!playerScore.isFullCombo}
+              stars={playerScore.stars}
+              isPlayer
+              showSeason={showSeason}
+              showAccuracy={showAccuracy}
+              showStars={showStars}
+              scoreWidth={scoreWidth}
+            />
           </div>
         </div>
         );

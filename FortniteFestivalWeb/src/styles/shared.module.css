@@ -21,6 +21,12 @@
   border: 1px solid var(--color-glass-border);
 }
 
+/* ── Text utilities ── */
+
+.textBold {
+  font-weight: 700;
+}
+
 /* ── Modal overlay ── */
 
 .modalOverlay {

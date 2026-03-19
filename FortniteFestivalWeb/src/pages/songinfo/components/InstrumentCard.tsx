@@ -2,9 +2,10 @@ import { memo, type CSSProperties } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
-import AccuracyDisplay from '../../../components/songs/metadata/AccuracyDisplay';
-import SeasonPill from '../../../components/songs/metadata/SeasonPill';
-import { INSTRUMENT_LABELS, type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry, type PlayerScore } from '@festival/core/api/serverTypes';
+import { LeaderboardEntry } from '../../leaderboard/global/components/LeaderboardEntry';
+import { INSTRUMENT_LABELS, type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore } from '@festival/core/api/serverTypes';
+import { QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON } from '@festival/theme';
+import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
 import s from './InstrumentCard.module.css';
 
 interface InstrumentCardProps {
@@ -15,7 +16,7 @@ interface InstrumentCardProps {
   playerScore?: PlayerScore;
   playerName?: string;
   playerAccountId?: string;
-  prefetchedEntries: LeaderboardEntry[];
+  prefetchedEntries: LeaderboardEntryType[];
   prefetchedError: string | null;
   skipAnimation?: boolean;
   scoreWidth: string;
@@ -38,8 +39,8 @@ export default memo(function InstrumentCard({
 
   const isTwoCol = windowWidth >= 840;
   const cardWidth = isTwoCol ? windowWidth / 2 : windowWidth;
-  const showAccuracy = cardWidth >= 420;
-  const showSeason = cardWidth >= 520;
+  const showAccuracy = useMediaQuery(QUERY_SHOW_ACCURACY);
+  const showSeason = useMediaQuery(QUERY_SHOW_SEASON);
   const isMobile = cardWidth < 360;
 
   const playerInTop = !!(playerAccountId && prefetchedEntries.some(
@@ -93,26 +94,18 @@ export default memo(function InstrumentCard({
               onClick={(ev) => ev.stopPropagation()}
               onAnimationEnd={clearAnim} /* v8 ignore -- animation cleanup */
             >
-              <span className={s.entryRank} style={isPlayer ? { fontWeight: 700 } : undefined}>#{(e.rank ?? i + 1).toLocaleString()}</span>
-              <span className={s.entryName} style={isPlayer ? { fontWeight: 700 } : undefined}>
-                {e.displayName ?? e.accountId.slice(0, 8)}
-              </span>
-              <span className={s.seasonScoreGroup}>
-                {showSeason && e.season != null && (
-                  <SeasonPill season={e.season} />
-                )}
-                <span className={s.entryScore} style={{ width: scoreWidth }}>
-                  {e.score.toLocaleString()}
-                </span>
-              </span>
-              {showAccuracy && (
-              <span className={s.entryAcc}>
-                <AccuracyDisplay
-                  accuracy={e.accuracy}
-                  isFullCombo={!!e.isFullCombo}
-                />
-              </span>
-              )}
+              <LeaderboardEntry
+                rank={e.rank ?? i + 1}
+                displayName={e.displayName ?? e.accountId.slice(0, 8)}
+                score={e.score}
+                season={e.season}
+                accuracy={e.accuracy}
+                isFullCombo={!!e.isFullCombo}
+                isPlayer={isPlayer}
+                showSeason={showSeason}
+                showAccuracy={showAccuracy}
+                scoreWidth={scoreWidth}
+              />
             </Link>
             );
           })}
@@ -129,24 +122,18 @@ export default memo(function InstrumentCard({
             onClick={(ev) => ev.stopPropagation()}
             onAnimationEnd={clearAnim} /* v8 ignore -- animation cleanup */
           >
-            <span className={s.entryRank} style={{ fontWeight: 700 }}>#{playerScore.rank.toLocaleString()}</span>
-            <span className={s.entryName} style={{ fontWeight: 700 }}>{playerName}</span>
-            <span className={s.seasonScoreGroup}>
-              {showSeason && playerScore.season != null && (
-                <SeasonPill season={playerScore.season} />
-              )}
-              <span className={s.entryScore} style={{ width: scoreWidth }}>
-                {playerScore.score.toLocaleString()}
-              </span>
-            </span>
-            {showAccuracy && (
-            <span className={s.entryAcc}>
-              <AccuracyDisplay
-                accuracy={playerScore.accuracy}
-                isFullCombo={!!playerScore.isFullCombo}
-              />
-            </span>
-            )}
+            <LeaderboardEntry
+              rank={playerScore.rank}
+              displayName={playerName}
+              score={playerScore.score}
+              season={playerScore.season}
+              accuracy={playerScore.accuracy}
+              isFullCombo={!!playerScore.isFullCombo}
+              isPlayer
+              showSeason={showSeason}
+              showAccuracy={showAccuracy}
+              scoreWidth={scoreWidth}
+            />
           </Link>
           );
         })()}
