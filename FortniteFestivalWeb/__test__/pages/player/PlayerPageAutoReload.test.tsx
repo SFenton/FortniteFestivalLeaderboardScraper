@@ -1,6 +1,10 @@
 /**
  * Tests for PlayerPage auto-reload when sync completes (lines 52-53).
  * Mocks useSyncStatus to simulate justCompleted=true for a non-tracked player.
+ *
+ * SEPARATE FILE: Cannot consolidate into PlayerPage.test.tsx because this file
+ * uses a module-level vi.mock of useSyncStatus, which would conflict with the
+ * other tests that rely on the real hook driven by mockApi.getSyncStatus.
  */
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import { render, waitFor } from '@testing-library/react';

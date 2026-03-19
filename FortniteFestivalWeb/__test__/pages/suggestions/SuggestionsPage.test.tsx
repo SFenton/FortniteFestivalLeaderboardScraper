@@ -1,3 +1,7 @@
+/**
+ * SuggestionsPage tests — merged from SuggestionsPage, SuggestionsPageExtra,
+ * SuggestionsPageMore, and SuggestionsCoverage test files.
+ */
 import { describe, it, expect, vi, beforeEach, beforeAll, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { Routes, Route } from 'react-router-dom';
@@ -14,13 +18,18 @@ const mockApi = vi.hoisted(() => {
       { songId: 's3', title: 'Gamma Song', artist: 'Artist C', year: 2025, difficulty: { guitar: 5, bass: 4, drums: 5, vocals: 3 } },
       { songId: 's4', title: 'Delta Song', artist: 'Artist D', year: 2024, difficulty: { guitar: 1, bass: 1, drums: 1, vocals: 1 } },
       { songId: 's5', title: 'Epsilon Song', artist: 'Artist E', year: 2024, difficulty: { guitar: 4, bass: 3, drums: 4, vocals: 2 } },
-    ], count: 5, currentSeason: 5 }),
+      { songId: 's6', title: 'Zeta Song', artist: 'Artist F', year: 2024, difficulty: { guitar: 3, bass: 2, drums: 3, vocals: 1 } },
+      { songId: 's7', title: 'Eta Song', artist: 'Artist G', year: 2024, difficulty: { guitar: 4, bass: 3, drums: 4, vocals: 3 } },
+      { songId: 's8', title: 'Theta Song', artist: 'Artist H', year: 2024, difficulty: { guitar: 2, bass: 1, drums: 2, vocals: 1 } },
+    ], count: 8, currentSeason: 5 }),
     getPlayer: fn().mockResolvedValue({
-      accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 3,
+      accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 5,
       scores: [
-        { songId: 's1', instrument: 'Solo_Guitar', score: 100000, rank: 5, percentile: 80, accuracy: 90, stars: 4, season: 5 },
-        { songId: 's2', instrument: 'Solo_Guitar', score: 80000, rank: 10, percentile: 60, accuracy: 85, stars: 3, season: 5 },
-        { songId: 's3', instrument: 'Solo_Guitar', score: 120000, rank: 2, percentile: 95, accuracy: 97, stars: 5, season: 5 },
+        { songId: 's1', instrument: 'Solo_Guitar', score: 100000, rank: 5, percentile: 80, accuracy: 90, stars: 4, season: 5, isFullCombo: false },
+        { songId: 's2', instrument: 'Solo_Guitar', score: 80000, rank: 10, percentile: 60, accuracy: 85, stars: 3, season: 5, isFullCombo: false },
+        { songId: 's3', instrument: 'Solo_Guitar', score: 120000, rank: 2, percentile: 95, accuracy: 97, stars: 5, season: 5, isFullCombo: true },
+        { songId: 's1', instrument: 'Solo_Bass', score: 70000, rank: 8, percentile: 70, accuracy: 88, stars: 3, season: 5, isFullCombo: false },
+        { songId: 's4', instrument: 'Solo_Guitar', score: 60000, rank: 15, percentile: 50, accuracy: 75, stars: 2, season: 4, isFullCombo: false },
       ],
     }),
     getSyncStatus: fn().mockResolvedValue({ accountId: 'test-player-1', isTracked: true, backfill: null, historyRecon: null }),
@@ -40,25 +49,38 @@ beforeAll(() => {
   stubScrollTo();
   stubResizeObserver();
   stubIntersectionObserver();
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: false, media: query, onchange: null,
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
+    })),
+  });
 });
 
-beforeEach(() => {
-  vi.clearAllMocks();
-  localStorage.clear();
-  localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player-1', displayName: 'TestPlayer' }));
-  // Re-set mock return values after clearAllMocks
+function resetMocks() {
   mockApi.getSongs.mockResolvedValue({ songs: [
     { songId: 's1', title: 'Alpha Song', artist: 'Artist A', year: 2024, difficulty: { guitar: 3, bass: 2, drums: 4, vocals: 1 }, albumArt: 'https://example.com/a.jpg' },
     { songId: 's2', title: 'Beta Song', artist: 'Artist B', year: 2023, difficulty: { guitar: 2, bass: 1, drums: 3, vocals: 2 } },
     { songId: 's3', title: 'Gamma Song', artist: 'Artist C', year: 2025, difficulty: { guitar: 5, bass: 4, drums: 5, vocals: 3 } },
     { songId: 's4', title: 'Delta Song', artist: 'Artist D', year: 2024, difficulty: { guitar: 1, bass: 1, drums: 1, vocals: 1 } },
     { songId: 's5', title: 'Epsilon Song', artist: 'Artist E', year: 2024, difficulty: { guitar: 4, bass: 3, drums: 4, vocals: 2 } },
-  ], count: 5, currentSeason: 5 });
-  mockApi.getPlayer.mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 3, scores: [
-    { songId: 's1', instrument: 'Solo_Guitar', score: 100000, rank: 5, percentile: 80, accuracy: 90, stars: 4, season: 5 },
-    { songId: 's2', instrument: 'Solo_Guitar', score: 80000, rank: 10, percentile: 60, accuracy: 85, stars: 3, season: 5 },
-    { songId: 's3', instrument: 'Solo_Guitar', score: 120000, rank: 2, percentile: 95, accuracy: 97, stars: 5, season: 5 },
-  ] });
+    { songId: 's6', title: 'Zeta Song', artist: 'Artist F', year: 2024, difficulty: { guitar: 3, bass: 2, drums: 3, vocals: 1 } },
+    { songId: 's7', title: 'Eta Song', artist: 'Artist G', year: 2024, difficulty: { guitar: 4, bass: 3, drums: 4, vocals: 3 } },
+    { songId: 's8', title: 'Theta Song', artist: 'Artist H', year: 2024, difficulty: { guitar: 2, bass: 1, drums: 2, vocals: 1 } },
+  ], count: 8, currentSeason: 5 });
+  mockApi.getPlayer.mockResolvedValue({
+    accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 5,
+    scores: [
+      { songId: 's1', instrument: 'Solo_Guitar', score: 100000, rank: 5, percentile: 80, accuracy: 90, stars: 4, season: 5, isFullCombo: false },
+      { songId: 's2', instrument: 'Solo_Guitar', score: 80000, rank: 10, percentile: 60, accuracy: 85, stars: 3, season: 5, isFullCombo: false },
+      { songId: 's3', instrument: 'Solo_Guitar', score: 120000, rank: 2, percentile: 95, accuracy: 97, stars: 5, season: 5, isFullCombo: true },
+      { songId: 's1', instrument: 'Solo_Bass', score: 70000, rank: 8, percentile: 70, accuracy: 88, stars: 3, season: 5, isFullCombo: false },
+      { songId: 's4', instrument: 'Solo_Guitar', score: 60000, rank: 15, percentile: 50, accuracy: 75, stars: 2, season: 4, isFullCombo: false },
+    ],
+  });
   mockApi.getSyncStatus.mockResolvedValue({ accountId: 'test-player-1', isTracked: true, backfill: null, historyRecon: null });
   mockApi.getVersion.mockResolvedValue({ version: '1.0.0' });
   mockApi.getLeaderboard.mockResolvedValue({ songId: 's1', instrument: 'Solo_Guitar', count: 0, totalEntries: 0, localEntries: 0, entries: [] });
@@ -67,6 +89,13 @@ beforeEach(() => {
   mockApi.getPlayerStats.mockResolvedValue({ accountId: 'test-player-1', stats: [] });
   mockApi.searchAccounts.mockResolvedValue({ results: [] });
   mockApi.trackPlayer.mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', trackingStarted: false, backfillStatus: 'none' });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  localStorage.clear();
+  localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player-1', displayName: 'TestPlayer' }));
+  resetMocks();
 });
 
 function renderSuggestions(route = '/suggestions', accountId = 'test-player-1') {
@@ -78,6 +107,10 @@ function renderSuggestions(route = '/suggestions', accountId = 'test-player-1') 
     </TestProviders>,
   );
 }
+
+// ---------------------------------------------------------------------------
+// From: SuggestionsPage.test.tsx
+// ---------------------------------------------------------------------------
 
 describe('SuggestionsPage', () => {
   it('renders without crashing', async () => {
@@ -109,14 +142,12 @@ describe('SuggestionsPage', () => {
   });
 
   it('shows empty state when no suggestions and loading is done', async () => {
-    // With empty songs, suggestions engine has nothing to generate from
     mockApi.getSongs.mockResolvedValue({ songs: [], count: 0, currentSeason: 5 });
     mockApi.getPlayer.mockResolvedValue({
       accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 0, scores: [],
     });
     const { container } = renderSuggestions();
     await waitFor(() => {
-      // Page should render (with empty state or no-suggestions message)
       expect(container.innerHTML.length).toBeGreaterThan(50);
     });
   });
@@ -134,7 +165,6 @@ describe('SuggestionsPage', () => {
     renderSuggestions();
     await waitFor(() => {
       const filterBtn = screen.queryByText('Filter');
-      // Filter button should be visible on desktop
       expect(filterBtn || screen.getByText((text) => text.toLowerCase().includes('filter'))).toBeDefined();
     });
   });
@@ -142,7 +172,6 @@ describe('SuggestionsPage', () => {
   it('renders page with player data loaded', async () => {
     const { container } = renderSuggestions();
     await waitFor(() => {
-      // The page should have rendered content (either categories or empty state)
       expect(container.innerHTML.length).toBeGreaterThan(100);
     });
   });
@@ -199,7 +228,6 @@ describe('SuggestionsPage', () => {
   });
 
   it('renders with categories when suggestion generator produces results', async () => {
-    // Provide enough songs + scores for the generator to produce categories
     const { container } = renderSuggestions();
     await waitFor(() => {
       expect(container.innerHTML.length).toBeGreaterThan(100);
@@ -255,11 +283,9 @@ describe('SuggestionsPage', () => {
     await waitFor(() => {
       expect(container.innerHTML).toBeTruthy();
     });
-    // albumArtMap is used internally — just verify the page renders
   });
 
   it('shows no-suggestions empty state when categories exhausted and no hasMore', async () => {
-    // Since mock data is limited, the generator might not produce categories
     mockApi.getSongs.mockResolvedValue({ songs: [
       { songId: 's-only', title: 'Only Song', artist: 'X', year: 2024, difficulty: { guitar: 1 } },
     ], count: 1, currentSeason: 5 });
@@ -306,5 +332,308 @@ describe('SuggestionsPage — filter handlers (extracted)', () => {
         await act(async () => { await vi.advanceTimersByTimeAsync(500); });
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// From: SuggestionsPageExtra.test.tsx
+// ---------------------------------------------------------------------------
+
+describe('SuggestionsPage (additional)', () => {
+  it('opens filter modal when Filter button is clicked', async () => {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false, media: query, onchange: null,
+        addEventListener: vi.fn(), removeEventListener: vi.fn(),
+        addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
+      })),
+    });
+    renderSuggestions();
+    await waitFor(() => {
+      const filterBtn = screen.queryByText('Filter');
+      if (filterBtn) {
+        fireEvent.click(filterBtn);
+      }
+    });
+  });
+
+  it('shows spinner overlay during loading phase', async () => {
+    mockApi.getPlayer.mockReturnValue(new Promise(() => {}));
+    const { container } = renderSuggestions();
+    await waitFor(() => {
+      expect(container.querySelector('[class*="spinner"]')).toBeTruthy();
+    });
+  });
+
+  it('renders category cards when categories are generated', async () => {
+    mockApi.getSongs.mockResolvedValue({ songs: [
+      { songId: 's1', title: 'A', artist: 'A', year: 2024, difficulty: { guitar: 3, bass: 2, drums: 4, vocals: 1 } },
+      { songId: 's2', title: 'B', artist: 'A', year: 2023, difficulty: { guitar: 2, bass: 1, drums: 3, vocals: 2 } },
+      { songId: 's3', title: 'C', artist: 'C', year: 2025, difficulty: { guitar: 5, bass: 4, drums: 5, vocals: 3 } },
+      { songId: 's4', title: 'D', artist: 'C', year: 2024, difficulty: { guitar: 1, bass: 1, drums: 1, vocals: 1 } },
+      { songId: 's5', title: 'E', artist: 'E', year: 2024, difficulty: { guitar: 4, bass: 3, drums: 2, vocals: 4 } },
+    ], count: 5, currentSeason: 5 });
+    mockApi.getPlayer.mockResolvedValue({
+      accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 3,
+      scores: [
+        { songId: 's1', instrument: 'Solo_Guitar', score: 100000, rank: 5, accuracy: 90, stars: 4, season: 5, totalEntries: 100 },
+        { songId: 's2', instrument: 'Solo_Guitar', score: 80000, rank: 10, accuracy: 85, stars: 3, season: 5, totalEntries: 100 },
+        { songId: 's3', instrument: 'Solo_Guitar', score: 120000, rank: 2, accuracy: 97, stars: 5, season: 5, totalEntries: 100 },
+      ],
+    });
+
+    const { container } = renderSuggestions();
+    await waitFor(() => {
+      expect(container.querySelector('[class*="page"]')).toBeTruthy();
+    }, { timeout: 3000 });
+  });
+
+  it('persists filter settings to localStorage', async () => {
+    renderSuggestions();
+    await waitFor(() => {
+      const raw = localStorage.getItem('fst-suggestions-filter');
+      expect(raw).toBeTruthy();
+    });
+  });
+
+  it('loads filter settings from localStorage on mount', async () => {
+    localStorage.setItem('fst-suggestions-filter', JSON.stringify({
+      suggestionsLeadFilter: false,
+      suggestionsBassFilter: true,
+    }));
+    const { container } = renderSuggestions();
+    await waitFor(() => {
+      expect(container.innerHTML).toBeTruthy();
+    });
+  });
+
+  it('shows empty state text with filters active', async () => {
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      showLead: false,
+      showBass: false,
+      showDrums: false,
+      showVocals: false,
+      showProLead: false,
+      showProBass: false,
+    }));
+    const { container } = renderSuggestions();
+    await waitFor(() => {
+      expect(container.innerHTML.length).toBeGreaterThan(50);
+    });
+  });
+
+  it('handles multiple rapid filter changes', async () => {
+    localStorage.setItem('fst-suggestions-filter', JSON.stringify({
+      suggestionsLeadFilter: true,
+    }));
+    const { container } = renderSuggestions();
+    await waitFor(() => {
+      expect(container.innerHTML).toBeTruthy();
+    });
+    localStorage.setItem('fst-suggestions-filter', JSON.stringify({
+      suggestionsLeadFilter: false,
+    }));
+    localStorage.setItem('fst-suggestions-filter', JSON.stringify({
+      suggestionsLeadFilter: true,
+    }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// From: SuggestionsPageMore.test.tsx
+// ---------------------------------------------------------------------------
+
+describe('SuggestionsPage — extra coverage', () => {
+  it('shows spinner before content loads', async () => {
+    mockApi.getPlayer.mockReturnValue(new Promise(() => {}));
+    const { container } = renderSuggestions();
+    expect(container.querySelector('[class*="page"]')).toBeTruthy();
+  });
+
+  it('renders categories once data loads', async () => {
+    const { container } = renderSuggestions();
+    await waitFor(() => {
+      expect(container.innerHTML.length).toBeGreaterThan(100);
+    });
+  });
+
+  it('shows could not load player message when no player data', async () => {
+    mockApi.getPlayer.mockResolvedValue(null);
+    render(
+      <TestProviders route="/suggestions">
+        <Routes>
+          <Route path="/suggestions" element={<SuggestionsPage accountId="no-match" />} />
+        </Routes>
+      </TestProviders>,
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Could not load player data.')).toBeTruthy();
+    });
+  });
+
+  it('renders filter pill on desktop', async () => {
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false, media: query, onchange: null,
+        addEventListener: vi.fn(), removeEventListener: vi.fn(),
+        addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
+      })),
+    });
+    const { container } = renderSuggestions();
+    await waitFor(() => {
+      expect(container.innerHTML.length).toBeGreaterThan(100);
+    });
+    const filterPill = screen.queryByText('Filter');
+    expect(filterPill).toBeTruthy();
+  });
+
+  it('shows empty state when no songs and player has no scores', async () => {
+    mockApi.getSongs.mockResolvedValue({ songs: [], count: 0, currentSeason: 5 });
+    mockApi.getPlayer.mockResolvedValue({
+      accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 0, scores: [],
+    });
+    const { container } = renderSuggestions();
+    await waitFor(() => {
+      expect(container.innerHTML.length).toBeGreaterThan(0);
+    });
+  });
+
+  it('handles API failure gracefully', async () => {
+    mockApi.getSongs.mockRejectedValue(new Error('Network error'));
+    const { container } = renderSuggestions();
+    await waitFor(() => {
+      expect(container.innerHTML).toBeTruthy();
+    });
+  });
+
+  it('shows empty state with filters when filtered results are empty', async () => {
+    const filter = {
+      suggestionsLeadFilter: false,
+      suggestionsBassFilter: false,
+      suggestionsDrumsFilter: false,
+      suggestionsVocalsFilter: false,
+      suggestionsProLeadFilter: false,
+      suggestionsProBassFilter: false,
+    };
+    localStorage.setItem('fst-suggestions-filter', JSON.stringify(filter));
+    const { container } = renderSuggestions();
+    await waitFor(() => {
+      expect(container.innerHTML.length).toBeGreaterThan(50);
+    });
+  });
+
+  it('renders page wrapper with correct class', async () => {
+    const { container } = renderSuggestions();
+    await waitFor(() => {
+      expect(container.querySelector('[class*="page"]')).toBeTruthy();
+    });
+  });
+
+  it('renders scroll area', async () => {
+    const { container } = renderSuggestions();
+    await waitFor(() => {
+      expect(container.querySelector('[class*="scrollArea"]') || container.querySelector('#suggestions-scroll')).toBeTruthy();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// From: SuggestionsCoverage.test.tsx
+// ---------------------------------------------------------------------------
+
+describe('SuggestionsPage — coverage: category rendering + filter logic', () => {
+  it('renders category cards with real suggestion data', async () => {
+    const { container } = renderSuggestions();
+
+    await waitFor(() => {
+      expect(container.innerHTML.length).toBeGreaterThan(200);
+    }, { timeout: 5000 });
+
+    const pageEl = container.querySelector('[class*="page"]');
+    expect(pageEl).toBeTruthy();
+  });
+
+  it('shows empty state with filtered text when filters hide all', async () => {
+    localStorage.setItem('fst-suggestions-filter', JSON.stringify({
+      suggestionsLeadFilter: false,
+      suggestionsBassFilter: false,
+      suggestionsDrumsFilter: false,
+      suggestionsVocalsFilter: false,
+      suggestionsProLeadFilter: false,
+      suggestionsProBassFilter: false,
+    }));
+
+    const { container } = renderSuggestions();
+
+    await waitFor(() => {
+      expect(container.innerHTML.length).toBeGreaterThan(50);
+    }, { timeout: 5000 });
+
+    expect(container.querySelector('[class*="page"]')).toBeTruthy();
+  });
+
+  it('renders filter button and opens filter modal', async () => {
+    renderSuggestions();
+
+    await waitFor(() => {
+      const filterBtn = screen.queryByText('Filter');
+      expect(filterBtn).toBeTruthy();
+    }, { timeout: 5000 });
+
+    const filterBtn = screen.getByText('Filter');
+    fireEvent.click(filterBtn);
+
+    await waitFor(() => {
+      expect(document.body.innerHTML).toBeTruthy();
+    });
+  });
+
+  it('renders categories after spinner → contentIn transition', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
+    const { container } = renderSuggestions();
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await waitFor(() => {
+      expect(container.innerHTML.length).toBeGreaterThan(100);
+    });
+
+    vi.useRealTimers();
+  });
+
+  it('scrolls categories list triggering scroll handler', async () => {
+    const { container } = renderSuggestions();
+
+    await waitFor(() => {
+      expect(container.innerHTML.length).toBeGreaterThan(100);
+    }, { timeout: 5000 });
+
+    const scrollArea = container.querySelector('[id="suggestions-scroll"]');
+    if (scrollArea) {
+      fireEvent.scroll(scrollArea);
+    }
+    expect(container.innerHTML.length).toBeGreaterThan(100);
+  });
+
+  it('renders with no songs and no hasMore', async () => {
+    mockApi.getSongs.mockResolvedValue({ songs: [], count: 0, currentSeason: 5 });
+    mockApi.getPlayer.mockResolvedValue({
+      accountId: 'test-player-1', displayName: 'TestPlayer', totalScores: 0, scores: [],
+    });
+
+    const { container } = renderSuggestions();
+
+    await waitFor(() => {
+      expect(
+        container.textContent!.includes('No suggestions') ||
+        container.textContent!.includes('Could not load') ||
+        container.innerHTML.length > 50
+      ).toBe(true);
+    }, { timeout: 5000 });
   });
 });
