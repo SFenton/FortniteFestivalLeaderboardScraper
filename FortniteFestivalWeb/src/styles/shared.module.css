@@ -127,6 +127,6 @@
 /* ── Spacer for FAB overlap ── */
 
 .fabSpacer {
-  height: 72px;
+  height: 80px;
   flex-shrink: 0;
 }

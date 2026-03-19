@@ -4,6 +4,10 @@
   overflow-x: hidden;
 }
 
+.fabSpacer {
+  composes: fabSpacer from '../../styles/shared.module.css';
+}
+
 .container {
   max-width: var(--max-width-card);
   margin: 0 auto;

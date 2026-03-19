@@ -3,10 +3,11 @@
  * Returns Item[] for ONE instrument (top 5 + optional bottom 5).
  */
 import { type ServerInstrumentKey as InstrumentKey, type ServerSong as Song, type PlayerScore, serverInstrumentLabel as instrumentLabel } from '@festival/core/api/serverTypes';
-import { Gap } from '@festival/theme';
+import { Layout } from '@festival/theme';
 import PlayerSectionHeading from '../sections/PlayerSectionHeading';
 import PlayerSongRow from './PlayerSongRow';
 import type { PlayerItem, NavigateToSongDetail } from '../helpers/playerPageTypes';
+import css from './TopSongsSection.module.css';
 
 export function buildTopSongsItems(
   t: (key: string, opts?: Record<string, unknown>) => string,
@@ -15,6 +16,7 @@ export function buildTopSongsItems(
   songMap: Map<string, Song>,
   displayName: string,
   navigateToSongDetail: NavigateToSongDetail,
+  isLast?: boolean,
 ): PlayerItem[] {
   const withPct = scores.filter((s) => s.rank > 0 && (s.totalEntries ?? 0) > 0);
   if (withPct.length === 0) return [];
@@ -53,7 +55,7 @@ export function buildTopSongsItems(
   items.push({
     key: `top-hdr-${inst}`,
     span: true,
-    heightEstimate: 64,
+    heightEstimate: Layout.sectionHeadingHeight,
     node: (
       <PlayerSectionHeading
         title={t('player.topFiveSongs')}
@@ -63,13 +65,15 @@ export function buildTopSongsItems(
     ),
   });
 
+  const noBottom = bottomScores.length === 0;
+
   // Top songs table
   items.push({
     key: `top-songs-${inst}`,
     span: true,
-    heightEstimate: topScores.length * 72,
+    heightEstimate: topScores.length * Layout.songRowHeight,
     node: (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: Gap.sm, marginBottom: Gap.section }}>
+      <div className={(isLast && noBottom) ? css.songListLast : css.songList}>
         {topScores.map((sc) => renderSongRow(sc))}
       </div>
     ),
@@ -80,7 +84,7 @@ export function buildTopSongsItems(
     items.push({
       key: `bot-hdr-${inst}`,
       span: true,
-      heightEstimate: 64,
+      heightEstimate: Layout.sectionHeadingHeight,
       node: (
         <PlayerSectionHeading
           title={t('player.bottomFiveSongs')}
@@ -95,9 +99,9 @@ export function buildTopSongsItems(
     items.push({
       key: `bot-songs-${inst}`,
       span: true,
-      heightEstimate: bottomScores.length * 72,
+      heightEstimate: bottomScores.length * Layout.songRowHeight,
       node: (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: Gap.sm, marginBottom: Gap.section }}>
+        <div className={isLast ? css.songListLast : css.songList}>
           {bottomScores.map((sc) => renderSongRow(sc))}
         </div>
       ),

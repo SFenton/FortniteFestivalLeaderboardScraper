@@ -1,0 +1,11 @@
+.songList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+  margin-bottom: var(--gap-section);
+}
+
+.songListLast {
+  composes: songList;
+  margin-bottom: 0;
+}
