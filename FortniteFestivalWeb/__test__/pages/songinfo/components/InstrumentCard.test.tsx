@@ -2,11 +2,21 @@
  * InstrumentCard tests — exercises rendering with entries, player scores,
  * error states, and responsive column widths.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import InstrumentCard from '../../../../src/pages/songinfo/components/InstrumentCard';
 import type { LeaderboardEntry, PlayerScore, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+
+/** Set window.innerWidth and override matchMedia to evaluate min-width queries. */
+function setViewportWidth(width: number) {
+  Object.defineProperty(window, 'innerWidth', { value: width, writable: true });
+  window.matchMedia = (query: string) => {
+    const match = query.match(/\(min-width:\s*(\d+)px\)/);
+    const matches = match ? width >= Number(match[1]) : false;
+    return { matches, media: query, onchange: null, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false } as MediaQueryList;
+  };
+}
 
 vi.mock('../../../../src/components/display/InstrumentIcons', () => ({
   InstrumentIcon: ({ instrument }: any) => <span data-testid={`icon-${instrument}`}>{instrument}</span>,
@@ -57,6 +67,8 @@ function renderCard(overrides: Partial<typeof baseProps> = {}) {
 }
 
 describe('InstrumentCard', () => {
+  beforeEach(() => setViewportWidth(900));
+
   it('renders instrument label', () => {
     renderCard();
     expect(screen.getByText('Lead')).toBeTruthy();
@@ -81,24 +93,28 @@ describe('InstrumentCard', () => {
   });
 
   it('renders season pill when window is wide enough', () => {
+    setViewportWidth(1200);
     const entries = [makeEntry(1, { season: 5 })];
     renderCard({ prefetchedEntries: entries, windowWidth: 1200 });
     expect(screen.getByTestId('season')).toBeTruthy();
   });
 
   it('hides season pill on narrow width', () => {
+    setViewportWidth(400);
     const entries = [makeEntry(1, { season: 5 })];
     renderCard({ prefetchedEntries: entries, windowWidth: 400 });
     expect(screen.queryByTestId('season')).toBeNull();
   });
 
   it('renders accuracy when card is wide enough', () => {
+    setViewportWidth(900);
     const entries = [makeEntry(1)];
     renderCard({ prefetchedEntries: entries, windowWidth: 900 });
     expect(screen.getByTestId('accuracy')).toBeTruthy();
   });
 
   it('hides accuracy on narrow width', () => {
+    setViewportWidth(300);
     const entries = [makeEntry(1)];
     renderCard({ prefetchedEntries: entries, windowWidth: 300 });
     expect(screen.queryByTestId('accuracy')).toBeNull();
@@ -107,9 +123,9 @@ describe('InstrumentCard', () => {
   it('highlights player entry when player is in top entries', () => {
     const entries = [makeEntry(1, { accountId: 'player-1' })];
     renderCard({ prefetchedEntries: entries, playerAccountId: 'player-1', playerName: 'MyPlayer' });
-    // Player row should have bold styling — check for fontWeight in inline style
+    // Player row should have bold styling via CSS class
     const rank = screen.getByText('#1');
-    expect(rank.style.fontWeight).toBe('700');
+    expect(rank.className).toContain('textBold');
   });
 
   it('renders separate player score row when player not in top', () => {
