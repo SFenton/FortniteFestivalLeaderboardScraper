@@ -392,7 +392,7 @@ describe('SongDetailPage — extra coverage', () => {
   it('renders album art background image', async () => {
     renderSongDetail('/songs/song-1', 'test-player-1');
     await waitFor(() => {
-      const bgEl = document.querySelector('[class*="bgImage"]');
+      const bgEl = document.querySelector('[class*="bg"]');
       expect(bgEl).toBeTruthy();
     });
   });
@@ -400,7 +400,7 @@ describe('SongDetailPage — extra coverage', () => {
   it('renders background dim overlay', async () => {
     renderSongDetail('/songs/song-1', 'test-player-1');
     await waitFor(() => {
-      const dimEl = document.querySelector('[class*="bgDim"]');
+      const dimEl = document.querySelector('[class*="dim"]');
       expect(dimEl).toBeTruthy();
     });
   });

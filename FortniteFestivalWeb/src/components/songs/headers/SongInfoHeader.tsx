@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { Font, Gap, Radius, Layout } from '@festival/theme';
 import { type ServerSong as Song, type ServerInstrumentKey, serverInstrumentLabel } from '@festival/core/api/serverTypes';
 import { InstrumentIcon } from '../../display/InstrumentIcons';
-import pageCss from '../../../pages/Page.module.css';
+import BackgroundImage from '../../page/BackgroundImage';
 import css from './SongInfoHeader.module.css';
 
 export interface SongInfoHeaderProps {
@@ -41,10 +41,7 @@ export default function SongInfoHeader({ song,
 
   return (
     <>
-      {song?.albumArt && (
-        <div className={pageCss.bgImage} style={{ backgroundImage: `url(${song.albumArt})` }} />
-      )}
-      <div className={pageCss.bgDim} />
+      <BackgroundImage src={song?.albumArt} />
       <div
         className={css.headerBar}
         style={{
