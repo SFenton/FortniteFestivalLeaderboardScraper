@@ -26,7 +26,7 @@ type FestivalContextValue = {
   actions: FestivalActions;
 };
 
-const FestivalContext = createContext<FestivalContextValue | null>(null);
+export const FestivalContext = createContext<FestivalContextValue | null>(null);
 
 export function FestivalProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();

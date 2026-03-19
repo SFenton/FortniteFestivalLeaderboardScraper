@@ -11,3 +11,10 @@
   border: 2px solid var(--color-border-subtle);
   display: inline-block;
 }
+
+.pillCurrent {
+  composes: pill;
+  background-color: var(--color-text-secondary);
+  color: var(--color-surface-subtle);
+  border-color: var(--color-surface-subtle);
+}
