@@ -271,8 +271,23 @@ export default function SongsPage() {
     }
   }, [settingsKey, loadPhase]);
 
+  // Show spinner while the user is typing ahead of the debounce
+  const searchLoadingRef = useRef(false);
+  useEffect(() => {
+    if (effectiveSearch !== debouncedSearch && (loadPhase === 'contentIn' || loadPhase === 'spinnerOut')) {
+      searchLoadingRef.current = true;
+      setLoadPhase('loading');
+    }
+  }, [effectiveSearch, debouncedSearch, loadPhase]);
+
   useEffect(() => {
     if (!dataReady || loadPhase !== 'loading') return;
+    // Hold the spinner briefly so it feels intentional after search debounce
+    if (searchLoadingRef.current) {
+      searchLoadingRef.current = false;
+      const id = setTimeout(() => { setShouldStagger(true); setLoadPhase('spinnerOut'); }, 300);
+      return () => clearTimeout(id);
+    }
     setShouldStagger(true);
     setLoadPhase('spinnerOut');
   }, [dataReady, loadPhase]);
