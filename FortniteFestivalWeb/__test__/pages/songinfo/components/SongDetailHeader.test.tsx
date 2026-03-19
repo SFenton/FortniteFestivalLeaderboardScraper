@@ -1,3 +1,8 @@
+/**
+ * SEPARATE FILE: Cannot consolidate into SongDetailPage.test.tsx because this
+ * file patches HTMLElement.prototype.animate/getAnimations and uses custom
+ * module-level mocks (react-icons, api/client) that would conflict.
+ */
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
