@@ -71,6 +71,11 @@ describe('AppShell', () => {
   it('renders Settings title in navigation', async () => {
     const { container } = render(<App />);
     await waitFor(() => {
+      expect(container.querySelector('[aria-label="Open navigation"]')).toBeTruthy();
+    });
+    const hamburger = container.querySelector('[aria-label="Open navigation"]') as HTMLButtonElement;
+    fireEvent.click(hamburger);
+    await waitFor(() => {
       expect(container.textContent).toContain('Settings');
     });
   });

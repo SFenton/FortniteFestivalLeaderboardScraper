@@ -272,7 +272,7 @@ public sealed class ScraperWorker : BackgroundService
                         after - before, after);
 
                     // Keep the DI singleton (used by API) in sync
-                    await _festivalService.InitializeAsync();
+                    await _festivalService.SyncSongsAsync();
                 }
                 else
                     _log.LogDebug("Background song sync complete. {Total} songs (no changes).", after);
@@ -282,7 +282,7 @@ public sealed class ScraperWorker : BackgroundService
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _log.LogWarning(ex, "Background song sync failed. Will retry at next quarter-hour.");
+                _log.LogWarning(ex, "Background song sync failed. Will retry at next interval.");
             }
         }
     }

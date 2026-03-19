@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-import { render, waitFor } from '@testing-library/react';
+import { render, waitFor, fireEvent } from '@testing-library/react';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver } from '../helpers/browserStubs';
 
 const mockApi = vi.hoisted(() => {
@@ -64,6 +64,11 @@ describe('App', () => {
 
   it('renders settings navigation link', async () => {
     const { container } = render(<App />);
+    await waitFor(() => {
+      expect(container.querySelector('[aria-label="Open navigation"]')).toBeTruthy();
+    });
+    const hamburger = container.querySelector('[aria-label="Open navigation"]') as HTMLButtonElement;
+    fireEvent.click(hamburger);
     await waitFor(() => {
       expect(container.textContent).toContain('Settings');
     });

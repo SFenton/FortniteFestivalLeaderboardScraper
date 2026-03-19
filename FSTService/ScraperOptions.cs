@@ -14,9 +14,9 @@ public sealed class ScraperOptions
 
     /// <summary>
     /// How often to re-sync the song catalog from Epic in the background,
-    /// aligned to clock boundaries (default: 15 minutes → :00, :15, :30, :45).
+    /// aligned to clock boundaries (default: 5 minutes).
     /// </summary>
-    public TimeSpan SongSyncInterval { get; set; } = TimeSpan.FromMinutes(15);
+    public TimeSpan SongSyncInterval { get; set; } = TimeSpan.FromMinutes(5);
 
     /// <summary>
     /// Max concurrent leaderboard requests per scrape pass.
