@@ -65,6 +65,9 @@ export default defineConfig(({ mode }) => {
     server: {
       host: true,
       port: 3000,
+      watch: {
+        ignored: ['**/coverage/**', '**/TestResults/**', '**/__test__/**'],
+      },
       proxy: {
         '/api': {
           target: apiTarget,
