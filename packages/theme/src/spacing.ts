@@ -43,6 +43,7 @@ export const Size = {
   iconMd: 28,
   iconSm: 24,
   iconXs: 14,
+  iconXl: 48,
   iconDefault: 20,
   iconFab: 18,
   iconTab: 20,

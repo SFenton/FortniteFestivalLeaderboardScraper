@@ -88,7 +88,7 @@ describe('AppShell', () => {
     });
     const { container } = render(<App />);
     await waitFor(() => {
-      const hamburger = container.querySelector('[class*="hamburger"]');
+      const hamburger = container.querySelector('[aria-label="Open navigation"]');
       expect(hamburger).toBeTruthy();
     });
   });
@@ -105,9 +105,9 @@ describe('AppShell', () => {
     });
     const { container } = render(<App />);
     await waitFor(() => {
-      expect(container.querySelector('[class*="hamburger"]')).toBeTruthy();
+      expect(container.querySelector('[aria-label="Open navigation"]')).toBeTruthy();
     });
-    const hamburger = container.querySelector('[class*="hamburger"]') as HTMLButtonElement;
+    const hamburger = container.querySelector('[aria-label="Open navigation"]') as HTMLButtonElement;
     fireEvent.click(hamburger);
     // Sidebar should now be open — look for sidebar element
     await waitFor(() => {
@@ -181,7 +181,7 @@ describe('AppShell', () => {
     });
     const { container } = render(<App />);
     await waitFor(() => {
-      const profileBtn = container.querySelector('[class*="headerProfileBtn"]');
+      const profileBtn = container.querySelector('[aria-label="Profile"]');
       expect(profileBtn).toBeTruthy();
     });
   });

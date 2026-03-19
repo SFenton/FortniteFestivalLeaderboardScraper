@@ -17,7 +17,7 @@ const PlayerPage = lazy(() => import('./pages/player/PlayerPage'));
 const SuggestionsPage = lazy(() => import('./pages/suggestions/SuggestionsPage'));
 const SettingsPage = lazy(() => import('./pages/settings/SettingsPage'));
 /* v8 ignore stop */
-import { Colors, Size } from '@festival/theme';
+import { Size } from '@festival/theme';
 import appCss from './App.module.css';
 import { resetSongSettingsForDeselect, loadSongSettings, SONG_SETTINGS_CHANGED_EVENT } from './utils/songSettings';
 import BackLink from './components/shell/mobile/BackLink';
@@ -25,9 +25,9 @@ import { InstrumentIcon } from './components/display/InstrumentIcons';
 import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
 import { SearchQueryProvider } from './contexts/SearchQueryContext';
 import { useSettings } from './contexts/SettingsContext';
-import HeaderSearch from './components/shell/desktop/HeaderSearch';
 import BottomNav from './components/shell/mobile/BottomNav';
 import Sidebar from './components/shell/desktop/Sidebar';
+import DesktopNav from './components/shell/desktop/DesktopNav';
 import FloatingActionButton from './components/shell/fab/FloatingActionButton';
 import MobilePlayerSearchModal from './components/shell/mobile/MobilePlayerSearchModal';
 import { clearSongDetailCache, clearLeaderboardCache, clearPlayerPageCache } from './api/pageCache';
@@ -231,32 +231,11 @@ function AppShell() {
             backFallback ? <BackLink key={location.pathname} fallback={backFallback} animate={shouldAnimateHeader} /> : null
           )
         ) : (
-          <nav className={`sa-top ${appCss.nav}`}>
-            <button
-              className={appCss.hamburger}
-              onClick={() => setSidebarOpen((o) => !o)}
-              aria-label={t('aria.openNavigation')}
-            >
-              <span className={appCss.hamburgerLine} />
-              <span className={appCss.hamburgerLine} />
-              <span className={appCss.hamburgerLine} />
-            </button>
-            <div className={appCss.spacer} />
-            <HeaderSearch />
-            <button
-              className={appCss.headerProfileBtn}
-              onClick={() => player ? navigate(AppRoutes.statistics) : setPlayerModalOpen(true)}
-              aria-label={t('aria.profile')}
-            >
-              <span className={appCss.headerProfileCircleBase} style={{
-                backgroundColor: player ? Colors.surfaceSubtle : '#D0D5DD',
-                border: player ? `1px solid ${Colors.borderSubtle}` : '1px solid transparent',
-                color: player ? Colors.textSecondary : '#4A5568',
-              }}>
-                <IoPerson size={16} />
-              </span>
-            </button>
-          </nav>
+          <DesktopNav
+            hasPlayer={!!player}
+            onOpenSidebar={() => setSidebarOpen((o) => !o)}
+            onProfileClick={() => player ? navigate(AppRoutes.statistics) : setPlayerModalOpen(true)}
+          />
         )}
       {/* v8 ignore stop */}
 

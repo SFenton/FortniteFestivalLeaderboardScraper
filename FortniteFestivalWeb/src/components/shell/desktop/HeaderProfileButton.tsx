@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { IoPerson } from 'react-icons/io5';
 import { Colors, Size } from '@festival/theme';
-import appCss from '../../../App.module.css';
+import css from './HeaderProfileButton.module.css';
 
 export interface HeaderProfileButtonProps {
   hasPlayer: boolean;
@@ -12,11 +12,11 @@ export default function HeaderProfileButton({ hasPlayer, onClick }: HeaderProfil
   const { t } = useTranslation();
   return (
     <button
-      className={appCss.headerProfileBtn}
+      className={css.button}
       onClick={onClick}
       aria-label={t('aria.profile')}
     >
-      <span className={appCss.headerProfileCircleBase} style={{
+      <span className={css.circle} style={{
         backgroundColor: hasPlayer ? Colors.surfaceSubtle : Colors.profileInactive,
         border: hasPlayer ? `1px solid ${Colors.borderSubtle}` : '1px solid transparent',
         color: hasPlayer ? Colors.textSecondary : Colors.profileInactiveText,
