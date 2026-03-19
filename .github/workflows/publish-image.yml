@@ -9,6 +9,7 @@ on:
       - "FSTService.Tests/**"
       - "FSTService/Dockerfile"
       - "FortniteFestivalWeb/**"
+      - "packages/**"
       - "PercentileService/**"
       - "PercentileService.Tests/**"
       - "PercentileService/Dockerfile"
@@ -20,6 +21,7 @@ on:
       - "FortniteFestival.Core/**"
       - "FSTService.Tests/**"
       - "FortniteFestivalWeb/**"
+      - "packages/**"
       - "PercentileService/**"
       - "PercentileService.Tests/**"
       - ".github/workflows/publish-image.yml"
@@ -172,9 +174,36 @@ jobs:
             TestResults-Percentile/*.trx
             TestResults-Percentile/**/coverage.cobertura.xml
 
+  test-web:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        working-directory: FortniteFestivalWeb
+        run: yarn install --immutable
+
+      - name: Build
+        working-directory: FortniteFestivalWeb
+        run: yarn vite build --outDir dist
+
+      - name: Run tests with coverage
+        working-directory: FortniteFestivalWeb
+        run: yarn vitest run --coverage
+
   build-and-push:
     runs-on: ubuntu-latest
-    needs: [test, test-percentile]
+    needs: [test, test-percentile, test-web]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
     permissions:

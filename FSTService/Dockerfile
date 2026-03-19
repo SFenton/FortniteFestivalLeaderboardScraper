@@ -2,6 +2,8 @@
 FROM node:20-slim AS webapp
 WORKDIR /src
 COPY packages/core/ packages/core/
+COPY packages/theme/ packages/theme/
+COPY packages/ui-utils/ packages/ui-utils/
 COPY FortniteFestivalWeb/package.json FortniteFestivalWeb/yarn.lock FortniteFestivalWeb/
 WORKDIR /src/FortniteFestivalWeb
 # Use node-modules linker in Docker (local dev uses PnP with global cache)
