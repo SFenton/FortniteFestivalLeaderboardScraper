@@ -2,8 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { LoadPhase } from '@festival/core';
 
-// Mock Page.module.css
-vi.mock('../../../src/pages/Page.module.css', () => ({
+// Mock LoadGate.module.css
+vi.mock('../../../src/components/page/LoadGate.module.css', () => ({
   default: {
     spinnerOverlay: 'spinnerOverlay',
     spinnerContainer: 'spinnerContainer',

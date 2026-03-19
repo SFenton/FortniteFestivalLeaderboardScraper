@@ -1,8 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { IoSearch } from 'react-icons/io5';
-import { IoSwapVerticalSharp, IoFunnel } from 'react-icons/io5';
-import { ActionPill } from '../../components/common/ActionPill';
 import { useLocation, useNavigationType } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { staggerDelay, estimateVisibleCount } from '@festival/ui-utils';
@@ -18,11 +15,12 @@ import { useScrollRestore, clearScrollCache } from '../../hooks/ui/useScrollRest
 import { useFilteredSongs } from '../../hooks/data/useFilteredSongs';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { type PlayerScore, type ServerInstrumentKey as InstrumentKey, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
-import { Colors, Gap } from '@festival/theme';
-import ArcSpinner from '../../components/common/ArcSpinner';
+import { Gap } from '@festival/theme';
+import { LoadGate } from '../../components/page/LoadGate';
+import SyncBanner from '../../components/page/SyncBanner';
 import s from './SongsPage.module.css';
-import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import { SongRow } from './components/SongRow';
+import { SongsToolbar } from './components/SongsToolbar';
 import { visibleInstruments } from '../../contexts/SettingsContext';
 import SortModal from './modals/SortModal';
 import type { SortDraft } from './modals/SortModal';
@@ -336,117 +334,36 @@ export default function SongsPage() {
 
   return (
     <div className={s.page}>
-      {/* Spinner overlay â€” visible during loading & spinnerOut */}
-      {loadPhase !== 'contentIn' && (
-        <div
-          className={s.spinnerOverlay} style={{
-            ...(loadPhase === 'spinnerOut'
-              ? { animation: 'fadeOut 500ms ease-out forwards' }
-              : {}),
-          }}
-        >
-          <ArcSpinner />
-        </div>
-      )}
+      <LoadGate phase={loadPhase} overlay spinnerClassName={s.spinnerOverlay}>
       {!isMobileChrome && (
       <div className={s.header}>
         <div className={s.container}>
           <div style={{ visibility: (toolbarShownRef.current || loadPhase === 'contentIn') ? 'visible' : 'hidden' } as CSSProperties}>
-          <div className={s.toolbar}>
-            {/* v8 ignore start -- DOM focus: querySelector not reliable in jsdom */}
-            <div className={s.searchWrap} onClick={e => { const input = e.currentTarget.querySelector('input'); input?.focus(); }}>
-            {/* v8 ignore stop */}
-              <IoSearch size={16} style={{ color: Colors.textTertiary, flexShrink: 0 }} />
-              <input
-                className={s.searchInput}
-                placeholder={t('songs.searchPlaceholder')}
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-            {settings.instrument && (
-              <InstrumentIcon instrument={settings.instrument} size={32} />
-            )}
-            <div className={s.sortGroup}>
-              <ActionPill icon={<IoSwapVerticalSharp size={18} />} label="Sort" onClick={openSort} active={sortActive} />
-              {hasPlayer && (
-                <ActionPill
-                  icon={<IoFunnel size={18} />}
-                  label="Filter"
-                  onClick={openFilter}
-                  active={filtersActive}
-                />
-              )}
-            </div>
-          </div>
-          {filtersActive && filtered.length !== songs.length && (
-            <div className={s.count}>{filtered.length} of {songs.length} songs</div>
-          )}
+          <SongsToolbar
+            search={search}
+            onSearchChange={setSearch}
+            instrument={settings.instrument}
+            sortActive={sortActive}
+            filtersActive={filtersActive}
+            hasPlayer={hasPlayer}
+            filteredCount={filtered.length}
+            totalCount={songs.length}
+            onOpenSort={openSort}
+            onOpenFilter={openFilter}
+          />
           </div>
         </div>
       </div>
       )}
       <div ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
         <div className={s.container} style={{ paddingTop: isMobile ? Gap.sm : Gap.md }}>
-        {isSyncing && (
-          <div className={s.syncBanner}>
-            <div className={s.syncSpinner} />
-            <div style={{ flex: 1 }}>
-              <div className={s.syncTitle}>
-                {syncPhase === 'backfill' ? 'Syncing Data' : 'Building Score History'}
-              </div>
-              <div className={s.syncSubtitle}>
-                {syncPhase === 'backfill'
-                  ? 'Fetching scores from leaderboardsâ€¦'
-                  : 'Reconstructing score history across seasonsâ€¦'}
-              </div>
-              {syncPhase === 'backfill' && backfillProgress > 0 && (
-                <div style={{ marginTop: Gap.md }}>
-                  <div className={s.syncProgressLabel}>
-                    <span>{t('player.syncingScores')}</span>
-                    <span>{(backfillProgress * 100).toFixed(1)}%</span>
-                  </div>
-                  <div className={s.syncProgressOuter}>
-                    <div
-                      className={s.syncProgressInner} style={{
-                        width: `${Math.round(backfillProgress * 100)}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
-              {/* v8 ignore start — sync phase progress UI; requires live server sync state */}
-              {syncPhase === 'history' && (
-                <>
-                  <div style={{ marginTop: Gap.md }}>
-                    <div className={s.syncProgressLabel}>
-                      <span>{t('player.syncingScores')}</span>
-                      <span>100.0%</span>
-                    </div>
-                    <div className={s.syncProgressOuter}>
-                      <div className={s.syncProgressInner} style={{ width: '100%' }} />
-                    </div>
-                  </div>
-                  {historyProgress > 0 && (
-                    <div style={{ marginTop: Gap.sm }}>
-                      <div className={s.syncProgressLabel}>
-                        <span>{t('player.buildingHistory')}</span>
-                        <span>{(historyProgress * 100).toFixed(1)}%</span>
-                      </div>
-                      <div className={s.syncProgressOuter}>
-                        <div
-                          className={s.syncProgressInner} style={{
-                            width: `${Math.round(historyProgress * 100)}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-              {/* v8 ignore stop */}
-            </div>
-          </div>
+        {isSyncing && playerData && (
+          <SyncBanner
+            displayName={playerData.displayName}
+            phase={syncPhase}
+            backfillProgress={backfillProgress}
+            historyProgress={historyProgress}
+          />
         )}
         {loadPhase === 'contentIn' && filtered.length === 0 ? (
           <div className={s.emptyState}>
@@ -505,6 +422,7 @@ export default function SongsPage() {
       </div>
 
       {isMobileChrome && <div className={s.fabSpacer} />}
+      </LoadGate>
 
       <SortModal
         visible={sortModal.visible}

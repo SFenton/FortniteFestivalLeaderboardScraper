@@ -9,6 +9,7 @@ describe('SongsToolbar', () => {
     search: '',
     onSearchChange: vi.fn(),
     instrument: null as ServerInstrumentKey | null,
+    sortActive: false,
     filtersActive: false,
     hasPlayer: false,
     filteredCount: 100,
@@ -48,6 +49,12 @@ describe('SongsToolbar', () => {
     render(<SongsToolbar {...defaults} filtersActive hasPlayer filteredCount={100} totalCount={100} />);
     expect(screen.queryByText(/of.*songs/)).toBeNull();
   });
+
+  it('passes sortActive to sort pill', () => {
+    const { container } = render(<SongsToolbar {...defaults} sortActive />);
+    const sortBtn = screen.getByLabelText(/sort/i);
+    expect(sortBtn.className).toContain('Active');
+  });
 });
 
 describe('SongsToolbar — instrument & filter branches', () => {
@@ -55,6 +62,7 @@ describe('SongsToolbar — instrument & filter branches', () => {
     search: '',
     onSearchChange: vi.fn(),
     instrument: null as ServerInstrumentKey | null,
+    sortActive: false,
     filtersActive: false,
     hasPlayer: false,
     filteredCount: 10,
