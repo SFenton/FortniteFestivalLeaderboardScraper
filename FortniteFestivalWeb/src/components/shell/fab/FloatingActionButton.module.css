@@ -11,17 +11,15 @@
 }
 
 .fab {
+  composes: purpleGlass from '../../../styles/shared.module.css';
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  background-color: var(--color-accent-purple);
-  border: 1px solid rgba(124, 58, 237, 0.35);
   color: var(--color-text-primary);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   flex-shrink: 0;
   pointer-events: auto;
 }

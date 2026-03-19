@@ -1,8 +1,6 @@
 .pill {
   composes: pillBase from '../common/ActionPill.module.css';
-  composes: frostedCard from '../../styles/shared.module.css';
-  background-color: var(--color-accent-purple);
-  border: 1px solid var(--color-purple-border-subtle);
+  composes: purpleGlass from '../../styles/shared.module.css';
   padding: 0 var(--size-md) 0 var(--gap-section);
   color: var(--color-text-primary);
   font-size: var(--font-lg);
