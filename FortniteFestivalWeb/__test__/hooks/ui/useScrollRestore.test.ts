@@ -30,7 +30,7 @@ describe('useScrollRestore', () => {
     // but we can at least verify the hook doesn't throw
   });
 
-  it('clears stored position on PUSH navigation', () => {
+  it('preserves stored position on PUSH navigation', () => {
     const el = createMockScrollEl();
     const ref = { current: el };
 
@@ -39,9 +39,11 @@ describe('useScrollRestore', () => {
     el.scrollTop = 500;
     act(() => { result.current(); });
 
-    // PUSH should clear stored position
+    // PUSH should NOT clear stored position — tab switches preserve scroll
+    el.scrollTop = 0;
     renderHook(() => useScrollRestore(ref as any, 'test-key', 'PUSH'));
-    // The PUSH handler runs useEffect which deletes the stored scroll
+    // The restore effect fires and sets scrollTop back to 500
+    expect(el.scrollTop).toBe(500);
   });
 
   it('clearScrollCache clears all entries', () => {

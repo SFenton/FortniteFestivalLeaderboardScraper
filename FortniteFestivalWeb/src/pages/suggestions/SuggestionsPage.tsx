@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigationType } from 'react-router-dom';
 import { IoFunnel } from 'react-icons/io5';
 import { ActionPill } from '../../components/common/ActionPill';
 import InfiniteScroll from 'react-infinite-scroll-component';
@@ -23,6 +24,7 @@ import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useScrollFade } from '../../hooks/ui/useScrollFade';
 import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
+import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import { useModalState } from '../../hooks/ui/useModalState';
 import FadeIn from '../../components/page/FadeIn';
@@ -100,6 +102,7 @@ let _suggestionsHasRendered = false;
 
 export default function SuggestionsPage({ accountId }: Props) {
   const { t } = useTranslation();
+  const navType = useNavigationType();
   const { settings: appSettings } = useSettings();
   const {
     state: { songs, currentSeason, isLoading },
@@ -128,6 +131,7 @@ export default function SuggestionsPage({ accountId }: Props) {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const saveScroll = useScrollRestore(scrollRef, 'suggestions', navType);
 
   // Use server-provided season, fall back to highest season in player scores
   const effectiveSeason = useMemo(() => {
@@ -285,9 +289,10 @@ export default function SuggestionsPage({ accountId }: Props) {
 
   const rushOnScroll = useStaggerRush(scrollRef);
   const handleScroll = useCallback(() => {
+    saveScroll();
     updateCardFade();
     rushOnScroll();
-  }, [updateCardFade, rushOnScroll]);
+  }, [saveScroll, updateCardFade, rushOnScroll]);
 
   // Track how many category cards have already been revealed so that newly
   // loaded batches get their own stagger starting from delay 0.
