@@ -5,6 +5,7 @@ import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { SyncPhase } from '../../hooks/data/useSyncStatus';
 import { Gap } from '@festival/theme';
+import ArcSpinner from '../common/ArcSpinner';
 import s from './SyncBanner.module.css';
 
 interface SyncBannerProps {
@@ -19,51 +20,40 @@ const SyncBanner = memo(function SyncBanner({ displayName, phase, backfillProgre
 
   return (
     <div className={s.syncBanner}>
-      <div className={s.syncSpinner} />
-      <div style={{ flex: 1 }}>
-        <div className={s.syncTitle}>
-          {phase === 'backfill' ? t('player.syncInProgress') : t('player.syncInProgress')}
-        </div>
-        <div className={s.syncSubtitle}>
+      <div className={s.syncHeader}>
+        <ArcSpinner size="sm" className={s.syncSpinner} />
+        <span className={s.syncTitle}>
           {phase === 'backfill'
             ? `Syncing ${displayName}'s scores…`
-            : `Reconstructing ${displayName}'s score history across seasons…`}
-        </div>
+            : `Reconstructing ${displayName}'s history…`}
+        </span>
+      </div>
         {phase === 'backfill' && backfillProgress > 0 && (
-          <div style={{ marginTop: Gap.md }}>
-            <div className={s.syncProgressLabel}>
-              <span>{t('player.syncingScores')}</span>
-              <span>{(backfillProgress * 100).toFixed(1)}%</span>
-            </div>
-            <div className={s.syncProgressOuter}>
+          <div>
+            <div className={s.syncProgressLabel}>{t('player.syncingScores')}</div>
+            <div className={s.syncProgressBar}>
               <div className={s.syncProgressInner} style={{ width: `${Math.round(backfillProgress * 100)}%` }} />
             </div>
           </div>
         )}
         {phase === 'history' && (
           <>
-            <div style={{ marginTop: Gap.md }}>
-              <div className={s.syncProgressLabel}>
-                <span>{t('player.syncingScores')}</span><span>100.0%</span>
-              </div>
-              <div className={s.syncProgressOuter}>
+            <div>
+              <div className={s.syncProgressLabel}>{t('player.syncingScores')}</div>
+              <div className={s.syncProgressBar}>
                 <div className={s.syncProgressInner} style={{ width: '100%' }} />
               </div>
             </div>
             {historyProgress > 0 && (
-              <div style={{ marginTop: Gap.sm }}>
-                <div className={s.syncProgressLabel}>
-                  <span>{t('player.buildingHistory')}</span>
-                  <span>{(historyProgress * 100).toFixed(1)}%</span>
-                </div>
-                <div className={s.syncProgressOuter}>
+              <div>
+                <div className={s.syncProgressLabel}>{t('player.buildingHistory')}</div>
+                <div className={s.syncProgressBar}>
                   <div className={s.syncProgressInner} style={{ width: `${Math.round(historyProgress * 100)}%` }} />
                 </div>
               </div>
             )}
           </>
         )}
-      </div>
     </div>
   );
 });
