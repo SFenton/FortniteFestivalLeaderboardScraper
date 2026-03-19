@@ -93,13 +93,3 @@
   gap: var(--gap-xl);
   flex-shrink: 0;
 }
-
-.scoreValue {
-  font-size: var(--font-lg);
-  font-weight: var(--weight-bold);
-  color: var(--color-text-primary);
-  font-variant-numeric: tabular-nums;
-  width: 78px;
-  text-align: right;
-  display: inline-block;
-}

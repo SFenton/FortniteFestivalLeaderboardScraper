@@ -12,6 +12,7 @@ import SongInfo from '../metadata/SongInfo';
 import SeasonPill from '../metadata/SeasonPill';
 import MiniStars from '../metadata/MiniStars';
 import DifficultyBars from '../metadata/DifficultyBars';
+import ScorePill from '../metadata/ScorePill';
 import type { SongSortMode } from '../../../utils/songSettings';
 import s from './SongRow.module.css';
 
@@ -36,7 +37,7 @@ function renderMetadataElement(
   switch (key) {
     case 'score':
       return score.score > 0 ? (
-        <span className={s.scoreValue}>{score.score.toLocaleString()}</span>
+        <ScorePill score={score.score} width="78px" bold />
       ) : null;
     case 'percentage':
       return (score.accuracy ?? 0) > 0 ? (

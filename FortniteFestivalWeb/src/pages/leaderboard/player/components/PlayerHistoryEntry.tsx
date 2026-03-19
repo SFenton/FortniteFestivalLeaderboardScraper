@@ -4,6 +4,7 @@
  */
 import { memo } from 'react';
 import SeasonPill from '../../../../components/songs/metadata/SeasonPill';
+import ScorePill from '../../../../components/songs/metadata/ScorePill';
 import AccuracyDisplay from '../../../../components/songs/metadata/AccuracyDisplay';
 import shared from '../../../../styles/shared.module.css';
 import s from './PlayerHistoryEntry.module.css';
@@ -48,9 +49,7 @@ export const PlayerHistoryEntry = memo(function PlayerHistoryEntry({
         {showSeason && season != null && (
           <SeasonPill season={season} />
         )}
-        <span className={s.colScore} style={scoreWidth ? { width: scoreWidth } : undefined}>
-          {score.toLocaleString()}
-        </span>
+        <ScorePill score={score} width={scoreWidth} />
       </span>
       {showAccuracy && (
         <span className={s.colAcc}>

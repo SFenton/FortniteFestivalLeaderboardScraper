@@ -27,7 +27,7 @@ export function clearScrollCache(key?: string): void {
 export function useScrollRestore(
   scrollRef: RefObject<HTMLElement | null>,
   cacheKey: string,
-  navType: string,
+  _navType: string,
 ): () => void {
   // Restore scroll position on mount when revisiting a page.
   // The saveScroll callback persists position on every scroll, so if a cached

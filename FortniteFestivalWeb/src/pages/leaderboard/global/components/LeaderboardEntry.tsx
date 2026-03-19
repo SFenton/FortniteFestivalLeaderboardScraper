@@ -7,6 +7,7 @@
  */
 import { memo } from 'react';
 import SeasonPill from '../../../../components/songs/metadata/SeasonPill';
+import ScorePill from '../../../../components/songs/metadata/ScorePill';
 import AccuracyDisplay from '../../../../components/songs/metadata/AccuracyDisplay';
 import MiniStars from '../../../../components/songs/metadata/MiniStars';
 import shared from '../../../../styles/shared.module.css';
@@ -60,9 +61,7 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
       <span className={`${s.colName}${bold}`}>{label ?? displayName}</span>
       <span className={s.seasonScoreGroup}>
         {showSeason && season != null && <SeasonPill season={season} />}
-        <span className={s.colScore} style={scoreWidth ? { width: scoreWidth } : undefined}>
-          {score.toLocaleString()}
-        </span>
+        <ScorePill score={score} width={scoreWidth} />
       </span>
       {showAccuracy && (
         <span className={s.colAcc}>
