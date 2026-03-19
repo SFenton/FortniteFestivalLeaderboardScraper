@@ -24,7 +24,7 @@
 
 .colScore {
   flex-shrink: 0;
-  text-align: center;
+  text-align: right;
   font-weight: var(--weight-semibold);
   font-size: var(--font-lg);
   color: var(--color-text-primary);
@@ -48,10 +48,4 @@
   align-items: center;
   justify-content: flex-end;
   gap: 3px;
-}
-
-.starImg {
-  width: var(--size-xs);
-  height: var(--size-xs);
-  object-fit: contain;
 }

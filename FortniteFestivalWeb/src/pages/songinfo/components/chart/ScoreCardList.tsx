@@ -4,9 +4,9 @@
  */
 import { memo } from 'react';
 import { ACCURACY_SCALE } from '@festival/core';
-import { Gap } from '@festival/theme';
-import AccuracyDisplay from '../../../../components/songs/metadata/AccuracyDisplay';
-import SeasonPill from '../../../../components/songs/metadata/SeasonPill';
+import { Gap, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON } from '@festival/theme';
+import { LeaderboardEntry } from '../../../leaderboard/global/components/LeaderboardEntry';
+import { useMediaQuery } from '../../../../hooks/ui/useMediaQuery';
 import type { ChartPoint } from '../../../../hooks/chart/useChartData';
 import s from './ScoreHistoryChart.module.css';
 
@@ -20,6 +20,9 @@ interface Props {
 }
 
 const ScoreCardList = memo(function ScoreCardList({ displayedCards, listHeight, listPhase, scoreWidth }: Props) {
+  const showSeason = useMediaQuery(QUERY_SHOW_SEASON);
+  const showAccuracy = useMediaQuery(QUERY_SHOW_ACCURACY);
+
   if (displayedCards.length === 0 && listHeight === 0) return null;
 
   return (
@@ -47,21 +50,17 @@ const ScoreCardList = memo(function ScoreCardList({ displayedCards, listHeight, 
 
           return (
             <div key={point.date} className={s.scoreListCard} style={animStyle}>
-              <span className={s.scoreCardDate}>
-                {new Date(point.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-              </span>
-              <span className={s.scoreCardMiddle}>
-                {point.season != null && <SeasonPill season={point.season} />}
-                <span className={s.scoreCardScore} style={scoreWidth ? { width: scoreWidth } : undefined}>
-                  {point.score.toLocaleString()}
-                </span>
-              </span>
-              <span className={s.scoreCardAcc}>
-                <AccuracyDisplay
-                  accuracy={point.accuracy * ACCURACY_SCALE}
-                  isFullCombo={!!point.isFullCombo}
-                />
-              </span>
+              <LeaderboardEntry
+                label={new Date(point.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                displayName=""
+                score={point.score}
+                season={point.season}
+                accuracy={point.accuracy * ACCURACY_SCALE}
+                isFullCombo={!!point.isFullCombo}
+                showSeason={showSeason}
+                showAccuracy={showAccuracy}
+                scoreWidth={scoreWidth}
+              />
             </div>
           );
         })}

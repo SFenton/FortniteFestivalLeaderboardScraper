@@ -1,6 +1,16 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import type { ChartPoint } from '../../../../../src/hooks/chart/useChartData';
+
+/** Set window.innerWidth and override matchMedia to evaluate min-width queries. */
+function setViewportWidth(width: number) {
+  Object.defineProperty(window, 'innerWidth', { value: width, writable: true });
+  window.matchMedia = (query: string) => {
+    const match = query.match(/\(min-width:\s*(\d+)px\)/);
+    const matches = match ? width >= Number(match[1]) : false;
+    return { matches, media: query, onchange: null, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, dispatchEvent: () => false } as MediaQueryList;
+  };
+}
 
 vi.mock('../../../../../src/pages/songinfo/components/chart/ScoreHistoryChart.module.css', () => ({
   default: { scoreCardList: 'scoreCardList', scoreListCard: 'scoreListCard', scoreCardDate: 'scoreCardDate', scoreCardScore: 'scoreCardScore' },
@@ -28,6 +38,8 @@ function makePoint(overrides: Partial<ChartPoint> = {}): ChartPoint {
 }
 
 describe('ScoreCardList', () => {
+  beforeEach(() => setViewportWidth(900));
+
   it('returns null when no cards and zero height', () => {
     const { container } = render(
       <ScoreCardList displayedCards={[]} listHeight={0} listPhase="idle" />,
