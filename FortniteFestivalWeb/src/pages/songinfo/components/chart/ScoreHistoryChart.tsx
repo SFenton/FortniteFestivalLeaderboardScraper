@@ -12,20 +12,30 @@ import {
   ResponsiveContainer,
   CartesianGrid,
 } from 'recharts';
-import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, type ServerInstrumentKey as InstrumentKey, serverInstrumentLabel as instrumentLabel, type ServerScoreHistoryEntry as ScoreHistoryEntry } from '@festival/core/api/serverTypes';
+import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, type ServerInstrumentKey as InstrumentKey, serverInstrumentLabel as instrumentLabel, type ServerScoreHistoryEntry as ScoreHistoryEntry, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
 import { CardPhase, ACCURACY_SCALE } from '@festival/core';
 import { InstrumentSelector } from '../../../../components/common/InstrumentSelector';
-import AccuracyDisplay from '../../../../components/songs/metadata/AccuracyDisplay';
-import { Colors, Font, Gap } from '@festival/theme';
+import { LeaderboardEntry } from '../../../leaderboard/global/components/LeaderboardEntry';
+import { Colors, Font, Gap, Size, Layout, Radius, CHART_ANIM_DURATION, CHART_ANIM_SETTLE } from '@festival/theme';
 import s from './ScoreHistoryChart.module.css';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
-import SeasonPill from '../../../../components/songs/metadata/SeasonPill';
 import { useChartData, type ChartPoint } from '../../../../hooks/chart/useChartData';
 import { useChartDimensions } from '../../../../hooks/chart/useChartDimensions';
 import { useChartPagination } from '../../../../hooks/chart/useChartPagination';
 import { useCardAnimation } from '../../../../hooks/chart/useCardAnimation';
 import { useListAnimation } from '../../../../hooks/chart/useListAnimation';
 import ScoreCardList from './ScoreCardList';
+
+/* ── Chart visual constants ── */
+
+/** Shared tick style for all axes. */
+const AXIS_TICK = { fill: Colors.textPrimary, fontSize: Font.md };
+
+/** X-axis tick style (extra downward offset for rotated labels). */
+const X_AXIS_TICK = { ...AXIS_TICK, dy: 16 };
+
+/** X-axis label rotation angle. */
+const X_AXIS_ANGLE = -35;
 
 type ScoreHistoryChartProps = {
   songId: string;
@@ -51,7 +61,7 @@ export default memo(function ScoreHistoryChart({
   const navigate = useNavigate();
   const { t } = useTranslation();
   const isMobile = useIsMobile();
-  const [selected, setSelected] = useState<InstrumentKey>(defaultInstrument ?? 'Solo_Guitar');
+  const [selected, setSelected] = useState<InstrumentKey>(defaultInstrument ?? DEFAULT_INSTRUMENT);
 
   const { songHistory: _songHistory, chartData, loading, instrumentCounts } = useChartData(accountId, songId, selected, historyProp);
 
@@ -79,7 +89,7 @@ export default memo(function ScoreHistoryChart({
     if (pageAnimTimer.current) clearTimeout(pageAnimTimer.current);
     setAnimatingPage(true);
     action();
-    pageAnimTimer.current = setTimeout(() => setAnimatingPage(false), 600);
+    pageAnimTimer.current = setTimeout(() => setAnimatingPage(false), CHART_ANIM_SETTLE);
   }, []);
   /* v8 ignore stop */
 
@@ -105,7 +115,7 @@ export default memo(function ScoreHistoryChart({
   useEffect(() => {
     /* v8 ignore start — instrument fallback logic */
     if ((instrumentCounts[selected] ?? 0) === 0 || !instrumentPool.includes(selected)) {
-      const lead = instrumentPool.find(k => k === 'Solo_Guitar' && (instrumentCounts[k] ?? 0) > 0);
+      const lead = instrumentPool.find(k => k === DEFAULT_INSTRUMENT && (instrumentCounts[k] ?? 0) > 0);
       if (lead) {
         setSelected(lead);
       } else {
@@ -155,8 +165,8 @@ export default memo(function ScoreHistoryChart({
       const entry = entries[0];
       if (!entry) return;
       const width = entry.contentRect.width;
-      // Each button is 64px + gap (10px). Need room for all icons.
-      const needed = availableInstruments.length * 64 + (availableInstruments.length - 1) * 10;
+      const buttonSize = 64; // matches --size-3xl (icon button width)
+      const needed = availableInstruments.length * buttonSize + (availableInstruments.length - 1) * Gap.lg;
       setCompact(width < needed);
     });
     ro.observe(el);
@@ -170,7 +180,7 @@ export default memo(function ScoreHistoryChart({
       <div className={s.chartContainer} ref={chartContainerRef}>
         {/* Instrument icons */}
         {availableInstruments.length > 1 && (
-          <div ref={iconRowRef}>
+          <div ref={iconRowRef} className={s.iconRowWrap}>
             <InstrumentSelector
               instruments={selectorItems}
               selected={selected}
@@ -198,11 +208,11 @@ export default memo(function ScoreHistoryChart({
         {!loading && chartData.length > 0 && (
           <ResponsiveContainer
             width="100%"
-            height={320}
+            height={Size.chartHeight}
           >
             <ComposedChart
               data={visibleChartData}
-              margin={{ top: 16, right: 24, bottom: 0, left: 24 }}
+              margin={Layout.chartMargin}
               barCategoryGap="10%"
             >
               <CartesianGrid
@@ -213,27 +223,23 @@ export default memo(function ScoreHistoryChart({
               />
               <XAxis
                 dataKey="dateLabel"
-                tick={{ fill: '#fff', fontSize: Font.md, dy: 16 }}
+                tick={X_AXIS_TICK}
                 stroke={Colors.borderSubtle}
-                axisLine={false}
-                tickLine={false}
-                angle={-35}
+                angle={X_AXIS_ANGLE}
                 textAnchor="end"
                 interval="preserveStartEnd"
               />
               <YAxis
                 yAxisId="score"
-                tick={{ fill: '#fff', fontSize: Font.md }}
+                tick={AXIS_TICK}
                 stroke={Colors.borderSubtle}
-                axisLine={false}
-                tickLine={false}
                 tickFormatter={(v: number) =>
                   v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)
                 }
                 label={({ viewBox }: { viewBox: { x: number; y: number; height: number } }) => {
                   const cy = viewBox.y + viewBox.height / 2;
                   return (
-                    <text x={viewBox.x - 8} y={cy} fill="#fff" fontSize={Font.md} textAnchor="middle" dominantBaseline="central" transform={`rotate(-90, ${viewBox.x - 8}, ${cy})`}>{t('chart.score')}</text>
+                    <text x={viewBox.x - Layout.axisLabelOffset} y={cy} fill={Colors.textPrimary} fontSize={Font.md} textAnchor="middle" dominantBaseline="central" transform={`rotate(-90, ${viewBox.x - Layout.axisLabelOffset}, ${cy})`}>{t('chart.score')}</text>
                   );
                 }}
               />
@@ -242,16 +248,14 @@ export default memo(function ScoreHistoryChart({
                 orientation="right"
                 domain={[0, 100]}
                 padding={{ top: 4 }}
-                tick={{ fill: '#fff', fontSize: Font.md }}
+                tick={AXIS_TICK}
                 stroke={Colors.borderSubtle}
-                axisLine={false}
-                tickLine={false}
                 tickFormatter={(v: number) => `${v}%`}
                 label={({ viewBox }: { viewBox: { x: number; y: number; width: number; height: number } }) => {
                   const cy = viewBox.y + viewBox.height / 2;
-                  const lx = viewBox.x + viewBox.width + 8;
+                  const lx = viewBox.x + viewBox.width + Layout.axisLabelOffset;
                   return (
-                    <text x={lx} y={cy} fill="#fff" fontSize={Font.md} textAnchor="middle" dominantBaseline="central" transform={`rotate(90, ${lx}, ${cy})`}>{t('chart.accuracy')}</text>
+                    <text x={lx} y={cy} fill={Colors.textPrimary} fontSize={Font.md} textAnchor="middle" dominantBaseline="central" transform={`rotate(90, ${lx}, ${cy})`}>{t('chart.accuracy')}</text>
                   );
                 }}
               />
@@ -291,9 +295,9 @@ export default memo(function ScoreHistoryChart({
                 yAxisId="accuracy"
                 dataKey="accuracy"
                 name={t('chart.accuracy')}
-                radius={[4, 4, 0, 0]}
+                radius={Radius.barCorner}
                 isAnimationActive={chartAnimActive}
-                animationDuration={400}
+                animationDuration={CHART_ANIM_DURATION}
                 onClick={(_data: Record<string, unknown>, index: number) => {
                   const point = visibleChartData[index];
                   if (!point) return;
@@ -312,15 +316,14 @@ export default memo(function ScoreHistoryChart({
                     fill = Colors.gold;
                     fillOp = 1;
                   } else {
-                    // Linear red→green based on accuracy (0–100%)
                     const t = Math.min(Math.max(acc / 100, 0), 1);
-                    const r = Math.round(220 * (1 - t) + 46 * t);
-                    const g = Math.round(40 * (1 - t) + 204 * t);
-                    const b = Math.round(40 * (1 - t) + 113 * t);
+                    const r = Math.round(Colors.accuracyLow.r * (1 - t) + Colors.accuracyHigh.r * t);
+                    const g = Math.round(Colors.accuracyLow.g * (1 - t) + Colors.accuracyHigh.g * t);
+                    const b = Math.round(Colors.accuracyLow.b * (1 - t) + Colors.accuracyHigh.b * t);
                     fill = `rgb(${r},${g},${b})`;
                     fillOp = 1;
                   }
-                  const rad = 4;
+                  const rad = Radius.barCorner[0];
                   const { x, y, width: w, height: h } = point;
                   const path = `M${x + rad},${y + h} Q${x},${y + h} ${x},${y + h - rad} L${x},${y + rad} Q${x},${y} ${x + rad},${y} L${x + w - rad},${y} Q${x + w},${y} ${x + w},${y + rad} L${x + w},${y + h - rad} Q${x + w},${y + h} ${x + w - rad},${y + h} Z`;
                   return (
@@ -342,10 +345,10 @@ export default memo(function ScoreHistoryChart({
                 name={t('chart.score')}
                 stroke={Colors.accentBlueBright}
                 strokeWidth={2}
-                dot={{ fill: Colors.accentBlueBright, r: 4 }}
-                activeDot={isMobile ? false : { r: 6, fill: Colors.accentBlue }}
+                dot={{ fill: Colors.accentBlueBright, r: Size.dotRadius }}
+                activeDot={isMobile ? false : { r: Size.dotRadiusActive, fill: Colors.accentBlue }}
                 isAnimationActive={chartAnimActive}
-                animationDuration={400}
+                animationDuration={CHART_ANIM_DURATION}
               />
             </ComposedChart>
           </ResponsiveContainer>
@@ -374,23 +377,17 @@ export default memo(function ScoreHistoryChart({
                   transform: (cardPhase === CardPhase.Open || cardPhase === CardPhase.SwapIn) ? 'translateY(0)' : (cardPhase === CardPhase.SwapOut ? 'translateY(-6px)' : undefined),
                   transition: (cardPhase === CardPhase.SwapOut || cardPhase === CardPhase.SwapIn) ? 'opacity 0.12s ease, transform 0.12s ease' : 'none',
                 }}>
-                  <span className={s.scoreCardDate}>
-                    {new Date(displayedPoint.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                  </span>
-                  <span className={s.scoreCardMiddle}>
-                    {displayedPoint.season != null && (
-                      <SeasonPill season={displayedPoint.season} />
-                    )}
-                    <span className={s.scoreCardScore} style={{ width: scoreWidthProp }}>
-                      {displayedPoint.score.toLocaleString()}
-                    </span>
-                  </span>
-                  <span className={s.scoreCardAcc}>
-                    <AccuracyDisplay
-                      accuracy={displayedPoint.accuracy * ACCURACY_SCALE}
-                      isFullCombo={!!displayedPoint.isFullCombo}
-                    />
-                  </span>
+                  <LeaderboardEntry
+                    label={new Date(displayedPoint.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    displayName=""
+                    score={displayedPoint.score}
+                    season={displayedPoint.season}
+                    accuracy={displayedPoint.accuracy * ACCURACY_SCALE}
+                    isFullCombo={!!displayedPoint.isFullCombo}
+                    showSeason={displayedPoint.season != null}
+                    showAccuracy
+                    scoreWidth={scoreWidthProp}
+                  />
                 </div>
               </div>
             )}
@@ -401,8 +398,7 @@ export default memo(function ScoreHistoryChart({
         {!loading && needsPagination && (
           <div className={s.chartPagination}>
             <button
-              className={backDisabled ? s.chartPageButtonDisabled : s.chartPageButton} style={{
-              }}
+              className={backDisabled ? s.chartPageButtonDisabled : s.chartPageButton}
               disabled={backDisabled}
               onClick={() => {
                 const target = selectedIndex - maxBars;
@@ -420,8 +416,7 @@ export default memo(function ScoreHistoryChart({
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M9 3L4 8L9 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M14 3L9 8L14 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
             <button
-              className={backDisabled ? s.chartPageButtonDisabled : s.chartPageButton} style={{
-              }}
+              className={backDisabled ? s.chartPageButtonDisabled : s.chartPageButton}
               disabled={backDisabled}
               onClick={() => {
                 const target = selectedIndex - 1;
@@ -439,9 +434,7 @@ export default memo(function ScoreHistoryChart({
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
             <button
-              className={forwardDisabled ? s.chartPageButtonDisabled : s.chartPageButton} style={{
-                marginLeft: Gap.md,
-              }}
+              className={forwardDisabled ? s.chartPageButtonDisabled : s.chartPageButton}
               disabled={forwardDisabled}
               onClick={() => {
                 const target = selectedIndex + 1;
@@ -459,8 +452,7 @@ export default memo(function ScoreHistoryChart({
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
             <button
-              className={forwardDisabled ? s.chartPageButtonDisabled : s.chartPageButton} style={{
-              }}
+              className={forwardDisabled ? s.chartPageButtonDisabled : s.chartPageButton}
               disabled={forwardDisabled}
               onClick={() => {
                 const target = selectedIndex + maxBars;

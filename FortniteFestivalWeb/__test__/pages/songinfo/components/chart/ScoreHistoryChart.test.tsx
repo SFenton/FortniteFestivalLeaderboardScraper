@@ -35,8 +35,8 @@ vi.mock('recharts', () => ({
   ComposedChart: ({ children }: any) => <div data-testid="composed-chart">{children}</div>,
   Bar: () => <div data-testid="bar" />,
   Line: () => <div data-testid="line" />,
-  XAxis: () => null,
-  YAxis: () => null,
+  XAxis: (props: any) => <div data-testid="xaxis" data-axisline={String(props.axisLine ?? true)} data-tickline={String(props.tickLine ?? true)} />,
+  YAxis: (props: any) => <div data-testid={`yaxis-${props.yAxisId ?? 'default'}`} data-axisline={String(props.axisLine ?? true)} data-tickline={String(props.tickLine ?? true)} />,
   Tooltip: () => null,
   Legend: ({ content: Content }: any) => Content ? <Content /> : null,
   ResponsiveContainer: ({ children }: any) => <div data-testid="responsive-container">{children}</div>,
@@ -126,6 +126,27 @@ describe('ScoreHistoryChart', () => {
     });
     renderChart();
     expect(screen.getByText('Score History')).toBeTruthy();
+  });
+
+  it('renders axes with visible axis lines and tick lines', () => {
+    mockChartData.useChartData.mockReturnValue({
+      songHistory: [{}],
+      chartData: [
+        { date: '2024-01-01', dateLabel: 'Jan 1', timestamp: 0, score: 100000, accuracy: 95, isFullCombo: false },
+      ],
+      loading: false,
+      instrumentCounts: { Solo_Guitar: 1 },
+    });
+    renderChart();
+    const xaxis = screen.getByTestId('xaxis');
+    expect(xaxis.dataset.axisline).toBe('true');
+    expect(xaxis.dataset.tickline).toBe('true');
+    const scoreAxis = screen.getByTestId('yaxis-score');
+    expect(scoreAxis.dataset.axisline).toBe('true');
+    expect(scoreAxis.dataset.tickline).toBe('true');
+    const accAxis = screen.getByTestId('yaxis-accuracy');
+    expect(accAxis.dataset.axisline).toBe('true');
+    expect(accAxis.dataset.tickline).toBe('true');
   });
 
   it('renders chart hint text', () => {

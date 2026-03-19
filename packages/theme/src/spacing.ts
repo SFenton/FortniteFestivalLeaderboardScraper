@@ -4,6 +4,7 @@ export const Radius = {
   md: 12,
   lg: 16,
   full: 999,
+  barCorner: [4, 4, 0, 0] as readonly [number, number, number, number],
 } as const;
 
 export const Font = {
@@ -58,6 +59,9 @@ export const Size = {
   albumArtExpanded: 120,
   control: 34,
   pillMinWidth: 80,
+  chartHeight: 320,
+  dotRadius: 4,
+  dotRadiusActive: 6,
 } as const;
 
 export const MaxWidth = {
@@ -71,4 +75,6 @@ export const Layout = {
   paddingTop: 16,
   paddingBottom: 4,
   fabPaddingBottom: 96,
+  chartMargin: { top: 16, right: 24, bottom: 0, left: 24 },
+  axisLabelOffset: 8,
 } as const;

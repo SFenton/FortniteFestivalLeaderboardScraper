@@ -1,5 +1,9 @@
 .wrapper {}
 
+.iconRowWrap {
+  width: 100%;
+}
+
 .iconRow {
   display: flex;
   justify-content: center;
@@ -74,7 +78,7 @@
   justify-content: center;
   gap: var(--gap-xl);
   font-size: var(--font-md);
-  color: #fff;
+  color: var(--color-text-primary);
   padding-top: 36px;
 }
 
@@ -106,7 +110,7 @@
 }
 
 .chartTitle {
-  color: #fff;
+  color: var(--color-text-primary);
   font-size: var(--font-title);
   font-weight: var(--weight-bold);
 }
