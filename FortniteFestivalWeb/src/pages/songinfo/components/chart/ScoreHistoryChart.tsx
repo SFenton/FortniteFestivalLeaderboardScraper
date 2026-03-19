@@ -328,11 +328,12 @@ export default memo(function ScoreHistoryChart({
                   const path = `M${x + rad},${y + h} Q${x},${y + h} ${x},${y + h - rad} L${x},${y + rad} Q${x},${y} ${x + rad},${y} L${x + w - rad},${y} Q${x + w},${y} ${x + w},${y + rad} L${x + w},${y + h - rad} Q${x + w},${y + h} ${x + w - rad},${y + h} Z`;
                   return (
                     <path
+                      className={s.chartBar}
                       d={path}
                       fill={fill}
                       fillOpacity={fillOp}
-                      stroke={isSelected ? Colors.accentPurple : 'none'}
-                      strokeWidth={isSelected ? 3 : 0}
+                      stroke={isSelected ? Colors.accentPurple : 'transparent'}
+                      strokeWidth={Size.barSelectionStroke}
                     />
                   );
                 }}

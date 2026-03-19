@@ -63,6 +63,7 @@ export const Size = {
   chartHeight: 320,
   dotRadius: 4,
   dotRadiusActive: 6,
+  barSelectionStroke: 3,
 } as const;
 
 export const MaxWidth = {

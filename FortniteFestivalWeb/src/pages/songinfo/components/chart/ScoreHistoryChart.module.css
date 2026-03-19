@@ -1,5 +1,9 @@
 .wrapper {}
 
+.chartBar {
+  transition: stroke var(--duration-fast) ease;
+}
+
 .iconRowWrap {
   width: 100%;
 }
