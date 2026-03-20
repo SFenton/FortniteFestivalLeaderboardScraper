@@ -26,16 +26,9 @@ public sealed class ScraperWorker : BackgroundService
     private readonly TokenManager _tokenManager;
     private readonly GlobalLeaderboardScraper _globalScraper;
     private readonly GlobalLeaderboardPersistence _persistence;
-    private readonly AccountNameResolver _nameResolver;
-    private readonly PersonalDbBuilder _personalDbBuilder;
-    private readonly ScoreBackfiller _backfiller;
-    private readonly BackfillQueue _backfillQueue;
-    private readonly PostScrapeRefresher _refresher;
-    private readonly HistoryReconstructor _historyReconstructor;
-    private readonly FirstSeenSeasonCalculator _firstSeenCalculator;
     private readonly FestivalService _festivalService;
-    private readonly NotificationService _notifications;
-    private readonly TokenVault _tokenVault;
+    private readonly PostScrapeOrchestrator _postScrapeOrchestrator;
+    private readonly BackfillOrchestrator _backfillOrchestrator;
     private readonly PathGenerator _pathGenerator;
     private readonly PathDataStore _pathDataStore;
     private readonly ScrapeProgressTracker _progress;
@@ -50,16 +43,9 @@ public sealed class ScraperWorker : BackgroundService
         TokenManager tokenManager,
         GlobalLeaderboardScraper globalScraper,
         GlobalLeaderboardPersistence persistence,
-        AccountNameResolver nameResolver,
-        PersonalDbBuilder personalDbBuilder,
-        ScoreBackfiller backfiller,
-        BackfillQueue backfillQueue,
-        PostScrapeRefresher refresher,
-        HistoryReconstructor historyReconstructor,
-        FirstSeenSeasonCalculator firstSeenCalculator,
         FestivalService festivalService,
-        NotificationService notifications,
-        TokenVault tokenVault,
+        PostScrapeOrchestrator postScrapeOrchestrator,
+        BackfillOrchestrator backfillOrchestrator,
         PathGenerator pathGenerator,
         PathDataStore pathDataStore,
         ScrapeProgressTracker progress,
@@ -70,16 +56,9 @@ public sealed class ScraperWorker : BackgroundService
         _tokenManager = tokenManager;
         _globalScraper = globalScraper;
         _persistence = persistence;
-        _nameResolver = nameResolver;
-        _personalDbBuilder = personalDbBuilder;
-        _backfiller = backfiller;
-        _backfillQueue = backfillQueue;
-        _refresher = refresher;
-        _historyReconstructor = historyReconstructor;
-        _firstSeenCalculator = firstSeenCalculator;
         _festivalService = festivalService;
-        _notifications = notifications;
-        _tokenVault = tokenVault;
+        _postScrapeOrchestrator = postScrapeOrchestrator;
+        _backfillOrchestrator = backfillOrchestrator;
         _pathGenerator = pathGenerator;
         _pathDataStore = pathDataStore;
         _progress = progress;
@@ -185,7 +164,7 @@ public sealed class ScraperWorker : BackgroundService
                 catch (Exception ex) { _log.LogWarning(ex, "DIAG: V2 lookup failed"); }
             }
 
-            await RunBackfillPhaseAsync(_festivalService, stoppingToken);
+            await _backfillOrchestrator.RunBackfillAsync(_festivalService, stoppingToken);
             _log.LogInformation("Backfill enrichment complete.");
             return;
         }
@@ -315,7 +294,7 @@ public sealed class ScraperWorker : BackgroundService
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ResolvingNames);
         try
         {
-            var resolved = await _nameResolver.ResolveNewAccountsAsync(maxConcurrency: 8, ct);
+            var resolved = await _postScrapeOrchestrator.ResolveNamesAsync(maxConcurrency: 8, ct);
             _log.LogInformation("--resolve-only complete. {Resolved} account(s) resolved.", resolved);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -459,158 +438,21 @@ public sealed class ScraperWorker : BackgroundService
         catch (OperationCanceledException) { /* expected on shutdown */ }
         catch (Exception ex) { _log.LogError(ex, "Path generation task faulted during scrape pass."); }
 
-        // ── Post-pass: parallel enrichment (ranks + first-seen + name resolution) ──
-        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.PostScrapeEnrichment);
-
-        // These three operations have zero mutual dependencies — run in parallel.
-        var rankTask = Task.Run(() =>
+        // ── Post-pass: enrichment, refresh, backfill, history recon, cleanup ──
+        var ctx = new ScrapePassContext
         {
-            try
-            {
-                var rankUpdated = _persistence.RecomputeAllRanks();
-                _log.LogInformation("Recomputed ranks across all instruments: {Count:N0} entries updated.", rankUpdated);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _log.LogWarning(ex, "Rank recomputation failed. Stored ranks may be stale.");
-            }
-        }, ct);
+            AccessToken = accessToken,
+            CallerAccountId = _tokenManager.AccountId!,
+            RegisteredIds = registeredIds,
+            Aggregates = aggregates,
+            ScrapeRequests = scrapeRequests,
+            DegreeOfParallelism = opts.DegreeOfParallelism,
+        };
 
-        var firstSeenTask = Task.Run(async () =>
-        {
-            try
-            {
-                var firstSeenToken = await _tokenManager.GetAccessTokenAsync(ct);
-                if (firstSeenToken is not null)
-                {
-                    var firstSeenCount = await _firstSeenCalculator.CalculateAsync(
-                        service, firstSeenToken, _tokenManager.AccountId!,
-                        opts.DegreeOfParallelism, ct);
-                    if (firstSeenCount > 0)
-                        _log.LogInformation("Calculated FirstSeenSeason for {Count} song(s).", firstSeenCount);
-                }
-                else
-                {
-                    _log.LogWarning("No access token for FirstSeenSeason calculation. Will retry next pass.");
-                }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _log.LogWarning(ex, "FirstSeenSeason calculation failed. Will retry next pass.");
-            }
-        }, ct);
+        await _postScrapeOrchestrator.RunAsync(ctx, service, ct);
 
-        var nameResTask = Task.Run(async () =>
-        {
-            try
-            {
-                await _nameResolver.ResolveNewAccountsAsync(maxConcurrency: 8, ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _log.LogWarning(ex, "Account name resolution failed. Will retry next pass.");
-            }
-        }, ct);
-
-        await Task.WhenAll(rankTask, firstSeenTask, nameResTask);
-
-        // ── Post-pass: rebuild personal DBs for registered users with score changes ──
-        if (aggregates.ChangedAccountIds.Count > 0)
-        {
-            _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.RebuildingPersonalDbs);
-            try
-            {
-                var changedIds = new HashSet<string>(aggregates.ChangedAccountIds, StringComparer.OrdinalIgnoreCase);
-                var rebuilt = _personalDbBuilder.RebuildForAccounts(changedIds, _persistence.Meta);
-                if (rebuilt > 0)
-                {
-                    _log.LogInformation("Rebuilt {Count} personal DB(s) for users with score changes.", rebuilt);
-
-                    // Notify connected clients their personal DBs have been updated
-                    foreach (var changedId in changedIds)
-                    {
-                        try { await _notifications.NotifyPersonalDbReadyAsync(changedId); }
-                        catch { /* best effort */ }
-                    }
-                }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _log.LogWarning(ex, "Personal DB rebuild failed. Will retry next pass.");
-            }
-        }
-
-        // ── Post-pass: refresh stale/missing entries for registered users ──
-        if (registeredIds.Count > 0)
-        {
-            _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.RefreshingRegisteredUsers);
-            try
-            {
-                var seenSet = new HashSet<(string AccountId, string SongId, string Instrument)>(
-                    aggregates.SeenRegisteredEntries);
-                var chartedSongIds = scrapeRequests.Select(r => r.SongId).ToList();
-
-                var refreshToken = await _tokenManager.GetAccessTokenAsync(ct);
-                if (refreshToken is not null)
-                {
-                    var refreshed = await _refresher.RefreshAllAsync(
-                        registeredIds, seenSet, chartedSongIds,
-                        refreshToken, _tokenManager.AccountId!,
-                        opts.DegreeOfParallelism, ct);
-                    if (refreshed > 0)
-                        _log.LogInformation("Post-scrape refresh updated {Count} entries for registered users.", refreshed);
-                }
-                else
-                {
-                    _log.LogWarning("No access token for post-scrape refresh. Will retry next pass.");
-                }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _log.LogWarning(ex, "Post-scrape refresh failed. Will retry next pass.");
-            }
-        }
-
-        // ── Post-pass: backfill missing scores for registered users ──
-        await RunBackfillPhaseAsync(service, ct);
-
-        // ── Post-pass: reconstruct score history for registered users (one-time) ──
-        await RunHistoryReconPhaseAsync(ct);
-
-        // ── Post-pass: clean up expired/revoked auth sessions ──
-        try
-        {
-            var cleaned = _persistence.Meta.CleanupExpiredSessions(DateTime.UtcNow.AddDays(-7));
-            if (cleaned > 0)
-                _log.LogInformation("Cleaned up {Count} expired/revoked auth session(s).", cleaned);
-
-            // Auto-unregister accounts whose sessions have all expired.
-            // This stops backfill, personal DB builds, and post-scrape refreshes
-            // for users who haven't opened the app since their refresh token expired.
-            // They'll re-register automatically on their next login.
-            var orphaned = _persistence.Meta.GetOrphanedRegisteredAccounts();
-            foreach (var orphanedAccountId in orphaned)
-            {
-                var deviceIds = _persistence.Meta.UnregisterAccount(orphanedAccountId);
-                foreach (var deviceId in deviceIds)
-                {
-                    var dbPath = _personalDbBuilder.GetPersonalDbPath(orphanedAccountId, deviceId);
-                    if (File.Exists(dbPath))
-                        File.Delete(dbPath);
-                }
-
-                _tokenVault.Revoke(orphanedAccountId);
-
-                var displayName = _persistence.Meta.GetDisplayName(orphanedAccountId);
-                _log.LogInformation(
-                    "Auto-unregistered {DisplayName} ({AccountId}) — all sessions expired ({DeviceCount} device(s) removed).",
-                    displayName ?? orphanedAccountId, orphanedAccountId, deviceIds.Count);
-            }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogWarning(ex, "Auth session cleanup failed. Will retry next pass.");
-        }
+        await _backfillOrchestrator.RunBackfillAsync(service, ct);
+        await _backfillOrchestrator.RunHistoryReconAsync(ct);
 
         _progress.EndPass();
     }
@@ -688,191 +530,6 @@ public sealed class ScraperWorker : BackgroundService
             _progress.EndPathGeneration();
             _log.LogWarning(ex, "Path generation failed. Scraping continues unaffected.");
         }
-    }
-
-    // ─── Backfill phase ─────────────────────────────────────────
-
-    /// <summary>
-    /// Run backfills for any queued accounts (from login/registration) and
-    /// also resume any in-progress backfills that were interrupted.
-    /// </summary>
-    private async Task RunBackfillPhaseAsync(FestivalService service, CancellationToken ct)
-    {
-        // Drain any newly queued requests from login
-        var queued = _backfillQueue.DrainAll();
-
-        // Also pick up any pending/in_progress backfills from the DB
-        var pending = _persistence.Meta.GetPendingBackfills();
-
-        // Merge: create a distinct set of account IDs to process
-        var accountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var req in queued) accountIds.Add(req.AccountId);
-        foreach (var bf in pending) accountIds.Add(bf.AccountId);
-
-        if (accountIds.Count == 0) return;
-
-        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.BackfillingScores);
-
-        var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
-        if (accessToken is null)
-        {
-            _log.LogWarning("No access token available for backfill. Will retry next pass.");
-            // Re-enqueue so they're not lost
-            foreach (var id in accountIds) _backfillQueue.Enqueue(new BackfillRequest(id));
-            return;
-        }
-
-        var callerAccountId = _tokenManager.AccountId!;
-
-        foreach (var accountId in accountIds)
-        {
-            ct.ThrowIfCancellationRequested();
-            try
-            {
-                var found = await _backfiller.BackfillAccountAsync(
-                    accountId, service, accessToken, callerAccountId,
-                    _options.Value.DegreeOfParallelism, ct);
-
-                // Rebuild personal DB for this user if we found new entries
-                if (found > 0)
-                {
-                    try
-                    {
-                        _personalDbBuilder.RebuildForAccounts(
-                            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { accountId },
-                            _persistence.Meta);
-
-                        // Notify connected clients that their personal DB is ready
-                        await _notifications.NotifyBackfillCompleteAsync(accountId);
-                        await _notifications.NotifyPersonalDbReadyAsync(accountId);
-                    }
-                    catch (Exception ex)
-                    {
-                        _log.LogWarning(ex, "Personal DB rebuild after backfill failed for {AccountId}.", accountId);
-                    }
-                }
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                _log.LogError(ex, "Backfill failed for {AccountId}. Will retry next pass.", accountId);
-            }
-        }
-    }
-
-    // ─── History Reconstruction phase ───────────────────────────
-
-    /// <summary>
-    /// Run history reconstruction for registered users whose backfill is complete
-    /// but whose history hasn't been reconstructed yet.
-    /// </summary>
-    private async Task RunHistoryReconPhaseAsync(CancellationToken ct)
-    {
-        // Find accounts with completed backfill but no completed history recon
-        var registeredIds = _persistence.Meta.GetRegisteredAccountIds();
-        if (registeredIds.Count == 0) return;
-
-        var accountsToReconstruct = new List<string>();
-        foreach (var accountId in registeredIds)
-        {
-            var backfillStatus = _persistence.Meta.GetBackfillStatus(accountId);
-            if (backfillStatus?.Status != "complete") continue; // Backfill must finish first
-
-            var reconStatus = _persistence.Meta.GetHistoryReconStatus(accountId);
-            if (reconStatus?.Status == "complete") continue; // Already reconstructed
-
-            accountsToReconstruct.Add(accountId);
-        }
-
-        if (accountsToReconstruct.Count == 0) return;
-
-        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ReconstructingHistory);
-
-        var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
-        if (accessToken is null)
-        {
-            _log.LogWarning("No access token available for history reconstruction. Will retry next pass.");
-            return;
-        }
-
-        var callerAccountId = _tokenManager.AccountId!;
-
-        // Discover season windows (cached after first call)
-        IReadOnlyList<Persistence.SeasonWindowInfo> seasonWindows;
-        try
-        {
-            seasonWindows = await _historyReconstructor.DiscoverSeasonWindowsAsync(
-                accessToken, callerAccountId, ct);
-
-            if (seasonWindows.Count == 0)
-            {
-                _log.LogWarning("No season windows discovered. Skipping history reconstruction.");
-                return;
-            }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogWarning(ex, "Season window discovery failed. Will retry next pass.");
-            return;
-        }
-
-        // Create a shared adaptive concurrency limiter so all users share the same
-        // API call budget. This prevents overwhelming Epic's API when multiple users
-        // are being reconstructed simultaneously.
-        var dop = _options.Value.DegreeOfParallelism;
-        int initialDop = Math.Max(1, dop / 2);
-        int maxDop = dop * 2;
-        using var sharedLimiter = new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: maxDop, _log);
-        _progress.SetAdaptiveLimiter(sharedLimiter);
-
-        _log.LogInformation(
-            "Reconstructing history for {Count} account(s) in parallel with shared limiter (initial DOP={InitialDop}, max={MaxDop}).",
-            accountsToReconstruct.Count, initialDop, maxDop);
-
-        // Process all users in parallel. The shared AdaptiveConcurrencyLimiter
-        // controls total API concurrency across all users, so there's no need
-        // to limit how many users run concurrently at the task level.
-        var userTasks = accountsToReconstruct.Select(accountId => Task.Run(async () =>
-        {
-            ct.ThrowIfCancellationRequested();
-            try
-            {
-                var entries = await _historyReconstructor.ReconstructAccountAsync(
-                    accountId, seasonWindows, accessToken, callerAccountId,
-                    dop, sharedLimiter, ct);
-
-                if (entries > 0)
-                {
-                    _log.LogInformation(
-                        "History reconstruction for {AccountId}: {Entries} score history entries created.",
-                        accountId, entries);
-
-                    // Rebuild personal DB to include new history
-                    try
-                    {
-                        _personalDbBuilder.RebuildForAccounts(
-                            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { accountId },
-                            _persistence.Meta);
-
-                        // Notify connected clients that history recon is done and DB is ready
-                        await _notifications.NotifyHistoryReconCompleteAsync(accountId);
-                        await _notifications.NotifyPersonalDbReadyAsync(accountId);
-                    }
-                    catch (Exception ex)
-                    {
-                        _log.LogWarning(ex, "Personal DB rebuild after history recon failed for {AccountId}.", accountId);
-                    }
-                }
-            }
-            catch (OperationCanceledException) { /* propagated via WhenAll */ }
-            catch (Exception ex)
-            {
-                _log.LogError(ex, "History reconstruction failed for {AccountId}. Will retry next pass.", accountId);
-                _persistence.Meta.FailHistoryRecon(accountId, ex.Message);
-            }
-        }, ct)).ToList();
-
-        await Task.WhenAll(userTasks);
     }
 
     // ─── Cached page estimate ───────────────────────────────────

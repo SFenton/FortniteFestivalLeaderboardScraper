@@ -169,6 +169,8 @@ builder.Services.AddSingleton<ScoreBackfiller>();
 builder.Services.AddSingleton<PostScrapeRefresher>();
 builder.Services.AddSingleton<FirstSeenSeasonCalculator>();
 builder.Services.AddSingleton<FSTService.Api.NotificationService>();
+builder.Services.AddSingleton<PostScrapeOrchestrator>();
+builder.Services.AddSingleton<BackfillOrchestrator>();
 
 builder.Services.AddHttpClient<HistoryReconstructor>()
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler

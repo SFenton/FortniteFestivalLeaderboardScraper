@@ -144,14 +144,42 @@ public class ScraperWorkerModeTests : IDisposable
         var pathDataStore = new PathDataStore(
             Path.Combine(_tempDir, "core.db"));
 
+        var notifications = new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>());
+
+        var postScrapeOrchestrator = new PostScrapeOrchestrator(
+            _persistence, _firstSeenCalculator, _nameResolver,
+            _personalDbBuilder, _refresher, notifications, _tokenVault,
+            _tokenManager, _progress,
+            Substitute.For<ILogger<PostScrapeOrchestrator>>());
+
+        var backfillOrchestrator = new BackfillOrchestrator(
+            _backfiller, _backfillQueue, _historyReconstructor,
+            _personalDbBuilder, notifications, _persistence,
+            _tokenManager, _progress, options,
+            Substitute.For<ILogger<BackfillOrchestrator>>());
+
         return new ScraperWorker(
-            _tokenManager, _scraper, _persistence, _nameResolver,
-            _personalDbBuilder, _backfiller, _backfillQueue, _refresher,
-            _historyReconstructor, _firstSeenCalculator, _festivalService,
-            new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()),
-            _tokenVault,
+            _tokenManager, _scraper, _persistence,
+            _festivalService,
+            postScrapeOrchestrator, backfillOrchestrator,
             pathGenerator, pathDataStore,
             _progress, options, _lifetime, _log);
+    }
+
+    private BackfillOrchestrator CreateBackfillOrchestrator(ScraperOptions? opts = null)
+    {
+        var options = Options.Create(opts ?? new ScraperOptions
+        {
+            DataDirectory = _tempDir,
+            DatabasePath = Path.Combine(_tempDir, "core.db"),
+            DeviceAuthPath = Path.Combine(_tempDir, "device.json"),
+        });
+        var notifications = new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>());
+        return new BackfillOrchestrator(
+            _backfiller, _backfillQueue, _historyReconstructor,
+            _personalDbBuilder, notifications, _persistence,
+            _tokenManager, _progress, options,
+            Substitute.For<ILogger<BackfillOrchestrator>>());
     }
 
     /// <summary>Invoke a private async method on ScraperWorker via reflection.</summary>
@@ -324,10 +352,9 @@ public class ScraperWorkerModeTests : IDisposable
     [Fact]
     public async Task RunBackfillPhase_NothingQueued_ReturnsEarly()
     {
-        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
-        var worker = CreateWorker();
+        var orchestrator = CreateBackfillOrchestrator();
 
-        await InvokePrivateAsync(worker, "RunBackfillPhaseAsync", service, CancellationToken.None);
+        await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
 
         await _backfiller.DidNotReceive().BackfillAccountAsync(
             Arg.Any<string>(), Arg.Any<FestivalService>(),
@@ -342,10 +369,9 @@ public class ScraperWorkerModeTests : IDisposable
         _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<string?>(null));
 
-        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
-        var worker = CreateWorker();
+        var orchestrator = CreateBackfillOrchestrator();
 
-        await InvokePrivateAsync(worker, "RunBackfillPhaseAsync", service, CancellationToken.None);
+        await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
 
         // Should not have called backfiller
         await _backfiller.DidNotReceive().BackfillAccountAsync(
@@ -371,13 +397,12 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlySet<string>>(), Arg.Any<MetaDatabase>())
             .Returns(1);
 
-        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
-        var worker = CreateWorker();
+        var orchestrator = CreateBackfillOrchestrator();
 
-        await InvokePrivateAsync(worker, "RunBackfillPhaseAsync", service, CancellationToken.None);
+        await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
 
         await _backfiller.Received(1).BackfillAccountAsync(
-            "acct1", service, "token", "callerAcct", ct: Arg.Any<CancellationToken>());
+            "acct1", _festivalService, "token", "callerAcct", ct: Arg.Any<CancellationToken>());
         _personalDbBuilder.Received(1).RebuildForAccounts(
             Arg.Any<IReadOnlySet<string>>(), Arg.Any<MetaDatabase>());
     }
@@ -396,10 +421,9 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(0));
 
-        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
-        var worker = CreateWorker();
+        var orchestrator = CreateBackfillOrchestrator();
 
-        await InvokePrivateAsync(worker, "RunBackfillPhaseAsync", service, CancellationToken.None);
+        await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
 
         _personalDbBuilder.DidNotReceive().RebuildForAccounts(
             Arg.Any<IReadOnlySet<string>>(), Arg.Any<MetaDatabase>());
@@ -424,11 +448,10 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(3));
 
-        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
-        var worker = CreateWorker();
+        var orchestrator = CreateBackfillOrchestrator();
 
         // Should not throw — errors are caught per-account
-        await InvokePrivateAsync(worker, "RunBackfillPhaseAsync", service, CancellationToken.None);
+        await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
 
         // Both accounts attempted
         await _backfiller.Received(2).BackfillAccountAsync(
@@ -454,11 +477,10 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlySet<string>>(), Arg.Any<MetaDatabase>())
             .Throws(new IOException("disk full"));
 
-        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
-        var worker = CreateWorker();
+        var orchestrator = CreateBackfillOrchestrator();
 
         // Should not throw
-        await InvokePrivateAsync(worker, "RunBackfillPhaseAsync", service, CancellationToken.None);
+        await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -468,8 +490,8 @@ public class ScraperWorkerModeTests : IDisposable
     [Fact]
     public async Task RunHistoryReconPhase_NoRegisteredUsers_ReturnsEarly()
     {
-        var worker = CreateWorker();
-        await InvokePrivateAsync(worker, "RunHistoryReconPhaseAsync", CancellationToken.None);
+        var orchestrator = CreateBackfillOrchestrator();
+        await orchestrator.RunHistoryReconAsync(CancellationToken.None);
 
         await _historyReconstructor.DidNotReceive().DiscoverSeasonWindowsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
@@ -480,8 +502,8 @@ public class ScraperWorkerModeTests : IDisposable
     {
         _metaDb.RegisterUser("dev1", "acct1");
 
-        var worker = CreateWorker();
-        await InvokePrivateAsync(worker, "RunHistoryReconPhaseAsync", CancellationToken.None);
+        var orchestrator = CreateBackfillOrchestrator();
+        await orchestrator.RunHistoryReconAsync(CancellationToken.None);
 
         // No completed backfill → nothing to reconstruct
         await _historyReconstructor.DidNotReceive().DiscoverSeasonWindowsAsync(
@@ -500,8 +522,8 @@ public class ScraperWorkerModeTests : IDisposable
         _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<string?>(null));
 
-        var worker = CreateWorker();
-        await InvokePrivateAsync(worker, "RunHistoryReconPhaseAsync", CancellationToken.None);
+        var orchestrator = CreateBackfillOrchestrator();
+        await orchestrator.RunHistoryReconAsync(CancellationToken.None);
 
         await _historyReconstructor.DidNotReceive().DiscoverSeasonWindowsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
@@ -538,8 +560,8 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlySet<string>>(), Arg.Any<MetaDatabase>())
             .Returns(1);
 
-        var worker = CreateWorker();
-        await InvokePrivateAsync(worker, "RunHistoryReconPhaseAsync", CancellationToken.None);
+        var orchestrator = CreateBackfillOrchestrator();
+        await orchestrator.RunHistoryReconAsync(CancellationToken.None);
 
         await _historyReconstructor.Received(1).ReconstructAccountAsync(
             "acct1", windows, "token", "callerAcct",
@@ -565,8 +587,8 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<IReadOnlyList<SeasonWindowInfo>>(new List<SeasonWindowInfo>()));
 
-        var worker = CreateWorker();
-        await InvokePrivateAsync(worker, "RunHistoryReconPhaseAsync", CancellationToken.None);
+        var orchestrator = CreateBackfillOrchestrator();
+        await orchestrator.RunHistoryReconAsync(CancellationToken.None);
 
         await _historyReconstructor.DidNotReceive().ReconstructAccountAsync(
             Arg.Any<string>(), Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
@@ -591,9 +613,9 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new HttpRequestException("network error"));
 
-        var worker = CreateWorker();
+        var orchestrator = CreateBackfillOrchestrator();
         // Should not throw
-        await InvokePrivateAsync(worker, "RunHistoryReconPhaseAsync", CancellationToken.None);
+        await orchestrator.RunHistoryReconAsync(CancellationToken.None);
     }
 
     [Fact]
@@ -625,9 +647,9 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("recon error"));
 
-        var worker = CreateWorker();
+        var orchestrator = CreateBackfillOrchestrator();
         // Should not throw
-        await InvokePrivateAsync(worker, "RunHistoryReconPhaseAsync", CancellationToken.None);
+        await orchestrator.RunHistoryReconAsync(CancellationToken.None);
 
         // Error state should be persisted in MetaDB
         var status = _metaDb.GetHistoryReconStatus("acct1");
@@ -651,8 +673,8 @@ public class ScraperWorkerModeTests : IDisposable
             .Returns(Task.FromResult<string?>("token"));
         _tokenManager.AccountId.Returns("callerAcct");
 
-        var worker = CreateWorker();
-        await InvokePrivateAsync(worker, "RunHistoryReconPhaseAsync", CancellationToken.None);
+        var orchestrator = CreateBackfillOrchestrator();
+        await orchestrator.RunHistoryReconAsync(CancellationToken.None);
 
         // Already reconstructed → should not call discover
         await _historyReconstructor.DidNotReceive().DiscoverSeasonWindowsAsync(
@@ -734,10 +756,9 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(0));
 
-        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
-        var worker = CreateWorker();
+        var orchestrator = CreateBackfillOrchestrator();
 
-        await InvokePrivateAsync(worker, "RunBackfillPhaseAsync", service, CancellationToken.None);
+        await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
 
         // Both accounts should have been processed
         await _backfiller.Received(2).BackfillAccountAsync(
