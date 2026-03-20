@@ -327,12 +327,14 @@ export default function SuggestionsPage({ accountId }: Props) {
             <div ref={listRef} className={s.listInner}>
             {visibleCategories.map((cat, idx) => {
               const delay = computeDelay(idx);
-              if (delay === -1) {
-                // Already visible -- render without animation wrapper
-                return <CategoryCard key={`${idx}-${cat.key}`} category={cat} albumArtMap={albumArtMap} scoresIndex={scoresIndex} />;
-              }
+              // Always render the same FadeIn → CategoryCard tree structure so
+              // React never switches element types on the same key (which would
+              // unmount/remount all children and reset AlbumArt loaded state).
+              // delay === -1  → already revealed, pass undefined to skip animation
+              // delay === null → hidden (waiting for contentIn phase)
+              // delay >= 0    → stagger animation
               return (
-                <FadeIn key={`${idx}-${cat.key}`} delay={delay ?? 0} hidden={delay === null}>
+                <FadeIn key={`${idx}-${cat.key}`} delay={delay === -1 ? undefined : (delay ?? 0)} hidden={delay === null}>
                   <CategoryCard category={cat} albumArtMap={albumArtMap} scoresIndex={scoresIndex} />
                 </FadeIn>
               );

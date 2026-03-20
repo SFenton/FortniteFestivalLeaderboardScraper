@@ -3,15 +3,31 @@ import css from './AlbumArt.module.css';
 
 const spinnerSize = 24;
 
+// Track URLs that have loaded successfully so virtualized rows that remount
+// can skip the spinner / opacity-0 → 1 transition entirely.
+const loadedSrcs = new Set<string>();
+
+/** @internal — exposed for tests only */
+export function _resetLoadedSrcs() { loadedSrcs.clear(); }
+/** @internal — exposed for tests only */
+export function _markLoaded(src: string) { loadedSrcs.add(src); }
+
 export default memo(function AlbumArt({ src, size, style, priority }: { src?: string; size: number; style?: CSSProperties; priority?: boolean }) {
-  const [loaded, setLoaded] = useState(false);
+  const alreadyKnown = !!(src && loadedSrcs.has(src));
+  const [loaded, setLoaded] = useState(alreadyKnown);
   const [failed, setFailed] = useState(false);
   /* v8 ignore start */
-  const handleLoad = useCallback(() => setLoaded(true), []);
+  const handleLoad = useCallback(() => {
+    if (src) loadedSrcs.add(src);
+    setLoaded(true);
+  }, [src]);
   const handleError = useCallback(() => { setFailed(true); setLoaded(true); }, []);
   const imgRef = useCallback((img: HTMLImageElement | null) => {
-    if (img?.complete && img.naturalWidth > 0) setLoaded(true);
-  }, []);
+    if (img?.complete && img.naturalWidth > 0) {
+      if (src) loadedSrcs.add(src);
+      setLoaded(true);
+    }
+  }, [src]);
   /* v8 ignore stop */
 
   const sizeVars = { '--album-size': `${size}px`, ...style } as CSSProperties;

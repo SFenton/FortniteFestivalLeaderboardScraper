@@ -1,8 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { render } from '@testing-library/react';
-import AlbumArt from '../../../../src/components/songs/metadata/AlbumArt';
+import AlbumArt, { _resetLoadedSrcs, _markLoaded } from '../../../../src/components/songs/metadata/AlbumArt';
 
 describe('AlbumArt', () => {
+  beforeEach(() => _resetLoadedSrcs());
+
   it('renders an image when src is provided', () => {
     const { container } = render(<AlbumArt src="https://example.com/art.jpg" size={44} />);
     const img = container.querySelector('img');
@@ -53,5 +55,34 @@ describe('AlbumArt — branch coverage', () => {
   it('renders with custom style', () => {
     const { container } = render(<AlbumArt src="https://example.com/art.jpg" size={60} style={{ margin: 5 }} />);
     expect(container.firstElementChild).toBeTruthy();
+  });
+});
+
+describe('AlbumArt — loadedSrcs cache', () => {
+  beforeEach(() => _resetLoadedSrcs());
+
+  it('shows spinner on first mount for unknown src', () => {
+    const { container } = render(<AlbumArt src="https://example.com/new.jpg" size={40} />);
+    expect(container.querySelector('[class*="spinnerWrap"]')).toBeTruthy();
+    // Image starts at opacity 0
+    const img = container.querySelector('img') as HTMLElement;
+    expect(img?.style.opacity).toBe('0');
+  });
+
+  it('skips spinner when src was previously loaded', () => {
+    _markLoaded('https://example.com/cached.jpg');
+    const { container } = render(<AlbumArt src="https://example.com/cached.jpg" size={40} />);
+    // No spinner visible
+    expect(container.querySelector('[class*="spinnerWrap"]')).toBeNull();
+    // Image starts at full opacity
+    const img = container.querySelector('img') as HTMLElement;
+    expect(img?.style.opacity).toBe('1');
+  });
+
+  it('reset clears the cache so spinner appears again', () => {
+    _markLoaded('https://example.com/cached.jpg');
+    _resetLoadedSrcs();
+    const { container } = render(<AlbumArt src="https://example.com/cached.jpg" size={40} />);
+    expect(container.querySelector('[class*="spinnerWrap"]')).toBeTruthy();
   });
 });
