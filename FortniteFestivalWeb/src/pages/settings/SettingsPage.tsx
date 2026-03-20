@@ -17,7 +17,7 @@ import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
 import { api } from '../../api/client';
 import css from './SettingsPage.module.css';
 
-import { APP_VERSION, CORE_VERSION } from '../../hooks/data/useVersions';
+import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
 
 /** Track whether settings page has rendered at least once to skip stagger on re-visit. */
 let _hasRendered = false;
@@ -324,6 +324,10 @@ export default function SettingsPage() {
             <div className={css.versionRow}>
               <span>{t('settings.coreVersion')}</span>
               <span className={css.versionValue}>{CORE_VERSION}</span>
+            </div>
+            <div className={css.versionRow}>
+              <span>{t('settings.themeVersion')}</span>
+              <span className={css.versionValue}>{THEME_VERSION}</span>
             </div>
           </Card>
           </FadeInDiv>

@@ -22,7 +22,7 @@ import { useSuggestions } from '../src/hooks/data/useSuggestions';
 import { useSyncStatus } from '../src/hooks/data/useSyncStatus';
 import { useTabNavigation } from '../src/hooks/ui/useTabNavigation';
 import { useTrackedPlayer } from '../src/hooks/data/useTrackedPlayer';
-import { APP_VERSION, CORE_VERSION } from '../src/hooks/data/useVersions';
+import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../src/hooks/data/useVersions';
 import * as useVisualViewportExports from '../src/hooks/ui/useVisualViewport';
 
 // Theme (src/theme/*.ts)
@@ -63,6 +63,7 @@ describe('barrel re-exports', () => {
   it('useVersions exports version strings', () => {
     expect(typeof APP_VERSION).toBe('string');
     expect(typeof CORE_VERSION).toBe('string');
+    expect(typeof THEME_VERSION).toBe('string');
   });
 });
 

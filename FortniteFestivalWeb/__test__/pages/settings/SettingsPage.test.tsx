@@ -225,4 +225,9 @@ describe('SettingsPage', () => {
     renderSettings();
     expect(screen.getByText('@festival/core Version')).toBeDefined();
   });
+
+  it('renders theme version', () => {
+    renderSettings();
+    expect(screen.getByText('@festival/theme Version')).toBeDefined();
+  });
 });

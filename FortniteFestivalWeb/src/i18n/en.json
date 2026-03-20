@@ -160,6 +160,7 @@
     "appVersion": "App Version",
     "serviceVersion": "Service Version",
     "coreVersion": "@festival/core Version",
+    "themeVersion": "@festival/theme Version",
     "version": "Version"
   },
   "instruments": {

@@ -9,7 +9,7 @@ import {Screen, FrostedSurface, FestivalTextInput, PageHeader, HamburgerButton, 
 import {usePageInstrumentation, useFestival, useAuth} from '@festival/contexts';
 import {useTabBarLayout} from '../navigation/useOptionalBottomTabBarHeight';
 import {useWindowsFlyoutUi} from '../navigation/windowsFlyoutUi';
-import {reorderPIOForVisibilityChange, showSettingKeyForInstrument, normalizeSongRowVisualOrder, InstrumentKeys, APP_VERSION, CORE_VERSION} from '@festival/core';
+import {reorderPIOForVisibilityChange, showSettingKeyForInstrument, normalizeSongRowVisualOrder, InstrumentKeys, APP_VERSION, CORE_VERSION, THEME_VERSION} from '@festival/core';
 import type {SongRowVisualItem, SongRowVisualKey} from '@festival/core';
 
 /* ────────────────────────── Settings screen ────────────────────────── */
@@ -460,6 +460,11 @@ export function SettingsScreen() {
             <View style={[modalStyles.orderRow, styles.orderRowSeparator, {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}]}>
               <Text style={modalStyles.orderName}>@festival/core Version</Text>
               <Text style={styles.versionValue}>{CORE_VERSION}</Text>
+            </View>
+
+            <View style={[modalStyles.orderRow, styles.orderRowSeparator, {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}]}>
+              <Text style={modalStyles.orderName}>@festival/theme Version</Text>
+              <Text style={styles.versionValue}>{THEME_VERSION}</Text>
             </View>
         </FrostedSurface>
 

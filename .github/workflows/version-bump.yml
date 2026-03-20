@@ -9,6 +9,7 @@ on:
       - "FortniteFestivalWeb/**"
       - "FortniteFestivalRN/**"
       - "packages/core/**"
+      - "packages/theme/**"
 
 permissions:
   contents: write
@@ -37,6 +38,7 @@ jobs:
           echo "web=false" >> "$GITHUB_OUTPUT"
           echo "mobile=false" >> "$GITHUB_OUTPUT"
           echo "core_ts=false" >> "$GITHUB_OUTPUT"
+          echo "theme_ts=false" >> "$GITHUB_OUTPUT"
 
           if echo "$CHANGED" | grep -qE '^(FSTService/|FortniteFestival\.Core/)'; then
             echo "service=true" >> "$GITHUB_OUTPUT"
@@ -50,9 +52,12 @@ jobs:
           if echo "$CHANGED" | grep -qE '^packages/core/'; then
             echo "core_ts=true" >> "$GITHUB_OUTPUT"
           fi
+          if echo "$CHANGED" | grep -qE '^packages/theme/'; then
+            echo "theme_ts=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup Node.js
-        if: steps.changes.outputs.web == 'true' || steps.changes.outputs.mobile == 'true' || steps.changes.outputs.core_ts == 'true'
+        if: steps.changes.outputs.web == 'true' || steps.changes.outputs.mobile == 'true' || steps.changes.outputs.core_ts == 'true' || steps.changes.outputs.theme_ts == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -116,6 +121,21 @@ jobs:
           "
           echo "@festival/core: $CURRENT -> $NEW_VERSION"
 
+      - name: Bump @festival/theme version
+        if: steps.changes.outputs.theme_ts == 'true'
+        run: |
+          cd packages/theme
+          CURRENT=$(node -p "require('./package.json').version")
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = '$NEW_VERSION';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+          echo "@festival/theme: $CURRENT -> $NEW_VERSION"
+
       - name: Sync APP_VERSION constant in @festival/core
         if: steps.changes.outputs.mobile == 'true'
         run: |
@@ -129,6 +149,13 @@ jobs:
           NEW_VERSION=$(node -p "require('./packages/core/package.json').version")
           sed -i "s|export const CORE_VERSION = '.*';|export const CORE_VERSION = '$NEW_VERSION';|" packages/core/src/index.ts
           echo "Updated CORE_VERSION in @festival/core to $NEW_VERSION"
+
+      - name: Sync THEME_VERSION constant in @festival/core
+        if: steps.changes.outputs.theme_ts == 'true'
+        run: |
+          NEW_VERSION=$(node -p "require('./packages/theme/package.json').version")
+          sed -i "s|export const THEME_VERSION = '.*';|export const THEME_VERSION = '$NEW_VERSION';|" packages/core/src/index.ts
+          echo "Updated THEME_VERSION in @festival/core to $NEW_VERSION"
 
       - name: Commit version bumps
         run: |
