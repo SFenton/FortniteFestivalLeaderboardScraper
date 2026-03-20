@@ -57,10 +57,21 @@
   transition: opacity var(--duration-fast) ease, width var(--duration-fast) ease var(--duration-fast), margin-right var(--duration-fast) ease var(--duration-fast);
 }
 
+.sortSlot {
+  opacity: 1;
+  max-width: var(--size-5xl);
+  transition: opacity var(--duration-fast) ease, max-width var(--duration-fast) ease;
+}
+
+.sortSlotHidden {
+  opacity: 0;
+  max-width: 0;
+  transition: opacity var(--duration-fast) ease, max-width var(--duration-fast) ease var(--duration-fast);
+}
+
 .filterSlot {
   opacity: 1;
   max-width: var(--size-5xl);
-  overflow: hidden;
   transition: opacity var(--duration-fast) ease, max-width var(--duration-fast) ease;
 }
 

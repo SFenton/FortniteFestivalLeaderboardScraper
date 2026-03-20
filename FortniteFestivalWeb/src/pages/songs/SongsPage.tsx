@@ -366,6 +366,7 @@ export default function SongsPage() {
             instrument={settings.instrument}
             sortActive={sortActive}
             filtersActive={filtersActive}
+            hasSongs={songs.length > 0 && !isLoading}
             hasPlayer={hasPlayer}
             filteredCount={filtered.length}
             totalCount={songs.length}

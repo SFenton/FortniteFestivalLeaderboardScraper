@@ -11,6 +11,7 @@ describe('SongsToolbar', () => {
     instrument: null as ServerInstrumentKey | null,
     sortActive: false,
     filtersActive: false,
+    hasSongs: true,
     hasPlayer: false,
     filteredCount: 100,
     totalCount: 100,
@@ -37,7 +38,8 @@ describe('SongsToolbar', () => {
 
   it('hides filter pill when hasPlayer is false', () => {
     render(<SongsToolbar {...defaults} hasPlayer={false} />);
-    expect(screen.queryByLabelText(/filter/i)).toBeNull();
+    const filterBtn = screen.getByLabelText(/filter/i);
+    expect(filterBtn.parentElement!.className).toContain('Hidden');
   });
 
   it('shows filtered count when filtersActive and counts differ', () => {

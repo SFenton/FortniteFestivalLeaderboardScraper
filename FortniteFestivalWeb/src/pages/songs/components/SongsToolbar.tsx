@@ -21,6 +21,7 @@ interface SongsToolbarProps {
   instrument: InstrumentKey | null;
   sortActive?: boolean;
   filtersActive: boolean;
+  hasSongs: boolean;
   hasPlayer: boolean;
   filteredCount: number;
   totalCount: number;
@@ -34,6 +35,7 @@ export function SongsToolbar({
   instrument,
   sortActive,
   filtersActive,
+  hasSongs,
   hasPlayer,
   filteredCount,
   totalCount,
@@ -73,8 +75,22 @@ export function SongsToolbar({
 
   const showIconSlot = !!displayedInst || !!instrument;
 
-  // Track filter button for fade transitions
-  const [filterMounted, setFilterMounted] = useState(hasPlayer);
+  // Track sort button for fade transitions (gated on songs loaded)
+  const [sortVisible, setSortVisible] = useState(hasSongs);
+  const prevHasSongs = useRef(hasSongs);
+
+  useEffect(() => {
+    const prev = prevHasSongs.current;
+    prevHasSongs.current = hasSongs;
+
+    if (!prev && hasSongs) {
+      requestAnimationFrame(() => requestAnimationFrame(() => setSortVisible(true)));
+    } else if (prev && !hasSongs) {
+      setSortVisible(false);
+    }
+  }, [hasSongs]);
+
+  // Track filter button for fade transitions (gated on player data loaded)
   const [filterVisible, setFilterVisible] = useState(hasPlayer);
   const prevHasPlayer = useRef(hasPlayer);
 
@@ -83,16 +99,11 @@ export function SongsToolbar({
     prevHasPlayer.current = hasPlayer;
 
     if (!prev && hasPlayer) {
-      setFilterMounted(true);
       requestAnimationFrame(() => requestAnimationFrame(() => setFilterVisible(true)));
     } else if (prev && !hasPlayer) {
       setFilterVisible(false);
-      const timer = setTimeout(() => setFilterMounted(false), INST_LEAVE_MS);
-      return () => clearTimeout(timer);
     }
   }, [hasPlayer]);
-
-  const showFilterSlot = filterMounted || hasPlayer;
 
   return (
     <>
@@ -110,17 +121,17 @@ export function SongsToolbar({
           </div>
         )}
         <div className={s.sortGroup}>
-          <ActionPill icon={<IoSwapVerticalSharp size={Size.iconAction} />} label={t('common.sort')} onClick={onOpenSort} active={sortActive} />
-          {showFilterSlot && (
-            <div className={filterVisible ? s.filterSlot : s.filterSlotHidden}>
-              <ActionPill
-                icon={<IoFunnel size={Size.iconAction} />}
-                label={t('common.filter')}
-                onClick={onOpenFilter}
-                active={filtersActive}
-              />
-            </div>
-          )}
+          <div className={sortVisible ? s.sortSlot : s.sortSlotHidden}>
+            <ActionPill icon={<IoSwapVerticalSharp size={Size.iconAction} />} label={t('common.sort')} onClick={onOpenSort} active={sortActive} />
+          </div>
+          <div className={filterVisible ? s.filterSlot : s.filterSlotHidden}>
+            <ActionPill
+              icon={<IoFunnel size={Size.iconAction} />}
+              label={t('common.filter')}
+              onClick={onOpenFilter}
+              active={filtersActive}
+            />
+          </div>
         </div>
       </div>
       {filtersActive && filteredCount !== totalCount && (
