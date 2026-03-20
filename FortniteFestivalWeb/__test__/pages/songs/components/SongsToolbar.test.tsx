@@ -51,7 +51,7 @@ describe('SongsToolbar', () => {
   });
 
   it('passes sortActive to sort pill', () => {
-    const { container } = render(<SongsToolbar {...defaults} sortActive />);
+    render(<SongsToolbar {...defaults} sortActive />);
     const sortBtn = screen.getByLabelText(/sort/i);
     expect(sortBtn.className).toContain('Active');
   });
