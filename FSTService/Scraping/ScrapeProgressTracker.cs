@@ -318,7 +318,8 @@ public sealed class ScrapeProgressTracker
             ScrapePhase.RefreshingRegisteredUsers or
             ScrapePhase.BackfillingScores or
             ScrapePhase.ReconstructingHistory or
-            ScrapePhase.CalculatingFirstSeen => new OperationSnapshot
+            ScrapePhase.CalculatingFirstSeen or
+            ScrapePhase.ComputingRivals => new OperationSnapshot
             {
                 Operation = phase.ToString(),
                 StartedAtUtc = _phaseStartedAtUtc,

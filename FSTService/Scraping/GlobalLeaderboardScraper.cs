@@ -526,6 +526,14 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         }
 
         int totalPages = page0.firstPage.TotalPages;
+        int entriesPerPage = page0.firstPage.Entries.Count;
+
+        if (totalPages > 1)
+        {
+            _log.LogDebug(
+                "Scraping {Label} ({Song}/{Instrument}): {EntriesPerPage} entries/page × {TotalPages:N0} pages (~{EstEntries:N0} entries reported by Epic).",
+                label ?? songId, songId, instrument, entriesPerPage, totalPages, (long)entriesPerPage * totalPages);
+        }
 
         var allEntries = new ConcurrentBag<(int Page, List<LeaderboardEntry> Entries)>();
         allEntries.Add((0, page0.firstPage.Entries));
