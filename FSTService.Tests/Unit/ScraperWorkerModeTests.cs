@@ -152,9 +152,16 @@ public class ScraperWorkerModeTests : IDisposable
             _tokenManager, _progress, options,
             Substitute.For<ILogger<BackfillOrchestrator>>());
 
+        var dbInitializer = new DatabaseInitializer(
+            _persistence, _festivalService, _lifetime,
+            Substitute.For<ILogger<DatabaseInitializer>>());
+        dbInitializer.StartAsync(CancellationToken.None);
+        // Wait for background init to complete before tests use the worker
+        while (!dbInitializer.IsReady) Thread.Sleep(10);
+
         return new ScraperWorker(
             _tokenManager, _scraper, _persistence,
-            _festivalService,
+            _festivalService, dbInitializer,
             postScrapeOrchestrator, backfillOrchestrator,
             pathGenerator, pathDataStore,
             _progress, options, _lifetime, _log);

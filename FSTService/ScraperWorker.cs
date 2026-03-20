@@ -27,6 +27,7 @@ public sealed class ScraperWorker : BackgroundService
     private readonly GlobalLeaderboardScraper _globalScraper;
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly FestivalService _festivalService;
+    private readonly DatabaseInitializer _dbInitializer;
     private readonly PostScrapeOrchestrator _postScrapeOrchestrator;
     private readonly BackfillOrchestrator _backfillOrchestrator;
     private readonly PathGenerator _pathGenerator;
@@ -44,6 +45,7 @@ public sealed class ScraperWorker : BackgroundService
         GlobalLeaderboardScraper globalScraper,
         GlobalLeaderboardPersistence persistence,
         FestivalService festivalService,
+        DatabaseInitializer dbInitializer,
         PostScrapeOrchestrator postScrapeOrchestrator,
         BackfillOrchestrator backfillOrchestrator,
         PathGenerator pathGenerator,
@@ -57,6 +59,7 @@ public sealed class ScraperWorker : BackgroundService
         _globalScraper = globalScraper;
         _persistence = persistence;
         _festivalService = festivalService;
+        _dbInitializer = dbInitializer;
         _postScrapeOrchestrator = postScrapeOrchestrator;
         _backfillOrchestrator = backfillOrchestrator;
         _pathGenerator = pathGenerator;
@@ -91,8 +94,12 @@ public sealed class ScraperWorker : BackgroundService
     {
         var opts = _options.Value;
 
-        // Always initialize the DI singleton so /api/songs works immediately
-        await _festivalService.InitializeAsync();
+        // Wait for DatabaseInitializer to finish (DBs + song catalog)
+        while (!_dbInitializer.IsReady)
+        {
+            _log.LogDebug("Waiting for database initialization...");
+            await Task.Delay(100, stoppingToken);
+        }
         _log.LogInformation("Song catalog loaded. {SongCount} songs available for API.",
             _festivalService.Songs.Count);
 

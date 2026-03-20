@@ -13,6 +13,7 @@ public sealed class DatabaseInitializer : IHostedService
 {
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly FestivalService _festivalService;
+    private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<DatabaseInitializer> _log;
     private volatile bool _ready;
 
@@ -21,27 +22,45 @@ public sealed class DatabaseInitializer : IHostedService
     public DatabaseInitializer(
         GlobalLeaderboardPersistence persistence,
         FestivalService festivalService,
+        IHostApplicationLifetime lifetime,
         ILogger<DatabaseInitializer> log)
     {
         _persistence = persistence;
         _festivalService = festivalService;
+        _lifetime = lifetime;
         _log = log;
     }
 
-    public async Task StartAsync(CancellationToken cancellationToken)
+    public Task StartAsync(CancellationToken cancellationToken)
     {
-        _log.LogInformation("Initializing databases and song catalog...");
+        // Fire-and-forget: run initialization in background so Kestrel can
+        // bind the port immediately. /readyz gates on IsReady for traffic.
+        _ = InitializeInBackgroundAsync(cancellationToken);
+        return Task.CompletedTask;
+    }
 
-        // Run DB schema init and song catalog load in parallel
-        var dbTask = Task.Run(() => _persistence.Initialize(), cancellationToken);
-        var songTask = _festivalService.InitializeAsync();
+    private async Task InitializeInBackgroundAsync(CancellationToken ct)
+    {
+        try
+        {
+            _log.LogInformation("Initializing databases and song catalog...");
 
-        await Task.WhenAll(dbTask, songTask);
+            // Run DB schema init and song catalog load in parallel
+            var dbTask = Task.Run(() => _persistence.Initialize(), ct);
+            var songTask = _festivalService.InitializeAsync();
 
-        _log.LogInformation(
-            "Initialization complete. {SongCount} songs loaded, {DbCount} instrument DBs ready.",
-            _festivalService.Songs.Count, 6);
-        _ready = true;
+            await Task.WhenAll(dbTask, songTask);
+
+            _log.LogInformation(
+                "Initialization complete. {SongCount} songs loaded, {DbCount} instrument DBs ready.",
+                _festivalService.Songs.Count, 6);
+            _ready = true;
+        }
+        catch (Exception ex)
+        {
+            _log.LogCritical(ex, "Database initialization failed. Application cannot serve data. Shutting down.");
+            _lifetime.StopApplication();
+        }
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
