@@ -1,3 +1,4 @@
+using FSTService.Api;
 using FSTService.Persistence;
 
 namespace FSTService.Scraping;
@@ -10,17 +11,20 @@ public sealed class RivalsOrchestrator
 {
     private readonly RivalsCalculator _calculator;
     private readonly GlobalLeaderboardPersistence _persistence;
+    private readonly NotificationService _notifications;
     private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<RivalsOrchestrator> _log;
 
     public RivalsOrchestrator(
         RivalsCalculator calculator,
         GlobalLeaderboardPersistence persistence,
+        NotificationService notifications,
         ScrapeProgressTracker progress,
         ILogger<RivalsOrchestrator> log)
     {
         _calculator = calculator;
         _persistence = persistence;
+        _notifications = notifications;
         _progress = progress;
         _log = log;
     }
@@ -79,8 +83,6 @@ public sealed class RivalsOrchestrator
     {
         try
         {
-            _persistence.Meta.StartRivals(accountId);
-
             IReadOnlySet<string>? dirtyInstruments = null;
             if (dirtyInstrumentsByUser is not null &&
                 dirtyInstrumentsByUser.TryGetValue(accountId, out var dirty))
@@ -88,10 +90,17 @@ public sealed class RivalsOrchestrator
                 dirtyInstruments = dirty;
             }
 
+            // Quick pre-scan: count valid instruments to compute total combos for progress tracking
+            var totalCombos = _calculator.CountValidCombos(accountId, dirtyInstruments);
+            _persistence.Meta.StartRivals(accountId, totalCombos);
+
             var result = _calculator.ComputeRivals(accountId, dirtyInstruments);
 
             _persistence.Meta.ReplaceRivalsData(accountId, result.Rivals, result.Samples);
             _persistence.Meta.CompleteRivals(accountId, result.CombosComputed, result.Rivals.Count);
+
+            try { _notifications.NotifyRivalsCompleteAsync(accountId).GetAwaiter().GetResult(); }
+            catch { /* best effort */ }
 
             _log.LogInformation(
                 "Computed rivals for {AccountId}: {Combos} combo(s), {Rivals} rival rows, {Samples} sample rows.",

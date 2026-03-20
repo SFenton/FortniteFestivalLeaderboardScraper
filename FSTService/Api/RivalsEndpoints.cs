@@ -214,7 +214,7 @@ public static partial class ApiEndpoints
         })
         .WithTags("Rivals")
         .RequireRateLimiting("protected")
-        .RequireAuthorization("ApiKeyPolicy");
+        .RequireAuthorization();
     }
 
     private static object MapRivalSummary(UserRivalRow r, Dictionary<string, string?> names)

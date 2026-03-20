@@ -216,13 +216,14 @@ public sealed class MetaDatabase : IDisposable
             );
 
             CREATE TABLE IF NOT EXISTS RivalsStatus (
-                AccountId         TEXT    PRIMARY KEY,
-                Status            TEXT    NOT NULL DEFAULT 'pending',
-                CombosComputed    INTEGER NOT NULL DEFAULT 0,
-                RivalsFound       INTEGER NOT NULL DEFAULT 0,
-                StartedAt         TEXT,
-                CompletedAt       TEXT,
-                ErrorMessage      TEXT
+                AccountId              TEXT    PRIMARY KEY,
+                Status                 TEXT    NOT NULL DEFAULT 'pending',
+                CombosComputed         INTEGER NOT NULL DEFAULT 0,
+                TotalCombosToCompute   INTEGER NOT NULL DEFAULT 0,
+                RivalsFound            INTEGER NOT NULL DEFAULT 0,
+                StartedAt              TEXT,
+                CompletedAt            TEXT,
+                ErrorMessage           TEXT
             );
 
             CREATE TABLE IF NOT EXISTS UserRivals (
@@ -295,6 +296,9 @@ public sealed class MetaDatabase : IDisposable
         MigrateAddColumn(conn, "RegisteredUsers", "DisplayName", "TEXT");
         MigrateAddColumn(conn, "RegisteredUsers", "Platform", "TEXT");
         MigrateAddColumn(conn, "RegisteredUsers", "LastLoginAt", "TEXT");
+
+        // ── Migration: add TotalCombosToCompute to RivalsStatus (existing DBs) ──
+        MigrateAddColumn(conn, "RivalsStatus", "TotalCombosToCompute", "INTEGER NOT NULL DEFAULT 0");
 
         // ── Migration: re-queue backfill / history recon when data-collection version bumps ──
         MigrateDataCollectionVersion(conn);
@@ -2175,7 +2179,7 @@ public sealed class MetaDatabase : IDisposable
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             UPDATE RivalsStatus
-               SET Status = 'pending', CombosComputed = 0, RivalsFound = 0,
+               SET Status = 'pending', CombosComputed = 0, TotalCombosToCompute = 0, RivalsFound = 0,
                    StartedAt = NULL, CompletedAt = NULL, ErrorMessage = NULL
              WHERE Status = 'complete';
             """;
@@ -2212,17 +2216,19 @@ public sealed class MetaDatabase : IDisposable
     }
 
     /// <summary>Mark a user's rivals computation as in-progress.</summary>
-    public void StartRivals(string accountId)
+    public void StartRivals(string accountId, int totalCombosToCompute = 0)
     {
         var now = DateTime.UtcNow.ToString("o");
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            UPDATE RivalsStatus SET Status = 'in_progress', StartedAt = @now, ErrorMessage = NULL
+            UPDATE RivalsStatus SET Status = 'in_progress', StartedAt = @now,
+                   TotalCombosToCompute = @total, CombosComputed = 0, RivalsFound = 0, ErrorMessage = NULL
             WHERE AccountId = @id;
             """;
         cmd.Parameters.AddWithValue("@id", accountId);
         cmd.Parameters.AddWithValue("@now", now);
+        cmd.Parameters.AddWithValue("@total", totalCombosToCompute);
         cmd.ExecuteNonQuery();
     }
 
@@ -2267,7 +2273,7 @@ public sealed class MetaDatabase : IDisposable
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT AccountId, Status, CombosComputed, RivalsFound, StartedAt, CompletedAt, ErrorMessage
+            SELECT AccountId, Status, CombosComputed, TotalCombosToCompute, RivalsFound, StartedAt, CompletedAt, ErrorMessage
             FROM RivalsStatus WHERE AccountId = @id;
             """;
         cmd.Parameters.AddWithValue("@id", accountId);
@@ -2278,10 +2284,11 @@ public sealed class MetaDatabase : IDisposable
             AccountId = reader.GetString(0),
             Status = reader.GetString(1),
             CombosComputed = reader.GetInt32(2),
-            RivalsFound = reader.GetInt32(3),
-            StartedAt = reader.IsDBNull(4) ? null : reader.GetString(4),
-            CompletedAt = reader.IsDBNull(5) ? null : reader.GetString(5),
-            ErrorMessage = reader.IsDBNull(6) ? null : reader.GetString(6),
+            TotalCombosToCompute = reader.GetInt32(3),
+            RivalsFound = reader.GetInt32(4),
+            StartedAt = reader.IsDBNull(5) ? null : reader.GetString(5),
+            CompletedAt = reader.IsDBNull(6) ? null : reader.GetString(6),
+            ErrorMessage = reader.IsDBNull(7) ? null : reader.GetString(7),
         };
     }
 

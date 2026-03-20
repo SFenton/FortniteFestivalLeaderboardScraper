@@ -186,6 +186,7 @@ public sealed class RivalsStatusInfo
     public string AccountId { get; init; } = "";
     public string Status { get; init; } = "pending";
     public int CombosComputed { get; init; }
+    public int TotalCombosToCompute { get; init; }
     public int RivalsFound { get; init; }
     public string? StartedAt { get; init; }
     public string? CompletedAt { get; init; }

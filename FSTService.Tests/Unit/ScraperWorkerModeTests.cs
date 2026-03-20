@@ -141,7 +141,7 @@ public class ScraperWorkerModeTests : IDisposable
         var notifications = new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>());
 
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
-        var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
+        var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
 
         var postScrapeOrchestrator = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
@@ -179,7 +179,7 @@ public class ScraperWorkerModeTests : IDisposable
         });
         var notifications = new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>());
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
-        var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
+        var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
         return new BackfillOrchestrator(
             _backfiller, _backfillQueue, _historyReconstructor,
             _personalDbBuilder, rivalsOrchestrator, notifications, _persistence,

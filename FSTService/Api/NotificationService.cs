@@ -113,6 +113,14 @@ public sealed class NotificationService
     }
 
     /// <summary>
+    /// Notify an account that rivals computation has completed.
+    /// </summary>
+    public Task NotifyRivalsCompleteAsync(string accountId)
+    {
+        return NotifyAccountAsync(accountId, new { type = "rivals_complete" });
+    }
+
+    /// <summary>
     /// Process a WebSocket connection — keep alive until closed by client or server shutdown.
     /// </summary>
     public async Task HandleConnectionAsync(string accountId, string deviceId, WebSocket ws, CancellationToken ct)

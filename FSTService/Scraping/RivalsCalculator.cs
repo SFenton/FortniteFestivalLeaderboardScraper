@@ -39,6 +39,29 @@ public sealed class RivalsCalculator
     }
 
     /// <summary>
+    /// Quickly count how many valid instrument combos a user will have.
+    /// Only queries song counts per instrument — no neighborhood scans.
+    /// </summary>
+    public int CountValidCombos(string userId, IReadOnlySet<string>? dirtyInstruments = null)
+    {
+        var instrumentKeys = _persistence.GetInstrumentKeys();
+        int validCount = 0;
+
+        foreach (var instrument in instrumentKeys)
+        {
+            if (dirtyInstruments is not null && !dirtyInstruments.Contains(instrument))
+                continue;
+
+            var db = _persistence.GetOrCreateInstrumentDb(instrument);
+            var scores = db.GetPlayerScores(userId);
+            if (scores.Count >= MinUserSongsPerInstrument)
+                validCount++;
+        }
+
+        return validCount > 0 ? (1 << validCount) - 1 : 0; // 2^N - 1
+    }
+
+    /// <summary>
     /// Compute rivals for a single user across all valid instruments and combos.
     /// Returns the total number of rival rows produced.
     /// </summary>

@@ -82,7 +82,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         _log = Substitute.For<ILogger<PostScrapeOrchestrator>>();
 
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
-        var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
+        var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
 
         _sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,

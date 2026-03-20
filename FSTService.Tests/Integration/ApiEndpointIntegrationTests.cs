@@ -1541,6 +1541,178 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         cmd.ExecuteNonQuery();
     }
 
+    // ─── Rivals ─────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Rivals_GetCombos_ReturnsEmptyForUnknownAccount()
+    {
+        var response = await _client.GetAsync("/api/player/unknown_acct/rivals");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var combos = json.GetProperty("combos");
+        Assert.Equal(0, combos.GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Rivals_GetCombo_Returns404WhenNoRivals()
+    {
+        var response = await _client.GetAsync("/api/player/unknown_acct/rivals/Solo_Guitar");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rivals_GetComboDetail_Returns404WhenNoSamples()
+    {
+        var response = await _client.GetAsync("/api/player/unknown_acct/rivals/Solo_Guitar/some_rival");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rivals_GetSongsPerInstrument_Returns404WhenNoData()
+    {
+        var response = await _client.GetAsync("/api/player/unknown_acct/rivals/some_rival/songs/Solo_Guitar");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rivals_Recompute_RequiresApiKey()
+    {
+        var response = await _client.PostAsync("/api/player/acct1/rivals/recompute", null);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rivals_Recompute_WithApiKey_ReturnsOk()
+    {
+        var response = await _authedClient.PostAsync("/api/player/acct1/rivals/recompute", null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("recomputed", json.GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public async Task Rivals_GetCombos_WithSeededData_ReturnsCombos()
+    {
+        // Seed rivals data via the recompute endpoint first
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var rivals = new List<UserRivalRow>
+        {
+            new() { UserId = "seeded_acct", RivalAccountId = "rival_1", InstrumentCombo = "Solo_Guitar",
+                     Direction = "above", RivalScore = 42.0, AvgSignedDelta = -3.5,
+                     SharedSongCount = 100, AheadCount = 60, BehindCount = 40, ComputedAt = "2026-01-01T00:00:00Z" },
+            new() { UserId = "seeded_acct", RivalAccountId = "rival_2", InstrumentCombo = "Solo_Guitar",
+                     Direction = "below", RivalScore = 30.0, AvgSignedDelta = 2.0,
+                     SharedSongCount = 80, AheadCount = 30, BehindCount = 50, ComputedAt = "2026-01-01T00:00:00Z" },
+        };
+        metaDb.ReplaceRivalsData("seeded_acct", rivals, Array.Empty<RivalSongSampleRow>());
+
+        var response = await _client.GetAsync("/api/player/seeded_acct/rivals");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var combos = json.GetProperty("combos");
+        Assert.Equal(1, combos.GetArrayLength());
+        Assert.Equal("Solo_Guitar", combos[0].GetProperty("combo").GetString());
+        Assert.Equal(1, combos[0].GetProperty("aboveCount").GetInt32());
+        Assert.Equal(1, combos[0].GetProperty("belowCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task Rivals_GetCombo_WithSeededData_ReturnsAboveAndBelow()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var rivals = new List<UserRivalRow>
+        {
+            new() { UserId = "seeded_acct2", RivalAccountId = "rival_a", InstrumentCombo = "Solo_Guitar",
+                     Direction = "above", RivalScore = 42.0, AvgSignedDelta = -3.5,
+                     SharedSongCount = 100, AheadCount = 60, BehindCount = 40, ComputedAt = "2026-01-01T00:00:00Z" },
+            new() { UserId = "seeded_acct2", RivalAccountId = "rival_b", InstrumentCombo = "Solo_Guitar",
+                     Direction = "below", RivalScore = 30.0, AvgSignedDelta = 2.0,
+                     SharedSongCount = 80, AheadCount = 30, BehindCount = 50, ComputedAt = "2026-01-01T00:00:00Z" },
+        };
+        var samples = new List<RivalSongSampleRow>
+        {
+            new() { UserId = "seeded_acct2", RivalAccountId = "rival_a", Instrument = "Solo_Guitar",
+                     SongId = "song1", UserRank = 10, RivalRank = 8, RankDelta = -2, UserScore = 9000, RivalScore = 9100 },
+        };
+        metaDb.ReplaceRivalsData("seeded_acct2", rivals, samples);
+
+        var response = await _client.GetAsync("/api/player/seeded_acct2/rivals/Solo_Guitar");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Solo_Guitar", json.GetProperty("combo").GetString());
+        Assert.Equal(1, json.GetProperty("above").GetArrayLength());
+        Assert.Equal(1, json.GetProperty("below").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Rivals_GetComboDetail_WithSeededData_ReturnsSongs()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var rivals = new List<UserRivalRow>
+        {
+            new() { UserId = "seeded_acct3", RivalAccountId = "rival_x", InstrumentCombo = "Solo_Guitar",
+                     Direction = "above", RivalScore = 42.0, AvgSignedDelta = -3.5,
+                     SharedSongCount = 100, AheadCount = 60, BehindCount = 40, ComputedAt = "2026-01-01T00:00:00Z" },
+        };
+        var samples = new List<RivalSongSampleRow>
+        {
+            new() { UserId = "seeded_acct3", RivalAccountId = "rival_x", Instrument = "Solo_Guitar",
+                     SongId = "song1", UserRank = 10, RivalRank = 8, RankDelta = -2, UserScore = 9000, RivalScore = 9100 },
+            new() { UserId = "seeded_acct3", RivalAccountId = "rival_x", Instrument = "Solo_Guitar",
+                     SongId = "song2", UserRank = 50, RivalRank = 100, RankDelta = 50, UserScore = 8000, RivalScore = 7000 },
+        };
+        metaDb.ReplaceRivalsData("seeded_acct3", rivals, samples);
+
+        // Default sort = closest
+        var response = await _client.GetAsync("/api/player/seeded_acct3/rivals/Solo_Guitar/rival_x");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(2, json.GetProperty("totalSongs").GetInt32());
+        var songs = json.GetProperty("songs");
+        Assert.Equal(2, songs.GetArrayLength());
+        // First song should be closest (|delta| = 2 < 50)
+        Assert.Equal(-2, songs[0].GetProperty("rankDelta").GetInt32());
+
+        // Sort by they_lead (most negative first)
+        response = await _client.GetAsync("/api/player/seeded_acct3/rivals/Solo_Guitar/rival_x?sort=they_lead");
+        json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        songs = json.GetProperty("songs");
+        Assert.Equal(-2, songs[0].GetProperty("rankDelta").GetInt32());
+
+        // Sort by you_lead (most positive first)
+        response = await _client.GetAsync("/api/player/seeded_acct3/rivals/Solo_Guitar/rival_x?sort=you_lead");
+        json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        songs = json.GetProperty("songs");
+        Assert.Equal(50, songs[0].GetProperty("rankDelta").GetInt32());
+
+        // Pagination: limit=1
+        response = await _client.GetAsync("/api/player/seeded_acct3/rivals/Solo_Guitar/rival_x?limit=1");
+        json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Single(json.GetProperty("songs").EnumerateArray());
+
+        // limit=0 = all
+        response = await _client.GetAsync("/api/player/seeded_acct3/rivals/Solo_Guitar/rival_x?limit=0");
+        json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(2, json.GetProperty("songs").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Rivals_GetSongsPerInstrument_WithSeededData_ReturnsSongs()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var samples = new List<RivalSongSampleRow>
+        {
+            new() { UserId = "seeded_acct4", RivalAccountId = "rival_y", Instrument = "Solo_Guitar",
+                     SongId = "song1", UserRank = 10, RivalRank = 8, RankDelta = -2, UserScore = 9000, RivalScore = 9100 },
+        };
+        metaDb.ReplaceRivalsData("seeded_acct4", Array.Empty<UserRivalRow>(), samples);
+
+        var response = await _client.GetAsync("/api/player/seeded_acct4/rivals/rival_y/songs/Solo_Guitar");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(1, json.GetProperty("totalSongs").GetInt32());
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Factory: sets up the test server with in-memory/temp dependencies
     // ═══════════════════════════════════════════════════════════════

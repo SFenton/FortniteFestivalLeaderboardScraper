@@ -169,6 +169,7 @@ public static partial class ApiEndpoints
         {
             var backfill = metaDb.GetBackfillStatus(accountId);
             var historyRecon = metaDb.GetHistoryReconStatus(accountId);
+            var rivals = metaDb.GetRivalsStatus(accountId);
             var isRegistered = metaDb.GetRegisteredAccountIds().Contains(accountId);
 
             return Results.Ok(new
@@ -193,6 +194,15 @@ public static partial class ApiEndpoints
                     historyEntriesFound = historyRecon.HistoryEntriesFound,
                     startedAt = historyRecon.StartedAt,
                     completedAt = historyRecon.CompletedAt,
+                },
+                rivals = rivals is null ? null : new
+                {
+                    status = rivals.Status,
+                    combosComputed = rivals.CombosComputed,
+                    totalCombosToCompute = rivals.TotalCombosToCompute,
+                    rivalsFound = rivals.RivalsFound,
+                    startedAt = rivals.StartedAt,
+                    completedAt = rivals.CompletedAt,
                 },
             });
         })

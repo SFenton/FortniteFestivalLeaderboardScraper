@@ -1065,4 +1065,77 @@ public class PersonalDbBuilderTests : IDisposable
         // acct1 is rank 2 (other has higher score)
         Assert.Equal(2, result.Items[0]["GuitarRank"]);
     }
+
+    [Fact]
+    public void Build_WithRivalsData_PopulatesRivalsTables()
+    {
+        var builder = CreateBuilder();
+
+        // Seed some rivals data in meta DB
+        var rivals = new List<UserRivalRow>
+        {
+            new() { UserId = "acct1", RivalAccountId = "rival_1", InstrumentCombo = "Solo_Guitar",
+                     Direction = "above", RivalScore = 42.0, AvgSignedDelta = -3.5,
+                     SharedSongCount = 100, AheadCount = 60, BehindCount = 40, ComputedAt = "2026-01-01T00:00:00Z" },
+            new() { UserId = "acct1", RivalAccountId = "rival_2", InstrumentCombo = "Solo_Guitar",
+                     Direction = "below", RivalScore = 30.0, AvgSignedDelta = 2.0,
+                     SharedSongCount = 80, AheadCount = 30, BehindCount = 50, ComputedAt = "2026-01-01T00:00:00Z" },
+        };
+        var samples = new List<RivalSongSampleRow>
+        {
+            new() { UserId = "acct1", RivalAccountId = "rival_1", Instrument = "Solo_Guitar",
+                     SongId = "song1", UserRank = 10, RivalRank = 8, RankDelta = -2, UserScore = 9000, RivalScore = 9100 },
+            new() { UserId = "acct1", RivalAccountId = "rival_1", Instrument = "Solo_Guitar",
+                     SongId = "song2", UserRank = 20, RivalRank = 25, RankDelta = 5, UserScore = 8000, RivalScore = 7500 },
+        };
+        _metaDb.Db.ReplaceRivalsData("acct1", rivals, samples);
+
+        var result = builder.Build("device1", "acct1");
+        Assert.NotNull(result);
+
+        using var conn = new SqliteConnection($"Data Source={result}");
+        conn.Open();
+
+        // Verify Rivals table
+        using var rivalCmd = conn.CreateCommand();
+        rivalCmd.CommandText = "SELECT COUNT(*) FROM Rivals";
+        Assert.Equal(2L, (long)rivalCmd.ExecuteScalar()!);
+
+        // Verify RivalSongSamples table
+        using var sampleCmd = conn.CreateCommand();
+        sampleCmd.CommandText = "SELECT COUNT(*) FROM RivalSongSamples";
+        Assert.Equal(2L, (long)sampleCmd.ExecuteScalar()!);
+
+        // Verify RivalCombos table
+        using var comboCmd = conn.CreateCommand();
+        comboCmd.CommandText = "SELECT COUNT(*) FROM RivalCombos";
+        Assert.Equal(1L, (long)comboCmd.ExecuteScalar()!);
+
+        // Verify data integrity
+        using var detailCmd = conn.CreateCommand();
+        detailCmd.CommandText = "SELECT RivalAccountId, Direction, RivalScore FROM Rivals ORDER BY RivalScore DESC";
+        using var reader = detailCmd.ExecuteReader();
+        Assert.True(reader.Read());
+        Assert.Equal("rival_1", reader.GetString(0));
+        Assert.Equal("above", reader.GetString(1));
+        Assert.Equal(42.0, reader.GetDouble(2));
+    }
+
+    [Fact]
+    public void Build_WithNoRivalsData_CreatesEmptyRivalsTables()
+    {
+        var builder = CreateBuilder();
+
+        var result = builder.Build("device1", "acct_no_rivals");
+        Assert.NotNull(result);
+
+        using var conn = new SqliteConnection($"Data Source={result}");
+        conn.Open();
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM Rivals";
+        Assert.Equal(0L, (long)cmd.ExecuteScalar()!);
+        cmd.CommandText = "SELECT COUNT(*) FROM RivalCombos";
+        Assert.Equal(0L, (long)cmd.ExecuteScalar()!);
+    }
 }
