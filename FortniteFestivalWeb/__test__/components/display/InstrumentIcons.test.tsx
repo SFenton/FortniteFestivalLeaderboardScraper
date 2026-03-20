@@ -24,6 +24,34 @@ describe('InstrumentIcon', () => {
     const img = container.querySelector('img');
     expect(img?.getAttribute('width')).toBe('36');
   });
+
+  it('uses default size when not specified', () => {
+    const { container } = render(<InstrumentIcon instrument={'bass'} />);
+    const img = container.querySelector('img');
+    expect(img?.getAttribute('width')).toBe('20');
+  });
+
+  it('applies custom style', () => {
+    const { container } = render(<InstrumentIcon instrument={'vocals'} style={{ opacity: 0.5 }} />);
+    const img = container.querySelector('img');
+    expect(img?.style.opacity).toBe('0.5');
+  });
+
+  it('renders all core instrument keys', () => {
+    const keys = ['guitar', 'bass', 'drums', 'vocals', 'pro_guitar', 'pro_bass'] as const;
+    for (const key of keys) {
+      const { container } = render(<InstrumentIcon instrument={key} />);
+      expect(container.querySelector('img')).toBeTruthy();
+    }
+  });
+
+  it('renders all server instrument keys', () => {
+    const keys = ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals', 'Solo_PeripheralGuitar', 'Solo_PeripheralBass'] as const;
+    for (const key of keys) {
+      const { container } = render(<InstrumentIcon instrument={key} />);
+      expect(container.querySelector('img')).toBeTruthy();
+    }
+  });
 });
 
 describe('INSTRUMENT_STATUS_COLORS', () => {

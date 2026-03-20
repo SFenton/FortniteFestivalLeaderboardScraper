@@ -129,14 +129,12 @@ export default function SuggestionsPage({ accountId }: Props) {
     }
     return m;
   }, [songs]);
-  /* v8 ignore stop */
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const saveScroll = useScrollRestore(scrollRef, 'suggestions', navType);
 
   // Use server-provided season, fall back to highest season in player scores
-  /* v8 ignore start — season fallback logic: covered in effectiveSeason tests */
   const effectiveSeason = useMemo(() => {
     if (currentSeason > 0) return currentSeason;
     if (!playerData) return 0;
@@ -146,7 +144,6 @@ export default function SuggestionsPage({ accountId }: Props) {
     }
     return max;
   }, [currentSeason, playerData]);
-  /* v8 ignore stop */
 
   const { categories, loadMore, hasMore } = useSuggestions(accountId, coreSongs, scoresIndex, effectiveSeason);
 
@@ -155,8 +152,6 @@ export default function SuggestionsPage({ accountId }: Props) {
   const filterModal = useModalState<SuggestionsFilterDraft>(defaultSuggestionsFilterDraft);
 
   useEffect(() => { saveSuggestionsFilter(filterSettings); }, [filterSettings]);
-
-  /* v8 ignore start — filter modal callbacks; require FAB interaction not available in jsdom */
   const openFilter = () => {
     filterModal.open({ ...filterSettings });
   };
@@ -170,7 +165,6 @@ export default function SuggestionsPage({ accountId }: Props) {
     setFilterSettings(defaults);
     filterModal.close();
   };
-  /* v8 ignore stop */
 
   const filtersActive = isSuggestionsFilterActive(filterSettings);
 
@@ -190,8 +184,6 @@ export default function SuggestionsPage({ accountId }: Props) {
     showProLead: appSettings.showProLead,
     showProBass: appSettings.showProBass,
   }), [appSettings.showLead, appSettings.showBass, appSettings.showDrums, appSettings.showVocals, appSettings.showProLead, appSettings.showProBass]);
-
-  /* v8 ignore start — filter pipeline: covered indirectly via render assertions */
   const visibleCategories = useMemo(() => {
     const instSettings = buildEffectiveInstrumentSettings(filterSettings, appSettings);
     return categories
@@ -202,7 +194,6 @@ export default function SuggestionsPage({ accountId }: Props) {
       .map(c => filterCategoryForInstrumentTypes(c, filterSettings))
       .filter((c): c is SuggestionCategory => c !== null);
   }, [categories, filterSettings, appSettings]);
-  /* v8 ignore stop */
 
   // When filters hide most generated content, InfiniteScroll fires loadMore
   // once, the new categories all get filtered out, visible-count and scroll
@@ -228,7 +219,6 @@ export default function SuggestionsPage({ accountId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterSettings]);
 
-  /* v8 ignore start — stale/exhausted loading logic */
   useEffect(() => {
     if (!hasMore || filterExhausted || categories.length === 0) return;
 
@@ -257,12 +247,8 @@ export default function SuggestionsPage({ accountId }: Props) {
   }, [categories.length, visibleCategories.length, hasMore, filterExhausted, loadMore]);
 
   const effectiveHasMore = hasMore && !filterExhausted;
-  /* v8 ignore stop */
 
   // If InfiniteScroll's scrollable target isn't overflowing, scroll events
-  // never fire and `next` is never called.  Detect this after each render
-  // and pump another batch so the container eventually becomes scrollable.
-  /* v8 ignore start — scroll overflow detection for infinite scroll */
   useEffect(() => {
     if (!effectiveHasMore) return;
     const el = scrollRef.current;
@@ -275,9 +261,7 @@ export default function SuggestionsPage({ accountId }: Props) {
     }, 100);
     return () => clearTimeout(id);
   }, [visibleCategories.length, effectiveHasMore, loadMore]);
-  /* v8 ignore stop */
 
-  /* v8 ignore start — filteredLoadMore and spinner transition */
   const filteredLoadMore = useCallback(() => {
     if (filterExhausted) return;
     loadMore();
@@ -285,7 +269,6 @@ export default function SuggestionsPage({ accountId }: Props) {
 
   // ââ Spinner â staggered-content transition ââ
   const dataReady = !(isLoading || playerLoading) || categories.length > 0;
-  /* v8 ignore stop */
   const skipAnimRef = useRef(_suggestionsHasRendered);
   const skipAnim = skipAnimRef.current;
   _suggestionsHasRendered = true;
@@ -305,7 +288,6 @@ export default function SuggestionsPage({ accountId }: Props) {
   // loaded batches get their own stagger starting from delay 0.
   const revealedCountRef = useRef(0);
 
-  /* v8 ignore start — animation delay logic */
   const getCardDelay = (index: number): number | null => {
     if (skipAnim) return -1;                                   // skip all animation
     if (phase !== 'contentIn') return null;                   // hidden behind spinner
@@ -315,22 +297,18 @@ export default function SuggestionsPage({ accountId }: Props) {
     if (offset >= maxVisible) return -1;                      // beyond viewport, show instantly
     return offset * 125;
   };
-  /* v8 ignore stop */
 
   // After each render, mark all current cards as revealed.
-  /* v8 ignore start — phase tracking and early-return guard */
   useEffect(() => {
     if (phase === 'contentIn') {
       revealedCountRef.current = visibleCategories.length;
     }
   }, [visibleCategories.length, phase]);
-  /* v8 ignore stop */
 
   if (!playerData && !playerLoading && categories.length === 0) {
     return <div className={s.center}>{t('common.couldNotLoadPlayer')}</div>;
   }
 
-  /* v8 ignore start — empty state: no categories generated */
   if (categories.length === 0 && !hasMore) {
     return (
       <div className={s.page}>
@@ -353,11 +331,9 @@ export default function SuggestionsPage({ accountId }: Props) {
           onApply={applyFilter}
         />
       </div>
-      /* v8 ignore stop */
     );
   }
 
-  /* v8 ignore start — conditional rendering */
   const headerStagger: React.CSSProperties = phase === 'contentIn' && !skipAnim
     ? { opacity: 0, animation: 'fadeInUp 400ms ease-out forwards' }
     : skipAnim ? {} : { opacity: 0 };
