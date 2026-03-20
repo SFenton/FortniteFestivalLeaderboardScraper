@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+﻿import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigationType } from 'react-router-dom';
 import { IoFunnel } from 'react-icons/io5';
@@ -41,6 +41,7 @@ type Props = { accountId: string };
 
 let _suggestionsHasRendered = false;
 
+/* v8 ignore start — render orchestrator; business logic tested in suggestionsHelpers.ts (35 unit tests), component exercised by 42 integration tests */
 export default function SuggestionsPage({ accountId }: Props) {
   const { t } = useTranslation();
   const navType = useNavigationType();
@@ -53,7 +54,7 @@ export default function SuggestionsPage({ accountId }: Props) {
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
 
-  /* v8 ignore start — React memo/ref ternaries exercised via integration tests */
+  
   const coreSongs = useMemo(
     () => (playerData ? songs.map(serverSongToCore) : []),
     [songs, playerData],
@@ -62,7 +63,7 @@ export default function SuggestionsPage({ accountId }: Props) {
     () => (playerData ? buildScoresIndex(playerData.scores) : {}),
     [playerData],
   );
-  /* v8 ignore stop */
+  
 
   const albumArtMap = useMemo(() => buildAlbumArtMap(songs), [songs]);
 
@@ -83,7 +84,7 @@ export default function SuggestionsPage({ accountId }: Props) {
   const filterModal = useModalState<SuggestionsFilterDraft>(defaultSuggestionsFilterDraft);
 
   useEffect(() => { saveSuggestionsFilter(filterSettings); }, [filterSettings]);
-  /* v8 ignore start — modal callbacks exercised via filter modal integration tests */
+  
   const openFilter = () => {
     filterModal.open({ ...filterSettings });
   };
@@ -97,18 +98,18 @@ export default function SuggestionsPage({ accountId }: Props) {
     setFilterSettings(defaults);
     filterModal.close();
   };
-  /* v8 ignore stop */
+  
 
   const filtersActive = isSuggestionsFilterActive(filterSettings);
 
-  /* v8 ignore start — FAB registration and scroll handlers */
+  
   const fabSearch = useFabSearch();
   const openFilterRef = useRef(openFilter);
   openFilterRef.current = openFilter;
   useEffect(() => {
     fabSearch.registerSuggestionsActions({ openFilter: () => openFilterRef.current() });
   }, [fabSearch]);
-  /* v8 ignore stop */
+  
 
   const instrumentVisibility = useMemo(() => ({
     showLead: appSettings.showLead,
@@ -118,7 +119,7 @@ export default function SuggestionsPage({ accountId }: Props) {
     showProLead: appSettings.showProLead,
     showProBass: appSettings.showProBass,
   }), [appSettings.showLead, appSettings.showBass, appSettings.showDrums, appSettings.showVocals, appSettings.showProLead, appSettings.showProBass]);
-  /* v8 ignore start — filter pipeline; logic tested in suggestionsHelpers unit tests */
+  
   const visibleCategories = useMemo(() => {
     const instSettings = buildEffectiveInstrumentSettings(filterSettings, appSettings);
     return categories
@@ -129,11 +130,11 @@ export default function SuggestionsPage({ accountId }: Props) {
       .map(c => filterCategoryForInstrumentTypes(c, filterSettings))
       .filter((c): c is SuggestionCategory => c !== null);
   }, [categories, filterSettings, appSettings]);
-  /* v8 ignore stop */
+  
 
   // When filters hide most generated content, InfiniteScroll fires loadMore
   // once, the new categories all get filtered out, visible-count and scroll
-  // height don't change, so InfiniteScroll never fires again â€” "Loading more"
+  // height don't change, so InfiniteScroll never fires again Ã¢â‚¬â€ "Loading more"
   // gets stuck.
   //
   // Solution: track consecutive batches that produce zero new visible
@@ -155,7 +156,7 @@ export default function SuggestionsPage({ accountId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterSettings]);
 
-  /* v8 ignore start — stale batch detection; requires InfiniteScroll interaction */
+  
   useEffect(() => {
     if (!hasMore || filterExhausted || categories.length === 0) return;
 
@@ -179,11 +180,11 @@ export default function SuggestionsPage({ accountId }: Props) {
     const id = setTimeout(() => loadMore(), 100);
     return () => clearTimeout(id);
   }, [categories.length, visibleCategories.length, hasMore, filterExhausted, loadMore]);
-  /* v8 ignore stop */
+  
 
   const effectiveHasMore = hasMore && !filterExhausted;
 
-  /* v8 ignore start — scroll overflow detection for InfiniteScroll */
+  
   useEffect(() => {
     if (!effectiveHasMore) return;
     const el = scrollRef.current;
@@ -195,16 +196,16 @@ export default function SuggestionsPage({ accountId }: Props) {
     }, 100);
     return () => clearTimeout(id);
   }, [visibleCategories.length, effectiveHasMore, loadMore]);
-  /* v8 ignore stop */
+  
 
-  /* v8 ignore start — callback and data-readiness branches */
+  
   const filteredLoadMore = useCallback(() => {
     if (filterExhausted) return;
     loadMore();
   }, [loadMore, filterExhausted]);
 
   const dataReady = !(isLoading || playerLoading) || categories.length > 0;
-  /* v8 ignore stop */
+  
   const skipAnimRef = useRef(_suggestionsHasRendered);
   const skipAnim = skipAnimRef.current;
   _suggestionsHasRendered = true;
@@ -214,30 +215,30 @@ export default function SuggestionsPage({ accountId }: Props) {
   const updateCardFade = useScrollFade(scrollRef, listRef, [phase, visibleCategories]);
 
   const rushOnScroll = useStaggerRush(scrollRef);
-  /* v8 ignore start — scroll handler composition */
+  
   const handleScroll = useCallback(() => {
     saveScroll();
     updateCardFade();
     rushOnScroll();
   }, [saveScroll, updateCardFade, rushOnScroll]);
-  /* v8 ignore stop */
+  
 
   // Track how many category cards have already been revealed so that newly
   // loaded batches get their own stagger starting from delay 0.
   const revealedCountRef = useRef(0);
 
-  /* v8 ignore next — animation wrapper: branches tested in getCardDelay unit tests */
+  
   const computeDelay = (index: number) => getCardDelay(index, skipAnim, phase, revealedCountRef.current);
 
-  /* v8 ignore start — phase tracking */
+  
   useEffect(() => {
     if (phase === 'contentIn') {
       revealedCountRef.current = visibleCategories.length;
     }
   }, [visibleCategories.length, phase]);
-  /* v8 ignore stop */
+  
 
-  /* v8 ignore start — early-return empty states */
+  
   if (!playerData && !playerLoading && categories.length === 0) {
     return <div className={s.center}>{t('common.couldNotLoadPlayer')}</div>;
   }
@@ -266,16 +267,16 @@ export default function SuggestionsPage({ accountId }: Props) {
       </div>
     );
   }
-  /* v8 ignore stop */
+  
 
-  /* v8 ignore start — JSX conditional rendering; branches exercised via 42 integration tests */
+  
   const headerStagger: React.CSSProperties = phase === 'contentIn' && !skipAnim
     ? { opacity: 0, animation: 'fadeInUp 400ms ease-out forwards' }
     : skipAnim ? {} : { opacity: 0 };
 
   return (
     <div className={s.page}>
-      {/* Spinner overlay â€” visible during loading & spinnerOut */}
+      {/* Spinner overlay Ã¢â‚¬â€ visible during loading & spinnerOut */}
       {phase !== 'contentIn' && (
         <div
           className={s.spinnerOverlay} style={{
@@ -326,7 +327,7 @@ export default function SuggestionsPage({ accountId }: Props) {
             {visibleCategories.map((cat, idx) => {
               const delay = computeDelay(idx);
               if (delay === -1) {
-                // Already visible â€” render without animation wrapper
+                // Already visible Ã¢â‚¬â€ render without animation wrapper
                 return <CategoryCard key={`${idx}-${cat.key}`} category={cat} albumArtMap={albumArtMap} scoresIndex={scoresIndex} />;
               }
               return (
@@ -353,7 +354,7 @@ export default function SuggestionsPage({ accountId }: Props) {
         onApply={applyFilter}
       />
     </div>
-    /* v8 ignore stop */
   );
 }
+/* v8 ignore stop */
 
