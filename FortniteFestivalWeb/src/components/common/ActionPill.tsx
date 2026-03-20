@@ -19,7 +19,7 @@ export interface ActionPillProps {
 }
 
 export function ActionPill({ icon, label, onClick, active, dot, className, style }: ActionPillProps) {
-  const pillClass = active ? css.pillActive : css.pill;
+  const pillClass = active ? `${css.pill} ${css.pillActive}` : css.pill;
   const fullClass = className ? `${pillClass} ${className}` : pillClass;
 
   return (
