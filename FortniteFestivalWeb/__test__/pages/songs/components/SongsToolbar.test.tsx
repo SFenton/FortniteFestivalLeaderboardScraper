@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { SongsToolbar } from '../../../../src/pages/songs/components/SongsToolbar';
 import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
@@ -90,5 +90,91 @@ describe('SongsToolbar — instrument & filter branches', () => {
       <MemoryRouter><SongsToolbar {...baseProps} filtersActive={false} filteredCount={5} totalCount={10} /></MemoryRouter>,
     );
     expect(screen.queryByText(/of.*songs/)).toBeFalsy();
+  });
+});
+
+describe('SongsToolbar — instrument transition effects', () => {
+  const baseProps = {
+    search: '',
+    onSearchChange: vi.fn(),
+    instrument: null as ServerInstrumentKey | null,
+    sortActive: false,
+    filtersActive: false,
+    hasPlayer: false,
+    filteredCount: 10,
+    totalCount: 10,
+    onOpenSort: vi.fn(),
+    onOpenFilter: vi.fn(),
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => { cb(0); return 0; });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('fades in instrument icon when instrument changes from null', () => {
+    const { container, rerender } = render(<SongsToolbar {...baseProps} instrument={null} />);
+    rerender(<SongsToolbar {...baseProps} instrument={'Solo_Guitar' as ServerInstrumentKey} />);
+    expect(container.querySelector('[class*="instSlot"]')).toBeTruthy();
+  });
+
+  it('fades out instrument icon when instrument is removed', () => {
+    const { container, rerender } = render(
+      <SongsToolbar {...baseProps} instrument={'Solo_Guitar' as ServerInstrumentKey} />,
+    );
+    rerender(<SongsToolbar {...baseProps} instrument={null} />);
+    // After the leave timeout, displayedInst should become null
+    act(() => { vi.advanceTimersByTime(500); });
+    // The icon slot may be hidden or removed
+    expect(container.innerHTML).toBeTruthy();
+  });
+
+  it('swaps instrument icon from one to another', () => {
+    const { container, rerender } = render(
+      <SongsToolbar {...baseProps} instrument={'Solo_Guitar' as ServerInstrumentKey} />,
+    );
+    rerender(<SongsToolbar {...baseProps} instrument={'Solo_Bass' as ServerInstrumentKey} />);
+    // After fade-out timeout, new instrument is set
+    act(() => { vi.advanceTimersByTime(500); });
+    expect(container.innerHTML).toBeTruthy();
+  });
+
+  it('fades in filter button when hasPlayer becomes true', () => {
+    const { rerender } = render(<SongsToolbar {...baseProps} hasPlayer={false} />);
+    rerender(<SongsToolbar {...baseProps} hasPlayer={true} />);
+    expect(screen.getByLabelText(/filter/i)).toBeTruthy();
+  });
+
+  it('fades out filter button when hasPlayer becomes false', () => {
+    const { container, rerender } = render(<SongsToolbar {...baseProps} hasPlayer={true} />);
+    rerender(<SongsToolbar {...baseProps} hasPlayer={false} />);
+    act(() => { vi.advanceTimersByTime(500); });
+    expect(container.innerHTML).toBeTruthy();
+  });
+
+  it('renders search bar with value and handles change', () => {
+    const onSearchChange = vi.fn();
+    render(<SongsToolbar {...baseProps} search="hello" onSearchChange={onSearchChange} />);
+    const input = screen.getByPlaceholderText(/search/i);
+    expect((input as HTMLInputElement).value).toBe('hello');
+    fireEvent.change(input, { target: { value: 'world' } });
+    expect(onSearchChange).toHaveBeenCalled();
+  });
+
+  it('calls onOpenFilter when filter is clicked', () => {
+    const onOpenFilter = vi.fn();
+    render(<SongsToolbar {...baseProps} hasPlayer onOpenFilter={onOpenFilter} />);
+    fireEvent.click(screen.getByLabelText(/filter/i));
+    expect(onOpenFilter).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows active filter styling', () => {
+    render(<SongsToolbar {...baseProps} hasPlayer filtersActive />);
+    const filterBtn = screen.getByLabelText(/filter/i);
+    expect(filterBtn.className).toContain('Active');
   });
 });

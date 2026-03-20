@@ -60,4 +60,49 @@ describe('LeaderboardEntry', () => {
     );
     expect(container.querySelector('[class*="colAcc"]')).toBeTruthy();
   });
+
+  it('renders label instead of rank when label is provided', () => {
+    render(<LeaderboardEntry label="2024-01-15" displayName="P1" score={100000} />);
+    expect(screen.getByText('2024-01-15')).toBeTruthy();
+  });
+
+  it('renders label and hides rank column when only label is given', () => {
+    const { container } = render(<LeaderboardEntry label="Jan 15" displayName="P1" score={50000} />);
+    expect(container.querySelector('[class*="colRank"]')).toBeFalsy();
+    expect(screen.getByText('Jan 15')).toBeTruthy();
+  });
+
+  it('shows dash for stars=0 with showStars', () => {
+    const { container } = render(
+      <LeaderboardEntry rank={1} displayName="P1" score={100000} showStars stars={0} />,
+    );
+    expect(container.querySelector('[class*="colStars"]')!.textContent).toBe('\u2014');
+  });
+
+  it('shows dash for stars=null with showStars', () => {
+    const { container } = render(
+      <LeaderboardEntry rank={1} displayName="P1" score={100000} showStars stars={null} />,
+    );
+    expect(container.querySelector('[class*="colStars"]')!.textContent).toBe('\u2014');
+  });
+
+  it('renders stars with isFullCombo false', () => {
+    const { container } = render(
+      <LeaderboardEntry rank={1} displayName="P1" score={100000} showStars stars={3} isFullCombo={false} />,
+    );
+    expect(container.querySelectorAll('img').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('renders with showSeason true but season undefined', () => {
+    const { container } = render(
+      <LeaderboardEntry rank={1} displayName="P1" score={100000} showSeason />,
+    );
+    // season is undefined → no SeasonPill rendered
+    expect(container.textContent).toContain('#1');
+  });
+
+  it('renders with rank=0', () => {
+    render(<LeaderboardEntry rank={0} displayName="P1" score={100000} />);
+    expect(screen.getByText('#0')).toBeTruthy();
+  });
 });
