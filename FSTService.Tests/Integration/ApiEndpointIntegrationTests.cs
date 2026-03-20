@@ -1630,10 +1630,21 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 var festivalService = CreateTestFestivalService();
                 services.AddSingleton(festivalService);
 
-                // Register a default IHttpClientFactory that uses the no-op handler
-                // so diagnostic endpoints don't make real HTTP requests
+                // Register no-op handlers for ALL typed HttpClients so tests never
+                // make real HTTP requests to Epic APIs or any external service.
+                var noOpHandler = () => (HttpMessageHandler)new HttpMessageHandler_NoOp();
                 services.AddHttpClient(string.Empty)
-                    .ConfigurePrimaryHttpMessageHandler(() => new HttpMessageHandler_NoOp());
+                    .ConfigurePrimaryHttpMessageHandler(noOpHandler);
+                services.AddHttpClient<GlobalLeaderboardScraper>()
+                    .ConfigurePrimaryHttpMessageHandler(noOpHandler);
+                services.AddHttpClient<AccountNameResolver>()
+                    .ConfigurePrimaryHttpMessageHandler(noOpHandler);
+                services.AddHttpClient<HistoryReconstructor>()
+                    .ConfigurePrimaryHttpMessageHandler(noOpHandler);
+                services.AddHttpClient<PathGenerator>()
+                    .ConfigurePrimaryHttpMessageHandler(noOpHandler);
+                services.AddHttpClient<EpicAuthService>()
+                    .ConfigurePrimaryHttpMessageHandler(noOpHandler);
             });
         }
 
