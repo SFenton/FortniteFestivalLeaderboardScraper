@@ -12,9 +12,9 @@ public static partial class ApiEndpoints
            .WithTags("Health")
            .RequireRateLimiting("public");
 
-        app.MapGet("/readyz", (GlobalLeaderboardPersistence persistence) =>
+        app.MapGet("/readyz", (DatabaseInitializer initializer) =>
         {
-            return persistence.IsReady()
+            return initializer.IsReady
                 ? Results.Ok("ready")
                 : Results.StatusCode(503);
         })

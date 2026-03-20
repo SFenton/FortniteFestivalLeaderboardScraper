@@ -268,14 +268,14 @@ builder.Services.AddCors(opts =>
 
 // ─── Background worker ─────────────────────────────────────
 
+// DatabaseInitializer must run before ScraperWorker (hosted services start in registration order)
+builder.Services.AddSingleton<DatabaseInitializer>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<DatabaseInitializer>());
 builder.Services.AddHostedService<ScraperWorker>();
 
 // ─── Build and configure pipeline ───────────────────────────
 
 var app = builder.Build();
-
-// Ensure all SQLite schemas (meta + per-instrument) exist before any request or scrape
-app.Services.GetRequiredService<GlobalLeaderboardPersistence>().Initialize();
 
 // Security: block path traversal attempts first
 app.UseMiddleware<PathTraversalGuardMiddleware>();

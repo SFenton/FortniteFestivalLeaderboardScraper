@@ -1586,6 +1586,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 // Remove the real ScraperWorker — we don't want background scraping
                 services.RemoveAll<IHostedService>();
 
+                // Re-register DatabaseInitializer so schemas are created during test startup
+                services.AddHostedService(sp => sp.GetRequiredService<DatabaseInitializer>());
+
                 // Ensure API key auth options are set (Program.cs resolves them early
                 // before test config is applied, so we must override here)
                 services.Configure<ApiKeyAuthOptions>("ApiKey", opts => opts.ApiKey = TestApiKey);
