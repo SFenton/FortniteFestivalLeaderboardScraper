@@ -43,9 +43,6 @@ public sealed class ScraperWorker : BackgroundService
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<ScraperWorker> _log;
 
-    /// <summary>Background song sync task — stored so we can observe failures.</summary>
-    private Task? _backgroundSyncTask;
-
     public ScraperWorker(
         TokenManager tokenManager,
         GlobalLeaderboardScraper globalScraper,
@@ -146,10 +143,26 @@ public sealed class ScraperWorker : BackgroundService
             return;
         }
 
+        // Create the persistence layer
+        var dbPath = Path.GetFullPath(opts.DatabasePath);
+        var dbDir = Path.GetDirectoryName(dbPath);
+        if (!string.IsNullOrEmpty(dbDir) && !Directory.Exists(dbDir))
+            Directory.CreateDirectory(dbDir);
+
+        var persistence = new SqlitePersistence(dbPath);
+        var service = new FestivalService(persistence);
+
+        service.Log += msg => _log.LogInformation("[Core] {Message}", msg);
+
+        // Initialize: fetch song catalog, images, load cached scores
+        _log.LogInformation("Initializing song catalog...");
+        await service.InitializeAsync();
+        _log.LogInformation("Initialization complete. {SongCount} songs loaded.", service.Songs.Count);
+
         // --test mode: fetch one song and exit
         if (!string.IsNullOrEmpty(opts.TestSongQuery))
         {
-            await RunSingleSongTestAsync(_festivalService, opts, stoppingToken);
+            await RunSingleSongTestAsync(service, opts, stoppingToken);
             return;
         }
 
@@ -185,7 +198,7 @@ public sealed class ScraperWorker : BackgroundService
                 catch (Exception ex) { _log.LogWarning(ex, "DIAG: V2 lookup failed"); }
             }
 
-            await RunBackfillPhaseAsync(_festivalService, stoppingToken);
+            await RunBackfillPhaseAsync(service, stoppingToken);
             _log.LogInformation("Backfill enrichment complete.");
             return;
         }
@@ -193,12 +206,12 @@ public sealed class ScraperWorker : BackgroundService
         // Start background song catalog refresh (every 15 minutes)
         // This runs independently of scraping — new songs get added to the DB
         // but won't be included in an already-running scrape pass.
-        _backgroundSyncTask = BackgroundSongSyncLoopAsync(_festivalService, opts.SongSyncInterval, stoppingToken);
+        _ = BackgroundSongSyncLoopAsync(service, opts.SongSyncInterval, stoppingToken);
 
         // Main scrape loop
         while (!stoppingToken.IsCancellationRequested)
         {
-            await RunScrapePassAsync(_festivalService, opts, stoppingToken);
+            await RunScrapePassAsync(service, opts, stoppingToken);
 
             if (opts.RunOnce)
             {
@@ -218,14 +231,6 @@ public sealed class ScraperWorker : BackgroundService
         }
 
         _log.LogInformation("ScraperWorker stopping.");
-
-        // Observe background task to surface any unhandled exceptions
-        if (_backgroundSyncTask is not null)
-        {
-            try { await _backgroundSyncTask; }
-            catch (OperationCanceledException) { /* expected on shutdown */ }
-            catch (Exception ex) { _log.LogError(ex, "Background song sync task faulted."); }
-        }
     }
 
     // ─── Auth helpers ───────────────────────────────────────────
@@ -265,6 +270,9 @@ public sealed class ScraperWorker : BackgroundService
                 {
                     _log.LogInformation("Background song sync: {NewCount} new song(s) discovered ({Total} total).",
                         after - before, after);
+
+                    // Keep the DI singleton (used by API) in sync
+                    await _festivalService.SyncSongsAsync();
                 }
                 else
                     _log.LogDebug("Background song sync complete. {Total} songs (no changes).", after);
@@ -453,11 +461,6 @@ public sealed class ScraperWorker : BackgroundService
         var counts = _persistence.GetEntryCounts();
         foreach (var (instrument, count) in counts)
             _log.LogInformation("  {Instrument}: {Count:N0} entries", instrument, count);
-
-        // Observe the path generation task that ran in parallel with the scrape
-        try { await pathGenTask; }
-        catch (OperationCanceledException) { /* expected on shutdown */ }
-        catch (Exception ex) { _log.LogError(ex, "Path generation task faulted during scrape pass."); }
 
         // ── Post-pass: parallel enrichment (ranks + first-seen + name resolution) ──
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.PostScrapeEnrichment);
