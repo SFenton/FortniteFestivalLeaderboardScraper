@@ -1,3 +1,4 @@
+using FSTService.Persistence;
 using FSTService.Tests.Helpers;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
@@ -279,6 +280,75 @@ public sealed class MetaDatabaseTests : IDisposable
         var entry = history[0];
         Assert.Equal(742, entry.SeasonRank);
         Assert.Equal(9989, entry.AllTimeRank);
+    }
+
+    // ═══ InsertScoreChanges (batch) ═════════════════════════════
+
+    [Fact]
+    public void InsertScoreChanges_batch_inserts_multiple()
+    {
+        var changes = new List<ScoreChangeRecord>
+        {
+            new()
+            {
+                SongId = "song_1", Instrument = "Solo_Guitar", AccountId = "acct_1",
+                OldScore = null, NewScore = 100_000, OldRank = null, NewRank = 1,
+                Accuracy = 95, IsFullCombo = true, Stars = 5, Percentile = 99.0,
+                Season = 10, ScoreAchievedAt = "2025-01-01T00:00:00Z", AllTimeRank = 1,
+            },
+            new()
+            {
+                SongId = "song_2", Instrument = "Solo_Bass", AccountId = "acct_2",
+                OldScore = 50_000, NewScore = 80_000, OldRank = 100, NewRank = 50,
+                Accuracy = 88, IsFullCombo = false, Stars = 4, Percentile = 85.0,
+                Season = 10, ScoreAchievedAt = "2025-01-02T00:00:00Z", AllTimeRank = 50,
+            },
+        };
+
+        var inserted = Db.InsertScoreChanges(changes);
+        Assert.Equal(2, inserted);
+
+        var history1 = Db.GetScoreHistory("acct_1");
+        Assert.Single(history1);
+        Assert.Equal(100_000, history1[0].NewScore);
+
+        var history2 = Db.GetScoreHistory("acct_2");
+        Assert.Single(history2);
+        Assert.Equal(80_000, history2[0].NewScore);
+        Assert.Equal(50_000, history2[0].OldScore);
+    }
+
+    [Fact]
+    public void InsertScoreChanges_batch_empty_returns_zero()
+    {
+        var inserted = Db.InsertScoreChanges([]);
+        Assert.Equal(0, inserted);
+    }
+
+    [Fact]
+    public void InsertScoreChanges_batch_deduplicates_with_conflict()
+    {
+        // Insert initial record
+        Db.InsertScoreChange("song_1", "Solo_Guitar", "acct_1", null, 100_000, null, 1,
+            scoreAchievedAt: "2025-01-01T00:00:00Z", seasonRank: 5);
+
+        // Batch-insert same key with allTimeRank — should merge via COALESCE
+        var changes = new List<ScoreChangeRecord>
+        {
+            new()
+            {
+                SongId = "song_1", Instrument = "Solo_Guitar", AccountId = "acct_1",
+                OldScore = null, NewScore = 100_000, OldRank = null, NewRank = 1,
+                ScoreAchievedAt = "2025-01-01T00:00:00Z", AllTimeRank = 42,
+            },
+        };
+
+        Db.InsertScoreChanges(changes);
+
+        var history = Db.GetScoreHistory("acct_1");
+        Assert.Single(history);
+        Assert.Equal(5, history[0].SeasonRank);   // preserved from first insert
+        Assert.Equal(42, history[0].AllTimeRank);  // merged from batch
     }
 
     // ═══ UserSessions ═══════════════════════════════════════════

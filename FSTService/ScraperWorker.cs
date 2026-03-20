@@ -462,51 +462,60 @@ public sealed class ScraperWorker : BackgroundService
         foreach (var (instrument, count) in counts)
             _log.LogInformation("  {Instrument}: {Count:N0} entries", instrument, count);
 
-        // ── Post-pass: calculate FirstSeenSeason for new songs ──
-        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.CalculatingFirstSeen);
+        // ── Post-pass: parallel enrichment (ranks + first-seen + name resolution) ──
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.PostScrapeEnrichment);
 
-        // Recompute stored rank columns across all instrument DBs
-        try
+        // These three operations have zero mutual dependencies — run in parallel.
+        var rankTask = Task.Run(() =>
         {
-            var rankUpdated = _persistence.RecomputeAllRanks();
-            _log.LogInformation("Recomputed ranks across all instruments: {Count:N0} entries updated.", rankUpdated);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogWarning(ex, "Rank recomputation failed. Stored ranks may be stale.");
-        }
-
-        try
-        {
-            var firstSeenToken = await _tokenManager.GetAccessTokenAsync(ct);
-            if (firstSeenToken is not null)
+            try
             {
-                var firstSeenCount = await _firstSeenCalculator.CalculateAsync(
-                    service, firstSeenToken, _tokenManager.AccountId!,
-                    opts.DegreeOfParallelism, ct);
-                if (firstSeenCount > 0)
-                    _log.LogInformation("Calculated FirstSeenSeason for {Count} song(s).", firstSeenCount);
+                var rankUpdated = _persistence.RecomputeAllRanks();
+                _log.LogInformation("Recomputed ranks across all instruments: {Count:N0} entries updated.", rankUpdated);
             }
-            else
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _log.LogWarning("No access token for FirstSeenSeason calculation. Will retry next pass.");
+                _log.LogWarning(ex, "Rank recomputation failed. Stored ranks may be stale.");
             }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogWarning(ex, "FirstSeenSeason calculation failed. Will retry next pass.");
-        }
+        }, ct);
 
-        // ── Post-pass: resolve display names for new accounts ──
-        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ResolvingNames);
-        try
+        var firstSeenTask = Task.Run(async () =>
         {
-            await _nameResolver.ResolveNewAccountsAsync(maxConcurrency: 8, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+            try
+            {
+                var firstSeenToken = await _tokenManager.GetAccessTokenAsync(ct);
+                if (firstSeenToken is not null)
+                {
+                    var firstSeenCount = await _firstSeenCalculator.CalculateAsync(
+                        service, firstSeenToken, _tokenManager.AccountId!,
+                        opts.DegreeOfParallelism, ct);
+                    if (firstSeenCount > 0)
+                        _log.LogInformation("Calculated FirstSeenSeason for {Count} song(s).", firstSeenCount);
+                }
+                else
+                {
+                    _log.LogWarning("No access token for FirstSeenSeason calculation. Will retry next pass.");
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "FirstSeenSeason calculation failed. Will retry next pass.");
+            }
+        }, ct);
+
+        var nameResTask = Task.Run(async () =>
         {
-            _log.LogWarning(ex, "Account name resolution failed. Will retry next pass.");
-        }
+            try
+            {
+                await _nameResolver.ResolveNewAccountsAsync(maxConcurrency: 8, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "Account name resolution failed. Will retry next pass.");
+            }
+        }, ct);
+
+        await Task.WhenAll(rankTask, firstSeenTask, nameResTask);
 
         // ── Post-pass: rebuild personal DBs for registered users with score changes ──
         if (aggregates.ChangedAccountIds.Count > 0)

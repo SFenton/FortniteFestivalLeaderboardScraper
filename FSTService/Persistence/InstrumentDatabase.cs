@@ -212,6 +212,59 @@ public sealed class InstrumentDatabase : IDisposable
     }
 
     /// <summary>
+    /// Batch-load entries for multiple accounts on a single song.
+    /// Uses the persistent connection to avoid per-call connection overhead.
+    /// Returns a dictionary keyed by AccountId (case-insensitive).
+    /// </summary>
+    public Dictionary<string, LeaderboardEntry> GetEntriesForAccounts(
+        string songId, IReadOnlyCollection<string> accountIds)
+    {
+        var result = new Dictionary<string, LeaderboardEntry>(StringComparer.OrdinalIgnoreCase);
+        if (accountIds.Count == 0) return result;
+
+        var conn = GetPersistentConnection();
+        using var cmd = conn.CreateCommand();
+
+        // Build parameterized IN clause: @a0, @a1, @a2, ...
+        var placeholders = new string[accountIds.Count];
+        int i = 0;
+        foreach (var accountId in accountIds)
+        {
+            var paramName = $"@a{i}";
+            placeholders[i] = paramName;
+            cmd.Parameters.AddWithValue(paramName, accountId);
+            i++;
+        }
+
+        cmd.CommandText = $"""
+            SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime, Rank
+            FROM LeaderboardEntries
+            WHERE SongId = @songId AND AccountId IN ({string.Join(", ", placeholders)});
+            """;
+        cmd.Parameters.AddWithValue("@songId", songId);
+
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var entry = new LeaderboardEntry
+            {
+                AccountId   = reader.GetString(0),
+                Score       = reader.GetInt32(1),
+                Accuracy    = reader.IsDBNull(2) ? 0 : reader.GetInt32(2),
+                IsFullCombo = !reader.IsDBNull(3) && reader.GetInt32(3) == 1,
+                Stars       = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
+                Season      = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
+                Percentile  = reader.IsDBNull(6) ? 0 : reader.GetDouble(6),
+                EndTime     = reader.IsDBNull(7) ? null : reader.GetString(7),
+                Rank        = reader.IsDBNull(8) ? 0 : reader.GetInt32(8),
+            };
+            result[entry.AccountId] = entry;
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Get the minimum Season value across all entries for a given song, or null if no entries exist.
     /// </summary>
     public int? GetMinSeason(string songId)

@@ -21,6 +21,7 @@ public sealed class ScrapeProgressTracker
         Idle,
         Initializing,
         Scraping,
+        PostScrapeEnrichment,
         CalculatingFirstSeen,
         ResolvingNames,
         RebuildingPersonalDbs,
@@ -323,6 +324,7 @@ public sealed class ScrapeProgressTracker
                 ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 1),
                 CurrentDop = _adaptiveLimiter?.CurrentDop,
             },
+            ScrapePhase.PostScrapeEnrichment => BuildPostScrapeEnrichmentSnapshot(elapsed),
             _ => null,
         };
     }
@@ -411,6 +413,23 @@ public sealed class ScrapeProgressTracker
             Batches = new ProgressCounter { Completed = completed, Total = total },
             AccountsResolved = _nameResResolved,
             FailedBatches = _nameResFailed,
+        };
+    }
+
+    private OperationSnapshot BuildPostScrapeEnrichmentSnapshot(TimeSpan elapsed)
+    {
+        // Include name resolution sub-progress if available
+        var total = _nameResTotal;
+        var completed = _nameResCompleted;
+
+        return new OperationSnapshot
+        {
+            Operation = "PostScrapeEnrichment",
+            StartedAtUtc = _phaseStartedAtUtc,
+            ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 1),
+            Batches = total > 0 ? new ProgressCounter { Completed = completed, Total = total } : null,
+            AccountsResolved = _nameResResolved > 0 ? _nameResResolved : null,
+            FailedBatches = _nameResFailed > 0 ? _nameResFailed : null,
         };
     }
 

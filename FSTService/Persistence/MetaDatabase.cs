@@ -343,7 +343,9 @@ public sealed class MetaDatabase : IDisposable
                                   int? seasonRank = null, int? allTimeRank = null)
     {
         var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
+        lock (_writeLock)
+        {
+        var conn = GetPersistentConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             INSERT INTO ScoreHistory (SongId, Instrument, AccountId, OldScore, NewScore, OldRank, NewRank,
@@ -376,6 +378,82 @@ public sealed class MetaDatabase : IDisposable
         cmd.Parameters.AddWithValue("@allTimeRank", allTimeRank.HasValue ? allTimeRank.Value : DBNull.Value);
         cmd.Parameters.AddWithValue("@now", now);
         cmd.ExecuteNonQuery();
+        } // lock
+    }
+
+    /// <summary>
+    /// Batch-insert multiple score changes in a single transaction.
+    /// Avoids per-call connection overhead when called from the scrape pipeline.
+    /// </summary>
+    public int InsertScoreChanges(IReadOnlyList<ScoreChangeRecord> changes)
+    {
+        if (changes.Count == 0) return 0;
+
+        lock (_writeLock)
+        {
+        var now = DateTime.UtcNow.ToString("o");
+        var conn = GetPersistentConnection();
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            INSERT INTO ScoreHistory (SongId, Instrument, AccountId, OldScore, NewScore, OldRank, NewRank,
+                                     Accuracy, IsFullCombo, Stars, Percentile, Season, ScoreAchievedAt,
+                                     SeasonRank, AllTimeRank, ChangedAt)
+            VALUES (@songId, @instrument, @accountId, @oldScore, @newScore, @oldRank, @newRank,
+                    @accuracy, @fc, @stars, @percentile, @season, @scoreAchievedAt,
+                    @seasonRank, @allTimeRank, @now)
+            ON CONFLICT(AccountId, SongId, Instrument, NewScore, ScoreAchievedAt) DO UPDATE SET
+                SeasonRank  = COALESCE(excluded.SeasonRank,  ScoreHistory.SeasonRank),
+                AllTimeRank = COALESCE(excluded.AllTimeRank, ScoreHistory.AllTimeRank),
+                OldScore    = COALESCE(excluded.OldScore,    ScoreHistory.OldScore),
+                OldRank     = COALESCE(excluded.OldRank,     ScoreHistory.OldRank),
+                ChangedAt   = excluded.ChangedAt;
+            """;
+
+        var pSongId         = cmd.Parameters.Add("@songId", SqliteType.Text);
+        var pInstrument     = cmd.Parameters.Add("@instrument", SqliteType.Text);
+        var pAccountId      = cmd.Parameters.Add("@accountId", SqliteType.Text);
+        var pOldScore       = cmd.Parameters.Add("@oldScore", SqliteType.Integer);
+        var pNewScore       = cmd.Parameters.Add("@newScore", SqliteType.Integer);
+        var pOldRank        = cmd.Parameters.Add("@oldRank", SqliteType.Integer);
+        var pNewRank        = cmd.Parameters.Add("@newRank", SqliteType.Integer);
+        var pAccuracy       = cmd.Parameters.Add("@accuracy", SqliteType.Integer);
+        var pFc             = cmd.Parameters.Add("@fc", SqliteType.Integer);
+        var pStars          = cmd.Parameters.Add("@stars", SqliteType.Integer);
+        var pPercentile     = cmd.Parameters.Add("@percentile", SqliteType.Real);
+        var pSeason         = cmd.Parameters.Add("@season", SqliteType.Integer);
+        var pScoreAchievedAt = cmd.Parameters.Add("@scoreAchievedAt", SqliteType.Text);
+        var pSeasonRank     = cmd.Parameters.Add("@seasonRank", SqliteType.Integer);
+        var pAllTimeRank    = cmd.Parameters.Add("@allTimeRank", SqliteType.Integer);
+        var pNow            = cmd.Parameters.Add("@now", SqliteType.Text);
+        cmd.Prepare();
+
+        int inserted = 0;
+        foreach (var c in changes)
+        {
+            pSongId.Value         = c.SongId;
+            pInstrument.Value     = c.Instrument;
+            pAccountId.Value      = c.AccountId;
+            pOldScore.Value       = c.OldScore.HasValue ? c.OldScore.Value : DBNull.Value;
+            pNewScore.Value       = c.NewScore;
+            pOldRank.Value        = c.OldRank.HasValue ? c.OldRank.Value : DBNull.Value;
+            pNewRank.Value        = c.NewRank;
+            pAccuracy.Value       = c.Accuracy.HasValue ? c.Accuracy.Value : DBNull.Value;
+            pFc.Value             = c.IsFullCombo.HasValue ? (c.IsFullCombo.Value ? 1 : 0) : DBNull.Value;
+            pStars.Value          = c.Stars.HasValue ? c.Stars.Value : DBNull.Value;
+            pPercentile.Value     = c.Percentile.HasValue ? c.Percentile.Value : DBNull.Value;
+            pSeason.Value         = c.Season.HasValue ? c.Season.Value : DBNull.Value;
+            pScoreAchievedAt.Value = (object?)c.ScoreAchievedAt ?? DBNull.Value;
+            pSeasonRank.Value     = c.SeasonRank.HasValue ? c.SeasonRank.Value : DBNull.Value;
+            pAllTimeRank.Value    = c.AllTimeRank.HasValue ? c.AllTimeRank.Value : DBNull.Value;
+            pNow.Value            = now;
+            inserted += cmd.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+        return inserted;
+        } // lock
     }
 
     // ─── AccountNames ───────────────────────────────────────────
@@ -387,7 +465,9 @@ public sealed class MetaDatabase : IDisposable
     /// </summary>
     public int InsertAccountIds(IEnumerable<string> accountIds)
     {
-        using var conn = OpenConnection();
+        lock (_writeLock)
+        {
+        var conn = GetPersistentConnection();
         using var tx = conn.BeginTransaction();
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
@@ -407,6 +487,7 @@ public sealed class MetaDatabase : IDisposable
 
         tx.Commit();
         return inserted;
+        } // lock
     }
 
     /// <summary>
@@ -469,7 +550,7 @@ public sealed class MetaDatabase : IDisposable
 
         lock (_writeLock)
         {
-            using var conn = OpenConnection();
+            var conn = GetPersistentConnection();
             using var tx = conn.BeginTransaction();
             using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
@@ -1670,6 +1751,10 @@ public sealed class MetaDatabase : IDisposable
 
     private readonly object _writeLock = new();
 
+    /// <summary>Long-lived connection used for write operations (same pattern as InstrumentDatabase).</summary>
+    private SqliteConnection? _persistentConn;
+    private readonly object _connLock = new();
+
     private SqliteConnection OpenConnection()
     {
         var conn = new SqliteConnection(_connectionString);
@@ -1682,9 +1767,33 @@ public sealed class MetaDatabase : IDisposable
         return conn;
     }
 
+    /// <summary>
+    /// Get the long-lived persistent connection for write operations.
+    /// Avoids per-call connection setup + pragma overhead.
+    /// </summary>
+    private SqliteConnection GetPersistentConnection()
+    {
+        if (_persistentConn is not null)
+            return _persistentConn;
+
+        lock (_connLock)
+        {
+            if (_persistentConn is not null)
+                return _persistentConn;
+
+            _persistentConn = OpenConnection();
+        }
+
+        return _persistentConn;
+    }
+
     public void Dispose()
     {
-        // No persistent connections to clean up.
+        if (_persistentConn is not null)
+        {
+            _persistentConn.Dispose();
+            _persistentConn = null;
+        }
     }
 
     // ─── SongFirstSeenSeason ────────────────────────────────────

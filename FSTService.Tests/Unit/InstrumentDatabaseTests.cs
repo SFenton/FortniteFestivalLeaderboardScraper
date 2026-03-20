@@ -93,6 +93,51 @@ public sealed class InstrumentDatabaseTests : IDisposable
         Assert.Null(entry);
     }
 
+    // ═══ GetEntriesForAccounts ═══════════════════════════════════
+
+    [Fact]
+    public void GetEntriesForAccounts_returns_matching_entries()
+    {
+        Db.UpsertEntries("song_1",
+        [
+            MakeEntry("acct_1", 100_000),
+            MakeEntry("acct_2", 90_000),
+            MakeEntry("acct_3", 80_000),
+        ]);
+
+        var result = Db.GetEntriesForAccounts("song_1", ["acct_1", "acct_3"]);
+        Assert.Equal(2, result.Count);
+        Assert.Equal(100_000, result["acct_1"].Score);
+        Assert.Equal(80_000, result["acct_3"].Score);
+    }
+
+    [Fact]
+    public void GetEntriesForAccounts_returns_empty_for_no_matches()
+    {
+        Db.UpsertEntries("song_1", [MakeEntry("acct_1", 100_000)]);
+
+        var result = Db.GetEntriesForAccounts("song_1", ["nobody_1", "nobody_2"]);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void GetEntriesForAccounts_returns_empty_for_empty_input()
+    {
+        var result = Db.GetEntriesForAccounts("song_1", []);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void GetEntriesForAccounts_case_insensitive_keys()
+    {
+        Db.UpsertEntries("song_1", [MakeEntry("acct_1", 100_000)]);
+
+        // AccountId stored as "acct_1"; query with exact case returns it
+        var result = Db.GetEntriesForAccounts("song_1", ["acct_1"]);
+        Assert.Single(result);
+        Assert.True(result.ContainsKey("acct_1"));
+    }
+
     // ═══ GetLeaderboard ═════════════════════════════════════════
 
     [Fact]

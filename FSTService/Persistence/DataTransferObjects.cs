@@ -155,3 +155,25 @@ public sealed class PlayerStatsDto
     /// <summary>Overall percentile (unplayed songs count as 100%), e.g. "Top 15%".</summary>
     public string? OverallPercentile { get; init; }
 }
+
+/// <summary>
+/// DTO for batch-inserting score changes via <see cref="MetaDatabase.InsertScoreChanges"/>.
+/// </summary>
+public sealed class ScoreChangeRecord
+{
+    public required string SongId { get; init; }
+    public required string Instrument { get; init; }
+    public required string AccountId { get; init; }
+    public int? OldScore { get; init; }
+    public required int NewScore { get; init; }
+    public int? OldRank { get; init; }
+    public required int NewRank { get; init; }
+    public int? Accuracy { get; init; }
+    public bool? IsFullCombo { get; init; }
+    public int? Stars { get; init; }
+    public double? Percentile { get; init; }
+    public int? Season { get; init; }
+    public string? ScoreAchievedAt { get; init; }
+    public int? SeasonRank { get; init; }
+    public int? AllTimeRank { get; init; }
+}

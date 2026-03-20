@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Threading.Channels;
 using FSTService.Scraping;
 
@@ -99,24 +100,27 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         Dictionary<string, LeaderboardEntry>? previousState = null;
         if (registeredAccountIds is { Count: > 0 })
         {
-            previousState = new Dictionary<string, LeaderboardEntry>(StringComparer.OrdinalIgnoreCase);
+            // Collect which registered users appear in this result
+            var relevantIds = new List<string>();
             foreach (var entry in result.Entries)
             {
                 if (registeredAccountIds.Contains(entry.AccountId))
-                {
-                    var existing = db.GetEntry(result.SongId, entry.AccountId);
-                    if (existing is not null)
-                        previousState[entry.AccountId] = existing;
-                }
+                    relevantIds.Add(entry.AccountId);
             }
+
+            // Single batch query instead of N individual GetEntry() calls
+            if (relevantIds.Count > 0)
+                previousState = db.GetEntriesForAccounts(result.SongId, relevantIds);
+            else
+                previousState = new Dictionary<string, LeaderboardEntry>(StringComparer.OrdinalIgnoreCase);
         }
 
         // ── UPSERT all entries in one transaction ──
         var rowsAffected = db.UpsertEntries(result.SongId, result.Entries);
 
         // ── Post-UPSERT: detect score changes for registered users ──
-        int changesDetected = 0;
         var changedAccountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var scoreChanges = new List<ScoreChangeRecord>();
         if (previousState is not null)
         {
             foreach (var entry in result.Entries)
@@ -129,29 +133,41 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                     // Existing entry — check if score actually changed
                     if (entry.Score != prev.Score)
                     {
-                        _metaDb.InsertScoreChange(
-                            result.SongId, result.Instrument, entry.AccountId,
-                            prev.Score, entry.Score, prev.Rank, entry.Rank,
-                            entry.Accuracy, entry.IsFullCombo, entry.Stars,
-                            entry.Percentile, entry.Season, entry.EndTime,
-                            allTimeRank: entry.Rank);
-                        changesDetected++;
+                        scoreChanges.Add(new ScoreChangeRecord
+                        {
+                            SongId = result.SongId, Instrument = result.Instrument,
+                            AccountId = entry.AccountId,
+                            OldScore = prev.Score, NewScore = entry.Score,
+                            OldRank = prev.Rank, NewRank = entry.Rank,
+                            Accuracy = entry.Accuracy, IsFullCombo = entry.IsFullCombo,
+                            Stars = entry.Stars, Percentile = entry.Percentile,
+                            Season = entry.Season, ScoreAchievedAt = entry.EndTime,
+                            AllTimeRank = entry.Rank,
+                        });
                         changedAccountIds.Add(entry.AccountId);
                     }
                 }
                 else
                 {
                     // New entry for a registered user — record as a new score
-                    _metaDb.InsertScoreChange(
-                        result.SongId, result.Instrument, entry.AccountId,
-                        null, entry.Score, null, entry.Rank,
-                        entry.Accuracy, entry.IsFullCombo, entry.Stars,
-                        entry.Percentile, entry.Season, entry.EndTime,
-                        allTimeRank: entry.Rank);
-                    changesDetected++;
+                    scoreChanges.Add(new ScoreChangeRecord
+                    {
+                        SongId = result.SongId, Instrument = result.Instrument,
+                        AccountId = entry.AccountId,
+                        OldScore = null, NewScore = entry.Score,
+                        OldRank = null, NewRank = entry.Rank,
+                        Accuracy = entry.Accuracy, IsFullCombo = entry.IsFullCombo,
+                        Stars = entry.Stars, Percentile = entry.Percentile,
+                        Season = entry.Season, ScoreAchievedAt = entry.EndTime,
+                        AllTimeRank = entry.Rank,
+                    });
                     changedAccountIds.Add(entry.AccountId);
                 }
             }
+
+            // Batch-insert all score changes in one transaction
+            if (scoreChanges.Count > 0)
+                _metaDb.InsertScoreChanges(scoreChanges);
         }
 
         // Persist account IDs to meta DB so the name resolver can
@@ -161,7 +177,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         return new PersistResult
         {
             RowsAffected = rowsAffected,
-            ScoreChangesDetected = changesDetected,
+            ScoreChangesDetected = scoreChanges.Count,
             ChangedAccountIds = changedAccountIds,
         };
     }
@@ -423,10 +439,17 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// <returns>Total number of rows updated across all instruments.</returns>
     public int RecomputeAllRanks()
     {
-        int total = 0;
-        foreach (var (instrument, db) in _instrumentDbs)
+        // Each instrument has its own DB file and _writeLock — run all 6 in parallel.
+        var results = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        Parallel.ForEach(_instrumentDbs, kvp =>
         {
-            var updated = db.RecomputeAllRanks();
+            var updated = kvp.Value.RecomputeAllRanks();
+            results[kvp.Key] = updated;
+        });
+
+        int total = 0;
+        foreach (var (instrument, updated) in results)
+        {
             _log.LogInformation("Recomputed ranks for {Instrument}: {Updated} entries.", instrument, updated);
             total += updated;
         }
