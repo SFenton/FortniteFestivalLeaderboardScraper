@@ -332,12 +332,18 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     /// <summary>Max retries for transient HTTP failures (429, 5xx, timeouts).</summary>
     private const int MaxRetries = 3;
 
+    /// <summary>Consecutive 403 Forbidden responses before cancelling remaining pages.</summary>
+    private const int ForbiddenThreshold = 3;
+
+    /// <summary>Outcome of a single page fetch.</summary>
+    internal enum FetchStatus { Success, Forbidden, OtherFailure }
+
     /// <summary>
     /// Fetch and parse a single leaderboard page with automatic retry on
     /// transient failures (429, 5xx, network errors, timeouts).
     /// Thread-safe (no shared mutable state).
     /// </summary>
-    private async Task<(ParsedPage? Page, int BodyLength)> FetchPageAsync(
+    private async Task<(ParsedPage? Page, int BodyLength, FetchStatus Status)> FetchPageAsync(
         string songId,
         string instrument,
         int page,
@@ -391,7 +397,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 if (parsed is not null)
                 {
                     limiter?.ReportSuccess();
-                    return (parsed, contentLength > 0 ? contentLength : parsed.EstimatedBytes);
+                    return (parsed, contentLength > 0 ? contentLength : parsed.EstimatedBytes, FetchStatus.Success);
                 }
 
                 // Parse failure on a 200 — read body for diagnostics
@@ -415,7 +421,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
                 _log.LogWarning("Failed to parse {Song}/{Instrument} page {Page} after {Attempts} attempts: {Detail}",
                     songId, instrument, page, MaxRetries + 1, parseBody);
-                return (null, 0);
+                return (null, 0, FetchStatus.OtherFailure);
             }
 
             var statusCode = (int)res.StatusCode;
@@ -452,13 +458,21 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 continue;
             }
 
-            _log.LogWarning("Leaderboard request failed for {Song}/{Instrument} page {Page}: {StatusCode} {Body}",
-                songId, instrument, page, statusCode, errorBody);
+            var failStatus = statusCode == 403 ? FetchStatus.Forbidden : FetchStatus.OtherFailure;
+
+            // Only log non-403 failures — 403s are expected at Epic's access boundary
+            // and handled in bulk by the caller via consecutive-403 detection.
+            if (failStatus != FetchStatus.Forbidden)
+            {
+                _log.LogWarning("Leaderboard request failed for {Song}/{Instrument} page {Page}: {StatusCode} {Body}",
+                    songId, instrument, page, statusCode, errorBody);
+            }
+
             res.Dispose();
-            return (null, 0);
+            return (null, 0, failStatus);
         }
 
-        return (null, 0);
+        return (null, 0, FetchStatus.OtherFailure);
     }
 
     // ─── Single instrument (parallel pages) ─────────
@@ -474,11 +488,12 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         string accessToken,
         string accountId,
         AdaptiveConcurrencyLimiter? limiter = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? label = null)
     {
         // ── Page 0: discover totalPages ──
         if (limiter is not null) await limiter.WaitAsync(ct);
-        (ParsedPage? firstPage, int firstLen) page0;
+        (ParsedPage? firstPage, int firstLen, FetchStatus firstStatus) page0;
         try
         {
             page0 = await FetchPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct);
@@ -520,6 +535,11 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
         if (totalPages > 1)
         {
+            // Track consecutive 403s to detect Epic's access boundary.
+            // Once we hit ForbiddenThreshold consecutive 403s, cancel remaining pages.
+            int consecutive403s = 0;
+            using var pageCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
             // ── Pages 1…N in parallel (no Task.Run — pure async I/O) ──
             var tasks = new List<Task>(totalPages - 1);
             for (int p = 1; p < totalPages; p++)
@@ -530,16 +550,39 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
             async Task FetchAndCollectPageAsync(int pageNum)
             {
-                if (limiter is not null) await limiter.WaitAsync(ct);
+                if (pageCts.IsCancellationRequested) return;
+                if (limiter is not null) await limiter.WaitAsync(pageCts.Token);
                 try
                 {
-                    var (parsed, bodyLen) = await FetchPageAsync(
-                        songId, instrument, pageNum, accessToken, accountId, limiter, ct);
+                    var (parsed, bodyLen, status) = await FetchPageAsync(
+                        songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token);
                     Interlocked.Increment(ref requestCount);
                     Interlocked.Add(ref totalBytes, bodyLen);
                     _progress.ReportPageFetched(bodyLen);
+
                     if (parsed is not null)
+                    {
                         allEntries.Add((pageNum, parsed.Entries));
+                        Interlocked.Exchange(ref consecutive403s, 0); // reset on success
+                    }
+                    else if (status == FetchStatus.Forbidden)
+                    {
+                        var count = Interlocked.Increment(ref consecutive403s);
+                        if (count >= ForbiddenThreshold)
+                        {
+                            var entryCount = allEntries.Sum(e => e.Entries.Count);
+                            _log.LogInformation(
+                                "Hit access boundary for {Label} ({Song}/{Instrument}) at page {Page}. " +
+                                "Epic reported {TotalPages} pages but served {Fetched} pages ({Entries:N0} entries).",
+                                label ?? songId, songId, instrument, pageNum,
+                                totalPages, allEntries.Count, entryCount);
+                            try { pageCts.Cancel(); } catch { }
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (pageCts.IsCancellationRequested && !ct.IsCancellationRequested)
+                {
+                    // Cancelled due to access boundary — not an error
                 }
                 finally
                 {
@@ -582,7 +625,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         IEnumerable<string>? instruments = null,
         int maxConcurrency = DefaultMaxConcurrency,
         AdaptiveConcurrencyLimiter? sharedLimiter = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? label = null)
     {
         var instList = (instruments ?? AllInstruments).ToList();
         var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(
@@ -592,7 +636,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         // Launch all instruments in parallel
         var tasks = instList.Select(inst =>
         {
-            return ScrapeLeaderboardAsync(songId, inst, accessToken, accountId, limiter, ct);
+            return ScrapeLeaderboardAsync(songId, inst, accessToken, accountId, limiter, ct, label);
         }).ToList();
 
         var resultsArr = await Task.WhenAll(tasks);
@@ -643,7 +687,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 req.SongId, accessToken, accountId,
                 instruments: req.Instruments,
                 sharedLimiter: limiter,
-                ct: ct);
+                ct: ct,
+                label: req.Label);
 
             results[req.SongId] = songResults;
 
