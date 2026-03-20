@@ -23,4 +23,20 @@ describe('SeasonPill', () => {
     const { container } = render(<TestProviders><SeasonPill season={3} /></TestProviders>);
     expect(container.querySelector('[class*="pillCurrent"]')).toBeNull();
   });
+
+  it('applies default style when current is explicitly false', () => {
+    const { container } = render(<TestProviders><SeasonPill season={5} current={false} /></TestProviders>);
+    expect(container.querySelector('[class*="pillCurrent"]')).toBeNull();
+  });
+
+  it('renders without context (fallback currentSeason = 0)', () => {
+    // Render without TestProviders — context is null, currentSeason defaults to 0
+    render(<SeasonPill season={1} />);
+    expect(screen.getByText('S1')).toBeTruthy();
+  });
+
+  it('renders season 0', () => {
+    render(<TestProviders><SeasonPill season={0} /></TestProviders>);
+    expect(screen.getByText('S0')).toBeTruthy();
+  });
 });
