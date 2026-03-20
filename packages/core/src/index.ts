@@ -18,10 +18,10 @@ export * from './suggestions/suggestionFilterConfig';
 export * from './app/formatters';
 
 /** Current app version. Keep in sync with package.json. */
-export const APP_VERSION = '0.0.2';
+export const APP_VERSION = '0.0.3';
 
 /** Current @festival/core package version. Keep in sync with packages/core/package.json. */
-export const CORE_VERSION = '0.0.3';
+export const CORE_VERSION = '0.0.4';
 
 /** Current @festival/theme package version. Keep in sync with packages/theme/package.json. */
 export const THEME_VERSION = '0.0.1';
