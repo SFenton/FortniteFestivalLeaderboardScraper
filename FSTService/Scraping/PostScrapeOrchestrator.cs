@@ -19,7 +19,6 @@ public sealed class PostScrapeOrchestrator
     private readonly PersonalDbBuilder _personalDbBuilder;
     private readonly PostScrapeRefresher _refresher;
     private readonly NotificationService _notifications;
-    private readonly TokenVault _tokenVault;
     private readonly TokenManager _tokenManager;
     private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<PostScrapeOrchestrator> _log;
@@ -31,7 +30,6 @@ public sealed class PostScrapeOrchestrator
         PersonalDbBuilder personalDbBuilder,
         PostScrapeRefresher refresher,
         NotificationService notifications,
-        TokenVault tokenVault,
         TokenManager tokenManager,
         ScrapeProgressTracker progress,
         ILogger<PostScrapeOrchestrator> log)
@@ -42,7 +40,6 @@ public sealed class PostScrapeOrchestrator
         _personalDbBuilder = personalDbBuilder;
         _refresher = refresher;
         _notifications = notifications;
-        _tokenVault = tokenVault;
         _tokenManager = tokenManager;
         _progress = progress;
         _log = log;
@@ -213,8 +210,6 @@ public sealed class PostScrapeOrchestrator
                     if (File.Exists(dbPath))
                         File.Delete(dbPath);
                 }
-
-                _tokenVault.Revoke(orphanedAccountId);
 
                 var displayName = _persistence.Meta.GetDisplayName(orphanedAccountId);
                 _log.LogInformation(

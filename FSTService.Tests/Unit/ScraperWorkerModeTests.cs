@@ -34,7 +34,6 @@ public class ScraperWorkerModeTests : IDisposable
     private readonly HistoryReconstructor _historyReconstructor;
     private readonly FirstSeenSeasonCalculator _firstSeenCalculator;
     private readonly FestivalService _festivalService;
-    private readonly TokenVault _tokenVault;
     private readonly ScrapeProgressTracker _progress;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<ScraperWorker> _log;
@@ -106,11 +105,6 @@ public class ScraperWorkerModeTests : IDisposable
 
         _festivalService = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
 
-        _tokenVault = new TokenVault(
-            _metaDb, epicAuth,
-            Options.Create(new EpicOAuthSettings()),
-            Substitute.For<ILogger<TokenVault>>());
-
         _lifetime = Substitute.For<IHostApplicationLifetime>();
         _log = Substitute.For<ILogger<ScraperWorker>>();
     }
@@ -148,7 +142,7 @@ public class ScraperWorkerModeTests : IDisposable
 
         var postScrapeOrchestrator = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _personalDbBuilder, _refresher, notifications, _tokenVault,
+            _personalDbBuilder, _refresher, notifications,
             _tokenManager, _progress,
             Substitute.For<ILogger<PostScrapeOrchestrator>>());
 

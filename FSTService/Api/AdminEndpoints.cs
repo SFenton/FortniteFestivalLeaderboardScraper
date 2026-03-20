@@ -10,36 +10,6 @@ public static partial class ApiEndpoints
 {
     public static void MapAdminEndpoints(this WebApplication app)
     {
-        app.MapPost("/api/auth/device-code", async (TokenManager tokenManager, CancellationToken ct) =>
-        {
-            try
-            {
-                var deviceAuth = await tokenManager.StartDeviceCodeFlowAsync(ct);
-
-                // Fire-and-forget: poll in background until the user completes login.
-                // CompletePollAsync handles errors internally (timeout → returns false).
-                _ = tokenManager.CompletePollAsync(deviceAuth, CancellationToken.None);
-
-                return Results.Ok(new
-                {
-                    userCode = deviceAuth.UserCode,
-                    verificationUri = deviceAuth.VerificationUri,
-                    verificationUriComplete = deviceAuth.VerificationUriComplete,
-                    expiresIn = deviceAuth.ExpiresIn,
-                });
-            }
-            catch (Exception ex)
-            {
-                return Results.Problem(
-                    detail: ex.Message,
-                    statusCode: 502,
-                    title: "Failed to start device code flow");
-            }
-        })
-        .WithTags("Auth")
-        .RequireAuthorization()
-        .RequireRateLimiting("protected");
-
         app.MapGet("/api/status", (
             GlobalLeaderboardPersistence persistence,
             MetaDatabase metaDb) =>

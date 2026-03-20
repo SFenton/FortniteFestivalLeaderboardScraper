@@ -185,15 +185,6 @@ public class ScraperOptionsAndModelsTests
         Assert.Equal("", opts.ApiKey);
     }
 
-    // ─── BearerAuthOptions ──────────────────────────────
-
-    [Fact]
-    public void BearerAuthOptions_IsAuthenticationSchemeOptions()
-    {
-        var opts = new FSTService.Api.BearerAuthOptions();
-        Assert.IsAssignableFrom<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions>(opts);
-    }
-
     // ─── LeaderboardEntry ───────────────────────────────
 
     [Fact]
@@ -224,31 +215,6 @@ public class ScraperOptionsAndModelsTests
         Assert.Equal(0, result.PagesScraped);
         Assert.Equal(0, result.Requests);
         Assert.Equal(0L, result.BytesReceived);
-    }
-
-    // ─── Request DTOs ───────────────────────────────────
-
-    [Fact]
-    public void LoginRequest_Record()
-    {
-        var req = new FSTService.Api.LoginRequest("fake_code_123", "device1", "ios");
-        Assert.Equal("fake_code_123", req.Code);
-        Assert.Equal("device1", req.DeviceId);
-        Assert.Equal("ios", req.Platform);
-    }
-
-    [Fact]
-    public void RefreshRequest_Record()
-    {
-        var req = new FSTService.Api.RefreshRequest("rt_123");
-        Assert.Equal("rt_123", req.RefreshToken);
-    }
-
-    [Fact]
-    public void LogoutRequest_Record()
-    {
-        var req = new FSTService.Api.LogoutRequest("rt_123");
-        Assert.Equal("rt_123", req.RefreshToken);
     }
 
     [Fact]

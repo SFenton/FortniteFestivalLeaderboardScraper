@@ -108,7 +108,6 @@ builder.Services.AddHttpClient<AccountNameResolver>()
     });
 
 // ─── Auth (Epic device auth) ────────────────────────────────
-builder.Services.Configure<EpicOAuthSettings>(builder.Configuration.GetSection(EpicOAuthSettings.Section));
 builder.Services.AddSingleton<FSTService.Scraping.ScrapeProgressTracker>();
 builder.Services.AddSingleton<ICredentialStore>(sp =>
 {
@@ -152,19 +151,7 @@ builder.Services.AddSingleton<PersonalDbBuilder>(sp =>
         sp.GetRequiredService<ILogger<PersonalDbBuilder>>());
 });
 
-// ─── JWT / User Auth ────────────────────────────────────────
-
-builder.Services.Configure<JwtSettings>(
-    builder.Configuration.GetSection(JwtSettings.Section));
-
-var jwtSettings = builder.Configuration
-    .GetSection(JwtSettings.Section)
-    .Get<JwtSettings>() ?? new JwtSettings();
-
-builder.Services.AddSingleton<JwtTokenService>();
-
 builder.Services.AddSingleton<BackfillQueue>();
-builder.Services.AddSingleton<TokenVault>();
 builder.Services.AddSingleton<ScoreBackfiller>();
 builder.Services.AddSingleton<PostScrapeRefresher>();
 builder.Services.AddSingleton<FirstSeenSeasonCalculator>();
@@ -199,8 +186,6 @@ builder.Services.AddHttpClient<PathGenerator>()
         AutomaticDecompression = System.Net.DecompressionMethods.All,
     });
 
-builder.Services.AddSingleton<UserAuthService>();
-
 // Core FestivalService — song catalog sync. Shared with API for /api/songs.
 builder.Services.AddSingleton<FestivalService>(sp =>
 {
@@ -224,8 +209,7 @@ builder.Services
     .AddScheme<ApiKeyAuthOptions, ApiKeyAuthHandler>("ApiKey", opts =>
     {
         opts.ApiKey = apiSettings.ApiKey;
-    })
-    .AddScheme<BearerAuthOptions, BearerTokenAuthHandler>("Bearer", _ => { });
+    });
 builder.Services.AddAuthorization();
 
 // ─── Rate limiting ──────────────────────────────────────────
@@ -294,7 +278,6 @@ app.Services.GetRequiredService<GlobalLeaderboardPersistence>().Initialize();
 // Security: block path traversal attempts first
 app.UseMiddleware<PathTraversalGuardMiddleware>();
 
-app.UseWebSockets();
 app.UseCors();
 app.UseRateLimiter();
 app.UseAuthentication();
@@ -306,7 +289,6 @@ app.UseStaticFiles();
 
 // Map API endpoints
 app.MapApiEndpoints();
-app.MapAuthEndpoints();
 app.MapStaticAssets();
 
 // Fallback: serve index.html for any non-API GET request (SPA support)
