@@ -1583,11 +1583,12 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
             builder.ConfigureServices(services =>
             {
-                // Remove the real ScraperWorker — we don't want background scraping
+                // Remove the real ScraperWorker — we don't want background scraping.
+                // Also removes DatabaseInitializer (prevents HTTP calls to Epic CDN).
                 services.RemoveAll<IHostedService>();
 
-                // Re-register DatabaseInitializer so schemas are created during test startup
-                services.AddHostedService(sp => sp.GetRequiredService<DatabaseInitializer>());
+                // Initialize DB schemas directly — fast, no HTTP calls needed.
+                services.AddHostedService<TestDatabaseInitializer>();
 
                 // Ensure API key auth options are set (Program.cs resolves them early
                 // before test config is applied, so we must override here)
@@ -1669,6 +1670,39 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             protected override Task<HttpResponseMessage> SendAsync(
                 HttpRequestMessage request, CancellationToken cancellationToken)
                 => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }
+
+        /// <summary>
+        /// Test replacement for DatabaseInitializer — initializes DB schemas directly
+        /// without calling FestivalService.InitializeAsync() (which makes HTTP calls).
+        /// </summary>
+        private sealed class TestDatabaseInitializer : IHostedService
+        {
+            private readonly GlobalLeaderboardPersistence _persistence;
+            private readonly DatabaseInitializer _dbInitializer;
+
+            public TestDatabaseInitializer(
+                GlobalLeaderboardPersistence persistence,
+                DatabaseInitializer dbInitializer)
+            {
+                _persistence = persistence;
+                _dbInitializer = dbInitializer;
+            }
+
+            public Task StartAsync(CancellationToken cancellationToken)
+            {
+                _persistence.Initialize();
+                // Signal ready on the real DatabaseInitializer singleton so
+                // /readyz health check and ScraperWorker see it as ready.
+                // Use reflection to set the TaskCompletionSource since it's private.
+                var field = typeof(DatabaseInitializer).GetField("_readySignal",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                var tcs = (TaskCompletionSource)field!.GetValue(_dbInitializer)!;
+                tcs.TrySetResult();
+                return Task.CompletedTask;
+            }
+
+            public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
         }
     }
 }
