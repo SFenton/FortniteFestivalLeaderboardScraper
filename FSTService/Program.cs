@@ -271,6 +271,8 @@ builder.Services.AddCors(opts =>
 // DatabaseInitializer must run before ScraperWorker (hosted services start in registration order)
 builder.Services.AddSingleton<DatabaseInitializer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DatabaseInitializer>());
+builder.Services.AddHealthChecks()
+    .AddCheck<DatabaseInitializer>("database", tags: ["ready"]);
 builder.Services.AddHostedService<ScraperWorker>();
 
 // ─── Build and configure pipeline ───────────────────────────

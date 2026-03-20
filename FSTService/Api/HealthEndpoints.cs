@@ -1,5 +1,4 @@
 using System.Reflection;
-using FSTService.Persistence;
 using FSTService.Scraping;
 
 namespace FSTService.Api;
@@ -12,13 +11,15 @@ public static partial class ApiEndpoints
            .WithTags("Health")
            .RequireRateLimiting("public");
 
-        app.MapGet("/readyz", (DatabaseInitializer initializer) =>
+        app.MapHealthChecks("/readyz", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
         {
-            return initializer.IsReady
-                ? Results.Ok("ready")
-                : Results.StatusCode(503);
-        })
-        .WithTags("Health");
+            ResultStatusCodes =
+            {
+                [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Healthy] = 200,
+                [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Unhealthy] = 503,
+                [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded] = 503,
+            },
+        });
 
         app.MapGet("/api/version", () =>
         {

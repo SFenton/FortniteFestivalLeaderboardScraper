@@ -95,11 +95,7 @@ public sealed class ScraperWorker : BackgroundService
         var opts = _options.Value;
 
         // Wait for DatabaseInitializer to finish (DBs + song catalog)
-        while (!_dbInitializer.IsReady)
-        {
-            _log.LogDebug("Waiting for database initialization...");
-            await Task.Delay(100, stoppingToken);
-        }
+        await _dbInitializer.WaitForReadyAsync(stoppingToken);
         _log.LogInformation("Song catalog loaded. {SongCount} songs available for API.",
             _festivalService.Songs.Count);
 

@@ -156,8 +156,7 @@ public class ScraperWorkerModeTests : IDisposable
             _persistence, _festivalService, _lifetime,
             Substitute.For<ILogger<DatabaseInitializer>>());
         dbInitializer.StartAsync(CancellationToken.None);
-        // Wait for background init to complete before tests use the worker
-        while (!dbInitializer.IsReady) Thread.Sleep(10);
+        dbInitializer.WaitForReadyAsync().GetAwaiter().GetResult();
 
         return new ScraperWorker(
             _tokenManager, _scraper, _persistence,

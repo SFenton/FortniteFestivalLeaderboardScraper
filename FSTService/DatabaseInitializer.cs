@@ -1,23 +1,28 @@
 using FortniteFestival.Core.Services;
 using FSTService.Persistence;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace FSTService;
 
 /// <summary>
 /// Initializes all SQLite database schemas and eagerly loads the song catalog
 /// as a background hosted service, allowing Kestrel to start accepting connections
-/// immediately. The /readyz endpoint gates on <see cref="IsReady"/> to signal
-/// when databases and song data are fully loaded.
+/// immediately. Implements <see cref="IHealthCheck"/> for the /readyz endpoint.
 /// </summary>
-public sealed class DatabaseInitializer : IHostedService
+public sealed class DatabaseInitializer : IHostedService, IHealthCheck
 {
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly FestivalService _festivalService;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<DatabaseInitializer> _log;
-    private volatile bool _ready;
+    private readonly TaskCompletionSource _readySignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public bool IsReady => _ready;
+    /// <summary>True once databases and song catalog are fully initialized.</summary>
+    public bool IsReady => _readySignal.Task.IsCompletedSuccessfully;
+
+    /// <summary>Awaitable task that completes when initialization finishes.</summary>
+    public Task WaitForReadyAsync(CancellationToken ct = default)
+        => _readySignal.Task.WaitAsync(ct);
 
     public DatabaseInitializer(
         GlobalLeaderboardPersistence persistence,
@@ -33,8 +38,6 @@ public sealed class DatabaseInitializer : IHostedService
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        // Fire-and-forget: run initialization in background so Kestrel can
-        // bind the port immediately. /readyz gates on IsReady for traffic.
         _ = InitializeInBackgroundAsync(cancellationToken);
         return Task.CompletedTask;
     }
@@ -45,7 +48,6 @@ public sealed class DatabaseInitializer : IHostedService
         {
             _log.LogInformation("Initializing databases and song catalog...");
 
-            // Run DB schema init and song catalog load in parallel
             var dbTask = Task.Run(() => _persistence.Initialize(), ct);
             var songTask = _festivalService.InitializeAsync();
 
@@ -54,14 +56,23 @@ public sealed class DatabaseInitializer : IHostedService
             _log.LogInformation(
                 "Initialization complete. {SongCount} songs loaded, {DbCount} instrument DBs ready.",
                 _festivalService.Songs.Count, 6);
-            _ready = true;
+            _readySignal.TrySetResult();
         }
         catch (Exception ex)
         {
-            _log.LogCritical(ex, "Database initialization failed. Application cannot serve data. Shutting down.");
+            _log.LogCritical(ex, "Database initialization failed. Shutting down.");
+            _readySignal.TrySetException(ex);
             _lifetime.StopApplication();
         }
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task<HealthCheckResult> CheckHealthAsync(
+        HealthCheckContext context, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult(IsReady
+            ? HealthCheckResult.Healthy("Databases initialized.")
+            : HealthCheckResult.Unhealthy("Databases still initializing."));
+    }
 }
