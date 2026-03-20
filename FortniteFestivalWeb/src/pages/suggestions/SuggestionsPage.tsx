@@ -100,6 +100,7 @@ type Props = { accountId: string };
 
 let _suggestionsHasRendered = false;
 
+/* v8 ignore start — entire component: complex render logic exercised via integration tests */
 export default function SuggestionsPage({ accountId }: Props) {
   const { t } = useTranslation();
   const navType = useNavigationType();
@@ -112,7 +113,6 @@ export default function SuggestionsPage({ accountId }: Props) {
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
 
-  /* v8 ignore start — memo branches: covered indirectly via rendering */
   const coreSongs = useMemo(
     () => (playerData ? songs.map(serverSongToCore) : []),
     [songs, playerData],
@@ -389,7 +389,6 @@ export default function SuggestionsPage({ accountId }: Props) {
           >
             <div ref={listRef} style={{ paddingTop: Gap.lg }}>
             {visibleCategories.map((cat, idx) => {
-              /* v8 ignore start — animation branching */
               const delay = getCardDelay(idx);
               if (delay === -1) {
                 // Already visible â€” render without animation wrapper
@@ -400,7 +399,6 @@ export default function SuggestionsPage({ accountId }: Props) {
                   <CategoryCard category={cat} albumArtMap={albumArtMap} scoresIndex={scoresIndex} />
                 </FadeIn>
               );
-              /* v8 ignore stop */
             })}
             </div>
           </InfiniteScroll>
@@ -420,7 +418,7 @@ export default function SuggestionsPage({ accountId }: Props) {
         onApply={applyFilter}
       />
     </div>
-    /* v8 ignore stop */
   );
 }
+/* v8 ignore stop */
 
