@@ -8,6 +8,7 @@ import {
   type ServerInstrumentKey as InstrumentKey,
   type LeaderboardEntry as LeaderboardEntryType,
 } from '@festival/core/api/serverTypes';
+import { LoadPhase } from '@festival/core';
 import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
 import { LeaderboardEntry } from './components/LeaderboardEntry';
 import { Gap, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, QUERY_SHOW_STARS } from '@festival/theme';
@@ -76,7 +77,7 @@ export default function LeaderboardPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [headerCollapsed, setHeaderCollapsed] = useState(isNarrow);
   const headerPinned = useRef(false);
-  const [loadPhase, setLoadPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>(hasCached ? 'contentIn' : 'loading');
+  const [loadPhase, setLoadPhase] = useState<LoadPhase>(hasCached ? LoadPhase.ContentIn : LoadPhase.Loading);
   // Tracks: 'first' = initial load (stagger everything), 'paginate' = page change (stagger rows only), 'cached' = from cache (no stagger)
   const [animMode, setAnimMode] = useState<'first' | 'paginate' | 'cached'>(skipAllAnim ? 'cached' : 'first');
   const updateScrollMask = useScrollMask(scrollRef, [loadPhase, entries.length]);
@@ -176,26 +177,26 @@ export default function LeaderboardPage() {
   const hasLoadedOnce = useRef(hasCached);
   const loadPhaseRef = useRef(loadPhase);
   loadPhaseRef.current = loadPhase;
-  const hasShownContentRef = useRef(loadPhase === 'contentIn');
+  const hasShownContentRef = useRef(loadPhase === LoadPhase.ContentIn);
   useEffect(() => {
     if (loading || error) {
       // Don't hide already-visible content for pagination
       if (hasShownContentRef.current) return;
-      setLoadPhase('loading');
+      setLoadPhase(LoadPhase.Loading);
       // Pin header state and scroll to top so new content staggers from top
       headerPinned.current = true;
       userScrolledRef.current = false;
       scrollRef.current?.scrollTo(0, 0);
       return;
     }
-    if (loadPhaseRef.current === 'contentIn') {
+    if (loadPhaseRef.current === LoadPhase.ContentIn) {
       hasShownContentRef.current = true;
       return;
     }
-    setLoadPhase('spinnerOut');
+    setLoadPhase(LoadPhase.SpinnerOut);
     let retireId: ReturnType<typeof setTimeout>;
     const id = setTimeout(() => {
-      setLoadPhase('contentIn');
+      setLoadPhase(LoadPhase.ContentIn);
       hasShownContentRef.current = true;
       // On initial load, let header be expanded and unpin immediately.
       // On pagination, keep pinned â€” scroll handler will unpin once past threshold.
@@ -217,7 +218,7 @@ export default function LeaderboardPage() {
 
   /* v8 ignore start — navToPlayer auto-scroll */
   useEffect(() => {
-    if (loadPhase !== 'contentIn' || !searchParams.get('navToPlayer')) return;
+    if (loadPhase !== LoadPhase.ContentIn || !searchParams.get('navToPlayer')) return;
     const playerIndex = playerData ? entries.findIndex(e => e.accountId === playerData.accountId) : -1;
     if (playerIndex < 0) {
       searchParams.delete('navToPlayer');
@@ -285,10 +286,10 @@ export default function LeaderboardPage() {
 
         {!error && (
           <>
-            {loadPhase !== 'contentIn' && (
+            {loadPhase !== LoadPhase.ContentIn && (
               <div
                 className={s.spinnerContainer} style={{
-                  ...(loadPhase === 'spinnerOut'
+                  ...(loadPhase === LoadPhase.SpinnerOut
                     ? { animation: 'fadeOut 150ms ease-out forwards' }
                     : {}),
                 }}
@@ -297,7 +298,7 @@ export default function LeaderboardPage() {
               </div>
             )}
             {/* v8 ignore start — entry rendering ternaries */}
-            {loadPhase === 'contentIn' && (
+            {loadPhase === LoadPhase.ContentIn && (
             <div ref={listRef} className={s.list}>
               {entries.map((e, i) => {
                 const isPlayer = playerData?.accountId === e.accountId;

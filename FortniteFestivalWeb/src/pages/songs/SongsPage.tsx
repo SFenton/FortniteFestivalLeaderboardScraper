@@ -15,6 +15,7 @@ import { useScrollRestore, clearScrollCache } from '../../hooks/ui/useScrollRest
 import { useFilteredSongs } from '../../hooks/data/useFilteredSongs';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { type PlayerScore, type ServerInstrumentKey as InstrumentKey, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
+import { LoadPhase } from '@festival/core';
 import { Gap } from '@festival/theme';
 import { LoadGate } from '../../components/page/LoadGate';
 import SyncBanner from '../../components/page/SyncBanner';
@@ -237,14 +238,14 @@ export default function SongsPage() {
   }, [playerData]);
 
   // â”€â”€ Spinner â†’ staggered-content transition â”€â”€
-  const dataReady = !isLoading && songs.length > 0 && !playerLoading;
+  const dataReady = !isLoading && !playerLoading;
   // Capture "first visit this session" before marking as rendered
   const skipAnimRef = useRef((_songsHasRendered || isBackNav) && !forceRestagger);
   const skipAnim = skipAnimRef.current;
   _songsHasRendered = true;
-  // Skip spinner if data already available OR already visited; skip stagger only if already visited
-  const [loadPhase, setLoadPhase] = useState<'loading' | 'spinnerOut' | 'contentIn'>(
-    (skipAnim || dataReady) ? 'contentIn' : 'loading',
+  // Skip spinner + stagger only when data is actually available
+  const [loadPhase, setLoadPhase] = useState<LoadPhase>(
+    dataReady ? LoadPhase.ContentIn : LoadPhase.Loading,
   );
   // Track whether the initial load phase was set via settings change (not mount)
   const isSettingsChangeRef = useRef(false);
@@ -253,7 +254,7 @@ export default function SongsPage() {
 
   // Track whether the toolbar has been shown at least once (initial load complete)
   const toolbarShownRef = useRef(skipAnim);
-  if (loadPhase === 'contentIn') toolbarShownRef.current = true;
+  if (loadPhase === LoadPhase.ContentIn) toolbarShownRef.current = true;
 
   // Fingerprint of sort/filter/search settings â€” when it changes, re-stagger the list
   const settingsKey = `${settings.sortMode}|${settings.sortAscending}|${instrument}|${JSON.stringify(settings.filters)}|${debouncedSearch}`;
@@ -264,38 +265,43 @@ export default function SongsPage() {
     if (prevSettingsKeyRef.current === settingsKey) return;
     prevSettingsKeyRef.current = settingsKey;
     // Only re-stagger if we were already showing content
-    if (loadPhase === 'contentIn') {
+    if (loadPhase === LoadPhase.ContentIn) {
       isSettingsChangeRef.current = true;
       setShouldStagger(true);
-      setLoadPhase('spinnerOut');
+      setLoadPhase(LoadPhase.SpinnerOut);
     }
   }, [settingsKey, loadPhase]);
 
   // Show spinner while the user is typing ahead of the debounce
   const searchLoadingRef = useRef(false);
   useEffect(() => {
-    if (effectiveSearch !== debouncedSearch && (loadPhase === 'contentIn' || loadPhase === 'spinnerOut')) {
+    if (effectiveSearch !== debouncedSearch && (loadPhase === LoadPhase.ContentIn || loadPhase === LoadPhase.SpinnerOut)) {
       searchLoadingRef.current = true;
-      setLoadPhase('loading');
+      setLoadPhase(LoadPhase.Loading);
     }
   }, [effectiveSearch, debouncedSearch, loadPhase]);
 
   useEffect(() => {
-    if (!dataReady || loadPhase !== 'loading') return;
+    if (!dataReady || loadPhase !== LoadPhase.Loading) return;
     // Hold the spinner briefly so it feels intentional after search debounce
     if (searchLoadingRef.current) {
       searchLoadingRef.current = false;
-      const id = setTimeout(() => { setShouldStagger(true); setLoadPhase('spinnerOut'); }, 300);
+      const id = setTimeout(() => { setShouldStagger(true); setLoadPhase(LoadPhase.SpinnerOut); }, 300);
       return () => clearTimeout(id);
     }
-    setShouldStagger(true);
-    setLoadPhase('spinnerOut');
+    // On revisit (skipAnim) skip the spinner-out delay and jump straight to content
+    if (skipAnimRef.current) {
+      setLoadPhase(LoadPhase.ContentIn);
+    } else {
+      setShouldStagger(true);
+      setLoadPhase(LoadPhase.SpinnerOut);
+    }
   }, [dataReady, loadPhase]);
 
   useEffect(() => {
-    if (loadPhase !== 'spinnerOut') return;
+    if (loadPhase !== LoadPhase.SpinnerOut) return;
     const id = setTimeout(() => {
-      setLoadPhase('contentIn');
+      setLoadPhase(LoadPhase.ContentIn);
     }, 500);
     return () => clearTimeout(id);
   }, [loadPhase]);
@@ -303,7 +309,7 @@ export default function SongsPage() {
   // Turn off stagger after all animations finish
   const maxVisibleSongs = useMemo(() => estimateVisibleCount(isMobile ? 120 : 72), [isMobile]);
   useEffect(() => {
-    if (loadPhase !== 'contentIn' || !shouldStagger) return;
+    if (loadPhase !== LoadPhase.ContentIn || !shouldStagger) return;
     const totalAnimTime = (maxVisibleSongs + 1) * 125 + 400;
     const id = setTimeout(() => setShouldStagger(false), totalAnimTime);
     return () => clearTimeout(id);
@@ -313,7 +319,7 @@ export default function SongsPage() {
   // Scroll to top when content transitions in after a settings change (not on initial mount or back nav)
   /* v8 ignore start — scroll reset on settings change */
   useEffect(() => {
-    if (loadPhase === 'contentIn' && isSettingsChangeRef.current && scrollRef.current) {
+    if (loadPhase === LoadPhase.ContentIn && isSettingsChangeRef.current && scrollRef.current) {
       isSettingsChangeRef.current = false;
       scrollRef.current.scrollTop = 0;
       clearScrollCache('songs');
@@ -336,7 +342,7 @@ export default function SongsPage() {
   const ROW_HEIGHT = isMobile ? 122 : 68; // row + 2px gap
   const listParentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
-    count: loadPhase === 'contentIn' ? filtered.length : 0,
+    count: loadPhase === LoadPhase.ContentIn ? filtered.length : 0,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 8,
@@ -353,7 +359,7 @@ export default function SongsPage() {
       {!isMobileChrome && (
       <div className={s.header}>
         <div className={s.container}>
-          <div style={{ visibility: (toolbarShownRef.current || loadPhase === 'contentIn') ? 'visible' : 'hidden' } as CSSProperties}>
+          <div style={{ visibility: (toolbarShownRef.current || loadPhase === LoadPhase.ContentIn) ? 'visible' : 'hidden' } as CSSProperties}>
           <SongsToolbar
             search={search}
             onSearchChange={setSearch}
@@ -380,7 +386,7 @@ export default function SongsPage() {
             historyProgress={historyProgress}
           />
         )}
-        {loadPhase === 'contentIn' && filtered.length === 0 ? (
+        {loadPhase === LoadPhase.ContentIn && filtered.length === 0 ? (
           <div className={s.emptyState}>
             <div className={s.emptyTitle}>{t('songs.noResults')}</div>
             <div className={s.emptySubtitle}>
@@ -397,7 +403,7 @@ export default function SongsPage() {
               position: 'relative',
             }}
           >
-            {loadPhase === 'contentIn' && virtualizer.getVirtualItems().map((virtualRow) => {
+            {loadPhase === LoadPhase.ContentIn && virtualizer.getVirtualItems().map((virtualRow) => {
                 const song = filtered[virtualRow.index]!;
                 const i = virtualRow.index;
                 return (
