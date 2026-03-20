@@ -26,6 +26,7 @@ public sealed class ScrapeProgressTracker
         ResolvingNames,
         RebuildingPersonalDbs,
         RefreshingRegisteredUsers,
+        ComputingRivals,
         BackfillingScores,
         ReconstructingHistory,
     }

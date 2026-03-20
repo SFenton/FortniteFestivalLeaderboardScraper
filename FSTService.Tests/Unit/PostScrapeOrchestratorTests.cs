@@ -81,9 +81,12 @@ public class PostScrapeOrchestratorTests : IDisposable
         _progress = new ScrapeProgressTracker();
         _log = Substitute.For<ILogger<PostScrapeOrchestrator>>();
 
+        var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
+        var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
+
         _sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _personalDbBuilder, _refresher, _notifications,
+            _personalDbBuilder, _refresher, rivalsOrchestrator, _notifications,
             _tokenManager, _progress, _log);
     }
 

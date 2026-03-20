@@ -177,3 +177,60 @@ public sealed class ScoreChangeRecord
     public int? SeasonRank { get; init; }
     public int? AllTimeRank { get; init; }
 }
+
+/// <summary>
+/// DTO for rivals computation status tracking.
+/// </summary>
+public sealed class RivalsStatusInfo
+{
+    public string AccountId { get; init; } = "";
+    public string Status { get; init; } = "pending";
+    public int CombosComputed { get; init; }
+    public int RivalsFound { get; init; }
+    public string? StartedAt { get; init; }
+    public string? CompletedAt { get; init; }
+    public string? ErrorMessage { get; init; }
+}
+
+/// <summary>
+/// Row in the <c>UserRivals</c> table — a single rival for a user on a specific instrument combo.
+/// </summary>
+public sealed class UserRivalRow
+{
+    public string UserId { get; init; } = "";
+    public string RivalAccountId { get; init; } = "";
+    public string InstrumentCombo { get; init; } = "";
+    public string Direction { get; init; } = "";
+    public double RivalScore { get; init; }
+    public double AvgSignedDelta { get; init; }
+    public int SharedSongCount { get; init; }
+    public int AheadCount { get; init; }
+    public int BehindCount { get; init; }
+    public string ComputedAt { get; init; } = "";
+}
+
+/// <summary>
+/// Row in the <c>RivalSongSamples</c> table — a song comparison between user and rival.
+/// </summary>
+public sealed class RivalSongSampleRow
+{
+    public string UserId { get; init; } = "";
+    public string RivalAccountId { get; init; } = "";
+    public string Instrument { get; init; } = "";
+    public string SongId { get; init; } = "";
+    public int UserRank { get; init; }
+    public int RivalRank { get; init; }
+    public int RankDelta { get; init; }
+    public int? UserScore { get; init; }
+    public int? RivalScore { get; init; }
+}
+
+/// <summary>
+/// Summary of how many above/below rivals exist for a specific instrument combo.
+/// </summary>
+public sealed class RivalComboSummary
+{
+    public string InstrumentCombo { get; init; } = "";
+    public int AboveCount { get; init; }
+    public int BelowCount { get; init; }
+}

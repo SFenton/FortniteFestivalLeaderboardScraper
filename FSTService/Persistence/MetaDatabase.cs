@@ -14,6 +14,12 @@ public sealed class MetaDatabase : IDisposable
     /// </summary>
     internal const int DataCollectionVersion = 2;
 
+    /// <summary>
+    /// Bump this when rivals computation logic changes in a way that requires
+    /// re-running rivals for all registered users.
+    /// </summary>
+    internal const int RivalsVersion = 1;
+
     private readonly string _connectionString;
     private readonly ILogger<MetaDatabase> _log;
     private bool _initialized;
@@ -209,6 +215,49 @@ public sealed class MetaDatabase : IDisposable
                 Version INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS RivalsStatus (
+                AccountId         TEXT    PRIMARY KEY,
+                Status            TEXT    NOT NULL DEFAULT 'pending',
+                CombosComputed    INTEGER NOT NULL DEFAULT 0,
+                RivalsFound       INTEGER NOT NULL DEFAULT 0,
+                StartedAt         TEXT,
+                CompletedAt       TEXT,
+                ErrorMessage      TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS UserRivals (
+                UserId          TEXT    NOT NULL,
+                RivalAccountId  TEXT    NOT NULL,
+                InstrumentCombo TEXT    NOT NULL,
+                Direction       TEXT    NOT NULL,
+                RivalScore      REAL    NOT NULL,
+                AvgSignedDelta  REAL    NOT NULL,
+                SharedSongCount INTEGER NOT NULL,
+                AheadCount      INTEGER NOT NULL,
+                BehindCount     INTEGER NOT NULL,
+                ComputedAt      TEXT    NOT NULL,
+                PRIMARY KEY (UserId, RivalAccountId, InstrumentCombo)
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_UserRivals_Combo
+                ON UserRivals (UserId, InstrumentCombo, Direction, RivalScore DESC);
+
+            CREATE TABLE IF NOT EXISTS RivalSongSamples (
+                UserId          TEXT    NOT NULL,
+                RivalAccountId  TEXT    NOT NULL,
+                Instrument      TEXT    NOT NULL,
+                SongId          TEXT    NOT NULL,
+                UserRank        INTEGER NOT NULL,
+                RivalRank       INTEGER NOT NULL,
+                RankDelta       INTEGER NOT NULL,
+                UserScore       INTEGER,
+                RivalScore      INTEGER,
+                PRIMARY KEY (UserId, RivalAccountId, Instrument, SongId)
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_RivalSamples_Rival
+                ON RivalSongSamples (UserId, RivalAccountId, Instrument);
+
             """;
         cmd.ExecuteNonQuery();
 
@@ -249,6 +298,9 @@ public sealed class MetaDatabase : IDisposable
 
         // ── Migration: re-queue backfill / history recon when data-collection version bumps ──
         MigrateDataCollectionVersion(conn);
+
+        // ── Migration: re-queue rivals computation when rivals version bumps ──
+        MigrateFeatureVersion(conn, "Rivals", RivalsVersion, ResetRivalsStatus);
 
         _initialized = true;
 
@@ -659,6 +711,9 @@ public sealed class MetaDatabase : IDisposable
         deleteCmd.CommandText = "DELETE FROM RegisteredUsers WHERE AccountId = @accountId;";
         deleteCmd.Parameters.AddWithValue("@accountId", accountId);
         deleteCmd.ExecuteNonQuery();
+
+        // Clean up rivals data for this account.
+        CleanupRivalsData(conn, accountId);
 
         return deviceIds;
     }
@@ -2078,6 +2133,388 @@ public sealed class MetaDatabase : IDisposable
         cmd.CommandText = "SELECT Version FROM DataVersion WHERE Key = 'DataCollection';";
         var result = cmd.ExecuteScalar();
         return result is long v ? (int)v : 0;
+    }
+
+    /// <summary>
+    /// Generic per-feature version migration. Compares the stored version for <paramref name="featureKey"/>
+    /// against <paramref name="codeVersion"/>. If stale, calls <paramref name="resetAction"/> and updates.
+    /// </summary>
+    private void MigrateFeatureVersion(SqliteConnection conn, string featureKey, int codeVersion, Action<SqliteConnection> resetAction)
+    {
+        int storedVersion;
+        using (var read = conn.CreateCommand())
+        {
+            read.CommandText = "SELECT Version FROM DataVersion WHERE Key = @key;";
+            read.Parameters.AddWithValue("@key", featureKey);
+            var result = read.ExecuteScalar();
+            storedVersion = result is long v ? (int)v : 0;
+        }
+
+        if (storedVersion >= codeVersion)
+            return;
+
+        _log.LogInformation(
+            "Feature version upgraded {Feature}: {Old} → {New}. Running reset action.",
+            featureKey, storedVersion, codeVersion);
+
+        resetAction(conn);
+
+        using var upsert = conn.CreateCommand();
+        upsert.CommandText = """
+            INSERT INTO DataVersion (Key, Version) VALUES (@key, @ver)
+            ON CONFLICT(Key) DO UPDATE SET Version = @ver;
+            """;
+        upsert.Parameters.AddWithValue("@key", featureKey);
+        upsert.Parameters.AddWithValue("@ver", codeVersion);
+        upsert.ExecuteNonQuery();
+    }
+
+    /// <summary>Reset action for Rivals: re-queue all completed rivals computations.</summary>
+    private static void ResetRivalsStatus(SqliteConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE RivalsStatus
+               SET Status = 'pending', CombosComputed = 0, RivalsFound = 0,
+                   StartedAt = NULL, CompletedAt = NULL, ErrorMessage = NULL
+             WHERE Status = 'complete';
+            """;
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Returns the stored version for a feature, or 0 if not yet recorded.
+    /// </summary>
+    internal int GetFeatureVersion(string featureKey)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Version FROM DataVersion WHERE Key = @key;";
+        cmd.Parameters.AddWithValue("@key", featureKey);
+        var result = cmd.ExecuteScalar();
+        return result is long v ? (int)v : 0;
+    }
+
+    // ─── Rivals ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Ensure a <c>RivalsStatus</c> row exists for a registered user (idempotent).
+    /// </summary>
+    public void EnsureRivalsStatus(string accountId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT OR IGNORE INTO RivalsStatus (AccountId, Status) VALUES (@id, 'pending');
+            """;
+        cmd.Parameters.AddWithValue("@id", accountId);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Mark a user's rivals computation as in-progress.</summary>
+    public void StartRivals(string accountId)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE RivalsStatus SET Status = 'in_progress', StartedAt = @now, ErrorMessage = NULL
+            WHERE AccountId = @id;
+            """;
+        cmd.Parameters.AddWithValue("@id", accountId);
+        cmd.Parameters.AddWithValue("@now", now);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Mark a user's rivals computation as complete.</summary>
+    public void CompleteRivals(string accountId, int combosComputed, int rivalsFound)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE RivalsStatus
+               SET Status = 'complete', CombosComputed = @combos, RivalsFound = @rivals,
+                   CompletedAt = @now, ErrorMessage = NULL
+             WHERE AccountId = @id;
+            """;
+        cmd.Parameters.AddWithValue("@id", accountId);
+        cmd.Parameters.AddWithValue("@combos", combosComputed);
+        cmd.Parameters.AddWithValue("@rivals", rivalsFound);
+        cmd.Parameters.AddWithValue("@now", now);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Mark a user's rivals computation as failed.</summary>
+    public void FailRivals(string accountId, string errorMessage)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE RivalsStatus SET Status = 'error', ErrorMessage = @err, CompletedAt = @now
+            WHERE AccountId = @id;
+            """;
+        cmd.Parameters.AddWithValue("@id", accountId);
+        cmd.Parameters.AddWithValue("@err", errorMessage);
+        cmd.Parameters.AddWithValue("@now", now);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Get the rivals computation status for a user.</summary>
+    public RivalsStatusInfo? GetRivalsStatus(string accountId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT AccountId, Status, CombosComputed, RivalsFound, StartedAt, CompletedAt, ErrorMessage
+            FROM RivalsStatus WHERE AccountId = @id;
+            """;
+        cmd.Parameters.AddWithValue("@id", accountId);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read()) return null;
+        return new RivalsStatusInfo
+        {
+            AccountId = reader.GetString(0),
+            Status = reader.GetString(1),
+            CombosComputed = reader.GetInt32(2),
+            RivalsFound = reader.GetInt32(3),
+            StartedAt = reader.IsDBNull(4) ? null : reader.GetString(4),
+            CompletedAt = reader.IsDBNull(5) ? null : reader.GetString(5),
+            ErrorMessage = reader.IsDBNull(6) ? null : reader.GetString(6),
+        };
+    }
+
+    /// <summary>Get all registered users whose rivals need (re)computation.</summary>
+    public List<string> GetPendingRivalsAccounts()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT AccountId FROM RivalsStatus
+            WHERE Status IN ('pending', 'in_progress')
+            ORDER BY rowid;
+            """;
+        var list = new List<string>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read()) list.Add(reader.GetString(0));
+        return list;
+    }
+
+    /// <summary>
+    /// Replace all rivals data for a user in a single transaction.
+    /// Deletes old UserRivals + RivalSongSamples, then bulk-inserts the new data.
+    /// </summary>
+    public void ReplaceRivalsData(
+        string userId,
+        IReadOnlyList<UserRivalRow> rivals,
+        IReadOnlyList<RivalSongSampleRow> samples)
+    {
+        using var conn = OpenConnection();
+        using var txn = conn.BeginTransaction();
+
+        using (var del1 = conn.CreateCommand())
+        {
+            del1.CommandText = "DELETE FROM RivalSongSamples WHERE UserId = @uid;";
+            del1.Parameters.AddWithValue("@uid", userId);
+            del1.ExecuteNonQuery();
+        }
+        using (var del2 = conn.CreateCommand())
+        {
+            del2.CommandText = "DELETE FROM UserRivals WHERE UserId = @uid;";
+            del2.Parameters.AddWithValue("@uid", userId);
+            del2.ExecuteNonQuery();
+        }
+
+        if (rivals.Count > 0)
+        {
+            using var insertRival = conn.CreateCommand();
+            insertRival.CommandText = """
+                INSERT INTO UserRivals (UserId, RivalAccountId, InstrumentCombo, Direction,
+                                        RivalScore, AvgSignedDelta, SharedSongCount, AheadCount, BehindCount, ComputedAt)
+                VALUES (@uid, @rid, @combo, @dir, @score, @delta, @songs, @ahead, @behind, @at);
+                """;
+            var pUid = insertRival.Parameters.Add("@uid", SqliteType.Text);
+            var pRid = insertRival.Parameters.Add("@rid", SqliteType.Text);
+            var pCombo = insertRival.Parameters.Add("@combo", SqliteType.Text);
+            var pDir = insertRival.Parameters.Add("@dir", SqliteType.Text);
+            var pScore = insertRival.Parameters.Add("@score", SqliteType.Real);
+            var pDelta = insertRival.Parameters.Add("@delta", SqliteType.Real);
+            var pSongs = insertRival.Parameters.Add("@songs", SqliteType.Integer);
+            var pAhead = insertRival.Parameters.Add("@ahead", SqliteType.Integer);
+            var pBehind = insertRival.Parameters.Add("@behind", SqliteType.Integer);
+            var pAt = insertRival.Parameters.Add("@at", SqliteType.Text);
+
+            foreach (var r in rivals)
+            {
+                pUid.Value = r.UserId;
+                pRid.Value = r.RivalAccountId;
+                pCombo.Value = r.InstrumentCombo;
+                pDir.Value = r.Direction;
+                pScore.Value = r.RivalScore;
+                pDelta.Value = r.AvgSignedDelta;
+                pSongs.Value = r.SharedSongCount;
+                pAhead.Value = r.AheadCount;
+                pBehind.Value = r.BehindCount;
+                pAt.Value = r.ComputedAt;
+                insertRival.ExecuteNonQuery();
+            }
+        }
+
+        if (samples.Count > 0)
+        {
+            using var insertSample = conn.CreateCommand();
+            insertSample.CommandText = """
+                INSERT INTO RivalSongSamples (UserId, RivalAccountId, Instrument, SongId,
+                                              UserRank, RivalRank, RankDelta, UserScore, RivalScore)
+                VALUES (@uid, @rid, @inst, @sid, @ur, @rr, @rd, @us, @rs);
+                """;
+            var sUid = insertSample.Parameters.Add("@uid", SqliteType.Text);
+            var sRid = insertSample.Parameters.Add("@rid", SqliteType.Text);
+            var sInst = insertSample.Parameters.Add("@inst", SqliteType.Text);
+            var sSid = insertSample.Parameters.Add("@sid", SqliteType.Text);
+            var sUr = insertSample.Parameters.Add("@ur", SqliteType.Integer);
+            var sRr = insertSample.Parameters.Add("@rr", SqliteType.Integer);
+            var sRd = insertSample.Parameters.Add("@rd", SqliteType.Integer);
+            var sUs = insertSample.Parameters.Add("@us", SqliteType.Integer);
+            var sRs = insertSample.Parameters.Add("@rs", SqliteType.Integer);
+
+            foreach (var s in samples)
+            {
+                sUid.Value = s.UserId;
+                sRid.Value = s.RivalAccountId;
+                sInst.Value = s.Instrument;
+                sSid.Value = s.SongId;
+                sUr.Value = s.UserRank;
+                sRr.Value = s.RivalRank;
+                sRd.Value = s.RankDelta;
+                sUs.Value = (object?)s.UserScore ?? DBNull.Value;
+                sRs.Value = (object?)s.RivalScore ?? DBNull.Value;
+                insertSample.ExecuteNonQuery();
+            }
+        }
+
+        txn.Commit();
+    }
+
+    /// <summary>Get all UserRivals rows for a user, optionally filtered by combo and direction.</summary>
+    public List<UserRivalRow> GetUserRivals(string userId, string? instrumentCombo = null, string? direction = null)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        var where = "UserId = @uid";
+        if (instrumentCombo is not null) where += " AND InstrumentCombo = @combo";
+        if (direction is not null) where += " AND Direction = @dir";
+
+        cmd.CommandText = $"""
+            SELECT UserId, RivalAccountId, InstrumentCombo, Direction,
+                   RivalScore, AvgSignedDelta, SharedSongCount, AheadCount, BehindCount, ComputedAt
+            FROM UserRivals WHERE {where}
+            ORDER BY RivalScore DESC;
+            """;
+        cmd.Parameters.AddWithValue("@uid", userId);
+        if (instrumentCombo is not null) cmd.Parameters.AddWithValue("@combo", instrumentCombo);
+        if (direction is not null) cmd.Parameters.AddWithValue("@dir", direction);
+
+        var list = new List<UserRivalRow>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new UserRivalRow
+            {
+                UserId = reader.GetString(0),
+                RivalAccountId = reader.GetString(1),
+                InstrumentCombo = reader.GetString(2),
+                Direction = reader.GetString(3),
+                RivalScore = reader.GetDouble(4),
+                AvgSignedDelta = reader.GetDouble(5),
+                SharedSongCount = reader.GetInt32(6),
+                AheadCount = reader.GetInt32(7),
+                BehindCount = reader.GetInt32(8),
+                ComputedAt = reader.GetString(9),
+            });
+        }
+        return list;
+    }
+
+    /// <summary>Get distinct instrument combos that have rivals for a user.</summary>
+    public List<RivalComboSummary> GetRivalCombos(string userId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT InstrumentCombo,
+                   SUM(CASE WHEN Direction = 'above' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN Direction = 'below' THEN 1 ELSE 0 END)
+            FROM UserRivals WHERE UserId = @uid
+            GROUP BY InstrumentCombo
+            ORDER BY InstrumentCombo;
+            """;
+        cmd.Parameters.AddWithValue("@uid", userId);
+        var list = new List<RivalComboSummary>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new RivalComboSummary
+            {
+                InstrumentCombo = reader.GetString(0),
+                AboveCount = reader.GetInt32(1),
+                BelowCount = reader.GetInt32(2),
+            });
+        }
+        return list;
+    }
+
+    /// <summary>Get rival song samples for a specific user/rival pair, optionally filtered by instrument.</summary>
+    public List<RivalSongSampleRow> GetRivalSongSamples(
+        string userId, string rivalAccountId, string? instrument = null)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        var where = "UserId = @uid AND RivalAccountId = @rid";
+        if (instrument is not null) where += " AND Instrument = @inst";
+
+        cmd.CommandText = $"""
+            SELECT UserId, RivalAccountId, Instrument, SongId,
+                   UserRank, RivalRank, RankDelta, UserScore, RivalScore
+            FROM RivalSongSamples WHERE {where}
+            ORDER BY ABS(RankDelta) ASC;
+            """;
+        cmd.Parameters.AddWithValue("@uid", userId);
+        cmd.Parameters.AddWithValue("@rid", rivalAccountId);
+        if (instrument is not null) cmd.Parameters.AddWithValue("@inst", instrument);
+
+        var list = new List<RivalSongSampleRow>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new RivalSongSampleRow
+            {
+                UserId = reader.GetString(0),
+                RivalAccountId = reader.GetString(1),
+                Instrument = reader.GetString(2),
+                SongId = reader.GetString(3),
+                UserRank = reader.GetInt32(4),
+                RivalRank = reader.GetInt32(5),
+                RankDelta = reader.GetInt32(6),
+                UserScore = reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                RivalScore = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+            });
+        }
+        return list;
+    }
+
+    /// <summary>Delete all rivals-related data for an account.</summary>
+    private static void CleanupRivalsData(SqliteConnection conn, string accountId)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            DELETE FROM RivalSongSamples WHERE UserId = @id;
+            DELETE FROM UserRivals WHERE UserId = @id;
+            DELETE FROM RivalsStatus WHERE AccountId = @id;
+            """;
+        cmd.Parameters.AddWithValue("@id", accountId);
+        cmd.ExecuteNonQuery();
     }
 
     /// <summary>

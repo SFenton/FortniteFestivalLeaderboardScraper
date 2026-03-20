@@ -18,6 +18,7 @@ public sealed class PostScrapeOrchestrator
     private readonly AccountNameResolver _nameResolver;
     private readonly PersonalDbBuilder _personalDbBuilder;
     private readonly PostScrapeRefresher _refresher;
+    private readonly RivalsOrchestrator _rivalsOrchestrator;
     private readonly NotificationService _notifications;
     private readonly TokenManager _tokenManager;
     private readonly ScrapeProgressTracker _progress;
@@ -29,6 +30,7 @@ public sealed class PostScrapeOrchestrator
         AccountNameResolver nameResolver,
         PersonalDbBuilder personalDbBuilder,
         PostScrapeRefresher refresher,
+        RivalsOrchestrator rivalsOrchestrator,
         NotificationService notifications,
         TokenManager tokenManager,
         ScrapeProgressTracker progress,
@@ -39,6 +41,7 @@ public sealed class PostScrapeOrchestrator
         _nameResolver = nameResolver;
         _personalDbBuilder = personalDbBuilder;
         _refresher = refresher;
+        _rivalsOrchestrator = rivalsOrchestrator;
         _notifications = notifications;
         _tokenManager = tokenManager;
         _progress = progress;
@@ -54,6 +57,7 @@ public sealed class PostScrapeOrchestrator
         await RunEnrichmentAsync(ctx, service, ct);
         await RebuildPersonalDbsAsync(ctx, ct);
         await RefreshRegisteredUsersAsync(ctx, ct);
+        await ComputeRivalsAsync(ctx, ct);
         CleanupSessions();
     }
 
@@ -186,6 +190,38 @@ public sealed class PostScrapeOrchestrator
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Post-scrape refresh failed. Will retry next pass.");
+        }
+    }
+
+    /// <summary>
+    /// Compute rivals for registered users whose scores (or rivals' scores) changed.
+    /// </summary>
+    internal async Task ComputeRivalsAsync(ScrapePassContext ctx, CancellationToken ct)
+    {
+        if (ctx.RegisteredIds.Count == 0)
+            return;
+
+        try
+        {
+            // Build dirty-instruments map from ChangedAccountIds.
+            // For v1, any change on a user triggers full recompute (no per-instrument tracking yet).
+            Dictionary<string, HashSet<string>>? dirtyMap = null;
+            if (ctx.Aggregates.ChangedAccountIds.Count > 0)
+            {
+                dirtyMap = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+                // For now, mark all instruments dirty for any changed registered user
+                foreach (var accountId in ctx.Aggregates.ChangedAccountIds)
+                {
+                    if (ctx.RegisteredIds.Contains(accountId))
+                        dirtyMap[accountId] = null!; // null = all instruments
+                }
+            }
+
+            await _rivalsOrchestrator.ComputeAllAsync(ctx.RegisteredIds, dirtyMap, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Rivals computation failed. Will retry next pass.");
         }
     }
 

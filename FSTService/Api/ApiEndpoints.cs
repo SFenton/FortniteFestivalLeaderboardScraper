@@ -13,6 +13,7 @@ public static partial class ApiEndpoints
         app.MapSongEndpoints();
         app.MapLeaderboardEndpoints();
         app.MapPlayerEndpoints();
+        app.MapRivalsEndpoints();
         app.MapAdminEndpoints();
         app.MapSyncEndpoints();
         app.MapDiagEndpoints();

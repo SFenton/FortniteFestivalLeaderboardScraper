@@ -375,6 +375,36 @@ public sealed class InstrumentDatabase : IDisposable
     }
 
     /// <summary>
+    /// Get entries within ±<paramref name="rankRadius"/> of a given rank on a song.
+    /// Uses the pre-computed Rank column. Returns (AccountId, Rank, Score) tuples.
+    /// </summary>
+    public List<(string AccountId, int Rank, int Score)> GetNeighborhood(
+        string songId, int centerRank, int rankRadius, string excludeAccountId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT AccountId, Rank, Score
+            FROM LeaderboardEntries
+            WHERE SongId = @songId
+              AND Rank BETWEEN @lo AND @hi
+              AND AccountId != @exclude;
+            """;
+        cmd.Parameters.AddWithValue("@songId", songId);
+        cmd.Parameters.AddWithValue("@lo", Math.Max(1, centerRank - rankRadius));
+        cmd.Parameters.AddWithValue("@hi", centerRank + rankRadius);
+        cmd.Parameters.AddWithValue("@exclude", excludeAccountId);
+
+        var list = new List<(string, int, int)>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add((reader.GetString(0), reader.GetInt32(1), reader.GetInt32(2)));
+        }
+        return list;
+    }
+
+    /// <summary>
     /// Get all entries for a player across all songs on this instrument.
     /// </summary>
     public List<PlayerScoreDto> GetPlayerScores(string accountId, string? songId = null)

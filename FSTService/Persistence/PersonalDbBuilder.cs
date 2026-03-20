@@ -204,6 +204,7 @@ public class PersonalDbBuilder
         PopulateSongs(conn, songs);
         PopulateScores(conn, accountId, songs);
         PopulateScoreHistory(conn, accountId);
+        PopulateRivals(conn, accountId);
     }
 
     private static void CreateSchema(SqliteConnection conn)
@@ -264,6 +265,37 @@ public class PersonalDbBuilder
                 GuitarRawPct REAL, DrumsRawPct REAL, BassRawPct REAL, VocalsRawPct REAL, ProGuitarRawPct REAL, ProBassRawPct REAL,
                 GuitarCalcTotal INTEGER, DrumsCalcTotal INTEGER, BassCalcTotal INTEGER, VocalsCalcTotal INTEGER, ProGuitarCalcTotal INTEGER, ProBassCalcTotal INTEGER,
                 FOREIGN KEY (SongId) REFERENCES Songs(SongId)
+            );
+
+            CREATE TABLE IF NOT EXISTS Rivals (
+                RivalAccountId  TEXT    NOT NULL,
+                DisplayName     TEXT,
+                InstrumentCombo TEXT    NOT NULL,
+                Direction       TEXT    NOT NULL,
+                RivalScore      REAL    NOT NULL,
+                AvgSignedDelta  REAL    NOT NULL,
+                SharedSongCount INTEGER NOT NULL,
+                AheadCount      INTEGER NOT NULL,
+                BehindCount     INTEGER NOT NULL,
+                PRIMARY KEY (RivalAccountId, InstrumentCombo)
+            );
+
+            CREATE TABLE IF NOT EXISTS RivalSongSamples (
+                RivalAccountId  TEXT    NOT NULL,
+                Instrument      TEXT    NOT NULL,
+                SongId          TEXT    NOT NULL,
+                UserRank        INTEGER NOT NULL,
+                RivalRank       INTEGER NOT NULL,
+                RankDelta       INTEGER NOT NULL,
+                UserScore       INTEGER,
+                RivalScore      INTEGER,
+                PRIMARY KEY (RivalAccountId, Instrument, SongId)
+            );
+
+            CREATE TABLE IF NOT EXISTS RivalCombos (
+                InstrumentCombo TEXT    PRIMARY KEY,
+                AboveCount      INTEGER NOT NULL,
+                BelowCount      INTEGER NOT NULL
             );
             """;
         cmd.ExecuteNonQuery();
@@ -564,6 +596,111 @@ public class PersonalDbBuilder
         tx.Commit();
         _log.LogDebug("Populated {Count} ScoreHistory rows for account {AccountId}.",
             history.Count, accountId);
+    }
+
+    private void PopulateRivals(SqliteConnection conn, string accountId)
+    {
+        var combos = _metaDb.GetRivalCombos(accountId);
+        if (combos.Count == 0) return;
+
+        var rivals = _metaDb.GetUserRivals(accountId);
+        if (rivals.Count == 0) return;
+
+        using var tx = conn.BeginTransaction();
+
+        // Populate RivalCombos
+        using (var comboCmd = conn.CreateCommand())
+        {
+            comboCmd.Transaction = tx;
+            comboCmd.CommandText = "INSERT INTO RivalCombos (InstrumentCombo, AboveCount, BelowCount) VALUES (@combo, @above, @below);";
+            var pCombo = comboCmd.Parameters.Add("@combo", SqliteType.Text);
+            var pAbove = comboCmd.Parameters.Add("@above", SqliteType.Integer);
+            var pBelow = comboCmd.Parameters.Add("@below", SqliteType.Integer);
+
+            foreach (var c in combos)
+            {
+                pCombo.Value = c.InstrumentCombo;
+                pAbove.Value = c.AboveCount;
+                pBelow.Value = c.BelowCount;
+                comboCmd.ExecuteNonQuery();
+            }
+        }
+
+        // Populate Rivals
+        using (var rivalCmd = conn.CreateCommand())
+        {
+            rivalCmd.Transaction = tx;
+            rivalCmd.CommandText = """
+                INSERT INTO Rivals (RivalAccountId, DisplayName, InstrumentCombo, Direction,
+                                    RivalScore, AvgSignedDelta, SharedSongCount, AheadCount, BehindCount)
+                VALUES (@rid, @name, @combo, @dir, @score, @delta, @songs, @ahead, @behind);
+                """;
+            var pRid = rivalCmd.Parameters.Add("@rid", SqliteType.Text);
+            var pName = rivalCmd.Parameters.Add("@name", SqliteType.Text);
+            var pCombo2 = rivalCmd.Parameters.Add("@combo", SqliteType.Text);
+            var pDir = rivalCmd.Parameters.Add("@dir", SqliteType.Text);
+            var pScore = rivalCmd.Parameters.Add("@score", SqliteType.Real);
+            var pDelta = rivalCmd.Parameters.Add("@delta", SqliteType.Real);
+            var pSongs = rivalCmd.Parameters.Add("@songs", SqliteType.Integer);
+            var pAhead = rivalCmd.Parameters.Add("@ahead", SqliteType.Integer);
+            var pBehind = rivalCmd.Parameters.Add("@behind", SqliteType.Integer);
+
+            foreach (var r in rivals)
+            {
+                pRid.Value = r.RivalAccountId;
+                pName.Value = (object?)_metaDb.GetDisplayName(r.RivalAccountId) ?? DBNull.Value;
+                pCombo2.Value = r.InstrumentCombo;
+                pDir.Value = r.Direction;
+                pScore.Value = r.RivalScore;
+                pDelta.Value = r.AvgSignedDelta;
+                pSongs.Value = r.SharedSongCount;
+                pAhead.Value = r.AheadCount;
+                pBehind.Value = r.BehindCount;
+                rivalCmd.ExecuteNonQuery();
+            }
+        }
+
+        // Populate RivalSongSamples for all distinct rivals
+        var rivalIds = rivals.Select(r => r.RivalAccountId).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        using (var sampleCmd = conn.CreateCommand())
+        {
+            sampleCmd.Transaction = tx;
+            sampleCmd.CommandText = """
+                INSERT INTO RivalSongSamples (RivalAccountId, Instrument, SongId,
+                                              UserRank, RivalRank, RankDelta, UserScore, RivalScore)
+                VALUES (@rid, @inst, @sid, @ur, @rr, @rd, @us, @rs);
+                """;
+            var sRid = sampleCmd.Parameters.Add("@rid", SqliteType.Text);
+            var sInst = sampleCmd.Parameters.Add("@inst", SqliteType.Text);
+            var sSid = sampleCmd.Parameters.Add("@sid", SqliteType.Text);
+            var sUr = sampleCmd.Parameters.Add("@ur", SqliteType.Integer);
+            var sRr = sampleCmd.Parameters.Add("@rr", SqliteType.Integer);
+            var sRd = sampleCmd.Parameters.Add("@rd", SqliteType.Integer);
+            var sUs = sampleCmd.Parameters.Add("@us", SqliteType.Integer);
+            var sRs = sampleCmd.Parameters.Add("@rs", SqliteType.Integer);
+
+            foreach (var rivalId in rivalIds)
+            {
+                var samples = _metaDb.GetRivalSongSamples(accountId, rivalId);
+                foreach (var s in samples)
+                {
+                    sRid.Value = s.RivalAccountId;
+                    sInst.Value = s.Instrument;
+                    sSid.Value = s.SongId;
+                    sUr.Value = s.UserRank;
+                    sRr.Value = s.RivalRank;
+                    sRd.Value = s.RankDelta;
+                    sUs.Value = (object?)s.UserScore ?? DBNull.Value;
+                    sRs.Value = (object?)s.RivalScore ?? DBNull.Value;
+                    sampleCmd.ExecuteNonQuery();
+                }
+            }
+        }
+
+        tx.Commit();
+        _log.LogDebug("Populated {Count} Rival rows and {SampleRids} rival accounts for {AccountId}.",
+            rivals.Count, rivalIds.Count, accountId);
     }
 
     private static int GetDifficultyForInstrument(Song song, string instrumentKey)

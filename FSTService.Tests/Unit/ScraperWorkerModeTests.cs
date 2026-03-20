@@ -140,15 +140,18 @@ public class ScraperWorkerModeTests : IDisposable
 
         var notifications = new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>());
 
+        var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
+        var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
+
         var postScrapeOrchestrator = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _personalDbBuilder, _refresher, notifications,
+            _personalDbBuilder, _refresher, rivalsOrchestrator, notifications,
             _tokenManager, _progress,
             Substitute.For<ILogger<PostScrapeOrchestrator>>());
 
         var backfillOrchestrator = new BackfillOrchestrator(
             _backfiller, _backfillQueue, _historyReconstructor,
-            _personalDbBuilder, notifications, _persistence,
+            _personalDbBuilder, rivalsOrchestrator, notifications, _persistence,
             _tokenManager, _progress, options,
             Substitute.For<ILogger<BackfillOrchestrator>>());
 
@@ -175,9 +178,11 @@ public class ScraperWorkerModeTests : IDisposable
             DeviceAuthPath = Path.Combine(_tempDir, "device.json"),
         });
         var notifications = new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>());
+        var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
+        var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
         return new BackfillOrchestrator(
             _backfiller, _backfillQueue, _historyReconstructor,
-            _personalDbBuilder, notifications, _persistence,
+            _personalDbBuilder, rivalsOrchestrator, notifications, _persistence,
             _tokenManager, _progress, options,
             Substitute.For<ILogger<BackfillOrchestrator>>());
     }

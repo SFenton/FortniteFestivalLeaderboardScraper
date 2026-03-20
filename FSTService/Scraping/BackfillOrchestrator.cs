@@ -17,6 +17,7 @@ public sealed class BackfillOrchestrator
     private readonly BackfillQueue _backfillQueue;
     private readonly HistoryReconstructor _historyReconstructor;
     private readonly PersonalDbBuilder _personalDbBuilder;
+    private readonly RivalsOrchestrator _rivalsOrchestrator;
     private readonly NotificationService _notifications;
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly TokenManager _tokenManager;
@@ -29,6 +30,7 @@ public sealed class BackfillOrchestrator
         BackfillQueue backfillQueue,
         HistoryReconstructor historyReconstructor,
         PersonalDbBuilder personalDbBuilder,
+        RivalsOrchestrator rivalsOrchestrator,
         NotificationService notifications,
         GlobalLeaderboardPersistence persistence,
         TokenManager tokenManager,
@@ -40,6 +42,7 @@ public sealed class BackfillOrchestrator
         _backfillQueue = backfillQueue;
         _historyReconstructor = historyReconstructor;
         _personalDbBuilder = personalDbBuilder;
+        _rivalsOrchestrator = rivalsOrchestrator;
         _notifications = notifications;
         _persistence = persistence;
         _tokenManager = tokenManager;
@@ -88,6 +91,9 @@ public sealed class BackfillOrchestrator
                 {
                     try
                     {
+                        // Compute rivals now that we have full score data
+                        _rivalsOrchestrator.ComputeForUser(accountId);
+
                         _personalDbBuilder.RebuildForAccounts(
                             new HashSet<string>(StringComparer.OrdinalIgnoreCase) { accountId },
                             _persistence.Meta);
