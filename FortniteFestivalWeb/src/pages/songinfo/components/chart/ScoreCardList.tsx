@@ -26,10 +26,8 @@ const ScoreCardList = memo(function ScoreCardList({ displayedCards, listHeight, 
   if (displayedCards.length === 0 && listHeight === 0) return null;
 
   return (
-    <div style={{
-      overflow: 'hidden',
+    <div className={s.scoreCardListWrap} style={{
       height: listHeight,
-      transition: 'height 0.3s ease',
       marginTop: Gap.xl,
     }}>
       <div className={s.scoreCardList}>

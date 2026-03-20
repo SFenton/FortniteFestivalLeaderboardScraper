@@ -136,6 +136,13 @@
   box-sizing: border-box;
 }
 
+.scoreCardListWrap {
+  overflow: clip;
+  /* Must exceed frostedCard's outer box-shadow blur (20px) so shadows aren't clipped */
+  overflow-clip-margin: 24px;
+  transition: height 0.3s ease;
+}
+
 .scoreCardList {
   display: flex;
   flex-direction: column;
