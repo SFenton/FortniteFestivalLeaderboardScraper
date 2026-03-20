@@ -45,7 +45,7 @@ describe('Accordion', () => {
   });
 
   it('renders icon when provided', () => {
-    render(<Accordion title="Title" icon={<span data-testid="icon">Ã°Å¸Å½Â¸</span>}><span>body</span></Accordion>);
+    render(<Accordion title="Title" icon={<span data-testid="icon">🎸</span>}><span>body</span></Accordion>);
     expect(screen.getByTestId('icon')).toBeDefined();
   });
 });

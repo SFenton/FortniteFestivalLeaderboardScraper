@@ -18,7 +18,7 @@ vi.mock('../../../src/api/client', () => ({ api: mockApi }));
 
 beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); });
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ Modal.tsx Ã¢â€â‚¬Ã¢â€â‚¬
+// ---- Modal.tsx ----
 import Modal from '../../../src/components/modals/Modal';
 
 describe('Modal', () => {
@@ -55,7 +55,7 @@ describe('Modal', () => {
 
   it('calls onClose when cancel clicked', () => {
     const { container } = render(<Modal {...defaults}><p>C</p></Modal>);
-    // Cancel button may use "close" handler Ã¢â‚¬â€ find by excluding Apply and Reset
+    // Cancel button may use "close" handler -- find by excluding Apply and Reset
     const buttons = Array.from(container.querySelectorAll('button'));
     const cancelBtn = buttons.find(b => {
       const t = b.textContent || '';
@@ -90,7 +90,7 @@ describe('Modal', () => {
   });
 });
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ ChangelogModal.tsx Ã¢â€â‚¬Ã¢â€â‚¬
+// ---- ChangelogModal.tsx ----
 import ChangelogModal from '../../../src/components/modals/ChangelogModal';
 
 describe('ChangelogModal', () => {
@@ -103,13 +103,13 @@ describe('ChangelogModal', () => {
     const onDismiss = vi.fn();
     const { container } = render(<ChangelogModal onDismiss={onDismiss} />);
     const buttons = container.querySelectorAll('button');
-    // Click any button Ã¢â‚¬â€ the dismiss button
+    // Click any button -- the dismiss button
     if (buttons.length > 0) fireEvent.click(buttons[0]!);
     expect(onDismiss).toHaveBeenCalled();
   });
 });
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ PathImage.tsx Ã¢â€â‚¬Ã¢â€â‚¬
+// ---- PathImage.tsx ----
 import { PathImage } from '../../../src/pages/songinfo/components/path/PathImage';
 import { Difficulty } from '@festival/core';
 
@@ -130,7 +130,7 @@ describe('PathImage', () => {
   });
 });
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ PlayerScoreSortModal.tsx Ã¢â€â‚¬Ã¢â€â‚¬
+// ---- PlayerScoreSortModal.tsx ----
 import PlayerScoreSortModal from '../../../src/pages/leaderboard/player/modals/PlayerScoreSortModal';
 
 describe('PlayerScoreSortModal', () => {
@@ -170,7 +170,7 @@ describe('PlayerScoreSortModal', () => {
   });
 });
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ ReorderList.tsx Ã¢â€â‚¬Ã¢â€â‚¬
+// ---- ReorderList.tsx ----
 import { ReorderList } from '../../../src/components/sort/ReorderList';
 
 describe('ReorderList', () => {
@@ -206,7 +206,7 @@ describe('ReorderList', () => {
   });
 });
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ Filter toggle components Ã¢â€â‚¬Ã¢â€â‚¬
+// ---- Filter toggle components ----
 import { DifficultyToggles } from '../../../src/pages/songs/modals/components/filters/DifficultyToggles';
 import { PercentileToggles } from '../../../src/pages/songs/modals/components/filters/PercentileToggles';
 import { SeasonToggles } from '../../../src/pages/songs/modals/components/filters/SeasonToggles';
@@ -282,7 +282,7 @@ describe('StarsToggles', () => {
   });
 });
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ FilterModal.tsx Ã¢â€â‚¬Ã¢â€â‚¬
+// ---- FilterModal.tsx ----
 import FilterModal from '../../../src/pages/songs/modals/FilterModal';
 
 describe('FilterModal', () => {
@@ -329,7 +329,7 @@ describe('FilterModal', () => {
   });
 });
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ SortModal.tsx Ã¢â€â‚¬Ã¢â€â‚¬
+// ---- SortModal.tsx ----
 import SortModal from '../../../src/pages/songs/modals/SortModal';
 
 describe('SortModal', () => {
@@ -362,7 +362,7 @@ describe('SortModal', () => {
   });
 });
 
-// Ã¢â€â‚¬Ã¢â€â‚¬ SuggestionsFilterModal.tsx Ã¢â€â‚¬Ã¢â€â‚¬
+// ---- SuggestionsFilterModal.tsx ----
 import SuggestionsFilterModal from '../../../src/pages/suggestions/modals/SuggestionsFilterModal';
 
 describe('SuggestionsFilterModal', () => {

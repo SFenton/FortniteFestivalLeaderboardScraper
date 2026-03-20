@@ -14,7 +14,8 @@ import { defaultSuggestionsFilterDraft, isSuggestionsFilterActive } from './moda
 import { shouldShowCategory, filterCategoryForInstruments } from '@festival/core/instrumentFilters';
 import type { SuggestionCategory } from '@festival/core/suggestions/types';
 import { useSettings } from '../../contexts/SettingsContext';
-import { Gap } from '@festival/theme';
+import { Size, FADE_DURATION, SPINNER_FADE_MS, SCROLL_PREFETCH_PX } from '@festival/theme';
+import { LoadPhase } from '@festival/core';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import s from './SuggestionsPage.module.css';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
@@ -134,7 +135,7 @@ export default function SuggestionsPage({ accountId }: Props) {
 
   // When filters hide most generated content, InfiniteScroll fires loadMore
   // once, the new categories all get filtered out, visible-count and scroll
-  // height don't change, so InfiniteScroll never fires again Ã¢â‚¬â€ "Loading more"
+  // height don't change, so InfiniteScroll never fires again -- "Loading more"
   // gets stuck.
   //
   // Solution: track consecutive batches that produce zero new visible
@@ -232,7 +233,7 @@ export default function SuggestionsPage({ accountId }: Props) {
 
   
   useEffect(() => {
-    if (phase === 'contentIn') {
+    if (phase === LoadPhase.ContentIn) {
       revealedCountRef.current = visibleCategories.length;
     }
   }, [visibleCategories.length, phase]);
@@ -250,7 +251,7 @@ export default function SuggestionsPage({ accountId }: Props) {
           <div className={s.emptyState}>
             <div className={s.emptyTitle}>{t('suggestions.noSuggestions')}</div>
             <div className={s.emptySubtitle}>
-              The service may be down unexpectedly. Please refresh to try again.
+              {t('suggestions.serviceDown')}
             </div>
           </div>
         </div>
@@ -270,18 +271,18 @@ export default function SuggestionsPage({ accountId }: Props) {
   
 
   
-  const headerStagger: React.CSSProperties = phase === 'contentIn' && !skipAnim
-    ? { opacity: 0, animation: 'fadeInUp 400ms ease-out forwards' }
+  const headerStagger: React.CSSProperties = phase === LoadPhase.ContentIn && !skipAnim
+    ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out forwards` }
     : skipAnim ? {} : { opacity: 0 };
 
   return (
     <div className={s.page}>
-      {/* Spinner overlay Ã¢â‚¬â€ visible during loading & spinnerOut */}
-      {phase !== 'contentIn' && (
+      {/* Spinner overlay -- visible during loading & spinnerOut */}
+      {phase !== LoadPhase.ContentIn && (
         <div
           className={s.spinnerOverlay} style={{
-            ...(phase === 'spinnerOut'
-              ? { animation: 'fadeOut 500ms ease-out forwards' }
+            ...(phase === LoadPhase.SpinnerOut
+              ? { animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards` }
               : {}),
           }}
         >
@@ -293,7 +294,7 @@ export default function SuggestionsPage({ accountId }: Props) {
         <div className={s.container}>
           <div className={s.headerRow} style={headerStagger}>
             <ActionPill
-              icon={<IoFunnel size={18} />}
+              icon={<IoFunnel size={Size.iconFab} />}
               label={t('common.filter')}
               onClick={openFilter}
               active={filtersActive}
@@ -303,7 +304,7 @@ export default function SuggestionsPage({ accountId }: Props) {
       </div>
       )}
       <div id="suggestions-scroll" ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
-      <div style={{ ...(isMobile ? { paddingTop: Gap.sm } : {}) }} className={s.container}>
+      <div className={`${s.container}${isMobile ? ` ${s.containerMobile}` : ''}`}>
         {visibleCategories.length === 0 && (categories.length > 0 || !effectiveHasMore) ? (
           <div className={s.emptyState}>
             <div className={s.emptyTitle}>{t('suggestions.noSuggestions')}</div>
@@ -318,16 +319,16 @@ export default function SuggestionsPage({ accountId }: Props) {
             dataLength={visibleCategories.length}
             next={filteredLoadMore}
             hasMore={effectiveHasMore}
-            loader={phase === 'contentIn' ? <div className={s.loader}><div className={s.loaderSpinner} /></div> : <></>}
-            scrollThreshold="600px"
+            loader={phase === LoadPhase.ContentIn ? <div className={s.loader}><div className={s.loaderSpinner} /></div> : <></>}
+            scrollThreshold={`${SCROLL_PREFETCH_PX}px`}
             scrollableTarget="suggestions-scroll"
             style={{ overflow: 'visible' }}
           >
-            <div ref={listRef} style={{ paddingTop: Gap.lg }}>
+            <div ref={listRef} className={s.listInner}>
             {visibleCategories.map((cat, idx) => {
               const delay = computeDelay(idx);
               if (delay === -1) {
-                // Already visible Ã¢â‚¬â€ render without animation wrapper
+                // Already visible -- render without animation wrapper
                 return <CategoryCard key={`${idx}-${cat.key}`} category={cat} albumArtMap={albumArtMap} scoresIndex={scoresIndex} />;
               }
               return (

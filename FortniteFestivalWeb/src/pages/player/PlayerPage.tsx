@@ -35,7 +35,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   const ctx = usePlayerData();
   const isTrackedPlayer = !!propAccountId;
 
-  // Local state for when viewing an arbitrary player via URL Ã¢â‚¬â€ use React Query
+  // Local state for when viewing an arbitrary player via URL -- use React Query
   const { data: queryData, isLoading: queryLoading, error: queryError } = useQuery({
     queryKey: queryKeys.player(accountId ?? ''),
     queryFn: () => api.getPlayer(accountId!),

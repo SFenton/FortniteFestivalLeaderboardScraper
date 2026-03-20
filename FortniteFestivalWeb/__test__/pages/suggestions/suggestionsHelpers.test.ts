@@ -1,7 +1,7 @@
 /**
  * Unit tests for pure helper functions extracted from SuggestionsPage.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   loadSuggestionsFilter,
   saveSuggestionsFilter,

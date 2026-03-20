@@ -12,7 +12,7 @@ describe('SectionHeader', () => {
     const { container } = render(<SectionHeader title="Title Only" />);
     const divs = container.querySelectorAll('div');
     expect(divs).toHaveLength(1);
-    expect(divs[0].textContent).toBe('Title Only');
+    expect(divs[0]!.textContent).toBe('Title Only');
   });
 
   it('renders description when provided', () => {
@@ -24,14 +24,14 @@ describe('SectionHeader', () => {
   it('applies description class when flush is false', () => {
     const { container } = render(<SectionHeader title="T" description="D" />);
     const descDiv = container.querySelectorAll('div')[1];
-    expect(descDiv.className).toContain('description');
-    expect(descDiv.className).not.toContain('Flush');
+    expect(descDiv!.className).toContain('description');
+    expect(descDiv!.className).not.toContain('Flush');
   });
 
   it('applies descriptionFlush class when flush is true', () => {
     const { container } = render(<SectionHeader title="T" description="D" flush />);
     const descDiv = container.querySelectorAll('div')[1];
-    expect(descDiv.className).toContain('descriptionFlush');
+    expect(descDiv!.className).toContain('descriptionFlush');
   });
 
   it('does not render description div for empty string', () => {

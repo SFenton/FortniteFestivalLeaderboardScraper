@@ -74,6 +74,14 @@
   color: var(--color-text-muted);
 }
 
+.containerMobile {
+  padding-top: var(--gap-sm);
+}
+
+.listInner {
+  padding-top: var(--gap-lg);
+}
+
 .loader {
   display: flex;
   justify-content: center;

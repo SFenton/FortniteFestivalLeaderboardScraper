@@ -40,7 +40,7 @@ describe('ToggleRow', () => {
         label="With Icon"
         checked={false}
         onToggle={() => {}}
-        icon={<span data-testid="test-icon">Ã°Å¸Å½Â¸</span>}
+        icon={<span data-testid="test-icon">🎸</span>}
       />,
     );
     expect(screen.getByTestId('test-icon')).toBeDefined();
@@ -48,7 +48,7 @@ describe('ToggleRow', () => {
 
   it('does not render icon container when no icon provided', () => {
     const { container } = render(<ToggleRow label="No Icon" checked={false} onToggle={() => {}} />);
-    // The icon container div should not exist Ã¢â‚¬â€ check there's no extra wrapper before the label
+    // The icon container div should not exist -- check there's no extra wrapper before the label
     const button = container.querySelector('button')!;
     // First child should be the text container (flex:1), not an icon div
     expect(button.children.length).toBe(2); // text div + track div
