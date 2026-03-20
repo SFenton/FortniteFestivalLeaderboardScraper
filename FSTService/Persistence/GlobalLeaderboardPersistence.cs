@@ -52,10 +52,24 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     {
         _metaDb.EnsureSchema();
 
-        foreach (var instrument in GlobalLeaderboardScraper.AllInstruments)
+        // Initialize all 6 instrument DBs in parallel (each has its own file, zero contention)
+        var instruments = GlobalLeaderboardScraper.AllInstruments;
+        var dbs = new InstrumentDatabase[instruments.Count];
+        Parallel.For(0, instruments.Count, i =>
         {
-            GetOrCreateInstrumentDb(instrument);
-        }
+            var instrument = instruments[i];
+            var dbPath = Path.Combine(_dataDir, $"fst-{instrument}.db");
+            var db = new InstrumentDatabase(
+                instrument, dbPath,
+                _loggerFactory.CreateLogger<InstrumentDatabase>());
+            db.EnsureSchema();
+            dbs[i] = db;
+            _log.LogDebug("Opened instrument DB: {Instrument} \u2192 {Path}", instrument, dbPath);
+        });
+
+        // Add to dictionary after parallel init completes (single-threaded)
+        foreach (var db in dbs)
+            _instrumentDbs[db.Instrument] = db;
 
         _log.LogInformation("GlobalLeaderboardPersistence initialized. " +
                             "{InstrumentCount} instrument DBs in {DataDir}",
