@@ -34,59 +34,6 @@ public class GlobalLeaderboardScraperTests
         Assert.Contains("Solo_PeripheralBass", GlobalLeaderboardScraper.AllInstruments);
     }
 
-    // ─── GetAvailableInstruments ────────────────────────
-
-    [Fact]
-    public void GetAvailableInstruments_AllZero_ReturnsEmpty()
-    {
-        var song = new Song
-        {
-            track = new Track { su = "song1", @in = new In() }
-        };
-        var result = GlobalLeaderboardScraper.GetAvailableInstruments(song);
-        Assert.Empty(result);
-    }
-
-    [Fact]
-    public void GetAvailableInstruments_SomeCharted_ReturnsOnlyThose()
-    {
-        var song = new Song
-        {
-            track = new Track
-            {
-                su = "song1",
-                @in = new In { gr = 5, ba = 0, vl = 3, ds = 0, pg = 0, pb = 0 }
-            }
-        };
-        var result = GlobalLeaderboardScraper.GetAvailableInstruments(song);
-        Assert.Equal(2, result.Count);
-        Assert.Contains("Solo_Guitar", result);
-        Assert.Contains("Solo_Vocals", result);
-    }
-
-    [Fact]
-    public void GetAvailableInstruments_AllCharted_Returns6()
-    {
-        var song = new Song
-        {
-            track = new Track
-            {
-                su = "song1",
-                @in = new In { gr = 1, ba = 2, vl = 3, ds = 4, pg = 5, pb = 6 }
-            }
-        };
-        var result = GlobalLeaderboardScraper.GetAvailableInstruments(song);
-        Assert.Equal(6, result.Count);
-    }
-
-    [Fact]
-    public void GetAvailableInstruments_NullDifficulty_ReturnsEmpty()
-    {
-        var song = new Song { track = new Track { su = "song1" } };
-        var result = GlobalLeaderboardScraper.GetAvailableInstruments(song);
-        Assert.Empty(result);
-    }
-
     // ─── LookupAccountAsync ────────────────────────────
 
     [Fact]
@@ -219,38 +166,6 @@ public class GlobalLeaderboardScraperTests
         // V2 seasonal: eventId = S5Window1_song1, windowId = song1_Solo_Guitar
         Assert.Contains("S5Window1_song1", url);
         Assert.Contains("song1_Solo_Guitar", url);
-    }
-
-    // ─── LookupAccountAllInstrumentsAsync ───────────────
-
-    [Fact]
-    public async Task LookupAccountAllInstrumentsAsync_ReturnsOnlyNonNull()
-    {
-        var (scraper, handler) = CreateScraper();
-
-        // Guitar = found (V2 flat array)
-        var foundJson = """
-        [
-            {
-                "teamId": "t1", "rank": 1, "percentile": 1.0,
-                "sessionHistory": [{ "trackedStats": { "SCORE": 100 } }]
-            }
-        ]
-        """;
-        // Bass = empty (V2 empty array)
-        var emptyJson = "[]";
-
-        // Enqueue for 2 instruments
-        handler.EnqueueJsonOk(foundJson);
-        handler.EnqueueJsonOk(emptyJson);
-
-        var instruments = new[] { "Solo_Guitar", "Solo_Bass" };
-        var result = await scraper.LookupAccountAllInstrumentsAsync(
-            "song1", "t1", "token", "caller", instruments);
-
-        Assert.Single(result);
-        Assert.True(result.ContainsKey("Solo_Guitar"));
-        Assert.False(result.ContainsKey("Solo_Bass"));
     }
 
     // ─── ScrapeLeaderboardAsync ─────────────────────────

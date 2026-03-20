@@ -15,7 +15,7 @@ namespace FSTService.Scraping;
 ///
 /// Both instrument-level and page-level requests are parallelised.
 /// </summary>
-public class GlobalLeaderboardScraper
+public class GlobalLeaderboardScraper : ILeaderboardQuerier
 {
     private const string EventsBase = "https://events-public-service-live.ol.epicgames.com";
 
@@ -35,21 +35,6 @@ public class GlobalLeaderboardScraper
         "Solo_PeripheralBass",
     };
 
-    /// <summary>
-    /// Maps instrument API key → song difficulty accessor.
-    /// If the accessor returns 0, the instrument is not charted for that song.
-    /// </summary>
-    private static readonly IReadOnlyDictionary<string, Func<Song, int>> InstrumentDifficultyMap =
-        new Dictionary<string, Func<Song, int>>
-        {
-            ["Solo_Guitar"]          = s => s.track?.@in?.gr ?? 0,
-            ["Solo_Bass"]            = s => s.track?.@in?.ba ?? 0,
-            ["Solo_Vocals"]          = s => s.track?.@in?.vl ?? 0,
-            ["Solo_Drums"]           = s => s.track?.@in?.ds ?? 0,
-            ["Solo_PeripheralGuitar"]= s => s.track?.@in?.pg ?? 0,
-            ["Solo_PeripheralBass"]  = s => s.track?.@in?.pb ?? 0,
-        };
-
     private readonly HttpClient _http;
     private readonly ILogger<GlobalLeaderboardScraper> _log;
     private readonly ScrapeProgressTracker _progress;
@@ -67,19 +52,6 @@ public class GlobalLeaderboardScraper
         _log = log;
         _maxLookupRetries = maxLookupRetries;
         _executor = new ResilientHttpExecutor(http, log);
-    }
-
-    /// <summary>
-    /// Returns only the instruments that are actually charted for the given song
-    /// (difficulty > 0 in the catalog metadata). Use this to avoid wasting
-    /// requests on instruments that will always return empty leaderboards.
-    /// </summary>
-    public static IReadOnlyList<string> GetAvailableInstruments(Song song)
-    {
-        return AllInstruments
-            .Where(inst => InstrumentDifficultyMap.TryGetValue(inst, out var getDiff)
-                           && getDiff(song) > 0)
-            .ToList();
     }
 
     // ─── Targeted account lookup ─────────────────────
@@ -353,101 +325,6 @@ public class GlobalLeaderboardScraper
         }
 
         return sessions;
-    }
-
-    /// <summary>
-    /// Look up a specific player's entries across all (or specified) instruments
-    /// for a given song. One HTTP request per instrument. Returns a dictionary
-    /// of instrument → entry (null entries are omitted).
-    /// </summary>
-    public async Task<Dictionary<string, LeaderboardEntry>> LookupAccountAllInstrumentsAsync(
-        string songId,
-        string targetAccountId,
-        string accessToken,
-        string callerAccountId,
-        IEnumerable<string>? instruments = null,
-        CancellationToken ct = default)
-    {
-        var instList = (instruments ?? AllInstruments).ToList();
-        var tasks = instList.Select(async inst =>
-        {
-            var entry = await LookupAccountAsync(
-                songId, inst, targetAccountId, accessToken, callerAccountId, ct: ct);
-            return (Instrument: inst, Entry: entry);
-        }).ToList();
-
-        var results = await Task.WhenAll(tasks);
-
-        return results
-            .Where(r => r.Entry is not null)
-            .ToDictionary(r => r.Instrument, r => r.Entry!);
-    }
-
-    // ─── V1 lookup with teamAccountIds ──────────────
-
-    /// <summary>
-    /// Fetch a specific player's leaderboard entry for one song + instrument
-    /// using the V1 GET API with <c>teamAccountIds</c> parameter.
-    /// Unlike the V2 POST API, V1 with teamAccountIds returns the player's
-    /// <b>real percentile</b> (a fraction in (0,1]) in addition to rank.
-    /// Returns the player's entry or null if the player has no score.
-    /// </summary>
-    public async Task<LeaderboardEntry?> LookupAccountV1Async(
-        string songId,
-        string instrument,
-        string targetAccountId,
-        string accessToken,
-        string callerAccountId,
-        AdaptiveConcurrencyLimiter? limiter = null,
-        CancellationToken ct = default)
-    {
-        // V1 API requires the path account ID to match teamAccountIds.
-        // Use the target account in both so the API jumps to the page
-        // containing their entry and returns their real percentile.
-        var url = $"{EventsBase}/api/v1/leaderboards/FNFestival/alltime_{songId}_{instrument}" +
-                  $"/alltime/{targetAccountId}?page=0&rank=0" +
-                  $"&teamAccountIds={targetAccountId}&appId=Fortnite&showLiveSessions=false";
-
-        HttpRequestMessage CreateRequest()
-        {
-            var req = new HttpRequestMessage(HttpMethod.Get, url);
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-            return req;
-        }
-
-        var label = $"V1/{songId}/{instrument}";
-
-        HttpResponseMessage res;
-        try
-        {
-            res = await _executor.SendAsync(CreateRequest, limiter, label, _maxLookupRetries, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogDebug(ex, "V1 lookup failed for {Account} on {Song}/{Instrument}.",
-                targetAccountId, songId, instrument);
-            throw;
-        }
-
-        if (!res.IsSuccessStatusCode)
-        {
-            var body = await res.Content.ReadAsStringAsync(ct);
-            _log.LogDebug("V1 lookup non-success for {Account} on {Song}/{Instrument}: {Status} {Body}",
-                targetAccountId, songId, instrument, res.StatusCode, body);
-            res.Dispose();
-            return null;
-        }
-
-        await using var stream = await res.Content.ReadAsStreamAsync(ct);
-        var page = await ParsePageAsync(stream, ct);
-        res.Dispose();
-
-        if (page is null || page.Entries.Count == 0)
-            return null;
-
-        // Find the target account's entry on the returned page
-        return page.Entries.FirstOrDefault(e =>
-            e.AccountId.Equals(targetAccountId, StringComparison.OrdinalIgnoreCase));
     }
 
     // ─── Single page fetch (with retry) ─────────────

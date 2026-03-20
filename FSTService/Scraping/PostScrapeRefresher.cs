@@ -19,13 +19,13 @@ namespace FSTService.Scraping;
 /// </summary>
 public class PostScrapeRefresher
 {
-    private readonly GlobalLeaderboardScraper _scraper;
+    private readonly ILeaderboardQuerier _scraper;
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly MetaDatabase _metaDb;
     private readonly ILogger<PostScrapeRefresher> _log;
 
     public PostScrapeRefresher(
-        GlobalLeaderboardScraper scraper,
+        ILeaderboardQuerier scraper,
         GlobalLeaderboardPersistence persistence,
         ILogger<PostScrapeRefresher> log)
     {

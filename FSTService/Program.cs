@@ -98,6 +98,8 @@ builder.Services.AddHttpClient<GlobalLeaderboardScraper>()
         AutomaticDecompression = System.Net.DecompressionMethods.All,
     });
 
+builder.Services.AddSingleton<ILeaderboardQuerier>(sp => sp.GetRequiredService<GlobalLeaderboardScraper>());
+
 builder.Services.AddHttpClient<AccountNameResolver>()
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {

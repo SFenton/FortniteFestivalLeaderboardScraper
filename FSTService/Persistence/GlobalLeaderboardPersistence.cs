@@ -63,6 +63,26 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>
+    /// Check if all databases are initialized and queryable.
+    /// Used by the /readyz endpoint.
+    /// </summary>
+    public bool IsReady()
+    {
+        try
+        {
+            if (_instrumentDbs.Count == 0) return false;
+            // Quick probe: verify each DB can execute a trivial query
+            foreach (var db in _instrumentDbs.Values)
+                db.GetTotalEntryCount();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Get (or create on first access) the <see cref="InstrumentDatabase"/>
     /// for a given instrument key (e.g. "Solo_Guitar").
     /// New instruments added in the future are automatically handled.

@@ -26,7 +26,7 @@ namespace FSTService.Scraping;
 /// </summary>
 public class HistoryReconstructor
 {
-    private readonly GlobalLeaderboardScraper _scraper;
+    private readonly ILeaderboardQuerier _scraper;
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly MetaDatabase _metaDb;
     private readonly HttpClient _http;
@@ -34,7 +34,7 @@ public class HistoryReconstructor
     private readonly ILogger<HistoryReconstructor> _log;
 
     public HistoryReconstructor(
-        GlobalLeaderboardScraper scraper,
+        ILeaderboardQuerier scraper,
         GlobalLeaderboardPersistence persistence,
         HttpClient http,
         ScrapeProgressTracker progress,

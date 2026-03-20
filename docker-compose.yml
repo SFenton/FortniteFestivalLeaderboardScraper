@@ -24,10 +24,9 @@ services:
       # - Scraper__ScrapeInterval=04:00:00
       # - Scraper__SongSyncInterval=00:15:00
       # - Scraper__DegreeOfParallelism=16
-    # Healthcheck (ready for future /healthz endpoint)
-    # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
-    #   interval: 30s
-    #   timeout: 5s
-    #   retries: 3
-    #   start_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

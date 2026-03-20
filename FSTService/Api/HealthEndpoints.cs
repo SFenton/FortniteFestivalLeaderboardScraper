@@ -1,4 +1,5 @@
 using System.Reflection;
+using FSTService.Persistence;
 using FSTService.Scraping;
 
 namespace FSTService.Api;
@@ -10,6 +11,14 @@ public static partial class ApiEndpoints
         app.MapGet("/healthz", () => Results.Ok("ok"))
            .WithTags("Health")
            .RequireRateLimiting("public");
+
+        app.MapGet("/readyz", (GlobalLeaderboardPersistence persistence) =>
+        {
+            return persistence.IsReady()
+                ? Results.Ok("ready")
+                : Results.StatusCode(503);
+        })
+        .WithTags("Health");
 
         app.MapGet("/api/version", () =>
         {

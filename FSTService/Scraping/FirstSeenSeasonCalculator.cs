@@ -20,14 +20,14 @@ namespace FSTService.Scraping;
 /// </summary>
 public class FirstSeenSeasonCalculator
 {
-    private readonly GlobalLeaderboardScraper _scraper;
+    private readonly ILeaderboardQuerier _scraper;
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly MetaDatabase _metaDb;
     private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<FirstSeenSeasonCalculator> _log;
 
     public FirstSeenSeasonCalculator(
-        GlobalLeaderboardScraper scraper,
+        ILeaderboardQuerier scraper,
         GlobalLeaderboardPersistence persistence,
         ScrapeProgressTracker progress,
         ILogger<FirstSeenSeasonCalculator> log)

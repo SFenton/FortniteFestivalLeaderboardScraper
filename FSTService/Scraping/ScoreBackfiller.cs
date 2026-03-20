@@ -13,7 +13,7 @@ namespace FSTService.Scraping;
 /// </summary>
 public class ScoreBackfiller
 {
-    private readonly GlobalLeaderboardScraper _scraper;
+    private readonly ILeaderboardQuerier _scraper;
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly MetaDatabase _metaDb;
     private readonly ILogger<ScoreBackfiller> _log;
@@ -22,7 +22,7 @@ public class ScoreBackfiller
     private const int ProgressFlushInterval = 25;
 
     public ScoreBackfiller(
-        GlobalLeaderboardScraper scraper,
+        ILeaderboardQuerier scraper,
         GlobalLeaderboardPersistence persistence,
         ILogger<ScoreBackfiller> log)
     {
