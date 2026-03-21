@@ -846,7 +846,8 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
             "token", "callerAcct", Arg.Any<int>(),
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>());
     }
 
     [Fact]
@@ -935,7 +936,8 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Is<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(r => r.Count == 2),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>());
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -1025,7 +1027,8 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
             "token", "callerAcct", 2,
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>());
 
         // Verify name resolution was attempted
         await _nameResolver.Received().ResolveNewAccountsAsync(
