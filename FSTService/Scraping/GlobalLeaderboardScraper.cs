@@ -715,8 +715,14 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int maxConcurrency = DefaultMaxConcurrency,
         Func<string, List<GlobalLeaderboardResult>, ValueTask>? onSongComplete = null,
         CancellationToken ct = default,
-        int maxPages = 0)
+        int maxPages = 0,
+        bool sequential = false,
+        int pageConcurrency = 10)
     {
+        if (sequential)
+            return await ScrapeManySongsSequentialAsync(
+                requests, accessToken, accountId, onSongComplete, ct, maxPages, pageConcurrency);
+
         using var limiter = new AdaptiveConcurrencyLimiter(
             maxConcurrency, minDop: 256, maxDop: Math.Max(2048, maxConcurrency),
             _log);
@@ -750,6 +756,181 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         _progress.SetAdaptiveLimiter(null);
 
         return new Dictionary<string, List<GlobalLeaderboardResult>>(results);
+    }
+
+    /// <summary>
+    /// Sequential scrape: one song at a time, instruments in parallel, pages with bounded concurrency.
+    /// Max concurrent requests = ~6 instruments × pageConcurrency.
+    /// </summary>
+    private async Task<Dictionary<string, List<GlobalLeaderboardResult>>> ScrapeManySongsSequentialAsync(
+        IReadOnlyList<SongScrapeRequest> requests,
+        string accessToken,
+        string accountId,
+        Func<string, List<GlobalLeaderboardResult>, ValueTask>? onSongComplete,
+        CancellationToken ct,
+        int maxPages,
+        int pageConcurrency)
+    {
+        var results = new Dictionary<string, List<GlobalLeaderboardResult>>();
+
+        _log.LogInformation(
+            "Starting sequential scrape: {SongCount} songs (one at a time, ~{MaxConcurrent} concurrent requests)",
+            requests.Count, 6 * Math.Max(1, pageConcurrency));
+
+        foreach (var req in requests)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var instTasks = req.Instruments.Select(inst =>
+                ScrapeLeaderboardSequentialAsync(
+                    req.SongId, inst, accessToken, accountId, ct, req.Label, maxPages, pageConcurrency)
+            ).ToList();
+
+            var songResults = (await Task.WhenAll(instTasks)).ToList();
+            results[req.SongId] = songResults;
+
+            if (onSongComplete is not null)
+                await onSongComplete(req.SongId, songResults);
+            _progress.ReportSongComplete();
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Page fetching for one song/instrument with bounded concurrency.
+    /// pageConcurrency=1 → fully sequential. pageConcurrency=10 → 10 pages at a time.
+    /// </summary>
+    private async Task<GlobalLeaderboardResult> ScrapeLeaderboardSequentialAsync(
+        string songId,
+        string instrument,
+        string accessToken,
+        string accountId,
+        CancellationToken ct,
+        string? label = null,
+        int maxPages = 0,
+        int pageConcurrency = 10)
+    {
+        // ── Page 0 ──
+        var page0 = await FetchPageAsync(songId, instrument, 0, accessToken, accountId, null, ct);
+
+        if (page0.Page is not null)
+        {
+            _progress.ReportPageFetched(page0.BodyLength);
+        }
+
+        if (page0.Page is null || page0.Page.TotalPages == 0)
+        {
+            _progress.ReportPage0(1);
+            _progress.ReportLeaderboardComplete(instrument);
+            return new GlobalLeaderboardResult
+            {
+                SongId = songId,
+                Instrument = instrument,
+                Entries = page0.Page?.Entries ?? [],
+                TotalPages = page0.Page?.TotalPages ?? 0,
+                ReportedTotalPages = page0.Page?.TotalPages ?? 0,
+                PagesScraped = page0.Page is not null ? 1 : 0,
+                Requests = 1,
+                BytesReceived = page0.BodyLength,
+            };
+        }
+
+        int reportedPages = page0.Page.TotalPages;
+        int totalPages = reportedPages;
+        if (maxPages > 0 && totalPages > maxPages)
+            totalPages = maxPages;
+
+        _progress.ReportPage0(totalPages);
+
+        var allEntries = new ConcurrentBag<(int Page, List<LeaderboardEntry> Entries)>();
+        allEntries.Add((0, page0.Page.Entries));
+        int requestCount = 1;
+        long totalBytes = page0.BodyLength;
+        int consecutive403s = 0;
+        int boundaryLogged = 0;
+
+        if (totalPages > 1)
+        {
+            int effectiveConcurrency = Math.Max(1, pageConcurrency);
+            using var pageSemaphore = new SemaphoreSlim(effectiveConcurrency, effectiveConcurrency);
+            using var pageCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+            var tasks = new List<Task>(totalPages - 1);
+            for (int p = 1; p < totalPages; p++)
+            {
+                int pageNum = p;
+                tasks.Add(FetchPageWithSemaphoreAsync(pageNum));
+            }
+
+            async Task FetchPageWithSemaphoreAsync(int pageNum)
+            {
+                if (pageCts.IsCancellationRequested) return;
+                await pageSemaphore.WaitAsync(pageCts.Token);
+                try
+                {
+                    var (parsed, bodyLen, status) = await FetchPageAsync(
+                        songId, instrument, pageNum, accessToken, accountId, null, pageCts.Token);
+                    Interlocked.Increment(ref requestCount);
+                    Interlocked.Add(ref totalBytes, bodyLen);
+                    _progress.ReportPageFetched(bodyLen);
+
+                    if (parsed is not null)
+                    {
+                        allEntries.Add((pageNum, parsed.Entries));
+                        Interlocked.Exchange(ref consecutive403s, 0);
+                    }
+                    else if (status == FetchStatus.Forbidden)
+                    {
+                        var count = Interlocked.Increment(ref consecutive403s);
+                        if (count >= ForbiddenThreshold &&
+                            Interlocked.CompareExchange(ref boundaryLogged, 1, 0) == 0)
+                        {
+                            var entryCount = allEntries.Sum(e => e.Entries.Count);
+                            _log.LogInformation(
+                                "Hit access boundary for {Label} ({Song}/{Instrument}) at page {Page}. " +
+                                "Epic reported {ReportedPages:N0} pages but served {Fetched} pages ({Entries:N0} entries).",
+                                label ?? songId, songId, instrument, pageNum,
+                                reportedPages, allEntries.Count, entryCount);
+                            try { pageCts.Cancel(); } catch { }
+                        }
+                        else if (!pageCts.IsCancellationRequested && count >= ForbiddenThreshold)
+                        {
+                            try { pageCts.Cancel(); } catch { }
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (pageCts.IsCancellationRequested && !ct.IsCancellationRequested)
+                {
+                    // Cancelled due to access boundary — not an error
+                }
+                finally
+                {
+                    pageSemaphore.Release();
+                }
+            }
+
+            await Task.WhenAll(tasks);
+        }
+
+        var ordered = allEntries
+            .OrderBy(x => x.Page)
+            .SelectMany(x => x.Entries)
+            .ToList();
+
+        _progress.ReportLeaderboardComplete(instrument);
+
+        return new GlobalLeaderboardResult
+        {
+            SongId = songId,
+            Instrument = instrument,
+            Entries = ordered,
+            TotalPages = totalPages,
+            ReportedTotalPages = reportedPages,
+            PagesScraped = allEntries.Count,
+            Requests = requestCount,
+            BytesReceived = totalBytes,
+        };
     }
 
     // ─── Parsing ────────────────────────────────────

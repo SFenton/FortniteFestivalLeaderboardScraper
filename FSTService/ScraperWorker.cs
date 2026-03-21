@@ -412,7 +412,9 @@ public sealed class ScraperWorker : BackgroundService
                 if (hasData) aggregates.IncrementSongsWithData();
             },
             ct,
-            maxPages: opts.MaxPagesPerLeaderboard);
+            maxPages: opts.MaxPagesPerLeaderboard,
+            sequential: opts.SequentialScrape,
+            pageConcurrency: opts.PageConcurrency);
 
         // Wait for all per-instrument writers to drain
         await _persistence.DrainWritersAsync();
@@ -509,15 +511,12 @@ public sealed class ScraperWorker : BackgroundService
                     state.LastModified);
             }).ToList();
 
-            _log.LogInformation("Path generation: checking {Count} songs for new/changed MIDI data.", requests.Count);
-
             var ownsProgress = _progress.BeginPathGeneration(requests.Count);
 
             var results = await _pathGenerator.GeneratePathsAsync(requests, force, ct);
 
             if (results.Count == 0)
             {
-                _log.LogDebug("Path generation: no songs needed updating.");
                 if (ownsProgress) _progress.EndPathGeneration();
                 return;
             }
@@ -540,7 +539,6 @@ public sealed class ScraperWorker : BackgroundService
             }
 
             if (ownsProgress) _progress.EndPathGeneration();
-            _log.LogInformation("Path generation complete: {Count} song(s) updated.", results.Count);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -643,7 +641,9 @@ public sealed class ScraperWorker : BackgroundService
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var allResults = await _globalScraper.ScrapeManySongsAsync(
             scrapeRequests, accessToken, accountId, opts.DegreeOfParallelism, onSongComplete: null, ct,
-            maxPages: opts.MaxPagesPerLeaderboard);
+            maxPages: opts.MaxPagesPerLeaderboard,
+            sequential: opts.SequentialScrape,
+            pageConcurrency: opts.PageConcurrency);
         sw.Stop();
 
         // Grand summary

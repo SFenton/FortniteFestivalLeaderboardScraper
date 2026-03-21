@@ -124,7 +124,6 @@ public sealed class PathGenerator
     {
         if (string.IsNullOrEmpty(song.DatUrl))
         {
-            _log.LogDebug("Song {SongId} has no .dat URL. Skipping.", song.SongId);
             _progress.PathGenSongSkipped();
             return null;
         }
@@ -133,7 +132,6 @@ public sealed class PathGenerator
         var lastModStr = song.LastModified?.ToString("o");
         if (!force && lastModStr is not null && lastModStr == song.ExistingLastModified)
         {
-            _log.LogDebug("Song {SongId} lastModified unchanged ({LastMod}). Skipping download.", song.SongId, lastModStr);
             _progress.PathGenSongSkipped();
             return null;
         }
@@ -157,7 +155,6 @@ public sealed class PathGenerator
         var hash = MidiCryptor.ComputeHash(datBytes);
         if (!force && hash == song.ExistingDatHash)
         {
-            _log.LogDebug("Song {SongId} .dat unchanged (hash={Hash}). Skipping.", song.SongId, hash[..12]);
             _progress.PathGenSongSkipped();
             return null;
         }

@@ -120,4 +120,17 @@ public sealed class ScraperOptions
     /// Default 100 = top 10,000 entries. Set to 0 for unlimited.
     /// </summary>
     public int MaxPagesPerLeaderboard { get; set; } = 100;
+
+    /// <summary>
+    /// When true, scrape songs one at a time instead of all in parallel.
+    /// Instruments still run in parallel (~6), but page concurrency is controlled by <see cref="PageConcurrency"/>.
+    /// </summary>
+    public bool SequentialScrape { get; set; }
+
+    /// <summary>
+    /// Max concurrent page fetches per instrument when <see cref="SequentialScrape"/> is true.
+    /// Default 10 = ~60 concurrent requests (6 instruments × 10 pages). Set to 1 for fully sequential.
+    /// Ignored when SequentialScrape is false (parallel mode uses DegreeOfParallelism instead).
+    /// </summary>
+    public int PageConcurrency { get; set; } = 10;
 }
