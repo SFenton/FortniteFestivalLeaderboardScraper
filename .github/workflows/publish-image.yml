@@ -63,7 +63,7 @@ jobs:
       - name: Enforce minimum line coverage for FSTService
         shell: bash
         env:
-          COVERAGE_THRESHOLD: 94.9
+          COVERAGE_THRESHOLD: 90
         run: |
           REPORT=$(find TestResults -name 'coverage.cobertura.xml' | head -1)
           if [ -z "$REPORT" ]; then

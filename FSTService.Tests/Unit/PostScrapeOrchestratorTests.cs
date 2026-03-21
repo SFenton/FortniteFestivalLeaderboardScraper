@@ -302,6 +302,32 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════
+    // PruneExcessEntries
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public void PruneExcessEntries_WithMaxPages_Runs()
+    {
+        var ctx = CreateContext(registeredIds: new HashSet<string> { "p_15" });
+        _sut.PruneExcessEntries(ctx); // should run without error
+    }
+
+    [Fact]
+    public void PruneExcessEntries_WithZeroMaxPages_DoesNotPrune()
+    {
+        var opts = Options.Create(new ScraperOptions { MaxPagesPerLeaderboard = 0 });
+        var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
+        var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new NotificationService(Substitute.For<ILogger<NotificationService>>()), _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
+        var sut = new PostScrapeOrchestrator(
+            _persistence, _firstSeenCalculator, _nameResolver,
+            _personalDbBuilder, _refresher, rivalsOrchestrator, _notifications,
+            _tokenManager, _progress, opts, _log);
+
+        var ctx = CreateContext();
+        sut.PruneExcessEntries(ctx); // maxPages=0 → no-op
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // NoOpHttpHandler (shared utility)
     // ═══════════════════════════════════════════════════════════
 

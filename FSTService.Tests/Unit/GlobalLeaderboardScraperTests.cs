@@ -767,4 +767,92 @@ public class GlobalLeaderboardScraperTests
             scraper.LookupSeasonalSessionsAsync(
                 "song1", "Solo_Guitar", "evergreen", "target_acct", "token", "caller_acct"));
     }
+
+    // ─── Sequential scrape mode ─────────────────────
+
+    [Fact]
+    public async Task ScrapeManySongsAsync_Sequential_SinglePage_Succeeds()
+    {
+        var (scraper, handler) = CreateScraper();
+
+        handler.EnqueueJsonOk(OnePage);
+
+        var requests = new List<GlobalLeaderboardScraper.SongScrapeRequest>
+        {
+            new() { SongId = "s1", Instruments = new[] { "Solo_Guitar" }, Label = "Test Song" },
+        };
+
+        var results = await scraper.ScrapeManySongsAsync(
+            requests, "token", "acct", sequential: true, pageConcurrency: 1);
+
+        Assert.Single(results);
+        Assert.Equal(1, results["s1"][0].Entries.Count);
+    }
+
+    [Fact]
+    public async Task ScrapeManySongsAsync_Sequential_MultiPage_FetchesAll()
+    {
+        var (scraper, handler) = CreateScraper();
+
+        // Page 0: 2 total pages
+        handler.EnqueueJsonOk("""{"page":0,"totalPages":2,"entries":[{"teamId":"a1","rank":1,"percentile":1.0,"sessionHistory":[{"trackedStats":{"SCORE":100}}]}]}""");
+        // Page 1
+        handler.EnqueueJsonOk("""{"page":1,"totalPages":2,"entries":[{"teamId":"a2","rank":2,"percentile":0.5,"sessionHistory":[{"trackedStats":{"SCORE":200}}]}]}""");
+
+        var requests = new List<GlobalLeaderboardScraper.SongScrapeRequest>
+        {
+            new() { SongId = "s1", Instruments = new[] { "Solo_Guitar" }, Label = "Test Song" },
+        };
+
+        var results = await scraper.ScrapeManySongsAsync(
+            requests, "token", "acct", sequential: true, pageConcurrency: 5);
+
+        Assert.Equal(2, results["s1"][0].Entries.Count);
+        Assert.Equal(2, results["s1"][0].TotalPages);
+    }
+
+    [Fact]
+    public async Task ScrapeManySongsAsync_Sequential_MultipleSongs_ProcessedInOrder()
+    {
+        var (scraper, handler) = CreateScraper();
+
+        handler.EnqueueJsonOk(OnePage);  // song 1
+        handler.EnqueueJsonOk(OnePage);  // song 2
+
+        var completedOrder = new List<string>();
+        var requests = new List<GlobalLeaderboardScraper.SongScrapeRequest>
+        {
+            new() { SongId = "s1", Instruments = new[] { "Solo_Guitar" }, Label = "Song 1" },
+            new() { SongId = "s2", Instruments = new[] { "Solo_Guitar" }, Label = "Song 2" },
+        };
+
+        var results = await scraper.ScrapeManySongsAsync(
+            requests, "token", "acct", sequential: true, pageConcurrency: 1,
+            onSongComplete: (songId, _) => { completedOrder.Add(songId); return ValueTask.CompletedTask; });
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal(new[] { "s1", "s2" }, completedOrder); // sequential = in order
+    }
+
+    [Fact]
+    public async Task ScrapeManySongsAsync_Sequential_ReportedTotalPages_Set()
+    {
+        var (scraper, handler) = CreateScraper();
+
+        // Page 0 reports 500 total pages, but maxPages caps at 1
+        handler.EnqueueJsonOk("""{"page":0,"totalPages":500,"entries":[{"teamId":"a1","rank":1,"percentile":1.0,"sessionHistory":[{"trackedStats":{"SCORE":100}}]}]}""");
+
+        var requests = new List<GlobalLeaderboardScraper.SongScrapeRequest>
+        {
+            new() { SongId = "s1", Instruments = new[] { "Solo_Guitar" }, Label = "Test" },
+        };
+
+        var results = await scraper.ScrapeManySongsAsync(
+            requests, "token", "acct", sequential: true, pageConcurrency: 1, maxPages: 1);
+
+        var r = results["s1"][0];
+        Assert.Equal(500, r.ReportedTotalPages); // uncapped
+        Assert.Equal(1, r.TotalPages);            // capped
+    }
+
 }
