@@ -23,6 +23,9 @@ services:
       # ── Required secrets (override defaults from appsettings.json) ──
       # Generate with: openssl rand -hex 32
       - Api__ApiKey=${API_KEY:?Set API_KEY in .env}
+      # ── Epic Games OAuth client (override built-in Switch client if needed) ──
+      - EPIC_CLIENT_ID=${EPIC_CLIENT_ID:-}
+      - EPIC_CLIENT_SECRET=${EPIC_CLIENT_SECRET:-}
       # ── Path generation (MIDI decryption key for CHOpt max score calculation) ──
       - Scraper__MidiEncryptionKey=${MIDI_ENCRYPTION_KEY:-}
       # Set to true to disable background scraping (API-only mode)

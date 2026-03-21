@@ -22,21 +22,23 @@ namespace FSTService.Auth;
 /// </summary>
 public class EpicAuthService
 {
-    // Switch client — supports device_code and refresh_token
-    private const string ClientId = "98f7e42c2e3a4f86a74eb43fbb41ed39";
-    private const string ClientSecret = "0a2449a2-001a-451e-afec-3e812901c4d7";
-    private static readonly string BasicAuth =
-        Convert.ToBase64String(Encoding.UTF8.GetBytes($"{ClientId}:{ClientSecret}"));
+    private const string DefaultClientId = "5229dcd3ac3845208b496649092f251b";
+    private const string DefaultClientSecret = "e3bd2d3e-bf8c-4857-9e7d-f3d947d220c7";
 
     private const string AccountBase = "https://account-public-service-prod.ol.epicgames.com";
 
     private readonly HttpClient _http;
     private readonly ILogger<EpicAuthService> _log;
+    private readonly string _basicAuth;
 
     public EpicAuthService(HttpClient http, ILogger<EpicAuthService> log)
     {
         _http = http;
         _log = log;
+
+        var clientId = Environment.GetEnvironmentVariable("EPIC_CLIENT_ID") ?? DefaultClientId;
+        var clientSecret = Environment.GetEnvironmentVariable("EPIC_CLIENT_SECRET") ?? DefaultClientSecret;
+        _basicAuth = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
     }
 
     // ──────────────────────────────────────────────
@@ -252,7 +254,7 @@ public class EpicAuthService
         CancellationToken ct)
     {
         var req = new HttpRequestMessage(HttpMethod.Post, $"{AccountBase}/account/api/oauth/token");
-        req.Headers.Authorization = new AuthenticationHeaderValue("Basic", BasicAuth);
+        req.Headers.Authorization = new AuthenticationHeaderValue("Basic", _basicAuth);
         req.Content = new FormUrlEncodedContent(formData);
 
         var res = await _http.SendAsync(req, ct);
