@@ -91,9 +91,80 @@ public sealed class InstrumentDatabase : IDisposable
         compIdx.CommandText = "CREATE INDEX IF NOT EXISTS IX_Account_Song ON LeaderboardEntries (AccountId, SongId);";
         compIdx.ExecuteNonQuery();
 
+        // ── Migration: add ApiRank column (real rank from Epic API, survives RecomputeAllRanks) ──
+        MigrateAddColumn(conn, "ApiRank", "INTEGER");
+
         _initialized = true;
 
+        // ── Rankings tables (SongStats, AccountRankings, RankHistory) ──
+        EnsureRankingsTables(conn);
+
         _log.LogDebug("Schema ensured for instrument DB: {Instrument}", _instrument);
+    }
+
+    /// <summary>Create ranking-related tables if they don't exist.</summary>
+    private void EnsureRankingsTables(SqliteConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS SongStats (
+                SongId             TEXT    PRIMARY KEY,
+                EntryCount         INTEGER NOT NULL,
+                PreviousEntryCount INTEGER NOT NULL DEFAULT 0,
+                LogWeight          REAL    NOT NULL,
+                MaxScore           INTEGER,
+                ComputedAt         TEXT    NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS AccountRankings (
+                AccountId            TEXT    PRIMARY KEY,
+                SongsPlayed          INTEGER NOT NULL,
+                TotalChartedSongs    INTEGER NOT NULL,
+                Coverage             REAL    NOT NULL,
+
+                RawSkillRating       REAL    NOT NULL,
+                AdjustedSkillRating  REAL    NOT NULL,
+                AdjustedSkillRank    INTEGER NOT NULL UNIQUE,
+
+                WeightedRating       REAL    NOT NULL,
+                WeightedRank         INTEGER NOT NULL UNIQUE,
+
+                FcRate               REAL    NOT NULL,
+                FcRateRank           INTEGER NOT NULL UNIQUE,
+
+                TotalScore           INTEGER NOT NULL,
+                TotalScoreRank       INTEGER NOT NULL UNIQUE,
+
+                MaxScorePercent      REAL    NOT NULL,
+                MaxScorePercentRank  INTEGER NOT NULL UNIQUE,
+
+                AvgAccuracy          REAL    NOT NULL,
+                FullComboCount       INTEGER NOT NULL,
+                AvgStars             REAL    NOT NULL,
+                BestRank             INTEGER NOT NULL,
+                AvgRank              REAL    NOT NULL,
+
+                ComputedAt           TEXT    NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_AR_AdjustedSkill ON AccountRankings (AdjustedSkillRank);
+            CREATE INDEX IF NOT EXISTS IX_AR_Weighted      ON AccountRankings (WeightedRank);
+            CREATE INDEX IF NOT EXISTS IX_AR_FcRate        ON AccountRankings (FcRateRank);
+            CREATE INDEX IF NOT EXISTS IX_AR_TotalScore    ON AccountRankings (TotalScoreRank);
+            CREATE INDEX IF NOT EXISTS IX_AR_MaxScorePct   ON AccountRankings (MaxScorePercentRank);
+
+            CREATE TABLE IF NOT EXISTS RankHistory (
+                AccountId            TEXT    NOT NULL,
+                SnapshotDate         TEXT    NOT NULL,
+                AdjustedSkillRank    INTEGER NOT NULL,
+                WeightedRank         INTEGER NOT NULL,
+                FcRateRank           INTEGER NOT NULL,
+                TotalScoreRank       INTEGER NOT NULL,
+                MaxScorePercentRank  INTEGER NOT NULL,
+                PRIMARY KEY (AccountId, SnapshotDate)
+            );
+            """;
+        cmd.ExecuteNonQuery();
     }
 
     /// <summary>
@@ -117,9 +188,9 @@ public sealed class InstrumentDatabase : IDisposable
         cmd.Transaction = tx;
         cmd.CommandText = """
             INSERT INTO LeaderboardEntries
-                (SongId, AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, Rank, EndTime, FirstSeenAt, LastUpdatedAt)
+                (SongId, AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, Rank, EndTime, ApiRank, FirstSeenAt, LastUpdatedAt)
             VALUES
-                (@songId, @accountId, @score, @accuracy, @fc, @stars, @season, @pct, @rank, @endTime, @now, @now)
+                (@songId, @accountId, @score, @accuracy, @fc, @stars, @season, @pct, @rank, @endTime, @apiRank, @now, @now)
             ON CONFLICT(SongId, AccountId) DO UPDATE SET
                 Score         = excluded.Score,
                 Accuracy      = excluded.Accuracy,
@@ -135,10 +206,15 @@ public sealed class InstrumentDatabase : IDisposable
                                   WHEN excluded.Rank > 0 THEN excluded.Rank
                                   ELSE LeaderboardEntries.Rank
                                 END,
+                ApiRank       = CASE
+                                  WHEN excluded.ApiRank > 0 THEN excluded.ApiRank
+                                  ELSE LeaderboardEntries.ApiRank
+                                END,
                 EndTime       = excluded.EndTime,
                 LastUpdatedAt = excluded.LastUpdatedAt
             WHERE Score != excluded.Score
                OR (excluded.Rank > 0 AND (LeaderboardEntries.Rank IS NULL OR LeaderboardEntries.Rank = 0))
+               OR (excluded.ApiRank > 0 AND (LeaderboardEntries.ApiRank IS NULL OR LeaderboardEntries.ApiRank = 0 OR LeaderboardEntries.ApiRank != excluded.ApiRank))
                OR (excluded.Percentile > 0 AND LeaderboardEntries.Percentile <= 0);
             """;
 
@@ -152,6 +228,7 @@ public sealed class InstrumentDatabase : IDisposable
         var pPct       = cmd.Parameters.Add("@pct", SqliteType.Real);
         var pRank      = cmd.Parameters.Add("@rank", SqliteType.Integer);
         var pEndTime   = cmd.Parameters.Add("@endTime", SqliteType.Text);
+        var pApiRank   = cmd.Parameters.Add("@apiRank", SqliteType.Integer);
         var pNow       = cmd.Parameters.Add("@now", SqliteType.Text);
 
         cmd.Prepare();
@@ -168,6 +245,7 @@ public sealed class InstrumentDatabase : IDisposable
             pPct.Value       = entry.Percentile;
             pRank.Value      = entry.Rank;
             pEndTime.Value   = (object?)entry.EndTime ?? DBNull.Value;
+            pApiRank.Value   = entry.ApiRank > 0 ? entry.ApiRank : DBNull.Value;
             pNow.Value       = now;
 
             affected += cmd.ExecuteNonQuery();
@@ -187,7 +265,7 @@ public sealed class InstrumentDatabase : IDisposable
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime, Rank
+            SELECT Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime, Rank, ApiRank
             FROM LeaderboardEntries
             WHERE SongId = @songId AND AccountId = @accountId;
             """;
@@ -208,6 +286,7 @@ public sealed class InstrumentDatabase : IDisposable
             Percentile   = reader.IsDBNull(5) ? 0 : reader.GetDouble(5),
             EndTime      = reader.IsDBNull(6) ? null : reader.GetString(6),
             Rank         = reader.IsDBNull(7) ? 0 : reader.GetInt32(7),
+            ApiRank      = reader.IsDBNull(8) ? 0 : reader.GetInt32(8),
         };
     }
 
@@ -766,6 +845,435 @@ public sealed class InstrumentDatabase : IDisposable
             Percentile   = reader.IsDBNull(6) ? 0 : reader.GetDouble(6),
             EndTime      = reader.IsDBNull(7) ? null : reader.GetString(7),
             Rank         = reader.FieldCount > 8 && !reader.IsDBNull(8) ? reader.GetInt32(8) : 0,
+        };
+    }
+
+    // ─── Rankings computation ───────────────────────────────────
+
+    /// <summary>
+    /// Recompute <c>SongStats</c> (per-song entry counts and log weights).
+    /// Uses monotonic MAX of (local COUNT, previous, real population) to prevent rank inflation.
+    /// </summary>
+    /// <param name="maxScoresByInstrument">CHOpt max scores keyed by SongId.</param>
+    /// <param name="realPopulation">Real population data from LeaderboardPopulation, keyed by SongId.</param>
+    public int ComputeSongStats(Dictionary<string, int?>? maxScoresByInstrument = null,
+                                Dictionary<string, long>? realPopulation = null)
+    {
+        lock (_writeLock)
+        {
+            var now = DateTime.UtcNow.ToString("o");
+            var conn = GetPersistentConnection();
+
+            // Load current EntryCount values to enforce monotonicity
+            var previous = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            using (var readCmd = conn.CreateCommand())
+            {
+                readCmd.CommandText = "SELECT SongId, EntryCount FROM SongStats;";
+                using var reader = readCmd.ExecuteReader();
+                while (reader.Read())
+                    previous[reader.GetString(0)] = reader.GetInt32(1);
+            }
+
+            // Get fresh counts from LeaderboardEntries
+            var freshCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            using (var countCmd = conn.CreateCommand())
+            {
+                countCmd.CommandText = "SELECT SongId, COUNT(*) FROM LeaderboardEntries GROUP BY SongId;";
+                using var reader = countCmd.ExecuteReader();
+                while (reader.Read())
+                    freshCounts[reader.GetString(0)] = reader.GetInt32(1);
+            }
+
+            // UPSERT with monotonic MAX
+            using var tx = conn.BeginTransaction();
+            using var upsert = conn.CreateCommand();
+            upsert.Transaction = tx;
+            upsert.CommandText = """
+                INSERT INTO SongStats (SongId, EntryCount, PreviousEntryCount, LogWeight, MaxScore, ComputedAt)
+                VALUES (@songId, @entryCount, @prevCount, @logWeight, @maxScore, @now)
+                ON CONFLICT(SongId) DO UPDATE SET
+                    PreviousEntryCount = SongStats.EntryCount,
+                    EntryCount         = excluded.EntryCount,
+                    LogWeight          = excluded.LogWeight,
+                    MaxScore           = excluded.MaxScore,
+                    ComputedAt         = excluded.ComputedAt;
+                """;
+            var pSongId = upsert.Parameters.Add("@songId", SqliteType.Text);
+            var pEntryCount = upsert.Parameters.Add("@entryCount", SqliteType.Integer);
+            var pPrevCount = upsert.Parameters.Add("@prevCount", SqliteType.Integer);
+            var pLogWeight = upsert.Parameters.Add("@logWeight", SqliteType.Real);
+            var pMaxScore = upsert.Parameters.Add("@maxScore", SqliteType.Integer);
+            var pNow = upsert.Parameters.Add("@now", SqliteType.Text);
+            upsert.Prepare();
+
+            int rows = 0;
+            foreach (var (songId, freshCount) in freshCounts)
+            {
+                var prevCount = previous.GetValueOrDefault(songId, 0);
+                long realPop = 0;
+                realPopulation?.TryGetValue(songId, out realPop);
+                // Monotonic MAX of (fresh local count, previous count, real Epic population)
+                var entryCount = (int)Math.Max(Math.Max(freshCount, prevCount), realPop > 0 ? realPop : 0);
+                var logWeight = entryCount > 0 ? Math.Log2(entryCount) : 0.0;
+
+                int? maxScore = null;
+                maxScoresByInstrument?.TryGetValue(songId, out maxScore);
+
+                pSongId.Value = songId;
+                pEntryCount.Value = entryCount;
+                pPrevCount.Value = prevCount;
+                pLogWeight.Value = logWeight;
+                pMaxScore.Value = maxScore.HasValue ? (object)maxScore.Value : DBNull.Value;
+                pNow.Value = now;
+                rows += upsert.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+            _log.LogDebug("Computed SongStats for {Instrument}: {Rows} songs.", _instrument, rows);
+            return rows;
+        }
+    }
+
+    /// <summary>
+    /// Recompute <c>AccountRankings</c> for all accounts on this instrument.
+    /// Applies CHOpt filter (exclude scores &gt; maxScore × 1.05) and Bayesian adjustment.
+    /// </summary>
+    /// <param name="totalChartedSongs">Total songs charted for this instrument (from song catalog).</param>
+    /// <param name="credibilityThreshold">Bayesian m parameter (default 50).</param>
+    /// <param name="populationMedian">Bayesian C parameter (default 0.5).</param>
+    /// <returns>Number of accounts ranked.</returns>
+    public int ComputeAccountRankings(int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5)
+    {
+        lock (_writeLock)
+        {
+            var now = DateTime.UtcNow.ToString("o");
+            var conn = GetPersistentConnection();
+            using var tx = conn.BeginTransaction();
+
+            // Clear existing rankings
+            using (var del = conn.CreateCommand())
+            {
+                del.Transaction = tx;
+                del.CommandText = "DELETE FROM AccountRankings;";
+                del.ExecuteNonQuery();
+            }
+
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                WITH ValidEntries AS (
+                    -- Filter out cheated scores (> 105% of CHOpt max)
+                    -- Use ApiRank (real Epic rank) when available, falling back to local Rank
+                    SELECT le.SongId, le.AccountId, le.Score, le.Accuracy, le.IsFullCombo, le.Stars,
+                           COALESCE(NULLIF(le.ApiRank, 0), le.Rank) AS EffectiveRank,
+                           ss.EntryCount, ss.LogWeight, ss.MaxScore
+                    FROM LeaderboardEntries le
+                    JOIN SongStats ss ON ss.SongId = le.SongId
+                    WHERE le.Score <= COALESCE(CAST(ss.MaxScore * 1.05 AS INTEGER), le.Score + 1)
+                      AND ss.EntryCount > 0
+                      AND COALESCE(NULLIF(le.ApiRank, 0), le.Rank) > 0
+                ),
+                Aggregated AS (
+                    SELECT
+                        v.AccountId,
+                        COUNT(*)                                                        AS SongsPlayed,
+                        @totalCharted                                                   AS TotalChartedSongs,
+                        CAST(COUNT(*) AS REAL) / @totalCharted                          AS Coverage,
+                        AVG(CAST(v.EffectiveRank AS REAL) / v.EntryCount)               AS RawSkillRating,
+                        SUM((CAST(v.EffectiveRank AS REAL) / v.EntryCount) * v.LogWeight) / NULLIF(SUM(v.LogWeight), 0)
+                                                                                        AS WeightedRating,
+                        CAST(SUM(v.IsFullCombo) AS REAL) / COUNT(*)                     AS FcRate,
+                        SUM(v.Score)                                                    AS TotalScore,
+                        AVG(CASE WHEN v.MaxScore IS NOT NULL AND v.MaxScore > 0
+                                 THEN MIN(CAST(v.Score AS REAL) / v.MaxScore, 1.05)
+                                 ELSE NULL END)                                         AS MaxScorePercent,
+                        AVG(v.Accuracy)                                                 AS AvgAccuracy,
+                        SUM(v.IsFullCombo)                                              AS FullComboCount,
+                        AVG(v.Stars)                                                    AS AvgStars,
+                        MIN(v.EffectiveRank)                                            AS BestRank,
+                        AVG(CAST(v.EffectiveRank AS REAL))                              AS AvgRank
+                    FROM ValidEntries v
+                    GROUP BY v.AccountId
+                ),
+                WithBayesian AS (
+                    SELECT *,
+                        (SongsPlayed * RawSkillRating + @m * @C) / (SongsPlayed + @m)   AS AdjustedSkillRating
+                    FROM Aggregated
+                ),
+                Ranked AS (
+                    SELECT *,
+                        ROW_NUMBER() OVER (ORDER BY AdjustedSkillRating ASC, SongsPlayed DESC, TotalScore DESC, FullComboCount DESC, AccountId ASC) AS AdjustedSkillRank,
+                        ROW_NUMBER() OVER (ORDER BY COALESCE(WeightedRating, 1.0) ASC, SongsPlayed DESC, TotalScore DESC, FullComboCount DESC, AccountId ASC) AS WeightedRank,
+                        ROW_NUMBER() OVER (ORDER BY FcRate DESC, SongsPlayed DESC, TotalScore DESC, AccountId ASC) AS FcRateRank,
+                        ROW_NUMBER() OVER (ORDER BY TotalScore DESC, SongsPlayed DESC, FullComboCount DESC, AccountId ASC) AS TotalScoreRank,
+                        ROW_NUMBER() OVER (ORDER BY COALESCE(MaxScorePercent, 0) DESC, SongsPlayed DESC, TotalScore DESC, AccountId ASC) AS MaxScorePercentRank
+                    FROM WithBayesian
+                )
+                INSERT INTO AccountRankings
+                SELECT AccountId, SongsPlayed, TotalChartedSongs, Coverage,
+                       RawSkillRating, AdjustedSkillRating, AdjustedSkillRank,
+                       COALESCE(WeightedRating, 1.0), WeightedRank,
+                       FcRate, FcRateRank,
+                       TotalScore, TotalScoreRank,
+                       COALESCE(MaxScorePercent, 0), MaxScorePercentRank,
+                       AvgAccuracy, FullComboCount, AvgStars, BestRank, AvgRank,
+                       @now
+                FROM Ranked;
+                """;
+            cmd.Parameters.AddWithValue("@totalCharted", totalChartedSongs);
+            cmd.Parameters.AddWithValue("@m", credibilityThreshold);
+            cmd.Parameters.AddWithValue("@C", populationMedian);
+            cmd.Parameters.AddWithValue("@now", now);
+
+            var ranked = cmd.ExecuteNonQuery();
+            tx.Commit();
+
+            _log.LogInformation("Computed AccountRankings for {Instrument}: {Count:N0} accounts ranked.", _instrument, ranked);
+            return ranked;
+        }
+    }
+
+    /// <summary>
+    /// Snapshot today's ranks for the top N accounts + specified additional accounts into <c>RankHistory</c>.
+    /// Automatically purges snapshots older than <paramref name="retentionDays"/>.
+    /// </summary>
+    public int SnapshotRankHistory(int topN, IReadOnlySet<string>? additionalAccountIds = null, int retentionDays = 365)
+    {
+        lock (_writeLock)
+        {
+            var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
+            var conn = GetPersistentConnection();
+            using var tx = conn.BeginTransaction();
+
+            // Insert top N by AdjustedSkillRank
+            using (var ins = conn.CreateCommand())
+            {
+                ins.Transaction = tx;
+                ins.CommandText = """
+                    INSERT OR REPLACE INTO RankHistory (AccountId, SnapshotDate, AdjustedSkillRank, WeightedRank, FcRateRank, TotalScoreRank, MaxScorePercentRank)
+                    SELECT AccountId, @today, AdjustedSkillRank, WeightedRank, FcRateRank, TotalScoreRank, MaxScorePercentRank
+                    FROM AccountRankings
+                    WHERE AdjustedSkillRank <= @topN;
+                    """;
+                ins.Parameters.AddWithValue("@today", today);
+                ins.Parameters.AddWithValue("@topN", topN);
+                ins.ExecuteNonQuery();
+            }
+
+            // Insert additional accounts (registered users) that may not be in top N
+            if (additionalAccountIds is { Count: > 0 })
+            {
+                using var ins2 = conn.CreateCommand();
+                ins2.Transaction = tx;
+                ins2.CommandText = """
+                    INSERT OR REPLACE INTO RankHistory (AccountId, SnapshotDate, AdjustedSkillRank, WeightedRank, FcRateRank, TotalScoreRank, MaxScorePercentRank)
+                    SELECT AccountId, @today, AdjustedSkillRank, WeightedRank, FcRateRank, TotalScoreRank, MaxScorePercentRank
+                    FROM AccountRankings
+                    WHERE AccountId = @aid;
+                    """;
+                ins2.Parameters.AddWithValue("@today", today);
+                var pAid = ins2.Parameters.Add("@aid", SqliteType.Text);
+                ins2.Prepare();
+
+                foreach (var aid in additionalAccountIds)
+                {
+                    pAid.Value = aid;
+                    ins2.ExecuteNonQuery();
+                }
+            }
+
+            // Purge old snapshots
+            using (var purge = conn.CreateCommand())
+            {
+                purge.Transaction = tx;
+                purge.CommandText = "DELETE FROM RankHistory WHERE SnapshotDate < date(@today, @retention);";
+                purge.Parameters.AddWithValue("@today", today);
+                purge.Parameters.AddWithValue("@retention", $"-{retentionDays} days");
+                purge.ExecuteNonQuery();
+            }
+
+            // Count today's snapshots
+            int count;
+            using (var cntCmd = conn.CreateCommand())
+            {
+                cntCmd.Transaction = tx;
+                cntCmd.CommandText = "SELECT COUNT(*) FROM RankHistory WHERE SnapshotDate = @today;";
+                cntCmd.Parameters.AddWithValue("@today", today);
+                count = Convert.ToInt32(cntCmd.ExecuteScalar());
+            }
+
+            tx.Commit();
+            _log.LogDebug("RankHistory snapshot for {Instrument}: {Count} accounts, date={Date}.", _instrument, count, today);
+            return count;
+        }
+    }
+
+    /// <summary>
+    /// Get a paginated list of account rankings, sorted by the specified rank column.
+    /// </summary>
+    public (List<AccountRankingDto> Entries, int TotalCount) GetAccountRankings(
+        string rankBy = "adjusted", int page = 1, int pageSize = 50)
+    {
+        var orderCol = rankBy.ToLowerInvariant() switch
+        {
+            "weighted" => "WeightedRank",
+            "fcrate" => "FcRateRank",
+            "totalscore" => "TotalScoreRank",
+            "maxscore" => "MaxScorePercentRank",
+            _ => "AdjustedSkillRank",
+        };
+
+        using var conn = OpenConnection();
+
+        int totalCount;
+        using (var cntCmd = conn.CreateCommand())
+        {
+            cntCmd.CommandText = "SELECT COUNT(*) FROM AccountRankings;";
+            totalCount = Convert.ToInt32(cntCmd.ExecuteScalar());
+        }
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT AccountId, SongsPlayed, TotalChartedSongs, Coverage,
+                   RawSkillRating, AdjustedSkillRating, AdjustedSkillRank,
+                   WeightedRating, WeightedRank,
+                   FcRate, FcRateRank,
+                   TotalScore, TotalScoreRank,
+                   MaxScorePercent, MaxScorePercentRank,
+                   AvgAccuracy, FullComboCount, AvgStars, BestRank, AvgRank,
+                   ComputedAt
+            FROM AccountRankings
+            ORDER BY {orderCol} ASC
+            LIMIT @limit OFFSET @offset;
+            """;
+        cmd.Parameters.AddWithValue("@limit", pageSize);
+        cmd.Parameters.AddWithValue("@offset", (page - 1) * pageSize);
+
+        var entries = new List<AccountRankingDto>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            entries.Add(ReadAccountRankingDto(reader, _instrument));
+        }
+        return (entries, totalCount);
+    }
+
+    /// <summary>
+    /// Get a single account's ranking on this instrument.
+    /// </summary>
+    public AccountRankingDto? GetAccountRanking(string accountId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT AccountId, SongsPlayed, TotalChartedSongs, Coverage,
+                   RawSkillRating, AdjustedSkillRating, AdjustedSkillRank,
+                   WeightedRating, WeightedRank,
+                   FcRate, FcRateRank,
+                   TotalScore, TotalScoreRank,
+                   MaxScorePercent, MaxScorePercentRank,
+                   AvgAccuracy, FullComboCount, AvgStars, BestRank, AvgRank,
+                   ComputedAt
+            FROM AccountRankings
+            WHERE AccountId = @accountId;
+            """;
+        cmd.Parameters.AddWithValue("@accountId", accountId);
+
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read()) return null;
+        return ReadAccountRankingDto(reader, _instrument);
+    }
+
+    /// <summary>
+    /// Get all account rankings as a lightweight list (for composite computation).
+    /// Returns (AccountId, AdjustedSkillRating, SongsPlayed, AdjustedSkillRank).
+    /// </summary>
+    internal List<(string AccountId, double AdjustedSkillRating, int SongsPlayed, int AdjustedSkillRank)> GetAllRankingSummaries()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT AccountId, AdjustedSkillRating, SongsPlayed, AdjustedSkillRank FROM AccountRankings;";
+
+        var result = new List<(string, double, int, int)>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            result.Add((reader.GetString(0), reader.GetDouble(1), reader.GetInt32(2), reader.GetInt32(3)));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Get rank history for an account over the last N days.
+    /// </summary>
+    public List<RankHistoryDto> GetRankHistory(string accountId, int days = 30)
+    {
+        var cutoff = DateTime.UtcNow.AddDays(-days).ToString("yyyy-MM-dd");
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT SnapshotDate, AdjustedSkillRank, WeightedRank, FcRateRank, TotalScoreRank, MaxScorePercentRank
+            FROM RankHistory
+            WHERE AccountId = @accountId AND SnapshotDate >= @cutoff
+            ORDER BY SnapshotDate ASC;
+            """;
+        cmd.Parameters.AddWithValue("@accountId", accountId);
+        cmd.Parameters.AddWithValue("@cutoff", cutoff);
+
+        var result = new List<RankHistoryDto>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            result.Add(new RankHistoryDto
+            {
+                SnapshotDate = reader.GetString(0),
+                AdjustedSkillRank = reader.GetInt32(1),
+                WeightedRank = reader.GetInt32(2),
+                FcRateRank = reader.GetInt32(3),
+                TotalScoreRank = reader.GetInt32(4),
+                MaxScorePercentRank = reader.GetInt32(5),
+            });
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Get the total number of ranked accounts on this instrument.
+    /// </summary>
+    public int GetRankedAccountCount()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM AccountRankings;";
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    private static AccountRankingDto ReadAccountRankingDto(SqliteDataReader reader, string instrument)
+    {
+        return new AccountRankingDto
+        {
+            AccountId = reader.GetString(0),
+            SongsPlayed = reader.GetInt32(1),
+            TotalChartedSongs = reader.GetInt32(2),
+            Coverage = reader.GetDouble(3),
+            RawSkillRating = reader.GetDouble(4),
+            AdjustedSkillRating = reader.GetDouble(5),
+            AdjustedSkillRank = reader.GetInt32(6),
+            WeightedRating = reader.GetDouble(7),
+            WeightedRank = reader.GetInt32(8),
+            FcRate = reader.GetDouble(9),
+            FcRateRank = reader.GetInt32(10),
+            TotalScore = reader.GetInt64(11),
+            TotalScoreRank = reader.GetInt32(12),
+            MaxScorePercent = reader.GetDouble(13),
+            MaxScorePercentRank = reader.GetInt32(14),
+            AvgAccuracy = reader.GetDouble(15),
+            FullComboCount = reader.GetInt32(16),
+            AvgStars = reader.GetDouble(17),
+            BestRank = reader.GetInt32(18),
+            AvgRank = reader.GetDouble(19),
+            ComputedAt = reader.GetString(20),
+            Instrument = instrument,
         };
     }
 

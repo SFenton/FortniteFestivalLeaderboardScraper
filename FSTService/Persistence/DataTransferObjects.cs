@@ -246,3 +246,97 @@ public sealed class SongGapEntry
     public int Score { get; init; }
     public int Rank { get; init; }
 }
+
+// ─── Rankings DTOs ──────────────────────────────────────────
+
+/// <summary>
+/// Per-instrument ranking data for a single account, from the <c>AccountRankings</c> table.
+/// </summary>
+public sealed class AccountRankingDto
+{
+    public string AccountId { get; init; } = "";
+    public string? DisplayName { get; init; }
+    public string Instrument { get; init; } = "";
+    public int SongsPlayed { get; init; }
+    public int TotalChartedSongs { get; init; }
+    public double Coverage { get; init; }
+
+    public double RawSkillRating { get; init; }
+    public double AdjustedSkillRating { get; init; }
+    public int AdjustedSkillRank { get; init; }
+
+    public double WeightedRating { get; init; }
+    public int WeightedRank { get; init; }
+
+    public double FcRate { get; init; }
+    public int FcRateRank { get; init; }
+
+    public long TotalScore { get; init; }
+    public int TotalScoreRank { get; init; }
+
+    public double MaxScorePercent { get; init; }
+    public int MaxScorePercentRank { get; init; }
+
+    public double AvgAccuracy { get; init; }
+    public int FullComboCount { get; init; }
+    public double AvgStars { get; init; }
+    public int BestRank { get; init; }
+    public double AvgRank { get; init; }
+
+    public string ComputedAt { get; init; } = "";
+    public int TotalRankedAccounts { get; init; }
+}
+
+/// <summary>
+/// Cross-instrument composite ranking for a single account, from <c>CompositeRankings</c>.
+/// </summary>
+public sealed class CompositeRankingDto
+{
+    public string AccountId { get; init; } = "";
+    public string? DisplayName { get; init; }
+    public int InstrumentsPlayed { get; init; }
+    public int TotalSongsPlayed { get; init; }
+    public double CompositeRating { get; init; }
+    public int CompositeRank { get; init; }
+
+    public double? GuitarAdjustedSkill { get; init; }
+    public int? GuitarSkillRank { get; init; }
+    public double? BassAdjustedSkill { get; init; }
+    public int? BassSkillRank { get; init; }
+    public double? DrumsAdjustedSkill { get; init; }
+    public int? DrumsSkillRank { get; init; }
+    public double? VocalsAdjustedSkill { get; init; }
+    public int? VocalsSkillRank { get; init; }
+    public double? ProGuitarAdjustedSkill { get; init; }
+    public int? ProGuitarSkillRank { get; init; }
+    public double? ProBassAdjustedSkill { get; init; }
+    public int? ProBassSkillRank { get; init; }
+
+    public string ComputedAt { get; init; } = "";
+    public int TotalRankedAccounts { get; init; }
+}
+
+/// <summary>
+/// Daily rank snapshot for history tracking.
+/// </summary>
+public sealed class RankHistoryDto
+{
+    public string SnapshotDate { get; init; } = "";
+    public int AdjustedSkillRank { get; init; }
+    public int WeightedRank { get; init; }
+    public int FcRateRank { get; init; }
+    public int TotalScoreRank { get; init; }
+    public int MaxScorePercentRank { get; init; }
+}
+
+/// <summary>
+/// Combo ranking result for a registered user's selected instrument combination.
+/// </summary>
+public sealed class UserComboRankingDto
+{
+    public string InstrumentCombo { get; init; } = "";
+    public double ComboRating { get; init; }
+    public int ComboRank { get; init; }
+    public int TotalAccountsInCombo { get; init; }
+    public string ComputedAt { get; init; } = "";
+}

@@ -221,6 +221,8 @@ public class ScoreBackfiller
 
         // UPSERT the entry (will also update Rank for existing entries
         // thanks to the Rank-enrichment clause in UpsertEntries)
+        // ApiRank preserves the real Epic API rank (survives RecomputeAllRanks)
+        entry.ApiRank = entry.Rank;
         instrumentDb.UpsertEntries(songId, [entry]);
 
         // Rank is a guaranteed population floor — if the user is ranked N,

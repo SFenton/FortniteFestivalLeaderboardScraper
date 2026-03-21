@@ -237,7 +237,8 @@ public class PostScrapeRefresher
                 allTimeRank: entry.Rank);
         }
 
-        // UPSERT the entry
+        // UPSERT the entry — ApiRank preserves the real Epic API rank
+        entry.ApiRank = entry.Rank;
         instrumentDb.UpsertEntries(songId, [entry]);
 
         // Rank is a guaranteed population floor — if the user is ranked N,

@@ -264,6 +264,54 @@ public sealed class MetaDatabase : IDisposable
                 ScrapedAt TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS CompositeRankings (
+                AccountId              TEXT    PRIMARY KEY,
+                InstrumentsPlayed      INTEGER NOT NULL,
+                TotalSongsPlayed       INTEGER NOT NULL,
+                CompositeRating        REAL    NOT NULL,
+                CompositeRank          INTEGER NOT NULL UNIQUE,
+
+                GuitarAdjustedSkill    REAL,
+                GuitarSkillRank        INTEGER,
+                BassAdjustedSkill      REAL,
+                BassSkillRank          INTEGER,
+                DrumsAdjustedSkill     REAL,
+                DrumsSkillRank         INTEGER,
+                VocalsAdjustedSkill    REAL,
+                VocalsSkillRank        INTEGER,
+                ProGuitarAdjustedSkill REAL,
+                ProGuitarSkillRank     INTEGER,
+                ProBassAdjustedSkill   REAL,
+                ProBassSkillRank       INTEGER,
+
+                ComputedAt             TEXT    NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_CompositeRank ON CompositeRankings (CompositeRank);
+
+            CREATE TABLE IF NOT EXISTS CompositeRankHistory (
+                AccountId      TEXT    NOT NULL,
+                SnapshotDate   TEXT    NOT NULL,
+                CompositeRank  INTEGER NOT NULL,
+                PRIMARY KEY (AccountId, SnapshotDate)
+            );
+
+            CREATE TABLE IF NOT EXISTS UserComboRankings (
+                AccountId            TEXT    NOT NULL,
+                InstrumentCombo      TEXT    NOT NULL,
+                ComboRating          REAL    NOT NULL,
+                ComboRank            INTEGER NOT NULL,
+                TotalAccountsInCombo INTEGER NOT NULL,
+                ComputedAt           TEXT    NOT NULL,
+                PRIMARY KEY (AccountId, InstrumentCombo)
+            );
+
+            CREATE TABLE IF NOT EXISTS UserInstrumentPrefs (
+                AccountId   TEXT PRIMARY KEY,
+                Instruments TEXT NOT NULL,
+                UpdatedAt   TEXT NOT NULL
+            );
+
             """;
         cmd.ExecuteNonQuery();
 
@@ -2579,6 +2627,348 @@ public sealed class MetaDatabase : IDisposable
         while (reader.Read())
             set.Add(reader.GetString(0));
         return set;
+    }
+
+    // ─── Rankings ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Replaces all rows in <c>CompositeRankings</c> with pre-computed data.
+    /// Called by <see cref="RankingsCalculator"/> after aggregating per-instrument data.
+    /// </summary>
+    public void ReplaceCompositeRankings(IReadOnlyList<CompositeRankingDto> rankings)
+    {
+        var conn = GetPersistentConnection();
+        lock (_writeLock)
+        {
+            using var tx = conn.BeginTransaction();
+
+            using (var del = conn.CreateCommand())
+            {
+                del.Transaction = tx;
+                del.CommandText = "DELETE FROM CompositeRankings;";
+                del.ExecuteNonQuery();
+            }
+
+            using var ins = conn.CreateCommand();
+            ins.Transaction = tx;
+            ins.CommandText = """
+                INSERT INTO CompositeRankings
+                (AccountId, InstrumentsPlayed, TotalSongsPlayed, CompositeRating, CompositeRank,
+                 GuitarAdjustedSkill, GuitarSkillRank, BassAdjustedSkill, BassSkillRank,
+                 DrumsAdjustedSkill, DrumsSkillRank, VocalsAdjustedSkill, VocalsSkillRank,
+                 ProGuitarAdjustedSkill, ProGuitarSkillRank, ProBassAdjustedSkill, ProBassSkillRank,
+                 ComputedAt)
+                VALUES (@aid, @instPlayed, @totalSongs, @rating, @rank,
+                        @gSkill, @gRank, @bSkill, @bRank,
+                        @dSkill, @dRank, @vSkill, @vRank,
+                        @pgSkill, @pgRank, @pbSkill, @pbRank,
+                        @now);
+                """;
+            var pAid = ins.Parameters.Add("@aid", SqliteType.Text);
+            var pInstPlayed = ins.Parameters.Add("@instPlayed", SqliteType.Integer);
+            var pTotalSongs = ins.Parameters.Add("@totalSongs", SqliteType.Integer);
+            var pRating = ins.Parameters.Add("@rating", SqliteType.Real);
+            var pRank = ins.Parameters.Add("@rank", SqliteType.Integer);
+            var pGSkill = ins.Parameters.Add("@gSkill", SqliteType.Real);
+            var pGRank = ins.Parameters.Add("@gRank", SqliteType.Integer);
+            var pBSkill = ins.Parameters.Add("@bSkill", SqliteType.Real);
+            var pBRank = ins.Parameters.Add("@bRank", SqliteType.Integer);
+            var pDSkill = ins.Parameters.Add("@dSkill", SqliteType.Real);
+            var pDRank = ins.Parameters.Add("@dRank", SqliteType.Integer);
+            var pVSkill = ins.Parameters.Add("@vSkill", SqliteType.Real);
+            var pVRank = ins.Parameters.Add("@vRank", SqliteType.Integer);
+            var pPGSkill = ins.Parameters.Add("@pgSkill", SqliteType.Real);
+            var pPGRank = ins.Parameters.Add("@pgRank", SqliteType.Integer);
+            var pPBSkill = ins.Parameters.Add("@pbSkill", SqliteType.Real);
+            var pPBRank = ins.Parameters.Add("@pbRank", SqliteType.Integer);
+            var pNow = ins.Parameters.Add("@now", SqliteType.Text);
+            ins.Prepare();
+
+            var now = DateTime.UtcNow.ToString("o");
+            foreach (var r in rankings)
+            {
+                pAid.Value = r.AccountId;
+                pInstPlayed.Value = r.InstrumentsPlayed;
+                pTotalSongs.Value = r.TotalSongsPlayed;
+                pRating.Value = r.CompositeRating;
+                pRank.Value = r.CompositeRank;
+                pGSkill.Value = (object?)r.GuitarAdjustedSkill ?? DBNull.Value;
+                pGRank.Value = (object?)r.GuitarSkillRank ?? DBNull.Value;
+                pBSkill.Value = (object?)r.BassAdjustedSkill ?? DBNull.Value;
+                pBRank.Value = (object?)r.BassSkillRank ?? DBNull.Value;
+                pDSkill.Value = (object?)r.DrumsAdjustedSkill ?? DBNull.Value;
+                pDRank.Value = (object?)r.DrumsSkillRank ?? DBNull.Value;
+                pVSkill.Value = (object?)r.VocalsAdjustedSkill ?? DBNull.Value;
+                pVRank.Value = (object?)r.VocalsSkillRank ?? DBNull.Value;
+                pPGSkill.Value = (object?)r.ProGuitarAdjustedSkill ?? DBNull.Value;
+                pPGRank.Value = (object?)r.ProGuitarSkillRank ?? DBNull.Value;
+                pPBSkill.Value = (object?)r.ProBassAdjustedSkill ?? DBNull.Value;
+                pPBRank.Value = (object?)r.ProBassSkillRank ?? DBNull.Value;
+                pNow.Value = now;
+                ins.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+        }
+    }
+
+    /// <summary>Get a paginated composite rankings leaderboard.</summary>
+    public (List<CompositeRankingDto> Entries, int TotalCount) GetCompositeRankings(int page = 1, int pageSize = 50)
+    {
+        using var conn = OpenConnection();
+
+        int totalCount;
+        using (var cntCmd = conn.CreateCommand())
+        {
+            cntCmd.CommandText = "SELECT COUNT(*) FROM CompositeRankings;";
+            totalCount = Convert.ToInt32(cntCmd.ExecuteScalar());
+        }
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT AccountId, InstrumentsPlayed, TotalSongsPlayed, CompositeRating, CompositeRank,
+                   GuitarAdjustedSkill, GuitarSkillRank, BassAdjustedSkill, BassSkillRank,
+                   DrumsAdjustedSkill, DrumsSkillRank, VocalsAdjustedSkill, VocalsSkillRank,
+                   ProGuitarAdjustedSkill, ProGuitarSkillRank, ProBassAdjustedSkill, ProBassSkillRank,
+                   ComputedAt
+            FROM CompositeRankings
+            ORDER BY CompositeRank ASC
+            LIMIT @limit OFFSET @offset;
+            """;
+        cmd.Parameters.AddWithValue("@limit", pageSize);
+        cmd.Parameters.AddWithValue("@offset", (page - 1) * pageSize);
+
+        var entries = new List<CompositeRankingDto>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            entries.Add(ReadCompositeDto(reader));
+
+        return (entries, totalCount);
+    }
+
+    /// <summary>Get a single account's composite ranking.</summary>
+    public CompositeRankingDto? GetCompositeRanking(string accountId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT AccountId, InstrumentsPlayed, TotalSongsPlayed, CompositeRating, CompositeRank,
+                   GuitarAdjustedSkill, GuitarSkillRank, BassAdjustedSkill, BassSkillRank,
+                   DrumsAdjustedSkill, DrumsSkillRank, VocalsAdjustedSkill, VocalsSkillRank,
+                   ProGuitarAdjustedSkill, ProGuitarSkillRank, ProBassAdjustedSkill, ProBassSkillRank,
+                   ComputedAt
+            FROM CompositeRankings
+            WHERE AccountId = @accountId;
+            """;
+        cmd.Parameters.AddWithValue("@accountId", accountId);
+
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read()) return null;
+        return ReadCompositeDto(reader);
+    }
+
+    /// <summary>Snapshot today's composite ranks for top N + additional accounts.</summary>
+    public void SnapshotCompositeRankHistory(int topN, IReadOnlySet<string>? additionalAccountIds = null, int retentionDays = 365)
+    {
+        var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
+        var conn = GetPersistentConnection();
+        lock (_writeLock)
+        {
+            using var tx = conn.BeginTransaction();
+
+            using (var ins = conn.CreateCommand())
+            {
+                ins.Transaction = tx;
+                ins.CommandText = """
+                    INSERT OR REPLACE INTO CompositeRankHistory (AccountId, SnapshotDate, CompositeRank)
+                    SELECT AccountId, @today, CompositeRank
+                    FROM CompositeRankings
+                    WHERE CompositeRank <= @topN;
+                    """;
+                ins.Parameters.AddWithValue("@today", today);
+                ins.Parameters.AddWithValue("@topN", topN);
+                ins.ExecuteNonQuery();
+            }
+
+            if (additionalAccountIds is { Count: > 0 })
+            {
+                using var ins2 = conn.CreateCommand();
+                ins2.Transaction = tx;
+                ins2.CommandText = """
+                    INSERT OR REPLACE INTO CompositeRankHistory (AccountId, SnapshotDate, CompositeRank)
+                    SELECT AccountId, @today, CompositeRank
+                    FROM CompositeRankings
+                    WHERE AccountId = @aid;
+                    """;
+                ins2.Parameters.AddWithValue("@today", today);
+                var pAid = ins2.Parameters.Add("@aid", SqliteType.Text);
+                ins2.Prepare();
+                foreach (var aid in additionalAccountIds)
+                {
+                    pAid.Value = aid;
+                    ins2.ExecuteNonQuery();
+                }
+            }
+
+            using (var purge = conn.CreateCommand())
+            {
+                purge.Transaction = tx;
+                purge.CommandText = "DELETE FROM CompositeRankHistory WHERE SnapshotDate < date(@today, @retention);";
+                purge.Parameters.AddWithValue("@today", today);
+                purge.Parameters.AddWithValue("@retention", $"-{retentionDays} days");
+                purge.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+        }
+    }
+
+    /// <summary>Replace combo rankings for a specific account.</summary>
+    public void ReplaceUserComboRankings(string accountId, IReadOnlyList<UserComboRankingDto> combos)
+    {
+        var conn = GetPersistentConnection();
+        lock (_writeLock)
+        {
+            using var tx = conn.BeginTransaction();
+
+            using (var del = conn.CreateCommand())
+            {
+                del.Transaction = tx;
+                del.CommandText = "DELETE FROM UserComboRankings WHERE AccountId = @aid;";
+                del.Parameters.AddWithValue("@aid", accountId);
+                del.ExecuteNonQuery();
+            }
+
+            if (combos.Count > 0)
+            {
+                using var ins = conn.CreateCommand();
+                ins.Transaction = tx;
+                ins.CommandText = """
+                    INSERT INTO UserComboRankings (AccountId, InstrumentCombo, ComboRating, ComboRank, TotalAccountsInCombo, ComputedAt)
+                    VALUES (@aid, @combo, @rating, @rank, @total, @now);
+                    """;
+                var pAid = ins.Parameters.Add("@aid", SqliteType.Text);
+                var pCombo = ins.Parameters.Add("@combo", SqliteType.Text);
+                var pRating = ins.Parameters.Add("@rating", SqliteType.Real);
+                var pRank = ins.Parameters.Add("@rank", SqliteType.Integer);
+                var pTotal = ins.Parameters.Add("@total", SqliteType.Integer);
+                var pNow = ins.Parameters.Add("@now", SqliteType.Text);
+                ins.Prepare();
+
+                var now = DateTime.UtcNow.ToString("o");
+                foreach (var c in combos)
+                {
+                    pAid.Value = accountId;
+                    pCombo.Value = c.InstrumentCombo;
+                    pRating.Value = c.ComboRating;
+                    pRank.Value = c.ComboRank;
+                    pTotal.Value = c.TotalAccountsInCombo;
+                    pNow.Value = now;
+                    ins.ExecuteNonQuery();
+                }
+            }
+
+            tx.Commit();
+        }
+    }
+
+    /// <summary>Get combo rankings for a specific registered user.</summary>
+    public List<UserComboRankingDto> GetUserComboRankings(string accountId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT InstrumentCombo, ComboRating, ComboRank, TotalAccountsInCombo, ComputedAt FROM UserComboRankings WHERE AccountId = @aid;";
+        cmd.Parameters.AddWithValue("@aid", accountId);
+
+        var result = new List<UserComboRankingDto>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            result.Add(new UserComboRankingDto
+            {
+                InstrumentCombo = reader.GetString(0),
+                ComboRating = reader.GetDouble(1),
+                ComboRank = reader.GetInt32(2),
+                TotalAccountsInCombo = reader.GetInt32(3),
+                ComputedAt = reader.GetString(4),
+            });
+        }
+        return result;
+    }
+
+    /// <summary>Save a registered user's instrument preferences.</summary>
+    public void SetUserInstrumentPrefs(string accountId, IReadOnlyList<string> instruments)
+    {
+        var conn = GetPersistentConnection();
+        lock (_writeLock)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO UserInstrumentPrefs (AccountId, Instruments, UpdatedAt)
+                VALUES (@aid, @instruments, @now)
+                ON CONFLICT(AccountId) DO UPDATE SET
+                    Instruments = excluded.Instruments,
+                    UpdatedAt = excluded.UpdatedAt;
+                """;
+            cmd.Parameters.AddWithValue("@aid", accountId);
+            cmd.Parameters.AddWithValue("@instruments", string.Join("+", instruments));
+            cmd.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("o"));
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>Get a registered user's instrument preferences. Returns null if not set.</summary>
+    public IReadOnlyList<string>? GetUserInstrumentPrefs(string accountId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Instruments FROM UserInstrumentPrefs WHERE AccountId = @aid;";
+        cmd.Parameters.AddWithValue("@aid", accountId);
+        var result = cmd.ExecuteScalar() as string;
+        return result?.Split('+', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    /// <summary>Get all user instrument preferences (for batch combo computation).</summary>
+    public Dictionary<string, IReadOnlyList<string>> GetAllUserInstrumentPrefs()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT AccountId, Instruments FROM UserInstrumentPrefs;";
+
+        var result = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var instruments = reader.GetString(1).Split('+', StringSplitOptions.RemoveEmptyEntries);
+            if (instruments.Length > 0)
+                result[reader.GetString(0)] = instruments;
+        }
+        return result;
+    }
+
+    private static CompositeRankingDto ReadCompositeDto(SqliteDataReader reader)
+    {
+        return new CompositeRankingDto
+        {
+            AccountId = reader.GetString(0),
+            InstrumentsPlayed = reader.GetInt32(1),
+            TotalSongsPlayed = reader.GetInt32(2),
+            CompositeRating = reader.GetDouble(3),
+            CompositeRank = reader.GetInt32(4),
+            GuitarAdjustedSkill = reader.IsDBNull(5) ? null : reader.GetDouble(5),
+            GuitarSkillRank = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+            BassAdjustedSkill = reader.IsDBNull(7) ? null : reader.GetDouble(7),
+            BassSkillRank = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+            DrumsAdjustedSkill = reader.IsDBNull(9) ? null : reader.GetDouble(9),
+            DrumsSkillRank = reader.IsDBNull(10) ? null : reader.GetInt32(10),
+            VocalsAdjustedSkill = reader.IsDBNull(11) ? null : reader.GetDouble(11),
+            VocalsSkillRank = reader.IsDBNull(12) ? null : reader.GetInt32(12),
+            ProGuitarAdjustedSkill = reader.IsDBNull(13) ? null : reader.GetDouble(13),
+            ProGuitarSkillRank = reader.IsDBNull(14) ? null : reader.GetInt32(14),
+            ProBassAdjustedSkill = reader.IsDBNull(15) ? null : reader.GetDouble(15),
+            ProBassSkillRank = reader.IsDBNull(16) ? null : reader.GetInt32(16),
+            ComputedAt = reader.GetString(17),
+        };
     }
 
     /// <summary>

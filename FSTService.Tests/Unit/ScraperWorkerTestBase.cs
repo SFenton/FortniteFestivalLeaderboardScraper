@@ -140,9 +140,11 @@ public abstract class ScraperWorkerTestBase : IDisposable
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
 
+        var rankingsCalculator = new RankingsCalculator(_persistence, _persistence.Meta, pathDataStore, Substitute.For<ILogger<RankingsCalculator>>());
+
         var postScrapeOrchestrator = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _personalDbBuilder, _refresher, rivalsOrchestrator, notifications,
+            _personalDbBuilder, _refresher, rivalsOrchestrator, rankingsCalculator, notifications,
             _tokenManager, _progress, options,
             Substitute.For<ILogger<PostScrapeOrchestrator>>());
 

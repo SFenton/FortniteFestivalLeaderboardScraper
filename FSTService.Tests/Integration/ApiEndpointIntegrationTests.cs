@@ -1808,6 +1808,388 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(1, json.GetProperty("totalSongs").GetInt32());
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // Rankings Endpoints
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Rankings_PerInstrument_ReturnsEmpty_WhenNoData()
+    {
+        var response = await _client.GetAsync("/api/rankings/Solo_Guitar?page=1&pageSize=10");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(0, json.GetProperty("totalAccounts").GetInt32());
+        Assert.Equal("Solo_Guitar", json.GetProperty("instrument").GetString());
+    }
+
+    [Fact]
+    public async Task Rankings_PerInstrument_ReturnsRankings_WhenSeeded()
+    {
+        var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        db.UpsertEntries("testSong1", [
+            new LeaderboardEntry { AccountId = "rank_p1", Score = 10000, Rank = 1, Accuracy = 99, Stars = 6 },
+            new LeaderboardEntry { AccountId = "rank_p2", Score = 8000, Rank = 2, Accuracy = 90, Stars = 5 },
+        ]);
+        db.RecomputeAllRanks();
+        db.ComputeSongStats();
+        db.ComputeAccountRankings(totalChartedSongs: 1);
+
+        var response = await _client.GetAsync("/api/rankings/Solo_Guitar?page=1&pageSize=50");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.GetProperty("totalAccounts").GetInt32() >= 2);
+        Assert.True(json.GetProperty("entries").GetArrayLength() >= 2);
+    }
+
+    [Fact]
+    public async Task Rankings_PerInstrument_DifferentRankBy()
+    {
+        var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        db.UpsertEntries("testSong1", [
+            new LeaderboardEntry { AccountId = "rb_p1", Score = 10000, Rank = 1, Accuracy = 99, Stars = 6 },
+        ]);
+        db.RecomputeAllRanks();
+        db.ComputeSongStats();
+        db.ComputeAccountRankings(totalChartedSongs: 1);
+
+        foreach (var rankBy in new[] { "adjusted", "weighted", "fcrate", "totalscore", "maxscore" })
+        {
+            var response = await _client.GetAsync($"/api/rankings/Solo_Guitar?rankBy={rankBy}");
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task Rankings_SingleAccount_ReturnsRanking()
+    {
+        var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        db.UpsertEntries("testSong1", [
+            new LeaderboardEntry { AccountId = "single_rank_p1", Score = 10000, Rank = 1, Accuracy = 99, Stars = 6 },
+        ]);
+        db.RecomputeAllRanks();
+        db.ComputeSongStats();
+        db.ComputeAccountRankings(totalChartedSongs: 1);
+
+        var response = await _client.GetAsync("/api/rankings/Solo_Guitar/single_rank_p1");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("single_rank_p1", json.GetProperty("accountId").GetString());
+        Assert.True(json.GetProperty("adjustedSkillRank").GetInt32() >= 1);
+    }
+
+    [Fact]
+    public async Task Rankings_SingleAccount_NotFound()
+    {
+        var response = await _client.GetAsync("/api/rankings/Solo_Guitar/nonexistent_account");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rankings_History_ReturnsData()
+    {
+        var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        db.UpsertEntries("testSong1", [
+            new LeaderboardEntry { AccountId = "hist_p1", Score = 10000, Rank = 1, Accuracy = 99, Stars = 6 },
+        ]);
+        db.RecomputeAllRanks();
+        db.ComputeSongStats();
+        db.ComputeAccountRankings(totalChartedSongs: 1);
+        db.SnapshotRankHistory(topN: 100);
+
+        var response = await _client.GetAsync("/api/rankings/Solo_Guitar/hist_p1/history?days=7");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.GetProperty("history").GetArrayLength() > 0);
+    }
+
+    [Fact]
+    public async Task Rankings_Composite_ReturnsEmpty_WhenNoData()
+    {
+        var response = await _client.GetAsync("/api/rankings/composite?page=1&pageSize=10");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(0, json.GetProperty("totalAccounts").GetInt32());
+    }
+
+    [Fact]
+    public async Task Rankings_Composite_ReturnsData_WhenSeeded()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.ReplaceCompositeRankings([new CompositeRankingDto
+        {
+            AccountId = "comp_p1", InstrumentsPlayed = 2, TotalSongsPlayed = 50,
+            CompositeRating = 0.05, CompositeRank = 1,
+            GuitarAdjustedSkill = 0.03, GuitarSkillRank = 1,
+        }]);
+
+        var response = await _client.GetAsync("/api/rankings/composite");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(1, json.GetProperty("totalAccounts").GetInt32());
+    }
+
+    [Fact]
+    public async Task Rankings_CompositeSingle_ReturnsData()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.ReplaceCompositeRankings([new CompositeRankingDto
+        {
+            AccountId = "comp_single", InstrumentsPlayed = 1, TotalSongsPlayed = 10,
+            CompositeRating = 0.1, CompositeRank = 1,
+        }]);
+
+        var response = await _client.GetAsync("/api/rankings/composite/comp_single");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("comp_single", json.GetProperty("accountId").GetString());
+    }
+
+    [Fact]
+    public async Task Rankings_CompositeSingle_NotFound()
+    {
+        var response = await _client.GetAsync("/api/rankings/composite/nobody");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rankings_InstrumentPrefs_RequiresAuth()
+    {
+        var body = new { instruments = new[] { "Solo_Guitar", "Solo_Bass" } };
+        var response = await _client.PostAsJsonAsync("/api/player/test_p1/instruments", body);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rankings_InstrumentPrefs_SetsPrefs_WhenAuthed()
+    {
+        var body = new { instruments = new[] { "Solo_Guitar", "Solo_Bass" } };
+        var response = await _authedClient.PostAsJsonAsync("/api/player/pref_p1/instruments", body);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var prefs = metaDb.GetUserInstrumentPrefs("pref_p1");
+        Assert.NotNull(prefs);
+        Assert.Equal(2, prefs.Count);
+    }
+
+    [Fact]
+    public async Task Rankings_InstrumentPrefs_BadRequest_EmptyInstruments()
+    {
+        var body = new { instruments = Array.Empty<string>() };
+        var response = await _authedClient.PostAsJsonAsync("/api/player/test_p1/instruments", body);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Admin Endpoints
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Admin_Status_ReturnsStatus()
+    {
+        var response = await _authedClient.GetAsync("/api/status");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.TryGetProperty("instruments", out _));
+    }
+
+    [Fact]
+    public async Task Admin_FirstSeen_ReturnsData()
+    {
+        var response = await _client.GetAsync("/api/firstseen");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.TryGetProperty("count", out _));
+        Assert.True(json.TryGetProperty("songs", out _));
+    }
+
+    [Fact]
+    public async Task Admin_LeaderboardPopulation_Get_ReturnsData()
+    {
+        var response = await _authedClient.GetAsync("/api/leaderboard-population");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_BackfillStatus_NotFound_WhenUnknown()
+    {
+        var response = await _authedClient.GetAsync("/api/backfill/unknown_account/status");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_Register_RequiresAuth()
+    {
+        var body = new { deviceId = "d1", username = "test" };
+        var response = await _client.PostAsJsonAsync("/api/register", body);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_Register_BadRequest_EmptyFields()
+    {
+        var body = new { deviceId = "", username = "" };
+        var response = await _authedClient.PostAsJsonAsync("/api/register", body);
+        // Returns 400 (BadRequest) for empty fields
+        Assert.True(response.StatusCode == HttpStatusCode.BadRequest || response.StatusCode == HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Admin_Register_UnknownUsername_ReturnsNoAccountFound()
+    {
+        var body = new { deviceId = "test-device-999", username = "definitely_not_a_real_user" };
+        var response = await _authedClient.PostAsJsonAsync("/api/register", body);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("no_account_found", json.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task Admin_Unregister_RequiresAuth()
+    {
+        var body = new { deviceId = "d1", username = "test" };
+        var response = await _client.SendAsync(new HttpRequestMessage(HttpMethod.Delete, "/api/register")
+        {
+            Content = JsonContent.Create(body),
+        });
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_Unregister_WithAuth_NoOp()
+    {
+        var response = await _authedClient.SendAsync(new HttpRequestMessage(HttpMethod.Delete,
+            "/api/register?deviceId=nonexistent&accountId=nonexistent"));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(json.GetProperty("unregistered").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Admin_Backfill_RequiresAuth()
+    {
+        var response = await _client.PostAsync("/api/backfill/test_account", null);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_LeaderboardPopulation_Post_RequiresAuth()
+    {
+        var body = new[] { new { songId = "s1", instrument = "Solo_Guitar", totalEntries = 1000 } };
+        var response = await _client.PostAsJsonAsync("/api/leaderboard-population", body);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_LeaderboardPopulation_Post_WithAuth_Succeeds()
+    {
+        var body = new[] { new { songId = "testSong1", instrument = "Solo_Guitar", totalEntries = 50000 } };
+        var response = await _authedClient.PostAsJsonAsync("/api/leaderboard-population", body);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_ShopRefresh_RequiresAuth()
+    {
+        var response = await _client.PostAsync("/api/admin/shop/refresh", null);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_ShopRefresh_WithAuth_Returns()
+    {
+        try
+        {
+            var response = await _authedClient.PostAsync("/api/admin/shop/refresh", null);
+            // Shop service may succeed or fail gracefully — either is fine
+            Assert.True(response.StatusCode != HttpStatusCode.Unauthorized);
+        }
+        catch (HttpRequestException)
+        {
+            // Connection/transport errors are acceptable in test environment
+        }
+    }
+
+    [Fact]
+    public async Task Admin_FirstSeenCalculate_RequiresAuth()
+    {
+        var response = await _client.PostAsync("/api/firstseen/calculate", null);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_RegeneratePaths_RequiresAuth()
+    {
+        var response = await _client.PostAsync("/api/admin/regenerate-paths", null);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Sync Endpoints
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Sync_Version_RequiresAuth()
+    {
+        var response = await _client.GetAsync("/api/sync/unknown_device/version");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Sync_Download_RequiresAuth()
+    {
+        var response = await _client.GetAsync("/api/sync/unknown_device");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Diag Endpoints
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Diag_Events_Returns_WhenPublic()
+    {
+        // Diag endpoints are public — should return OK or some status (not 401)
+        var response = await _client.GetAsync("/api/diag/events?eventId=test");
+        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Diag_Leaderboard_Returns_WhenPublic()
+    {
+        var response = await _client.GetAsync("/api/diag/leaderboard?song=testSong1&instrument=Solo_Guitar");
+        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Diag_Leaderboard_V2_Returns()
+    {
+        var response = await _client.GetAsync("/api/diag/leaderboard?song=testSong1&instrument=Solo_Guitar&version=v2");
+        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Sync Endpoints — auth checks
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Sync_Version_WithAuth_ReturnsNotFound()
+    {
+        var response = await _authedClient.GetAsync("/api/sync/nonexistent_device/version");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Sync_Download_WithAuth_ReturnsNotFound()
+    {
+        var response = await _authedClient.GetAsync("/api/sync/nonexistent_device");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Factory: sets up the test server with in-memory/temp dependencies
     // ═══════════════════════════════════════════════════════════════

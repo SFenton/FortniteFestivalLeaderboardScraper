@@ -14,6 +14,7 @@ public static partial class ApiEndpoints
         app.MapLeaderboardEndpoints();
         app.MapPlayerEndpoints();
         app.MapRivalsEndpoints();
+        app.MapRankingsEndpoints();
         app.MapAdminEndpoints();
         app.MapSyncEndpoints();
         app.MapDiagEndpoints();

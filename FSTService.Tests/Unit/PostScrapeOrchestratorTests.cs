@@ -84,10 +84,11 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
+        var rankingsCalculator = new RankingsCalculator(_persistence, _metaDb, new PathDataStore(Path.Combine(_tempDir, "core.db")), Substitute.For<ILogger<RankingsCalculator>>());
 
         _sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _personalDbBuilder, _refresher, rivalsOrchestrator, _notifications,
+            _personalDbBuilder, _refresher, rivalsOrchestrator, rankingsCalculator, _notifications,
             _tokenManager, _progress, Options.Create(new ScraperOptions()), _log);
     }
 
@@ -332,9 +333,10 @@ public class PostScrapeOrchestratorTests : IDisposable
         var opts = Options.Create(new ScraperOptions { MaxPagesPerLeaderboard = 1 });
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new NotificationService(Substitute.For<ILogger<NotificationService>>()), _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
+        var rankingsCalculator2 = new RankingsCalculator(_persistence, _metaDb, new PathDataStore(Path.Combine(_tempDir, "core.db")), Substitute.For<ILogger<RankingsCalculator>>());
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _personalDbBuilder, _refresher, rivalsOrchestrator, _notifications,
+            _personalDbBuilder, _refresher, rivalsOrchestrator, rankingsCalculator2, _notifications,
             _tokenManager, _progress, opts, _log);
 
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
@@ -384,13 +386,23 @@ public class PostScrapeOrchestratorTests : IDisposable
         var opts = Options.Create(new ScraperOptions { MaxPagesPerLeaderboard = 0 });
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new NotificationService(Substitute.For<ILogger<NotificationService>>()), _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
+        var rankingsCalculator3 = new RankingsCalculator(_persistence, _metaDb, new PathDataStore(Path.Combine(_tempDir, "core.db")), Substitute.For<ILogger<RankingsCalculator>>());
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _personalDbBuilder, _refresher, rivalsOrchestrator, _notifications,
+            _personalDbBuilder, _refresher, rivalsOrchestrator, rankingsCalculator3, _notifications,
             _tokenManager, _progress, opts, _log);
 
         var ctx = CreateContext();
         sut.PruneExcessEntries(ctx); // maxPages=0 → no-op
+    }
+
+    [Fact]
+    public async Task ComputeRankingsAsync_RunsWithoutError()
+    {
+        var service = new FortniteFestival.Core.Services.FestivalService(
+            (FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        await _sut.ComputeRankingsAsync(service, CancellationToken.None);
+        // Should complete without error (no data to rank)
     }
 
     // ═══════════════════════════════════════════════════════════

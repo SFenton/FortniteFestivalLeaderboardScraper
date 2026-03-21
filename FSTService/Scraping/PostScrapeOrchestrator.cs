@@ -20,6 +20,7 @@ public sealed class PostScrapeOrchestrator
     private readonly PersonalDbBuilder _personalDbBuilder;
     private readonly PostScrapeRefresher _refresher;
     private readonly RivalsOrchestrator _rivalsOrchestrator;
+    private readonly RankingsCalculator _rankingsCalculator;
     private readonly NotificationService _notifications;
     private readonly TokenManager _tokenManager;
     private readonly ScrapeProgressTracker _progress;
@@ -33,6 +34,7 @@ public sealed class PostScrapeOrchestrator
         PersonalDbBuilder personalDbBuilder,
         PostScrapeRefresher refresher,
         RivalsOrchestrator rivalsOrchestrator,
+        RankingsCalculator rankingsCalculator,
         NotificationService notifications,
         TokenManager tokenManager,
         ScrapeProgressTracker progress,
@@ -45,6 +47,7 @@ public sealed class PostScrapeOrchestrator
         _personalDbBuilder = personalDbBuilder;
         _refresher = refresher;
         _rivalsOrchestrator = rivalsOrchestrator;
+        _rankingsCalculator = rankingsCalculator;
         _notifications = notifications;
         _tokenManager = tokenManager;
         _progress = progress;
@@ -60,6 +63,7 @@ public sealed class PostScrapeOrchestrator
     {
         await RunEnrichmentAsync(ctx, service, ct);
         PruneExcessEntries(ctx);
+        await ComputeRankingsAsync(service, ct);
         await RebuildPersonalDbsAsync(ctx, ct);
         await RefreshRegisteredUsersAsync(ctx, ct);
         await ComputeRivalsAsync(ctx, ct);
@@ -131,6 +135,23 @@ public sealed class PostScrapeOrchestrator
     /// </summary>
     public Task<int> ResolveNamesAsync(int maxConcurrency, CancellationToken ct)
         => _nameResolver.ResolveNewAccountsAsync(maxConcurrency, ct);
+
+    /// <summary>
+    /// Compute per-instrument + composite + combo rankings and daily history snapshots.
+    /// Runs after enrichment/pruning, before personal DB rebuild and rivals.
+    /// </summary>
+    internal async Task ComputeRankingsAsync(FestivalService service, CancellationToken ct)
+    {
+        try
+        {
+            _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRankings);
+            await _rankingsCalculator.ComputeAllAsync(service, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Rankings computation failed. Will retry next pass.");
+        }
+    }
 
     /// <summary>
     /// Rebuild personal DBs for registered users whose scores changed during the scrape.

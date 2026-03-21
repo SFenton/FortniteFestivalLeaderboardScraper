@@ -22,6 +22,7 @@ public sealed class ScrapeProgressTracker
         Initializing,
         Scraping,
         PostScrapeEnrichment,
+        ComputingRankings,
         CalculatingFirstSeen,
         ResolvingNames,
         RebuildingPersonalDbs,

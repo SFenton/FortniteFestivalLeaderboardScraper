@@ -1098,6 +1098,8 @@ public sealed class LeaderboardEntry
     public int Season { get; set; }
     /// <summary>ISO 8601 timestamp when the best session ended (from API's endTime field). Null when not available.</summary>
     public string? EndTime { get; set; }
+    /// <summary>Real rank from Epic API (backfill/lookup). Survives RecomputeAllRanks. 0 = not set.</summary>
+    public int ApiRank { get; set; }
 }
 
 /// <summary>
