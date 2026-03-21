@@ -48,11 +48,11 @@ public class ApiKeyAuthHandlerTests
     }
 
     [Fact]
-    public async Task MissingHeader_ReturnsFail()
+    public async Task MissingHeader_ReturnsNoResult()
     {
         var result = await RunHandler("my-secret-key", null);
         Assert.False(result.Succeeded);
-        Assert.Contains("Missing X-API-Key", result.Failure?.Message);
+        Assert.True(result.None);
     }
 
     [Fact]

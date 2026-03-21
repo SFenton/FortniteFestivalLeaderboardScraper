@@ -50,7 +50,7 @@ public sealed class ApiKeyAuthHandler : AuthenticationHandler<ApiKeyAuthOptions>
 
         if (!Request.Headers.TryGetValue(ApiKeyHeaderName, out var providedKey))
         {
-            return Task.FromResult(AuthenticateResult.Fail("Missing X-API-Key header."));
+            return Task.FromResult(AuthenticateResult.NoResult());
         }
 
         if (!string.Equals(providedKey, Options.ApiKey, StringComparison.Ordinal))
