@@ -389,13 +389,15 @@ public class GlobalLeaderboardScraperTests
     {
         var (scraper, handler) = CreateScraper();
 
+        // 403 is retried once with 5s backoff, then treated as boundary
+        handler.EnqueueError(HttpStatusCode.Forbidden, "forbidden");
         handler.EnqueueError(HttpStatusCode.Forbidden, "forbidden");
 
         var result = await scraper.ScrapeLeaderboardAsync(
             "song1", "Solo_Guitar", "token", "acct");
 
         Assert.Empty(result.Entries);
-        Assert.Equal(1, handler.Requests.Count);
+        Assert.Equal(2, handler.Requests.Count);
     }
 
     [Fact]
