@@ -359,9 +359,15 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         {
             if (attempt > 0)
             {
-                // Exponential backoff: 500ms, 1s, 2s
-                var backoff = TimeSpan.FromMilliseconds(500 * Math.Pow(2, attempt - 1));
-                await Task.Delay(backoff, ct);
+                // Escalating backoff: 500ms, 1s, 2s, 5s
+                var backoffMs = attempt switch
+                {
+                    1 => 500,
+                    2 => 1000,
+                    3 => 2000,
+                    _ => 5000,
+                };
+                await Task.Delay(backoffMs, ct);
             }
 
             HttpResponseMessage res;
@@ -436,6 +442,16 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             }
             catch { }
 
+            // 403: single 5s backoff retry — if it fails again, treat as access boundary
+            if (statusCode == 403 && attempt == 0)
+            {
+                _progress.ReportRetry();
+                limiter?.ReportFailure();
+                res.Dispose();
+                await Task.Delay(TimeSpan.FromSeconds(5), ct);
+                continue;
+            }
+
             if (retryable && attempt < MaxRetries)
             {
                 // Honor Retry-After header on 429
@@ -468,6 +484,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                     songId, instrument, page, statusCode, errorBody);
             }
 
+            limiter?.ReportFailure();
             res.Dispose();
             return (null, 0, failStatus);
         }
@@ -546,6 +563,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             // Track consecutive 403s to detect Epic's access boundary.
             // Once we hit ForbiddenThreshold consecutive 403s, cancel remaining pages.
             int consecutive403s = 0;
+            int boundaryLogged = 0; // 0 = not logged, 1 = logged (for atomic once-only)
             using var pageCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
             // ── Pages 1…N in parallel (no Task.Run — pure async I/O) ──
@@ -576,14 +594,20 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                     else if (status == FetchStatus.Forbidden)
                     {
                         var count = Interlocked.Increment(ref consecutive403s);
-                        if (count >= ForbiddenThreshold)
+                        if (count >= ForbiddenThreshold &&
+                            Interlocked.CompareExchange(ref boundaryLogged, 1, 0) == 0)
                         {
                             var entryCount = allEntries.Sum(e => e.Entries.Count);
                             _log.LogInformation(
                                 "Hit access boundary for {Label} ({Song}/{Instrument}) at page {Page}. " +
-                                "Epic reported {TotalPages} pages but served {Fetched} pages ({Entries:N0} entries).",
+                                "Epic reported {TotalPages:N0} pages but served {Fetched} pages ({Entries:N0} entries).",
                                 label ?? songId, songId, instrument, pageNum,
                                 totalPages, allEntries.Count, entryCount);
+                            try { pageCts.Cancel(); } catch { }
+                        }
+                        else if (!pageCts.IsCancellationRequested && count >= ForbiddenThreshold)
+                        {
+                            // Already logged — just ensure cancellation
                             try { pageCts.Cancel(); } catch { }
                         }
                     }
