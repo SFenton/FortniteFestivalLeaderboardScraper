@@ -708,7 +708,8 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>());
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -826,7 +827,8 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>())
             .Returns(Task.FromResult(mockResults));
 
         var opts = new ScraperOptions
@@ -867,7 +869,8 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>());
     }
 
     [Fact]
@@ -891,7 +894,8 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>());
     }
 
     [Fact]
@@ -909,7 +913,8 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>())
             .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>
             {
                 ["s1"] = new() { new() { SongId = "s1", Instrument = "Solo_Guitar", Entries = new(), TotalPages = 0, PagesScraped = 0, Requests = 1, BytesReceived = 100 } },
@@ -954,7 +959,8 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>());
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>());
     }
 
     [Fact]
@@ -987,7 +993,8 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>())
             .Returns(async callInfo =>
             {
                 // Invoke the callback so the persistence pipeline processes entries
@@ -1055,7 +1062,8 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>())
             .Returns(async callInfo =>
             {
                 var onSongComplete = callInfo.ArgAt<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(4);
@@ -1112,7 +1120,8 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>())
             .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>()));
 
         _nameResolver.ResolveNewAccountsAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
@@ -1140,7 +1149,8 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>())
             .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>()));
 
         _nameResolver.ResolveNewAccountsAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
@@ -1189,7 +1199,8 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>())
             .Returns(async callInfo =>
             {
                 var cb = callInfo.ArgAt<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(4);
@@ -1232,7 +1243,8 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>())
             .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>()));
 
         _nameResolver.ResolveNewAccountsAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
@@ -1271,7 +1283,8 @@ public class ScraperWorkerModeTests : IDisposable
             Arg.Any<IReadOnlyList<GlobalLeaderboardScraper.SongScrapeRequest>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(),
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
-            Arg.Any<CancellationToken>())
+            Arg.Any<CancellationToken>(),
+            Arg.Any<int>())
             .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>()));
 
         _nameResolver.ResolveNewAccountsAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
