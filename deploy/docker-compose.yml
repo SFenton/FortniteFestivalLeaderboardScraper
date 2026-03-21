@@ -32,6 +32,8 @@ services:
       - Scraper__SequentialScrape=${SEQUENTIAL_SCRAPE:-false}
       # ── Pages fetched concurrently per instrument in sequential mode (default: 10 = ~60 concurrent) ──
       - Scraper__PageConcurrency=${PAGE_CONCURRENCY:-10}
+      # ── Songs scraped concurrently in sequential mode (default: 1) ──
+      - Scraper__SongConcurrency=${SONG_CONCURRENCY:-1}
       # ── Path generation (MIDI decryption key for CHOpt max score calculation) ──
       - Scraper__MidiEncryptionKey=${MIDI_ENCRYPTION_KEY:-}
       # Set to true to disable background scraping (API-only mode)

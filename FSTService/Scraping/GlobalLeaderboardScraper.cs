@@ -718,11 +718,12 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         CancellationToken ct = default,
         int maxPages = 0,
         bool sequential = false,
-        int pageConcurrency = 10)
+        int pageConcurrency = 10,
+        int songConcurrency = 1)
     {
         if (sequential)
             return await ScrapeManySongsSequentialAsync(
-                requests, accessToken, accountId, onSongComplete, ct, maxPages, pageConcurrency);
+                requests, accessToken, accountId, onSongComplete, ct, maxPages, pageConcurrency, songConcurrency);
 
         using var limiter = new AdaptiveConcurrencyLimiter(
             maxConcurrency, minDop: 256, maxDop: Math.Max(2048, maxConcurrency),
@@ -771,32 +772,45 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         Func<string, List<GlobalLeaderboardResult>, ValueTask>? onSongComplete,
         CancellationToken ct,
         int maxPages,
-        int pageConcurrency)
+        int pageConcurrency,
+        int songConcurrency)
     {
-        var results = new Dictionary<string, List<GlobalLeaderboardResult>>();
+        var results = new ConcurrentDictionary<string, List<GlobalLeaderboardResult>>();
+        int effectiveSongConcurrency = Math.Max(1, songConcurrency);
 
         _log.LogInformation(
-            "Starting sequential scrape: {SongCount} songs (one at a time, ~{MaxConcurrent} concurrent requests)",
-            requests.Count, 6 * Math.Max(1, pageConcurrency));
+            "Starting sequential scrape: {SongCount} songs ({SongDop} at a time, ~{MaxConcurrent} concurrent requests)",
+            requests.Count, effectiveSongConcurrency,
+            effectiveSongConcurrency * 6 * Math.Max(1, pageConcurrency));
 
-        foreach (var req in requests)
+        using var songSemaphore = new SemaphoreSlim(effectiveSongConcurrency, effectiveSongConcurrency);
+
+        var tasks = requests.Select(async req =>
         {
-            ct.ThrowIfCancellationRequested();
+            await songSemaphore.WaitAsync(ct);
+            try
+            {
+                var instTasks = req.Instruments.Select(inst =>
+                    ScrapeLeaderboardSequentialAsync(
+                        req.SongId, inst, accessToken, accountId, ct, req.Label, maxPages, pageConcurrency)
+                ).ToList();
 
-            var instTasks = req.Instruments.Select(inst =>
-                ScrapeLeaderboardSequentialAsync(
-                    req.SongId, inst, accessToken, accountId, ct, req.Label, maxPages, pageConcurrency)
-            ).ToList();
+                var songResults = (await Task.WhenAll(instTasks)).ToList();
+                results[req.SongId] = songResults;
 
-            var songResults = (await Task.WhenAll(instTasks)).ToList();
-            results[req.SongId] = songResults;
+                if (onSongComplete is not null)
+                    await onSongComplete(req.SongId, songResults);
+                _progress.ReportSongComplete();
+            }
+            finally
+            {
+                songSemaphore.Release();
+            }
+        }).ToList();
 
-            if (onSongComplete is not null)
-                await onSongComplete(req.SongId, songResults);
-            _progress.ReportSongComplete();
-        }
+        await Task.WhenAll(tasks);
 
-        return results;
+        return new Dictionary<string, List<GlobalLeaderboardResult>>(results);
     }
 
     /// <summary>

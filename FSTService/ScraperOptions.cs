@@ -133,4 +133,12 @@ public sealed class ScraperOptions
     /// Ignored when SequentialScrape is false (parallel mode uses DegreeOfParallelism instead).
     /// </summary>
     public int PageConcurrency { get; set; } = 10;
+
+    /// <summary>
+    /// Max songs scraped concurrently when <see cref="SequentialScrape"/> is true.
+    /// Default 1 = one song at a time. Higher values scrape multiple songs in parallel
+    /// while still using bounded page concurrency per instrument.
+    /// Total concurrent requests = SongConcurrency × 6 instruments × PageConcurrency.
+    /// </summary>
+    public int SongConcurrency { get; set; } = 1;
 }

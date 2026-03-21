@@ -415,7 +415,8 @@ public sealed class ScraperWorker : BackgroundService
             ct,
             maxPages: opts.MaxPagesPerLeaderboard,
             sequential: opts.SequentialScrape,
-            pageConcurrency: opts.PageConcurrency);
+            pageConcurrency: opts.PageConcurrency,
+            songConcurrency: opts.SongConcurrency);
 
         // Wait for all per-instrument writers to drain
         await _persistence.DrainWritersAsync();
@@ -644,7 +645,8 @@ public sealed class ScraperWorker : BackgroundService
             scrapeRequests, accessToken, accountId, opts.DegreeOfParallelism, onSongComplete: null, ct,
             maxPages: opts.MaxPagesPerLeaderboard,
             sequential: opts.SequentialScrape,
-            pageConcurrency: opts.PageConcurrency);
+            pageConcurrency: opts.PageConcurrency,
+            songConcurrency: opts.SongConcurrency);
         sw.Stop();
 
         // Grand summary
