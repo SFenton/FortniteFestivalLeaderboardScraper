@@ -299,7 +299,7 @@ public class HistoryReconstructor
         IReadOnlyList<SeasonWindowInfo> seasonWindows,
         string accessToken,
         string callerAccountId,
-        int degreeOfParallelism = 16,
+        int maxConcurrency = 10,
         AdaptiveConcurrencyLimiter? sharedLimiter = null,
         CancellationToken ct = default)
     {
@@ -368,8 +368,8 @@ public class HistoryReconstructor
         AdaptiveConcurrencyLimiter limiter;
         if (ownsLimiter)
         {
-            int initialDop = Math.Max(1, degreeOfParallelism / 2);
-            int maxDop = degreeOfParallelism * 2;
+            int initialDop = Math.Max(1, maxConcurrency / 2);
+            int maxDop = maxConcurrency;
             limiter = new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: maxDop, _log);
             _progress.SetAdaptiveLimiter(limiter);
 

@@ -140,7 +140,7 @@ public static partial class ApiEndpoints
             IOptions<ScraperOptions> scraperOptions,
             CancellationToken ct) =>
         {
-            var dop = scraperOptions.Value.DegreeOfParallelism;
+            var dop = scraperOptions.Value.PageConcurrency;
 
             var accessToken = await tokenManager.GetAccessTokenAsync(ct);
             if (accessToken is null)
@@ -293,7 +293,7 @@ public static partial class ApiEndpoints
             IOptions<ScraperOptions> scraperOptions,
             CancellationToken ct) =>
         {
-            var dop = scraperOptions.Value.DegreeOfParallelism;
+            var dop = scraperOptions.Value.PageConcurrency;
             // Verify the account is registered
             var registeredIds = metaDb.GetRegisteredAccountIds();
             if (!registeredIds.Contains(accountId))

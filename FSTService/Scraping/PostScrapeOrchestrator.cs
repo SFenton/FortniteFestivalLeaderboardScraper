@@ -96,7 +96,7 @@ public sealed class PostScrapeOrchestrator
                 {
                     var firstSeenCount = await _firstSeenCalculator.CalculateAsync(
                         service, firstSeenToken, _tokenManager.AccountId!,
-                        ctx.DegreeOfParallelism, ct);
+                        _options.Value.PageConcurrency, ct);
                     if (firstSeenCount > 0)
                         _log.LogInformation("Calculated FirstSeenSeason for {Count} song(s).", firstSeenCount);
                 }
@@ -115,7 +115,7 @@ public sealed class PostScrapeOrchestrator
         {
             try
             {
-                await _nameResolver.ResolveNewAccountsAsync(maxConcurrency: 8, ct);
+                await _nameResolver.ResolveNewAccountsAsync(maxConcurrency: _options.Value.PageConcurrency, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -183,7 +183,7 @@ public sealed class PostScrapeOrchestrator
                 var refreshed = await _refresher.RefreshAllAsync(
                     ctx.RegisteredIds, seenSet, chartedSongIds,
                     refreshToken, _tokenManager.AccountId!,
-                    ctx.DegreeOfParallelism, ct);
+                    _options.Value.PageConcurrency, ct);
                 if (refreshed > 0)
                     _log.LogInformation("Post-scrape refresh updated {Count} entries for registered users.", refreshed);
             }

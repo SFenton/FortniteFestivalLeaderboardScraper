@@ -43,7 +43,7 @@ public class ScoreBackfiller
         FestivalService festivalService,
         string accessToken,
         string callerAccountId,
-        int degreeOfParallelism = 16,
+        int maxConcurrency = 10,
         CancellationToken ct = default)
     {
         // Gather the set of all charted songs
@@ -98,8 +98,8 @@ public class ScoreBackfiller
 
         try
         {
-            int initialDop = Math.Max(1, degreeOfParallelism / 2);
-            int maxDop = degreeOfParallelism * 2;
+            int initialDop = Math.Max(1, maxConcurrency / 2);
+            int maxDop = maxConcurrency;
             using var limiter = new AdaptiveConcurrencyLimiter(
                 initialDop, minDop: 2, maxDop: maxDop, _log);
 

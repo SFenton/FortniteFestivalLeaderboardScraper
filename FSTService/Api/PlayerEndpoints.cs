@@ -106,7 +106,7 @@ public static partial class ApiEndpoints
                     var log = loggerFactory.CreateLogger("FSTService.Api.TrackBackfill");
                     try
                     {
-                        var dop = scraperOptions.Value.DegreeOfParallelism;
+                        var dop = scraperOptions.Value.PageConcurrency;
                         var accessToken = await tokenManager.GetAccessTokenAsync(CancellationToken.None);
                         if (accessToken is null)
                         {

@@ -47,7 +47,7 @@ public class FirstSeenSeasonCalculator
         FestivalService festivalService,
         string accessToken,
         string callerAccountId,
-        int degreeOfParallelism = 16,
+        int maxConcurrency = 10,
         CancellationToken ct = default)
     {
         // Get all song IDs from the catalog
@@ -127,7 +127,7 @@ public class FirstSeenSeasonCalculator
         _log.LogInformation("FirstSeenSeason: probing {Count} song(s) for earlier seasons...", needsProbe.Count);
 
         // Use SemaphoreSlim for DOP control (lightweight — no adaptive needed for this)
-        using var semaphore = new SemaphoreSlim(degreeOfParallelism, degreeOfParallelism);
+        using var semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
 
         var tasks = needsProbe.Select(async item =>
         {

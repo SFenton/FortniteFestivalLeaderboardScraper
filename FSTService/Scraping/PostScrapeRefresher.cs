@@ -51,7 +51,7 @@ public class PostScrapeRefresher
         IReadOnlyList<string> chartedSongIds,
         string accessToken,
         string callerAccountId,
-        int degreeOfParallelism = 16,
+        int maxConcurrency = 10,
         CancellationToken ct = default)
     {
         if (registeredAccountIds.Count == 0) return 0;
@@ -59,8 +59,8 @@ public class PostScrapeRefresher
         var instruments = GlobalLeaderboardScraper.AllInstruments;
         int totalUpdated = 0;
 
-        int initialDop = Math.Max(1, degreeOfParallelism / 2);
-        int maxDop = degreeOfParallelism * 2;
+        int initialDop = Math.Max(1, maxConcurrency / 2);
+        int maxDop = maxConcurrency;
         using var limiter = new AdaptiveConcurrencyLimiter(
             initialDop, minDop: 2, maxDop: maxDop, _log);
 

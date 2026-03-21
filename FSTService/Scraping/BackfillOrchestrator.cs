@@ -85,7 +85,7 @@ public sealed class BackfillOrchestrator
             {
                 var found = await _backfiller.BackfillAccountAsync(
                     accountId, service, accessToken, callerAccountId,
-                    _options.Value.DegreeOfParallelism, ct);
+                    _options.Value.PageConcurrency, ct);
 
                 if (found > 0)
                 {
@@ -167,9 +167,9 @@ public sealed class BackfillOrchestrator
             return;
         }
 
-        var dop = _options.Value.DegreeOfParallelism;
+        var dop = _options.Value.PageConcurrency;
         int initialDop = Math.Max(1, dop / 2);
-        int maxDop = dop * 2;
+        int maxDop = dop;
         using var sharedLimiter = new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: maxDop, _log);
         _progress.SetAdaptiveLimiter(sharedLimiter);
 
