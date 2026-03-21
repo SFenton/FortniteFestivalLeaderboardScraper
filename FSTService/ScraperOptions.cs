@@ -113,4 +113,11 @@ public sealed class ScraperOptions
     /// Enable or disable automatic path generation when new songs are detected.
     /// </summary>
     public bool EnablePathGeneration { get; set; } = true;
+
+    /// <summary>
+    /// Maximum pages to fetch per leaderboard (100 entries per page).
+    /// Caps the number of tasks spawned per song/instrument, regardless of what Epic reports.
+    /// Default 100 = top 10,000 entries. Set to 0 for unlimited.
+    /// </summary>
+    public int MaxPagesPerLeaderboard { get; set; } = 100;
 }

@@ -411,7 +411,8 @@ public sealed class ScraperWorker : BackgroundService
                 }
                 if (hasData) aggregates.IncrementSongsWithData();
             },
-            ct);
+            ct,
+            maxPages: opts.MaxPagesPerLeaderboard);
 
         // Wait for all per-instrument writers to drain
         await _persistence.DrainWritersAsync();
@@ -628,7 +629,8 @@ public sealed class ScraperWorker : BackgroundService
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var allResults = await _globalScraper.ScrapeManySongsAsync(
-            scrapeRequests, accessToken, accountId, opts.DegreeOfParallelism, onSongComplete: null, ct);
+            scrapeRequests, accessToken, accountId, opts.DegreeOfParallelism, onSongComplete: null, ct,
+            maxPages: opts.MaxPagesPerLeaderboard);
         sw.Stop();
 
         // Grand summary

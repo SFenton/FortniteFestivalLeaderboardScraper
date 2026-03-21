@@ -26,6 +26,8 @@ services:
       # ── Epic Games OAuth client (override built-in Switch client if needed) ──
       - EPIC_CLIENT_ID=${EPIC_CLIENT_ID:-}
       - EPIC_CLIENT_SECRET=${EPIC_CLIENT_SECRET:-}
+      # ── Leaderboard page cap (100 entries/page, default 100 pages = top 10K) ──
+      - Scraper__MaxPagesPerLeaderboard=${MAX_PAGES_PER_LEADERBOARD:-100}
       # ── Path generation (MIDI decryption key for CHOpt max score calculation) ──
       - Scraper__MidiEncryptionKey=${MIDI_ENCRYPTION_KEY:-}
       # Set to true to disable background scraping (API-only mode)

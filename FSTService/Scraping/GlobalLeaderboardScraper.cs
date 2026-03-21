@@ -506,7 +506,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         string accountId,
         AdaptiveConcurrencyLimiter? limiter = null,
         CancellationToken ct = default,
-        string? label = null)
+        string? label = null,
+        int maxPages = 0)
     {
         // ── Page 0: discover totalPages ──
         if (limiter is not null) await limiter.WaitAsync(ct);
@@ -544,6 +545,11 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
         int totalPages = page0.firstPage.TotalPages;
         int entriesPerPage = page0.firstPage.Entries.Count;
+
+        // Clamp to configured max to avoid spawning millions of tasks
+        int reportedPages = totalPages;
+        if (maxPages > 0 && totalPages > maxPages)
+            totalPages = maxPages;
 
         if (totalPages > 1)
         {
@@ -658,7 +664,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int maxConcurrency = DefaultMaxConcurrency,
         AdaptiveConcurrencyLimiter? sharedLimiter = null,
         CancellationToken ct = default,
-        string? label = null)
+        string? label = null,
+        int maxPages = 0)
     {
         var instList = (instruments ?? AllInstruments).ToList();
         var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(
@@ -668,7 +675,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         // Launch all instruments in parallel
         var tasks = instList.Select(inst =>
         {
-            return ScrapeLeaderboardAsync(songId, inst, accessToken, accountId, limiter, ct, label);
+            return ScrapeLeaderboardAsync(songId, inst, accessToken, accountId, limiter, ct, label, maxPages);
         }).ToList();
 
         var resultsArr = await Task.WhenAll(tasks);
@@ -702,7 +709,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         string accountId,
         int maxConcurrency = DefaultMaxConcurrency,
         Func<string, List<GlobalLeaderboardResult>, ValueTask>? onSongComplete = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        int maxPages = 0)
     {
         using var limiter = new AdaptiveConcurrencyLimiter(
             maxConcurrency, minDop: 256, maxDop: Math.Max(2048, maxConcurrency),
@@ -720,7 +728,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 instruments: req.Instruments,
                 sharedLimiter: limiter,
                 ct: ct,
-                label: req.Label);
+                label: req.Label,
+                maxPages: maxPages);
 
             results[req.SongId] = songResults;
 
