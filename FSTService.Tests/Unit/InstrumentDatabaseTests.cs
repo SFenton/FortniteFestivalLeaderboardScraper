@@ -836,4 +836,71 @@ public sealed class InstrumentDatabaseTests : IDisposable
         var rankings = Db.GetPlayerStoredRankings("nobody");
         Assert.Empty(rankings);
     }
+
+    // ═══ PruneExcessEntries ═════════════════════════════════════
+
+    [Fact]
+    public void PruneExcessEntries_removes_low_scoring_entries()
+    {
+        // Seed 20 entries
+        var entries = Enumerable.Range(0, 20).Select(i =>
+            MakeEntry($"player_{i}", 1000 - i * 10)).ToList();
+        Db.UpsertEntries("song1", entries);
+
+        // Prune to top 5
+        var deleted = Db.PruneExcessEntries("song1", 5, new HashSet<string>());
+        Assert.Equal(15, deleted);
+
+        var remaining = Db.GetPlayerScores("player_0", "song1");
+        Assert.Single(remaining); // top player kept
+
+        var pruned = Db.GetPlayerScores("player_19", "song1");
+        Assert.Empty(pruned); // lowest player removed
+    }
+
+    [Fact]
+    public void PruneExcessEntries_preserves_registered_users()
+    {
+        var entries = Enumerable.Range(0, 20).Select(i =>
+            MakeEntry($"player_{i}", 1000 - i * 10)).ToList();
+        Db.UpsertEntries("song1", entries);
+
+        // Prune to top 5, but preserve player_15 (rank 16, outside top 5)
+        var preserve = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "player_15" };
+        var deleted = Db.PruneExcessEntries("song1", 5, preserve);
+        Assert.Equal(14, deleted); // 20 - 5 (top) - 1 (preserved) = 14
+
+        // player_15 should still exist
+        var keptScores = Db.GetPlayerScores("player_15", "song1");
+        Assert.Single(keptScores);
+    }
+
+    [Fact]
+    public void PruneExcessEntries_no_op_when_under_limit()
+    {
+        var entries = Enumerable.Range(0, 5).Select(i =>
+            MakeEntry($"player_{i}", 1000 - i * 10)).ToList();
+        Db.UpsertEntries("song1", entries);
+
+        var deleted = Db.PruneExcessEntries("song1", 10, new HashSet<string>());
+        Assert.Equal(0, deleted);
+    }
+
+    [Fact]
+    public void PruneAllSongs_prunes_across_songs()
+    {
+        for (int s = 0; s < 3; s++)
+        {
+            var entries = Enumerable.Range(0, 10).Select(i =>
+                MakeEntry($"player_{i}", 1000 - i * 10)).ToList();
+            Db.UpsertEntries($"song_{s}", entries);
+        }
+
+        var deleted = Db.PruneAllSongs(3, new HashSet<string>());
+        Assert.Equal(21, deleted); // 3 songs × 7 pruned each = 21
+
+        // Each song should have 3 entries
+        foreach (var s in Enumerable.Range(0, 3))
+            Assert.Equal(3, Db.GetLeaderboardCount($"song_{s}"));
+    }
 }

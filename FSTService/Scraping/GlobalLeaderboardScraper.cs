@@ -524,12 +524,12 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         // Report page-0 to progress tracker (even if empty)
         if (page0.firstPage is not null)
         {
-            _progress.ReportPage0(page0.firstPage.TotalPages > 0 ? page0.firstPage.TotalPages : 1);
             _progress.ReportPageFetched(page0.firstLen);
         }
 
         if (page0.firstPage is null || page0.firstPage.TotalPages == 0)
         {
+            _progress.ReportPage0(1);
             _progress.ReportLeaderboardComplete(instrument);
             return new GlobalLeaderboardResult
             {
@@ -551,6 +551,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int reportedPages = totalPages;
         if (maxPages > 0 && totalPages > maxPages)
             totalPages = maxPages;
+
+        // Report capped page count for progress tracking (after clamp)
+        _progress.ReportPage0(totalPages);
 
         if (totalPages > 1)
         {
@@ -607,9 +610,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                             var entryCount = allEntries.Sum(e => e.Entries.Count);
                             _log.LogInformation(
                                 "Hit access boundary for {Label} ({Song}/{Instrument}) at page {Page}. " +
-                                "Epic reported {TotalPages:N0} pages but served {Fetched} pages ({Entries:N0} entries).",
+                                "Epic reported {ReportedPages:N0} pages but served {Fetched} pages ({Entries:N0} entries).",
                                 label ?? songId, songId, instrument, pageNum,
-                                totalPages, allEntries.Count, entryCount);
+                                reportedPages, allEntries.Count, entryCount);
                             try { pageCts.Cancel(); } catch { }
                         }
                         else if (!pageCts.IsCancellationRequested && count >= ForbiddenThreshold)
