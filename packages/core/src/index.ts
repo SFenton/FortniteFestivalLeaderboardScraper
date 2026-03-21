@@ -24,7 +24,7 @@ export const APP_VERSION = '0.0.3';
 export const CORE_VERSION = '0.0.4';
 
 /** Current @festival/theme package version. Keep in sync with packages/theme/package.json. */
-export const THEME_VERSION = '0.0.1';
+export const THEME_VERSION = '0.0.2';
 export * from './app/scoreRows';
 export * from './app/songInfo';
 export * from './app/songFiltering';
