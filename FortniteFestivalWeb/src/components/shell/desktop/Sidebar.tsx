@@ -90,13 +90,13 @@ export default function Sidebar({ player, open, onClose, onDeselect, onSelectPla
                 {player.displayName}
               </Link>
               <button className={s.deselectBtn} onClick={onDeselect}>
-                Deselect
+                {t('common.deselect')}
               </button>
             </div>
           ) : (
             <button className={s.selectPlayerBtn} onClick={onSelectPlayer}>
               <span className={s.profileCircleEmpty}><IoPerson size={14} /></span>
-              Select Player
+              {t('common.selectPlayerProfile')}
             </button>
           )}
           <NavLink to="/settings" onClick={onClose} className={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>

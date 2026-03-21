@@ -2,7 +2,7 @@
 
 .card {
   composes: frostedCard from '../../../styles/shared.module.css';
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   margin-bottom: var(--gap-section);
   overflow: hidden;
 }
@@ -86,10 +86,10 @@
 }
 
 .instrumentChip {
-  width: 34px;
-  height: 34px;
-  border-radius: 17px;
-  border: 2px solid;
+  width: var(--size-instrument-chip);
+  height: var(--size-instrument-chip);
+  border-radius: 50%;
+  border: var(--gap-xs) solid;
   display: flex;
   align-items: center;
   justify-content: center;

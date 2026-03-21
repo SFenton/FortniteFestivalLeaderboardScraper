@@ -58,15 +58,9 @@
 }
 
 .instIconWrap {
-  width: 56px;
-  height: 56px;
+  width: var(--size-xl);
+  height: var(--size-xl);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform var(--duration-normal) var(--ease-standard);
-}
-
-.instLabel {
-  font-size: var(--font-xl);
-  font-weight: var(--weight-semibold);
 }

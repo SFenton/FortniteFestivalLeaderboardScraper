@@ -101,6 +101,7 @@
   --size-icon-instrument-sm: 36px;
   --size-icon-md: 28px;
   --size-icon-sm: 24px;
+  --size-instrument-chip: 34px;
   --album-size: 100px;
 
   /* ── Font Weights ── */
@@ -111,6 +112,8 @@
   /* ── Layout ── */
   --layout-padding-h: 20px;
   --layout-padding-top: 16px;
+  --sidebar-width: 240px;
+  --layout-padding-h-pinned: 10px;
   --max-width-card: 1080px;
   --max-width-grid: 2170px;
   --max-width-narrow: 600px;

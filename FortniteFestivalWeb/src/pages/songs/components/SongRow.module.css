@@ -53,10 +53,10 @@
 }
 
 .instrumentStatusChip {
-  width: 34px;
-  height: 34px;
-  border-radius: 17px;
-  border-width: 2px;
+  width: var(--size-instrument-chip);
+  height: var(--size-instrument-chip);
+  border-radius: 50%;
+  border-width: var(--gap-xs);
   border-style: solid;
   display: flex;
   align-items: center;

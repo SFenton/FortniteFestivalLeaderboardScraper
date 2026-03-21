@@ -7,7 +7,7 @@ import { SettingsProvider } from './contexts/SettingsContext';
 import { AnimatedBackground } from './components/shell/AnimatedBackground';
 import { useTrackedPlayer, type TrackedPlayer } from './hooks/data/useTrackedPlayer';
 import { PlayerDataProvider } from './contexts/PlayerDataContext';
-import { useIsMobile, useIsMobileChrome } from './hooks/ui/useIsMobile';
+import { useIsMobile, useIsMobileChrome, useIsWideDesktop } from './hooks/ui/useIsMobile';
 import SongsPage from './pages/songs/SongsPage';
 /* v8 ignore start -- lazy() wrappers are resolved by the bundler, not callable in unit tests */
 const SongDetailPage = lazy(() => import('./pages/songinfo/SongDetailPage'));
@@ -28,6 +28,7 @@ import { useSettings } from './contexts/SettingsContext';
 import BottomNav from './components/shell/mobile/BottomNav';
 import Sidebar from './components/shell/desktop/Sidebar';
 import DesktopNav from './components/shell/desktop/DesktopNav';
+import PinnedSidebar from './components/shell/desktop/PinnedSidebar';
 import FloatingActionButton from './components/shell/fab/FloatingActionButton';
 import MobilePlayerSearchModal from './components/shell/mobile/MobilePlayerSearchModal';
 import { clearSongDetailCache, clearLeaderboardCache, clearPlayerPageCache } from './api/pageCache';
@@ -81,6 +82,7 @@ function AppShell() {
   const location = useLocation();
   const isMobile = useIsMobileChrome();
   const isNarrow = useIsMobile();
+  const isWideDesktop = useIsWideDesktop();
   const fabSearch = useFabSearch();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [playerModalOpen, setPlayerModalOpen] = useState(false);
@@ -199,10 +201,25 @@ function AppShell() {
   })();
   /* v8 ignore stop */
 
+  const wideDesktop = !isMobile && isWideDesktop;
+
   return (
     <PlayerDataProvider accountId={player?.accountId}>
     <div className={appCss.shell}>
       <ScrollToTop />
+
+      {/* v8 ignore start — sidebar callbacks tested via Sidebar.test / PinnedSidebar.test */}
+      {!wideDesktop && (
+        <Sidebar
+          player={player}
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          onDeselect={handleDeselect}
+          onSelectPlayer={() => { setSidebarOpen(false); setPlayerModalOpen(true); }}
+        />
+      )}
+      {/* v8 ignore stop */}
+
       {showAnimatedBg && <AnimatedBackground songs={songs} />}
 
       {/* v8 ignore start — mobile header conditional rendering */}
@@ -222,21 +239,20 @@ function AppShell() {
             hasPlayer={!!player}
             onOpenSidebar={() => setSidebarOpen((o) => !o)}
             onProfileClick={() => player ? navigate(AppRoutes.statistics) : setPlayerModalOpen(true)}
+            isWideDesktop={isWideDesktop}
           />
         )}
       {/* v8 ignore stop */}
 
-      {/* v8 ignore start — sidebar callbacks tested via Sidebar.test */}
-      <Sidebar
-        player={player}
-        open={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-        onDeselect={handleDeselect}
-        onSelectPlayer={() => { setSidebarOpen(false); setPlayerModalOpen(true); }}
-      />
-      {/* v8 ignore stop */}
-
-      <div id="main-content" className={appCss.content}>
+      <div className={wideDesktop ? appCss.contentRow : appCss.contentColumn}>
+      {wideDesktop && (
+        <PinnedSidebar
+          player={player}
+          onDeselect={handleDeselect}
+          onSelectPlayer={() => setPlayerModalOpen(true)}
+        />
+      )}
+      <div id="main-content" className={`${appCss.content}${wideDesktop ? ` ${appCss.contentPinned}` : ''}`}>
         <Suspense fallback={<SuspenseFallback />}>
         <Routes>
           <Route path="/" element={<Navigate to={AppRoutes.songs} replace />} />
@@ -259,6 +275,7 @@ function AppShell() {
         </Routes>
         </Suspense>
       </div>
+      {wideDesktop && <div className={appCss.rightSpacer} />}
 
       {/* v8 ignore start — mobile FAB configuration tested via MobileFabController + FloatingActionButton tests */}
       {isMobile && <BottomNav player={player} activeTab={activeTab} onTabClick={handleTabClick} />}
@@ -369,6 +386,7 @@ function AppShell() {
       />
       {changelogOpen && <ChangelogModal onDismiss={dismissChangelog} />}
       {/* v8 ignore stop */}
+      </div>
     </div>
     </PlayerDataProvider>
   );

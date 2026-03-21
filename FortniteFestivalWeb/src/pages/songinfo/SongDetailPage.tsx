@@ -10,7 +10,7 @@ import {
   type PlayerScore,
   type ServerScoreHistoryEntry as ScoreHistoryEntry,
 } from '@festival/core/api/serverTypes';
-import { Gap, Layout } from '@festival/theme';
+import { Gap } from '@festival/theme';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import BackgroundImage from '../../components/page/BackgroundImage';
 import s from './SongDetailPage.module.css';
@@ -340,8 +340,8 @@ export default function SongDetailPage() {
       {phase === 'contentIn' && (
         <div className={s.stickyHeader} style={{
           padding: hasFab || headerCollapsed
-            ? `${Gap.md}px ${Layout.paddingHorizontal}px ${Gap.section}px`
-            : `${Layout.paddingTop}px ${Layout.paddingHorizontal}px ${Gap.section}px`,
+            ? 'var(--gap-md) var(--layout-padding-h) var(--gap-section)'
+            : 'var(--layout-padding-top) var(--layout-padding-h) var(--gap-section)',
         }}>
           <div style={stagger(150)} onAnimationEnd={clearAnim}>
             <SongDetailHeader song={song} songId={songId} collapsed={!!(hasFab || headerCollapsed)} noTransition={hasFab} onOpenPaths={() => setPathsOpen(true)} />

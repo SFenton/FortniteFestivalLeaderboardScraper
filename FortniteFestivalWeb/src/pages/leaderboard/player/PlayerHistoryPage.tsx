@@ -16,8 +16,9 @@ import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
 import { LeaderboardEntry } from '../global/components/LeaderboardEntry';
 import PlayerScoreSortModal from './modals/PlayerScoreSortModal';
 import type { PlayerScoreSortMode, PlayerScoreSortDraft } from './modals/PlayerScoreSortModal';
-import { Gap, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON } from '@festival/theme';
+import { Gap, Size, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON } from '@festival/theme';
 import ArcSpinner from '../../../components/common/ArcSpinner';
+import { ActionPill } from '../../../components/common/ActionPill';
 import s from './PlayerHistoryPage.module.css';
 import { staggerDelay, estimateVisibleCount } from '@festival/ui-utils';
 import { useScrollMask } from '../../../hooks/ui/useScrollMask';
@@ -159,10 +160,12 @@ export default function PlayerHistoryPage() {
 
   /* v8 ignore start — responsive row height + virtualizer config */
   const ROW_HEIGHT = isMobile ? 44 : 52;
+  const ROW_GAP = Gap.sm;
+  const staggerDoneRef = useRef(false);
   const virtualizer = useVirtualizer({
     count: loadPhase === 'contentIn' ? sortedHistory.length : 0,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => ROW_HEIGHT + ROW_GAP,
     overscan: 10,
   });
   /* v8 ignore stop */
@@ -177,9 +180,11 @@ export default function PlayerHistoryPage() {
           animate={!hasFab}
           /* v8 ignore start — platform-conditional sort button */
           actions={!hasFab && !IS_IOS && !IS_ANDROID && !IS_PWA ? (
-            <button className={s.sortBtn} onClick={openSort} title={t('common.sort')} aria-label={t('common.sortPlayerScores')}>
-              <IoSwapVerticalSharp size={18} />
-            </button>
+            <ActionPill
+              icon={<IoSwapVerticalSharp size={Size.iconAction} />}
+              label={t('common.sort')}
+              onClick={openSort}
+            />
           ) : undefined}
           /* v8 ignore stop */
         />
@@ -197,43 +202,41 @@ export default function PlayerHistoryPage() {
           <>
             {loadPhase !== 'contentIn' && (
               <div
-                className={s.spinnerContainer}
-                style={loadPhase === 'spinnerOut'
-                    ? { animation: 'fadeOut 500ms ease-out forwards' }
-                    : undefined}
+                className={`${s.spinnerContainer}${loadPhase === 'spinnerOut' ? ` ${s.spinnerOut}` : ''}`}
               >
                 <ArcSpinner />
               </div>
             )}
             {/* v8 ignore start — virtual list rendering */}
             {loadPhase === 'contentIn' && (
-            <div key={staggerKey} className={s.list} style={{ height: virtualizer.getTotalSize(), position: 'relative', ...(hasFab ? { paddingBottom: 96 } : {}) }}>
+            <div key={staggerKey} className={`${s.list}${hasFab ? ` ${s.listFab}` : ''}`} style={{ height: virtualizer.getTotalSize() }}>
               {virtualizer.getVirtualItems().map((virtualRow) => {
                 const i = virtualRow.index;
                 const h = sortedHistory[i]!;
-                const delay = staggerDelay(i, 125, estimateVisibleCount(ROW_HEIGHT));
+                const delay = staggerDoneRef.current ? null : staggerDelay(i, 125, estimateVisibleCount(ROW_HEIGHT));
                 const staggerStyle: React.CSSProperties | undefined = delay != null
                   ? { opacity: 0, animation: `fadeInUp 400ms ease-out ${delay}ms forwards` }
                   : undefined;
                 const dateStr = new Date(h.scoreAchievedAt ?? h.changedAt)
                   .toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                 const isHighScore = i === highScoreIndex;
-                const rowClass = isHighScore ? s.rowHighlight : s.row;
-                const mobileStyle: React.CSSProperties | undefined = isMobile ? { gap: Gap.md, padding: `0 ${Gap.md}px` } : undefined;
+                const rowClass = `${isHighScore ? s.rowHighlight : s.row}${isMobile ? ` ${s.rowMobile}` : ''}`;
                 return (
                 <div
                   key={`${h.changedAt}-${h.newScore}`}
                   ref={virtualizer.measureElement}
                   data-index={virtualRow.index}
-                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }}
+                  className={s.virtualRow}
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
                 >
                 <div
                   className={rowClass}
-                  style={{ ...mobileStyle, ...staggerStyle }}
+                  style={staggerStyle}
                   onAnimationEnd={(ev) => {
                     /* v8 ignore start — animation cleanup */
                     ev.currentTarget.style.opacity = '';
                     ev.currentTarget.style.animation = '';
+                    staggerDoneRef.current = true;
                     /* v8 ignore stop */
                   }}
                 >

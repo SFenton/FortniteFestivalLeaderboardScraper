@@ -14,7 +14,7 @@ import { defaultSuggestionsFilterDraft, isSuggestionsFilterActive } from './moda
 import { shouldShowCategory, filterCategoryForInstruments } from '@festival/core/instrumentFilters';
 import type { SuggestionCategory } from '@festival/core/suggestions/types';
 import { useSettings } from '../../contexts/SettingsContext';
-import { Size, FADE_DURATION, SPINNER_FADE_MS, SCROLL_PREFETCH_PX } from '@festival/theme';
+import { Size, Gap, FADE_DURATION, SPINNER_FADE_MS, SCROLL_PREFETCH_PX } from '@festival/theme';
 import { LoadPhase } from '@festival/core';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import s from './SuggestionsPage.module.css';
@@ -304,7 +304,7 @@ export default function SuggestionsPage({ accountId }: Props) {
       </div>
       )}
       <div id="suggestions-scroll" ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
-      <div className={`${s.container}${isMobile ? ` ${s.containerMobile}` : ''}`}>
+      <div className={s.container} style={{ paddingTop: isMobile ? Gap.sm : Gap.md }}>
         {visibleCategories.length === 0 && (categories.length > 0 || !effectiveHasMore) ? (
           <div className={s.emptyState}>
             <div className={s.emptyTitle}>{t('suggestions.noSuggestions')}</div>

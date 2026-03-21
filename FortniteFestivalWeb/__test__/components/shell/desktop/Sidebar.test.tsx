@@ -65,12 +65,12 @@ describe('Sidebar', () => {
 
   it('shows Select Player button when no player', () => {
     renderSidebar({ player: null });
-    expect(screen.getByText('Select Player')).toBeTruthy();
+    expect(screen.getByText('Select Player Profile')).toBeTruthy();
   });
 
   it('calls onSelectPlayer when Select Player is clicked', () => {
     const { props } = renderSidebar({ player: null });
-    fireEvent.click(screen.getByText('Select Player'));
+    fireEvent.click(screen.getByText('Select Player Profile'));
     expect(props.onSelectPlayer).toHaveBeenCalled();
   });
 

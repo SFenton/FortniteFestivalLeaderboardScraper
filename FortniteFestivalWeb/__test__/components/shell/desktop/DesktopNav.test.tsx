@@ -48,3 +48,33 @@ describe('DesktopNav', () => {
     expect(onProfile).toHaveBeenCalled();
   });
 });
+
+describe('DesktopNav — isWideDesktop', () => {
+  it('hides hamburger button when isWideDesktop is true', () => {
+    renderWithRouter(<DesktopNav hasPlayer={false} onOpenSidebar={vi.fn()} onProfileClick={vi.fn()} isWideDesktop />);
+    expect(screen.queryByLabelText('Open navigation')).toBeNull();
+  });
+
+  it('hides profile button when isWideDesktop is true', () => {
+    renderWithRouter(<DesktopNav hasPlayer={true} onOpenSidebar={vi.fn()} onProfileClick={vi.fn()} isWideDesktop />);
+    expect(screen.queryByLabelText('Profile')).toBeNull();
+  });
+
+  it('still renders a nav element when isWideDesktop is true', () => {
+    renderWithRouter(<DesktopNav hasPlayer={false} onOpenSidebar={vi.fn()} onProfileClick={vi.fn()} isWideDesktop />);
+    expect(screen.getByRole('navigation')).toBeDefined();
+  });
+
+  it('renders only spacer buttons when isWideDesktop — no hamburger or profile', () => {
+    renderWithRouter(<DesktopNav hasPlayer={false} onOpenSidebar={vi.fn()} onProfileClick={vi.fn()} isWideDesktop />);
+    // Should have no hamburger or profile buttons — only the search bar elements
+    expect(screen.queryByLabelText('Open navigation')).toBeNull();
+  });
+
+  it('renders sidebar spacer and inner container for content alignment', () => {
+    const { container } = renderWithRouter(<DesktopNav hasPlayer={false} onOpenSidebar={vi.fn()} onProfileClick={vi.fn()} isWideDesktop />);
+    const nav = container.querySelector('nav')!;
+    // First and last children are the 240px spacers
+    expect(nav.children).toHaveLength(3);
+  });
+});

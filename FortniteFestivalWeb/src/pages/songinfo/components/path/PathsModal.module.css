@@ -78,6 +78,7 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--gap-md);
+  overflow: hidden;
 }
 
 .mobileSelector {
@@ -113,6 +114,7 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--gap-sm);
+  overflow: hidden;
 }
 
 .diffBtnSmall {
@@ -132,6 +134,7 @@
   grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
   gap: var(--gap-md);
   margin-top: var(--gap-section);
+  overflow: hidden;
 }
 
 .diffBtn {

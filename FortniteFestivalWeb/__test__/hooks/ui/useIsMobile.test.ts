@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useIsMobile } from '../../../src/hooks/ui/useIsMobile';
+import { useIsMobile, useIsWideDesktop } from '../../../src/hooks/ui/useIsMobile';
 
 type ChangeListener = (e: { matches: boolean }) => void;
 
@@ -92,5 +92,45 @@ describe('useIsMobile', () => {
 
     unmount();
     expect(getListenerCount()).toBe(0);
+  });
+});
+
+describe('useIsWideDesktop', () => {
+  let originalMatchMedia: typeof window.matchMedia;
+
+  beforeEach(() => {
+    originalMatchMedia = window.matchMedia;
+  });
+
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia;
+  });
+
+  it('returns true when viewport is at or above 1440px', () => {
+    const { mockFn } = createMockMatchMedia(true);
+    window.matchMedia = mockFn as unknown as typeof window.matchMedia;
+
+    const { result } = renderHook(() => useIsWideDesktop());
+    expect(result.current).toBe(true);
+    expect(mockFn).toHaveBeenCalledWith('(min-width: 1440px)');
+  });
+
+  it('returns false when viewport is below 1440px', () => {
+    const { mockFn } = createMockMatchMedia(false);
+    window.matchMedia = mockFn as unknown as typeof window.matchMedia;
+
+    const { result } = renderHook(() => useIsWideDesktop());
+    expect(result.current).toBe(false);
+  });
+
+  it('updates when the media query changes', () => {
+    const { mockFn, setMatches } = createMockMatchMedia(false);
+    window.matchMedia = mockFn as unknown as typeof window.matchMedia;
+
+    const { result } = renderHook(() => useIsWideDesktop());
+    expect(result.current).toBe(false);
+
+    act(() => setMatches(true));
+    expect(result.current).toBe(true);
   });
 });

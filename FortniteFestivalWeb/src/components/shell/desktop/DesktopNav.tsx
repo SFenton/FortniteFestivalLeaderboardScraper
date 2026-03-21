@@ -10,9 +10,10 @@ export interface DesktopNavProps {
   hasPlayer: boolean;
   onOpenSidebar: () => void;
   onProfileClick: () => void;
+  isWideDesktop?: boolean;
 }
 
-export default function DesktopNav({ hasPlayer, onOpenSidebar, onProfileClick }: DesktopNavProps) {
+export default function DesktopNav({ hasPlayer, onOpenSidebar, onProfileClick, isWideDesktop }: DesktopNavProps) {
   const navigate = useNavigate();
   /* v8 ignore start — navigation callback */
   const handleSelect = useCallback((r: { accountId: string }) => {
@@ -20,17 +21,34 @@ export default function DesktopNav({ hasPlayer, onOpenSidebar, onProfileClick }:
   }, [navigate]);
   /* v8 ignore stop */
 
+  const searchBar = (
+    <PlayerSearchBar
+      onSelect={handleSelect}
+      className={headerCss.container}
+      searchClassName={headerCss.inputWrap}
+      inputClassName={headerCss.input}
+    />
+  );
+
   return (
-    <nav className={`sa-top ${appCss.nav}`}>
-      <HamburgerButton onClick={onOpenSidebar} />
-      <div className={appCss.spacer} />
-      <PlayerSearchBar
-        onSelect={handleSelect}
-        className={headerCss.container}
-        searchClassName={headerCss.inputWrap}
-        inputClassName={headerCss.input}
-      />
-      <HeaderProfileButton hasPlayer={hasPlayer} onClick={onProfileClick} />
+    <nav className={`sa-top ${appCss.nav}${isWideDesktop ? ` ${appCss.navWide}` : ''}`}>
+      {isWideDesktop ? (
+        <>
+          <div className={appCss.sidebarSpacer} />
+          <div className={appCss.navWideInner}>
+            <div className={appCss.spacer} />
+            {searchBar}
+          </div>
+          <div className={appCss.rightSpacer} />
+        </>
+      ) : (
+        <>
+          <HamburgerButton onClick={onOpenSidebar} />
+          <div className={appCss.spacer} />
+          {searchBar}
+          <HeaderProfileButton hasPlayer={hasPlayer} onClick={onProfileClick} />
+        </>
+      )}
     </nav>
   );
 }
