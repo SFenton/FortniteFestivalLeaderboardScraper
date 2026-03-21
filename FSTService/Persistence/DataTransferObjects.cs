@@ -235,3 +235,14 @@ public sealed class RivalComboSummary
     public int AboveCount { get; init; }
     public int BelowCount { get; init; }
 }
+
+/// <summary>
+/// A song that one player has scored on but the other hasn't — used for rival song gap analysis.
+/// </summary>
+public sealed class SongGapEntry
+{
+    public string SongId { get; init; } = "";
+    public string Instrument { get; init; } = "";
+    public int Score { get; init; }
+    public int Rank { get; init; }
+}

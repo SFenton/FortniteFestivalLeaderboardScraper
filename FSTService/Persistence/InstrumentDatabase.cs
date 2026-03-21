@@ -405,6 +405,72 @@ public sealed class InstrumentDatabase : IDisposable
     }
 
     /// <summary>
+    /// Get the set of song IDs that a player has scores on for this instrument.
+    /// Lightweight alternative to <see cref="GetPlayerScores"/> when only song IDs are needed.
+    /// </summary>
+    public HashSet<string> GetSongIdsForAccount(string accountId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT SongId FROM LeaderboardEntries WHERE AccountId = @accountId;";
+        cmd.Parameters.AddWithValue("@accountId", accountId);
+
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            result.Add(reader.GetString(0));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Get a player's scores for a specific subset of songs on this instrument.
+    /// </summary>
+    public List<PlayerScoreDto> GetPlayerScoresForSongs(string accountId, IReadOnlyCollection<string> songIds)
+    {
+        if (songIds.Count == 0)
+            return new List<PlayerScoreDto>();
+
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+
+        // Build parameterized IN clause
+        var placeholders = new string[songIds.Count];
+        int idx = 0;
+        foreach (var sid in songIds)
+        {
+            var pName = $"@s{idx}";
+            placeholders[idx] = pName;
+            cmd.Parameters.AddWithValue(pName, sid);
+            idx++;
+        }
+
+        cmd.CommandText = $"SELECT SongId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime, Rank FROM LeaderboardEntries WHERE AccountId = @accountId AND SongId IN ({string.Join(",", placeholders)}) ORDER BY SongId;";
+        cmd.Parameters.AddWithValue("@accountId", accountId);
+
+        var scores = new List<PlayerScoreDto>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            scores.Add(new PlayerScoreDto
+            {
+                SongId       = reader.GetString(0),
+                Instrument   = _instrument,
+                Score        = reader.GetInt32(1),
+                Accuracy     = reader.IsDBNull(2) ? 0 : reader.GetInt32(2),
+                IsFullCombo  = !reader.IsDBNull(3) && reader.GetInt32(3) == 1,
+                Stars        = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
+                Season       = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
+                Percentile   = reader.IsDBNull(6) ? 0 : reader.GetDouble(6),
+                EndTime      = reader.IsDBNull(7) ? null : reader.GetString(7),
+                Rank         = reader.IsDBNull(8) ? 0 : reader.GetInt32(8),
+            });
+        }
+        return scores;
+    }
+
+    /// <summary>
     /// Get all entries for a player across all songs on this instrument.
     /// </summary>
     public List<PlayerScoreDto> GetPlayerScores(string accountId, string? songId = null)

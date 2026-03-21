@@ -1739,6 +1739,59 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task Rivals_GetComboDetail_WithSeededData_IncludesSongGaps()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
+
+        // Seed instrument DB with asymmetric songs
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        db.UpsertEntries("shared_song", new[]
+        {
+            new LeaderboardEntry { AccountId = "gap_user", Score = 10000, Accuracy = 95 },
+            new LeaderboardEntry { AccountId = "gap_rival", Score = 9000, Accuracy = 90 },
+        });
+        db.UpsertEntries("user_only_song", new[]
+        {
+            new LeaderboardEntry { AccountId = "gap_user", Score = 8000, Accuracy = 95 },
+        });
+        db.UpsertEntries("rival_only_song", new[]
+        {
+            new LeaderboardEntry { AccountId = "gap_rival", Score = 7000, Accuracy = 90 },
+        });
+
+        // Seed rivalry data (samples for shared songs)
+        var rivals = new List<UserRivalRow>
+        {
+            new() { UserId = "gap_user", RivalAccountId = "gap_rival", InstrumentCombo = "Solo_Guitar",
+                     Direction = "above", RivalScore = 10.0, AvgSignedDelta = -1.0,
+                     SharedSongCount = 1, AheadCount = 1, BehindCount = 0, ComputedAt = "2026-01-01T00:00:00Z" },
+        };
+        var samples = new List<RivalSongSampleRow>
+        {
+            new() { UserId = "gap_user", RivalAccountId = "gap_rival", Instrument = "Solo_Guitar",
+                     SongId = "shared_song", UserRank = 1, RivalRank = 2, RankDelta = 1, UserScore = 10000, RivalScore = 9000 },
+        };
+        metaDb.ReplaceRivalsData("gap_user", rivals, samples);
+
+        var response = await _client.GetAsync("/api/player/gap_user/rivals/Solo_Guitar/gap_rival");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        // Shared songs present
+        Assert.Equal(1, json.GetProperty("totalSongs").GetInt32());
+
+        // Song gaps present
+        var songsToCompete = json.GetProperty("songsToCompete");
+        Assert.Equal(1, songsToCompete.GetArrayLength());
+        Assert.Equal("rival_only_song", songsToCompete[0].GetProperty("songId").GetString());
+
+        var yourExclusives = json.GetProperty("yourExclusiveSongs");
+        Assert.Equal(1, yourExclusives.GetArrayLength());
+        Assert.Equal("user_only_song", yourExclusives[0].GetProperty("songId").GetString());
+    }
+
+    [Fact]
     public async Task Rivals_GetSongsPerInstrument_WithSeededData_ReturnsSongs()
     {
         var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();

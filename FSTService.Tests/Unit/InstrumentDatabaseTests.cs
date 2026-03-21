@@ -242,6 +242,62 @@ public sealed class InstrumentDatabaseTests : IDisposable
         Assert.Empty(scores);
     }
 
+    // ═══ GetSongIdsForAccount ═══════════════════════════════════
+
+    [Fact]
+    public void GetSongIdsForAccount_returns_correct_song_ids()
+    {
+        Db.UpsertEntries("song_A", [MakeEntry("acct_1", 100_000)]);
+        Db.UpsertEntries("song_B", [MakeEntry("acct_1", 90_000)]);
+        Db.UpsertEntries("song_A", [MakeEntry("acct_2", 80_000)]);
+
+        var ids = Db.GetSongIdsForAccount("acct_1");
+        Assert.Equal(2, ids.Count);
+        Assert.Contains("song_A", ids);
+        Assert.Contains("song_B", ids);
+    }
+
+    [Fact]
+    public void GetSongIdsForAccount_returns_empty_for_unknown_account()
+    {
+        var ids = Db.GetSongIdsForAccount("nobody");
+        Assert.Empty(ids);
+    }
+
+    // ═══ GetPlayerScoresForSongs ════════════════════════════════
+
+    [Fact]
+    public void GetPlayerScoresForSongs_returns_filtered_subset()
+    {
+        Db.UpsertEntries("song_A", [MakeEntry("acct_1", 100_000)]);
+        Db.UpsertEntries("song_B", [MakeEntry("acct_1", 90_000)]);
+        Db.UpsertEntries("song_C", [MakeEntry("acct_1", 80_000)]);
+
+        var scores = Db.GetPlayerScoresForSongs("acct_1", new[] { "song_A", "song_C" });
+        Assert.Equal(2, scores.Count);
+        Assert.Contains(scores, s => s.SongId == "song_A");
+        Assert.Contains(scores, s => s.SongId == "song_C");
+        Assert.DoesNotContain(scores, s => s.SongId == "song_B");
+    }
+
+    [Fact]
+    public void GetPlayerScoresForSongs_returns_empty_for_empty_song_list()
+    {
+        Db.UpsertEntries("song_A", [MakeEntry("acct_1", 100_000)]);
+
+        var scores = Db.GetPlayerScoresForSongs("acct_1", Array.Empty<string>());
+        Assert.Empty(scores);
+    }
+
+    [Fact]
+    public void GetPlayerScoresForSongs_returns_empty_for_unknown_account()
+    {
+        Db.UpsertEntries("song_A", [MakeEntry("acct_1", 100_000)]);
+
+        var scores = Db.GetPlayerScoresForSongs("nobody", new[] { "song_A" });
+        Assert.Empty(scores);
+    }
+
     // ═══ GetAnySongId ═══════════════════════════════════════════
 
     [Fact]

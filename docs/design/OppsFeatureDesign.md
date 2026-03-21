@@ -409,3 +409,52 @@ These are not part of the backend design, but useful to think about for API/data
 - [ ] **Minimum appearances threshold**: Should an Opp need to appear in at least N neighborhoods (e.g., 5) to qualify? Prevents one-song coincidences from cluttering the list.
 - [ ] **OppEvents scope**: Detecting pass/passed-by requires knowing the previous rank state. Re-use the existing `ScoreHistory` data (which already tracks old/new rank for registered users), or maintain a separate "last known Opp state" cache? The `ScoreHistory` approach is cheaper but only covers the registered user's own rank changes, not the Opp's.
 - [ ] **Cross-instrument Opps vs. per-instrument Opps**: The current design produces a single blended Opps list. Should the API also expose per-instrument Opps (e.g., "your Guitar Opps")? Easy to derive from the stored data by filtering on `Instruments`.
+
+---
+
+## Song Gaps (Asymmetric Coverage)
+
+### Motivation
+
+The core rivals system only surfaces songs where **both** players have scores. This misses two valuable scenarios:
+- **Songs to compete on**: songs a rival has played that you haven't — opportunities to challenge them on new ground.
+- **Your exclusive songs**: songs you've played that the rival hasn't — your competitive advantage.
+
+### Design Decision: Compute On-the-Fly
+
+Song gaps are **not stored**. They are computed at request time in the head-to-head endpoint. Rationale:
+- **Trivially cheap**: two indexed SQLite reads per instrument (`IX_Account` on `LeaderboardEntries`) + O(N) HashSet subtraction. Sub-millisecond even for 6-instrument combos.
+- **Always fresh**: gaps change whenever either player scores on a new song. Precomputed data would go stale between scrape passes.
+- **Zero storage overhead**: no new tables, no migrations, no personal DB sync changes.
+- **Minimal code surface**: extends the existing endpoint handler with ~30 lines.
+
+### Implementation
+
+**New methods in `InstrumentDatabase`:**
+- `GetSongIdsForAccount(accountId)` → `HashSet<string>` of song IDs (lightweight, uses `IX_Account` index)
+- `GetPlayerScoresForSongs(accountId, songIds)` → `List<PlayerScoreDto>` for a specific subset (parameterized IN clause)
+
+**New method in `RivalsCalculator`:**
+- `ComputeSongGaps(userId, rivalId, instruments, cap)` → `SongGapsResult` containing two lists
+- Per instrument: gets both players' song ID sets, computes set differences, fetches scores for gap songs
+- Sorts by rank ascending (best-ranked gap songs first), caps at 100 per direction
+
+**Extended endpoint:** `GET /api/player/{accountId}/rivals/{combo}/{rivalId}` now returns two additional arrays:
+
+```json
+{
+  "rival": { "accountId": "...", "displayName": "..." },
+  "combo": "Solo_Guitar",
+  "totalSongs": 150,
+  "songs": [ /* existing shared-song samples */ ],
+  "songsToCompete": [
+    { "songId": "...", "title": "...", "artist": "...", "instrument": "Solo_Guitar", "score": 985000, "rank": 12 }
+  ],
+  "yourExclusiveSongs": [
+    { "songId": "...", "title": "...", "artist": "...", "instrument": "Solo_Guitar", "score": 970000, "rank": 5 }
+  ]
+}
+```
+
+- `songsToCompete`: rival's songs you haven't played, sorted by rival's rank ascending (their best first), capped at 100
+- `yourExclusiveSongs`: your songs the rival hasn't played, sorted by your rank ascending (your best first), capped at 100

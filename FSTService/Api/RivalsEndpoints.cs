@@ -72,7 +72,8 @@ public static partial class ApiEndpoints
             int? offset,
             string? sort,
             MetaDatabase metaDb,
-            FestivalService festivalService) =>
+            FestivalService festivalService,
+            RivalsCalculator rivalsCalculator) =>
         {
             // Parse combo into instruments
             var instruments = combo.Split('+');
@@ -108,6 +109,9 @@ public static partial class ApiEndpoints
                 .ToDictionary(s => s.track.su, StringComparer.OrdinalIgnoreCase);
             var rivalName = metaDb.GetDisplayName(rivalId);
 
+            // Compute song gaps on-the-fly
+            var gaps = rivalsCalculator.ComputeSongGaps(accountId, rivalId, instruments);
+
             return Results.Ok(new
             {
                 rival = new { accountId = rivalId, displayName = rivalName },
@@ -130,6 +134,32 @@ public static partial class ApiEndpoints
                         s.RankDelta,
                         s.UserScore,
                         s.RivalScore,
+                    };
+                }).ToList(),
+                songsToCompete = gaps.SongsToCompete.Select(g =>
+                {
+                    songLookup.TryGetValue(g.SongId, out var song);
+                    return new
+                    {
+                        g.SongId,
+                        title = song?.track?.tt,
+                        artist = song?.track?.an,
+                        g.Instrument,
+                        g.Score,
+                        g.Rank,
+                    };
+                }).ToList(),
+                yourExclusiveSongs = gaps.YourExclusives.Select(g =>
+                {
+                    songLookup.TryGetValue(g.SongId, out var song);
+                    return new
+                    {
+                        g.SongId,
+                        title = song?.track?.tt,
+                        artist = song?.track?.an,
+                        g.Instrument,
+                        g.Score,
+                        g.Rank,
                     };
                 }).ToList(),
             });

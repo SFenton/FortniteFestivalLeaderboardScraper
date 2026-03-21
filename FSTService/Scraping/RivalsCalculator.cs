@@ -357,6 +357,92 @@ public sealed class RivalsCalculator
         return result;
     }
 
+    /// <summary>Maximum song gap entries to return per direction (songs to compete / exclusive songs).</summary>
+    internal const int MaxSongGapsPerDirection = 100;
+
+    /// <summary>
+    /// Compute song gaps between a user and a rival across the specified instruments.
+    /// Returns songs the rival has that the user doesn't ("songs to compete on")
+    /// and songs the user has that the rival doesn't ("your exclusive songs").
+    /// Computed on-the-fly from local instrument DBs — no storage or API calls.
+    /// </summary>
+    public SongGapsResult ComputeSongGaps(
+        string userId,
+        string rivalId,
+        IReadOnlyList<string> instruments,
+        int cap = MaxSongGapsPerDirection)
+    {
+        var songsToCompete = new List<SongGapEntry>();
+        var yourExclusives = new List<SongGapEntry>();
+
+        foreach (var instrument in instruments)
+        {
+            var db = _persistence.GetOrCreateInstrumentDb(instrument);
+
+            var userSongIds = db.GetSongIdsForAccount(userId);
+            var rivalSongIds = db.GetSongIdsForAccount(rivalId);
+
+            // Songs the rival has that the user hasn't played
+            var rivalOnly = new List<string>();
+            foreach (var sid in rivalSongIds)
+            {
+                if (!userSongIds.Contains(sid))
+                    rivalOnly.Add(sid);
+            }
+
+            if (rivalOnly.Count > 0)
+            {
+                var rivalScores = db.GetPlayerScoresForSongs(rivalId, rivalOnly);
+                foreach (var s in rivalScores)
+                {
+                    songsToCompete.Add(new SongGapEntry
+                    {
+                        SongId = s.SongId,
+                        Instrument = instrument,
+                        Score = s.Score,
+                        Rank = s.Rank,
+                    });
+                }
+            }
+
+            // Songs the user has that the rival hasn't played
+            var userOnly = new List<string>();
+            foreach (var sid in userSongIds)
+            {
+                if (!rivalSongIds.Contains(sid))
+                    userOnly.Add(sid);
+            }
+
+            if (userOnly.Count > 0)
+            {
+                var userScores = db.GetPlayerScoresForSongs(userId, userOnly);
+                foreach (var s in userScores)
+                {
+                    yourExclusives.Add(new SongGapEntry
+                    {
+                        SongId = s.SongId,
+                        Instrument = instrument,
+                        Score = s.Score,
+                        Rank = s.Rank,
+                    });
+                }
+            }
+        }
+
+        // Sort by rank ascending (best songs first), cap at limit
+        return new SongGapsResult
+        {
+            SongsToCompete = songsToCompete
+                .OrderBy(e => e.Rank <= 0 ? int.MaxValue : e.Rank)
+                .Take(cap)
+                .ToList(),
+            YourExclusives = yourExclusives
+                .OrderBy(e => e.Rank <= 0 ? int.MaxValue : e.Rank)
+                .Take(cap)
+                .ToList(),
+        };
+    }
+
     // ─── Internal types ──────────────────────────────────────────
 
     internal sealed class RivalCandidate
@@ -403,4 +489,15 @@ public sealed class RivalsResult
     public int CombosComputed { get; init; }
 
     public static RivalsResult Empty { get; } = new();
+}
+
+/// <summary>
+/// Result of song gap computation between a user and a rival.
+/// </summary>
+public sealed class SongGapsResult
+{
+    /// <summary>Songs the rival has scored on that the user hasn't — opportunities to compete.</summary>
+    public IReadOnlyList<SongGapEntry> SongsToCompete { get; init; } = Array.Empty<SongGapEntry>();
+    /// <summary>Songs the user has scored on that the rival hasn't — exclusive advantage.</summary>
+    public IReadOnlyList<SongGapEntry> YourExclusives { get; init; } = Array.Empty<SongGapEntry>();
 }

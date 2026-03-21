@@ -357,4 +357,158 @@ public sealed class RivalsCalculatorTests : IDisposable
         Assert.Contains("Solo_Bass", combos);
         Assert.Contains("Solo_Bass+Solo_Guitar", combos); // combo key is sorted
     }
+
+    // ═══ ComputeSongGaps ═════════════════════════════════════════
+
+    [Fact]
+    public void ComputeSongGaps_returns_empty_when_both_play_same_songs()
+    {
+        var persistence = CreatePersistence();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        for (int i = 0; i < 5; i++)
+        {
+            SeedEntries(db, $"song_{i}",
+                ("user1", 10000 - i * 100),
+                ("rival1", 9000 - i * 100));
+        }
+
+        var calc = CreateCalculator(persistence);
+        var gaps = calc.ComputeSongGaps("user1", "rival1", new[] { "Solo_Guitar" });
+
+        Assert.Empty(gaps.SongsToCompete);
+        Assert.Empty(gaps.YourExclusives);
+    }
+
+    [Fact]
+    public void ComputeSongGaps_finds_rival_only_songs()
+    {
+        var persistence = CreatePersistence();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        // Shared songs
+        SeedEntries(db, "shared_1", ("user1", 10000), ("rival1", 9000));
+        SeedEntries(db, "shared_2", ("user1", 9500), ("rival1", 8500));
+
+        // Rival-only songs
+        SeedEntries(db, "rival_only_1", ("rival1", 8000));
+        SeedEntries(db, "rival_only_2", ("rival1", 7000));
+
+        var calc = CreateCalculator(persistence);
+        var gaps = calc.ComputeSongGaps("user1", "rival1", new[] { "Solo_Guitar" });
+
+        Assert.Equal(2, gaps.SongsToCompete.Count);
+        Assert.Contains(gaps.SongsToCompete, g => g.SongId == "rival_only_1");
+        Assert.Contains(gaps.SongsToCompete, g => g.SongId == "rival_only_2");
+        Assert.Empty(gaps.YourExclusives);
+    }
+
+    [Fact]
+    public void ComputeSongGaps_finds_user_only_songs()
+    {
+        var persistence = CreatePersistence();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        // Shared songs
+        SeedEntries(db, "shared_1", ("user1", 10000), ("rival1", 9000));
+
+        // User-only songs
+        SeedEntries(db, "user_only_1", ("user1", 9000));
+        SeedEntries(db, "user_only_2", ("user1", 8500));
+
+        var calc = CreateCalculator(persistence);
+        var gaps = calc.ComputeSongGaps("user1", "rival1", new[] { "Solo_Guitar" });
+
+        Assert.Empty(gaps.SongsToCompete);
+        Assert.Equal(2, gaps.YourExclusives.Count);
+        Assert.Contains(gaps.YourExclusives, g => g.SongId == "user_only_1");
+        Assert.Contains(gaps.YourExclusives, g => g.SongId == "user_only_2");
+    }
+
+    [Fact]
+    public void ComputeSongGaps_mixed_gaps_both_directions()
+    {
+        var persistence = CreatePersistence();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        SeedEntries(db, "shared", ("user1", 10000), ("rival1", 9000));
+        SeedEntries(db, "rival_only", ("rival1", 7000));
+        SeedEntries(db, "user_only", ("user1", 8000));
+
+        var calc = CreateCalculator(persistence);
+        var gaps = calc.ComputeSongGaps("user1", "rival1", new[] { "Solo_Guitar" });
+
+        Assert.Single(gaps.SongsToCompete);
+        Assert.Equal("rival_only", gaps.SongsToCompete[0].SongId);
+        Assert.Single(gaps.YourExclusives);
+        Assert.Equal("user_only", gaps.YourExclusives[0].SongId);
+    }
+
+    [Fact]
+    public void ComputeSongGaps_caps_at_limit()
+    {
+        var persistence = CreatePersistence();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        // Create 120 rival-only songs (over the 100 cap)
+        for (int i = 0; i < 120; i++)
+        {
+            SeedEntries(db, $"rival_song_{i}", ("rival1", 10000 - i * 10));
+        }
+
+        var calc = CreateCalculator(persistence);
+        var gaps = calc.ComputeSongGaps("user1", "rival1", new[] { "Solo_Guitar" });
+
+        Assert.Equal(100, gaps.SongsToCompete.Count);
+        Assert.Empty(gaps.YourExclusives);
+    }
+
+    [Fact]
+    public void ComputeSongGaps_sorts_by_rank_ascending()
+    {
+        var persistence = CreatePersistence();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        // Rival-only songs with varying ranks — seed with different scores
+        // Higher score = better rank after RecomputeAllRanks
+        SeedEntries(db, "low_rank", ("rival1", 50000));  // best score = rank 1
+        SeedEntries(db, "mid_rank", ("rival1", 30000));  // rank 2
+        SeedEntries(db, "high_rank", ("rival1", 10000)); // rank 3
+        db.RecomputeAllRanks();
+
+        var calc = CreateCalculator(persistence);
+        var gaps = calc.ComputeSongGaps("user1", "rival1", new[] { "Solo_Guitar" });
+
+        Assert.Equal(3, gaps.SongsToCompete.Count);
+        // Should be sorted by rank ascending — best rank first
+        Assert.True(gaps.SongsToCompete[0].Rank <= gaps.SongsToCompete[1].Rank
+                  || gaps.SongsToCompete[0].Rank == 0); // 0 = unranked, goes to end
+    }
+
+    [Fact]
+    public void ComputeSongGaps_multi_instrument_combo()
+    {
+        var persistence = CreatePersistence();
+        var guitarDb = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        var bassDb = persistence.GetOrCreateInstrumentDb("Solo_Bass");
+
+        // Guitar: rival has extra song
+        SeedEntries(guitarDb, "shared", ("user1", 10000), ("rival1", 9000));
+        SeedEntries(guitarDb, "guitar_rival_only", ("rival1", 8000));
+
+        // Bass: user has extra song
+        SeedEntries(bassDb, "shared", ("user1", 10000), ("rival1", 9000));
+        SeedEntries(bassDb, "bass_user_only", ("user1", 7000));
+
+        var calc = CreateCalculator(persistence);
+        var gaps = calc.ComputeSongGaps("user1", "rival1", new[] { "Solo_Guitar", "Solo_Bass" });
+
+        Assert.Single(gaps.SongsToCompete);
+        Assert.Equal("Solo_Guitar", gaps.SongsToCompete[0].Instrument);
+        Assert.Equal("guitar_rival_only", gaps.SongsToCompete[0].SongId);
+
+        Assert.Single(gaps.YourExclusives);
+        Assert.Equal("Solo_Bass", gaps.YourExclusives[0].Instrument);
+        Assert.Equal("bass_user_only", gaps.YourExclusives[0].SongId);
+    }
 }
