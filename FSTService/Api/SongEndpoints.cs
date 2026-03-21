@@ -9,10 +9,11 @@ public static partial class ApiEndpoints
 {
     public static void MapSongEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/songs", (FestivalService service, PathDataStore pathStore, MetaDatabase metaDb) =>
+        app.MapGet("/api/songs", (FestivalService service, PathDataStore pathStore, MetaDatabase metaDb, ItemShopService shopService) =>
         {
             var maxScoresMap = pathStore.GetAllMaxScores();
             var currentSeason = metaDb.GetCurrentSeason();
+            var inShop = shopService.InShopSongIds;
             var songs = service.Songs
                 .Where(s => s.track?.su is not null)
                 .Select(s =>
@@ -47,6 +48,9 @@ public static partial class ApiEndpoints
                             Solo_PeripheralBass   = ms.MaxProBassScore,
                         },
                         pathsGeneratedAt = ms?.GeneratedAt,
+                        shopUrl = inShop.Contains(s.track.su)
+                            ? ShopUrlHelper.ComputeShopUrl(s.track.su, s.track.tt)
+                            : null,
                     };
                 })
                 .ToList();

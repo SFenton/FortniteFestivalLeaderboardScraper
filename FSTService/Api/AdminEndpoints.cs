@@ -38,6 +38,21 @@ public static partial class ApiEndpoints
         .RequireAuthorization()
         .RequireRateLimiting("protected");
 
+        app.MapPost("/api/admin/shop/refresh", async (ItemShopService shopService, CancellationToken ct) =>
+        {
+            var result = await shopService.TriggerScrapeAsync(ct);
+            return Results.Ok(new
+            {
+                success = result >= 0,
+                matchedCount = result >= 0 ? result : shopService.InShopSongIds.Count,
+                contentChanged = result >= 0,
+                scrapedAt = shopService.LastScrapedAt,
+            });
+        })
+        .WithTags("Admin")
+        .RequireAuthorization()
+        .RequireRateLimiting("protected");
+
         app.MapPost("/api/register", (
             RegisterRequest request,
             MetaDatabase metaDb,

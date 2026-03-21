@@ -163,6 +163,23 @@ builder.Services.AddSingleton<RivalsOrchestrator>();
 builder.Services.AddSingleton<PostScrapeOrchestrator>();
 builder.Services.AddSingleton<BackfillOrchestrator>();
 
+builder.Services.AddHttpClient<ItemShopService>()
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        AutomaticDecompression = System.Net.DecompressionMethods.All,
+    });
+builder.Services.AddSingleton<ItemShopService>(sp =>
+    sp.GetRequiredService<IHttpClientFactory>()
+      .CreateClient(nameof(ItemShopService))
+      is var http
+        ? new ItemShopService(
+            http,
+            sp.GetRequiredService<FestivalService>(),
+            sp.GetRequiredService<MetaDatabase>(),
+            sp.GetRequiredService<ILogger<ItemShopService>>())
+        : throw new InvalidOperationException());
+
+
 builder.Services.AddHttpClient<HistoryReconstructor>()
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {

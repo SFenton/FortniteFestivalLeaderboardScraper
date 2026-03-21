@@ -152,8 +152,20 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _tokenManager, _progress, options,
             Substitute.For<ILogger<BackfillOrchestrator>>());
 
+        var shopMetaDb = new FSTService.Persistence.MetaDatabase(
+                Path.Combine(Path.GetTempPath(), $"fst-shop-test-{Guid.NewGuid()}.db"),
+                Substitute.For<ILogger<FSTService.Persistence.MetaDatabase>>());
+        shopMetaDb.EnsureSchema();
+
+        var shopService = new FSTService.Scraping.ItemShopService(
+            new HttpClient(),
+            _festivalService,
+            shopMetaDb,
+            Substitute.For<ILogger<FSTService.Scraping.ItemShopService>>());
+
         var dbInitializer = new DatabaseInitializer(
-            _persistence, _festivalService, _lifetime,
+            _persistence, _festivalService, shopService,
+            _lifetime,
             Substitute.For<ILogger<DatabaseInitializer>>());
         dbInitializer.StartAsync(CancellationToken.None);
         dbInitializer.WaitForReadyAsync().GetAwaiter().GetResult();

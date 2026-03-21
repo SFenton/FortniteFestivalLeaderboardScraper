@@ -259,6 +259,11 @@ public sealed class MetaDatabase : IDisposable
             CREATE INDEX IF NOT EXISTS IX_RivalSamples_Rival
                 ON RivalSongSamples (UserId, RivalAccountId, Instrument);
 
+            CREATE TABLE IF NOT EXISTS ItemShopTracks (
+                SongId    TEXT PRIMARY KEY,
+                ScrapedAt TEXT NOT NULL
+            );
+
             """;
         cmd.ExecuteNonQuery();
 
@@ -2522,6 +2527,58 @@ public sealed class MetaDatabase : IDisposable
             """;
         cmd.Parameters.AddWithValue("@id", accountId);
         cmd.ExecuteNonQuery();
+    }
+
+    // ─── Item Shop ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Replaces the entire ItemShopTracks table with the given set of song IDs.
+    /// </summary>
+    public void SaveItemShopTracks(IReadOnlySet<string> songIds, DateTime scrapedAt)
+    {
+        var ts = scrapedAt.ToString("o");
+        using var conn = OpenConnection();
+        using var tx = conn.BeginTransaction();
+
+        using (var del = conn.CreateCommand())
+        {
+            del.Transaction = tx;
+            del.CommandText = "DELETE FROM ItemShopTracks;";
+            del.ExecuteNonQuery();
+        }
+
+        using (var ins = conn.CreateCommand())
+        {
+            ins.Transaction = tx;
+            ins.CommandText = "INSERT INTO ItemShopTracks (SongId, ScrapedAt) VALUES (@songId, @ts);";
+            var pSongId = ins.Parameters.Add("@songId", Microsoft.Data.Sqlite.SqliteType.Text);
+            var pTs = ins.Parameters.Add("@ts", Microsoft.Data.Sqlite.SqliteType.Text);
+            pTs.Value = ts;
+
+            foreach (var songId in songIds)
+            {
+                pSongId.Value = songId;
+                ins.ExecuteNonQuery();
+            }
+        }
+
+        tx.Commit();
+    }
+
+    /// <summary>
+    /// Loads the persisted set of in-shop song IDs from the database.
+    /// </summary>
+    public HashSet<string> LoadItemShopTracks()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT SongId FROM ItemShopTracks;";
+
+        var set = new HashSet<string>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            set.Add(reader.GetString(0));
+        return set;
     }
 
     /// <summary>

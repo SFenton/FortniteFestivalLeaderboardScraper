@@ -1,5 +1,6 @@
 using FortniteFestival.Core.Services;
 using FSTService.Persistence;
+using FSTService.Scraping;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace FSTService;
@@ -13,6 +14,7 @@ public sealed class DatabaseInitializer : IHostedService, IHealthCheck
 {
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly FestivalService _festivalService;
+    private readonly ItemShopService _shopService;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<DatabaseInitializer> _log;
     private readonly TaskCompletionSource _readySignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -27,11 +29,13 @@ public sealed class DatabaseInitializer : IHostedService, IHealthCheck
     public DatabaseInitializer(
         GlobalLeaderboardPersistence persistence,
         FestivalService festivalService,
+        ItemShopService shopService,
         IHostApplicationLifetime lifetime,
         ILogger<DatabaseInitializer> log)
     {
         _persistence = persistence;
         _festivalService = festivalService;
+        _shopService = shopService;
         _lifetime = lifetime;
         _log = log;
     }
@@ -52,6 +56,9 @@ public sealed class DatabaseInitializer : IHostedService, IHealthCheck
             var songTask = _festivalService.InitializeAsync();
 
             await Task.WhenAll(dbTask, songTask);
+
+            // Initialize Item Shop service (loads from DB + first scrape)
+            await _shopService.InitializeAsync(ct);
 
             _log.LogInformation(
                 "Initialization complete. {SongCount} songs loaded, {DbCount} instrument DBs ready.",
