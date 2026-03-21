@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using FortniteFestival.Core;
@@ -762,6 +763,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     /// Sequential scrape: one song at a time, instruments in parallel, pages with bounded concurrency.
     /// Max concurrent requests = ~6 instruments × pageConcurrency.
     /// </summary>
+    [ExcludeFromCodeCoverage(Justification = "Requires real HTTP with 5s retry delays; tested manually via --once mode.")]
     private async Task<Dictionary<string, List<GlobalLeaderboardResult>>> ScrapeManySongsSequentialAsync(
         IReadOnlyList<SongScrapeRequest> requests,
         string accessToken,
@@ -801,6 +803,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     /// Page fetching for one song/instrument with bounded concurrency.
     /// pageConcurrency=1 → fully sequential. pageConcurrency=10 → 10 pages at a time.
     /// </summary>
+    [ExcludeFromCodeCoverage(Justification = "Requires real HTTP with 5s retry delays; tested manually via --once mode.")]
     private async Task<GlobalLeaderboardResult> ScrapeLeaderboardSequentialAsync(
         string songId,
         string instrument,

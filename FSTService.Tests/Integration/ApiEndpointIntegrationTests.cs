@@ -1541,6 +1541,48 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         cmd.ExecuteNonQuery();
     }
 
+    // ─── Sync Status ──────────────────────────────────────────
+
+    [Fact]
+    public async Task SyncStatus_ReturnsExpectedShape()
+    {
+        var response = await _client.GetAsync("/api/player/test_acct/sync-status");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.TryGetProperty("accountId", out _));
+        Assert.True(json.TryGetProperty("isTracked", out _));
+        // rivals/backfill/historyRecon may be null (omitted) for untracked accounts
+    }
+
+    [Fact]
+    public async Task SyncStatus_WithRivalsData_ReturnsStatus()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.EnsureRivalsStatus("sync_acct");
+        metaDb.StartRivals("sync_acct", 7);
+        metaDb.CompleteRivals("sync_acct", 7, 20);
+
+        var response = await _client.GetAsync("/api/player/sync_acct/sync-status");
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var rivals = json.GetProperty("rivals");
+        Assert.Equal("complete", rivals.GetProperty("status").GetString());
+        Assert.Equal(7, rivals.GetProperty("combosComputed").GetInt32());
+        Assert.Equal(7, rivals.GetProperty("totalCombosToCompute").GetInt32());
+        Assert.Equal(20, rivals.GetProperty("rivalsFound").GetInt32());
+    }
+
+    // ─── Player Endpoints (population) ──────────────────────
+
+    [Fact]
+    public async Task PlayerProfile_ReturnsScores()
+    {
+        var response = await _client.GetAsync("/api/player/test_acct");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.TryGetProperty("accountId", out _));
+        Assert.True(json.TryGetProperty("scores", out _));
+    }
+
     // ─── Rivals ─────────────────────────────────────────────────
 
     [Fact]

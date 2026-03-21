@@ -568,4 +568,71 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         var entries = glp.GetLeaderboard("song_1", "Unknown_Instrument");
         Assert.Null(entries);
     }
+
+    // ═══ PruneAllInstruments ════════════════════════════════
+
+    [Fact]
+    public void PruneAllInstruments_RemovesExcessEntries()
+    {
+        using var glp = CreatePersistence();
+        glp.Initialize();
+
+        var db = glp.GetOrCreateInstrumentDb("Solo_Guitar");
+        var entries = Enumerable.Range(0, 50).Select(i =>
+            new LeaderboardEntry
+            {
+                AccountId = $"p_{i}", Score = 5000 - i * 10,
+                Accuracy = 95, Stars = 5, Season = 3,
+            }).ToList();
+        db.UpsertEntries("song1", entries);
+
+        var preserve = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "p_40" };
+        var deleted = glp.PruneAllInstruments(10, preserve);
+
+        Assert.Equal(39, deleted); // 50 - 10 (top) - 1 (preserved) = 39
+        Assert.Equal(11, db.GetLeaderboardCount("song1")); // 10 + 1 preserved
+    }
+
+    [Fact]
+    public void PruneAllInstruments_ZeroMax_ReturnsZero()
+    {
+        using var glp = CreatePersistence();
+        glp.Initialize();
+
+        var deleted = glp.PruneAllInstruments(0, new HashSet<string>());
+        Assert.Equal(0, deleted);
+    }
+
+    [Fact]
+    public void IsReady_AfterInitialize_ReturnsTrue()
+    {
+        using var glp = CreatePersistence();
+        glp.Initialize();
+
+        Assert.True(glp.IsReady());
+    }
+
+    [Fact]
+    public void IsReady_WithoutDbs_ReturnsFalse()
+    {
+        // Create but don't initialize — no instrument DBs exist
+        var tempDir = Path.Combine(Path.GetTempPath(), $"fst_ready_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var metaFixture = new InMemoryMetaDatabase();
+            var loggerFactory = new Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory();
+            var glp = new GlobalLeaderboardPersistence(
+                tempDir, metaFixture.Db, loggerFactory,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<GlobalLeaderboardPersistence>.Instance);
+            // Don't call Initialize — no DBs
+            Assert.False(glp.IsReady());
+            glp.Dispose();
+            metaFixture.Dispose();
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, true); } catch { }
+        }
+    }
 }

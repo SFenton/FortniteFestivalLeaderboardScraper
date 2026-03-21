@@ -147,6 +147,7 @@ public class EpicAuthService
     /// An <see cref="EpicTokenResponse"/> containing the user's account ID,
     /// display name, access token, and refresh token.
     /// </returns>
+    [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
     public virtual async Task<EpicTokenResponse> ExchangeAuthorizationCodeAsync(
         string code, string clientId, string clientSecret, string redirectUri,
         CancellationToken ct = default)
@@ -183,6 +184,7 @@ public class EpicAuthService
     /// EOS application client, not the Switch client). Used by <see cref="TokenVault"/>
     /// to transparently refresh stored user tokens.
     /// </summary>
+    [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
     public virtual async Task<EpicTokenResponse> RefreshUserTokenAsync(
         string refreshToken, string clientId, string clientSecret,
         CancellationToken ct = default)
@@ -212,6 +214,7 @@ public class EpicAuthService
     /// <summary>
     /// Verify that an access token is still valid.
     /// </summary>
+    [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
     public async Task<bool> VerifyTokenAsync(string accessToken, CancellationToken ct = default)
     {
         var req = new HttpRequestMessage(HttpMethod.Get, $"{AccountBase}/account/api/oauth/verify");

@@ -308,8 +308,74 @@ public class PostScrapeOrchestratorTests : IDisposable
     [Fact]
     public void PruneExcessEntries_WithMaxPages_Runs()
     {
+        // Seed excess entries to trigger actual pruning
+        var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        var entries = Enumerable.Range(0, 20).Select(i =>
+            new LeaderboardEntry
+            {
+                AccountId = $"p_{i}", Score = 1000 - i * 10,
+                Accuracy = 95, Stars = 5, Season = 3,
+            }).ToList();
+        db.UpsertEntries("song1", entries);
+
         var ctx = CreateContext(registeredIds: new HashSet<string> { "p_15" });
-        _sut.PruneExcessEntries(ctx); // should run without error
+        _sut.PruneExcessEntries(ctx); // MaxPages=100 → maxEntries=10000 → no pruning (only 20)
+
+        // Verify no entries pruned (20 < 10000)
+        Assert.Equal(20, db.GetLeaderboardCount("song1"));
+    }
+
+    [Fact]
+    public void PruneExcessEntries_ActuallyPrunes_WhenExceedsMax()
+    {
+        // Create SUT with MaxPages=1 → maxEntries=100, but we seed 200 entries
+        var opts = Options.Create(new ScraperOptions { MaxPagesPerLeaderboard = 1 });
+        var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
+        var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new NotificationService(Substitute.For<ILogger<NotificationService>>()), _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
+        var sut = new PostScrapeOrchestrator(
+            _persistence, _firstSeenCalculator, _nameResolver,
+            _personalDbBuilder, _refresher, rivalsOrchestrator, _notifications,
+            _tokenManager, _progress, opts, _log);
+
+        var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        var entries = Enumerable.Range(0, 200).Select(i =>
+            new LeaderboardEntry
+            {
+                AccountId = $"p_{i}", Score = 10000 - i * 10,
+                Accuracy = 95, Stars = 5, Season = 3,
+            }).ToList();
+        db.UpsertEntries("song1", entries);
+
+        // p_150 is registered — should be preserved even though outside top 100
+        var ctx = CreateContext(registeredIds: new HashSet<string> { "p_150" });
+        sut.PruneExcessEntries(ctx);
+
+        var remaining = db.GetLeaderboardCount("song1");
+        Assert.True(remaining <= 101); // top 100 + 1 preserved registered user
+        // Verify preserved user still exists
+        var preserved = db.GetPlayerScores("p_150", "song1");
+        Assert.Single(preserved);
+    }
+
+    [Fact]
+    public async Task ComputeRivalsAsync_WithChangedAccounts_Runs()
+    {
+        var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
+        aggregates.AddChangedAccountIds(new[] { "user-1" });
+
+        var registeredIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "user-1" };
+        var ctx = CreateContext(registeredIds: registeredIds, aggregates: aggregates);
+
+        // Should run without error — rivals computation handles user with no data gracefully
+        await _sut.ComputeRivalsAsync(ctx, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task ComputeRivalsAsync_NoRegisteredUsers_Skips()
+    {
+        var ctx = CreateContext(registeredIds: new HashSet<string>());
+        await _sut.ComputeRivalsAsync(ctx, CancellationToken.None);
+        // No crash, no rivals computed
     }
 
     [Fact]

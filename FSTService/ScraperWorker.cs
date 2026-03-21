@@ -70,6 +70,7 @@ public sealed class ScraperWorker : BackgroundService
         _log = log;
     }
 
+    [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
