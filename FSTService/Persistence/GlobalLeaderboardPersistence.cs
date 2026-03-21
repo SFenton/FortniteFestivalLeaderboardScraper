@@ -497,6 +497,26 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         => _instrumentDbs.Keys.ToList();
 
     /// <summary>
+    /// Prune all instrument DBs: for each song, keep only the top <paramref name="maxEntriesPerSong"/>
+    /// entries (by score), plus any entries for accounts in <paramref name="preserveAccountIds"/>.
+    /// Returns total rows deleted across all instruments.
+    /// </summary>
+    public int PruneAllInstruments(int maxEntriesPerSong, IReadOnlySet<string> preserveAccountIds)
+    {
+        if (maxEntriesPerSong <= 0) return 0;
+
+        int totalDeleted = 0;
+        foreach (var (instrument, db) in _instrumentDbs)
+        {
+            var deleted = db.PruneAllSongs(maxEntriesPerSong, preserveAccountIds);
+            if (deleted > 0)
+                _log.LogInformation("Pruned {Deleted:N0} excess entries from {Instrument}.", deleted, instrument);
+            totalDeleted += deleted;
+        }
+        return totalDeleted;
+    }
+
+    /// <summary>
     /// Get the minimum Season value for a song across all instrument DBs.
     /// Returns null if no instrument has any entry for this song.
     /// </summary>

@@ -549,6 +549,94 @@ public sealed class InstrumentDatabase : IDisposable
     }
 
     /// <summary>
+    /// Prune entries for a song down to the top <paramref name="maxEntries"/> by score,
+    /// while always preserving entries for accounts in <paramref name="preserveAccountIds"/>.
+    /// Returns the number of rows deleted.
+    /// </summary>
+    public int PruneExcessEntries(string songId, int maxEntries, IReadOnlySet<string> preserveAccountIds)
+    {
+        lock (_writeLock)
+        {
+            var conn = GetPersistentConnection();
+            using var tx = conn.BeginTransaction();
+
+            // Build a temp table of preserved account IDs for efficient lookups
+            using (var createTemp = conn.CreateCommand())
+            {
+                createTemp.Transaction = tx;
+                createTemp.CommandText = "CREATE TEMP TABLE IF NOT EXISTS _preserve (AccountId TEXT PRIMARY KEY);";
+                createTemp.ExecuteNonQuery();
+            }
+            using (var clearTemp = conn.CreateCommand())
+            {
+                clearTemp.Transaction = tx;
+                clearTemp.CommandText = "DELETE FROM _preserve;";
+                clearTemp.ExecuteNonQuery();
+            }
+            if (preserveAccountIds.Count > 0)
+            {
+                using var insertTemp = conn.CreateCommand();
+                insertTemp.Transaction = tx;
+                insertTemp.CommandText = "INSERT OR IGNORE INTO _preserve (AccountId) VALUES (@id);";
+                var pId = insertTemp.Parameters.Add("@id", SqliteType.Text);
+                foreach (var id in preserveAccountIds)
+                {
+                    pId.Value = id;
+                    insertTemp.ExecuteNonQuery();
+                }
+            }
+
+            using var deleteCmd = conn.CreateCommand();
+            deleteCmd.Transaction = tx;
+            deleteCmd.CommandText = """
+                DELETE FROM LeaderboardEntries
+                WHERE SongId = @songId
+                  AND AccountId NOT IN (SELECT AccountId FROM _preserve)
+                  AND rowid NOT IN (
+                      SELECT rowid FROM LeaderboardEntries
+                      WHERE SongId = @songId
+                      ORDER BY Score DESC
+                      LIMIT @maxEntries
+                  );
+                """;
+            deleteCmd.Parameters.AddWithValue("@songId", songId);
+            deleteCmd.Parameters.AddWithValue("@maxEntries", maxEntries);
+            var deleted = deleteCmd.ExecuteNonQuery();
+
+            tx.Commit();
+            return deleted;
+        }
+    }
+
+    /// <summary>
+    /// Prune all songs on this instrument down to <paramref name="maxEntriesPerSong"/> each.
+    /// Returns total rows deleted across all songs.
+    /// </summary>
+    public int PruneAllSongs(int maxEntriesPerSong, IReadOnlySet<string> preserveAccountIds)
+    {
+        if (maxEntriesPerSong <= 0) return 0;
+
+        // Get all distinct song IDs
+        var songIds = new List<string>();
+        using (var conn = OpenConnection())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT DISTINCT SongId FROM LeaderboardEntries;";
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+                songIds.Add(reader.GetString(0));
+        }
+
+        int totalDeleted = 0;
+        foreach (var songId in songIds)
+        {
+            totalDeleted += PruneExcessEntries(songId, maxEntriesPerSong, preserveAccountIds);
+        }
+
+        return totalDeleted;
+    }
+
+    /// <summary>
     /// Get the leaderboard for a song including the total count in a single query.
     /// Returns (entries, totalCount) — avoids a separate COUNT(*) round-trip.
     /// </summary>

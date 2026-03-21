@@ -146,7 +146,7 @@ public class ScraperWorkerModeTests : IDisposable
         var postScrapeOrchestrator = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
             _personalDbBuilder, _refresher, rivalsOrchestrator, notifications,
-            _tokenManager, _progress,
+            _tokenManager, _progress, options,
             Substitute.For<ILogger<PostScrapeOrchestrator>>());
 
         var backfillOrchestrator = new BackfillOrchestrator(

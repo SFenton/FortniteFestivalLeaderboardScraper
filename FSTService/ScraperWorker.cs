@@ -437,6 +437,19 @@ public sealed class ScraperWorker : BackgroundService
         foreach (var (instrument, count) in counts)
             _log.LogInformation("  {Instrument}: {Count:N0} entries", instrument, count);
 
+        // ── Update leaderboard population from Epic's reported totalPages ──
+        var populationItems = new List<(string SongId, string Instrument, long TotalEntries)>();
+        foreach (var (_, results) in allResults)
+            foreach (var r in results)
+                if (r.ReportedTotalPages > 0)
+                    populationItems.Add((r.SongId, r.Instrument, (long)r.ReportedTotalPages * 100));
+        if (populationItems.Count > 0)
+        {
+            _persistence.Meta.UpsertLeaderboardPopulation(populationItems);
+            _log.LogInformation("Updated leaderboard population for {Count:N0} song/instrument pairs from Epic page counts.",
+                populationItems.Count);
+        }
+
         // Observe the path generation task that ran in parallel with the scrape
         try { await pathGenTask; }
         catch (OperationCanceledException) { /* expected on shutdown */ }

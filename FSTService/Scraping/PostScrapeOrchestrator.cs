@@ -2,6 +2,7 @@ using FortniteFestival.Core.Services;
 using FSTService.Api;
 using FSTService.Auth;
 using FSTService.Persistence;
+using Microsoft.Extensions.Options;
 
 namespace FSTService.Scraping;
 
@@ -22,6 +23,7 @@ public sealed class PostScrapeOrchestrator
     private readonly NotificationService _notifications;
     private readonly TokenManager _tokenManager;
     private readonly ScrapeProgressTracker _progress;
+    private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<PostScrapeOrchestrator> _log;
 
     public PostScrapeOrchestrator(
@@ -34,6 +36,7 @@ public sealed class PostScrapeOrchestrator
         NotificationService notifications,
         TokenManager tokenManager,
         ScrapeProgressTracker progress,
+        IOptions<ScraperOptions> options,
         ILogger<PostScrapeOrchestrator> log)
     {
         _persistence = persistence;
@@ -45,6 +48,7 @@ public sealed class PostScrapeOrchestrator
         _notifications = notifications;
         _tokenManager = tokenManager;
         _progress = progress;
+        _options = options;
         _log = log;
     }
 
@@ -55,6 +59,7 @@ public sealed class PostScrapeOrchestrator
     public async Task RunAsync(ScrapePassContext ctx, FestivalService service, CancellationToken ct)
     {
         await RunEnrichmentAsync(ctx, service, ct);
+        PruneExcessEntries(ctx);
         await RebuildPersonalDbsAsync(ctx, ct);
         await RefreshRegisteredUsersAsync(ctx, ct);
         await ComputeRivalsAsync(ctx, ct);
@@ -222,6 +227,29 @@ public sealed class PostScrapeOrchestrator
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Rivals computation failed. Will retry next pass.");
+        }
+    }
+
+    /// <summary>
+    /// Prune excess entries from instrument DBs down to the configured max per song,
+    /// preserving registered users. Runs after rank recomputation so ranks are fresh.
+    /// </summary>
+    internal void PruneExcessEntries(ScrapePassContext ctx)
+    {
+        var maxPages = _options.Value.MaxPagesPerLeaderboard;
+        if (maxPages <= 0) return; // unlimited — no pruning
+
+        var maxEntries = maxPages * 100;
+        try
+        {
+            var deleted = _persistence.PruneAllInstruments(maxEntries, ctx.RegisteredIds);
+            if (deleted > 0)
+                _log.LogInformation("Pruned {Deleted:N0} excess entries (keeping top {Max:N0} per song + registered users).",
+                    deleted, maxEntries);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Entry pruning failed. Will retry next pass.");
         }
     }
 

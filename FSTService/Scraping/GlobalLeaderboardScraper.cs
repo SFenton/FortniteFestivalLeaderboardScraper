@@ -537,6 +537,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 Instrument = instrument,
                 Entries = page0.firstPage?.Entries ?? [],
                 TotalPages = page0.firstPage?.TotalPages ?? 0,
+                ReportedTotalPages = page0.firstPage?.TotalPages ?? 0,
                 PagesScraped = page0.firstPage is not null ? 1 : 0,
                 Requests = 1,
                 BytesReceived = page0.firstLen,
@@ -645,6 +646,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             Instrument = instrument,
             Entries = ordered,
             TotalPages = totalPages,
+            ReportedTotalPages = reportedPages,
             PagesScraped = allEntries.Count,
             Requests = requestCount,
             BytesReceived = totalBytes,
@@ -924,6 +926,8 @@ public sealed class GlobalLeaderboardResult
     public string Instrument { get; init; } = "";
     public List<LeaderboardEntry> Entries { get; init; } = [];
     public int TotalPages { get; init; }
+    /// <summary>The uncapped page count reported by Epic's API. Use <c>ReportedTotalPages * 100</c> for population estimate.</summary>
+    public int ReportedTotalPages { get; init; }
     public int PagesScraped { get; init; }
     public int Requests { get; init; }
     public long BytesReceived { get; init; }

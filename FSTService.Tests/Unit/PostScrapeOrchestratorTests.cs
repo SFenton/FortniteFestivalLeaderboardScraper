@@ -4,6 +4,7 @@ using FSTService.Auth;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 
@@ -87,7 +88,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         _sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
             _personalDbBuilder, _refresher, rivalsOrchestrator, _notifications,
-            _tokenManager, _progress, _log);
+            _tokenManager, _progress, Options.Create(new ScraperOptions()), _log);
     }
 
     public void Dispose()
