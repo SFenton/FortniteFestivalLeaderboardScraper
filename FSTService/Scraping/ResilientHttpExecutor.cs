@@ -197,6 +197,8 @@ public sealed class ResilientHttpExecutor
     /// Retry a CDN-blocked request (403 with non-JSON body) using the extended
     /// backoff schedule. CDN retries are separate from the normal retry budget.
     /// Each retry reports failure to the limiter so AIMD backs off DOP.
+    /// The limiter slot is released during CDN waits so other work can proceed,
+    /// then re-acquired before the next attempt.
     /// </summary>
     private async Task<HttpResponseMessage> RetryCdnBlockAsync(
         Func<HttpRequestMessage> requestFactory,
@@ -213,7 +215,19 @@ public sealed class ResilientHttpExecutor
                 "CDN block on {Operation} (CDN retry {CdnAttempt}/{CdnMax}), waiting {Delay:F1}s",
                 label ?? "request", i + 1, delays.Length, delays[i].TotalSeconds);
             limiter?.ReportFailure();
-            await Task.Delay(delays[i], ct);
+
+            // Release the limiter slot while waiting so other work can proceed
+            limiter?.Release();
+            try
+            {
+                await Task.Delay(delays[i], ct);
+            }
+            finally
+            {
+                // Re-acquire before retrying (even if cancelled, so slot accounting stays balanced)
+                if (limiter is not null)
+                    await limiter.WaitAsync(ct);
+            }
 
             HttpResponseMessage res;
             try
