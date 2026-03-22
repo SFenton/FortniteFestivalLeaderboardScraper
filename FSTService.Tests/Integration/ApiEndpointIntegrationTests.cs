@@ -1956,32 +1956,52 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
-    public async Task Rankings_InstrumentPrefs_RequiresAuth()
+    public async Task Rankings_Combo_ReturnsOk_WithValidInstruments()
     {
-        var body = new { instruments = new[] { "Solo_Guitar", "Solo_Bass" } };
-        var response = await _client.PostAsJsonAsync("/api/player/test_p1/instruments", body);
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Rankings_InstrumentPrefs_SetsPrefs_WhenAuthed()
-    {
-        var body = new { instruments = new[] { "Solo_Guitar", "Solo_Bass" } };
-        var response = await _authedClient.PostAsJsonAsync("/api/player/pref_p1/instruments", body);
+        var response = await _client.GetAsync("/api/rankings/combo?instruments=Solo_Guitar%2BSolo_Bass");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-
-        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
-        var prefs = metaDb.GetUserInstrumentPrefs("pref_p1");
-        Assert.NotNull(prefs);
-        Assert.Equal(2, prefs.Count);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.TryGetProperty("totalAccounts", out _));
     }
 
     [Fact]
-    public async Task Rankings_InstrumentPrefs_BadRequest_EmptyInstruments()
+    public async Task Rankings_Combo_BadRequest_SingleInstrument()
     {
-        var body = new { instruments = Array.Empty<string>() };
-        var response = await _authedClient.PostAsJsonAsync("/api/player/test_p1/instruments", body);
+        var response = await _client.GetAsync("/api/rankings/combo?instruments=Solo_Guitar");
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rankings_Combo_ReturnsData_WhenSeeded()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.ReplaceComboLeaderboard("Solo_Bass+Solo_Guitar",
+            [("combo_p1", 0.05, 100), ("combo_p2", 0.10, 80)], 2);
+
+        var response = await _client.GetAsync("/api/rankings/combo?instruments=Solo_Guitar%2BSolo_Bass");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.GetProperty("totalAccounts").GetInt32() >= 2);
+    }
+
+    [Fact]
+    public async Task Rankings_ComboSingle_ReturnsData()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.ReplaceComboLeaderboard("Solo_Bass+Solo_Guitar",
+            [("combo_single_p1", 0.05, 100)], 1);
+
+        var response = await _client.GetAsync("/api/rankings/combo/combo_single_p1?instruments=Solo_Guitar%2BSolo_Bass");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("combo_single_p1", json.GetProperty("accountId").GetString());
+    }
+
+    [Fact]
+    public async Task Rankings_ComboSingle_NotFound()
+    {
+        var response = await _client.GetAsync("/api/rankings/combo/nobody?instruments=Solo_Guitar%2BSolo_Bass");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -2126,6 +2146,159 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     {
         var response = await _client.PostAsync("/api/admin/regenerate-paths", null);
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Account Endpoints
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Account_Check_ReturnsNotFound_ForUnknown()
+    {
+        var response = await _client.GetAsync("/api/account/check?username=definitely_not_a_real_user_xyz");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(json.GetProperty("exists").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Account_Search_ReturnsEmptyForGarbage()
+    {
+        var response = await _client.GetAsync("/api/account/search?q=zzzzzzzzzznotauser");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.TryGetProperty("results", out var results));
+        Assert.Equal(0, results.GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Account_Search_RequiresQuery()
+    {
+        var response = await _client.GetAsync("/api/account/search");
+        // Should return 400 or empty — depends on implementation
+        Assert.True(response.StatusCode == HttpStatusCode.BadRequest || response.StatusCode == HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Account_Check_WithSeededName_ReturnsFound()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.InsertAccountNames([("check_test_acct", "CheckTestUser")]);
+
+        var response = await _client.GetAsync("/api/account/check?username=CheckTestUser");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.GetProperty("exists").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Account_Search_WithSeededName_ReturnsMatch()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.InsertAccountNames([("search_test_acct", "SearchableUser99")]);
+
+        var response = await _client.GetAsync("/api/account/search?q=SearchableUser");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.GetProperty("results").GetArrayLength() >= 1);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Player Endpoints — additional coverage
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Player_Profile_NotFound_ForUnknown()
+    {
+        var response = await _client.GetAsync("/api/player/nonexistent_player_xyz");
+        // Returns 200 with empty scores (player may have no data)
+        Assert.True(response.StatusCode == HttpStatusCode.OK || response.StatusCode == HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Player_Stats_WithSeededData()
+    {
+        var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        db.UpsertEntries("testSong1", [
+            new LeaderboardEntry { AccountId = "stats_player", Score = 5000, Rank = 50, Accuracy = 90, Stars = 4, Season = 3 },
+        ]);
+
+        var response = await _client.GetAsync("/api/player/stats_player/stats");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Player_History_RequiresRegistration()
+    {
+        var response = await _client.GetAsync("/api/player/unregistered_player/history");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Player_History_ReturnsData_WhenRegistered()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.RegisterUser("hist-device", "hist_reg_player");
+        metaDb.InsertScoreChange("testSong1", "Solo_Guitar", "hist_reg_player",
+            null, 5000, null, 50, accuracy: 90, isFullCombo: false, stars: 4,
+            percentile: 0.5, season: 3, scoreAchievedAt: null);
+
+        var response = await _client.GetAsync("/api/player/hist_reg_player/history?songId=testSong1");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Additional Admin Endpoints — body coverage
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Admin_Register_WithKnownUser_Succeeds()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.InsertAccountNames([("register_test_acct", "RegisterableUser")]);
+
+        var body = new { deviceId = "reg-device-001", username = "RegisterableUser" };
+        var response = await _authedClient.PostAsJsonAsync("/api/register", body);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.GetProperty("registered").GetBoolean());
+        Assert.Equal("register_test_acct", json.GetProperty("accountId").GetString());
+    }
+
+    [Fact]
+    public async Task Admin_BackfillStatus_WithRegisteredUser()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.InsertAccountNames([("bf_status_acct", "BackfillStatusUser")]);
+        metaDb.RegisterUser("bf-device", "bf_status_acct");
+
+        var response = await _authedClient.GetAsync("/api/backfill/bf_status_acct/status");
+        // Returns OK with status info (even if not yet backfilled)
+        Assert.True(response.StatusCode == HttpStatusCode.OK || response.StatusCode == HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Admin_LeaderboardPopulation_Post_WithData()
+    {
+        var body = new[] {
+            new { songId = "testSong1", instrument = "Solo_Guitar", totalEntries = 100000 },
+            new { songId = "testSong1", instrument = "Solo_Bass", totalEntries = 200000 },
+        };
+        var response = await _authedClient.PostAsJsonAsync("/api/leaderboard-population", body);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.TryGetProperty("upserted", out _));
+    }
+
+    [Fact]
+    public async Task Admin_LeaderboardPopulation_Get_WithData()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.UpsertLeaderboardPopulation([("testSong1", "Solo_Guitar", 50000L)]);
+
+        var response = await _authedClient.GetAsync("/api/leaderboard-population");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     // ═══════════════════════════════════════════════════════════

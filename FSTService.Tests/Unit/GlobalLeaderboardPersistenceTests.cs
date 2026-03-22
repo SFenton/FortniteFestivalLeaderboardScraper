@@ -458,6 +458,18 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
     // ═══ GetLeaderboardWithCount ════════════════════════════════
 
     [Fact]
+    public void GetOrCreateInstrumentDb_CreatesNewDb_ForUnknownInstrument()
+    {
+        using var glp = CreatePersistence();
+        // "Solo_Keys" doesn't exist in AllInstruments — triggers the create-new path
+        var db = glp.GetOrCreateInstrumentDb("Solo_Keys");
+        Assert.NotNull(db);
+        Assert.Equal("Solo_Keys", db.Instrument);
+        // Verify it's queryable
+        Assert.Equal(0, db.GetTotalEntryCount());
+    }
+
+    [Fact]
     public void GetLeaderboardWithCount_returns_entries_and_count()
     {
         using var glp = CreatePersistence();

@@ -296,20 +296,22 @@ public sealed class MetaDatabase : IDisposable
                 PRIMARY KEY (AccountId, SnapshotDate)
             );
 
-            CREATE TABLE IF NOT EXISTS UserComboRankings (
-                AccountId            TEXT    NOT NULL,
-                InstrumentCombo      TEXT    NOT NULL,
-                ComboRating          REAL    NOT NULL,
-                ComboRank            INTEGER NOT NULL,
-                TotalAccountsInCombo INTEGER NOT NULL,
-                ComputedAt           TEXT    NOT NULL,
-                PRIMARY KEY (AccountId, InstrumentCombo)
+            CREATE TABLE IF NOT EXISTS ComboLeaderboard (
+                ComboKey    TEXT    NOT NULL,
+                Rank        INTEGER NOT NULL,
+                AccountId   TEXT    NOT NULL,
+                ComboRating REAL    NOT NULL,
+                SongsPlayed INTEGER NOT NULL,
+                ComputedAt  TEXT    NOT NULL,
+                PRIMARY KEY (ComboKey, Rank)
             );
 
-            CREATE TABLE IF NOT EXISTS UserInstrumentPrefs (
-                AccountId   TEXT PRIMARY KEY,
-                Instruments TEXT NOT NULL,
-                UpdatedAt   TEXT NOT NULL
+            CREATE INDEX IF NOT EXISTS IX_ComboLB_Account ON ComboLeaderboard (ComboKey, AccountId);
+
+            CREATE TABLE IF NOT EXISTS ComboStats (
+                ComboKey       TEXT PRIMARY KEY,
+                TotalAccounts  INTEGER NOT NULL,
+                ComputedAt     TEXT    NOT NULL
             );
 
             """;
@@ -2823,127 +2825,146 @@ public sealed class MetaDatabase : IDisposable
         }
     }
 
-    /// <summary>Replace combo rankings for a specific account.</summary>
-    public void ReplaceUserComboRankings(string accountId, IReadOnlyList<UserComboRankingDto> combos)
+    /// <summary>Replace all combo leaderboard data for a specific combo key.</summary>
+    public void ReplaceComboLeaderboard(string comboKey, IReadOnlyList<(string AccountId, double ComboRating, int SongsPlayed)> ranked, int totalAccounts)
     {
         var conn = GetPersistentConnection();
         lock (_writeLock)
         {
+            var now = DateTime.UtcNow.ToString("o");
             using var tx = conn.BeginTransaction();
 
             using (var del = conn.CreateCommand())
             {
                 del.Transaction = tx;
-                del.CommandText = "DELETE FROM UserComboRankings WHERE AccountId = @aid;";
-                del.Parameters.AddWithValue("@aid", accountId);
+                del.CommandText = "DELETE FROM ComboLeaderboard WHERE ComboKey = @key;";
+                del.Parameters.AddWithValue("@key", comboKey);
                 del.ExecuteNonQuery();
             }
 
-            if (combos.Count > 0)
+            using (var ins = conn.CreateCommand())
             {
-                using var ins = conn.CreateCommand();
                 ins.Transaction = tx;
                 ins.CommandText = """
-                    INSERT INTO UserComboRankings (AccountId, InstrumentCombo, ComboRating, ComboRank, TotalAccountsInCombo, ComputedAt)
-                    VALUES (@aid, @combo, @rating, @rank, @total, @now);
+                    INSERT INTO ComboLeaderboard (ComboKey, Rank, AccountId, ComboRating, SongsPlayed, ComputedAt)
+                    VALUES (@key, @rank, @aid, @rating, @songs, @now);
                     """;
-                var pAid = ins.Parameters.Add("@aid", SqliteType.Text);
-                var pCombo = ins.Parameters.Add("@combo", SqliteType.Text);
-                var pRating = ins.Parameters.Add("@rating", SqliteType.Real);
+                var pKey = ins.Parameters.Add("@key", SqliteType.Text);
                 var pRank = ins.Parameters.Add("@rank", SqliteType.Integer);
-                var pTotal = ins.Parameters.Add("@total", SqliteType.Integer);
+                var pAid = ins.Parameters.Add("@aid", SqliteType.Text);
+                var pRating = ins.Parameters.Add("@rating", SqliteType.Real);
+                var pSongs = ins.Parameters.Add("@songs", SqliteType.Integer);
                 var pNow = ins.Parameters.Add("@now", SqliteType.Text);
                 ins.Prepare();
 
-                var now = DateTime.UtcNow.ToString("o");
-                foreach (var c in combos)
+                for (int i = 0; i < ranked.Count; i++)
                 {
+                    var (accountId, rating, songs) = ranked[i];
+                    pKey.Value = comboKey;
+                    pRank.Value = i + 1;
                     pAid.Value = accountId;
-                    pCombo.Value = c.InstrumentCombo;
-                    pRating.Value = c.ComboRating;
-                    pRank.Value = c.ComboRank;
-                    pTotal.Value = c.TotalAccountsInCombo;
+                    pRating.Value = rating;
+                    pSongs.Value = songs;
                     pNow.Value = now;
                     ins.ExecuteNonQuery();
                 }
+            }
+
+            // Upsert combo stats
+            using (var stats = conn.CreateCommand())
+            {
+                stats.Transaction = tx;
+                stats.CommandText = """
+                    INSERT INTO ComboStats (ComboKey, TotalAccounts, ComputedAt)
+                    VALUES (@key, @total, @now)
+                    ON CONFLICT(ComboKey) DO UPDATE SET TotalAccounts = excluded.TotalAccounts, ComputedAt = excluded.ComputedAt;
+                    """;
+                stats.Parameters.AddWithValue("@key", comboKey);
+                stats.Parameters.AddWithValue("@total", totalAccounts);
+                stats.Parameters.AddWithValue("@now", now);
+                stats.ExecuteNonQuery();
             }
 
             tx.Commit();
         }
     }
 
-    /// <summary>Get combo rankings for a specific registered user.</summary>
-    public List<UserComboRankingDto> GetUserComboRankings(string accountId)
+    /// <summary>Get a paginated combo leaderboard.</summary>
+    public (List<ComboLeaderboardEntry> Entries, int TotalAccounts) GetComboLeaderboard(string comboKey, int page = 1, int pageSize = 50)
     {
         using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT InstrumentCombo, ComboRating, ComboRank, TotalAccountsInCombo, ComputedAt FROM UserComboRankings WHERE AccountId = @aid;";
-        cmd.Parameters.AddWithValue("@aid", accountId);
 
-        var result = new List<UserComboRankingDto>();
+        int totalAccounts = 0;
+        using (var statsCmd = conn.CreateCommand())
+        {
+            statsCmd.CommandText = "SELECT TotalAccounts FROM ComboStats WHERE ComboKey = @key;";
+            statsCmd.Parameters.AddWithValue("@key", comboKey);
+            var result = statsCmd.ExecuteScalar();
+            if (result is long l) totalAccounts = (int)l;
+        }
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT Rank, AccountId, ComboRating, SongsPlayed, ComputedAt
+            FROM ComboLeaderboard
+            WHERE ComboKey = @key
+            ORDER BY Rank ASC
+            LIMIT @limit OFFSET @offset;
+            """;
+        cmd.Parameters.AddWithValue("@key", comboKey);
+        cmd.Parameters.AddWithValue("@limit", pageSize);
+        cmd.Parameters.AddWithValue("@offset", (page - 1) * pageSize);
+
+        var entries = new List<ComboLeaderboardEntry>();
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
         {
-            result.Add(new UserComboRankingDto
+            entries.Add(new ComboLeaderboardEntry
             {
-                InstrumentCombo = reader.GetString(0),
-                ComboRating = reader.GetDouble(1),
-                ComboRank = reader.GetInt32(2),
-                TotalAccountsInCombo = reader.GetInt32(3),
+                Rank = reader.GetInt32(0),
+                AccountId = reader.GetString(1),
+                ComboRating = reader.GetDouble(2),
+                SongsPlayed = reader.GetInt32(3),
                 ComputedAt = reader.GetString(4),
             });
         }
-        return result;
+        return (entries, totalAccounts);
     }
 
-    /// <summary>Save a registered user's instrument preferences.</summary>
-    public void SetUserInstrumentPrefs(string accountId, IReadOnlyList<string> instruments)
-    {
-        var conn = GetPersistentConnection();
-        lock (_writeLock)
-        {
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
-                INSERT INTO UserInstrumentPrefs (AccountId, Instruments, UpdatedAt)
-                VALUES (@aid, @instruments, @now)
-                ON CONFLICT(AccountId) DO UPDATE SET
-                    Instruments = excluded.Instruments,
-                    UpdatedAt = excluded.UpdatedAt;
-                """;
-            cmd.Parameters.AddWithValue("@aid", accountId);
-            cmd.Parameters.AddWithValue("@instruments", string.Join("+", instruments));
-            cmd.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("o"));
-            cmd.ExecuteNonQuery();
-        }
-    }
-
-    /// <summary>Get a registered user's instrument preferences. Returns null if not set.</summary>
-    public IReadOnlyList<string>? GetUserInstrumentPrefs(string accountId)
+    /// <summary>Get a single account's rank within a specific combo.</summary>
+    public ComboLeaderboardEntry? GetComboRank(string comboKey, string accountId)
     {
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT Instruments FROM UserInstrumentPrefs WHERE AccountId = @aid;";
+        cmd.CommandText = """
+            SELECT Rank, AccountId, ComboRating, SongsPlayed, ComputedAt
+            FROM ComboLeaderboard
+            WHERE ComboKey = @key AND AccountId = @aid;
+            """;
+        cmd.Parameters.AddWithValue("@key", comboKey);
         cmd.Parameters.AddWithValue("@aid", accountId);
-        var result = cmd.ExecuteScalar() as string;
-        return result?.Split('+', StringSplitOptions.RemoveEmptyEntries);
+
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read()) return null;
+        return new ComboLeaderboardEntry
+        {
+            Rank = reader.GetInt32(0),
+            AccountId = reader.GetString(1),
+            ComboRating = reader.GetDouble(2),
+            SongsPlayed = reader.GetInt32(3),
+            ComputedAt = reader.GetString(4),
+        };
     }
 
-    /// <summary>Get all user instrument preferences (for batch combo computation).</summary>
-    public Dictionary<string, IReadOnlyList<string>> GetAllUserInstrumentPrefs()
+    /// <summary>Get combo stats (total accounts) for a combo key.</summary>
+    public int GetComboTotalAccounts(string comboKey)
     {
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT AccountId, Instruments FROM UserInstrumentPrefs;";
-
-        var result = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            var instruments = reader.GetString(1).Split('+', StringSplitOptions.RemoveEmptyEntries);
-            if (instruments.Length > 0)
-                result[reader.GetString(0)] = instruments;
-        }
-        return result;
+        cmd.CommandText = "SELECT TotalAccounts FROM ComboStats WHERE ComboKey = @key;";
+        cmd.Parameters.AddWithValue("@key", comboKey);
+        var result = cmd.ExecuteScalar();
+        return result is long l ? (int)l : 0;
     }
 
     private static CompositeRankingDto ReadCompositeDto(SqliteDataReader reader)

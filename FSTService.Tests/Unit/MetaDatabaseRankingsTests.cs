@@ -133,88 +133,95 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════
-    // UserComboRankings
+    // ComboLeaderboard
     // ═══════════════════════════════════════════════════════════
 
     [Fact]
-    public void ReplaceUserComboRankings_StoresAndRetrieves()
+    public void ReplaceComboLeaderboard_StoresAndRetrieves()
     {
-        var combos = new List<UserComboRankingDto>
+        var ranked = new List<(string AccountId, double ComboRating, int SongsPlayed)>
         {
-            new() { InstrumentCombo = "Solo_Guitar+Solo_Bass", ComboRating = 0.05, ComboRank = 42, TotalAccountsInCombo = 10000 },
+            ("p1", 0.05, 100),
+            ("p2", 0.10, 80),
         };
-        Db.ReplaceUserComboRankings("p1", combos);
+        Db.ReplaceComboLeaderboard("Solo_Bass+Solo_Guitar", ranked, 2);
 
-        var result = Db.GetUserComboRankings("p1");
-        Assert.Single(result);
-        Assert.Equal("Solo_Guitar+Solo_Bass", result[0].InstrumentCombo);
-        Assert.Equal(42, result[0].ComboRank);
-        Assert.Equal(10000, result[0].TotalAccountsInCombo);
+        var (entries, total) = Db.GetComboLeaderboard("Solo_Bass+Solo_Guitar", 1, 50);
+        Assert.Equal(2, total);
+        Assert.Equal(2, entries.Count);
+        Assert.Equal("p1", entries[0].AccountId);
+        Assert.Equal(1, entries[0].Rank);
+        Assert.Equal(0.05, entries[0].ComboRating, 4);
     }
 
     [Fact]
-    public void ReplaceUserComboRankings_ReplacesOld()
+    public void ReplaceComboLeaderboard_ReplacesOld()
     {
-        Db.ReplaceUserComboRankings("p1", [new UserComboRankingDto
-            { InstrumentCombo = "old", ComboRating = 0.5, ComboRank = 1, TotalAccountsInCombo = 100 }]);
+        Db.ReplaceComboLeaderboard("Solo_Bass+Solo_Guitar",
+            [("old", 0.5, 10)], 1);
+        Db.ReplaceComboLeaderboard("Solo_Bass+Solo_Guitar",
+            [("new", 0.1, 20)], 1);
 
-        Db.ReplaceUserComboRankings("p1", [new UserComboRankingDto
-            { InstrumentCombo = "new", ComboRating = 0.1, ComboRank = 5, TotalAccountsInCombo = 200 }]);
-
-        var result = Db.GetUserComboRankings("p1");
-        Assert.Single(result);
-        Assert.Equal("new", result[0].InstrumentCombo);
+        var (entries, total) = Db.GetComboLeaderboard("Solo_Bass+Solo_Guitar");
+        Assert.Equal(1, total);
+        Assert.Equal("new", entries[0].AccountId);
     }
 
     [Fact]
-    public void GetUserComboRankings_EmptyForUnknown()
+    public void GetComboRank_SingleAccount()
     {
-        Assert.Empty(Db.GetUserComboRankings("nobody"));
-    }
+        Db.ReplaceComboLeaderboard("Solo_Bass+Solo_Guitar",
+            [("p1", 0.05, 100), ("p2", 0.10, 80)], 2);
 
-    // ═══════════════════════════════════════════════════════════
-    // UserInstrumentPrefs
-    // ═══════════════════════════════════════════════════════════
-
-    [Fact]
-    public void SetAndGetUserInstrumentPrefs()
-    {
-        Db.SetUserInstrumentPrefs("p1", ["Solo_Guitar", "Solo_Bass"]);
-
-        var prefs = Db.GetUserInstrumentPrefs("p1");
-        Assert.NotNull(prefs);
-        Assert.Equal(2, prefs.Count);
-        Assert.Contains("Solo_Guitar", prefs);
-        Assert.Contains("Solo_Bass", prefs);
+        var entry = Db.GetComboRank("Solo_Bass+Solo_Guitar", "p2");
+        Assert.NotNull(entry);
+        Assert.Equal(2, entry.Rank);
+        Assert.Equal("p2", entry.AccountId);
     }
 
     [Fact]
-    public void SetUserInstrumentPrefs_Upserts()
+    public void GetComboRank_ReturnsNull_ForUnknown()
     {
-        Db.SetUserInstrumentPrefs("p1", ["Solo_Guitar"]);
-        Db.SetUserInstrumentPrefs("p1", ["Solo_Bass", "Solo_Drums"]);
-
-        var prefs = Db.GetUserInstrumentPrefs("p1");
-        Assert.NotNull(prefs);
-        Assert.Equal(2, prefs.Count);
-        Assert.DoesNotContain("Solo_Guitar", prefs);
+        Assert.Null(Db.GetComboRank("Solo_Bass+Solo_Guitar", "nobody"));
     }
 
     [Fact]
-    public void GetUserInstrumentPrefs_NullForUnknown()
+    public void GetComboTotalAccounts_ReturnsCount()
     {
-        Assert.Null(Db.GetUserInstrumentPrefs("nobody"));
+        Db.ReplaceComboLeaderboard("Solo_Bass+Solo_Guitar",
+            [("p1", 0.05, 100)], 500_000);
+
+        Assert.Equal(500_000, Db.GetComboTotalAccounts("Solo_Bass+Solo_Guitar"));
     }
 
     [Fact]
-    public void GetAllUserInstrumentPrefs_ReturnsAll()
+    public void GetComboTotalAccounts_ZeroForUnknown()
     {
-        Db.SetUserInstrumentPrefs("p1", ["Solo_Guitar"]);
-        Db.SetUserInstrumentPrefs("p2", ["Solo_Bass", "Solo_Drums"]);
+        Assert.Equal(0, Db.GetComboTotalAccounts("nonexistent"));
+    }
 
-        var all = Db.GetAllUserInstrumentPrefs();
-        Assert.Equal(2, all.Count);
-        Assert.Single(all["p1"]);
-        Assert.Equal(2, all["p2"].Count);
+    [Fact]
+    public void GetComboLeaderboard_Pagination()
+    {
+        var ranked = Enumerable.Range(0, 10)
+            .Select(i => ($"p{i}", 0.01 * i, 100 - i))
+            .ToList();
+        Db.ReplaceComboLeaderboard("Solo_Bass+Solo_Guitar", ranked, 10);
+
+        var (page1, total) = Db.GetComboLeaderboard("Solo_Bass+Solo_Guitar", 1, 3);
+        var (page2, _) = Db.GetComboLeaderboard("Solo_Bass+Solo_Guitar", 2, 3);
+
+        Assert.Equal(10, total);
+        Assert.Equal(3, page1.Count);
+        Assert.Equal(3, page2.Count);
+        Assert.NotEqual(page1[0].AccountId, page2[0].AccountId);
+    }
+
+    [Fact]
+    public void GetComboLeaderboard_EmptyForUnknownCombo()
+    {
+        var (entries, total) = Db.GetComboLeaderboard("nonexistent");
+        Assert.Empty(entries);
+        Assert.Equal(0, total);
     }
 }

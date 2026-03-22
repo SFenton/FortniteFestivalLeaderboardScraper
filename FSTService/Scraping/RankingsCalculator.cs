@@ -99,8 +99,10 @@ public sealed class RankingsCalculator
         await Task.WhenAll(snapshotTasks);
         _metaDb.SnapshotCompositeRankHistory(HistoryTopN, registeredIds);
 
-        // ── Phase 5: Combo rankings for registered users ──
-        ComputeUserComboRankings(instruments, registeredIds);
+        // ── Phase 5: All-combo rankings ──
+        var comboSw = System.Diagnostics.Stopwatch.StartNew();
+        ComputeAllCombos(instruments);
+        _log.LogInformation("All-combo rankings complete in {Elapsed}.", comboSw.Elapsed);
 
         _log.LogInformation("Full rankings computation complete in {Total}.", sw.Elapsed);
     }
@@ -192,96 +194,103 @@ public sealed class RankingsCalculator
     }
 
     /// <summary>
-    /// Compute combo rankings for registered users based on their instrument preferences.
-    /// Piggybacks on the in-memory per-instrument data (already read for composite).
+    /// Compute rankings for every multi-instrument combo (2^N - 1 minus singles).
+    /// Stores all players' ranks in ComboLeaderboard.
     /// </summary>
-    internal void ComputeUserComboRankings(IReadOnlyList<string> instruments, IReadOnlySet<string> registeredIds)
+    internal void ComputeAllCombos(IReadOnlyList<string> instruments)
     {
-        var allPrefs = _metaDb.GetAllUserInstrumentPrefs();
-        if (allPrefs.Count == 0)
+        if (instruments.Count < 2)
         {
-            _log.LogDebug("No user instrument preferences found, skipping combo rankings.");
+            _log.LogDebug("Fewer than 2 instruments, skipping combo rankings.");
             return;
         }
 
         // Load all per-instrument ranking summaries into memory
-        var perInstrument = new Dictionary<string, List<(string AccountId, double Rating, int SongsPlayed)>>(StringComparer.OrdinalIgnoreCase);
+        var perInstrument = new Dictionary<string, Dictionary<string, (double Rating, int SongsPlayed)>>(StringComparer.OrdinalIgnoreCase);
         foreach (var instrument in instruments)
         {
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
-            perInstrument[instrument] = db.GetAllRankingSummaries()
-                .Select(s => (s.AccountId, s.AdjustedSkillRating, s.SongsPlayed))
-                .ToList();
+            var dict = new Dictionary<string, (double, int)>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (accountId, rating, songsPlayed, _) in db.GetAllRankingSummaries())
+                dict[accountId] = (rating, songsPlayed);
+            perInstrument[instrument] = dict;
         }
 
-        foreach (var (accountId, userInstruments) in allPrefs)
+        // Generate all combos of size >= 2
+        var instrumentList = instruments.OrderBy(i => i, StringComparer.OrdinalIgnoreCase).ToList();
+        int n = instrumentList.Count;
+        int combosComputed = 0;
+        int totalRows = 0;
+
+        for (int mask = 3; mask < (1 << n); mask++) // Start at 3 (binary 11) to skip single-instrument
         {
-            if (!registeredIds.Contains(accountId)) continue;
+            if (BitCount(mask) < 2) continue;
 
-            var comboKey = string.Join("+", userInstruments.OrderBy(i => i, StringComparer.OrdinalIgnoreCase));
-
-            // Build combined ratings for all accounts that have entries on ALL instruments in the combo
-            var accountRatings = new Dictionary<string, (double WeightedSum, int TotalSongs)>(StringComparer.OrdinalIgnoreCase);
-
-            // Start with the first instrument — seed the dictionary
-            bool first = true;
-            foreach (var instrument in userInstruments)
+            // Build combo key and instrument list for this mask
+            var comboInstruments = new List<string>();
+            for (int bit = 0; bit < n; bit++)
             {
-                if (!perInstrument.TryGetValue(instrument, out var summaries)) continue;
+                if ((mask & (1 << bit)) != 0)
+                    comboInstruments.Add(instrumentList[bit]);
+            }
+            var comboKey = string.Join("+", comboInstruments);
 
-                if (first)
+            // Intersect accounts across all instruments in this combo + compute weighted rating
+            Dictionary<string, (double WeightedSum, int TotalSongs)>? accountRatings = null;
+
+            foreach (var instrument in comboInstruments)
+            {
+                if (!perInstrument.TryGetValue(instrument, out var instData)) { accountRatings = null; break; }
+
+                if (accountRatings is null)
                 {
-                    foreach (var (aid, rating, songs) in summaries)
+                    // Seed from first instrument
+                    accountRatings = new Dictionary<string, (double, int)>(instData.Count, StringComparer.OrdinalIgnoreCase);
+                    foreach (var (aid, (rating, songs)) in instData)
                         accountRatings[aid] = (rating * songs, songs);
-                    first = true;
                 }
                 else
                 {
-                    // Only keep accounts that also have this instrument
-                    var currentAccountIds = new HashSet<string>(summaries.Select(s => s.AccountId), StringComparer.OrdinalIgnoreCase);
-                    var toRemove = accountRatings.Keys.Where(k => !currentAccountIds.Contains(k)).ToList();
-                    foreach (var k in toRemove) accountRatings.Remove(k);
+                    // Intersect: remove accounts not in this instrument, accumulate for those that are
+                    var toRemove = new List<string>();
+                    foreach (var aid in accountRatings.Keys)
+                    {
+                        if (!instData.ContainsKey(aid))
+                            toRemove.Add(aid);
+                    }
+                    foreach (var aid in toRemove)
+                        accountRatings.Remove(aid);
 
-                    foreach (var (aid, rating, songs) in summaries)
+                    foreach (var (aid, (rating, songs)) in instData)
                     {
                         if (accountRatings.TryGetValue(aid, out var existing))
                             accountRatings[aid] = (existing.WeightedSum + rating * songs, existing.TotalSongs + songs);
                     }
                 }
-                first = false;
             }
 
-            if (!accountRatings.ContainsKey(accountId))
-            {
-                _log.LogDebug("User {AccountId} has no entries for combo {Combo}, skipping.", accountId, comboKey);
-                continue;
-            }
+            if (accountRatings is null || accountRatings.Count == 0) continue;
 
-            // Sort all accounts by composite rating, find user's rank
+            // Sort by combo rating ASC, then AccountId ASC for deterministic tiebreak
             var sorted = accountRatings
-                .Select(kvp => (AccountId: kvp.Key, ComboRating: kvp.Value.WeightedSum / kvp.Value.TotalSongs))
+                .Select(kvp => (AccountId: kvp.Key, ComboRating: kvp.Value.WeightedSum / kvp.Value.TotalSongs, SongsPlayed: kvp.Value.TotalSongs))
                 .OrderBy(x => x.ComboRating)
                 .ThenBy(x => x.AccountId, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            var userIndex = sorted.FindIndex(x => x.AccountId.Equals(accountId, StringComparison.OrdinalIgnoreCase));
-            if (userIndex < 0) continue;
-
-            var combos = new List<UserComboRankingDto>
-            {
-                new()
-                {
-                    InstrumentCombo = comboKey,
-                    ComboRating = sorted[userIndex].ComboRating,
-                    ComboRank = userIndex + 1,
-                    TotalAccountsInCombo = sorted.Count,
-                }
-            };
-
-            _metaDb.ReplaceUserComboRankings(accountId, combos);
-            _log.LogDebug("Computed combo ranking for {AccountId} on {Combo}: rank {Rank}/{Total}.",
-                accountId, comboKey, userIndex + 1, sorted.Count);
+            _metaDb.ReplaceComboLeaderboard(comboKey, sorted, sorted.Count);
+            combosComputed++;
+            totalRows += sorted.Count;
         }
+
+        _log.LogInformation("Computed {Combos} combo leaderboards with {TotalRows:N0} total ranked entries.", combosComputed, totalRows);
+    }
+
+    private static int BitCount(int value)
+    {
+        int count = 0;
+        while (value != 0) { count += value & 1; value >>= 1; }
+        return count;
     }
 
     /// <summary>

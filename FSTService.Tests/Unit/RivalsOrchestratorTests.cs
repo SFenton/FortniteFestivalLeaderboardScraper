@@ -77,6 +77,21 @@ public sealed class RivalsOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task ComputeAllAsync_skips_when_all_users_already_complete()
+    {
+        var persistence = CreatePersistence();
+        var (orch, progress) = CreateOrchestrator(persistence);
+
+        // Register user but mark rivals as already complete
+        _metaFixture.Db.EnsureRivalsStatus("acct-complete");
+        _metaFixture.Db.CompleteRivals("acct-complete", 0, 0);
+
+        var registeredIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "acct-complete" };
+        await orch.ComputeAllAsync(registeredIds, null, CancellationToken.None);
+        // toCompute should be empty → early return at line 63
+    }
+
+    [Fact]
     public async Task ComputeAllAsync_processes_pending_accounts()
     {
         var persistence = CreatePersistence();

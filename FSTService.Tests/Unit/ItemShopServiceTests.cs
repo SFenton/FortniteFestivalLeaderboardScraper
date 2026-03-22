@@ -1,4 +1,12 @@
+using FortniteFestival.Core;
+using FortniteFestival.Core.Persistence;
+using FortniteFestival.Core.Services;
+using FSTService.Persistence;
 using FSTService.Scraping;
+using FSTService.Tests.Helpers;
+using Microsoft.Extensions.Logging;
+using NSubstitute;
+using System.Reflection;
 
 namespace FSTService.Tests.Unit;
 
@@ -141,5 +149,135 @@ public class ItemShopServiceTests
         Assert.Contains("flowers-65417f34f863", slugs);
         Assert.Contains("moves-like-jagger-fea1e3c647d8", slugs);
         Assert.Contains("sweet-child-o-mine-ba9c7596ace5", slugs);
+    }
+
+    // ─── ScrapeAsync ────────────────────────────────────
+
+    private static ItemShopService CreateService(HttpMessageHandler handler, MetaDatabase? metaDb = null)
+    {
+        var http = new HttpClient(handler);
+        var svc = new FestivalService((IFestivalPersistence?)null);
+
+        // Add a test song that matches the hash in our fake HTML
+        var flags = BindingFlags.NonPublic | BindingFlags.Instance;
+        var songsField = typeof(FestivalService).GetField("_songs", flags)!;
+        var dirtyField = typeof(FestivalService).GetField("_songsDirty", flags)!;
+        var dict = (Dictionary<string, Song>)songsField.GetValue(svc)!;
+        dict["1faef457-e84e-424b-b9de-65417f34f863"] = new Song
+        {
+            track = new Track { su = "1faef457-e84e-424b-b9de-65417f34f863", tt = "Flowers", an = "Miley Cyrus" },
+        };
+        dirtyField.SetValue(svc, true);
+
+        return new ItemShopService(
+            http,
+            svc,
+            metaDb ?? new InMemoryMetaDatabase().Db,
+            Substitute.For<ILogger<ItemShopService>>());
+    }
+
+    [Fact]
+    public async Task ScrapeAsync_WithMatchingHtml_ReturnsSongCount()
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk("""
+            <a href="/item-shop/jam-tracks/flowers-65417f34f863?lang=en-US">Flowers</a>
+            """);
+
+        var metaFixture = new InMemoryMetaDatabase();
+        var service = CreateService(handler, metaFixture.Db);
+
+        var result = await service.ScrapeAsync(CancellationToken.None);
+        Assert.Equal(1, result);
+        Assert.Single(service.InShopSongIds);
+        Assert.NotNull(service.LastScrapedAt);
+
+        metaFixture.Dispose();
+    }
+
+    [Fact]
+    public async Task ScrapeAsync_NoJamTracks_ReturnsZero()
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk("<html><body>No jam tracks here</body></html>");
+
+        var metaFixture = new InMemoryMetaDatabase();
+        var service = CreateService(handler, metaFixture.Db);
+
+        var result = await service.ScrapeAsync(CancellationToken.None);
+        Assert.Equal(0, result);
+
+        metaFixture.Dispose();
+    }
+
+    [Fact]
+    public async Task ScrapeAsync_UnchangedContent_ReturnsNegativeOne()
+    {
+        var handler = new MockHttpMessageHandler();
+        var html = """<a href="/item-shop/jam-tracks/flowers-65417f34f863?lang=en-US">Flowers</a>""";
+        handler.EnqueueJsonOk(html);
+        handler.EnqueueJsonOk(html); // Same content again
+
+        var metaFixture = new InMemoryMetaDatabase();
+        var service = CreateService(handler, metaFixture.Db);
+
+        var first = await service.ScrapeAsync(CancellationToken.None);
+        Assert.Equal(1, first);
+
+        var second = await service.ScrapeAsync(CancellationToken.None);
+        Assert.Equal(-1, second); // Unchanged
+
+        metaFixture.Dispose();
+    }
+
+    [Fact]
+    public async Task InitializeAsync_LoadsFromDbAndScrapes()
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk("""
+            <a href="/item-shop/jam-tracks/flowers-65417f34f863?lang=en-US">Flowers</a>
+            """);
+
+        var metaFixture = new InMemoryMetaDatabase();
+        var service = CreateService(handler, metaFixture.Db);
+
+        await service.InitializeAsync(CancellationToken.None);
+
+        Assert.NotNull(service.LastScrapedAt);
+
+        metaFixture.Dispose();
+    }
+
+    [Fact]
+    public async Task InitializeAsync_ScrapeFailure_DoesNotThrow()
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueException(new HttpRequestException("Network error"));
+
+        var metaFixture = new InMemoryMetaDatabase();
+        var service = CreateService(handler, metaFixture.Db);
+
+        // Should not throw — startup scrape failure is caught
+        await service.InitializeAsync(CancellationToken.None);
+        Assert.Null(service.LastScrapedAt); // Scrape failed, no timestamp
+
+        metaFixture.Dispose();
+    }
+
+    [Fact]
+    public async Task ScrapeAsync_UnmatchedSlugs_LogsWarning()
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk("""
+            <a href="/item-shop/jam-tracks/unknown-song-abcdef123456?lang=en-US">Unknown</a>
+            """);
+
+        var metaFixture = new InMemoryMetaDatabase();
+        var service = CreateService(handler, metaFixture.Db);
+
+        var result = await service.ScrapeAsync(CancellationToken.None);
+        Assert.Equal(0, result); // No matches
+
+        metaFixture.Dispose();
     }
 }

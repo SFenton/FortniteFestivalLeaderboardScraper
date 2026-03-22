@@ -16,6 +16,13 @@ public class ScrapeProgressTrackerTests
     }
 
     [Fact]
+    public void SetPhase_ComputingRankings()
+    {
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRankings);
+        Assert.Equal(ScrapeProgressTracker.ScrapePhase.ComputingRankings, _tracker.Phase);
+    }
+
+    [Fact]
     public void BeginPass_ResetsCounters()
     {
         _tracker.BeginPass(10, 5, 100);

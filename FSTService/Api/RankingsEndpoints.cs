@@ -185,8 +185,6 @@ public static partial class ApiEndpoints
             if (ranking is null)
                 return Results.NotFound(new { error = "Account not found in composite rankings." });
 
-            var combos = metaDb.GetUserComboRankings(accountId);
-
             return Results.Ok(new
             {
                 ranking.AccountId,
@@ -205,40 +203,90 @@ public static partial class ApiEndpoints
                     proBass = ranking.ProBassAdjustedSkill.HasValue ? new { skill = ranking.ProBassAdjustedSkill, rank = ranking.ProBassSkillRank } : null,
                 },
                 ranking.ComputedAt,
-                comboRankings = combos.Select(c => new
-                {
-                    c.InstrumentCombo,
-                    c.ComboRating,
-                    c.ComboRank,
-                    c.TotalAccountsInCombo,
-                    c.ComputedAt,
-                }),
             });
         })
         .WithTags("Rankings")
         .RequireRateLimiting("public");
 
-        // ─── Set instrument preferences ────────────────────────
+        // ─── Combo leaderboard (paginated) ─────────────────────
 
-        app.MapPost("/api/player/{accountId}/instruments", (
-            string accountId,
-            InstrumentPrefsRequest body,
+        app.MapGet("/api/rankings/combo", (
+            string instruments,
+            int? page,
+            int? pageSize,
             MetaDatabase metaDb) =>
         {
-            if (body.Instruments is null || body.Instruments.Count == 0)
-                return Results.BadRequest(new { error = "At least one instrument must be specified." });
+            var comboKey = NormalizeComboKey(instruments);
+            if (string.IsNullOrEmpty(comboKey))
+                return Results.BadRequest(new { error = "At least two instruments required, separated by '+'." });
 
-            metaDb.SetUserInstrumentPrefs(accountId, body.Instruments);
-            return Results.Ok(new { accountId, instruments = body.Instruments });
+            var (entries, totalAccounts) = metaDb.GetComboLeaderboard(
+                comboKey, page ?? 1, Math.Clamp(pageSize ?? 50, 1, 200));
+
+            var enriched = entries.Select(e => new
+            {
+                e.Rank,
+                e.AccountId,
+                displayName = metaDb.GetDisplayName(e.AccountId),
+                e.ComboRating,
+                e.SongsPlayed,
+                e.ComputedAt,
+            }).ToList();
+
+            return Results.Ok(new
+            {
+                comboKey,
+                page = page ?? 1,
+                pageSize = Math.Clamp(pageSize ?? 50, 1, 200),
+                totalAccounts,
+                entries = enriched,
+            });
         })
         .WithTags("Rankings")
-        .RequireRateLimiting("protected")
-        .RequireAuthorization();
-    }
-}
+        .RequireRateLimiting("public");
 
-/// <summary>Request body for POST /api/player/{accountId}/instruments.</summary>
-public sealed class InstrumentPrefsRequest
-{
-    public List<string> Instruments { get; set; } = new();
+        // ─── Single account combo rank ─────────────────────────
+
+        app.MapGet("/api/rankings/combo/{accountId}", (
+            string accountId,
+            string instruments,
+            MetaDatabase metaDb) =>
+        {
+            var comboKey = NormalizeComboKey(instruments);
+            if (string.IsNullOrEmpty(comboKey))
+                return Results.BadRequest(new { error = "At least two instruments required, separated by '+'." });
+
+            var entry = metaDb.GetComboRank(comboKey, accountId);
+            if (entry is null)
+                return Results.NotFound(new { error = "Account not found in this combo ranking." });
+
+            var totalAccounts = metaDb.GetComboTotalAccounts(comboKey);
+
+            return Results.Ok(new
+            {
+                comboKey,
+                entry.Rank,
+                entry.AccountId,
+                displayName = metaDb.GetDisplayName(accountId),
+                entry.ComboRating,
+                entry.SongsPlayed,
+                totalAccounts,
+                entry.ComputedAt,
+            });
+        })
+        .WithTags("Rankings")
+        .RequireRateLimiting("public");
+    }
+
+    /// <summary>Normalize a combo key: split by +, sort, rejoin. Returns null if fewer than 2 instruments.</summary>
+    private static string? NormalizeComboKey(string? instruments)
+    {
+        if (string.IsNullOrWhiteSpace(instruments)) return null;
+        var parts = instruments.Split('+', StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.Trim())
+            .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return parts.Count >= 2 ? string.Join("+", parts) : null;
+    }
 }

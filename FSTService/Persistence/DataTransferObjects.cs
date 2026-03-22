@@ -330,13 +330,14 @@ public sealed class RankHistoryDto
 }
 
 /// <summary>
-/// Combo ranking result for a registered user's selected instrument combination.
+/// A single entry in a combo leaderboard.
 /// </summary>
-public sealed class UserComboRankingDto
+public sealed class ComboLeaderboardEntry
 {
-    public string InstrumentCombo { get; init; } = "";
+    public int Rank { get; init; }
+    public string AccountId { get; init; } = "";
+    public string? DisplayName { get; init; }
     public double ComboRating { get; init; }
-    public int ComboRank { get; init; }
-    public int TotalAccountsInCombo { get; init; }
+    public int SongsPlayed { get; init; }
     public string ComputedAt { get; init; } = "";
 }

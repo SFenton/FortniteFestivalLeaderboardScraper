@@ -173,17 +173,17 @@ public sealed class RankingsCalculatorTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════
-    // ComputeUserComboRankings
+    // ComputeAllCombos
     // ═══════════════════════════════════════════════════════════
 
     [Fact]
-    public void ComboRankings_ComputesForRegisteredUser()
+    public void AllCombos_ComputesForAllPlayers()
     {
         var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
         var bassDb = _persistence.GetOrCreateInstrumentDb("Solo_Bass");
 
-        guitarDb.UpsertEntries("song_0", [MakeEntry("registered", 1000, rank: 1), MakeEntry("other", 500, rank: 2)]);
-        bassDb.UpsertEntries("song_0", [MakeEntry("registered", 800, rank: 1), MakeEntry("other", 400, rank: 2)]);
+        guitarDb.UpsertEntries("song_0", [MakeEntry("p1", 1000, rank: 1), MakeEntry("p2", 500, rank: 2)]);
+        bassDb.UpsertEntries("song_0", [MakeEntry("p1", 800, rank: 1), MakeEntry("p2", 400, rank: 2)]);
 
         guitarDb.RecomputeAllRanks();
         bassDb.RecomputeAllRanks();
@@ -192,40 +192,46 @@ public sealed class RankingsCalculatorTests : IDisposable
         guitarDb.ComputeAccountRankings(totalChartedSongs: 1);
         bassDb.ComputeAccountRankings(totalChartedSongs: 1);
 
-        // Register instrument prefs
-        _metaFixture.Db.SetUserInstrumentPrefs("registered", ["Solo_Guitar", "Solo_Bass"]);
+        _sut.ComputeAllCombos(["Solo_Guitar", "Solo_Bass"]);
 
-        _sut.ComputeUserComboRankings(
-            ["Solo_Guitar", "Solo_Bass"],
-            new HashSet<string> { "registered" });
-
-        var combos = _metaFixture.Db.GetUserComboRankings("registered");
-        Assert.Single(combos);
-        Assert.Contains("+", combos[0].InstrumentCombo);
-        Assert.True(combos[0].ComboRank >= 1);
-        Assert.True(combos[0].TotalAccountsInCombo >= 1);
+        // Should have computed the Solo_Bass+Solo_Guitar combo (sorted)
+        var comboKey = "Solo_Bass+Solo_Guitar";
+        var (entries, total) = _metaFixture.Db.GetComboLeaderboard(comboKey);
+        Assert.Equal(2, total);
+        Assert.Equal(2, entries.Count);
+        Assert.Equal(1, entries[0].Rank);
     }
 
     [Fact]
-    public void ComboRankings_SkipsUserWithNoEntries()
+    public void AllCombos_AccountMustHaveAllInstruments()
     {
-        var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
-        db.UpsertEntries("song_0", [MakeEntry("other", 1000, rank: 1)]);
-        db.RecomputeAllRanks();
-        db.ComputeSongStats();
-        db.ComputeAccountRankings(totalChartedSongs: 1);
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        var bassDb = _persistence.GetOrCreateInstrumentDb("Solo_Bass");
 
-        // registered user has prefs but no scores
-        _metaFixture.Db.SetUserInstrumentPrefs("registered", ["Solo_Guitar"]);
+        // p1 has both instruments, p2 only has guitar
+        guitarDb.UpsertEntries("song_0", [MakeEntry("p1", 1000, rank: 1), MakeEntry("p2", 500, rank: 2)]);
+        bassDb.UpsertEntries("song_0", [MakeEntry("p1", 800, rank: 1)]);
 
-        _sut.ComputeUserComboRankings(["Solo_Guitar"], new HashSet<string> { "registered" });
+        guitarDb.RecomputeAllRanks();
+        bassDb.RecomputeAllRanks();
+        guitarDb.ComputeSongStats();
+        bassDb.ComputeSongStats();
+        guitarDb.ComputeAccountRankings(totalChartedSongs: 1);
+        bassDb.ComputeAccountRankings(totalChartedSongs: 1);
 
-        var combos = _metaFixture.Db.GetUserComboRankings("registered");
-        Assert.Empty(combos);
+        _sut.ComputeAllCombos(["Solo_Guitar", "Solo_Bass"]);
+
+        var comboKey = "Solo_Bass+Solo_Guitar";
+        var entry = _metaFixture.Db.GetComboRank(comboKey, "p2");
+        Assert.Null(entry); // p2 doesn't have bass, shouldn't be in combo
+
+        var p1 = _metaFixture.Db.GetComboRank(comboKey, "p1");
+        Assert.NotNull(p1);
+        Assert.Equal(1, p1.Rank);
     }
 
     [Fact]
-    public void ComboRankings_NoPrefs_Skips()
+    public void AllCombos_SkipsWithFewerThan2Instruments()
     {
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
         db.UpsertEntries("song_0", [MakeEntry("p1", 1000, rank: 1)]);
@@ -233,11 +239,33 @@ public sealed class RankingsCalculatorTests : IDisposable
         db.ComputeSongStats();
         db.ComputeAccountRankings(totalChartedSongs: 1);
 
-        // No prefs set for anyone
-        _sut.ComputeUserComboRankings(["Solo_Guitar"], new HashSet<string> { "p1" });
+        _sut.ComputeAllCombos(["Solo_Guitar"]); // Only 1 instrument — no combos
+        // Should not throw, just skip
+    }
 
-        var combos = _metaFixture.Db.GetUserComboRankings("p1");
-        Assert.Empty(combos);
+    [Fact]
+    public void AllCombos_MultipleComboSizes()
+    {
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        var bassDb = _persistence.GetOrCreateInstrumentDb("Solo_Bass");
+        var drumsDb = _persistence.GetOrCreateInstrumentDb("Solo_Drums");
+
+        guitarDb.UpsertEntries("song_0", [MakeEntry("p1", 1000, rank: 1)]);
+        bassDb.UpsertEntries("song_0", [MakeEntry("p1", 800, rank: 1)]);
+        drumsDb.UpsertEntries("song_0", [MakeEntry("p1", 600, rank: 1)]);
+
+        guitarDb.RecomputeAllRanks(); bassDb.RecomputeAllRanks(); drumsDb.RecomputeAllRanks();
+        guitarDb.ComputeSongStats(); bassDb.ComputeSongStats(); drumsDb.ComputeSongStats();
+        guitarDb.ComputeAccountRankings(1); bassDb.ComputeAccountRankings(1); drumsDb.ComputeAccountRankings(1);
+
+        _sut.ComputeAllCombos(["Solo_Guitar", "Solo_Bass", "Solo_Drums"]);
+
+        // Should have 4 combos: 3 pairs + 1 triple
+        // Guitar+Bass, Guitar+Drums, Bass+Drums, Guitar+Bass+Drums
+        Assert.True(_metaFixture.Db.GetComboTotalAccounts("Solo_Bass+Solo_Guitar") > 0);
+        Assert.True(_metaFixture.Db.GetComboTotalAccounts("Solo_Drums+Solo_Guitar") > 0);
+        Assert.True(_metaFixture.Db.GetComboTotalAccounts("Solo_Bass+Solo_Drums") > 0);
+        Assert.True(_metaFixture.Db.GetComboTotalAccounts("Solo_Bass+Solo_Drums+Solo_Guitar") > 0);
     }
 
     // ═══════════════════════════════════════════════════════════

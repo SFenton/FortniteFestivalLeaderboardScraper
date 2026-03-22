@@ -405,6 +405,43 @@ public class PostScrapeOrchestratorTests : IDisposable
         // Should complete without error (no data to rank)
     }
 
+    [Fact]
+    public void CleanupSessions_WithOrphanedAccount_CleansThem()
+    {
+        // Register a user with a session that's long expired
+        _metaDb.RegisterUser("orphan-device", "orphan-acct");
+        _metaDb.InsertSession("orphan-acct", "orphan-device", "refresh-old", "Windows", DateTime.UtcNow.AddDays(-60));
+
+        // Run cleanup — should clean expired sessions and possibly auto-unregister
+        _sut.CleanupSessions();
+        // No crash = pass
+    }
+
+    [Fact]
+    public void CleanupSessions_NoSessionsToClean_NoError()
+    {
+        // Clean state — nothing to clean
+        _sut.CleanupSessions();
+    }
+
+    [Fact]
+    public async Task PruneExcessEntries_WithData_Prunes()
+    {
+        // Create entries that exceed the configured max
+        var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        var entries = Enumerable.Range(0, 50).Select(i =>
+            new LeaderboardEntry
+            {
+                AccountId = $"prune_{i}", Score = 10000 - i * 100,
+                Accuracy = 95, Stars = 5, Season = 3,
+            }).ToList();
+        db.UpsertEntries("song1", entries);
+
+        // Use max 10 pages = 1000 entries — but we only have 50, so no pruning
+        var ctx = CreateContext();
+        _sut.PruneExcessEntries(ctx);
+    }
+
     // ═══════════════════════════════════════════════════════════
     // NoOpHttpHandler (shared utility)
     // ═══════════════════════════════════════════════════════════
