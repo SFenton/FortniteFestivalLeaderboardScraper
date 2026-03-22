@@ -203,10 +203,14 @@ public sealed class PostScrapeOrchestrator
             var refreshToken = await _tokenManager.GetAccessTokenAsync(ct);
             if (refreshToken is not null)
             {
+                // Match scrape-phase concurrency: songDop × instruments × pageDop
+                var refreshConcurrency = Math.Max(1, _options.Value.SongConcurrency)
+                    * GlobalLeaderboardScraper.AllInstruments.Count
+                    * Math.Max(1, _options.Value.PageConcurrency);
                 var refreshed = await _refresher.RefreshAllAsync(
                     ctx.RegisteredIds, seenSet, chartedSongIds,
                     refreshToken, _tokenManager.AccountId!,
-                    _options.Value.PageConcurrency, ct);
+                    refreshConcurrency, ct);
                 if (refreshed > 0)
                     _log.LogInformation("Post-scrape refresh updated {Count} entries for registered users.", refreshed);
             }
