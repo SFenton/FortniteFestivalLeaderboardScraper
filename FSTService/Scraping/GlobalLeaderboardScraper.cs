@@ -77,6 +77,112 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     }
 
     /// <summary>
+    /// Fetch alltime entries for multiple accounts on one song/instrument in a single
+    /// batched V2 POST. The <c>teams</c> body includes the caller plus all targets.
+    /// Pages through the response (25 entries per page) until all targets are collected
+    /// or no more results. Filters out the caller's own entry from results.
+    /// </summary>
+    public async Task<List<LeaderboardEntry>> LookupMultipleAccountsAsync(
+        string songId,
+        string instrument,
+        IReadOnlyList<string> targetAccountIds,
+        string accessToken,
+        string callerAccountId,
+        AdaptiveConcurrencyLimiter? limiter = null,
+        CancellationToken ct = default)
+    {
+        if (targetAccountIds.Count == 0) return [];
+
+        var eventId = $"alltime_{songId}_{instrument}";
+        var baseUrl = $"{EventsBase}/api/v2/games/FNFestival/leaderboards/{eventId}/alltime/scores" +
+                      $"?accountId={callerAccountId}";
+
+        // Build teams body: [["callerAccountId"], ["target1"], ["target2"], ...]
+        var sb = new System.Text.StringBuilder();
+        sb.Append("{\"teams\":[[\"").Append(callerAccountId).Append("\"]");
+        foreach (var targetId in targetAccountIds)
+            sb.Append(",[\"").Append(targetId).Append("\"]");
+        sb.Append("]}");
+        var teamsJson = sb.ToString();
+        var label = $"{songId}/{instrument}/batch({targetAccountIds.Count})";
+
+        // Collect target IDs for fast lookup
+        var targetSet = new HashSet<string>(targetAccountIds, StringComparer.OrdinalIgnoreCase);
+        var results = new List<LeaderboardEntry>();
+
+        // Page through response (25 entries per page)
+        const int pageSize = 25;
+        for (int fromIndex = 0; ; fromIndex += pageSize)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var url = $"{baseUrl}&fromIndex={fromIndex}";
+
+            HttpRequestMessage CreateRequest()
+            {
+                var req = new HttpRequestMessage(HttpMethod.Post, url);
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                req.Content = new StringContent(teamsJson, System.Text.Encoding.UTF8, "application/json");
+                return req;
+            }
+
+            HttpResponseMessage res;
+            try
+            {
+                res = await _executor.SendAsync(CreateRequest, limiter, label, _maxLookupRetries, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "Batch lookup failed for {Label} at fromIndex={FromIndex}.",
+                    label, fromIndex);
+                break;
+            }
+
+            if (!res.IsSuccessStatusCode)
+            {
+                var body = await res.Content.ReadAsStringAsync(ct);
+                if (body.Contains("no_score_found", StringComparison.Ordinal))
+                {
+                    res.Dispose();
+                    break; // No more results
+                }
+
+                _log.LogWarning("Batch lookup returned {Status} for {Label}: {Body}",
+                    res.StatusCode, label, body);
+                res.Dispose();
+                break;
+            }
+
+            List<LeaderboardEntry>? pageEntries;
+            await using (var stream = await res.Content.ReadAsStreamAsync(ct))
+            {
+                pageEntries = await ParseV2ResponseAsync(stream, ct);
+            }
+            res.Dispose();
+
+            if (pageEntries is null || pageEntries.Count == 0)
+                break; // No more results
+
+            // Filter to only requested targets (exclude caller's own entry)
+            foreach (var entry in pageEntries)
+            {
+                if (targetSet.Contains(entry.AccountId))
+                    results.Add(entry);
+            }
+
+            // If we got fewer than a full page, there are no more results
+            if (pageEntries.Count < pageSize)
+                break;
+
+            // If we've found all targets, no need to page further
+            if (results.Count >= targetAccountIds.Count)
+                break;
+        }
+
+        return results;
+    }
+
+    /// <summary>
     /// Fetch a specific player's leaderboard entry for one song + instrument
     /// in a specific seasonal window. Returns null if the player has no entry
     /// in that season.
@@ -199,7 +305,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         var url = $"{EventsBase}/api/v2/games/FNFestival/leaderboards/{eventId}/{v2WindowId}/scores" +
                   $"?accountId={callerAccountId}&fromIndex=0";
 
-        var teamsJson = $"{{\"teams\":[[\"{targetAccountId}\"]]}}";
+        var teamsJson = $"{{\"teams\":[[\"{callerAccountId}\"],[\"{targetAccountId}\"]]}}";
         var label = $"{songId}/{instrument}/{windowId}";
 
         HttpRequestMessage CreateRequest()

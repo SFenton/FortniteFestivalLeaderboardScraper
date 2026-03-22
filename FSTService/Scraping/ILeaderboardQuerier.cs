@@ -17,6 +17,16 @@ public interface ILeaderboardQuerier
         string accessToken, string callerAccountId,
         AdaptiveConcurrencyLimiter? limiter = null, CancellationToken ct = default);
 
+    /// <summary>
+    /// Fetch alltime entries for multiple accounts on one song/instrument in a single
+    /// batched V2 POST. Pages through the response (25 entries per page) until all
+    /// requested accounts are returned or no more results.
+    /// </summary>
+    Task<List<LeaderboardEntry>> LookupMultipleAccountsAsync(
+        string songId, string instrument, IReadOnlyList<string> targetAccountIds,
+        string accessToken, string callerAccountId,
+        AdaptiveConcurrencyLimiter? limiter = null, CancellationToken ct = default);
+
     /// <summary>Fetch a player's entry in a specific seasonal window (V2 POST).</summary>
     Task<LeaderboardEntry?> LookupSeasonalAsync(
         string songId, string instrument, string windowId,

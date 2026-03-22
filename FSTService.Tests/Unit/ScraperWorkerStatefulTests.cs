@@ -341,7 +341,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlySet<string>>(),
             Arg.Any<HashSet<(string, string, string)>>(),
             Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(0));
 
         var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2 };
@@ -353,7 +353,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlySet<string>>(),
             Arg.Any<HashSet<(string, string, string)>>(),
             Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>());
 
         _personalDbBuilder.Received().RebuildForAccounts(
             Arg.Any<HashSet<string>>(), Arg.Any<MetaDatabase>());
@@ -385,7 +385,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlySet<string>>(),
             Arg.Any<HashSet<(string, string, string)>>(),
             Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(5));
 
         var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2 };
@@ -441,7 +441,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlySet<string>>(),
             Arg.Any<HashSet<(string, string, string)>>(),
             Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(0));
 
         var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2 };
@@ -476,7 +476,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlySet<string>>(),
             Arg.Any<HashSet<(string, string, string)>>(),
             Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("Refresh crashed"));
 
         var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2 };

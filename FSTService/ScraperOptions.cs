@@ -141,4 +141,12 @@ public sealed class ScraperOptions
     /// Total concurrent requests = SongConcurrency × 6 instruments × PageConcurrency.
     /// </summary>
     public int SongConcurrency { get; set; } = 1;
+
+    /// <summary>
+    /// Max accounts per batched V2 lookup request. Each request includes the caller
+    /// plus up to this many target accounts. The V2 endpoint has a ~19 KB body limit
+    /// (empirically ~518 teams). Default 500 is safely under that limit.
+    /// Configurable via <c>Scraper__LookupBatchSize</c> env var.
+    /// </summary>
+    public int LookupBatchSize { get; set; } = 500;
 }

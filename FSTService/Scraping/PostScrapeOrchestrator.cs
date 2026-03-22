@@ -210,7 +210,7 @@ public sealed class PostScrapeOrchestrator
                 var refreshed = await _refresher.RefreshAllAsync(
                     ctx.RegisteredIds, seenSet, chartedSongIds,
                     refreshToken, _tokenManager.AccountId!,
-                    refreshConcurrency, ct);
+                    refreshConcurrency, _options.Value.LookupBatchSize, ct);
                 if (refreshed > 0)
                     _log.LogInformation("Post-scrape refresh updated {Count} entries for registered users.", refreshed);
             }

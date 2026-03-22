@@ -6,16 +6,9 @@ namespace FSTService.Scraping;
 /// After each scrape pass, refreshes registered users' leaderboard entries that
 /// were NOT seen in the scraped pages (stale or missing entries).
 ///
-/// Two categories of entries are re-queried:
-/// <list type="bullet">
-///   <item><b>Gap entries</b> — songs the user has no entry for (scored below top 60K).</item>
-///   <item><b>Stale entries</b> — songs the user HAS an entry for, but it wasn't
-///         refreshed in this scrape pass (they fell out of the top 60K, so their
-///         rank/score may be outdated).</item>
-/// </list>
-///
-/// Uses the "seen set" from <see cref="GlobalLeaderboardPersistence.PipelineAggregates"/>
-/// to efficiently determine which entries need re-querying.
+/// Uses batched V2 POST lookups: one request per (song, instrument) serves all
+/// registered users at once, with pagination for large batches. This reduces
+/// API calls from O(users × songs × instruments) to O(songs × instruments × batches).
 /// </summary>
 public class PostScrapeRefresher
 {
@@ -39,15 +32,10 @@ public class PostScrapeRefresher
     }
 
     /// <summary>
-    /// Refresh stale and missing entries for all registered users.
+    /// Refresh stale and missing entries for all registered users using batched lookups.
+    /// Iterates per (song, instrument) and batches all registered users into a single
+    /// V2 POST request (chunked if more than <paramref name="lookupBatchSize"/> users).
     /// </summary>
-    /// <param name="registeredAccountIds">The set of registered account IDs.</param>
-    /// <param name="seenEntries">Entries seen during this scrape pass.</param>
-    /// <param name="chartedSongIds">All charted song IDs.</param>
-    /// <param name="accessToken">Epic API access token.</param>
-    /// <param name="callerAccountId">Caller's account ID for API requests.</param>
-    /// <param name="ct">Cancellation token.</param>
-    /// <returns>Total entries added or updated across all users.</returns>
     public virtual async Task<int> RefreshAllAsync(
         IReadOnlySet<string> registeredAccountIds,
         HashSet<(string AccountId, string SongId, string Instrument)> seenEntries,
@@ -55,184 +43,155 @@ public class PostScrapeRefresher
         string accessToken,
         string callerAccountId,
         int maxConcurrency = 10,
+        int lookupBatchSize = 500,
         CancellationToken ct = default)
     {
         if (registeredAccountIds.Count == 0) return 0;
 
         var instruments = GlobalLeaderboardScraper.AllInstruments;
-        int totalUpdated = 0;
+        int totalLeaderboards = chartedSongIds.Count * instruments.Count;
 
         int initialDop = Math.Max(1, maxConcurrency / 2);
         int maxDop = maxConcurrency;
         using var limiter = new AdaptiveConcurrencyLimiter(
             initialDop, minDop: 2, maxDop: maxDop, _log);
         _progress.SetAdaptiveLimiter(limiter);
+        _progress.BeginPhaseProgress(totalLeaderboards);
 
         _log.LogInformation(
-            "Post-scrape refresh using adaptive concurrency: initial DOP={InitialDop}, max={MaxDop}.",
-            initialDop, maxDop);
+            "Post-scrape refresh: {Songs} songs × {Instruments} instruments = {Total} leaderboards, "
+            + "{Users} registered users, batch size {BatchSize}, DOP={InitialDop}→{MaxDop}.",
+            chartedSongIds.Count, instruments.Count, totalLeaderboards,
+            registeredAccountIds.Count, lookupBatchSize, initialDop, maxDop);
 
-        foreach (var accountId in registeredAccountIds)
-        {
-            ct.ThrowIfCancellationRequested();
+        int totalUpdated = 0;
 
-            try
-            {
-                var updated = await RefreshAccountAsync(
-                    accountId, seenEntries, chartedSongIds, instruments,
-                    accessToken, callerAccountId, limiter, ct);
-                totalUpdated += updated;
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                _log.LogWarning(ex, "Post-scrape refresh failed for {AccountId}. Will retry next pass.", accountId);
-            }
-
-            _progress.ReportPhaseAccountComplete();
-        }
-
-        _progress.SetAdaptiveLimiter(null);
-        return totalUpdated;
-    }
-
-    /// <summary>
-    /// Refresh stale/missing entries for a single account.
-    /// </summary>
-    private async Task<int> RefreshAccountAsync(
-        string accountId,
-        HashSet<(string AccountId, string SongId, string Instrument)> seenEntries,
-        IReadOnlyList<string> chartedSongIds,
-        IReadOnlyList<string> instruments,
-        string accessToken,
-        string callerAccountId,
-        AdaptiveConcurrencyLimiter limiter,
-        CancellationToken ct)
-    {
-        // Build the work list: pairs that are either missing or stale
-        var workItems = new List<(string SongId, string Instrument, bool IsStale)>();
+        // Process each (song, instrument) leaderboard
+        var tasks = new List<Task<int>>();
 
         foreach (var songId in chartedSongIds)
         {
             foreach (var instrument in instruments)
             {
-                bool wasSeen = seenEntries.Contains((accountId, songId, instrument));
-                if (wasSeen)
-                    continue; // Entry was refreshed in the scrape — nothing to do
+                ct.ThrowIfCancellationRequested();
 
-                var instrumentDb = _persistence.GetOrCreateInstrumentDb(instrument);
-                var existing = instrumentDb.GetEntry(songId, accountId);
-
-                if (existing is null)
-                {
-                    // Gap: user has no entry at all. Only query if the backfill
-                    // previously found a score (BackfillProgress.EntryFound = 1),
-                    // or if backfill hasn't run yet. Skip confirmed "no score" entries.
-                    workItems.Add((songId, instrument, false));
-                }
-                else
-                {
-                    // Stale: we have an entry but it wasn't in the scrape pages
-                    workItems.Add((songId, instrument, true));
-                }
+                tasks.Add(RefreshLeaderboardAsync(
+                    songId, instrument, registeredAccountIds, seenEntries,
+                    accessToken, callerAccountId, lookupBatchSize, limiter, ct));
             }
         }
 
-        if (workItems.Count == 0) return 0;
+        // Execute with concurrency control via the adaptive limiter
+        // (each task acquires/releases the limiter internally)
+        var results = await Task.WhenAll(tasks);
+        totalUpdated = results.Sum();
 
-        _progress.AddPhaseItems(workItems.Count);
+        _progress.SetAdaptiveLimiter(null);
 
-        _log.LogDebug(
-            "Post-scrape refresh for {AccountId}: {Count} pairs to check ({Stale} stale, {Gap} gap).",
-            accountId, workItems.Count,
-            workItems.Count(w => w.IsStale),
-            workItems.Count(w => !w.IsStale));
+        if (totalUpdated > 0)
+            _log.LogInformation("Post-scrape refresh complete: {Updated} entries updated.", totalUpdated);
+
+        return totalUpdated;
+    }
+
+    /// <summary>
+    /// Refresh all registered users for a single (song, instrument) leaderboard.
+    /// Chunks users into batches and calls the batched V2 lookup for each chunk.
+    /// </summary>
+    private async Task<int> RefreshLeaderboardAsync(
+        string songId,
+        string instrument,
+        IReadOnlySet<string> registeredAccountIds,
+        HashSet<(string AccountId, string SongId, string Instrument)> seenEntries,
+        string accessToken,
+        string callerAccountId,
+        int batchSize,
+        AdaptiveConcurrencyLimiter limiter,
+        CancellationToken ct)
+    {
+        // Collect users who need refresh for this (song, instrument)
+        var needsRefresh = new List<(string AccountId, bool IsStale)>();
+        foreach (var accountId in registeredAccountIds)
+        {
+            if (seenEntries.Contains((accountId, songId, instrument)))
+                continue; // Was in the scrape pages — already fresh
+
+            var instrumentDb = _persistence.GetOrCreateInstrumentDb(instrument);
+            var existing = instrumentDb.GetEntry(songId, accountId);
+            needsRefresh.Add((accountId, existing is not null));
+        }
+
+        if (needsRefresh.Count == 0)
+        {
+            _progress.ReportPhaseItemComplete();
+            return 0;
+        }
 
         int updated = 0;
 
-        var tasks = workItems.Select(async item =>
+        // Chunk into batches
+        for (int offset = 0; offset < needsRefresh.Count; offset += batchSize)
         {
+            var chunk = needsRefresh.GetRange(offset, Math.Min(batchSize, needsRefresh.Count - offset));
+            var targetIds = chunk.Select(c => c.AccountId).ToList();
+            var staleSet = new HashSet<string>(
+                chunk.Where(c => c.IsStale).Select(c => c.AccountId),
+                StringComparer.OrdinalIgnoreCase);
+
             await limiter.WaitAsync(ct);
             try
             {
                 _progress.ReportPhaseRequest();
-                var result = await RefreshSingleEntryAsync(
-                    accountId, item.SongId, item.Instrument, item.IsStale,
-                    accessToken, callerAccountId, limiter, ct);
-                if (result) _progress.ReportPhaseEntryUpdated();
-                return result;
+
+                List<LeaderboardEntry> entries;
+                try
+                {
+                    entries = await _scraper.LookupMultipleAccountsAsync(
+                        songId, instrument, targetIds,
+                        accessToken, callerAccountId, limiter, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.LogDebug(ex, "Batch refresh failed for {Song}/{Instrument}.", songId, instrument);
+                    continue;
+                }
+
+                // Process each returned entry
+                foreach (var entry in entries)
+                {
+                    bool isStale = staleSet.Contains(entry.AccountId);
+                    if (ProcessEntry(songId, instrument, entry, isStale))
+                        updated++;
+                }
             }
             finally
             {
                 limiter.Release();
-                _progress.ReportPhaseItemComplete();
             }
-        }).ToList();
-
-        var results = await Task.WhenAll(tasks);
-        updated += results.Count(r => r);
-
-        if (updated > 0)
-        {
-            _log.LogInformation(
-                "Post-scrape refresh for {AccountId}: updated {Updated} entries out of {Total} checked.",
-                accountId, updated, workItems.Count);
         }
+
+        _progress.ReportPhaseItemComplete();
+        if (updated > 0)
+            _progress.ReportPhaseEntryUpdated(updated);
 
         return updated;
     }
 
     /// <summary>
-    /// Re-query a single song/instrument for an account.
+    /// Process a single returned entry: detect changes, record score history, upsert.
     /// Returns true if the entry was inserted or updated.
     /// </summary>
-    private async Task<bool> RefreshSingleEntryAsync(
-        string accountId,
-        string songId,
-        string instrument,
-        bool isStale,
-        string accessToken,
-        string callerAccountId,
-        AdaptiveConcurrencyLimiter limiter,
-        CancellationToken ct)
+    private bool ProcessEntry(string songId, string instrument, LeaderboardEntry entry, bool isStale)
     {
-        LeaderboardEntry? entry;
-        try
-        {
-            entry = await _scraper.LookupAccountAsync(
-                songId, instrument, accountId, accessToken, callerAccountId, limiter, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogDebug(ex, "Refresh lookup failed for {Account}/{Song}/{Instrument}.",
-                accountId, songId, instrument);
-            return false;
-        }
-
         var instrumentDb = _persistence.GetOrCreateInstrumentDb(instrument);
 
-        if (entry is null)
-        {
-            if (isStale)
-            {
-                // Entry was stale and now not found — very rare (ban, data reset)
-                _log.LogWarning(
-                    "Stale entry for {Account}/{Song}/{Instrument} returned null from API. Entry may be stale but keeping it.",
-                    accountId, songId, instrument);
-            }
-            // Gap entry with no score — nothing to do
-            return false;
-        }
-
-        // Check if the score changed (for stale entries)
         if (isStale)
         {
-            var existing = instrumentDb.GetEntry(songId, accountId);
+            var existing = instrumentDb.GetEntry(songId, entry.AccountId);
             if (existing is not null && existing.Score != entry.Score)
             {
-                // Score actually changed while out of the scraped range
                 _metaDb.InsertScoreChange(
-                    songId, instrument, accountId,
+                    songId, instrument, entry.AccountId,
                     existing.Score, entry.Score, existing.Rank, entry.Rank,
                     entry.Accuracy, entry.IsFullCombo, entry.Stars,
                     entry.Percentile, entry.Season, entry.EndTime,
@@ -241,21 +200,18 @@ public class PostScrapeRefresher
         }
         else
         {
-            // New entry discovered during gap check
+            // New entry discovered
             _metaDb.InsertScoreChange(
-                songId, instrument, accountId,
+                songId, instrument, entry.AccountId,
                 null, entry.Score, null, entry.Rank,
                 entry.Accuracy, entry.IsFullCombo, entry.Stars,
                 entry.Percentile, entry.Season, entry.EndTime,
                 allTimeRank: entry.Rank);
         }
 
-        // UPSERT the entry — ApiRank preserves the real Epic API rank
         entry.ApiRank = entry.Rank;
         instrumentDb.UpsertEntries(songId, [entry]);
 
-        // Rank is a guaranteed population floor — if the user is ranked N,
-        // there are at least N entries on this leaderboard.
         if (entry.Rank > 0)
             _metaDb.RaiseLeaderboardPopulationFloor(songId, instrument, entry.Rank);
 

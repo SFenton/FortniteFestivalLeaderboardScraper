@@ -197,6 +197,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             Arg.Any<string>(),
             Arg.Any<string>(),
             Arg.Any<int>(),
+            Arg.Any<int>(),
             Arg.Any<CancellationToken>())
             .Returns(5);
 
@@ -210,6 +211,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             Arg.Any<List<string>>(),
             Arg.Is("test-access-token"),
             Arg.Is("caller-001"),
+            Arg.Any<int>(),
             Arg.Any<int>(),
             Arg.Any<CancellationToken>());
     }
@@ -241,6 +243,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             Arg.Any<List<string>>(),
             Arg.Any<string>(),
             Arg.Any<string>(),
+            Arg.Any<int>(),
             Arg.Any<int>(),
             Arg.Any<CancellationToken>())
             .Throws(new InvalidOperationException("API error"));
