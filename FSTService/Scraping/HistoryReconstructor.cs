@@ -363,6 +363,8 @@ public class HistoryReconstructor
             "Reconstructing history for {AccountId}: {Total} song/instrument pairs to process ({Already} already done).",
             accountId, reconstructable.Count, alreadyProcessed.Count);
 
+        _progress.AddPhaseItems(reconstructable.Count - alreadyProcessed.Count);
+
         int totalHistoryEntries = 0;
         int songsProcessed = alreadyProcessed.Count;
         int seasonsQueried = 0;
@@ -430,6 +432,8 @@ public class HistoryReconstructor
                 var processed = Interlocked.Increment(ref songsProcessed);
 
                 _metaDb.MarkHistoryReconSongProcessed(accountId, songId, instrument);
+                _progress.ReportPhaseItemComplete();
+                if (entries > 0) _progress.ReportPhaseEntryUpdated(entries);
 
                 // Update progress every 50 songs
                 if (processed % 50 == 0)
@@ -450,6 +454,7 @@ public class HistoryReconstructor
                     "History recon failed for {AccountId}/{Song}/{Instrument}. Skipping.",
                     accountId, songId, instrument);
                 Interlocked.Increment(ref songsProcessed);
+                _progress.ReportPhaseItemComplete();
             }
         }
 
@@ -532,6 +537,7 @@ public class HistoryReconstructor
                     songId, instrument, window.WindowId,
                     accountId, accessToken, callerAccountId, limiter, ct);
                 Interlocked.Increment(ref queriesMade);
+                _progress.ReportPhaseRequest();
 
                 if (sessions is not null)
                 {
@@ -546,6 +552,7 @@ public class HistoryReconstructor
                 _log.LogDebug(ex, "Seasonal lookup failed for {Song}/{Instrument}/season_{Season}.",
                     songId, instrument, s);
                 Interlocked.Increment(ref queriesMade);
+                _progress.ReportPhaseRequest();
             }
             finally
             {

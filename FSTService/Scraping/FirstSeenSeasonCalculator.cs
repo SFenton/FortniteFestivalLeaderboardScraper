@@ -74,6 +74,8 @@ public class FirstSeenSeasonCalculator
             "FirstSeenSeason: calculating for {Count} song(s) ({Already} already done, {Total} total).",
             songsToCalculate.Count, alreadyCalculated.Count, allSongs.Count);
 
+        _progress.BeginPhaseProgress(songsToCalculate.Count);
+
         // Get season windows (needed for probing)
         var seasonWindows = _metaDb.GetSeasonWindows();
 
@@ -105,6 +107,7 @@ public class FirstSeenSeasonCalculator
                 {
                     _metaDb.UpsertFirstSeenSeason(songId, null, null, globalMaxSeason.Value, "no_entries_estimated");
                     calculated++;
+                    _progress.ReportPhaseItemComplete();
                     _log.LogDebug("FirstSeenSeason: {SongId} has no entries. EstimatedSeason={Max}.",
                         songId, globalMaxSeason.Value);
                 }
@@ -115,6 +118,7 @@ public class FirstSeenSeasonCalculator
                 // Already the earliest possible season
                 _metaDb.UpsertFirstSeenSeason(songId, 1, 1, 1, "min_is_1");
                 calculated++;
+                _progress.ReportPhaseItemComplete();
             }
         }
 
@@ -142,6 +146,8 @@ public class FirstSeenSeasonCalculator
                     item.SongId, result.FirstSeenSeason,
                     item.MinSeason, result.FirstSeenSeason, result.ProbeResult);
 
+                _progress.ReportPhaseRequest();
+                _progress.ReportPhaseItemComplete();
                 return 1;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -154,6 +160,8 @@ public class FirstSeenSeasonCalculator
                     item.SongId, item.MinSeason,
                     item.MinSeason, item.MinSeason, "probe_failed");
 
+                _progress.ReportPhaseRequest();
+                _progress.ReportPhaseItemComplete();
                 return 1;
             }
             finally

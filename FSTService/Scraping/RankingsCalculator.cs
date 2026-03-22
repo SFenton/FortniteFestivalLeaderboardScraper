@@ -16,17 +16,20 @@ public sealed class RankingsCalculator
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly MetaDatabase _metaDb;
     private readonly PathDataStore _pathStore;
+    private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<RankingsCalculator> _log;
 
     public RankingsCalculator(
         GlobalLeaderboardPersistence persistence,
         MetaDatabase metaDb,
         PathDataStore pathStore,
+        ScrapeProgressTracker progress,
         ILogger<RankingsCalculator> log)
     {
         _persistence = persistence;
         _metaDb = metaDb;
         _pathStore = pathStore;
+        _progress = progress;
         _log = log;
     }
 
@@ -42,6 +45,7 @@ public sealed class RankingsCalculator
         var allPopulation = _metaDb.GetAllLeaderboardPopulation();
 
         // ── Phase 1+2: SongStats + AccountRankings per instrument (parallel) ──
+        _progress.BeginPhaseProgress(instruments.Count);
         var tasks = instruments.Select(instrument => Task.Run(() =>
         {
             ct.ThrowIfCancellationRequested();
@@ -76,6 +80,7 @@ public sealed class RankingsCalculator
             }
 
             db.ComputeAccountRankings(totalCharted, CredibilityThreshold, PopulationMedian);
+            _progress.ReportPhaseItemComplete();
         }, ct)).ToList();
 
         await Task.WhenAll(tasks);

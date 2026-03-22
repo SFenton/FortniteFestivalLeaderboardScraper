@@ -63,12 +63,14 @@ public sealed class RivalsOrchestrator
             return;
 
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRivals);
+        _progress.BeginPhaseProgress(totalItems: 0, totalAccounts: toCompute.Count);
         _log.LogInformation("Computing rivals for {Count} registered user(s).", toCompute.Count);
 
         var tasks = toCompute.Select(accountId => Task.Run(() =>
         {
             ct.ThrowIfCancellationRequested();
             ComputeForUser(accountId, dirtyInstrumentsByUser);
+            _progress.ReportPhaseAccountComplete();
         }, ct)).ToList();
 
         await Task.WhenAll(tasks);

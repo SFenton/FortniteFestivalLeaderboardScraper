@@ -88,7 +88,7 @@ public class PersonalDbBuilderTests : IDisposable
     }
 
     private PersonalDbBuilder CreateBuilder()
-        => new(_persistence, _service, _metaDb.Db, _dataDir, _log);
+        => new(_persistence, _service, _metaDb.Db, new ScrapeProgressTracker(), _dataDir, _log);
 
     // ─── Build ──────────────────────────────────────────────────
 
@@ -239,7 +239,7 @@ public class PersonalDbBuilderTests : IDisposable
     public void Build_NoSongsLoaded_ReturnsNull()
     {
         var emptyService = CreateServiceWithSongs(Array.Empty<Song>());
-        var builder = new PersonalDbBuilder(_persistence, emptyService, _metaDb.Db, _dataDir, _log);
+        var builder = new PersonalDbBuilder(_persistence, emptyService, _metaDb.Db, new ScrapeProgressTracker(), _dataDir, _log);
 
         var result = builder.Build("device1", "acct1");
         Assert.Null(result);
@@ -418,7 +418,7 @@ public class PersonalDbBuilderTests : IDisposable
     {
         // Use an empty FestivalService so Build returns null (no songs)
         var emptyService = CreateServiceWithSongs(Array.Empty<Song>());
-        var builder = new PersonalDbBuilder(_persistence, emptyService, _metaDb.Db, _dataDir, _log);
+        var builder = new PersonalDbBuilder(_persistence, emptyService, _metaDb.Db, new ScrapeProgressTracker(), _dataDir, _log);
 
         _metaDb.Db.RegisterUser("deviceNull", "acctNull");
 
@@ -658,7 +658,7 @@ public class PersonalDbBuilderTests : IDisposable
     public void GetSongsAsJson_EmptyService_ReturnsNull()
     {
         var emptyService = CreateServiceWithSongs(Array.Empty<Song>());
-        var builder = new PersonalDbBuilder(_persistence, emptyService, _metaDb.Db, _dataDir, _log);
+        var builder = new PersonalDbBuilder(_persistence, emptyService, _metaDb.Db, new ScrapeProgressTracker(), _dataDir, _log);
 
         var result = builder.GetSongsAsJson(0, 100);
         Assert.Null(result);
@@ -720,7 +720,7 @@ public class PersonalDbBuilderTests : IDisposable
     public void GetScoresAsJson_EmptyService_ReturnsNull()
     {
         var emptyService = CreateServiceWithSongs(Array.Empty<Song>());
-        var builder = new PersonalDbBuilder(_persistence, emptyService, _metaDb.Db, _dataDir, _log);
+        var builder = new PersonalDbBuilder(_persistence, emptyService, _metaDb.Db, new ScrapeProgressTracker(), _dataDir, _log);
 
         var result = builder.GetScoresAsJson("acct1", 0, 100);
         Assert.Null(result);
@@ -885,7 +885,7 @@ public class PersonalDbBuilderTests : IDisposable
             }
         };
         var svc = CreateServiceWithSongs(new[] { songNoIn });
-        var builder = new PersonalDbBuilder(_persistence, svc, _metaDb.Db, _dataDir, _log);
+        var builder = new PersonalDbBuilder(_persistence, svc, _metaDb.Db, new ScrapeProgressTracker(), _dataDir, _log);
 
         // Insert a score for this song
         var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");

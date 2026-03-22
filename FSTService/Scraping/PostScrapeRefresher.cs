@@ -22,16 +22,19 @@ public class PostScrapeRefresher
     private readonly ILeaderboardQuerier _scraper;
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly MetaDatabase _metaDb;
+    private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<PostScrapeRefresher> _log;
 
     public PostScrapeRefresher(
         ILeaderboardQuerier scraper,
         GlobalLeaderboardPersistence persistence,
+        ScrapeProgressTracker progress,
         ILogger<PostScrapeRefresher> log)
     {
         _scraper = scraper;
         _persistence = persistence;
         _metaDb = persistence.Meta;
+        _progress = progress;
         _log = log;
     }
 
@@ -63,6 +66,7 @@ public class PostScrapeRefresher
         int maxDop = maxConcurrency;
         using var limiter = new AdaptiveConcurrencyLimiter(
             initialDop, minDop: 2, maxDop: maxDop, _log);
+        _progress.SetAdaptiveLimiter(limiter);
 
         _log.LogInformation(
             "Post-scrape refresh using adaptive concurrency: initial DOP={InitialDop}, max={MaxDop}.",
@@ -84,8 +88,11 @@ public class PostScrapeRefresher
             {
                 _log.LogWarning(ex, "Post-scrape refresh failed for {AccountId}. Will retry next pass.", accountId);
             }
+
+            _progress.ReportPhaseAccountComplete();
         }
 
+        _progress.SetAdaptiveLimiter(null);
         return totalUpdated;
     }
 
@@ -133,6 +140,8 @@ public class PostScrapeRefresher
 
         if (workItems.Count == 0) return 0;
 
+        _progress.AddPhaseItems(workItems.Count);
+
         _log.LogDebug(
             "Post-scrape refresh for {AccountId}: {Count} pairs to check ({Stale} stale, {Gap} gap).",
             accountId, workItems.Count,
@@ -146,13 +155,17 @@ public class PostScrapeRefresher
             await limiter.WaitAsync(ct);
             try
             {
-                return await RefreshSingleEntryAsync(
+                _progress.ReportPhaseRequest();
+                var result = await RefreshSingleEntryAsync(
                     accountId, item.SongId, item.Instrument, item.IsStale,
                     accessToken, callerAccountId, limiter, ct);
+                if (result) _progress.ReportPhaseEntryUpdated();
+                return result;
             }
             finally
             {
                 limiter.Release();
+                _progress.ReportPhaseItemComplete();
             }
         }).ToList();
 

@@ -77,11 +77,12 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _persistence,
             new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null),
             _metaDb,
+            new ScrapeProgressTracker(),
             _tempDir,
             Substitute.For<ILogger<PersonalDbBuilder>>());
 
         _backfiller = Substitute.For<ScoreBackfiller>(
-            _scraper, _persistence,
+            _scraper, _persistence, new ScrapeProgressTracker(),
             Substitute.For<ILogger<ScoreBackfiller>>());
 
         _backfillQueue = new BackfillQueue();
@@ -89,7 +90,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
         _progress = new ScrapeProgressTracker();
 
         _refresher = Substitute.For<PostScrapeRefresher>(
-            _scraper, _persistence,
+            _scraper, _persistence, new ScrapeProgressTracker(),
             Substitute.For<ILogger<PostScrapeRefresher>>());
 
         _historyReconstructor = Substitute.For<HistoryReconstructor>(
@@ -140,7 +141,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
 
-        var rankingsCalculator = new RankingsCalculator(_persistence, _persistence.Meta, pathDataStore, Substitute.For<ILogger<RankingsCalculator>>());
+        var rankingsCalculator = new RankingsCalculator(_persistence, _persistence.Meta, pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
 
         var postScrapeOrchestrator = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,

@@ -44,7 +44,7 @@ public class PostScrapeRefresherTests : IDisposable
         var progress = new ScrapeProgressTracker();
         var scraperLog = Substitute.For<ILogger<GlobalLeaderboardScraper>>();
         var scraper = new GlobalLeaderboardScraper(http, progress, scraperLog, maxLookupRetries: 0);
-        var refresher = new PostScrapeRefresher(scraper, _persistence, _log);
+        var refresher = new PostScrapeRefresher(scraper, _persistence, progress, _log);
         return (refresher, handler);
     }
 

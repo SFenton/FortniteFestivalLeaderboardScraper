@@ -16,6 +16,7 @@ public class ScoreBackfiller
     private readonly ILeaderboardQuerier _scraper;
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly MetaDatabase _metaDb;
+    private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<ScoreBackfiller> _log;
 
     /// <summary>Save progress counters to the DB every N songs checked.</summary>
@@ -24,11 +25,13 @@ public class ScoreBackfiller
     public ScoreBackfiller(
         ILeaderboardQuerier scraper,
         GlobalLeaderboardPersistence persistence,
+        ScrapeProgressTracker progress,
         ILogger<ScoreBackfiller> log)
     {
         _scraper = scraper;
         _persistence = persistence;
         _metaDb = persistence.Meta;
+        _progress = progress;
         _log = log;
     }
 
@@ -94,6 +97,7 @@ public class ScoreBackfiller
             return 0;
         }
 
+        _progress.AddPhaseItems(workItems.Count);
         int newEntriesThisRun = 0;
 
         try
@@ -102,6 +106,7 @@ public class ScoreBackfiller
             int maxDop = maxConcurrency;
             using var limiter = new AdaptiveConcurrencyLimiter(
                 initialDop, minDop: 2, maxDop: maxDop, _log);
+            _progress.SetAdaptiveLimiter(limiter);
 
             _log.LogInformation(
                 "Backfill using adaptive concurrency: initial DOP={InitialDop}, max={MaxDop}.",
@@ -112,6 +117,7 @@ public class ScoreBackfiller
                 await limiter.WaitAsync(ct);
                 try
                 {
+                    _progress.ReportPhaseRequest();
                     return await ProcessSingleLookupAsync(
                         accountId, item.SongId, item.Instrument,
                         accessToken, callerAccountId, limiter, ct);
@@ -119,6 +125,7 @@ public class ScoreBackfiller
                 finally
                 {
                     limiter.Release();
+                    _progress.ReportPhaseItemComplete();
                 }
             }).ToList();
 
@@ -131,6 +138,7 @@ public class ScoreBackfiller
                 {
                     entriesFound++;
                     newEntriesThisRun++;
+                    _progress.ReportPhaseEntryUpdated();
                 }
 
                 // Flush progress periodically

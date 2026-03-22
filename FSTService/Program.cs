@@ -149,6 +149,7 @@ builder.Services.AddSingleton<PersonalDbBuilder>(sp =>
         sp.GetRequiredService<GlobalLeaderboardPersistence>(),
         sp.GetRequiredService<FestivalService>(),
         sp.GetRequiredService<MetaDatabase>(),
+        sp.GetRequiredService<FSTService.Scraping.ScrapeProgressTracker>(),
         Path.GetFullPath(opts.DataDirectory),
         sp.GetRequiredService<ILogger<PersonalDbBuilder>>());
 });

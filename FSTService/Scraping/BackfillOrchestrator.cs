@@ -67,6 +67,7 @@ public sealed class BackfillOrchestrator
         if (accountIds.Count == 0) return;
 
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.BackfillingScores);
+        _progress.BeginPhaseProgress(totalItems: 0, totalAccounts: accountIds.Count);
 
         var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
         if (accessToken is null)
@@ -112,6 +113,8 @@ public sealed class BackfillOrchestrator
             {
                 _log.LogError(ex, "Backfill failed for {AccountId}. Will retry next pass.", accountId);
             }
+
+            _progress.ReportPhaseAccountComplete();
         }
     }
 
@@ -139,6 +142,7 @@ public sealed class BackfillOrchestrator
         if (accountsToReconstruct.Count == 0) return;
 
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ReconstructingHistory);
+        _progress.BeginPhaseProgress(totalItems: 0, totalAccounts: accountsToReconstruct.Count);
 
         var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
         if (accessToken is null)
@@ -206,6 +210,8 @@ public sealed class BackfillOrchestrator
                         _log.LogWarning(ex, "Personal DB rebuild after history recon failed for {AccountId}.", accountId);
                     }
                 }
+
+                _progress.ReportPhaseAccountComplete();
             }
             catch (OperationCanceledException) { /* propagated via WhenAll */ }
             catch (Exception ex)

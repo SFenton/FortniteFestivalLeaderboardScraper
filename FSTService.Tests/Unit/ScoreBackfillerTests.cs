@@ -47,7 +47,7 @@ public class ScoreBackfillerTests : IDisposable
         var progress = new ScrapeProgressTracker();
         var scraperLog = Substitute.For<ILogger<GlobalLeaderboardScraper>>();
         var scraper = new GlobalLeaderboardScraper(http, progress, scraperLog, maxLookupRetries: 0);
-        var backfiller = new ScoreBackfiller(scraper, _persistence, _log);
+        var backfiller = new ScoreBackfiller(scraper, _persistence, progress, _log);
         return (backfiller, handler);
     }
 

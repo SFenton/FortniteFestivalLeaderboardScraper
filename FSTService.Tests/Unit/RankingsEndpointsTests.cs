@@ -156,7 +156,7 @@ public sealed class RankingsEndpointsTests : IDisposable
 
         var pathStore = new PathDataStore(Path.Combine(_tempDir, "fst-service.db"));
         var calc = new RankingsCalculator(_persistence, _metaFixture.Db,
-            pathStore, Substitute.For<ILogger<RankingsCalculator>>());
+            pathStore, new ScrapeProgressTracker(), Substitute.For<ILogger<RankingsCalculator>>());
         calc.ComputeCompositeRankings(["Solo_Guitar", "Solo_Bass"]);
 
         var (entries, total) = _metaFixture.Db.GetCompositeRankings(1, 50);

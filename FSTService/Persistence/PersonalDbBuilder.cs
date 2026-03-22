@@ -18,6 +18,7 @@ public class PersonalDbBuilder
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly FestivalService _festivalService;
     private readonly MetaDatabase _metaDb;
+    private readonly Scraping.ScrapeProgressTracker _progress;
     private readonly string _personalDir;
     private readonly ILogger<PersonalDbBuilder> _log;
 
@@ -38,12 +39,14 @@ public class PersonalDbBuilder
         GlobalLeaderboardPersistence persistence,
         FestivalService festivalService,
         MetaDatabase metaDb,
+        Scraping.ScrapeProgressTracker progress,
         string dataDir,
         ILogger<PersonalDbBuilder> log)
     {
         _persistence = persistence;
         _festivalService = festivalService;
         _metaDb = metaDb;
+        _progress = progress;
         _personalDir = Path.Combine(dataDir, "personal");
         _log = log;
 
@@ -164,6 +167,8 @@ public class PersonalDbBuilder
                     _log.LogError(ex, "Failed to copy personal DB for device {DeviceId}.", devices[i]);
                 }
             }
+
+            _progress.ReportPhaseItemComplete();
         }
 
         return rebuilt;

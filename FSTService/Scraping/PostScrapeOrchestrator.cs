@@ -162,6 +162,7 @@ public sealed class PostScrapeOrchestrator
             return;
 
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.RebuildingPersonalDbs);
+        _progress.BeginPhaseProgress(totalItems: 0, totalAccounts: ctx.Aggregates.ChangedAccountIds.Count);
         try
         {
             var changedIds = new HashSet<string>(ctx.Aggregates.ChangedAccountIds, StringComparer.OrdinalIgnoreCase);
@@ -192,6 +193,7 @@ public sealed class PostScrapeOrchestrator
             return;
 
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.RefreshingRegisteredUsers);
+        _progress.BeginPhaseProgress(totalItems: 0, totalAccounts: ctx.RegisteredIds.Count);
         try
         {
             var seenSet = new HashSet<(string AccountId, string SongId, string Instrument)>(

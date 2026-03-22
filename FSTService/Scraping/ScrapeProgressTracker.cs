@@ -62,6 +62,17 @@ public sealed class ScrapeProgressTracker
     private int _nameResResolved;
     private int _nameResFailed;
 
+    // ─── Generic phase counters ──────────────────────────────
+    // Reusable counters that any phase can opt into. Auto-reset on SetPhase().
+
+    private int _phaseTotal;
+    private int _phaseCompleted;
+    private int _phaseAccountsTotal;
+    private int _phaseAccountsCompleted;
+    private int _phaseRequests;
+    private int _phaseRetries;
+    private int _phaseUpdated;
+
     // ─── Adaptive concurrency ───────────────────────────────
 
     private AdaptiveConcurrencyLimiter? _adaptiveLimiter;
@@ -100,6 +111,7 @@ public sealed class ScrapeProgressTracker
         _nameResCompleted = 0;
         _nameResResolved = 0;
         _nameResFailed = 0;
+        ResetGenericCounters();
         _startedAtUtc = DateTime.UtcNow;
         _phaseStartedAtUtc = _startedAtUtc;
         _passStopwatch.Restart();
@@ -145,6 +157,49 @@ public sealed class ScrapeProgressTracker
         Interlocked.Increment(ref _completedSongs);
     }
 
+    // ─── Generic phase reporters ─────────────────────────────
+
+    /// <summary>Initialize generic phase counters. Call after SetPhase().</summary>
+    public void BeginPhaseProgress(int totalItems, int totalAccounts = 0)
+    {
+        _phaseTotal = totalItems;
+        _phaseCompleted = 0;
+        _phaseAccountsTotal = totalAccounts;
+        _phaseAccountsCompleted = 0;
+        _phaseRequests = 0;
+        _phaseRetries = 0;
+        _phaseUpdated = 0;
+    }
+
+    /// <summary>Add to the total work item count (for incrementally-discovered work).</summary>
+    public void AddPhaseItems(int additional) => Interlocked.Add(ref _phaseTotal, additional);
+
+    /// <summary>Report one work item completed.</summary>
+    public void ReportPhaseItemComplete() => Interlocked.Increment(ref _phaseCompleted);
+
+    /// <summary>Report one account-level unit completed.</summary>
+    public void ReportPhaseAccountComplete() => Interlocked.Increment(ref _phaseAccountsCompleted);
+
+    /// <summary>Report one HTTP API request made.</summary>
+    public void ReportPhaseRequest() => Interlocked.Increment(ref _phaseRequests);
+
+    /// <summary>Report one retry attempt.</summary>
+    public void ReportPhaseRetry() => Interlocked.Increment(ref _phaseRetries);
+
+    /// <summary>Report entries created or updated.</summary>
+    public void ReportPhaseEntryUpdated(int count = 1) => Interlocked.Add(ref _phaseUpdated, count);
+
+    private void ResetGenericCounters()
+    {
+        _phaseTotal = 0;
+        _phaseCompleted = 0;
+        _phaseAccountsTotal = 0;
+        _phaseAccountsCompleted = 0;
+        _phaseRequests = 0;
+        _phaseRetries = 0;
+        _phaseUpdated = 0;
+    }
+
     // ─── Name resolution reporters ──────────────────────────
 
     /// <summary>Set total batches at the start of name resolution.</summary>
@@ -178,6 +233,7 @@ public sealed class ScrapeProgressTracker
         if (currentOp is not null)
             _completedOperations.Add(currentOp);
 
+        ResetGenericCounters();
         _phaseStartedAtUtc = DateTime.UtcNow;
         _phaseStopwatch.Restart();
         _phase = phase;
@@ -304,29 +360,19 @@ public sealed class ScrapeProgressTracker
         {
             ScrapePhase.Scraping => BuildScrapingSnapshot(elapsed),
             ScrapePhase.ResolvingNames => BuildNameResolutionSnapshot(elapsed),
-            ScrapePhase.RebuildingPersonalDbs => new OperationSnapshot
-            {
-                Operation = "RebuildingPersonalDbs",
-                StartedAtUtc = _phaseStartedAtUtc,
-                ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 1),
-            },
             ScrapePhase.Initializing => new OperationSnapshot
             {
                 Operation = "Initializing",
                 StartedAtUtc = _phaseStartedAtUtc,
                 ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 1),
             },
+            ScrapePhase.RebuildingPersonalDbs or
             ScrapePhase.RefreshingRegisteredUsers or
             ScrapePhase.BackfillingScores or
             ScrapePhase.ReconstructingHistory or
             ScrapePhase.CalculatingFirstSeen or
-            ScrapePhase.ComputingRivals => new OperationSnapshot
-            {
-                Operation = phase.ToString(),
-                StartedAtUtc = _phaseStartedAtUtc,
-                ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 1),
-                CurrentDop = _adaptiveLimiter?.CurrentDop,
-            },
+            ScrapePhase.ComputingRankings or
+            ScrapePhase.ComputingRivals => BuildGenericPhaseSnapshot(phase.ToString(), elapsed),
             ScrapePhase.PostScrapeEnrichment => BuildPostScrapeEnrichmentSnapshot(elapsed),
             _ => null,
         };
@@ -416,6 +462,53 @@ public sealed class ScrapeProgressTracker
             Batches = new ProgressCounter { Completed = completed, Total = total },
             AccountsResolved = _nameResResolved,
             FailedBatches = _nameResFailed,
+        };
+    }
+
+    private OperationSnapshot BuildGenericPhaseSnapshot(string operation, TimeSpan elapsed)
+    {
+        var total = _phaseTotal;
+        var completed = _phaseCompleted;
+        var accountsTotal = _phaseAccountsTotal;
+        var accountsCompleted = _phaseAccountsCompleted;
+        var requests = _phaseRequests;
+        var retries = _phaseRetries;
+        var updated = _phaseUpdated;
+
+        double? progressPercent = null;
+        TimeSpan? estimatedRemaining = null;
+
+        if (total > 0)
+        {
+            progressPercent = Math.Min(100.0, (double)completed / total * 100.0);
+        }
+        else if (accountsTotal > 0)
+        {
+            progressPercent = Math.Min(100.0, (double)accountsCompleted / accountsTotal * 100.0);
+        }
+
+        if (progressPercent is > 0 and < 100)
+        {
+            var totalEstimatedTime = elapsed / (progressPercent.Value / 100.0);
+            estimatedRemaining = totalEstimatedTime - elapsed;
+            if (estimatedRemaining < TimeSpan.Zero)
+                estimatedRemaining = TimeSpan.Zero;
+        }
+
+        return new OperationSnapshot
+        {
+            Operation = operation,
+            StartedAtUtc = _phaseStartedAtUtc,
+            ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 1),
+            EstimatedRemainingSeconds = estimatedRemaining.HasValue
+                ? Math.Round(estimatedRemaining.Value.TotalSeconds, 0) : null,
+            ProgressPercent = progressPercent.HasValue ? Math.Round(progressPercent.Value, 1) : null,
+            Accounts = accountsTotal > 0 ? new ProgressCounter { Completed = accountsCompleted, Total = accountsTotal } : null,
+            WorkItems = total > 0 ? new ProgressCounter { Completed = completed, Total = total } : null,
+            Requests = requests > 0 ? requests : null,
+            Retries = retries > 0 ? retries : null,
+            EntriesUpdated = updated > 0 ? updated : null,
+            CurrentDop = _adaptiveLimiter?.CurrentDop,
         };
     }
 
@@ -521,6 +614,11 @@ public sealed class OperationSnapshot
     public ProgressCounter? Batches { get; init; }
     public int? AccountsResolved { get; init; }
     public int? FailedBatches { get; init; }
+
+    // ── Generic phase progress ──
+    public ProgressCounter? Accounts { get; init; }
+    public ProgressCounter? WorkItems { get; init; }
+    public int? EntriesUpdated { get; init; }
 }
 
 public sealed class ProgressCounter

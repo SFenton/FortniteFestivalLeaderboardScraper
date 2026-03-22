@@ -425,4 +425,237 @@ public class ScrapeProgressTrackerTests
         var progress = _tracker.GetProgressResponse();
         Assert.Null(progress.Current);
     }
+
+    // ─── Generic phase progress ─────────────────────────
+
+    [Fact]
+    public void BeginPhaseProgress_SetsCountersVisibleInSnapshot()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.RefreshingRegisteredUsers);
+        _tracker.BeginPhaseProgress(totalItems: 100, totalAccounts: 3);
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal("RefreshingRegisteredUsers", progress.Current?.Operation);
+        Assert.Equal(100, progress.Current?.WorkItems?.Total);
+        Assert.Equal(0, progress.Current?.WorkItems?.Completed);
+        Assert.Equal(3, progress.Current?.Accounts?.Total);
+        Assert.Equal(0, progress.Current?.Accounts?.Completed);
+        Assert.Equal(0.0, progress.Current?.ProgressPercent);
+    }
+
+    [Fact]
+    public void ReportPhaseItemComplete_IncrementsAndUpdatesProgress()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.BackfillingScores);
+        _tracker.BeginPhaseProgress(totalItems: 10);
+
+        _tracker.ReportPhaseItemComplete();
+        _tracker.ReportPhaseItemComplete();
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal(2, progress.Current?.WorkItems?.Completed);
+        Assert.Equal(10, progress.Current?.WorkItems?.Total);
+        Assert.Equal(20.0, progress.Current?.ProgressPercent);
+    }
+
+    [Fact]
+    public void AddPhaseItems_IncreasesTotalAndAffectsProgress()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.RefreshingRegisteredUsers);
+        _tracker.BeginPhaseProgress(totalItems: 0, totalAccounts: 2);
+
+        // First account's work discovered
+        _tracker.AddPhaseItems(50);
+        _tracker.ReportPhaseItemComplete();
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal(50, progress.Current?.WorkItems?.Total);
+        Assert.Equal(1, progress.Current?.WorkItems?.Completed);
+        Assert.Equal(2.0, progress.Current?.ProgressPercent);
+    }
+
+    [Fact]
+    public void ReportPhaseAccountComplete_Increments()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.RebuildingPersonalDbs);
+        _tracker.BeginPhaseProgress(totalItems: 0, totalAccounts: 5);
+
+        _tracker.ReportPhaseAccountComplete();
+        _tracker.ReportPhaseAccountComplete();
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal(2, progress.Current?.Accounts?.Completed);
+        Assert.Equal(5, progress.Current?.Accounts?.Total);
+        // Progress based on accounts when no work items
+        Assert.Equal(40.0, progress.Current?.ProgressPercent);
+    }
+
+    [Fact]
+    public void ReportPhaseRequest_And_ReportPhaseRetry_Increment()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.BackfillingScores);
+        _tracker.BeginPhaseProgress(totalItems: 10);
+
+        _tracker.ReportPhaseRequest();
+        _tracker.ReportPhaseRequest();
+        _tracker.ReportPhaseRetry();
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal(2, progress.Current?.Requests);
+        Assert.Equal(1, progress.Current?.Retries);
+    }
+
+    [Fact]
+    public void ReportPhaseEntryUpdated_Accumulates()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.RefreshingRegisteredUsers);
+        _tracker.BeginPhaseProgress(totalItems: 10);
+
+        _tracker.ReportPhaseEntryUpdated();
+        _tracker.ReportPhaseEntryUpdated(5);
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal(6, progress.Current?.EntriesUpdated);
+    }
+
+    [Fact]
+    public void GenericPhaseSnapshot_EstimatesRemainingTime()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.BackfillingScores);
+        _tracker.BeginPhaseProgress(totalItems: 100);
+
+        // Simulate 50% complete
+        for (int i = 0; i < 50; i++)
+            _tracker.ReportPhaseItemComplete();
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal(50.0, progress.Current?.ProgressPercent);
+        // Estimated remaining should be non-null at 50%
+        Assert.NotNull(progress.Current?.EstimatedRemainingSeconds);
+    }
+
+    [Fact]
+    public void GenericPhaseSnapshot_NullFieldsWhenZero()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRankings);
+        // No BeginPhaseProgress called — all counters at 0
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal("ComputingRankings", progress.Current?.Operation);
+        Assert.Null(progress.Current?.WorkItems);
+        Assert.Null(progress.Current?.Accounts);
+        Assert.Null(progress.Current?.Requests);
+        Assert.Null(progress.Current?.Retries);
+        Assert.Null(progress.Current?.EntriesUpdated);
+        Assert.Null(progress.Current?.ProgressPercent);
+    }
+
+    [Fact]
+    public void SetPhase_ResetsGenericCounters()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.BackfillingScores);
+        _tracker.BeginPhaseProgress(totalItems: 100, totalAccounts: 2);
+        _tracker.ReportPhaseItemComplete();
+        _tracker.ReportPhaseRequest();
+        _tracker.ReportPhaseEntryUpdated(5);
+
+        // Transition to a new phase — counters should reset
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.ReconstructingHistory);
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal("ReconstructingHistory", progress.Current?.Operation);
+        Assert.Null(progress.Current?.WorkItems);
+        Assert.Null(progress.Current?.Accounts);
+        Assert.Null(progress.Current?.Requests);
+        Assert.Null(progress.Current?.EntriesUpdated);
+    }
+
+    [Fact]
+    public void SetPhase_SnapshotsGenericCountersBeforeReset()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.BackfillingScores);
+        _tracker.BeginPhaseProgress(totalItems: 10, totalAccounts: 1);
+
+        for (int i = 0; i < 10; i++)
+            _tracker.ReportPhaseItemComplete();
+        _tracker.ReportPhaseAccountComplete();
+        _tracker.ReportPhaseEntryUpdated(3);
+        _tracker.ReportPhaseRequest();
+
+        // Transition — previous phase should be snapshotted
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.ReconstructingHistory);
+
+        var progress = _tracker.GetProgressResponse();
+        var backfillOp = progress.CompletedOperations
+            .FirstOrDefault(o => o.Operation == "BackfillingScores");
+        Assert.NotNull(backfillOp);
+        Assert.Equal(10, backfillOp!.WorkItems?.Completed);
+        Assert.Equal(10, backfillOp.WorkItems?.Total);
+        Assert.Equal(1, backfillOp.Accounts?.Completed);
+        Assert.Equal(1, backfillOp.Accounts?.Total);
+        Assert.Equal(3, backfillOp.EntriesUpdated);
+        Assert.Equal(100.0, backfillOp.ProgressPercent);
+    }
+
+    [Fact]
+    public void GenericPhaseSnapshot_ProgressPercent_CappedAt100()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRivals);
+        _tracker.BeginPhaseProgress(totalItems: 0, totalAccounts: 1);
+
+        _tracker.ReportPhaseAccountComplete();
+        _tracker.ReportPhaseAccountComplete(); // More than total
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal(100.0, progress.Current?.ProgressPercent);
+    }
+
+    [Fact]
+    public void RebuildingPersonalDbs_UsesGenericPhaseSnapshot()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.RebuildingPersonalDbs);
+        _tracker.BeginPhaseProgress(totalItems: 0, totalAccounts: 3);
+        _tracker.ReportPhaseAccountComplete();
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal("RebuildingPersonalDbs", progress.Current?.Operation);
+        Assert.Equal(3, progress.Current?.Accounts?.Total);
+        Assert.Equal(1, progress.Current?.Accounts?.Completed);
+    }
+
+    [Fact]
+    public void OperationSnapshot_NewFieldDefaults()
+    {
+        var snapshot = new OperationSnapshot();
+        Assert.Null(snapshot.Accounts);
+        Assert.Null(snapshot.WorkItems);
+        Assert.Null(snapshot.EntriesUpdated);
+    }
+
+    [Fact]
+    public void GenericPhaseSnapshot_AdaptiveLimiterDop()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.RefreshingRegisteredUsers);
+        _tracker.BeginPhaseProgress(totalItems: 10);
+
+        using var limiter = new AdaptiveConcurrencyLimiter(32, 4, 128,
+            NSubstitute.Substitute.For<Microsoft.Extensions.Logging.ILogger>());
+        _tracker.SetAdaptiveLimiter(limiter);
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal(32, progress.Current?.CurrentDop);
+    }
 }

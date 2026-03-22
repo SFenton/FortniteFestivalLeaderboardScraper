@@ -49,7 +49,7 @@ public sealed class RankingsCalculatorTests : IDisposable
         _pathStore = new PathDataStore(coreDbPath);
 
         _sut = new RankingsCalculator(_persistence, _metaFixture.Db,
-            _pathStore, Substitute.For<ILogger<RankingsCalculator>>());
+            _pathStore, new ScrapeProgressTracker(), Substitute.For<ILogger<RankingsCalculator>>());
     }
 
     public void Dispose()
