@@ -217,4 +217,139 @@ public class PostScrapeRefresher
 
         return true;
     }
+
+    // ─── Current-season session refresh ─────────────────────────
+
+    /// <summary>
+    /// Query the current season for all registered users to capture sub-optimal sessions
+    /// (plays that didn't beat the all-time best) for the score history chart.
+    /// Uses the same batched V2 POST approach as the alltime refresh.
+    /// </summary>
+    /// <returns>Number of new session history entries inserted.</returns>
+    public virtual async Task<int> RefreshCurrentSeasonSessionsAsync(
+        IReadOnlySet<string> registeredAccountIds,
+        IReadOnlyList<string> chartedSongIds,
+        string seasonPrefix,
+        string accessToken,
+        string callerAccountId,
+        int maxConcurrency = 10,
+        int lookupBatchSize = 500,
+        CancellationToken ct = default)
+    {
+        if (registeredAccountIds.Count == 0) return 0;
+
+        var instruments = GlobalLeaderboardScraper.AllInstruments;
+        int totalLeaderboards = chartedSongIds.Count * instruments.Count;
+
+        int initialDop = Math.Max(1, maxConcurrency / 2);
+        int maxDop = maxConcurrency;
+        using var limiter = new AdaptiveConcurrencyLimiter(
+            initialDop, minDop: 2, maxDop: maxDop, _log);
+        _progress.SetAdaptiveLimiter(limiter);
+        _progress.BeginPhaseProgress(totalLeaderboards);
+
+        _log.LogInformation(
+            "Current-season session refresh ({Season}): {Total} leaderboards, {Users} users, batch {BatchSize}.",
+            seasonPrefix, totalLeaderboards, registeredAccountIds.Count, lookupBatchSize);
+
+        int totalNewSessions = 0;
+        var targetIds = registeredAccountIds.ToList();
+
+        var tasks = new List<Task<int>>();
+        foreach (var songId in chartedSongIds)
+        {
+            foreach (var instrument in instruments)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                tasks.Add(RefreshSeasonalSessionsForLeaderboardAsync(
+                    songId, instrument, seasonPrefix, targetIds,
+                    accessToken, callerAccountId, lookupBatchSize, limiter, ct));
+            }
+        }
+
+        var results = await Task.WhenAll(tasks);
+        totalNewSessions = results.Sum();
+
+        _progress.SetAdaptiveLimiter(null);
+
+        if (totalNewSessions > 0)
+            _log.LogInformation("Current-season session refresh: {New} new history entries.", totalNewSessions);
+
+        return totalNewSessions;
+    }
+
+    /// <summary>
+    /// Fetch all sessions for registered users on one (song, instrument) in the current season.
+    /// Inserts new sessions into ScoreHistory, deduplicating by endTime.
+    /// </summary>
+    private async Task<int> RefreshSeasonalSessionsForLeaderboardAsync(
+        string songId,
+        string instrument,
+        string seasonPrefix,
+        IReadOnlyList<string> targetIds,
+        string accessToken,
+        string callerAccountId,
+        int batchSize,
+        AdaptiveConcurrencyLimiter limiter,
+        CancellationToken ct)
+    {
+        int newSessions = 0;
+
+        for (int offset = 0; offset < targetIds.Count; offset += batchSize)
+        {
+            var chunk = targetIds.Skip(offset).Take(batchSize).ToList();
+
+            await limiter.WaitAsync(ct);
+            try
+            {
+                _progress.ReportPhaseRequest();
+
+                List<SessionHistoryEntry> sessions;
+                try
+                {
+                    sessions = await _scraper.LookupMultipleAccountSessionsAsync(
+                        songId, instrument, seasonPrefix, chunk,
+                        accessToken, callerAccountId, limiter, ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.LogDebug(ex, "Season session lookup failed for {Song}/{Instrument}/{Season}.",
+                        songId, instrument, seasonPrefix);
+                    continue;
+                }
+
+                // Insert new sessions into ScoreHistory
+                foreach (var session in sessions)
+                {
+                    // ScoreHistory deduplicates via unique index on
+                    // (AccountId, SongId, Instrument, NewScore, ScoreAchievedAt)
+                    // so duplicate inserts are harmless (UPSERT via ON CONFLICT).
+                    var instrumentDb = _persistence.GetOrCreateInstrumentDb(instrument);
+                    var existing = instrumentDb.GetEntry(songId, session.AccountId);
+                    int? oldScore = existing?.Score;
+
+                    _metaDb.InsertScoreChange(
+                        songId, instrument, session.AccountId,
+                        oldScore, session.Score,
+                        existing?.Rank, session.Rank,
+                        session.Accuracy, session.IsFullCombo, session.Stars,
+                        session.Percentile, session.Season, session.EndTime,
+                        seasonRank: session.Rank);
+
+                    newSessions++;
+                }
+            }
+            finally
+            {
+                limiter.Release();
+            }
+        }
+
+        _progress.ReportPhaseItemComplete();
+        if (newSessions > 0)
+            _progress.ReportPhaseEntryUpdated(newSessions);
+
+        return newSessions;
+    }
 }

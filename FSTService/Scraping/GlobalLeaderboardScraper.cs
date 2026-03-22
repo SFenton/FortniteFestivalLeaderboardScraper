@@ -183,6 +183,114 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     }
 
     /// <summary>
+    /// Fetch all sessions for multiple accounts on one song/instrument in a seasonal window.
+    /// Returns a flat list of <see cref="SessionHistoryEntry"/> across all accounts.
+    /// Pages through the V2 response (25 entries per page).
+    /// </summary>
+    public async Task<List<SessionHistoryEntry>> LookupMultipleAccountSessionsAsync(
+        string songId,
+        string instrument,
+        string seasonPrefix,
+        IReadOnlyList<string> targetAccountIds,
+        string accessToken,
+        string callerAccountId,
+        AdaptiveConcurrencyLimiter? limiter = null,
+        CancellationToken ct = default)
+    {
+        if (targetAccountIds.Count == 0) return [];
+
+        var eventId = $"{seasonPrefix}_{songId}";
+        var windowId = $"{songId}_{instrument}";
+        var baseUrl = $"{EventsBase}/api/v2/games/FNFestival/leaderboards/{eventId}/{windowId}/scores" +
+                      $"?accountId={callerAccountId}";
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append("{\"teams\":[[\"").Append(callerAccountId).Append("\"]");
+        foreach (var targetId in targetAccountIds)
+            sb.Append(",[\"").Append(targetId).Append("\"]");
+        sb.Append("]}");
+        var teamsJson = sb.ToString();
+        var label = $"{songId}/{instrument}/{seasonPrefix}/sessions({targetAccountIds.Count})";
+
+        var targetSet = new HashSet<string>(targetAccountIds, StringComparer.OrdinalIgnoreCase);
+        var allSessions = new List<SessionHistoryEntry>();
+
+        const int pageSize = 25;
+        for (int fromIndex = 0; ; fromIndex += pageSize)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var url = $"{baseUrl}&fromIndex={fromIndex}";
+
+            HttpRequestMessage CreateRequest()
+            {
+                var req = new HttpRequestMessage(HttpMethod.Post, url);
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                req.Content = new StringContent(teamsJson, System.Text.Encoding.UTF8, "application/json");
+                return req;
+            }
+
+            HttpResponseMessage res;
+            try
+            {
+                res = await _executor.SendAsync(CreateRequest, limiter, label, _maxLookupRetries, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogWarning(ex, "Batch session lookup failed for {Label} at fromIndex={FromIndex}.",
+                    label, fromIndex);
+                break;
+            }
+
+            if (!res.IsSuccessStatusCode)
+            {
+                var body = await res.Content.ReadAsStringAsync(ct);
+                res.Dispose();
+                if (body.Contains("no_score_found", StringComparison.Ordinal))
+                    break;
+                _log.LogWarning("Batch session lookup returned {Status} for {Label}: {Body}",
+                    res.StatusCode, label, body);
+                break;
+            }
+
+            int entriesOnPage = 0;
+            await using (var stream = await res.Content.ReadAsStreamAsync(ct))
+            {
+                // Parse all entries on this page, extracting sessions for target accounts
+                using var doc = await System.Text.Json.JsonDocument.ParseAsync(stream, cancellationToken: ct);
+                var root = doc.RootElement;
+                if (root.ValueKind != System.Text.Json.JsonValueKind.Array)
+                    break;
+
+                foreach (var e in root.EnumerateArray())
+                {
+                    entriesOnPage++;
+                    string accountId = "";
+                    if (e.TryGetProperty("teamId", out var tid) && tid.ValueKind == System.Text.Json.JsonValueKind.String)
+                        accountId = tid.GetString()!;
+
+                    if (!targetSet.Contains(accountId))
+                        continue;
+
+                    int rank = e.TryGetProperty("rank", out var rk) && rk.ValueKind == System.Text.Json.JsonValueKind.Number
+                        ? rk.GetInt32() : 0;
+                    double percentile = e.TryGetProperty("percentile", out var pct) && pct.ValueKind == System.Text.Json.JsonValueKind.Number
+                        ? pct.GetDouble() : 0;
+
+                    var sessions = ParseAllSessionsFromEntry(e, accountId, rank, percentile);
+                    allSessions.AddRange(sessions);
+                }
+            }
+            res.Dispose();
+
+            if (entriesOnPage < pageSize)
+                break;
+        }
+
+        return allSessions;
+    }
+
+    /// <summary>
     /// Fetch a specific player's leaderboard entry for one song + instrument
     /// in a specific seasonal window. Returns null if the player has no entry
     /// in that season.

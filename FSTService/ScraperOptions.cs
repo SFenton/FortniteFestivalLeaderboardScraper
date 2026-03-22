@@ -149,4 +149,12 @@ public sealed class ScraperOptions
     /// Configurable via <c>Scraper__LookupBatchSize</c> env var.
     /// </summary>
     public int LookupBatchSize { get; set; } = 500;
+
+    /// <summary>
+    /// When true, the post-scrape refresh also queries the current season for each
+    /// registered user to capture sub-optimal sessions (plays that didn't beat the
+    /// all-time best) for the score history chart.
+    /// Doubles the refresh API calls but provides complete play-by-play history.
+    /// </summary>
+    public bool RefreshCurrentSeasonSessions { get; set; } = true;
 }

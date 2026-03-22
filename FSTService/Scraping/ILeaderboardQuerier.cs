@@ -38,4 +38,15 @@ public interface ILeaderboardQuerier
         string songId, string instrument, string windowId,
         string targetAccountId, string accessToken, string callerAccountId,
         AdaptiveConcurrencyLimiter? limiter = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// Fetch all sessions for multiple accounts on one song/instrument in a seasonal window.
+    /// Returns a flat list of sessions across all accounts (each tagged with its AccountId).
+    /// Pages through the V2 response (25 entries per page).
+    /// </summary>
+    Task<List<SessionHistoryEntry>> LookupMultipleAccountSessionsAsync(
+        string songId, string instrument, string seasonPrefix,
+        IReadOnlyList<string> targetAccountIds,
+        string accessToken, string callerAccountId,
+        AdaptiveConcurrencyLimiter? limiter = null, CancellationToken ct = default);
 }

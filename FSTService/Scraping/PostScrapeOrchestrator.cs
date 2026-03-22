@@ -213,6 +213,20 @@ public sealed class PostScrapeOrchestrator
                     refreshConcurrency, _options.Value.LookupBatchSize, ct);
                 if (refreshed > 0)
                     _log.LogInformation("Post-scrape refresh updated {Count} entries for registered users.", refreshed);
+
+                // Current-season session refresh: capture sub-optimal plays for history chart
+                if (_options.Value.RefreshCurrentSeasonSessions)
+                {
+                    var currentSeason = _persistence.GetMaxSeasonAcrossInstruments() ?? 1;
+                    var seasonPrefix = HistoryReconstructor.GetSeasonPrefix(currentSeason);
+
+                    var newSessions = await _refresher.RefreshCurrentSeasonSessionsAsync(
+                        ctx.RegisteredIds, chartedSongIds, seasonPrefix,
+                        refreshToken, _tokenManager.AccountId!,
+                        refreshConcurrency, _options.Value.LookupBatchSize, ct);
+                    if (newSessions > 0)
+                        _log.LogInformation("Current-season session refresh captured {Count} new history entries.", newSessions);
+                }
             }
             else
             {
