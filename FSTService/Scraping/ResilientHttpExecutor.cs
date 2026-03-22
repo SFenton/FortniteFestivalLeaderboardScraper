@@ -10,8 +10,10 @@ namespace FSTService.Scraping;
 /// <para>Retry behaviour:</para>
 /// <list type="bullet">
 ///   <item>Exponential backoff: 500 ms × 2^(attempt−1) for normal retries</item>
-///   <item>CDN 403 blocks (non-JSON body) use an extended fixed schedule:
-///         500 ms, 1 s, 2 s, 5 s, 10 s, 15 s, 30 s, 45 s, 60 s</item>
+///   <item>CDN 403 blocks (non-JSON body) trigger a shared cooldown: all requests
+///         on this executor wait until the cooldown expires, then one probe request
+///         tests whether the CDN is available again. Schedule: 500 ms, 1 s, 2 s,
+///         5 s, 10 s, 15 s, 30 s, 45 s, 60 s</item>
 ///   <item>429 responses honour the <c>Retry-After</c> header when present</item>
 ///   <item>Network errors (<see cref="HttpRequestException"/>) and non-cancellation
 ///         <see cref="TaskCanceledException"/> (timeouts) trigger retry</item>
@@ -53,6 +55,14 @@ public sealed class ResilientHttpExecutor
 
     private readonly HttpClient _http;
     private readonly ILogger _log;
+
+    // ── Shared CDN cooldown state ─────────────────────────────
+    // When a CDN block is detected, _cdnCooldownUntil is set to a future time.
+    // All concurrent SendAsync calls wait until this time before sending.
+    // The _cdnGate semaphore ensures only one request probes the CDN at a time.
+    private DateTimeOffset _cdnCooldownUntil;
+    private readonly SemaphoreSlim _cdnGate = new(1, 1);
+    private int _cdnRetryIndex; // current position in the delay schedule
 
     public ResilientHttpExecutor(HttpClient http, ILogger log)
     {
@@ -106,6 +116,9 @@ public sealed class ResilientHttpExecutor
                     BaseDelay.TotalMilliseconds * Math.Pow(2, attempt - 1));
                 await Task.Delay(backoff, ct);
             }
+
+            // ── Wait for any active CDN cooldown before sending ──
+            await WaitForCdnCooldownAsync(ct);
 
             HttpResponseMessage res;
             try
@@ -194,11 +207,12 @@ public sealed class ResilientHttpExecutor
     }
 
     /// <summary>
-    /// Retry a CDN-blocked request (403 with non-JSON body) using the extended
-    /// backoff schedule. CDN retries are separate from the normal retry budget.
-    /// Each retry reports failure to the limiter so AIMD backs off DOP.
-    /// The limiter slot is released during CDN waits so other work can proceed,
-    /// then re-acquired before the next attempt.
+    /// Handle a CDN-blocked request using a shared cooldown. The first request to
+    /// detect a CDN block sets a cooldown timestamp and becomes the "probe" — it
+    /// walks the extended backoff schedule, testing the CDN after each delay.
+    /// All other concurrent requests simply wait for the cooldown to pass, then
+    /// retry their own request normally. This prevents all requests from hammering
+    /// the CDN in parallel during a block.
     /// </summary>
     private async Task<HttpResponseMessage> RetryCdnBlockAsync(
         Func<HttpRequestMessage> requestFactory,
@@ -207,76 +221,106 @@ public sealed class ResilientHttpExecutor
         CancellationToken ct)
     {
         var delays = CdnRetryDelaysOverride ?? DefaultCdnRetryDelays;
-        HttpResponseMessage? lastRes = null;
 
-        for (int i = 0; i < delays.Length; i++)
+        // Try to become the probe. Only one request probes at a time.
+        if (!_cdnGate.Wait(0))
         {
-            _log.LogWarning(
-                "CDN block on {Operation} (CDN retry {CdnAttempt}/{CdnMax}), waiting {Delay:F1}s",
-                label ?? "request", i + 1, delays.Length, delays[i].TotalSeconds);
+            // Another request is already probing — just wait for cooldown, then retry our request
+            _log.LogDebug("CDN block on {Operation} — waiting for probe to clear cooldown.", label ?? "request");
+            await WaitForCdnCooldownAsync(ct);
             limiter?.ReportFailure();
-
-            // Release the limiter slot while waiting so other work can proceed
-            limiter?.Release();
-            try
-            {
-                await Task.Delay(delays[i], ct);
-            }
-            finally
-            {
-                // Re-acquire before retrying (even if cancelled, so slot accounting stays balanced)
-                if (limiter is not null)
-                    await limiter.WaitAsync(ct);
-            }
-
-            HttpResponseMessage res;
-            try
-            {
-                res = await _http.SendAsync(requestFactory(), ct);
-            }
-            catch (HttpRequestException)
-            {
-                continue; // Network error during CDN retry — try next delay
-            }
-            catch (TaskCanceledException) when (!ct.IsCancellationRequested)
-            {
-                continue; // Timeout during CDN retry — try next delay
-            }
-
-            lastRes?.Dispose();
-
-            if (res.IsSuccessStatusCode)
-            {
-                limiter?.ReportSuccess();
-                return res;
-            }
-
-            // Check if still a CDN block
-            if ((int)res.StatusCode == 403)
-            {
-                var body = await res.Content.ReadAsStringAsync(ct);
-                if (!body.TrimStart().StartsWith('{'))
-                {
-                    lastRes = res;
-                    continue; // Still CDN blocked — try next delay
-                }
-
-                // Got a JSON 403 — re-wrap body and return for normal handling
-                res.Content.Dispose();
-                res.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
-                return res;
-            }
-
-            // Different status code — return for caller to handle
-            return res;
+            return await _http.SendAsync(requestFactory(), ct);
         }
 
-        // Exhausted CDN retries
-        _log.LogWarning(
-            "CDN block on {Operation} persisted after {CdnMax} retries. Giving up.",
-            label ?? "request", delays.Length);
-        limiter?.ReportFailure();
+        // We are the probe. Walk the retry schedule.
+        try
+        {
+            for (int i = _cdnRetryIndex; i < delays.Length; i++)
+            {
+                _cdnRetryIndex = i + 1;
 
-        return lastRes ?? new HttpResponseMessage(System.Net.HttpStatusCode.Forbidden);
+                // Set cooldown so all other requests wait
+                _cdnCooldownUntil = DateTimeOffset.UtcNow + delays[i];
+
+                _log.LogWarning(
+                    "CDN block on {Operation} (CDN retry {CdnAttempt}/{CdnMax}), waiting {Delay:F1}s",
+                    label ?? "request", i + 1, delays.Length, delays[i].TotalSeconds);
+                limiter?.ReportFailure();
+
+                await Task.Delay(delays[i], ct);
+
+                HttpResponseMessage res;
+                try
+                {
+                    res = await _http.SendAsync(requestFactory(), ct);
+                }
+                catch (HttpRequestException)
+                {
+                    continue;
+                }
+                catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    continue;
+                }
+
+                if (res.IsSuccessStatusCode)
+                {
+                    // CDN is back — clear cooldown and reset retry index
+                    _cdnCooldownUntil = default;
+                    _cdnRetryIndex = 0;
+                    limiter?.ReportSuccess();
+                    return res;
+                }
+
+                if ((int)res.StatusCode == 403)
+                {
+                    var body = await res.Content.ReadAsStringAsync(ct);
+                    if (!body.TrimStart().StartsWith('{'))
+                    {
+                        res.Dispose();
+                        continue; // Still CDN blocked — try next delay
+                    }
+
+                    // JSON 403 — CDN is clear, this is an API error
+                    _cdnCooldownUntil = default;
+                    _cdnRetryIndex = 0;
+                    res.Content.Dispose();
+                    res.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+                    return res;
+                }
+
+                // Different status — CDN is clear
+                _cdnCooldownUntil = default;
+                _cdnRetryIndex = 0;
+                return res;
+            }
+
+            // Exhausted all CDN retries
+            _log.LogWarning(
+                "CDN block on {Operation} persisted after {CdnMax} retries. Giving up.",
+                label ?? "request", delays.Length);
+            _cdnCooldownUntil = default;
+            _cdnRetryIndex = 0;
+            limiter?.ReportFailure();
+
+            return new HttpResponseMessage(System.Net.HttpStatusCode.Forbidden)
+            {
+                Content = new StringContent("CDN block persisted after all retries"),
+            };
+        }
+        finally
+        {
+            _cdnGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// If a CDN cooldown is active, wait until it expires.
+    /// </summary>
+    private async Task WaitForCdnCooldownAsync(CancellationToken ct)
+    {
+        var remaining = _cdnCooldownUntil - DateTimeOffset.UtcNow;
+        if (remaining > TimeSpan.Zero)
+            await Task.Delay(remaining, ct);
     }
 }
