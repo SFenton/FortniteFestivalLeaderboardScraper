@@ -13,7 +13,7 @@ namespace FSTService.Scraping;
 /// </summary>
 public sealed partial class ItemShopService
 {
-    private const string JamTracksUrl = "https://www.fortnite.com/item-shop/jam-tracks?lang=en-US";
+    private const string FortniteApiShopUrl = "https://fortnite-api.com/v2/shop";
     private const int MidnightRetryIntervalMs = 15_000;
     private const int MidnightMaxRetries = 40; // ~10 minutes
 
@@ -88,64 +88,63 @@ public sealed partial class ItemShopService
     // ─── Scrape Logic ───────────────────────────────────────────
 
     /// <summary>
-    /// Scrapes the Item Shop page, matches songs, and updates the in-memory set + DB.
+    /// Fetches the Item Shop from fortnite-api.com, matches Jam Track titles to the
+    /// song catalog, and updates the in-memory set + DB.
     /// Returns the count of matched songs, or -1 if content was unchanged.
     /// </summary>
     public async Task<int> ScrapeAsync(CancellationToken ct = default)
     {
-        _log.LogInformation("Scraping Item Shop Jam Tracks...");
+        _log.LogInformation("Fetching Item Shop Jam Tracks from fortnite-api.com...");
 
-        var html = await _http.GetStringAsync(JamTracksUrl, ct);
+        using var request = new HttpRequestMessage(HttpMethod.Get, FortniteApiShopUrl);
+        request.Headers.Accept.ParseAdd("application/json");
 
-        // Extract all /item-shop/jam-tracks/{slug} hrefs
-        var slugs = ExtractJamTrackSlugs(html);
-        if (slugs.Count == 0)
+        using var response = await _http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        var json = await response.Content.ReadAsStringAsync(ct);
+
+        // Parse the API response for jam track titles
+        var titles = ExtractJamTrackTitles(json);
+        if (titles.Count == 0)
         {
-            _log.LogWarning("No Jam Track URLs found on the shop page. Page structure may have changed.");
+            _log.LogWarning("No Jam Tracks found in fortnite-api.com shop response.");
             return 0;
         }
 
         // Content change detection
-        var contentHash = ComputeContentHash(slugs);
+        var contentHash = ComputeContentHash(titles);
         if (contentHash == _lastContentHash)
         {
-            _log.LogDebug("Shop content unchanged ({Count} tracks).", slugs.Count);
+            _log.LogDebug("Shop content unchanged ({Count} tracks).", titles.Count);
             return -1;
         }
 
-        // Extract hashes from slugs
-        var shopHashes = new List<(string Slug, string Hash)>();
-        foreach (var slug in slugs)
-        {
-            var hash = ShopUrlHelper.ExtractHashFromSlug(slug);
-            if (hash is not null)
-                shopHashes.Add((slug, hash));
-            else
-                _log.LogWarning("Could not extract hash from shop slug: {Slug}", slug);
-        }
+        // Match titles to song catalog
+        var matched = MatchTitlesToSongs(titles);
 
-        // Build hash→songId lookup from catalog
-        var matched = MatchHashesToSongs(shopHashes.Select(h => h.Hash).ToList());
-
-        // If we have unmatched hashes, try refreshing the song catalog
-        if (matched.Count < shopHashes.Count)
+        // If we have unmatched titles, try refreshing the song catalog
+        if (matched.Count < titles.Count)
         {
-            var unmatchedCount = shopHashes.Count - matched.Count;
+            var unmatchedCount = titles.Count - matched.Count;
             _log.LogInformation(
                 "{Unmatched} shop tracks unmatched. Syncing song catalog...",
                 unmatchedCount);
 
             await _festivalService.SyncSongsAsync();
+            matched = MatchTitlesToSongs(titles);
 
-            // Retry matching with refreshed catalog
-            matched = MatchHashesToSongs(shopHashes.Select(h => h.Hash).ToList());
-
-            var stillUnmatched = shopHashes.Count - matched.Count;
+            var stillUnmatched = titles.Count - matched.Count;
             if (stillUnmatched > 0)
             {
+                var matchedTitles = new HashSet<string>(
+                    _festivalService.Songs
+                        .Where(s => s.track?.tt is not null && matched.Contains(s.track.su))
+                        .Select(s => s.track.tt!),
+                    StringComparer.OrdinalIgnoreCase);
+                var unmatched = titles.Where(t => !matchedTitles.Contains(t)).ToList();
                 _log.LogWarning(
-                    "{Count} shop tracks still unmatched after catalog sync.",
-                    stillUnmatched);
+                    "{Count} shop tracks still unmatched after catalog sync: {Titles}",
+                    stillUnmatched, string.Join(", ", unmatched));
             }
         }
 
@@ -162,8 +161,8 @@ public sealed partial class ItemShopService
         _metaDb.SaveItemShopTracks(matched, now);
 
         _log.LogInformation(
-            "Item Shop scrape complete: {Matched}/{Total} tracks matched.",
-            matched.Count, slugs.Count);
+            "Item Shop update complete: {Matched}/{Total} tracks matched.",
+            matched.Count, titles.Count);
 
         return matched.Count;
     }
@@ -175,6 +174,26 @@ public sealed partial class ItemShopService
         => ScrapeAsync(ct);
 
     // ─── Matching ───────────────────────────────────────────────
+
+    private HashSet<string> MatchTitlesToSongs(List<string> titles)
+    {
+        // Build case-insensitive title → songId lookup
+        var titleToSong = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var song in _festivalService.Songs)
+        {
+            if (song.track?.tt is not null && song.track.su is not null)
+                titleToSong.TryAdd(song.track.tt, song.track.su);
+        }
+
+        var matched = new HashSet<string>();
+        foreach (var title in titles)
+        {
+            if (titleToSong.TryGetValue(title, out var songId))
+                matched.Add(songId);
+        }
+
+        return matched;
+    }
 
     private HashSet<string> MatchHashesToSongs(List<string> hashes)
     {
@@ -197,7 +216,41 @@ public sealed partial class ItemShopService
         return matched;
     }
 
-    // ─── HTML Parsing ───────────────────────────────────────────
+    // ─── JSON Parsing (fortnite-api.com) ───────────────────────
+
+    /// <summary>
+    /// Extracts Jam Track titles from the fortnite-api.com /v2/shop JSON response.
+    /// </summary>
+    internal static List<string> ExtractJamTrackTitles(string json)
+    {
+        var titles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("data", out var data)) return [];
+            if (!data.TryGetProperty("entries", out var entries)) return [];
+
+            foreach (var entry in entries.EnumerateArray())
+            {
+                if (!entry.TryGetProperty("tracks", out var tracks)) continue;
+                foreach (var track in tracks.EnumerateArray())
+                {
+                    if (track.TryGetProperty("title", out var title) &&
+                        title.GetString() is { Length: > 0 } t)
+                    {
+                        titles.Add(t);
+                    }
+                }
+            }
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            // Malformed JSON — return empty
+        }
+        return titles.ToList();
+    }
+
+    // ─── HTML Parsing (legacy) ──────────────────────────────────
 
     /// <summary>
     /// Extracts Jam Track URL slugs from the shop page HTML.

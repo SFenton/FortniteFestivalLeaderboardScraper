@@ -12,7 +12,62 @@ namespace FSTService.Tests.Unit;
 
 public class ItemShopServiceTests
 {
-    // ─── ExtractJamTrackSlugs ───────────────────────────
+    // ─── ExtractJamTrackTitles (fortnite-api.com JSON) ────
+
+    [Fact]
+    public void ExtractTitles_ParsesJamTracksFromJson()
+    {
+        var json = """
+        {
+            "data": {
+                "entries": [
+                    { "tracks": [{ "title": "Dream On" }] },
+                    { "tracks": [{ "title": "Flowers" }] },
+                    { "regularPrice": 500 }
+                ]
+            }
+        }
+        """;
+
+        var titles = ItemShopService.ExtractJamTrackTitles(json);
+        Assert.Equal(2, titles.Count);
+        Assert.Contains("Dream On", titles);
+        Assert.Contains("Flowers", titles);
+    }
+
+    [Fact]
+    public void ExtractTitles_Deduplicates()
+    {
+        var json = """
+        {
+            "data": {
+                "entries": [
+                    { "tracks": [{ "title": "Dream On" }] },
+                    { "tracks": [{ "title": "Dream On" }] }
+                ]
+            }
+        }
+        """;
+
+        var titles = ItemShopService.ExtractJamTrackTitles(json);
+        Assert.Single(titles);
+    }
+
+    [Fact]
+    public void ExtractTitles_EmptyJson_ReturnsEmpty()
+    {
+        var titles = ItemShopService.ExtractJamTrackTitles("{}");
+        Assert.Empty(titles);
+    }
+
+    [Fact]
+    public void ExtractTitles_MalformedJson_ReturnsEmpty()
+    {
+        var titles = ItemShopService.ExtractJamTrackTitles("not json {{");
+        Assert.Empty(titles);
+    }
+
+    // ─── ExtractJamTrackSlugs (legacy HTML) ─────────────
 
     [Fact]
     public void ExtractSlugs_ParsesHrefsFromHtml()
@@ -176,13 +231,25 @@ public class ItemShopServiceTests
             Substitute.For<ILogger<ItemShopService>>());
     }
 
+    private static string MakeShopJson(params string[] titles)
+    {
+        var entries = string.Join(",\n",
+            titles.Select(t => $$"""{ "tracks": [{ "title": "{{t}}" }] }"""));
+        return $$"""
+        {
+            "data": {
+                "hash": "abc",
+                "entries": [{{entries}}]
+            }
+        }
+        """;
+    }
+
     [Fact]
-    public async Task ScrapeAsync_WithMatchingHtml_ReturnsSongCount()
+    public async Task ScrapeAsync_WithMatchingJson_ReturnsSongCount()
     {
         var handler = new MockHttpMessageHandler();
-        handler.EnqueueJsonOk("""
-            <a href="/item-shop/jam-tracks/flowers-65417f34f863?lang=en-US">Flowers</a>
-            """);
+        handler.EnqueueJsonOk(MakeShopJson("Flowers"));
 
         var metaFixture = new InMemoryMetaDatabase();
         var service = CreateService(handler, metaFixture.Db);
@@ -199,7 +266,7 @@ public class ItemShopServiceTests
     public async Task ScrapeAsync_NoJamTracks_ReturnsZero()
     {
         var handler = new MockHttpMessageHandler();
-        handler.EnqueueJsonOk("<html><body>No jam tracks here</body></html>");
+        handler.EnqueueJsonOk("""{ "data": { "entries": [] } }""");
 
         var metaFixture = new InMemoryMetaDatabase();
         var service = CreateService(handler, metaFixture.Db);
@@ -214,9 +281,9 @@ public class ItemShopServiceTests
     public async Task ScrapeAsync_UnchangedContent_ReturnsNegativeOne()
     {
         var handler = new MockHttpMessageHandler();
-        var html = """<a href="/item-shop/jam-tracks/flowers-65417f34f863?lang=en-US">Flowers</a>""";
-        handler.EnqueueJsonOk(html);
-        handler.EnqueueJsonOk(html); // Same content again
+        var json = MakeShopJson("Flowers");
+        handler.EnqueueJsonOk(json);
+        handler.EnqueueJsonOk(json); // Same content again
 
         var metaFixture = new InMemoryMetaDatabase();
         var service = CreateService(handler, metaFixture.Db);
@@ -234,9 +301,7 @@ public class ItemShopServiceTests
     public async Task InitializeAsync_LoadsFromDbAndScrapes()
     {
         var handler = new MockHttpMessageHandler();
-        handler.EnqueueJsonOk("""
-            <a href="/item-shop/jam-tracks/flowers-65417f34f863?lang=en-US">Flowers</a>
-            """);
+        handler.EnqueueJsonOk(MakeShopJson("Flowers"));
 
         var metaFixture = new InMemoryMetaDatabase();
         var service = CreateService(handler, metaFixture.Db);
@@ -265,12 +330,10 @@ public class ItemShopServiceTests
     }
 
     [Fact]
-    public async Task ScrapeAsync_UnmatchedSlugs_LogsWarning()
+    public async Task ScrapeAsync_UnmatchedTitles_LogsWarning()
     {
         var handler = new MockHttpMessageHandler();
-        handler.EnqueueJsonOk("""
-            <a href="/item-shop/jam-tracks/unknown-song-abcdef123456?lang=en-US">Unknown</a>
-            """);
+        handler.EnqueueJsonOk(MakeShopJson("Totally Unknown Song"));
 
         var metaFixture = new InMemoryMetaDatabase();
         var service = CreateService(handler, metaFixture.Db);
