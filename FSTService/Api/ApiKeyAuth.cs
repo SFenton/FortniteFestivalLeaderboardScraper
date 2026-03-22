@@ -31,6 +31,7 @@ public sealed class ApiSettings
 public sealed class ApiKeyAuthHandler : AuthenticationHandler<ApiKeyAuthOptions>
 {
     private const string ApiKeyHeaderName = "X-API-Key";
+    private readonly ILogger<ApiKeyAuthHandler> _log;
 
     public ApiKeyAuthHandler(
         IOptionsMonitor<ApiKeyAuthOptions> options,
@@ -38,13 +39,15 @@ public sealed class ApiKeyAuthHandler : AuthenticationHandler<ApiKeyAuthOptions>
         UrlEncoder encoder)
         : base(options, logger, encoder)
     {
+        _log = logger.CreateLogger<ApiKeyAuthHandler>();
     }
 
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         if (string.IsNullOrEmpty(Options.ApiKey))
         {
-            // No API key configured — reject all protected requests
+            _log.LogWarning("API key not configured on server — rejecting protected request to {Path}.",
+                Request.Path);
             return Task.FromResult(AuthenticateResult.Fail("API key not configured on server."));
         }
 
@@ -55,6 +58,8 @@ public sealed class ApiKeyAuthHandler : AuthenticationHandler<ApiKeyAuthOptions>
 
         if (!string.Equals(providedKey, Options.ApiKey, StringComparison.Ordinal))
         {
+            _log.LogWarning("Invalid API key for {Method} {Path} from {RemoteIp}.",
+                Request.Method, Request.Path, Context.Connection.RemoteIpAddress);
             return Task.FromResult(AuthenticateResult.Fail("Invalid API key."));
         }
 

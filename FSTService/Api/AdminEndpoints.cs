@@ -38,6 +38,24 @@ public static partial class ApiEndpoints
         .RequireAuthorization()
         .RequireRateLimiting("protected");
 
+        app.MapGet("/api/admin/epic-token", async (TokenManager tokenManager, CancellationToken ct) =>
+        {
+            var accessToken = await tokenManager.GetAccessTokenAsync(ct);
+            if (accessToken is null)
+                return Results.Problem("No access token available. Service may need re-authentication.");
+
+            return Results.Ok(new
+            {
+                accessToken,
+                accountId = tokenManager.AccountId,
+                displayName = tokenManager.DisplayName,
+                expiresAt = tokenManager.ExpiresAt,
+            });
+        })
+        .WithTags("Admin")
+        .RequireAuthorization()
+        .RequireRateLimiting("protected");
+
         app.MapPost("/api/admin/shop/refresh", async (ItemShopService shopService, CancellationToken ct) =>
         {
             var result = await shopService.TriggerScrapeAsync(ct);

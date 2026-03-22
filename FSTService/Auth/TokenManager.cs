@@ -37,6 +37,16 @@ public class TokenManager
     public virtual string? AccountId => _currentToken?.AccountId;
 
     /// <summary>
+    /// When the current access token expires, or null if not authenticated.
+    /// </summary>
+    public virtual DateTimeOffset? ExpiresAt => _currentToken?.ExpiresAt;
+
+    /// <summary>
+    /// Display name of the currently authenticated Epic account, or null.
+    /// </summary>
+    public virtual string? DisplayName => _currentToken?.DisplayName;
+
+    /// <summary>
     /// Get a valid access token, refreshing or re-authenticating as needed.
     /// </summary>
     public virtual async Task<string?> GetAccessTokenAsync(CancellationToken ct = default)

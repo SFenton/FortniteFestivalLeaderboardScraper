@@ -246,11 +246,11 @@ public sealed class ScraperWorker : BackgroundService
                 var after = service.Songs.Count;
                 if (after > before)
                 {
-                    _log.LogInformation("Background song sync: {NewCount} new song(s) discovered ({Total} total).",
+                    _log.LogInformation("Song catalog refresh: {NewCount} new song(s) discovered ({Total} total).",
                         after - before, after);
                 }
                 else
-                    _log.LogDebug("Background song sync complete. {Total} songs (no changes).", after);
+                    _log.LogDebug("Song catalog refresh: {Total} songs in catalog (no changes).", after);
 
                 // Fire-and-forget path generation for new/changed songs
                 _ = TryGeneratePathsAsync(service, force: false, ct);

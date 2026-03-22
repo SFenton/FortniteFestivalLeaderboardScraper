@@ -2018,6 +2018,43 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     [Fact]
+    public async Task Admin_EpicToken_ReturnsTokenInfo()
+    {
+        var response = await _authedClient.GetAsync("/api/admin/epic-token");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("mock_access_token_for_testing", json.GetProperty("accessToken").GetString());
+        Assert.Equal("mock_caller_account_id", json.GetProperty("accountId").GetString());
+        Assert.Equal("MockPlayer", json.GetProperty("displayName").GetString());
+        Assert.True(json.TryGetProperty("expiresAt", out _));
+    }
+
+    [Fact]
+    public async Task Admin_EpicToken_RequiresAuth()
+    {
+        var response = await _client.GetAsync("/api/admin/epic-token");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Admin_EpicToken_NoToken_ReturnsProblem()
+    {
+        var tokenManager = _factory.Services.GetRequiredService<TokenManager>();
+        tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns((string?)null);
+        try
+        {
+            var response = await _authedClient.GetAsync("/api/admin/epic-token");
+            Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        }
+        finally
+        {
+            tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+                .Returns("mock_access_token_for_testing");
+        }
+    }
+
+    [Fact]
     public async Task Admin_FirstSeen_ReturnsData()
     {
         var response = await _client.GetAsync("/api/firstseen");
@@ -2444,6 +2481,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 mockTokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
                     .Returns("mock_access_token_for_testing");
                 mockTokenManager.AccountId.Returns("mock_caller_account_id");
+                mockTokenManager.DisplayName.Returns("MockPlayer");
+                mockTokenManager.ExpiresAt.Returns(DateTimeOffset.UtcNow.AddHours(1));
                 services.AddSingleton(mockTokenManager);
 
 
