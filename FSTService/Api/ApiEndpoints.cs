@@ -18,6 +18,7 @@ public static partial class ApiEndpoints
         app.MapAdminEndpoints();
         app.MapSyncEndpoints();
         app.MapDiagEndpoints();
+        app.MapWebSocketEndpoints();
     }
 }
 

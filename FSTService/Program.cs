@@ -302,7 +302,14 @@ var app = builder.Build();
 // Security: block path traversal attempts first
 app.UseMiddleware<PathTraversalGuardMiddleware>();
 
+// Wire up cross-references between NotificationService and ItemShopService
+var shopService = app.Services.GetRequiredService<ItemShopService>();
+var notificationService = app.Services.GetRequiredService<NotificationService>();
+shopService.SetNotificationService(notificationService);
+notificationService.SetShopProvider(shopService);
+
 app.UseCors();
+app.UseWebSockets();
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();

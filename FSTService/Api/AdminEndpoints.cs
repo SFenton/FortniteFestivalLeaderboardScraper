@@ -56,16 +56,29 @@ public static partial class ApiEndpoints
         .RequireAuthorization()
         .RequireRateLimiting("protected");
 
-        app.MapPost("/api/admin/shop/refresh", async (ItemShopService shopService, CancellationToken ct) =>
+        app.MapPost("/api/admin/shop/refresh", async (ItemShopService shopService, ILogger<ItemShopService> log, CancellationToken ct) =>
         {
-            var result = await shopService.TriggerScrapeAsync(ct);
-            return Results.Ok(new
+            try
             {
-                success = result >= 0,
-                matchedCount = result >= 0 ? result : shopService.InShopSongIds.Count,
-                contentChanged = result >= 0,
-                scrapedAt = shopService.LastScrapedAt,
-            });
+                var result = await shopService.TriggerScrapeAsync(ct);
+                return Results.Ok(new
+                {
+                    success = result >= 0,
+                    matchedCount = result >= 0 ? result : shopService.InShopSongIds.Count,
+                    contentChanged = result >= 0,
+                    scrapedAt = shopService.LastScrapedAt,
+                });
+            }
+            catch (HttpRequestException ex)
+            {
+                log.LogError(ex, "Shop scrape failed: {Message}", ex.Message);
+                return Results.Json(new
+                {
+                    success = false,
+                    error = ex.Message,
+                    scrapedAt = shopService.LastScrapedAt,
+                }, statusCode: 502);
+            }
         })
         .WithTags("Admin")
         .RequireAuthorization()

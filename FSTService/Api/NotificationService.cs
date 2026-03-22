@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using FSTService.Scraping;
 
 namespace FSTService.Api;
 
@@ -16,11 +17,18 @@ public sealed class NotificationService
 {
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, WebSocket>> _connections = new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<NotificationService> _log;
+    private IShopProvider? _shopProvider;
 
     public NotificationService(ILogger<NotificationService> log)
     {
         _log = log;
     }
+
+    /// <summary>
+    /// Set the shop provider for sending snapshots on connect.
+    /// Called during startup to break the circular dependency.
+    /// </summary>
+    public void SetShopProvider(IShopProvider provider) => _shopProvider = provider;
 
     /// <summary>
     /// Register a WebSocket connection for the given account+device pair.
@@ -89,6 +97,59 @@ public sealed class NotificationService
     }
 
     /// <summary>
+    /// Broadcast a message to ALL connected WebSocket clients (every account, every device).
+    /// Used for global events like shop rotation.
+    /// </summary>
+    public async Task BroadcastAllAsync(object message)
+    {
+        var json = JsonSerializer.Serialize(message);
+        var bytes = Encoding.UTF8.GetBytes(json);
+        var segment = new ArraySegment<byte>(bytes);
+
+        foreach (var (accountId, deviceMap) in _connections)
+        {
+            var deadConnections = new List<string>();
+            foreach (var (deviceId, ws) in deviceMap)
+            {
+                try
+                {
+                    if (ws.State == WebSocketState.Open)
+                        await ws.SendAsync(segment, WebSocketMessageType.Text, true, CancellationToken.None);
+                    else
+                        deadConnections.Add(deviceId);
+                }
+                catch
+                {
+                    deadConnections.Add(deviceId);
+                }
+            }
+            foreach (var deviceId in deadConnections)
+                RemoveConnection(accountId, deviceId);
+        }
+
+        _log.LogInformation("Broadcast to all clients: {Message}", json);
+    }
+
+    /// <summary>
+    /// Broadcast that the item shop has changed. Sends added/removed songId deltas.
+    /// </summary>
+    public Task NotifyShopChangedAsync(IReadOnlyCollection<string> added, IReadOnlyCollection<string> removed, int total)
+    {
+        return BroadcastAllAsync(new { type = "shop_changed", added, removed, total });
+    }
+
+    /// <summary>
+    /// Send the current shop snapshot to a single WebSocket (used on reconnect).
+    /// </summary>
+    public async Task SendShopSnapshotAsync(WebSocket ws, IReadOnlyCollection<string> songIds)
+    {
+        var json = JsonSerializer.Serialize(new { type = "shop_snapshot", songIds, total = songIds.Count });
+        var bytes = Encoding.UTF8.GetBytes(json);
+        if (ws.State == WebSocketState.Open)
+            await ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None);
+    }
+
+    /// <summary>
     /// Notify an account that their personal DB has been rebuilt and is ready for download.
     /// </summary>
     public Task NotifyPersonalDbReadyAsync(string accountId)
@@ -126,6 +187,20 @@ public sealed class NotificationService
     public async Task HandleConnectionAsync(string accountId, string deviceId, WebSocket ws, CancellationToken ct)
     {
         AddConnection(accountId, deviceId, ws);
+
+        // Send current shop snapshot so the client is immediately up-to-date
+        if (_shopProvider is not null)
+        {
+            try
+            {
+                var shopIds = _shopProvider.InShopSongIds;
+                await SendShopSnapshotAsync(ws, shopIds.ToArray());
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Failed to send shop snapshot on connect for {AccountId}/{DeviceId}", accountId, deviceId);
+            }
+        }
 
         try
         {

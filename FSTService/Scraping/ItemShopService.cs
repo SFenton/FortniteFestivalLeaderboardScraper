@@ -2,16 +2,26 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using FortniteFestival.Core.Services;
+using FSTService.Api;
 using FSTService.Persistence;
 
 namespace FSTService.Scraping;
+
+/// <summary>
+/// Provides read-only access to the current in-shop song set.
+/// Used by NotificationService to send shop snapshots on WebSocket connect.
+/// </summary>
+public interface IShopProvider
+{
+    IReadOnlySet<string> InShopSongIds { get; }
+}
 
 /// <summary>
 /// Scrapes the Fortnite Item Shop Jam Tracks page to determine which songs
 /// are currently available for purchase, and provides in-memory lookup of
 /// the current in-shop set.
 /// </summary>
-public sealed partial class ItemShopService
+public sealed partial class ItemShopService : IShopProvider
 {
     private const string FortniteApiShopUrl = "https://fortnite-api.com/v2/shop";
     private const int MidnightRetryIntervalMs = 15_000;
@@ -21,6 +31,7 @@ public sealed partial class ItemShopService
     private readonly FestivalService _festivalService;
     private readonly MetaDatabase _metaDb;
     private readonly ILogger<ItemShopService> _log;
+    private NotificationService? _notifications;
 
     private HashSet<string> _inShopSongIds = new();
     private string? _lastContentHash;
@@ -51,6 +62,12 @@ public sealed partial class ItemShopService
         _metaDb = metaDb;
         _log = log;
     }
+
+    /// <summary>
+    /// Wire up the notification service for broadcasting shop changes.
+    /// Called during startup to break the circular dependency.
+    /// </summary>
+    public void SetNotificationService(NotificationService notifications) => _notifications = notifications;
 
     // ─── Initialization ─────────────────────────────────────────
 
@@ -148,6 +165,15 @@ public sealed partial class ItemShopService
             }
         }
 
+        // Compute diff before updating state
+        HashSet<string> previousIds;
+        lock (_lock)
+        {
+            previousIds = _inShopSongIds;
+        }
+        var added = matched.Except(previousIds).ToList();
+        var removed = previousIds.Except(matched).ToList();
+
         // Update state
         var now = DateTime.UtcNow;
         lock (_lock)
@@ -159,6 +185,22 @@ public sealed partial class ItemShopService
 
         // Persist to DB
         _metaDb.SaveItemShopTracks(matched, now);
+
+        // Broadcast shop change to all connected WebSocket clients
+        if (_notifications is not null && (added.Count > 0 || removed.Count > 0))
+        {
+            try
+            {
+                await _notifications.NotifyShopChangedAsync(added, removed, matched.Count);
+                _log.LogInformation(
+                    "Shop change broadcast: {Added} added, {Removed} removed.",
+                    added.Count, removed.Count);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Failed to broadcast shop change notification.");
+            }
+        }
 
         _log.LogInformation(
             "Item Shop update complete: {Matched}/{Total} tracks matched.",
