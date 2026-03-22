@@ -255,9 +255,9 @@ public class ScoreBackfillerTests : IDisposable
         };
         var service = CreateServiceWithSongs(songs);
 
-        // Queue HTTP errors for all 6 instruments (non-retryable, returns null from LookupAccountAsync)
+        // Queue HTTP errors for all 6 instruments (non-retryable JSON 403)
         for (int i = 0; i < 6; i++)
-            handler.EnqueueError(HttpStatusCode.Forbidden, "forbidden");
+            handler.EnqueueJsonResponse(HttpStatusCode.Forbidden, """{"errorCode":"forbidden"}""");
 
         var result = await backfiller.BackfillAccountAsync("acct1", service, "token", "caller");
 

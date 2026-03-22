@@ -54,6 +54,18 @@ public sealed class MockHttpMessageHandler : HttpMessageHandler
         _responses.Enqueue(response);
     }
 
+    /// <summary>Enqueue a CDN-style 403 response with HTML body (non-JSON).</summary>
+    public void EnqueueHtml403()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent(
+                "<html><head><title>403 Forbidden</title></head><body><center><h1>403 Forbidden</h1></center></body></html>",
+                System.Text.Encoding.UTF8, "text/html"),
+        };
+        _responses.Enqueue(response);
+    }
+
     protected override Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {

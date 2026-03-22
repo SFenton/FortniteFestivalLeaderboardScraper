@@ -30,6 +30,7 @@ public class HistoryReconstructor
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly MetaDatabase _metaDb;
     private readonly HttpClient _http;
+    private readonly ResilientHttpExecutor _executor;
     private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<HistoryReconstructor> _log;
 
@@ -44,6 +45,7 @@ public class HistoryReconstructor
         _persistence = persistence;
         _metaDb = persistence.Meta;
         _http = http;
+        _executor = new ResilientHttpExecutor(http, log);
         _progress = progress;
         _log = log;
     }
@@ -106,10 +108,12 @@ public class HistoryReconstructor
         var url = $"https://events-public-service-live.ol.epicgames.com" +
                   $"/api/v1/events/FNFestival/data/{callerAccountId}?showPastEvents=true";
 
-        var req = new HttpRequestMessage(HttpMethod.Get, url);
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-
-        var res = await _http.SendAsync(req, ct);
+        var res = await _executor.SendAsync(() =>
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            return req;
+        }, label: "events-discovery", maxRetries: 0, ct: ct);
         if (!res.IsSuccessStatusCode)
         {
             _log.LogWarning("Events API returned {Status}.", res.StatusCode);

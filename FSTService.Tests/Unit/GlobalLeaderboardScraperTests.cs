@@ -97,7 +97,7 @@ public class GlobalLeaderboardScraperTests
     {
         var (scraper, handler) = CreateScraper();
 
-        handler.EnqueueError(HttpStatusCode.Forbidden, "Forbidden");
+        handler.EnqueueJsonResponse(HttpStatusCode.Forbidden, """{"errorCode":"forbidden"}""");
 
         await Assert.ThrowsAsync<HttpRequestException>(() =>
             scraper.LookupAccountAsync(
@@ -761,7 +761,7 @@ public class GlobalLeaderboardScraperTests
     {
         var (scraper, handler) = CreateScraper();
 
-        handler.EnqueueError(HttpStatusCode.Forbidden, "Forbidden");
+        handler.EnqueueJsonResponse(HttpStatusCode.Forbidden, """{"errorCode":"forbidden"}""");
 
         await Assert.ThrowsAsync<HttpRequestException>(() =>
             scraper.LookupSeasonalSessionsAsync(

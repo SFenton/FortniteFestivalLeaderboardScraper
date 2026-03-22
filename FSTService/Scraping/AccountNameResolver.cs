@@ -23,6 +23,7 @@ public class AccountNameResolver
     private const int BatchSize = 100;
 
     private readonly HttpClient _http;
+    private readonly ResilientHttpExecutor _executor;
     private readonly MetaDatabase _metaDb;
     private readonly TokenManager _tokenManager;
     private readonly ScrapeProgressTracker _progress;
@@ -36,6 +37,7 @@ public class AccountNameResolver
         ILogger<AccountNameResolver> log)
     {
         _http = http;
+        _executor = new ResilientHttpExecutor(http, log);
         _metaDb = metaDb;
         _tokenManager = tokenManager;
         _progress = progress;
@@ -181,9 +183,14 @@ public class AccountNameResolver
             HttpResponseMessage res;
             try
             {
-                var req = new HttpRequestMessage(HttpMethod.Get, url);
-                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-                res = await _http.SendAsync(req, ct);
+                // Use executor with maxRetries:0 — outer loop handles normal retries,
+                // executor only provides CDN 403 detection and extended retry.
+                res = await _executor.SendAsync(() =>
+                {
+                    var req = new HttpRequestMessage(HttpMethod.Get, url);
+                    req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                    return req;
+                }, label: "account-name-lookup", maxRetries: 0, ct: ct);
             }
             catch (HttpRequestException ex) when (attempt < maxRetries)
             {
