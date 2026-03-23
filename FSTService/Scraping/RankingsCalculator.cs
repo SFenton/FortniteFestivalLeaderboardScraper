@@ -45,7 +45,8 @@ public sealed class RankingsCalculator
         var allPopulation = _metaDb.GetAllLeaderboardPopulation();
 
         // ── Phase 1+2: SongStats + AccountRankings per instrument (parallel) ──
-        _progress.BeginPhaseProgress(instruments.Count);
+        // Total steps: instruments(6) + composite(1) + snapshots(instruments+1) + combos(1) = 15
+        _progress.BeginPhaseProgress(instruments.Count + 1 + instruments.Count + 1 + 1);
         var tasks = instruments.Select(instrument => Task.Run(() =>
         {
             ct.ThrowIfCancellationRequested();
@@ -91,6 +92,7 @@ public sealed class RankingsCalculator
         // ── Phase 3: Composite rankings ──
         var compositeSw = System.Diagnostics.Stopwatch.StartNew();
         ComputeCompositeRankings(instruments);
+        _progress.ReportPhaseItemComplete();
         _log.LogInformation("Composite rankings complete in {Elapsed}.", compositeSw.Elapsed);
 
         // ── Phase 4: History snapshots (parallel per instrument + composite) ──
@@ -99,14 +101,17 @@ public sealed class RankingsCalculator
             ct.ThrowIfCancellationRequested();
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
             db.SnapshotRankHistory(HistoryTopN, registeredIds);
+            _progress.ReportPhaseItemComplete();
         }, ct)).ToList();
 
         await Task.WhenAll(snapshotTasks);
         _metaDb.SnapshotCompositeRankHistory(HistoryTopN, registeredIds);
+        _progress.ReportPhaseItemComplete();
 
         // ── Phase 5: All-combo rankings ──
         var comboSw = System.Diagnostics.Stopwatch.StartNew();
         ComputeAllCombos(instruments);
+        _progress.ReportPhaseItemComplete();
         _log.LogInformation("All-combo rankings complete in {Elapsed}.", comboSw.Elapsed);
 
         _log.LogInformation("Full rankings computation complete in {Total}.", sw.Elapsed);
