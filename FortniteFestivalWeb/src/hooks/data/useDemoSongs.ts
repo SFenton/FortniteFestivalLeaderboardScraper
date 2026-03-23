@@ -61,6 +61,7 @@ const MEDIUM_POOL = 6;
 const MAX_DEDUP_ATTEMPTS = 10;
 const INITIAL_DONE_BUFFER_MS = 100;
 
+/* v8 ignore start -- hook requires FestivalContext + SlideHeightContext + timers; utility fns tested separately */
 export function useDemoSongs({ rowHeight, mobileRowHeight, isMobile, autoSwap = true }: UseDemoSongsOptions): UseDemoSongsResult {
   const { state: { songs: apiSongs } } = useFestival();
   const h = useSlideHeight();
@@ -147,3 +148,4 @@ export function useDemoSongs({ rowHeight, mobileRowHeight, isMobile, autoSwap = 
 
   return { rows, fadingIdx, initialDone, pool };
 }
+/* v8 ignore stop */

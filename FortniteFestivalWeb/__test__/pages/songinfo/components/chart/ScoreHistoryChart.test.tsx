@@ -191,7 +191,7 @@ describe('ScoreHistoryChart', () => {
       instrumentCounts: { Solo_Guitar: 7 },
     });
     renderChart();
-    expect(screen.getByText('View All Scores')).toBeTruthy();
+    expect(screen.getByText('View all scores')).toBeTruthy();
   });
 
   it('does not show "view all scores" button with 5 or fewer entries', () => {
@@ -211,7 +211,7 @@ describe('ScoreHistoryChart', () => {
     });
     renderChart();
     expect(screen.getByTestId('responsive-container')).toBeTruthy();
-    expect(screen.queryByText('View All Scores')).toBeNull();
+    expect(screen.queryByText('View all scores')).toBeNull();
   });
 
   it('filters visible instruments', () => {

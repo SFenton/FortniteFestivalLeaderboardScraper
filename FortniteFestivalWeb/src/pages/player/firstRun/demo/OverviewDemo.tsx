@@ -26,7 +26,9 @@ const DEMO_STATS: OverallStats = {
 
 const TOTAL_SONGS = 206;
 const CARD_HEIGHT = 100;
+/* v8 ignore start -- NOOP is passed as prop but never invoked in test (pointerEvents: none) */
 const NOOP = () => {};
+/* v8 ignore stop */
 
 const cardStyle: CSSProperties = { ...frostedCard, borderRadius: Radius.md };
 
@@ -51,7 +53,12 @@ export default function OverviewDemo() {
   return (
     <div className={s.gridList} style={gridStyle}>
       {visible.map((item, i) => (
-        <FadeIn key={item.key} delay={i * 80} className={item.span ? s.gridFullWidth : undefined} style={item.style}>
+        <FadeIn key={item.key} delay={i * 80}
+          /* v8 ignore start -- item.span depends on buildOverallSummaryItems output; not all branches reachable with static data */
+          className={item.span ? s.gridFullWidth : undefined}
+          /* v8 ignore stop */
+          style={item.style}
+        >
           {item.node}
         </FadeIn>
       ))}

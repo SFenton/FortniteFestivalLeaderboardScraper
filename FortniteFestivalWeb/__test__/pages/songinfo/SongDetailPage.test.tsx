@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { Routes, Route } from 'react-router-dom';
 import SongDetailPage, { clearSongDetailCache } from '../../../src/pages/songinfo/SongDetailPage';
+import { songInfoSlides } from '../../../src/pages/songinfo/firstRun';
+import { contentHash } from '../../../src/firstRun/types';
 import { TestProviders } from '../../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
 
@@ -91,6 +93,12 @@ beforeEach(() => {
   localStorage.clear();
   clearSongDetailCache();
   resetMocks();
+  // Seed song info FRE as seen so it doesn't interfere with page tests
+  const seen: Record<string, { version: number; hash: string; seenAt: string }> = {};
+  for (const slide of songInfoSlides(false)) {
+    seen[slide.id] = { version: slide.version, hash: contentHash(slide.title + slide.description), seenAt: new Date().toISOString() };
+  }
+  localStorage.setItem('fst:firstRun', JSON.stringify(seen));
 });
 
 function renderSongDetail(route = '/songs/song-1', accountId?: string) {

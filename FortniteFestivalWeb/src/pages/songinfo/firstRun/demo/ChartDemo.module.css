@@ -1,0 +1,108 @@
+.wrapper {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+}
+
+.chartCard {
+  composes: frostedCard from '../../../../styles/shared.module.css';
+  border-radius: var(--radius-lg);
+  padding: var(--gap-sm) var(--gap-md) var(--gap-md);
+  display: flex;
+  flex-direction: column;
+}
+
+.chartArea {
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: var(--gap-md) 0;
+}
+
+.bar {
+  flex: 1;
+  border-radius: var(--radius-xs) var(--radius-xs) 0 0;
+  transition: opacity 0.3s ease, outline 0.3s ease;
+  min-width: 0;
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+}
+
+.barSelected {
+  composes: bar;
+  outline-color: var(--color-accent-purple);
+}
+
+.detailCard {
+  composes: frostedCard from '../../../../styles/shared.module.css';
+  border-radius: var(--radius-md);
+  padding: var(--gap-sm) var(--gap-md);
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  height: var(--size-xl);
+  font-size: var(--font-md);
+  overflow: hidden;
+  transition: opacity 0.25s ease, max-height 0.25s ease;
+}
+
+.detailCardBorderless {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  padding: 0 var(--gap-md);
+  height: var(--size-xl);
+  font-size: var(--font-md);
+  color: inherit;
+  width: 100%;
+  box-sizing: border-box;
+  transition: opacity 0.15s ease;
+}
+
+.detailHidden {
+  opacity: 0;
+  max-height: 0;
+  padding: 0 var(--gap-md);
+}
+
+.detailVisible {
+  opacity: 1;
+  max-height: var(--size-xl);
+}
+
+.detailLabel {
+  color: var(--color-text-secondary);
+  font-size: var(--font-sm);
+}
+
+.detailValue {
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.detailGold {
+  color: var(--color-gold);
+}
+
+.legend {
+  display: flex;
+  justify-content: center;
+  gap: var(--gap-xl);
+  padding-top: var(--gap-xs);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-xs);
+  font-size: var(--font-xs);
+  color: var(--color-text-muted);
+}
+
+.legendSwatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}

@@ -7,6 +7,7 @@ import { MIN_BAR_WIDTH, BAR_GAP, FALLBACK_OVERHEAD } from '../../pages/songinfo/
 
 export function useChartDimensions(chartContainerRef: React.RefObject<HTMLDivElement | null>) {
   const [containerWidth, setContainerWidth] = useState(0);
+  const [overheadRevision, setOverheadRevision] = useState(0);
   const axesOverheadRef = useRef<number | null>(null);
 
   /* v8 ignore start — ResizeObserver DOM measurement */
@@ -42,7 +43,7 @@ export function useChartDimensions(chartContainerRef: React.RefObject<HTMLDivEle
         const clipW = parseFloat(clip.getAttribute('width') || '0');
         if (clipW > 0) {
           axesOverheadRef.current = containerWidth - clipW;
-          setContainerWidth((prev) => prev);
+          setOverheadRevision((r) => r + 1);
         }
       }
     });
@@ -50,6 +51,8 @@ export function useChartDimensions(chartContainerRef: React.RefObject<HTMLDivEle
   });
   /* v8 ignore stop */
 
+  // overheadRevision forces a re-render after the real axes overhead is measured
+  void overheadRevision;
   const overhead = axesOverheadRef.current ?? FALLBACK_OVERHEAD;
   const plotWidth = Math.max(0, containerWidth - overhead);
   const maxBars = containerWidth === 0

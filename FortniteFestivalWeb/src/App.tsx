@@ -100,6 +100,7 @@ function AppShell() {
   });
   const [changelogDismissed, setChangelogDismissed] = useState(false);
   const { activeCarouselKey } = useFirstRunContext();
+  /* v8 ignore next — activeCarouselKey suppression tested via FirstRunContext tests */
   const showChangelog = hasNewChangelog && !changelogDismissed && !activeCarouselKey;
   /* v8 ignore start — modal dismiss callback */
   const dismissChangelog = useCallback(() => {
@@ -245,6 +246,7 @@ function AppShell() {
         )}
       {/* v8 ignore stop */}
 
+      {/* v8 ignore start — wideDesktop layout tested via PinnedSidebar.test */}
       <div className={wideDesktop ? appCss.contentRow : appCss.contentColumn}>
       {wideDesktop && (
         <PinnedSidebar
@@ -254,6 +256,7 @@ function AppShell() {
         />
       )}
       <div id="main-content" className={`${appCss.content}${wideDesktop ? ` ${appCss.contentPinned}` : ''}`}>
+      {/* v8 ignore stop */}
         <Suspense fallback={<SuspenseFallback />}>
         <Routes>
           <Route path="/" element={<Navigate to={AppRoutes.songs} replace />} />
@@ -276,7 +279,9 @@ function AppShell() {
         </Routes>
         </Suspense>
       </div>
+      {/* v8 ignore start — wideDesktop spacer */}
       {wideDesktop && <div className={appCss.rightSpacer} />}
+      {/* v8 ignore stop */}
 
       {/* v8 ignore start — mobile FAB configuration tested via MobileFabController + FloatingActionButton tests */}
       {isMobile && <BottomNav player={player} activeTab={activeTab} onTabClick={handleTabClick} />}

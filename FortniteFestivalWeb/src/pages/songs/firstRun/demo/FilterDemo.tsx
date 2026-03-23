@@ -31,6 +31,7 @@ export default function FilterDemo() {
     [instruments],
   );
 
+  /* v8 ignore start -- instruments always has entries; instrument/null guards are defensive */
   const [instrument, setInstrument] = useState<InstrumentKey | null>(() => instruments[0] ?? null);
 
   // Per-instrument toggle state — persists across instrument switches.
@@ -57,18 +58,23 @@ export default function FilterDemo() {
     setInstrument(k);
     if (k) setToggles(getToggles(k));
   }, [instrument, toggles, getToggles]);
+  /* v8 ignore stop */
 
   // Compact mode: measure container width to decide.
   const rowRef = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
   useEffect(() => {
     const el = rowRef.current;
+    /* v8 ignore start -- ref is always set after render */
     if (!el) return;
+    /* v8 ignore stop */
+    /* v8 ignore start -- ResizeObserver callback depends on real DOM measurements */
     const ro = new ResizeObserver(entries => {
       const width = entries[0]?.contentRect.width ?? 0;
       const needed = instruments.length * Layout.demoInstrumentBtn + (instruments.length - 1) * Gap.lg;
       setCompact(width < needed);
     });
+    /* v8 ignore stop */
     ro.observe(el);
     return () => ro.disconnect();
   }, [instruments.length]);

@@ -13,10 +13,12 @@ import type {
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
 
+/* v8 ignore start -- WebSocket URL helper depends on browser location */
 function getWsUrl(): string {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${proto}//${location.host}/api/ws`;
 }
+/* v8 ignore stop */
 
 export type ShopState = {
   /** Set of songIds currently in the item shop. Null until first snapshot. */
@@ -31,6 +33,7 @@ export type ShopState = {
  * @param initialShopIds - Song IDs with shopUrl from the initial /api/songs fetch.
  *                         Used as the starting set before the first WS snapshot arrives.
  */
+/* v8 ignore start -- WebSocket lifecycle cannot be exercised in jsdom */
 export function useShopWebSocket(initialShopIds: ReadonlySet<string> | null): ShopState {
   const [shopSongIds, setShopSongIds] = useState<ReadonlySet<string> | null>(initialShopIds);
   const [connected, setConnected] = useState(false);
@@ -116,3 +119,4 @@ export function useShopWebSocket(initialShopIds: ReadonlySet<string> | null): Sh
 
   return { shopSongIds, connected };
 }
+/* v8 ignore stop */

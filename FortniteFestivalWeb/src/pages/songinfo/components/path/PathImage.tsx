@@ -10,6 +10,7 @@ import { Colors, Font, TRANSITION_MS, MIN_SPINNER_MS } from '@festival/theme';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { useScrollMask } from '../../../../hooks/ui/useScrollMask';
 import { ZoomableImage } from './ZoomableImage';
+import ArcSpinner from '../../../../components/common/ArcSpinner';
 import css from './PathsModal.module.css';
 
 const FADE_MS = TRANSITION_MS;
@@ -117,7 +118,7 @@ export function PathImage({ songId, instrument, difficulty }: PathImageProps) {
           opacity: spinnerVisible ? 1 : 0,
           transition: `opacity ${FADE_MS}ms ease`,
         }}>
-          <div className={css.spinner} />
+          <ArcSpinner />
         </div>
       )}
       {error && phase === ImagePhase.Idle && (

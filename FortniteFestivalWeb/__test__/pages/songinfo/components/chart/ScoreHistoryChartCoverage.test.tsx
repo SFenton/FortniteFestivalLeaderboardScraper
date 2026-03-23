@@ -281,8 +281,8 @@ describe('ScoreHistoryChart — coverage: score card list', () => {
 
     // Should render chart with cards
     expect(screen.getByTestId('responsive-container')).toBeTruthy();
-    // "View All Scores" button for >5 entries
-    expect(screen.getByText('View All Scores')).toBeTruthy();
+    // "View all scores" button for >5 entries
+    expect(screen.getByText('View all scores')).toBeTruthy();
   });
 });
 

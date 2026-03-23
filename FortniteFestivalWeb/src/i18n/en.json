@@ -197,6 +197,7 @@
   },
   "nav": {
     "songs": "Songs",
+    "songInfo": "Song Info",
     "suggestions": "Suggestions",
     "statistics": "Statistics",
     "settings": "Settings"
@@ -209,7 +210,7 @@
     "accuracy": "Accuracy",
     "accuracyFC": "Accuracy (FC)",
     "score": "Score",
-    "viewAllScores": "View All Scores"
+    "viewAllScores": "View all scores"
   },
   "aria": {
     "previousInstrument": "Previous instrument",
@@ -403,6 +404,29 @@
       "showFirstRunTitle": "First Run Guides",
       "showFirstRunHint": "Re-visit the first run experience for each page.",
       "showButton": "Show"
+    },
+    "songInfo": {
+      "chart": {
+        "title": "Score History Chart",
+        "description": "When you have a player selected, their score history for this song appears at the top — charting accuracy and score over time. Change instruments to see more data!"
+      },
+      "barSelect": {
+        "title": "Select a Bar for Details",
+        "description": "Tap any bar on the chart to see the details for that score — date, season, score, and accuracy."
+      },
+      "viewAll": {
+        "title": "View Player Scores",
+        "description": "Below the chart, the player's top scores are listed for quick reference. If there's more than five, tapping View all scores will take you to the player history page, where you can see all tracked history for that user, score, and instrument."
+      },
+      "topScores": {
+        "title": "Top Scores Per Instrument",
+        "description": "Each instrument shows the top leaderboard entries for this song. Tap any player to go to their page, or \"View full leaderboard\" to go to the instrument leaderboard for the selected song."
+      },
+      "paths": {
+        "title": "Optimal Paths",
+        "descriptionMobile": "Tap \"View Paths\" in the action button to see the optimal score path for any instrument and difficulty.",
+        "descriptionDesktop": "Tap \"View Paths\" in the header to see the optimal score path for any instrument and difficulty."
+      }
     }
   }
 }

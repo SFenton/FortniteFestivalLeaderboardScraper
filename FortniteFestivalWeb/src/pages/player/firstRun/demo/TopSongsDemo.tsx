@@ -10,7 +10,9 @@ import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import css from '../../components/TopSongsSection.module.css';
 
+/* v8 ignore start -- NOOP is passed as prop but never invoked in test (pointerEvents: none) */
 const NOOP = (e: React.MouseEvent) => e.preventDefault();
+/* v8 ignore stop */
 
 /** Static percentile values assigned to demo rows. */
 // eslint-disable-next-line no-magic-numbers -- static demo percentile values

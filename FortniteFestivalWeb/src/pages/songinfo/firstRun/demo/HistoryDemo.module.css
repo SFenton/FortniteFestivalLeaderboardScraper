@@ -1,0 +1,21 @@
+.wrapper {
+  width: 100%;
+  pointer-events: none;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+}
+
+.card {
+  composes: frostedCard from '../../../../styles/shared.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  padding: 0 var(--gap-xl);
+  height: var(--size-xl);
+  border-radius: var(--radius-md);
+  font-size: var(--font-md);
+}

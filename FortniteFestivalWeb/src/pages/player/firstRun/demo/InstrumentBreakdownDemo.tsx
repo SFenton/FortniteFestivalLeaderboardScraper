@@ -16,7 +16,9 @@ import s from '../../../../components/player/PlayerPage.module.css';
 const TOTAL_SONGS = 206;
 const CARD_HEIGHT = 100;
 const HEADER_HEIGHT = 64;
+/* v8 ignore start -- NOOP is passed as prop but never invoked in test (pointerEvents: none) */
 const NOOP = () => {};
+/* v8 ignore stop */
 
 const cardStyle: CSSProperties = { ...frostedCard, borderRadius: Radius.md };
 

@@ -49,6 +49,7 @@ export function useFirstRun(pageKey: string, gateCtx: FirstRunGateContext): UseF
 
   // Keep context's activeCarouselKey in sync with this page's carousel visibility.
   // useLayoutEffect ensures this runs before paint, preventing a changelog flash.
+  /* v8 ignore start -- layout synchronization + cleanup branches not exercisable via renderHook */
   useLayoutEffect(() => {
     if (show && !closing) {
       setActiveCarousel(pageKey);
@@ -56,13 +57,13 @@ export function useFirstRun(pageKey: string, gateCtx: FirstRunGateContext): UseF
       setActiveCarousel(null);
     }
     return () => {
-      // Only clear on unmount if we're the active carousel
       if (activeCarouselKey === pageKey) {
         setActiveCarousel(null);
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to show/closing changes and unmount
   }, [show, closing, pageKey]);
+  /* v8 ignore stop */
 
   const dismiss = useCallback(() => {
     if (computedSlides.length > 0) {

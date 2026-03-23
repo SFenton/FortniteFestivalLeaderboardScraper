@@ -186,7 +186,7 @@ describe('ScoreHistoryChart — extra coverage', () => {
     expect(screen.getByTestId('responsive-container')).toBeTruthy();
   });
 
-  /* ── View All Scores button ── */
+  /* ── View all scores button ── */
   it('shows view all scores button with more than 5 chart entries', () => {
     const data = makeChartData(8);
     mockChartData.useChartData.mockReturnValue({
@@ -196,7 +196,7 @@ describe('ScoreHistoryChart — extra coverage', () => {
       instrumentCounts: { Solo_Guitar: 8 },
     });
     renderChart();
-    expect(screen.getByText('View All Scores')).toBeTruthy();
+    expect(screen.getByText('View all scores')).toBeTruthy();
   });
 
   it('hides view all scores button with 5 or fewer entries', () => {
@@ -208,7 +208,7 @@ describe('ScoreHistoryChart — extra coverage', () => {
       instrumentCounts: { Solo_Guitar: 4 },
     });
     renderChart();
-    expect(screen.queryByText('View All Scores')).toBeNull();
+    expect(screen.queryByText('View all scores')).toBeNull();
   });
 
   /* ── Chart title and subtitle ── */

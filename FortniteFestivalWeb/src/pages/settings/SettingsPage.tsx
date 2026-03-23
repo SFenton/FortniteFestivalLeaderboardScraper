@@ -20,6 +20,7 @@ import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
 import { statisticsSlides } from '../player/firstRun';
 import { suggestionsSlides } from '../suggestions/firstRun';
 import { songSlides } from '../songs/firstRun';
+import { songInfoSlides } from '../songinfo/firstRun';
 import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
 import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
 import { api } from '../../api/client';
@@ -175,11 +176,15 @@ export default function SettingsPage() {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Register first-run slides so replay is always available from Settings
+  /* v8 ignore next */
   const songsSlidesMemo = useMemo(() => songSlides(isMobileChrome), [isMobileChrome]);
+  const songInfoSlidesMemo = useMemo(() => songInfoSlides(isMobileChrome), [isMobileChrome]);
   useRegisterFirstRun('songs', t('nav.songs'), songsSlidesMemo);
+  useRegisterFirstRun('songinfo', t('nav.songInfo', 'Song Info'), songInfoSlidesMemo);
   useRegisterFirstRun('statistics', t('nav.statistics'), statisticsSlides);
   useRegisterFirstRun('suggestions', t('nav.suggestions'), suggestionsSlides);
   const songsReplay = useFirstRunReplay('songs');
+  const songInfoReplay = useFirstRunReplay('songinfo');
   const statsReplay = useFirstRunReplay('statistics');
   const suggestionsReplay = useFirstRunReplay('suggestions');
   const [serviceVersion, setServiceVersion] = useState<string | null>(null);
@@ -359,6 +364,12 @@ export default function SettingsPage() {
               </div>
               <span className={css.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
+            <button className={modalCss.toggleRow} onClick={songInfoReplay.open}>
+              <div className={modalCss.toggleContent}>
+                <div className={modalCss.toggleLabel}>{t('nav.songInfo', 'Song Info')}</div>
+              </div>
+              <span className={css.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+            </button>
             <button className={modalCss.toggleRow} onClick={statsReplay.open}>
               <div className={modalCss.toggleContent}>
                 <div className={modalCss.toggleLabel}>{t('nav.statistics')}</div>
@@ -404,6 +415,7 @@ export default function SettingsPage() {
         /* v8 ignore stop */
       )}
       {songsReplay.show && <FirstRunCarousel slides={songsReplay.slides} onDismiss={songsReplay.dismiss} />}
+      {songInfoReplay.show && <FirstRunCarousel slides={songInfoReplay.slides} onDismiss={songInfoReplay.dismiss} />}
       {statsReplay.show && <FirstRunCarousel slides={statsReplay.slides} onDismiss={statsReplay.dismiss} />}
       {suggestionsReplay.show && <FirstRunCarousel slides={suggestionsReplay.slides} onDismiss={suggestionsReplay.dismiss} />}
     </div>

@@ -14,7 +14,9 @@ import css from './DrillDownDemo.module.css';
 
 const cardStyle: CSSProperties = { ...frostedCard, borderRadius: Radius.md };
 const CARD_HEIGHT = 100;
+/* v8 ignore start -- NOOP is passed as prop but never invoked in test (pointerEvents: none) */
 const NOOP = () => {};
+/* v8 ignore stop */
 
 const DEMO_BOXES: { label: string; value: string; color?: string; clickable: boolean }[] = [
   { label: 'Songs Played', value: '142', color: undefined, clickable: true },

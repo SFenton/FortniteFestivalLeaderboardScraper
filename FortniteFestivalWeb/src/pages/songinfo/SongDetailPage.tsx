@@ -26,6 +26,10 @@ import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import PathsModal from './components/path/PathsModal';
 import SongDetailHeader from './components/SongDetailHeader';
 import InstrumentCard from './components/InstrumentCard';
+import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
+import { useFirstRun } from '../../hooks/ui/useFirstRun';
+import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
+import { songInfoSlides } from './firstRun';
 
 import { songDetailCache } from '../../api/pageCache';
 import type { InstrumentData } from '../../api/pageCache';
@@ -53,6 +57,14 @@ export default function SongDetailPage() {
   } = useFestival();
   const { player } = useTrackedPlayer();
   const { settings } = useSettings();
+
+  // First-run carousel
+  const isMobile = useIsMobile();
+  const songInfoSlidesMemo = useMemo(() => songInfoSlides(isMobile), [isMobile]);
+  useRegisterFirstRun('songinfo', t('nav.songInfo', 'Song Info'), songInfoSlidesMemo);
+  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player }), [player]);
+  const firstRun = useFirstRun('songinfo', firstRunGateCtx);
+
   const activeInstruments = visibleInstruments(settings);
   const fabSearch = useFabSearch();
   const { filterPlayerScores, filterHistory: filterScoreHistory, leewayParam } = useScoreFilter();
@@ -402,6 +414,7 @@ export default function SongDetailPage() {
       {/* v8 ignore start -- songId always truthy from route params */}
       {songId && <PathsModal visible={pathsOpen} songId={songId} onClose={() => setPathsOpen(false)} />}
       {/* v8 ignore stop */}
+      {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
     </div>
   );
 }

@@ -1,9 +1,25 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { SettingsProvider } from '../../../src/contexts/SettingsContext';
 import { FirstRunProvider } from '../../../src/contexts/FirstRunContext';
 import SettingsPage from '../../../src/pages/settings/SettingsPage';
+import { stubResizeObserver, stubScrollTo, stubElementDimensions } from '../../helpers/browserStubs';
+
+beforeAll(() => {
+  stubScrollTo();
+  stubResizeObserver();
+  stubElementDimensions();
+  if (!HTMLElement.prototype.animate) {
+    HTMLElement.prototype.animate = vi.fn().mockReturnValue({
+      cancel: vi.fn(), pause: vi.fn(), play: vi.fn(), finish: vi.fn(),
+      onfinish: null, finished: Promise.resolve(),
+    }) as any;
+  }
+  if (!HTMLElement.prototype.getAnimations) {
+    HTMLElement.prototype.getAnimations = vi.fn().mockReturnValue([]) as any;
+  }
+});
 
 beforeEach(() => {
   localStorage.clear();
@@ -232,5 +248,27 @@ describe('SettingsPage', () => {
   it('renders theme version', () => {
     renderSettings();
     expect(screen.getByText('@festival/theme Version')).toBeDefined();
+  });
+
+  it.each([
+    ['Songs', 0],
+    ['Song Info', 1],
+    ['Statistics', 2],
+    ['Suggestions', 3],
+  ] as const)('opens %s first-run replay carousel', async (label, _idx) => {
+    renderSettings();
+    // There are multiple buttons per row; find the one whose sibling text matches the label
+    const buttons = screen.getAllByText('Show');
+    const row = screen.getByText(label).closest('button')!;
+    expect(row).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.click(row);
+    });
+
+    // FirstRunCarousel renders a close button with aria-label="Close"
+    await waitFor(() => {
+      expect(screen.getByLabelText('Close')).toBeTruthy();
+    });
   });
 });

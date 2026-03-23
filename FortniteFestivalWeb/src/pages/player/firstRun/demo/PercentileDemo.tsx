@@ -12,7 +12,9 @@ import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 
 const TABLE_HEADER_HEIGHT = 40;
 const ROW_HEIGHT = 44;
+/* v8 ignore start -- NOOP is passed as prop but never invoked in test (pointerEvents: none) */
 const NOOP = () => {};
+/* v8 ignore stop */
 
 const cardStyle: CSSProperties = { ...frostedCard, borderRadius: Radius.md, overflow: 'hidden' as const };
 

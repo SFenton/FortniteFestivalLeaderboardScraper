@@ -126,6 +126,29 @@ describe('App — coverage: changelog modal', () => {
       expect(container.innerHTML.length).toBeGreaterThan(100);
     });
   });
+
+  it('detects stale changelog when stored version differs', async () => {
+    // Seed song FRE as seen so it doesn't block the changelog
+    seedSongFRE();
+    // Stored version doesn't match current — exercises the || short-circuit branch
+    localStorage.setItem('fst:changelog', JSON.stringify({ version: '0.0.0-old', hash: changelogHash() }));
+
+    const { container } = render(<App />);
+    await waitFor(() => {
+      expect(container.innerHTML.length).toBeGreaterThan(100);
+    });
+  });
+
+  it('treats corrupted changelog storage as new (catch branch)', async () => {
+    seedSongFRE();
+    // Invalid JSON triggers the catch block in the hasNewChangelog initializer
+    localStorage.setItem('fst:changelog', 'NOT_VALID_JSON{{{');
+
+    const { container } = render(<App />);
+    await waitFor(() => {
+      expect(container.innerHTML.length).toBeGreaterThan(100);
+    });
+  });
 });
 
 describe('App — coverage: backFallback for detail routes', () => {
