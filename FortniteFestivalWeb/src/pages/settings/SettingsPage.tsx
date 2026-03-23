@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigationType } from 'react-router-dom';
@@ -8,10 +9,17 @@ import SectionHeader from '../../components/common/SectionHeader';
 import { ReorderList } from '../../components/sort/ReorderList';
 import { METADATA_SORT_DISPLAY } from '../../utils/songSettings';
 import ConfirmAlert from '../../components/modals/ConfirmAlert';
+import modalCss from '../../components/modals/Modal.module.css';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { Colors, Font, Gap } from '@festival/theme';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
+import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
+import { useFirstRunReplay } from '../../hooks/ui/useFirstRun';
+import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
+import { statisticsSlides } from '../player/firstRun';
+import { suggestionsSlides } from '../suggestions/firstRun';
+import { songSlides } from '../songs/firstRun';
 import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
 import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
 import { api } from '../../api/client';
@@ -165,6 +173,15 @@ export default function SettingsPage() {
   const handleScroll = useCallback(() => { saveScroll(); updateScrollMask(); rushOnScroll(); }, [saveScroll, updateScrollMask, rushOnScroll]);
   /* v8 ignore stop */
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+
+  // Register first-run slides so replay is always available from Settings
+  const songsSlidesMemo = useMemo(() => songSlides(isMobileChrome), [isMobileChrome]);
+  useRegisterFirstRun('songs', t('nav.songs'), songsSlidesMemo);
+  useRegisterFirstRun('statistics', t('nav.statistics'), statisticsSlides);
+  useRegisterFirstRun('suggestions', t('nav.suggestions'), suggestionsSlides);
+  const songsReplay = useFirstRunReplay('songs');
+  const statsReplay = useFirstRunReplay('statistics');
+  const suggestionsReplay = useFirstRunReplay('suggestions');
   const [serviceVersion, setServiceVersion] = useState<string | null>(null);
   // Capture skip decision at mount time (ref avoids StrictMode double-mount issues)
   const skipAnimRef = useRef(_hasRendered);
@@ -332,8 +349,33 @@ export default function SettingsPage() {
           </Card>
           </FadeInDiv>
 
-          {/* ── Reset ── */}
+          {/* ── First Run Guides ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
+          <SectionHeader title={t('firstRun.settings.showFirstRunTitle')} description={t('firstRun.settings.showFirstRunHint')} />
+          <Card>
+            <button className={modalCss.toggleRow} onClick={songsReplay.open}>
+              <div className={modalCss.toggleContent}>
+                <div className={modalCss.toggleLabel}>{t('nav.songs')}</div>
+              </div>
+              <span className={css.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+            </button>
+            <button className={modalCss.toggleRow} onClick={statsReplay.open}>
+              <div className={modalCss.toggleContent}>
+                <div className={modalCss.toggleLabel}>{t('nav.statistics')}</div>
+              </div>
+              <span className={css.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+            </button>
+            <button className={modalCss.toggleRow} onClick={suggestionsReplay.open}>
+              <div className={modalCss.toggleContent}>
+                <div className={modalCss.toggleLabel}>{t('nav.suggestions')}</div>
+              </div>
+              <span className={css.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+            </button>
+          </Card>
+          </FadeInDiv>
+
+          {/* ── Reset ── */}
+          <FadeInDiv delay={stagger(staggerIndex)}>
           <div className={isMobile ? css.resetRowMobile : css.resetRow}>
             <div>
               <SectionHeader title={t('settings.resetSection')} description={t('settings.resetDescription')} flush />
@@ -361,6 +403,9 @@ export default function SettingsPage() {
         />
         /* v8 ignore stop */
       )}
+      {songsReplay.show && <FirstRunCarousel slides={songsReplay.slides} onDismiss={songsReplay.dismiss} />}
+      {statsReplay.show && <FirstRunCarousel slides={statsReplay.slides} onDismiss={statsReplay.dismiss} />}
+      {suggestionsReplay.show && <FirstRunCarousel slides={suggestionsReplay.slides} onDismiss={suggestionsReplay.dismiss} />}
     </div>
   );
 }

@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useMemo, useCallback, useState } from 'react';
 import Modal from '../../../components/modals/Modal';
 import { ModalSection } from '../../../components/modals/components/ModalSection';
@@ -28,7 +29,7 @@ export type MetadataVisibility = {
   stars: boolean;
 };
 
-type Props = {
+type SortModalProps = {
   visible: boolean;
   draft: SortDraft;
   savedDraft?: SortDraft;
@@ -41,7 +42,7 @@ type Props = {
   onApply: () => void;
 };
 
-export default function SortModal({ visible, draft, savedDraft, instrumentFilter, hasPlayer, metadataVisibility: mv, onChange, onCancel, onReset, onApply }: Props) {
+export default function SortModal({ visible, draft, savedDraft, instrumentFilter, hasPlayer, metadataVisibility: mv, onChange, onCancel, onReset, onApply }: SortModalProps) {
   const setMode = (sortMode: SongSortMode) => onChange({ ...draft, sortMode });
 
   const hasChanges = useMemo(() => {

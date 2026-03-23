@@ -307,3 +307,5 @@ PercentileService/data/
 # Web stuff
 FortniteFestivalWeb/.yarn
 FortniteFestivalWeb/coverage
+#Playwright
+.playwright-mcp

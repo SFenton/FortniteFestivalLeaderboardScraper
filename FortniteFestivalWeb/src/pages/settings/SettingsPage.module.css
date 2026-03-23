@@ -143,3 +143,12 @@
 .fabSpacer {
   composes: fabSpacer from '../../styles/shared.module.css';
 }
+
+/* ── First Run Guides ── */
+
+.firstRunBtn {
+  composes: btnPrimary from '../../styles/shared.module.css';
+  padding: var(--gap-sm) var(--gap-section);
+  font-size: var(--font-md);
+  flex-shrink: 0;
+}

@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useState, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoPerson } from 'react-icons/io5';
@@ -51,6 +52,7 @@ export default function MobilePlayerSearchModal({
     setLoading(false);
     setDebouncing(false);
     spinner.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only close handler
     }, []);
 
   const search = useCallback(async (q: string) => {

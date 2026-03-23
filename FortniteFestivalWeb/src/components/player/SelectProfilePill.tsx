@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Purple branded "Select Player Profile" pill with scale/opacity animation.
  * Inherits base layout from ActionPill.module.css via CSS composes.

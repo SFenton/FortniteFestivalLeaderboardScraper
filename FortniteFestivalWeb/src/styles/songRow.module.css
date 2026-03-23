@@ -1,0 +1,75 @@
+/*
+ * Shared song-row layout classes used by both production SongRow and first-run demos.
+ * Import via `composes` in consumer CSS modules to keep visuals in sync.
+ */
+
+/* ── Row containers ── */
+
+.row {
+  composes: frostedCard from './shared.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  padding: 0 var(--gap-xl);
+  height: var(--size-3xl);
+  border-radius: var(--radius-md);
+}
+
+.rowMobile {
+  composes: frostedCard from './shared.module.css';
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+  padding: var(--gap-lg) var(--gap-xl);
+  border-radius: var(--radius-md);
+}
+
+/* ── Inner layout ── */
+
+.mobileTopRow {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+}
+
+.detailStrip {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.scoreMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  flex-shrink: 0;
+}
+
+.metadataWrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--gap-lg);
+}
+
+.instrumentStatusRow {
+  display: flex;
+  gap: var(--gap-sm);
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* ── Animation utilities ── */
+
+.fadeIn {
+  opacity: 0;
+  animation: fadeIn var(--duration-fade) ease forwards;
+}
+
+.fadeInDelayed {
+  opacity: 0;
+  animation: fadeInUp var(--duration-fade) ease-out var(--duration-normal) forwards;
+}

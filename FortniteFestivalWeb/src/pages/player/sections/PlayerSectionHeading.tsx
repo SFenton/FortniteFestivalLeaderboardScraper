@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { memo } from 'react';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { Font, Gap, Size } from '@festival/theme';

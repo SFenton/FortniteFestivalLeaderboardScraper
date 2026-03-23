@@ -272,6 +272,7 @@
     "individualToggles": "Individual Score & FC Toggles",
     "instrumentFilters": "Selected Instrument Filters",
     "instrumentFiltersHint": "Select an instrument to filter its scores and FCs.",
+    "instrumentHeader": "{{instrument}} Filters",
     "seasonTitle": "Season",
     "seasonHint": "Filter by the season a score was achieved.",
     "percentileTitle": "Percentile",
@@ -309,5 +310,99 @@
     "medium": "Medium",
     "hard": "Hard",
     "expert": "Expert"
+  },
+  "firstRun": {
+    "songs": {
+      "songList": {
+        "title": "Song List",
+        "description": "Browse and search the entire Festival library. Tap a song to see leaderboards and more details."
+      },
+      "sort": {
+        "title": "Sort Songs",
+        "description": "Tap the sort button to reorder by default song data. Select a player profile to narrow it down even more."
+      },
+      "navigation": {
+        "title": "Navigation",
+        "description": "Use the sidebar or bottom tabs to switch between Songs, Suggestions, Statistics, and Settings.",
+        "descriptionMobile": "Use the bottom tabs to navigate the app. Select a player profile to see even more options.",
+        "descriptionDesktop": "Use the sidebar to navigate the app. Select a player profile to see even more options."
+      },
+      "filter": {
+        "title": "Filter Songs",
+        "description": "Filter down the song list by global data, and refine it with per-instrument filters."
+      },
+      "songIcons": {
+        "title": "Instrument Icons",
+        "description": "When showing all instruments, quickly identify songs you've FC'd (gold), played (green), or haven't played (red)."
+      },
+      "metadata": {
+        "title": "Song Metadata",
+        "description": "When filtering to a single instrument, see more details about your best score. Customize the order, and what appears, in Settings."
+      }
+    },
+    "statistics": {
+      "drillDown": {
+        "title": "Drill Into Your Data",
+        "description": "Tap any stat card marked with a chevron to jump to the Songs page with pre-applied filters, instantly showing you all songs for that category."
+      },
+      "overview": {
+        "title": "Global Statistics",
+        "description": "See a player's overall performance at a glance — songs played, full combos, gold stars, accuracy, and best rank. Tap any stat with an indicator to jump to the relevant songs."
+      },
+      "instrumentBreakdown": {
+        "title": "Per-Instrument Stats",
+        "description": "Scroll down to see detailed stats for each instrument, and tap to immediately be taken to a filtered list of songs for that instrument."
+      },
+      "percentiles": {
+        "title": "Percentile Rankings",
+        "description": "See where a player ranks relative to all players. The percentile table breaks down how many scores land in each bracket — from Top 1% to Top 100%."
+      },
+      "topSongs": {
+        "title": "Highest and Lowest Rank Breakdown",
+        "description": "Each instrument shows your highest and lowest five songs by percentile rank. Tap any song to see its leaderboard and score history."
+      }
+    },
+    "suggestions": {
+      "overview": {
+        "title": "Personalized Suggestions",
+        "description": "Get tailored song suggestions based on your scores — find your best improvement opportunities, achievement gaps, and next milestones."
+      },
+      "categoryCard": {
+        "title": "Suggestion Cards",
+        "description": "Each suggestion is a themed card with songs tailored to what you have and haven't played — near FCs, unplayed tracks, percentile pushes, and more."
+      },
+      "globalFilter": {
+        "title": "Filter Suggestions",
+        "description": "Tap the filter button to control which suggestions are visible to you."
+      },
+      "instrumentFilter": {
+        "title": "Per-Instrument Filters",
+        "description": "Select an instrument to fine-tune which suggestion types appear for that specific instrument."
+      },
+      "infiniteScroll": {
+        "title": "Endless Suggestions",
+        "description": "Scroll down to load an endless rotation of personalized suggestions."
+      },
+      "demo": {
+        "unfcTitle": "Finish the Guitar FCs",
+        "unfcDesc": "Play these songs again on Guitar and grab an FC!",
+        "pctPushTitle": "Percentile Push: Bass",
+        "pctPushDesc": "Replay these Bass songs to jump to the next percentile bracket.",
+        "staleTitle": "Play Vocals This Season",
+        "staleDesc": "Songs you haven't played on Vocals this season.",
+        "nearFcTitle": "FC These Next!",
+        "nearFcDesc": "If you can get gold stars, you can FC it!",
+        "unplayedTitle": "New on Drums",
+        "unplayedDesc": "Songs you haven't played on Drums yet.",
+        "varietyTitle": "Variety Pack",
+        "varietyDesc": "Two different artists for variety.",
+        "perInstrumentHeader": "Per-Instrument Types"
+      }
+    },
+    "settings": {
+      "showFirstRunTitle": "First Run Guides",
+      "showFirstRunHint": "Re-visit the first run experience for each page.",
+      "showButton": "Show"
+    }
   }
 }

@@ -5,7 +5,7 @@ import { ModalSection } from './components/ModalSection';
 import ModalShell from './components/ModalShell';
 import css from './Modal.module.css';
 
-type Props = {
+type ModalProps = {
   visible: boolean;
   title: string;
   onClose: () => void;
@@ -22,7 +22,7 @@ type Props = {
  * Adaptive modal: bottom sheet on mobile (≤768px), side flyout on desktop.
  * Uses a draft pattern — the parent controls open/close & apply/cancel.
  */
-export default function Modal({ visible, title, onClose, onApply, onReset, resetLabel, resetHint, applyLabel, applyDisabled, children }: Props) {
+export default function Modal({ visible, title, onClose, onApply, onReset, resetLabel, resetHint, applyLabel, applyDisabled, children }: ModalProps) {
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement>(null);
   const updateScrollMask = useScrollMask(scrollRef, [visible, children]);

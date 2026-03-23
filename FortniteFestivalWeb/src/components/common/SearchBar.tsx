@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Reusable search bar with icon, input, and click-to-focus wrapper.
  * Used across desktop header, songs toolbar, player search modal,

@@ -13,3 +13,5 @@ export const STAGGER_ENTRY_OFFSET = 80;
 export const ACCORDION_DELAY_MS = 300;
 export const CHART_ANIM_DURATION = 400;
 export const CHART_ANIM_SETTLE = 600;
+export const DEMO_SWAP_INTERVAL_MS = 5_000;
+export const SWIPE_THRESHOLD = 50;

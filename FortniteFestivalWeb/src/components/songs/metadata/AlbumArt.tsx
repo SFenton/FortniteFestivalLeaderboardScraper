@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useState, useCallback, memo, type CSSProperties } from 'react';
 import css from './AlbumArt.module.css';
 

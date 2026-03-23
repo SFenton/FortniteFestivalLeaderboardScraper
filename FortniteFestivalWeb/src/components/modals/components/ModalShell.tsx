@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Lightweight modal shell: overlay + panel + header + close + escape + lifecycle.
  * Both Modal (sort/filter with apply/reset footer) and MobilePlayerSearchModal

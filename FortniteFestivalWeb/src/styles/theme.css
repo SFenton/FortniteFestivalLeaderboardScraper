@@ -102,6 +102,9 @@
   --size-icon-md: 28px;
   --size-icon-sm: 24px;
   --size-instrument-chip: 34px;
+  --size-button-close: 36px;
+  --size-button-nav: 40px;
+  --size-dot: 8px;
   --album-size: 100px;
 
   /* ── Font Weights ── */
@@ -117,6 +120,14 @@
   --max-width-card: 1080px;
   --max-width-grid: 2170px;
   --max-width-narrow: 600px;
+  --max-width-carousel: 520px;
+
+  /* ── Carousel ── */
+  --carousel-height: 80vh;
+  --carousel-max-height: 720px;
+  --carousel-min-height: 400px;
+  --carousel-height-mobile: 85vh;
+  --carousel-max-height-mobile: 640px;
 
   /* ── Duration ── */
   --duration-quick: 150ms;

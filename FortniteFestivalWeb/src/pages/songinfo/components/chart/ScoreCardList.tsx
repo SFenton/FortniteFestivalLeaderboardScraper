@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Top score cards displayed beneath the chart.
  * Extracted from ScoreHistoryChart for readability.

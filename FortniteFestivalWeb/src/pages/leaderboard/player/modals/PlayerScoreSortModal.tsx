@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useMemo, useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import Modal from '../../../../components/modals/Modal';
@@ -14,7 +15,7 @@ export type PlayerScoreSortDraft = {
   sortAscending: boolean;
 };
 
-type Props = {
+type PlayerScoreSortModalProps = {
   visible: boolean;
   draft: PlayerScoreSortDraft;
   savedDraft?: PlayerScoreSortDraft;
@@ -24,7 +25,7 @@ type Props = {
   onApply: () => void;
 };
 
-export default function PlayerScoreSortModal({ visible, draft, savedDraft, onChange, onCancel, onReset, onApply }: Props) {
+export default function PlayerScoreSortModal({ visible, draft, savedDraft, onChange, onCancel, onReset, onApply }: PlayerScoreSortModalProps) {
   const { t } = useTranslation();
   const setMode = (sortMode: PlayerScoreSortMode) => onChange({ ...draft, sortMode });
 

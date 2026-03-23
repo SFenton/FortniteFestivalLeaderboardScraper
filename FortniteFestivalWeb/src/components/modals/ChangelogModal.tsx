@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useLayoutEffect, useState, useRef, useCallback } from 'react';
 import { IoClose } from 'react-icons/io5';
 import { APP_VERSION } from '../../hooks/data/useVersions';

@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { memo } from 'react';
 import PercentilePill from '../songs/metadata/PercentilePill';
 import s from './PlayerPercentileTable.module.css';

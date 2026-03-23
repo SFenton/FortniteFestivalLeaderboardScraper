@@ -1,0 +1,20 @@
+/* Demo song rows for first-run carousel — composes from shared songRow base. */
+
+.list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+}
+
+.row {
+  composes: row from '../../../../styles/songRow.module.css';
+}
+
+.rowMobile {
+  composes: rowMobile from '../../../../styles/songRow.module.css';
+}
+
+.mobileTopRow {
+  composes: mobileTopRow from '../../../../styles/songRow.module.css';
+}

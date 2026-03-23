@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useTranslation } from 'react-i18next';
 import { IoPerson } from 'react-icons/io5';
 import { Colors, Size } from '@festival/theme';

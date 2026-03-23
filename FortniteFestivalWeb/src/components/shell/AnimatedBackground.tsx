@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
 import { type ServerSong as Song } from '@festival/core/api/serverTypes';
 import css from './AnimatedBackground.module.css';
@@ -13,6 +14,7 @@ type MotionPreset = {
   translateY: [number, number];
 };
 
+/* eslint-disable no-magic-numbers -- motion animation parameters */
 const MOTION_PRESETS: MotionPreset[] = [
   { scale: [1.0, 1.12], translateX: [0, 0], translateY: [0, 0] },   // Zoom in
   { scale: [1.12, 1.0], translateX: [0, 0], translateY: [0, 0] },   // Zoom out
@@ -25,6 +27,7 @@ const MOTION_PRESETS: MotionPreset[] = [
   { scale: [1.18, 1.18], translateX: [-14, 14], translateY: [14, -14] }, // Diagonal ↗
   { scale: [1.18, 1.18], translateX: [14, -14], translateY: [14, -14] }, // Diagonal ↖
 ];
+/* eslint-enable no-magic-numbers */
 
 /* v8 ignore start — animation DOM code */
 function randomMotion(): MotionPreset {

@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, Link, useSearchParams, useLocation, useNavigate } from 'react-router-dom';
@@ -139,6 +140,7 @@ export default function LeaderboardPage() {
         setLoading(false);
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- t is stable i18n fn
     [songId, instrument, instKey, leewayParam],
   );
 
@@ -149,6 +151,7 @@ export default function LeaderboardPage() {
     if (cached.scrollTop > 0 && scrollRef.current) {
       scrollRef.current.scrollTop = cached.scrollTop;
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only scroll restore
   }, []);
   /* v8 ignore stop */
 
@@ -158,6 +161,7 @@ export default function LeaderboardPage() {
     const pageParam = parseInt(searchParams.get('page') ?? '', 10);
     const startPage = !isNaN(pageParam) && pageParam >= 1 ? pageParam - 1 : 0;
     void fetchPage(startPage, 'first');
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally skip searchParams
   }, [fetchPage, cacheKey]);
 
   // Write cache whenever data changes
@@ -214,6 +218,7 @@ export default function LeaderboardPage() {
       retireId = setTimeout(() => setAnimMode('cached'), staggerWindow);
     }, 150);
     return () => { clearTimeout(id); clearTimeout(retireId); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- animation sequence, intentionally omits isNarrow
   }, [loading, error]);
 
   /* v8 ignore start — navToPlayer auto-scroll */
@@ -237,12 +242,6 @@ export default function LeaderboardPage() {
   }, [loadPhase, entries, playerData, searchParams, setSearchParams]);
   /* v8 ignore stop */
 
-  if (!songId || !instrument) {
-    return <div className={s.center}>{t('leaderboard.notFound')}</div>;
-  }
-
-  const startRank = page * PAGE_SIZE;
-
   const scoreWidth = useMemo(() => {
     const maxLen = Math.max(
       ...entries.map((e) => e.score.toLocaleString().length),
@@ -251,11 +250,19 @@ export default function LeaderboardPage() {
     return `${maxLen}ch`;
   }, [entries]);
 
+  const listRef = useRef<HTMLDivElement>(null);
+  const lastRowDelayRef = useRef(0);
+
+  if (!songId || !instrument) {
+    return <div className={s.center}>{t('leaderboard.notFound')}</div>;
+  }
+
+  const startRank = page * PAGE_SIZE;
+
   // Row = 48px height + Gap.sm gap â‰ˆ 52px effective.
   // scrollRef wraps the scroll viewport and is always mounted (even during spinner
   // phase), so clientHeight is reliable on the first contentIn render â€” unlike
   // listRef which lives inside the contentIn conditional and is null initially.
-  const listRef = useRef<HTMLDivElement>(null);
   const ROW_SLOT = 48 + Gap.sm;
   /* v8 ignore next 2 -- scrollRef.clientHeight: DOM measurement */
   const scrollViewHeight = scrollRef.current?.clientHeight
@@ -266,7 +273,6 @@ export default function LeaderboardPage() {
   );
   const STAGGER_INTERVAL = 125;
   const lastRowDelay = maxVisibleRows * STAGGER_INTERVAL;
-  const lastRowDelayRef = useRef(lastRowDelay);
   lastRowDelayRef.current = lastRowDelay;
 
   return (

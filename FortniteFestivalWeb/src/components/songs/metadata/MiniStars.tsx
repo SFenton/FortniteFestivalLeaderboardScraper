@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { memo, type CSSProperties } from 'react';
 import { Colors } from '@festival/theme';
 import css from './MiniStars.module.css';

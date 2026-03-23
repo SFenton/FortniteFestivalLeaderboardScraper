@@ -20,7 +20,6 @@ import { useRef } from 'react';
 export function createRenderFlag(): () => boolean {
   let hasRendered = false;
   return function useRenderFlag(): boolean {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
     const ref = useRef(hasRendered);
     hasRendered = true;
     return ref.current;

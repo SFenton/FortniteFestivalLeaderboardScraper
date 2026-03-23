@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Shared song + instrument header bar used by LeaderboardPage, PlayerHistoryPage,
  * and SongDetailPage. Shows album art, song title/artist, and optionally an

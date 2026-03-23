@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Image loader with spinner/fade transition state machine.
  * Extracted from PathsModal for independent testability.
@@ -58,6 +59,7 @@ export function PathImage({ songId, instrument, difficulty }: PathImageProps) {
       });
       return () => { cancelAnimationFrame(raf); clearTimeout(timerRef.current); };
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- loadImage is stable useCallback, defined below
   }, [phase]);
   /* v8 ignore stop */
 

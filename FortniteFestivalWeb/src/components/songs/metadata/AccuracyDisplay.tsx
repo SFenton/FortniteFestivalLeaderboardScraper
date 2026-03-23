@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Displays an accuracy percentage with color interpolation (red→green).
  * Shows a gold FC badge when the player has a full combo.

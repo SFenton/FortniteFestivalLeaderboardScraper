@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
 import { IoClose, IoChevronDown } from 'react-icons/io5';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
@@ -16,13 +17,13 @@ const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const;
 type Difficulty = typeof DIFFICULTIES[number];
 const DIFFICULTY_LABELS: Record<Difficulty, string> = { easy: 'Easy', medium: 'Medium', hard: 'Hard', expert: 'Expert' };
 
-type Props = {
+type PathsModalProps = {
   visible: boolean;
   songId: string;
   onClose: () => void;
 };
 
-export default function PathsModal({ visible, songId, onClose }: Props) {
+export default function PathsModal({ visible, songId, onClose }: PathsModalProps) {
   const isMobile = useIsMobile();
   const vvHeight = useVisualViewportHeight();
   const vvOffsetTop = useVisualViewportOffsetTop();
@@ -290,6 +291,7 @@ function PathImage({ songId, instrument, difficulty }: { songId: string; instrum
       });
       return () => { cancelAnimationFrame(raf); clearTimeout(timerRef.current); };
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- loadImage is stable useCallback, defined below
   }, [phase]);
 
   const loadImage = useCallback((src: string) => {

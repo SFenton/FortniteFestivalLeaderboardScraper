@@ -63,13 +63,40 @@ export type ServerSong = {
   genres?: string[];
   difficulty?: SongDifficulty;
   maxScores?: Partial<Record<ServerInstrumentKey, number>>;
+  shopUrl?: string;
 };
+
+/** Minimal song shape for display purposes (album art required). */
+export type SongDisplay = Pick<ServerSong, 'title' | 'artist' | 'year'> & { albumArt: string };
 
 export type SongsResponse = {
   count: number;
   currentSeason?: number;
   songs: ServerSong[];
 };
+
+// ─── WebSocket notification types ──────────────────────────────
+
+export type ShopChangedMessage = {
+  type: 'shop_changed';
+  added: string[];
+  removed: string[];
+  total: number;
+};
+
+export type ShopSnapshotMessage = {
+  type: 'shop_snapshot';
+  songIds: string[];
+  total: number;
+};
+
+export type WsNotificationMessage =
+  | ShopChangedMessage
+  | ShopSnapshotMessage
+  | { type: 'personal_db_ready' }
+  | { type: 'backfill_complete' }
+  | { type: 'history_recon_complete' }
+  | { type: 'rivals_complete' };
 
 export type LeaderboardEntry = {
   accountId: string;

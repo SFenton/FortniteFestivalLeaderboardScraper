@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Suggestion category and song row components extracted from SuggestionsPage.
  */

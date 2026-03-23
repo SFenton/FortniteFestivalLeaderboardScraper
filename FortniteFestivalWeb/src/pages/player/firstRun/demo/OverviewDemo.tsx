@@ -1,0 +1,60 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
+/**
+ * First-run demo: Overall summary stat boxes in the production 2-column grid.
+ * Renders real StatBox components via buildOverallSummaryItems() with static data.
+ */
+import { type CSSProperties } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Radius, frostedCard, Gap } from '@festival/theme';
+import { buildOverallSummaryItems, type OverallStats } from '../../sections/OverallSummarySection';
+import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS } from '@festival/core/api/serverTypes';
+import FadeIn from '../../../../components/page/FadeIn';
+import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
+import { useIsMobileChrome } from '../../../../hooks/ui/useIsMobile';
+import s from '../../../../components/player/PlayerPage.module.css';
+
+const DEMO_STATS: OverallStats = {
+  songsPlayed: 142,
+  fcCount: 38,
+  fcPercent: '26.8',
+  goldStarCount: 12,
+  avgAccuracy: 962000,
+  bestRank: 4,
+  bestRankSongId: null,
+  bestRankInstrument: null,
+};
+
+const TOTAL_SONGS = 206;
+const CARD_HEIGHT = 100;
+const NOOP = () => {};
+
+const cardStyle: CSSProperties = { ...frostedCard, borderRadius: Radius.md };
+
+export default function OverviewDemo() {
+  const { t } = useTranslation();
+  const h = useSlideHeight();
+  const isMobile = useIsMobileChrome();
+
+  const items = buildOverallSummaryItems(
+    t, DEMO_STATS, TOTAL_SONGS, [...INSTRUMENT_KEYS], NOOP, NOOP, cardStyle,
+  );
+
+  // On mobile: single column, fit by height; on desktop: 2-column grid
+  const cols = isMobile ? 1 : 2;
+  const maxItems = h ? Math.max(1, Math.floor((h + Gap.md) / (CARD_HEIGHT + Gap.md)) * cols) : items.length;
+  const visible = items.slice(0, maxItems);
+
+  const gridStyle = isMobile
+    ? { width: '100%', overflow: 'visible' as const, pointerEvents: 'none' as const, gridTemplateColumns: '1fr' }
+    : { width: '100%', overflow: 'visible' as const, pointerEvents: 'none' as const };
+
+  return (
+    <div className={s.gridList} style={gridStyle}>
+      {visible.map((item, i) => (
+        <FadeIn key={item.key} delay={i * 80} className={item.span ? s.gridFullWidth : undefined} style={item.style}>
+          {item.node}
+        </FadeIn>
+      ))}
+    </div>
+  );
+}

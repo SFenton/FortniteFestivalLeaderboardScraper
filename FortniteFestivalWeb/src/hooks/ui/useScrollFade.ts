@@ -12,10 +12,12 @@ export interface ScrollFadeOptions {
 
 const DEFAULT_DISTANCE = 36;
 
+/* eslint-disable no-magic-numbers -- opacity ramp curve: [position, opacity] tuples */
 const DEFAULT_STOPS: ReadonlyArray<readonly [number, number]> = [
   [0, 0], [0.15, 0.01], [0.30, 0.03], [0.45, 0.08],
   [0.60, 0.18], [0.75, 0.40], [0.90, 0.70], [1, 1],
 ];
+/* eslint-enable no-magic-numbers */
 
 function buildTopMask(clipTop: number, distance: number, stops: ReadonlyArray<readonly [number, number]>): string {
   const s = stops.map(([t, a]) =>

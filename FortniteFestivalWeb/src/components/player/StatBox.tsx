@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { memo, type CSSProperties } from 'react';
 import css from './StatBox.module.css';
 
@@ -15,7 +16,8 @@ const StatBox = memo(function StatBox({ label, value, color, onClick }: StatBoxP
       <span className={css.label}>{label}</span>
     </div>
   );
-  if (onClick) return (
+  if (onClick) {
+    return (
     <div className={css.clickable} onClick={onClick}>
       {inner}
       <svg className={css.chevron} width="8" height="14" viewBox="0 0 8 14" fill="none">
@@ -23,6 +25,7 @@ const StatBox = memo(function StatBox({ label, value, color, onClick }: StatBoxP
       </svg>
     </div>
   );
+  }
   return inner;
 });
 

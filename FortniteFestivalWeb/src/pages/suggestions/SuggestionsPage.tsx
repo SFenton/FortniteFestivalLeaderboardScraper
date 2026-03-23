@@ -1,4 +1,5 @@
-﻿import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigationType } from 'react-router-dom';
 import { IoFunnel } from 'react-icons/io5';
@@ -7,6 +8,10 @@ import InfiniteScroll from 'react-infinite-scroll-component';
 import { useFestival } from '../../contexts/FestivalContext';
 import { usePlayerData } from '../../contexts/PlayerDataContext';
 import { useSuggestions } from '../../hooks/data/useSuggestions';
+import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
+import { useFirstRun } from '../../hooks/ui/useFirstRun';
+import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
+import { suggestionsSlides } from './firstRun';
 import { serverSongToCore, buildScoresIndex } from '../../utils/suggestionAdapter';
 import SuggestionsFilterModal from './modals/SuggestionsFilterModal';
 import type { SuggestionsFilterDraft } from './modals/SuggestionsFilterModal';
@@ -38,15 +43,20 @@ import {
   buildAlbumArtMap,
 } from './suggestionsHelpers';
 
-type Props = { accountId: string };
+type SuggestionsPageProps = { accountId: string };
 
 let _suggestionsHasRendered = false;
 
 /* v8 ignore start — render orchestrator; business logic tested in suggestionsHelpers.ts (35 unit tests), component exercised by 42 integration tests */
-export default function SuggestionsPage({ accountId }: Props) {
+export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
   const { t } = useTranslation();
   const navType = useNavigationType();
   const { settings: appSettings } = useSettings();
+
+  // First-run carousel
+  useRegisterFirstRun('suggestions', t('nav.suggestions'), suggestionsSlides);
+  const firstRunGateCtx = useMemo(() => ({ hasPlayer: true }), []);
+  const firstRun = useFirstRun('suggestions', firstRunGateCtx);
   const {
     state: { songs, currentSeason, isLoading },
   } = useFestival();
@@ -356,6 +366,7 @@ export default function SuggestionsPage({ accountId }: Props) {
         onReset={resetFilter}
         onApply={applyFilter}
       />
+      {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} />}
     </div>
   );
 }

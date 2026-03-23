@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useTranslation } from 'react-i18next';
 import { Gap, Size } from '@festival/theme';
 import { ToggleRow } from '../../../../../components/common/ToggleRow';

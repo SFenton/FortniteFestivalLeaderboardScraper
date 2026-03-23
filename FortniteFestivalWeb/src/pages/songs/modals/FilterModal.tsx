@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useMemo, useCallback, useState } from 'react';
 import Modal from '../../../components/modals/Modal';
 import { ModalSection } from '../../../components/modals/components/ModalSection';
@@ -18,7 +19,7 @@ export type FilterDraft = SongFilters & {
   instrumentFilter: InstrumentKey | null;
 };
 
-type Props = {
+type FilterModalProps = {
   visible: boolean;
   draft: FilterDraft;
   savedDraft?: FilterDraft;
@@ -31,7 +32,7 @@ type Props = {
 
 const PERCENTILE_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100] as const;
 
-export default function FilterModal({ visible, draft, savedDraft, availableSeasons, onChange, onCancel, onReset, onApply }: Props) {
+export default function FilterModal({ visible, draft, savedDraft, availableSeasons, onChange, onCancel, onReset, onApply }: FilterModalProps) {
   const { settings: appSettings } = useSettings();
   const visibleKeys = INSTRUMENT_KEYS.filter(k => isInstrumentVisible(appSettings, k));
 

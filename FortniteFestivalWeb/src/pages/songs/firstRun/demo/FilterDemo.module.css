@@ -1,0 +1,81 @@
+/* Instrument selector styles for first-run filter demo — mirrors ScoreHistoryChart pattern. */
+
+.iconRow {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: var(--gap-lg);
+  width: 100%;
+  overflow: hidden;
+}
+
+.iconButton {
+  background: none;
+  border: none;
+  border-radius: 50%;
+  width: var(--size-3xl);
+  height: var(--size-3xl);
+  padding: 0;
+  cursor: pointer;
+  transition: all var(--duration-quick) ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.5;
+  position: relative;
+  overflow: hidden;
+}
+
+.iconButtonActive {
+  composes: iconButton;
+  background-color: var(--color-status-green);
+  opacity: 1;
+}
+
+.arrowButton {
+  background: none;
+  border: 1px solid var(--color-border-primary);
+  border-radius: 50%;
+  width: var(--size-lg);
+  height: var(--size-lg);
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  line-height: 0;
+  transition: all var(--duration-quick) ease;
+}
+
+.wrapper {
+  width: 100%;
+}
+
+.instrumentSection {
+  margin-bottom: var(--gap-md);
+}
+
+.modeSection {
+  margin-bottom: var(--gap-lg);
+}
+
+.modeSectionCompact {
+  margin-bottom: 0;
+}
+
+/* ── Section headers shared by Filter & Sort demos ── */
+
+.sectionHeader {
+  font-size: var(--font-lg);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: var(--gap-sm);
+}
+
+.sectionHint {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--gap-md);
+  line-height: 1.4;
+}

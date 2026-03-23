@@ -64,6 +64,7 @@ export const Size = {
   dotRadius: 4,
   dotRadiusActive: 6,
   barSelectionStroke: 3,
+  instrumentBtn: 48,
 } as const;
 
 export const MaxWidth = {
@@ -79,6 +80,22 @@ export const Layout = {
   fabPaddingBottom: 96,
   sectionHeadingHeight: 64,
   songRowHeight: 72,
+  demoRowHeight: 64,
+  demoRowMobileHeight: 72,
+  demoRowMobileIconsHeight: 130,
+  demoRowMobileMetaHeight: 160,
+  demoRowGap: 4,
+  pinnedSidebarItemHeight: 52,
+  sidebarItemHeight: 48,
+  bottomNavTabMinWidth: 80,
+  sortModeRowHeight: 44,
+  sortDirectionHeight: 60,
+  sortHeaderHeight: 50,
+  sortHintPadding: 20,
+  filterInstrumentRowHeight: 70,
+  demoInstrumentBtn: 64,
+  filterHeaderHeight: 30,
+  filterToggleRowHeight: 56,
   chartMargin: { top: 16, right: 24, bottom: 0, left: 24 },
   axisLabelOffset: 8,
 } as const;

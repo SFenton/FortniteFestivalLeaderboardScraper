@@ -80,6 +80,7 @@ export function useSuggestions(
     setHasMore(true);
 
     _cache = { accountId, categories: first, generator: gen, scrollY: 0 };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- currentSeason only needed at init
   }, [accountId, coreSongs, scoresIndex]);
 
   const loadMore = useCallback(() => {

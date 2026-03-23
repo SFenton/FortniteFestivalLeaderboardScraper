@@ -43,12 +43,14 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { queryClient } from './api/queryClient';
 import { Routes as AppRoutes, RoutePatterns } from './routes';
+import { FirstRunProvider } from './contexts/FirstRunContext';
 
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
     <SettingsProvider>
       <FestivalProvider>
+        <FirstRunProvider>
         <FabSearchProvider>
           <SearchQueryProvider>
             <HashRouter>
@@ -56,6 +58,7 @@ export default function App() {
             </HashRouter>
           </SearchQueryProvider>
         </FabSearchProvider>
+        </FirstRunProvider>
       </FestivalProvider>
     </SettingsProvider>
     <ReactQueryDevtools initialIsOpen={false} />

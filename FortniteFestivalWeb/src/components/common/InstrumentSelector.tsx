@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Reusable instrument selector with collapsible content section.
  * Shows a row of instrument circle buttons; clicking one expands children below it.

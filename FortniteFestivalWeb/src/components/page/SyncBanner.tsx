@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Sync progress banner displayed on PlayerPage when backfill/history reconstruction is running.
  */

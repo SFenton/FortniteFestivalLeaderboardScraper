@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Full-screen background image with dim overlay that fades in once the image loads.
  * Used by SongDetailPage, LeaderboardPage, PlayerPage, etc.

@@ -1,0 +1,36 @@
+{
+  "extends": ["stylelint-config-standard"],
+  "plugins": ["stylelint-declaration-strict-value"],
+  "rules": {
+    "scale-unlimited/declaration-strict-value": [
+      [
+        "font-size",
+        "color",
+        "background-color",
+        "border-color",
+        "gap",
+        "border-radius"
+      ],
+      {
+        "ignoreValues": [
+          "inherit",
+          "initial",
+          "unset",
+          "currentColor",
+          "transparent",
+          "none",
+          "0",
+          "50%",
+          "100%"
+        ],
+        "disableFix": true,
+        "message": "Use a CSS variable (var(--*)) instead of a literal value for '${property}'"
+      }
+    ],
+    "import-notation": null,
+    "selector-class-pattern": null,
+    "custom-property-pattern": null,
+    "declaration-block-no-redundant-longhand-properties": null,
+    "no-descending-specificity": null
+  }
+}

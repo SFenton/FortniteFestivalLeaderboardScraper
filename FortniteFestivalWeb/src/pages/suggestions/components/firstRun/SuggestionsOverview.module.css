@@ -1,0 +1,45 @@
+.wrapper {
+  width: 100%;
+  max-width: 320px;
+}
+
+.card {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-md);
+  padding: var(--gap-md) var(--gap-lg);
+  background: var(--color-surface-elevated);
+  border-radius: var(--radius-xs);
+  margin-bottom: var(--gap-sm);
+}
+
+.cardBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.cardLabel {
+  font-size: var(--font-md);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.tag {
+  font-size: var(--font-xs);
+  font-weight: 700;
+  padding: var(--gap-xs) var(--gap-sm);
+  border-radius: var(--radius-xs);
+  color: #fff;
+}
+
+.tagGold {
+  background: var(--color-gold);
+}
+
+.tagBlue {
+  background: var(--color-accent-blue);
+}
+
+.tagPurple {
+  background: var(--color-accent-purple);
+}

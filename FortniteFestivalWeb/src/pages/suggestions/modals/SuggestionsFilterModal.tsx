@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useState, useMemo, useCallback } from 'react';
 import Modal from '../../../components/modals/Modal';
 import { ModalSection } from '../../../components/modals/components/ModalSection';
@@ -79,7 +80,7 @@ type InstrumentVisibility = {
   showProBass: boolean;
 };
 
-type Props = {
+type SuggestionsFilterModalProps = {
   visible: boolean;
   draft: SuggestionsFilterDraft;
   savedDraft?: SuggestionsFilterDraft;
@@ -90,7 +91,7 @@ type Props = {
   onApply: () => void;
 };
 
-export default function SuggestionsFilterModal({ visible, draft, savedDraft, instrumentVisibility, onChange, onCancel, onReset, onApply }: Props) {
+export default function SuggestionsFilterModal({ visible, draft, savedDraft, instrumentVisibility, onChange, onCancel, onReset, onApply }: SuggestionsFilterModalProps) {
   const [selectedInstrument, setSelectedInstrument] = useState<InstrumentKey | null>(null);
 
   const visibleInstruments = INSTRUMENTS.filter(i => instrumentVisibility[i.showKey as keyof InstrumentVisibility]);

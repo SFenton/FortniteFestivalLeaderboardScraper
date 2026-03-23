@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Gold star row display — shows 5 gold star PNGs inline.
  * Extracted from PlayerPage for reuse.

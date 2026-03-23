@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { Size } from '@festival/theme';
 import { useState } from 'react';
 import { IoChevronDown } from 'react-icons/io5';

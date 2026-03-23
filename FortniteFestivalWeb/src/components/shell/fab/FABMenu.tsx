@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * FABMenu — animated popup actions menu that appears above the FAB button.
  * Renders grouped action items with dividers between groups.

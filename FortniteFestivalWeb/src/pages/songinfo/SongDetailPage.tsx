@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useSearchParams, useNavigationType, useLocation } from 'react-router-dom';
@@ -109,6 +110,7 @@ export default function SongDetailPage() {
       if (!cancelled) setPlayerScoresReady(true);
     });
     return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- hasCachedPlayer checked via ref
   }, [player, songId]);
 
   // Fetch score history
@@ -129,6 +131,7 @@ export default function SongDetailPage() {
       if (!cancelled) setScoreHistoryReady(true);
     });
     return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- hasCachedPlayer checked via ref
   }, [player, songId]);
 
   // Fetch all instrument leaderboards in a single request
@@ -165,6 +168,7 @@ export default function SongDetailPage() {
       );
     });
     return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- cached/leewayParam intentionally omitted
   }, [songId]);
   /* v8 ignore stop */
 
@@ -268,12 +272,13 @@ export default function SongDetailPage() {
   if (saved && saved.scrollTop > 0 && scrollRef.current) {
       scrollRef.current.scrollTop = saved.scrollTop;
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only scroll restore
   }, []);
   /* v8 ignore stop */
 
   // Scroll to the instrument card when arriving with ?instrument= and autoScroll state
   /* v8 ignore start — DOM scroll positioning */
-  const autoScroll = !!(location.state as any)?.autoScroll;
+  const autoScroll = !!(location.state as Record<string, unknown> | null)?.autoScroll;
   useEffect(() => {
     if (phase !== 'contentIn' || !defaultInstrument || hasScrolled.current || !autoScroll) return;
     hasScrolled.current = true;
@@ -304,7 +309,16 @@ export default function SongDetailPage() {
       scrollContainer.scrollTo({ top: Math.max(0, scrollTop), behavior: 'smooth' });
     }, 1500);
     return () => clearTimeout(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- autoScroll frozen at mount
   }, [phase, defaultInstrument]);
+  /* v8 ignore stop */
+
+  /* v8 ignore start — animation cleanup */
+  const clearAnim = useCallback((e: React.AnimationEvent<HTMLElement>) => {
+    const el = e.currentTarget;
+    el.style.opacity = '';
+    el.style.animation = '';
+  }, []);
   /* v8 ignore stop */
 
   if (!songId) {
@@ -315,13 +329,6 @@ export default function SongDetailPage() {
     opacity: 0,
     animation: `fadeInUp 400ms ease-out ${delayMs}ms forwards`,
   });
-  /* v8 ignore start — animation cleanup */
-  const clearAnim = useCallback((e: React.AnimationEvent<HTMLElement>) => {
-    const el = e.currentTarget;
-    el.style.opacity = '';
-    el.style.animation = '';
-  }, []);
-  /* v8 ignore stop */
 
   return (
     <div className={s.page}>

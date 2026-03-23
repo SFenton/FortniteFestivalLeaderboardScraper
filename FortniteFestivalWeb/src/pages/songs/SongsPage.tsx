@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useState, useMemo, useEffect, useRef, useCallback, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigationType } from 'react-router-dom';
@@ -52,7 +53,7 @@ export default function SongsPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const navType = useNavigationType();
   const location = useLocation();
-  const forceRestagger = !!(location.state as any)?.restagger;
+  const forceRestagger = !!(location.state as Record<string, unknown> | null)?.restagger;
   const isBackNav = navType === 'POP';
 
   // Unified scroll position save/restore
@@ -62,6 +63,7 @@ export default function SongsPage() {
   const setSearch = useCallback((q: string) => {
     setSearchLocal(q);
     searchQuery.setQuery(q);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- searchQuery is context, stable ref
   }, [fabSearch]);
   const effectiveSearch = isMobileChrome ? searchQuery.query : search;
   const [debouncedSearch, setDebouncedSearch] = useState(effectiveSearch);

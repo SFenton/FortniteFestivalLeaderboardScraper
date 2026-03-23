@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Instrument icon component using the same PNG assets as the React Native mobile app.
  * Assets are served from /instruments/ in the public folder.

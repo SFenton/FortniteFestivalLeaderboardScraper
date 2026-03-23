@@ -1,4 +1,5 @@
-﻿import { useEffect, useRef } from 'react';
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
+import { useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useNavigationType } from 'react-router-dom';
 import { useFestival } from '../../contexts/FestivalContext';
@@ -11,6 +12,10 @@ import s from './PlayerPage.module.css';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../../api/queryKeys';
 import PlayerContent from '../leaderboard/player/components/PlayerContent';
+import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
+import { useFirstRun } from '../../hooks/ui/useFirstRun';
+import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
+import { statisticsSlides } from './firstRun';
 
 
 /** Track rendered accounts so we can skip stagger animation on revisit. */
@@ -34,6 +39,11 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   // Use cached context data when viewing the tracked player (statistics tab)
   const ctx = usePlayerData();
   const isTrackedPlayer = !!propAccountId;
+
+  // First-run carousel
+  useRegisterFirstRun('statistics', t('nav.statistics'), statisticsSlides);
+  const firstRunGateCtx = useMemo(() => ({ hasPlayer: true }), []);
+  const firstRun = useFirstRun('statistics', firstRunGateCtx);
 
   // Local state for when viewing an arbitrary player via URL -- use React Query
   const { data: queryData, isLoading: queryLoading, error: queryError } = useQuery({
@@ -103,6 +113,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
       {loadPhase === 'contentIn' && data && (
         <PlayerContent key={accountId} data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} isTrackedPlayer={isTrackedPlayer} skipAnim={skipAnim} />
       )}
+      {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} />}
     </div>
   );
 }

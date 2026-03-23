@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Renders a spinner during loading/spinnerOut phases and children during contentIn.
  *

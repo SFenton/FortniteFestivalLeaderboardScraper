@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { SettingsProvider } from '../../../src/contexts/SettingsContext';
+import { FirstRunProvider } from '../../../src/contexts/FirstRunContext';
 import SettingsPage from '../../../src/pages/settings/SettingsPage';
 
 beforeEach(() => {
@@ -32,7 +33,9 @@ function renderSettings() {
   return render(
     <MemoryRouter>
     <SettingsProvider>
-      <SettingsPage />
+      <FirstRunProvider>
+        <SettingsPage />
+      </FirstRunProvider>
     </SettingsProvider>
     </MemoryRouter>,
   );

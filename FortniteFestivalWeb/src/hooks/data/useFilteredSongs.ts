@@ -112,6 +112,7 @@ export function useFilteredSongs({
         if (f.starsFilter[stars] === false) return false;
       }
       if (checkDiff) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- difficulty may be flat number from API
         const diff = (s as any).difficulty ?? 0;
         if (f.difficultyFilter[diff] === false) return false;
       }

@@ -1,0 +1,73 @@
+/* Direction selector — ascending/descending toggle with animated purple circles. */
+
+.inner {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+}
+
+.textCol {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-xs);
+}
+
+.title {
+  font-size: var(--font-lg);
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.hint {
+  font-size: var(--font-sm);
+  color: var(--color-text-secondary);
+}
+
+.icons {
+  display: flex;
+  gap: var(--gap-md);
+  flex-shrink: 0;
+}
+
+.iconBtn {
+  width: var(--size-xl);
+  height: var(--size-xl);
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 0;
+  line-height: 0;
+}
+
+.iconCircle {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background-color: var(--color-accent-purple);
+  transform: scale(0);
+  transition: transform var(--duration-confirm) ease;
+}
+
+.iconCircleActive {
+  composes: iconCircle;
+  transform: scale(1);
+}
+
+.icon {
+  position: relative;
+  z-index: 1;
+  color: var(--color-text-muted);
+  transition: color var(--duration-fast) ease;
+}
+
+.iconActive {
+  composes: icon;
+  color: var(--color-text-primary);
+}

@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useNavigationType } from 'react-router-dom';
@@ -126,15 +127,11 @@ export default function PlayerHistoryPage() {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- t is stable i18n fn
   }, [player, songId, instKey]);
   /* v8 ignore stop */
 
-  if (!songId || !instrument) {
-    return <div className={s.center}>{t('history.notFound')}</div>;
-  }
-
   const filteredHistory = useMemo(
-    /* v8 ignore next — songId always present (early return above) */
     () => songId ? filterHistory(songId, instKey, history) : history,
     [songId, instKey, history, filterHistory],
   );
@@ -169,6 +166,10 @@ export default function PlayerHistoryPage() {
     overscan: 10,
   });
   /* v8 ignore stop */
+
+  if (!songId || !instrument) {
+    return <div className={s.center}>{t('history.notFound')}</div>;
+  }
 
   return (
     <div className={s.page}>

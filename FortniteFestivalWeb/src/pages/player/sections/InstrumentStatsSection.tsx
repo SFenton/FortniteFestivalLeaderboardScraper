@@ -99,9 +99,11 @@ export function buildInstrumentStatsItems(
     { count: stats.oneStarCount, label: t('player.oneStar'), starKey: 1 },
   ];
   for (const sc of STAR_CARDS) {
-    if (sc.count > 0) cards.push({ label: sc.label, value: sc.count.toLocaleString(), color: sc.color, onClick: () => {
-      navigateToSongs(instStarsUpdater(inst, sc.starKey));
-    } });
+    if (sc.count > 0) {
+      cards.push({ label: sc.label, value: sc.count.toLocaleString(), color: sc.color, onClick: () => {
+        navigateToSongs(instStarsUpdater(inst, sc.starKey));
+      } });
+    }
   }
 
   const accPct = stats.avgAccuracy / ACCURACY_SCALE;

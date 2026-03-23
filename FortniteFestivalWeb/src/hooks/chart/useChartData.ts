@@ -34,7 +34,10 @@ export function useChartData(
     staleTime: 5 * 60 * 1000,
   });
 
-  const songHistory = historyProp ?? fetchedHistory ?? [];
+  const songHistory = useMemo(
+    () => historyProp ?? fetchedHistory ?? [],
+    [historyProp, fetchedHistory],
+  );
   const loading = !historyProp && isLoading;
 
   const filtered = useMemo(
@@ -48,7 +51,8 @@ export function useChartData(
     );
     const daySeen = new Map<string, number>();
     const dayTotal = new Map<string, number>();
-    const formatDay = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(-2)}`;
+    const YEAR_SUFFIX_LEN = -2;
+    const formatDay = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(YEAR_SUFFIX_LEN)}`;
     for (const h of sorted) {
       const dayKey = formatDay(new Date(h.scoreAchievedAt ?? h.changedAt));
       dayTotal.set(dayKey, (dayTotal.get(dayKey) ?? 0) + 1);

@@ -1,0 +1,32 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: #fff;
+  text-align: center;
+  padding: 24px;
+  gap: 16px;
+}
+
+.title {
+  font-size: 24px;
+  margin: 0;
+}
+
+.message {
+  font-size: 14px;
+  opacity: 0.7;
+  margin: 0;
+}
+
+.reloadBtn {
+  padding: 10px 24px;
+  border-radius: 8px;
+  border: none;
+  background: #7c3aed;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}

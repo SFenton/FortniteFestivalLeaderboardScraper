@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from 'react';
+import css from './ErrorBoundary.module.css';
 
 interface Props {
   children: ReactNode;
@@ -30,31 +31,10 @@ export default class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       if (this.props.fallback) return this.props.fallback;
       return (
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100vh',
-          color: '#fff',
-          textAlign: 'center',
-          padding: 24,
-          gap: 16,
-        }}>
-          <h1 style={{ fontSize: 24, margin: 0 }}>Something went wrong</h1>
-          <p style={{ fontSize: 14, opacity: 0.7, margin: 0 }}>An unexpected error occurred. Try reloading the page.</p>
-          <button
-            onClick={this.handleReload}
-            style={{
-              padding: '10px 24px',
-              borderRadius: 8,
-              border: 'none',
-              background: '#7c3aed',
-              color: '#fff',
-              fontSize: 14,
-              cursor: 'pointer',
-            }}
-          >
+        <div className={css.container}>
+          <h1 className={css.title}>Something went wrong</h1>
+          <p className={css.message}>An unexpected error occurred. Try reloading the page.</p>
+          <button onClick={this.handleReload} className={css.reloadBtn}>
             Reload
           </button>
         </div>
