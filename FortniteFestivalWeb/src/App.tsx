@@ -43,7 +43,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { queryClient } from './api/queryClient';
 import { Routes as AppRoutes, RoutePatterns } from './routes';
-import { FirstRunProvider } from './contexts/FirstRunContext';
+import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
 
 export default function App() {
   return (
@@ -90,7 +90,7 @@ function AppShell() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [playerModalOpen, setPlayerModalOpen] = useState(false);
   const [findPlayerOpen, setFindPlayerOpen] = useState(false);
-  const [changelogOpen, setChangelogOpen] = useState(() => {
+  const [hasNewChangelog] = useState(() => {
     try {
       const stored = localStorage.getItem(CHANGELOG_STORAGE_KEY);
       if (!stored) return true;
@@ -98,15 +98,13 @@ function AppShell() {
       return parsed.version !== APP_VERSION || parsed.hash !== changelogHash();
     } catch { return true; }
   });
-  // Mark as seen immediately so refresh won't re-show
-  useEffect(() => {
-    if (changelogOpen) {
-      localStorage.setItem(CHANGELOG_STORAGE_KEY, JSON.stringify({ version: APP_VERSION, hash: changelogHash() }));
-    }
-  }, [changelogOpen]);
+  const [changelogDismissed, setChangelogDismissed] = useState(false);
+  const { activeCarouselKey } = useFirstRunContext();
+  const showChangelog = hasNewChangelog && !changelogDismissed && !activeCarouselKey;
   /* v8 ignore start — modal dismiss callback */
   const dismissChangelog = useCallback(() => {
-    setChangelogOpen(false);
+    localStorage.setItem(CHANGELOG_STORAGE_KEY, JSON.stringify({ version: APP_VERSION, hash: changelogHash() }));
+    setChangelogDismissed(true);
   }, []);
   /* v8 ignore stop */
   const navigate = useNavigate();
@@ -387,7 +385,7 @@ function AppShell() {
         isMobile={isNarrow}
         title={t('common.findPlayer')}
       />
-      {changelogOpen && <ChangelogModal onDismiss={dismissChangelog} />}
+      {showChangelog && <ChangelogModal onDismiss={dismissChangelog} />}
       {/* v8 ignore stop */}
       </div>
     </div>

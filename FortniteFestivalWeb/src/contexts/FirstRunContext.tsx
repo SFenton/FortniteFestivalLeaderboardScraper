@@ -39,6 +39,10 @@ type FirstRunContextValue = {
   resetAll: () => void;
   /** List of registered pages (for Settings "Show First Run" section). */
   registeredPages: { pageKey: string; label: string }[];
+  /** Page key of the currently-active FRE carousel, or null. */
+  activeCarouselKey: string | null;
+  /** Set/clear the active carousel (used by useFirstRun). */
+  setActiveCarousel: (key: string | null) => void;
 };
 
 const FirstRunContext = createContext<FirstRunContextValue | null>(null);
@@ -48,6 +52,7 @@ export function FirstRunProvider({ children }: { children: ReactNode }) {
   // Bump to force re-renders when registry or seen state changes
   const [tick, setTick] = useState(0);
   const seenRef = useRef<FirstRunStorage>(loadSeenSlides());
+  const [activeCarouselKey, setActiveCarousel] = useState<string | null>(null);
 
   const register = useCallback((pageKey: string, label: string, slides: FirstRunSlideDef[]) => {
     registryRef.current.set(pageKey, { label, slides });
@@ -124,7 +129,9 @@ export function FirstRunProvider({ children }: { children: ReactNode }) {
     resetPage,
     resetAll,
     registeredPages,
-  }), [register, unregister, getUnseenSlides, getAllSlides, markSeen, resetPage, resetAll, registeredPages]);
+    activeCarouselKey,
+    setActiveCarousel,
+  }), [register, unregister, getUnseenSlides, getAllSlides, markSeen, resetPage, resetAll, registeredPages, activeCarouselKey]);
 
   return (
     <FirstRunContext.Provider value={value}>

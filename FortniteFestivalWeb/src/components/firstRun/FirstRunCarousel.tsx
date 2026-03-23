@@ -11,11 +11,14 @@ import css from './FirstRunCarousel.module.css';
 type FirstRunCarouselProps = {
   slides: FirstRunSlideDef[];
   onDismiss: () => void;
+  /** Called after the exit animation completes. When provided, enables exit animation. */
+  onExitComplete?: () => void;
 };
 
-export default function FirstRunCarousel({ slides, onDismiss }: FirstRunCarouselProps) {
+export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: FirstRunCarouselProps) {
   const { t } = useTranslation();
   const [animIn, setAnimIn] = useState(false);
+  const [animOut, setAnimOut] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [slideKey, setSlideKey] = useState(0);
   const [fading, setFading] = useState(false);
@@ -27,10 +30,19 @@ export default function FirstRunCarousel({ slides, onDismiss }: FirstRunCarousel
     return () => cancelAnimationFrame(id);
   }, []);
 
+  const handleDismiss = useCallback(() => {
+    if (animOut) return;
+    onDismiss();
+    if (onExitComplete) {
+      setAnimOut(true);
+      setTimeout(() => onExitComplete(), TRANSITION_MS);
+    }
+  }, [animOut, onDismiss, onExitComplete]);
+
   // Escape key dismisses
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onDismiss();
+      if (e.key === 'Escape') handleDismiss();
       else if (e.key === 'ArrowLeft') goBack();
       else if (e.key === 'ArrowRight') goForward();
     };
@@ -112,26 +124,29 @@ export default function FirstRunCarousel({ slides, onDismiss }: FirstRunCarousel
   const titleDelay = staggerCount * STAGGER_INTERVAL;
   const descDelay = (staggerCount + 1) * STAGGER_INTERVAL;
 
+  const overlayOpacity = animOut ? 0 : (animIn ? 1 : 0);
+  const cardStyle = animOut
+    ? { opacity: 0, transform: 'scale(0.95) translateY(10px)', transition: `opacity ${TRANSITION_MS}ms ease, transform ${TRANSITION_MS}ms ease` }
+    : entranceDone
+      ? undefined
+      : { opacity: animIn ? 1 : 0, transform: animIn ? 'scale(1) translateY(0)' : 'scale(0.95) translateY(10px)', transition: `opacity ${TRANSITION_MS}ms ease, transform ${TRANSITION_MS}ms ease` };
+
   return (
     <div
       className={css.overlay}
-      style={{ opacity: animIn ? 1 : 0, transition: `opacity ${TRANSITION_MS}ms ease` }}
-      onClick={onDismiss}
+      style={{ opacity: overlayOpacity, transition: `opacity ${TRANSITION_MS}ms ease`, pointerEvents: animOut ? 'none' : undefined }}
+      onClick={handleDismiss}
     >
       <div
         className={css.card}
-        style={entranceDone ? undefined : {
-          opacity: animIn ? 1 : 0,
-          transform: animIn ? 'scale(1) translateY(0)' : 'scale(0.95) translateY(10px)',
-          transition: `opacity ${TRANSITION_MS}ms ease, transform ${TRANSITION_MS}ms ease`,
-        }}
+        style={cardStyle}
         onClick={e => e.stopPropagation()}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
         {/* Close button â€” own flex row so content never overlaps */}
         <div className={css.closeRow}>
-          <button className={css.closeBtn} onClick={onDismiss} aria-label={t('common.close')}>
+          <button className={css.closeBtn} onClick={handleDismiss} aria-label={t('common.close')}>
             <IoClose size={Size.iconFab} />
           </button>
         </div>

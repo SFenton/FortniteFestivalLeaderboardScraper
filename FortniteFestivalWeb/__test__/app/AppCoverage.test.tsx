@@ -3,7 +3,7 @@
  * backFallback, mobile header, and changelog modal.
  */
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-import { render, waitFor, act } from '@testing-library/react';
+import { render, waitFor, act, fireEvent } from '@testing-library/react';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver } from '../helpers/browserStubs';
 
 const mockApi = vi.hoisted(() => {
@@ -33,6 +33,8 @@ vi.mock('../../src/api/client', () => ({ api: mockApi }));
 import App from '../../src/App';
 import { APP_VERSION } from '../../src/hooks/data/useVersions';
 import { changelogHash } from '../../src/changelog';
+import { songSlides } from '../../src/pages/songs/firstRun';
+import { contentHash } from '../../src/firstRun/types';
 
 beforeAll(() => {
   stubScrollTo();
@@ -80,20 +82,39 @@ beforeEach(() => {
   resetMocks();
 });
 
+/** Pre-seed all song FRE slides as seen so they don't block changelog tests. */
+function seedSongFRE() {
+  const seen: Record<string, { version: number; hash: string; seenAt: string }> = {};
+  for (const slide of songSlides(false)) {
+    seen[slide.id] = { version: slide.version, hash: contentHash(slide.title + slide.description), seenAt: new Date().toISOString() };
+  }
+  localStorage.setItem('fst:firstRun', JSON.stringify(seen));
+}
+
 describe('App — coverage: changelog modal', () => {
   it('shows changelog modal on first visit and dismisses it', async () => {
+    // Seed song FRE as seen so it doesn't block the changelog
+    seedSongFRE();
     const { container } = render(<App />);
     await waitFor(() => {
       expect(container.innerHTML.length).toBeGreaterThan(100);
     });
 
     // Changelog should be showing (no version stored yet)
-    // Look for "What's New" or changelog content
     const changelogContent = container.textContent!;
     expect(changelogContent.length).toBeGreaterThan(0);
 
-    // Store version and verify it was persisted
-    expect(localStorage.getItem('fst:changelog')).toBeTruthy();
+    // localStorage should NOT be written until the user dismisses
+    expect(localStorage.getItem('fst:changelog')).toBeNull();
+
+    // Dismiss the changelog
+    const dismissBtn = container.querySelector('button[aria-label="Close"]') as HTMLElement;
+    if (dismissBtn) fireEvent.click(dismissBtn);
+
+    // Now localStorage should be written
+    await waitFor(() => {
+      expect(localStorage.getItem('fst:changelog')).toBeTruthy();
+    });
   });
 
   it('does not show changelog when version+hash match', async () => {

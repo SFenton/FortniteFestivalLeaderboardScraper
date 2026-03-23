@@ -15,6 +15,10 @@ import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
 import { useScrollRestore, clearScrollCache } from '../../hooks/ui/useScrollRestore';
 import { useFilteredSongs } from '../../hooks/data/useFilteredSongs';
 import { useModalState } from '../../hooks/ui/useModalState';
+import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
+import { useFirstRun } from '../../hooks/ui/useFirstRun';
+import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
+import { songSlides } from './firstRun';
 import { type PlayerScore, type ServerInstrumentKey as InstrumentKey, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
 import { LoadPhase } from '@festival/core';
 import { Gap } from '@festival/theme';
@@ -48,6 +52,11 @@ export default function SongsPage() {
   const { settings: appSettings } = useSettings();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
+
+  // First-run carousel — registration is early; gating deferred until playerData is available
+  const songsSlidesMemo = useMemo(() => songSlides(isMobileChrome), [isMobileChrome]);
+  useRegisterFirstRun('songs', t('nav.songs'), songsSlidesMemo);
+
   const fabSearch = useFabSearch();
   const searchQuery = useSearchQuery();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -150,6 +159,8 @@ export default function SongsPage() {
   }, [fabSearch]);
   /* v8 ignore stop */
   const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress } = usePlayerData();
+  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!playerData }), [playerData]);
+  const firstRun = useFirstRun('songs', firstRunGateCtx);
 
   // Build lookup: songId â†’ PlayerScore for the selected instrument
   /* v8 ignore start — scoreMap: instrument filter loop */
@@ -482,6 +493,7 @@ export default function SongsPage() {
         onReset={resetFilter}
         onApply={applyFilter}
       />
+      {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
     </div>
   );
 }

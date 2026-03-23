@@ -366,7 +366,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
         onReset={resetFilter}
         onApply={applyFilter}
       />
-      {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} />}
+      {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
     </div>
   );
 }
