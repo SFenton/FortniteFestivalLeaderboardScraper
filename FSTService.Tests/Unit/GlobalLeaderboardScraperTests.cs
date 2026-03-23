@@ -389,9 +389,9 @@ public class GlobalLeaderboardScraperTests
     {
         var (scraper, handler) = CreateScraper();
 
-        // 403 is retried once with 5s backoff, then treated as boundary
-        handler.EnqueueError(HttpStatusCode.Forbidden, "forbidden");
-        handler.EnqueueError(HttpStatusCode.Forbidden, "forbidden");
+        // 403 with JSON body = Epic boundary (not CDN block)
+        handler.EnqueueError(HttpStatusCode.Forbidden, """{"errorCode":"forbidden"}""");
+        handler.EnqueueError(HttpStatusCode.Forbidden, """{"errorCode":"forbidden"}""");
 
         var result = await scraper.ScrapeLeaderboardAsync(
             "song1", "Solo_Guitar", "token", "acct");

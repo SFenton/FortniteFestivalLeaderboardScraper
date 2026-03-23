@@ -657,14 +657,102 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             }
             catch { }
 
-            // 403: single 5s backoff retry — if it fails again, treat as access boundary
-            if (statusCode == 403 && attempt == 0)
+            // 403: distinguish CDN block (HTML body) from Epic boundary (JSON/empty body)
+            if (statusCode == 403)
             {
-                _progress.ReportRetry();
+                bool isCdnBlock = errorBody.Length > 0 && !errorBody.TrimStart().StartsWith('{');
+
+                if (isCdnBlock)
+                {
+                    // CDN block — retry with escalating backoff (unlimited, exits on cancel or success)
+                    _progress.ReportRetry();
+                    limiter?.ReportFailure();
+                    res.Dispose();
+
+                    _log.LogWarning("CDN block on {Song}/{Instrument} page {Page} (attempt {Attempt}). Entering CDN retry loop.",
+                        songId, instrument, page, attempt + 1);
+
+                    var cdnDelays = new[] { 500, 1000, 2000, 5000, 10000, 15000, 30000, 45000, 60000 };
+                    for (int cdnAttempt = 0; ; cdnAttempt++)
+                    {
+                        var delayMs = cdnAttempt < cdnDelays.Length ? cdnDelays[cdnAttempt] : 60000;
+                        await Task.Delay(delayMs, ct);
+
+                        HttpResponseMessage cdnRes;
+                        try
+                        {
+                            var cdnReq = new HttpRequestMessage(HttpMethod.Get, url);
+                            cdnReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                            cdnRes = await _http.SendAsync(cdnReq, ct);
+                        }
+                        catch (HttpRequestException)
+                        {
+                            _progress.ReportRetry();
+                            limiter?.ReportFailure();
+                            continue;
+                        }
+                        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+                        {
+                            _progress.ReportRetry();
+                            limiter?.ReportFailure();
+                            continue;
+                        }
+
+                        if (cdnRes.IsSuccessStatusCode)
+                        {
+                            await using var cdnStream = await cdnRes.Content.ReadAsStreamAsync(ct);
+                            var cdnContentLength = (int)(cdnRes.Content.Headers.ContentLength ?? 0);
+                            var cdnParsed = await ParsePageAsync(cdnStream, ct);
+                            if (cdnParsed is not null)
+                            {
+                                limiter?.ReportSuccess();
+                                return (cdnParsed, cdnContentLength > 0 ? cdnContentLength : cdnParsed.EstimatedBytes, FetchStatus.Success);
+                            }
+                        }
+
+                        var cdnStatus = (int)cdnRes.StatusCode;
+                        if (cdnStatus == 403)
+                        {
+                            string cdnBody = "";
+                            try { cdnBody = await cdnRes.Content.ReadAsStringAsync(ct); } catch { }
+                            bool stillCdn = cdnBody.Length > 0 && !cdnBody.TrimStart().StartsWith('{');
+                            cdnRes.Dispose();
+
+                            if (stillCdn)
+                            {
+                                // Still CDN blocked — continue loop
+                                _progress.ReportRetry();
+                                limiter?.ReportFailure();
+                                continue;
+                            }
+
+                            // JSON/empty 403 — real Epic boundary, stop retrying
+                            return (null, 0, FetchStatus.Forbidden);
+                        }
+
+                        // Different status — CDN is clear, let normal handling deal with it
+                        cdnRes.Dispose();
+                        break;
+                    }
+
+                    // Fell through CDN loop via non-403 status — restart main retry loop
+                    continue;
+                }
+
+                // JSON/empty 403: Epic access boundary
+                if (attempt == 0)
+                {
+                    // One more try with 5s backoff before returning Forbidden
+                    _progress.ReportRetry();
+                    limiter?.ReportFailure();
+                    res.Dispose();
+                    await Task.Delay(TimeSpan.FromSeconds(5), ct);
+                    continue;
+                }
+
                 limiter?.ReportFailure();
                 res.Dispose();
-                await Task.Delay(TimeSpan.FromSeconds(5), ct);
-                continue;
+                return (null, 0, FetchStatus.Forbidden);
             }
 
             if (retryable && attempt < MaxRetries)
@@ -991,11 +1079,15 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     {
         var results = new ConcurrentDictionary<string, List<GlobalLeaderboardResult>>();
         int effectiveSongConcurrency = Math.Max(1, songConcurrency);
+        int maxDop = effectiveSongConcurrency * 6 * Math.Max(1, pageConcurrency);
+        int initialDop = Math.Max(1, maxDop / 2);
 
         _log.LogInformation(
-            "Starting sequential scrape: {SongCount} songs ({SongDop} at a time, ~{MaxConcurrent} concurrent requests)",
-            requests.Count, effectiveSongConcurrency,
-            effectiveSongConcurrency * 6 * Math.Max(1, pageConcurrency));
+            "Starting sequential scrape: {SongCount} songs ({SongDop} at a time, ~{MaxConcurrent} max concurrent requests, adaptive)",
+            requests.Count, effectiveSongConcurrency, maxDop);
+
+        using var limiter = new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: maxDop, _log);
+        _progress.SetAdaptiveLimiter(limiter);
 
         using var songSemaphore = new SemaphoreSlim(effectiveSongConcurrency, effectiveSongConcurrency);
 
@@ -1006,7 +1098,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             {
                 var instTasks = req.Instruments.Select(inst =>
                     ScrapeLeaderboardSequentialAsync(
-                        req.SongId, inst, accessToken, accountId, ct, req.Label, maxPages, pageConcurrency)
+                        req.SongId, inst, accessToken, accountId, ct, req.Label, maxPages, limiter)
                 ).ToList();
 
                 var songResults = (await Task.WhenAll(instTasks)).ToList();
@@ -1023,6 +1115,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         }).ToList();
 
         await Task.WhenAll(tasks);
+        _progress.SetAdaptiveLimiter(null);
 
         return new Dictionary<string, List<GlobalLeaderboardResult>>(results);
     }
@@ -1040,10 +1133,10 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         CancellationToken ct,
         string? label = null,
         int maxPages = 0,
-        int pageConcurrency = 10)
+        AdaptiveConcurrencyLimiter? limiter = null)
     {
         // ── Page 0 ──
-        var page0 = await FetchPageAsync(songId, instrument, 0, accessToken, accountId, null, ct);
+        var page0 = await FetchPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct);
 
         if (page0.Page is not null)
         {
@@ -1083,25 +1176,23 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
         if (totalPages > 1)
         {
-            int effectiveConcurrency = Math.Max(1, pageConcurrency);
-            using var pageSemaphore = new SemaphoreSlim(effectiveConcurrency, effectiveConcurrency);
             using var pageCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
             var tasks = new List<Task>(totalPages - 1);
             for (int p = 1; p < totalPages; p++)
             {
                 int pageNum = p;
-                tasks.Add(FetchPageWithSemaphoreAsync(pageNum));
+                tasks.Add(FetchPageWithLimiterAsync(pageNum));
             }
 
-            async Task FetchPageWithSemaphoreAsync(int pageNum)
+            async Task FetchPageWithLimiterAsync(int pageNum)
             {
                 if (pageCts.IsCancellationRequested) return;
-                await pageSemaphore.WaitAsync(pageCts.Token);
+                if (limiter is not null) await limiter.WaitAsync(pageCts.Token);
                 try
                 {
                     var (parsed, bodyLen, status) = await FetchPageAsync(
-                        songId, instrument, pageNum, accessToken, accountId, null, pageCts.Token);
+                        songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token);
                     Interlocked.Increment(ref requestCount);
                     Interlocked.Add(ref totalBytes, bodyLen);
                     _progress.ReportPageFetched(bodyLen);
@@ -1137,7 +1228,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 }
                 finally
                 {
-                    pageSemaphore.Release();
+                    limiter?.Release();
                 }
             }
 
