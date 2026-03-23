@@ -25,9 +25,3 @@
   background-color: var(--color-status-red);
   border-color: var(--color-status-red-stroke);
 }
-
-.chip > img {
-  width: 100%;
-  height: 100%;
-  mix-blend-mode: multiply;
-}

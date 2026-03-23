@@ -56,7 +56,9 @@
 
   /* ── Status ── */
   --color-status-green: #2ECC71;
+  --color-status-green-stroke: #1E7F46;
   --color-status-red: #C62828;
+  --color-status-red-stroke: #8B0000;
   --color-danger-bg: rgba(198,40,40,0.4);
   --color-chip-selected: rgba(45,130,230,0.4);
   --color-purple-tab-active: #7A2B95;

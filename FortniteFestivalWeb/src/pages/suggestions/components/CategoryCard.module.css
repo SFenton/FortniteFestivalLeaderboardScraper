@@ -95,12 +95,6 @@
   justify-content: center;
 }
 
-.instrumentChip > img {
-  width: 100%;
-  height: 100%;
-  mix-blend-mode: multiply;
-}
-
 .unfcPct {
   font-size: var(--font-lg);
   font-weight: var(--weight-semibold);
