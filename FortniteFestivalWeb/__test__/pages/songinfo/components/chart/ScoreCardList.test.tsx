@@ -13,7 +13,7 @@ function setViewportWidth(width: number) {
 }
 
 vi.mock('../../../../../src/pages/songinfo/components/chart/ScoreHistoryChart.module.css', () => ({
-  default: { scoreCardList: 'scoreCardList', scoreListCard: 'scoreListCard', scoreCardDate: 'scoreCardDate', scoreCardScore: 'scoreCardScore' },
+  default: { scoreCardList: 'scoreCardList', scoreListCard: 'scoreListCard', scoreListCardBest: 'scoreListCardBest', scoreCardDate: 'scoreCardDate', scoreCardScore: 'scoreCardScore' },
 }));
 
 vi.mock('../../../../../src/components/songs/metadata/AccuracyDisplay', () => ({
@@ -61,7 +61,7 @@ describe('ScoreCardList', () => {
     const { container } = render(
       <ScoreCardList displayedCards={cards} listHeight={200} listPhase="in" />,
     );
-    const card = container.querySelector('.scoreListCard');
+    const card = container.querySelector('.scoreListCardBest, .scoreListCard');
     expect(card?.getAttribute('style')).toContain('fadeInUp');
   });
 
@@ -70,7 +70,7 @@ describe('ScoreCardList', () => {
     const { container } = render(
       <ScoreCardList displayedCards={cards} listHeight={200} listPhase="out" />,
     );
-    const card = container.querySelector('.scoreListCard');
+    const card = container.querySelector('.scoreListCardBest, .scoreListCard');
     const style = card?.getAttribute('style') ?? '';
     expect(style).toContain('translateY');
     expect(style).toContain('opacity: 0');
@@ -84,7 +84,7 @@ describe('ScoreCardList', () => {
     const { container } = render(
       <ScoreCardList displayedCards={cards} listHeight={300} listPhase="in" />,
     );
-    const cardEls = container.querySelectorAll('.scoreListCard');
+    const cardEls = container.querySelectorAll('.scoreListCardBest, .scoreListCard');
     expect(cardEls.length).toBe(2);
   });
 

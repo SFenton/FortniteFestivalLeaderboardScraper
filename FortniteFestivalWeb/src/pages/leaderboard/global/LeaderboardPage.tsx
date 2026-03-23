@@ -90,7 +90,7 @@ export default function LeaderboardPage() {
     if (entry && scrollRef.current) entry.scrollTop = scrollRef.current.scrollTop;
   }, [cacheKey]);
 
-  const rushOnScroll = useStaggerRush(scrollRef);
+  const { rushOnScroll, resetRush } = useStaggerRush(scrollRef);
   /* v8 ignore start — header pin logic */
   const handleScroll = useCallback(() => {
     updateScrollMask();
@@ -116,6 +116,7 @@ export default function LeaderboardPage() {
       if (!songId || !instrument) return;
       setAnimMode(mode);
       if (mode === 'paginate') {
+        resetRush();
         scrollRef.current?.scrollTo(0, 0);
         headerPinned.current = true;
         userScrolledRef.current = false;

@@ -280,6 +280,7 @@ export default function SongsPage() {
     // Only re-stagger if we were already showing content
     if (loadPhase === LoadPhase.ContentIn) {
       isSettingsChangeRef.current = true;
+      resetRush();
       setShouldStagger(true);
       setLoadPhase(LoadPhase.SpinnerOut);
     }
@@ -299,13 +300,14 @@ export default function SongsPage() {
     // Hold the spinner briefly so it feels intentional after search debounce
     if (searchLoadingRef.current) {
       searchLoadingRef.current = false;
-      const id = setTimeout(() => { setShouldStagger(true); setLoadPhase(LoadPhase.SpinnerOut); }, 300);
+      const id = setTimeout(() => { resetRush(); setShouldStagger(true); setLoadPhase(LoadPhase.SpinnerOut); }, 300);
       return () => clearTimeout(id);
     }
     // On revisit (skipAnim) skip the spinner-out delay and jump straight to content
     if (skipAnimRef.current) {
       setLoadPhase(LoadPhase.ContentIn);
     } else {
+      resetRush();
       setShouldStagger(true);
       setLoadPhase(LoadPhase.SpinnerOut);
     }
@@ -344,7 +346,7 @@ export default function SongsPage() {
   const updateScrollMask = useScrollMask(scrollRef, [loadPhase, filtered]);
 
   // Save scroll position continuously + update fade
-  const rushOnScroll = useStaggerRush(scrollRef);
+  const { rushOnScroll, resetRush } = useStaggerRush(scrollRef);
   const handleScroll = useCallback(() => {
     saveScroll();
     updateScrollMask();

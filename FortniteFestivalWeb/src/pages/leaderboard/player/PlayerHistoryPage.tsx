@@ -33,6 +33,10 @@ import { useHeaderCollapse } from '../../../hooks/ui/useHeaderCollapse';
 import { useScrollRestore } from '../../../hooks/ui/useScrollRestore';
 import { useLoadPhase } from '../../../hooks/data/useLoadPhase';
 import { IS_IOS, IS_ANDROID, IS_PWA } from '@festival/ui-utils';
+import { useRegisterFirstRun } from '../../../hooks/ui/useRegisterFirstRun';
+import { useFirstRun } from '../../../hooks/ui/useFirstRun';
+import FirstRunCarousel from '../../../components/firstRun/FirstRunCarousel';
+import { playerHistorySlides } from './firstRun';
 
 export default function PlayerHistoryPage() {
   const { t } = useTranslation();
@@ -53,6 +57,11 @@ export default function PlayerHistoryPage() {
   const showSeason = useMediaQuery(QUERY_SHOW_SEASON);
   const isMobile = !showAccuracy;
   const hasFab = useIsMobile();
+
+  // First-run carousel
+  const historySlidesMemo = useMemo(() => playerHistorySlides(hasFab), [hasFab]);
+  useRegisterFirstRun('playerhistory', t('history.title'), historySlidesMemo);
+  const firstRun = useFirstRun('playerhistory', { hasPlayer: !!player });
 
   const [history, setHistory] = useState<ScoreHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -79,6 +88,8 @@ export default function PlayerHistoryPage() {
     setSortMode(sortModal.draft.sortMode);
     setSortAscending(sortModal.draft.sortAscending);
     sortModal.close();
+    staggerDoneRef.current = false;
+    resetRush();
     setStaggerKey(k => k + 1);
   };
   /* v8 ignore stop */
@@ -93,7 +104,7 @@ export default function PlayerHistoryPage() {
   }, [fabSearch]);
   /* v8 ignore stop */
 
-  const rushOnScroll = useStaggerRush(scrollRef);
+  const { rushOnScroll, resetRush } = useStaggerRush(scrollRef);
   /* v8 ignore start — scroll handler */
   const handleScroll = useCallback(() => {
     saveScroll();
@@ -159,6 +170,7 @@ export default function PlayerHistoryPage() {
   const ROW_HEIGHT = isMobile ? 44 : 52;
   const ROW_GAP = Gap.sm;
   const staggerDoneRef = useRef(false);
+  const maxStagger = useMemo(() => estimateVisibleCount(ROW_HEIGHT), [ROW_HEIGHT]);
   const virtualizer = useVirtualizer({
     count: loadPhase === 'contentIn' ? sortedHistory.length : 0,
     getScrollElement: () => scrollRef.current,
@@ -185,6 +197,7 @@ export default function PlayerHistoryPage() {
               icon={<IoSwapVerticalSharp size={Size.iconAction} />}
               label={t('common.sort')}
               onClick={openSort}
+              active={sortMode !== 'score' || sortAscending}
             />
           ) : undefined}
           /* v8 ignore stop */
@@ -214,7 +227,7 @@ export default function PlayerHistoryPage() {
               {virtualizer.getVirtualItems().map((virtualRow) => {
                 const i = virtualRow.index;
                 const h = sortedHistory[i]!;
-                const delay = staggerDoneRef.current ? null : staggerDelay(i, 125, estimateVisibleCount(ROW_HEIGHT));
+                const delay = staggerDoneRef.current ? null : staggerDelay(i, 125, maxStagger);
                 const staggerStyle: React.CSSProperties | undefined = delay != null
                   ? { opacity: 0, animation: `fadeInUp 400ms ease-out ${delay}ms forwards` }
                   : undefined;
@@ -237,7 +250,7 @@ export default function PlayerHistoryPage() {
                     /* v8 ignore start — animation cleanup */
                     ev.currentTarget.style.opacity = '';
                     ev.currentTarget.style.animation = '';
-                    staggerDoneRef.current = true;
+                    if (i >= maxStagger - 1) staggerDoneRef.current = true;
                     /* v8 ignore stop */
                   }}
                 >
@@ -275,6 +288,7 @@ export default function PlayerHistoryPage() {
         onReset={sortModal.reset}
         onApply={applySort}
       />
+      {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
     </div>
   );
 }

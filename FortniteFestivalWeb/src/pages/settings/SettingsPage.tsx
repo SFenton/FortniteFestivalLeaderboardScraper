@@ -21,6 +21,7 @@ import { statisticsSlides } from '../player/firstRun';
 import { suggestionsSlides } from '../suggestions/firstRun';
 import { songSlides } from '../songs/firstRun';
 import { songInfoSlides } from '../songinfo/firstRun';
+import { playerHistorySlides } from '../leaderboard/player/firstRun';
 import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
 import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
 import { api } from '../../api/client';
@@ -169,7 +170,7 @@ export default function SettingsPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const saveScroll = useScrollRestore(scrollRef, 'settings', navType);
   const updateScrollMask = useScrollMask(scrollRef, []);
-  const rushOnScroll = useStaggerRush(scrollRef);
+  const { rushOnScroll } = useStaggerRush(scrollRef);
   /* v8 ignore start — scroll handler */
   const handleScroll = useCallback(() => { saveScroll(); updateScrollMask(); rushOnScroll(); }, [saveScroll, updateScrollMask, rushOnScroll]);
   /* v8 ignore stop */
@@ -179,14 +180,17 @@ export default function SettingsPage() {
   /* v8 ignore next */
   const songsSlidesMemo = useMemo(() => songSlides(isMobileChrome), [isMobileChrome]);
   const songInfoSlidesMemo = useMemo(() => songInfoSlides(isMobileChrome), [isMobileChrome]);
+  const playerHistorySlidesMemo = useMemo(() => playerHistorySlides(isMobileChrome), [isMobileChrome]);
   useRegisterFirstRun('songs', t('nav.songs'), songsSlidesMemo);
   useRegisterFirstRun('songinfo', t('nav.songInfo', 'Song Info'), songInfoSlidesMemo);
+  useRegisterFirstRun('playerhistory', t('history.title'), playerHistorySlidesMemo);
   useRegisterFirstRun('statistics', t('nav.statistics'), statisticsSlides);
   useRegisterFirstRun('suggestions', t('nav.suggestions'), suggestionsSlides);
   const songsReplay = useFirstRunReplay('songs');
   const songInfoReplay = useFirstRunReplay('songinfo');
   const statsReplay = useFirstRunReplay('statistics');
   const suggestionsReplay = useFirstRunReplay('suggestions');
+  const playerHistoryReplay = useFirstRunReplay('playerhistory');
   const [serviceVersion, setServiceVersion] = useState<string | null>(null);
   // Capture skip decision at mount time (ref avoids StrictMode double-mount issues)
   const skipAnimRef = useRef(_hasRendered);
@@ -382,6 +386,12 @@ export default function SettingsPage() {
               </div>
               <span className={css.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
+            <button className={modalCss.toggleRow} onClick={playerHistoryReplay.open}>
+              <div className={modalCss.toggleContent}>
+                <div className={modalCss.toggleLabel}>{t('history.title')}</div>
+              </div>
+              <span className={css.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+            </button>
           </Card>
           </FadeInDiv>
 
@@ -418,6 +428,7 @@ export default function SettingsPage() {
       {songInfoReplay.show && <FirstRunCarousel slides={songInfoReplay.slides} onDismiss={songInfoReplay.dismiss} />}
       {statsReplay.show && <FirstRunCarousel slides={statsReplay.slides} onDismiss={statsReplay.dismiss} />}
       {suggestionsReplay.show && <FirstRunCarousel slides={suggestionsReplay.slides} onDismiss={suggestionsReplay.dismiss} />}
+      {playerHistoryReplay.show && <FirstRunCarousel slides={playerHistoryReplay.slides} onDismiss={playerHistoryReplay.dismiss} />}
     </div>
   );
 }

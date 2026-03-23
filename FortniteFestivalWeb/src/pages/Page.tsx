@@ -95,7 +95,7 @@ export default function Page({
 }: PageProps) {
   const stableScrollDeps = useMemo(() => scrollDeps ?? [], [scrollDeps]);
   const updateScrollMask = useScrollMask(scrollRef, stableScrollDeps, scrollMaskOptions);
-  const rushOnScroll = useStaggerRush(scrollRef);
+  const { rushOnScroll } = useStaggerRush(scrollRef);
 
   /* v8 ignore start — scroll handler */
   const handleScroll = useCallback(() => {

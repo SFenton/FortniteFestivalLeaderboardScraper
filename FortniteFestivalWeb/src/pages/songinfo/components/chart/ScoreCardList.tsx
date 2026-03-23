@@ -48,7 +48,7 @@ const ScoreCardList = memo(function ScoreCardList({ displayedCards, listHeight, 
           }
 
           return (
-            <div key={point.date} className={s.scoreListCard} style={animStyle}>
+            <div key={point.date} className={i === 0 ? s.scoreListCardBest : s.scoreListCard} style={animStyle}>
               <LeaderboardEntry
                 label={new Date(point.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                 displayName=""
@@ -56,6 +56,7 @@ const ScoreCardList = memo(function ScoreCardList({ displayedCards, listHeight, 
                 season={point.season}
                 accuracy={point.accuracy * ACCURACY_SCALE}
                 isFullCombo={!!point.isFullCombo}
+                isPlayer={i === 0}
                 showSeason={showSeason}
                 showAccuracy={showAccuracy}
                 scoreWidth={scoreWidth}

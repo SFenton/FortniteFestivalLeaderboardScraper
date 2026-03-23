@@ -238,7 +238,7 @@ export default function SongDetailPage() {
   const [headerCollapsed, setHeaderCollapsed] = useState(hasFab || (skipAnim && (cached?.scrollTop ?? 0) > 40));
   const updateScrollMask = useScrollMask(scrollRef, [phase, activeInstruments.length]);
   const userScrolledRef = useRef(false);
-  const rushOnScroll = useStaggerRush(scrollRef);
+  const { rushOnScroll } = useStaggerRush(scrollRef);
   /* v8 ignore start — scroll handler with cache update */
   const handleScroll = useCallback(() => {
     updateScrollMask();

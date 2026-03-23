@@ -15,9 +15,9 @@ export function useStaggerRush(containerRef: React.RefObject<HTMLElement | null>
 
   const rushOnScroll = useCallback(() => {
     if (rushedRef.current) return;
-    rushedRef.current = true;
     const container = containerRef.current;
     if (!container) return;
+    let rushed = false;
     for (const el of container.querySelectorAll<HTMLElement>('[style*="fadeInUp"]')) {
       // Only rush elements still waiting (opacity 0 = animation hasn't visually started)
       if (getComputedStyle(el).opacity !== '0') continue;
@@ -25,8 +25,13 @@ export function useStaggerRush(containerRef: React.RefObject<HTMLElement | null>
       el.style.animation = 'none';
       void el.offsetWidth; // force reflow
       el.style.animation = `fadeInUp ${FADE_DURATION}ms ease-out forwards`;
+      rushed = true;
     }
+    // Only mark as rushed if we actually found and rushed elements
+    if (rushed) rushedRef.current = true;
   }, [containerRef]);
 
-  return rushOnScroll;
+  const resetRush = useCallback(() => { rushedRef.current = false; }, []);
+
+  return { rushOnScroll, resetRush };
 }

@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { Routes, Route } from 'react-router-dom';
 import PlayerHistoryPage from '../../../../src/pages/leaderboard/player/PlayerHistoryPage';
+import { playerHistorySlides } from '../../../../src/pages/leaderboard/player/firstRun';
+import { contentHash } from '../../../../src/firstRun/types';
 import { TestProviders } from '../../../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../../helpers/browserStubs';
 
@@ -79,6 +81,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player-1', displayName: 'TestPlayer' }));
+  // Seed player history FRE as seen so it doesn't interfere with page tests
+  const seen: Record<string, { version: number; hash: string; seenAt: string }> = {};
+  for (const slide of playerHistorySlides(false)) {
+    seen[slide.id] = { version: slide.version, hash: contentHash(slide.title + slide.description), seenAt: new Date().toISOString() };
+  }
+  localStorage.setItem('fst:firstRun', JSON.stringify(seen));
   resetMocks();
 });
 

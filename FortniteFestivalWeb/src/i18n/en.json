@@ -427,6 +427,17 @@
         "descriptionMobile": "Tap \"View Paths\" in the action button to see the optimal score path for any instrument and difficulty.",
         "descriptionDesktop": "Tap \"View Paths\" in the header to see the optimal score path for any instrument and difficulty."
       }
+    },
+    "playerHistory": {
+      "scoreList": {
+        "title": "Score History",
+        "description": "Every tracked score change for this song and instrument is listed here. Your personal best is highlighted so you can spot it at a glance."
+      },
+      "sort": {
+        "title": "Sort Scores",
+        "descriptionMobile": "Tap the sort button in the action menu to reorder by date, score, accuracy, or season — ascending or descending.",
+        "descriptionDesktop": "Tap the sort button in the header to reorder by date, score, accuracy, or season — ascending or descending."
+      }
     }
   }
 }

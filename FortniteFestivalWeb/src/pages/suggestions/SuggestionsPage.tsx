@@ -225,7 +225,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
   // Per-card scroll fade
   const updateCardFade = useScrollFade(scrollRef, listRef, [phase, visibleCategories]);
 
-  const rushOnScroll = useStaggerRush(scrollRef);
+  const { rushOnScroll } = useStaggerRush(scrollRef);
   
   const handleScroll = useCallback(() => {
     saveScroll();
