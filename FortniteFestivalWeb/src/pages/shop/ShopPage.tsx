@@ -42,8 +42,9 @@ export default function ShopPage() {
   const saveScroll = useScrollRestore(scrollRef, 'shop', navType);
   const updateScrollMask = useScrollMask(scrollRef, [shopSongs]);
   const { rushOnScroll, resetRush } = useStaggerRush(scrollRef);
+  const programmaticScrollRef = useRef(false);
   /* v8 ignore start — scroll handler */
-  const handleScroll = useCallback(() => { saveScroll(); updateScrollMask(); rushOnScroll(); }, [saveScroll, updateScrollMask, rushOnScroll]);
+  const handleScroll = useCallback(() => { saveScroll(); updateScrollMask(); if (!programmaticScrollRef.current) rushOnScroll(); programmaticScrollRef.current = false; }, [saveScroll, updateScrollMask, rushOnScroll]);
   /* v8 ignore stop */
 
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(loadViewMode);
@@ -52,6 +53,8 @@ export default function ShopPage() {
   const [staggerGen, setStaggerGen] = useState(0);
 
   const toggleView = useCallback(() => {
+    programmaticScrollRef.current = true;
+    scrollRef.current?.scrollTo({ top: 0 });
     setViewMode(prev => {
       const next = prev === 'grid' ? 'list' : 'grid';
       localStorage.setItem(STORAGE_KEY, next);
