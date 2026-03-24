@@ -7,6 +7,7 @@ export const Routes = {
   player: (accountId: string) => `/player/${accountId}`,
   statistics: '/statistics',
   suggestions: '/suggestions',
+  shop: '/shop',
   settings: '/settings',
 } as const;
 

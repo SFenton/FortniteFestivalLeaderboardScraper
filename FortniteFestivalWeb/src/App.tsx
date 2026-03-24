@@ -1,13 +1,15 @@
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
-import { IoPerson, IoPersonAdd, IoSearch, IoSwapVerticalSharp, IoFunnel, IoFlash } from 'react-icons/io5';
+import { IoPerson, IoPersonAdd, IoSearch, IoSwapVerticalSharp, IoFunnel, IoFlash, IoBagHandle, IoGrid, IoList } from 'react-icons/io5';
 import { useEffect, useState, useMemo, useRef, useCallback, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
 import { SettingsProvider } from './contexts/SettingsContext';
+import { ShopProvider } from './contexts/ShopContext';
 import { AnimatedBackground } from './components/shell/AnimatedBackground';
 import { useTrackedPlayer, type TrackedPlayer } from './hooks/data/useTrackedPlayer';
 import { PlayerDataProvider } from './contexts/PlayerDataContext';
 import { useIsMobile, useIsMobileChrome, useIsWideDesktop } from './hooks/ui/useIsMobile';
+import { useMediaQuery } from './hooks/ui/useMediaQuery';
 import SongsPage from './pages/songs/SongsPage';
 /* v8 ignore start -- lazy() wrappers are resolved by the bundler, not callable in unit tests */
 const SongDetailPage = lazy(() => import('./pages/songinfo/SongDetailPage'));
@@ -16,8 +18,9 @@ const PlayerHistoryPage = lazy(() => import('./pages/leaderboard/player/PlayerHi
 const PlayerPage = lazy(() => import('./pages/player/PlayerPage'));
 const SuggestionsPage = lazy(() => import('./pages/suggestions/SuggestionsPage'));
 const SettingsPage = lazy(() => import('./pages/settings/SettingsPage'));
+const ShopPage = lazy(() => import('./pages/shop/ShopPage'));
 /* v8 ignore stop */
-import { Size } from '@festival/theme';
+import { Size, QUERY_NARROW_GRID } from '@festival/theme';
 import appCss from './App.module.css';
 import { resetSongSettingsForDeselect, loadSongSettings, SONG_SETTINGS_CHANGED_EVENT } from './utils/songSettings';
 import BackLink from './components/shell/mobile/BackLink';
@@ -44,12 +47,14 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { queryClient } from './api/queryClient';
 import { Routes as AppRoutes, RoutePatterns } from './routes';
 import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
+import { useShopState } from './hooks/data/useShopState';
 
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
     <SettingsProvider>
       <FestivalProvider>
+        <ShopProvider>
         <FirstRunProvider>
         <FabSearchProvider>
           <SearchQueryProvider>
@@ -59,6 +64,7 @@ export default function App() {
           </SearchQueryProvider>
         </FabSearchProvider>
         </FirstRunProvider>
+        </ShopProvider>
       </FestivalProvider>
     </SettingsProvider>
     <ReactQueryDevtools initialIsOpen={false} />
@@ -70,7 +76,7 @@ import { useTabNavigation } from './hooks/ui/useTabNavigation';
 
 const CHANGELOG_STORAGE_KEY = 'fst:changelog';
 
-const ANIMATED_BG_ROUTES = new Set(['/', AppRoutes.songs, AppRoutes.suggestions, AppRoutes.statistics, AppRoutes.settings]);
+const ANIMATED_BG_ROUTES = new Set(['/', AppRoutes.songs, AppRoutes.suggestions, AppRoutes.statistics, AppRoutes.settings, AppRoutes.shop]);
 /* v8 ignore start — route detection helper */
 function isAnimatedBgRoute(pathname: string) {
   return ANIMATED_BG_ROUTES.has(pathname) || RoutePatterns.player.test(pathname);
@@ -85,8 +91,10 @@ function AppShell() {
   const location = useLocation();
   const isMobile = useIsMobileChrome();
   const isNarrow = useIsMobile();
+  const isNarrowGrid = useMediaQuery(QUERY_NARROW_GRID);
   const isWideDesktop = useIsWideDesktop();
   const fabSearch = useFabSearch();
+  const { isShopVisible, getShopUrl } = useShopState();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [playerModalOpen, setPlayerModalOpen] = useState(false);
   const [findPlayerOpen, setFindPlayerOpen] = useState(false);
@@ -275,6 +283,7 @@ function AppShell() {
           ) : (
             <Route path="/suggestions" element={<Navigate to={AppRoutes.songs} replace />} />
           )}
+          <Route path="/shop" element={<ErrorBoundary fallback={<RouteErrorFallback />}><ShopPage /></ErrorBoundary>} />
           <Route path="/settings" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SettingsPage /></ErrorBoundary>} />
         </Routes>
         </Suspense>
@@ -339,12 +348,22 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      {isMobile && RoutePatterns.songDetail.test(location.pathname) && (
+      {isMobile && RoutePatterns.songDetail.test(location.pathname) && (() => {
+        const songIdMatch = location.pathname.match(/^\/songs\/([^/]+)$/);
+        const currentSongId = songIdMatch?.[1];
+        const currentShopUrl = currentSongId ? getShopUrl(currentSongId) : undefined;
+        return (
         <FloatingActionButton
           mode="players"
           actionGroups={[
-            ...(isNarrow ? [[
-              { label: t('common.viewPaths'), icon: <IoFlash size={Size.iconFab} />, onPress: () => fabSearch.openPaths() },
+            ...(isNarrow ? [[{
+              label: t('common.viewPaths'), icon: <IoFlash size={Size.iconFab} />, onPress: () => fabSearch.openPaths(),
+            },
+            ...(isShopVisible && currentShopUrl ? [{
+              label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />,
+              /* v8 ignore next */
+              onPress: () => window.open(currentShopUrl, '_blank', 'noopener,noreferrer'),
+            }] : []),
             ]] : []),
             [
               { label: t('common.findPlayer'), icon: <IoSearch size={Size.iconFab} />, onPress: () => setFindPlayerOpen(true) },
@@ -355,8 +374,28 @@ function AppShell() {
           ]}
           onPress={() => {}}
         />
+        );
+      })()}
+      {isMobile && location.pathname === AppRoutes.shop && (
+        <FloatingActionButton
+          mode="players"
+          actionGroups={[
+            ...(!isNarrowGrid ? [[{
+              label: fabSearch.shopViewMode === 'grid' ? t('common.listView', 'List View') : t('common.gridView', 'Grid View'),
+              icon: fabSearch.shopViewMode === 'grid' ? <IoList size={Size.iconFab} /> : <IoGrid size={Size.iconFab} />,
+              onPress: () => fabSearch.shopToggleView(),
+            }]] : []),
+            [
+              { label: t('common.findPlayer'), icon: <IoSearch size={Size.iconFab} />, onPress: () => setFindPlayerOpen(true) },
+              player
+                ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
+                : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
+            ],
+          ]}
+          onPress={() => {}}
+        />
       )}
-      {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && (
+      {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.shop && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && (
         <FloatingActionButton
           mode="players"
           actionGroups={[

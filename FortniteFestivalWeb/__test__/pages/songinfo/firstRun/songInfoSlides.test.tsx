@@ -5,12 +5,13 @@ import { barSelectSlide } from '../../../../src/pages/songinfo/firstRun/pages/Ba
 import { viewAllSlide } from '../../../../src/pages/songinfo/firstRun/pages/ViewAll';
 import { topScoresSlide } from '../../../../src/pages/songinfo/firstRun/pages/TopScores';
 import { pathsMobileSlide, pathsDesktopSlide } from '../../../../src/pages/songinfo/firstRun/pages/PathPreview';
+import { shopButtonMobileSlide, shopButtonDesktopSlide } from '../../../../src/pages/songinfo/firstRun/pages/ShopButton';
 import { historySlide } from '../../../../src/pages/songinfo/firstRun/pages/History';
 
 describe('songInfoSlides', () => {
-  it('returns 5 slides', () => {
-    expect(songInfoSlides(false)).toHaveLength(5);
-    expect(songInfoSlides(true)).toHaveLength(5);
+  it('returns 6 slides', () => {
+    expect(songInfoSlides(false)).toHaveLength(6);
+    expect(songInfoSlides(true)).toHaveLength(6);
   });
 
   it('returns desktop paths slide when isMobile is false', () => {
@@ -21,6 +22,16 @@ describe('songInfoSlides', () => {
   it('returns mobile paths slide when isMobile is true', () => {
     const slides = songInfoSlides(true);
     expect(slides[4]).toBe(pathsMobileSlide);
+  });
+
+  it('returns desktop shop slide when isMobile is false', () => {
+    const slides = songInfoSlides(false);
+    expect(slides[5]).toBe(shopButtonDesktopSlide);
+  });
+
+  it('returns mobile shop slide when isMobile is true', () => {
+    const slides = songInfoSlides(true);
+    expect(slides[5]).toBe(shopButtonMobileSlide);
   });
 
   it('includes chart, barSelect, viewAll, topScores in both modes', () => {
@@ -35,7 +46,7 @@ describe('songInfoSlides', () => {
 });
 
 describe('slide definitions', () => {
-  const slides = [chartSlide, barSelectSlide, viewAllSlide, topScoresSlide, pathsMobileSlide, pathsDesktopSlide, historySlide];
+  const slides = [chartSlide, barSelectSlide, viewAllSlide, topScoresSlide, pathsMobileSlide, pathsDesktopSlide, shopButtonMobileSlide, shopButtonDesktopSlide, historySlide];
 
   it.each(slides.map(s => [s.id, s]))('%s has required fields', (_id, slide) => {
     expect(slide.id).toBeTruthy();
@@ -77,6 +88,16 @@ describe('slide definitions', () => {
   it('paths slides share the same id but differ in description', () => {
     expect(pathsMobileSlide.id).toBe(pathsDesktopSlide.id);
     expect(pathsMobileSlide.description).not.toBe(pathsDesktopSlide.description);
+  });
+
+  it('shop slides have no gate', () => {
+    expect(shopButtonMobileSlide.gate).toBeUndefined();
+    expect(shopButtonDesktopSlide.gate).toBeUndefined();
+  });
+
+  it('shop slides share the same id but differ in description', () => {
+    expect(shopButtonMobileSlide.id).toBe(shopButtonDesktopSlide.id);
+    expect(shopButtonMobileSlide.description).not.toBe(shopButtonDesktopSlide.description);
   });
 
   it('slide render() returns JSX', () => {

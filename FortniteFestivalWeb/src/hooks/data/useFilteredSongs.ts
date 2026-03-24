@@ -18,6 +18,8 @@ interface FilterSortOptions {
   scoreMap: Map<string, PlayerScore>;
   /** Map: songId → Map<InstrumentKey, PlayerScore> for all instruments */
   allScoreMap: Map<string, Map<InstrumentKey, PlayerScore>>;
+  /** Set of songIds currently in the item shop (for 'shop' sort mode). */
+  shopSongIds?: ReadonlySet<string> | null;
 }
 
 const PCT_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100];
@@ -31,6 +33,7 @@ export function useFilteredSongs({
   instrument: inst,
   scoreMap,
   allScoreMap,
+  shopSongIds,
 }: FilterSortOptions): Song[] {
   return useMemo(() => {
     const q = search.toLowerCase();
@@ -130,6 +133,22 @@ export function useFilteredSongs({
           cmp = a.artist.localeCompare(b.artist); break;
         case 'year':
           cmp = (a.year ?? 0) - (b.year ?? 0); break;
+        case 'shop': {
+          const aShop = shopSongIds?.has(a.songId) ? 1 : 0;
+          const bShop = shopSongIds?.has(b.songId) ? 1 : 0;
+          cmp = bShop - aShop; // Shop items first
+          if (cmp === 0) {
+            // Tiebreaker chain: if instrument filtered + has scores, use score comparison;
+            // otherwise use title → artist → year
+            if (inst && scoreMap.size > 0) {
+              cmp = compareByMode('score', scoreMap.get(a.songId), scoreMap.get(b.songId));
+            }
+            if (cmp === 0) cmp = a.title.localeCompare(b.title);
+            if (cmp === 0) cmp = a.artist.localeCompare(b.artist);
+            if (cmp === 0) cmp = (a.year ?? 0) - (b.year ?? 0);
+          }
+          break;
+        }
         default:
           if (scoreMap.size > 0) {
             cmp = compareByMode(sortMode, scoreMap.get(a.songId), scoreMap.get(b.songId));
@@ -139,5 +158,5 @@ export function useFilteredSongs({
       }
       return cmp === 0 ? a.title.localeCompare(b.title) * dir : cmp * dir;
     });
-  }, [songs, search, sortMode, sortAscending, f, inst, scoreMap, allScoreMap]);
+  }, [songs, search, sortMode, sortAscending, f, inst, scoreMap, allScoreMap, shopSongIds]);
 }

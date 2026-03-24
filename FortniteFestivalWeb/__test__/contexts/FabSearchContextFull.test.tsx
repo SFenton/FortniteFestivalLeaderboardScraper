@@ -18,6 +18,9 @@ describe('FabSearchContext', () => {
     expect(typeof result.current.openSuggestionsFilter).toBe('function');
     expect(typeof result.current.openPlayerHistorySort).toBe('function');
     expect(typeof result.current.openPaths).toBe('function');
+    expect(typeof result.current.shopToggleView).toBe('function');
+    expect(typeof result.current.setShopViewMode).toBe('function');
+    expect(result.current.shopViewMode).toBe('grid');
   });
 
   it('registerActions + openSort calls registered sort', () => {
@@ -61,6 +64,21 @@ describe('FabSearchContext', () => {
     expect(mockPaths).toHaveBeenCalledTimes(1);
   });
 
+  it('registerShopActions + shopToggleView calls registered toggle', () => {
+    const { result } = renderHook(() => useFabSearch(), { wrapper });
+    const mockToggle = vi.fn();
+    act(() => result.current.registerShopActions({ toggleView: mockToggle }));
+    act(() => result.current.shopToggleView());
+    expect(mockToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('setShopViewMode updates shopViewMode reactively', () => {
+    const { result } = renderHook(() => useFabSearch(), { wrapper });
+    expect(result.current.shopViewMode).toBe('grid');
+    act(() => result.current.setShopViewMode('list'));
+    expect(result.current.shopViewMode).toBe('list');
+  });
+
   it('registerPlayerPageSelect sets and clears playerPageSelect', () => {
     const { result } = renderHook(() => usePlayerPageSelect(), { wrapper });
     expect(result.current.playerPageSelect).toBeNull();
@@ -80,5 +98,7 @@ describe('FabSearchContext', () => {
     expect(() => { act(() => result.current.openSuggestionsFilter()); }).not.toThrow();
     expect(() => { act(() => result.current.openPlayerHistorySort()); }).not.toThrow();
     expect(() => { act(() => result.current.openPaths()); }).not.toThrow();
+    expect(() => { act(() => result.current.shopToggleView()); }).not.toThrow();
+    expect(result.current.shopViewMode).toBe('grid');
   });
 });

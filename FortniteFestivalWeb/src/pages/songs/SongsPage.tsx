@@ -14,6 +14,8 @@ import { useScrollMask } from '../../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
 import { useScrollRestore, clearScrollCache } from '../../hooks/ui/useScrollRestore';
 import { useFilteredSongs } from '../../hooks/data/useFilteredSongs';
+import { useShopState } from '../../hooks/data/useShopState';
+import { useShop } from '../../contexts/ShopContext';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
 import { useFirstRun } from '../../hooks/ui/useFirstRun';
@@ -159,7 +161,7 @@ export default function SongsPage() {
   }, [fabSearch]);
   /* v8 ignore stop */
   const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress } = usePlayerData();
-  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!playerData }), [playerData]);
+  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!playerData, shopHighlightEnabled: !appSettings.hideItemShop && !appSettings.disableShopHighlighting }), [playerData, appSettings.hideItemShop, appSettings.disableShopHighlighting]);
   const firstRun = useFirstRun('songs', firstRunGateCtx);
 
   // Build lookup: songId â†’ PlayerScore for the selected instrument
@@ -193,6 +195,9 @@ export default function SongsPage() {
   }, [playerData]);
   /* v8 ignore stop */
 
+  const shopCtx = useShop();
+  const { isShopHighlighted } = useShopState();
+
   const filtered = useFilteredSongs({
     songs,
     search: debouncedSearch,
@@ -202,6 +207,7 @@ export default function SongsPage() {
     instrument: settings.instrument,
     scoreMap,
     allScoreMap,
+    shopSongIds: shopCtx.shopSongIds,
   });
 
   const hasPlayer = !!playerData;
@@ -449,6 +455,7 @@ export default function SongsPage() {
                       /* v8 ignore start — stagger delay calculation */
                       staggerDelay={shouldStagger && i < maxVisibleSongs ? (staggerDelay(i, 125, maxVisibleSongs) ?? maxVisibleSongs * 125) : undefined}
                       /* v8 ignore stop */
+                      shopHighlight={isShopHighlighted(song.songId)}
                     />
                   </div>
                 );
@@ -472,6 +479,7 @@ export default function SongsPage() {
         }}
         instrumentFilter={instrument}
         hasPlayer={!!playerData}
+        hideItemShop={appSettings.hideItemShop}
         metadataVisibility={{
           score: appSettings.metadataShowScore,
           percentage: appSettings.metadataShowPercentage,

@@ -6,11 +6,12 @@ import { navigationMobileSlide, navigationDesktopSlide } from '../../../../src/p
 import { filterSlide } from '../../../../src/pages/songs/firstRun/pages/Filter';
 import { songIconsSlide } from '../../../../src/pages/songs/firstRun/pages/SongIcons';
 import { metadataSlide } from '../../../../src/pages/songs/firstRun/pages/MetadataFilter';
+import { shopHighlightSlide } from '../../../../src/pages/songs/firstRun/pages/ShopHighlight';
 
 describe('songSlides', () => {
-  it('returns 6 slides', () => {
-    expect(songSlides(false)).toHaveLength(6);
-    expect(songSlides(true)).toHaveLength(6);
+  it('returns 7 slides', () => {
+    expect(songSlides(false)).toHaveLength(7);
+    expect(songSlides(true)).toHaveLength(7);
   });
 
   it('returns desktop navigation slide when isMobile is false', () => {
@@ -31,12 +32,13 @@ describe('songSlides', () => {
       expect(slides[3]).toBe(filterSlide);
       expect(slides[4]).toBe(songIconsSlide);
       expect(slides[5]).toBe(metadataSlide);
+      expect(slides[6]).toBe(shopHighlightSlide);
     }
   });
 });
 
 describe('slide definitions', () => {
-  const slides = [songListSlide, sortSlide, navigationMobileSlide, navigationDesktopSlide, filterSlide, songIconsSlide, metadataSlide];
+  const slides = [songListSlide, sortSlide, navigationMobileSlide, navigationDesktopSlide, filterSlide, songIconsSlide, metadataSlide, shopHighlightSlide];
 
   it.each(slides.map(s => [s.id, s]))('%s has required fields', (_id, slide) => {
     expect(slide.id).toBeTruthy();
@@ -77,6 +79,13 @@ describe('slide definitions', () => {
   it('navigation slides share the same id but differ in description', () => {
     expect(navigationMobileSlide.id).toBe(navigationDesktopSlide.id);
     expect(navigationMobileSlide.description).not.toBe(navigationDesktopSlide.description);
+  });
+
+  it('shopHighlightSlide is gated on shopHighlightEnabled', () => {
+    expect(shopHighlightSlide.gate).toBeDefined();
+    expect(shopHighlightSlide.gate!({ hasPlayer: false })).toBe(false);
+    expect(shopHighlightSlide.gate!({ hasPlayer: true, shopHighlightEnabled: false })).toBe(false);
+    expect(shopHighlightSlide.gate!({ hasPlayer: true, shopHighlightEnabled: true })).toBe(true);
   });
 
   it('slide render() returns JSX', () => {

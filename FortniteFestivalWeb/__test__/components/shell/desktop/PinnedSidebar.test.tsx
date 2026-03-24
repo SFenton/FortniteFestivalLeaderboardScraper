@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import PinnedSidebar from '../../../../src/components/shell/desktop/PinnedSidebar';
+import { SettingsProvider } from '../../../../src/contexts/SettingsContext';
 
 vi.mock('../../../../src/components/shell/desktop/PinnedSidebar.module.css', () => ({
   default: {
@@ -18,7 +19,7 @@ function renderPinned(overrides: Partial<Parameters<typeof PinnedSidebar>[0]> = 
     onSelectPlayer: vi.fn(),
     ...overrides,
   };
-  return { ...render(<MemoryRouter><PinnedSidebar {...defaults} /></MemoryRouter>), props: defaults };
+  return { ...render(<MemoryRouter><SettingsProvider><PinnedSidebar {...defaults} /></SettingsProvider></MemoryRouter>), props: defaults };
 }
 
 describe('PinnedSidebar', () => {
@@ -83,7 +84,9 @@ describe('PinnedSidebar — route-specific active styling', () => {
   it('shows active styling on songs route', () => {
     render(
       <MemoryRouter initialEntries={['/songs']}>
+        <SettingsProvider>
         <PinnedSidebar player={null} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} />
+        </SettingsProvider>
       </MemoryRouter>,
     );
     const link = screen.getByText('Songs');
@@ -93,7 +96,9 @@ describe('PinnedSidebar — route-specific active styling', () => {
   it('shows active styling on suggestions route', () => {
     render(
       <MemoryRouter initialEntries={['/suggestions']}>
+        <SettingsProvider>
         <PinnedSidebar player={{ accountId: 'p1', displayName: 'P' } as any} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} />
+        </SettingsProvider>
       </MemoryRouter>,
     );
     const link = screen.getByText('Suggestions');
@@ -103,7 +108,9 @@ describe('PinnedSidebar — route-specific active styling', () => {
   it('shows active styling on statistics route', () => {
     render(
       <MemoryRouter initialEntries={['/statistics']}>
+        <SettingsProvider>
         <PinnedSidebar player={{ accountId: 'p1', displayName: 'P' } as any} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} />
+        </SettingsProvider>
       </MemoryRouter>,
     );
     const link = screen.getByText('Statistics');
@@ -113,7 +120,9 @@ describe('PinnedSidebar — route-specific active styling', () => {
   it('shows active styling on settings route', () => {
     render(
       <MemoryRouter initialEntries={['/settings']}>
+        <SettingsProvider>
         <PinnedSidebar player={null} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} />
+        </SettingsProvider>
       </MemoryRouter>,
     );
     const link = screen.getByText('Settings');

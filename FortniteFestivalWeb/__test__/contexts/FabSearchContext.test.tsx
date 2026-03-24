@@ -90,6 +90,10 @@ describe('FabSearchContext — default context (no provider)', () => {
     expect(() => result.current.openPlayerHistorySort()).not.toThrow();
     expect(() => result.current.registerSongDetailActions({ openPaths: () => {} })).not.toThrow();
     expect(() => result.current.openPaths()).not.toThrow();
+    expect(() => result.current.registerShopActions({ toggleView: () => {} })).not.toThrow();
+    expect(() => result.current.shopToggleView()).not.toThrow();
+    expect(result.current.shopViewMode).toBe('grid');
+    expect(() => result.current.setShopViewMode('list')).not.toThrow();
     expect(() => result.current.registerPlayerPageSelect(null)).not.toThrow();
     expect(result.current.playerPageSelect).toBeNull();
   });

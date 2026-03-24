@@ -26,3 +26,7 @@
   object-fit: cover;
   transition: opacity var(--duration-normal) ease;
 }
+
+.pulse {
+  composes: shopPulse from '../../../styles/shared.module.css';
+}

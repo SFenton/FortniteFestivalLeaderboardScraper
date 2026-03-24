@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { stubResizeObserver } from '../../../helpers/browserStubs';
 import { TestProviders } from '../../../helpers/TestProviders';

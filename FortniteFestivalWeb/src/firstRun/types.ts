@@ -2,6 +2,8 @@ import type { ReactNode } from 'react';
 
 export type FirstRunGateContext = {
   hasPlayer: boolean;
+  /** True when shop highlighting is active (not hidden + not disabled). */
+  shopHighlightEnabled?: boolean;
   /** When false, the carousel waits to show until context stabilizes. Default: true. */
   ready?: boolean;
   /** When true, bypass seen-state and always show all gate-passing slides. */

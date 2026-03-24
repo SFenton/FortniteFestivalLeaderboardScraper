@@ -4,6 +4,7 @@ import { NavLink, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { IoPerson } from 'react-icons/io5';
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
+import { useSettings } from '../../../contexts/SettingsContext';
 import s from './Sidebar.module.css';
 
 const SIDEBAR_DURATION = 250;
@@ -18,6 +19,7 @@ interface SidebarProps {
 
 export default function Sidebar({ player, open, onClose, onDeselect, onSelectPlayer }: SidebarProps) {
   const { t } = useTranslation();
+  const { settings } = useSettings();
   const sidebarRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(false);
   const [visible, setVisible] = useState(false);
@@ -80,6 +82,11 @@ export default function Sidebar({ player, open, onClose, onDeselect, onSelectPla
           {player && (
             <NavLink to="/statistics" onClick={onClose} className={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
               {t('nav.statistics')}
+            </NavLink>
+          )}
+          {!settings.hideItemShop && (
+            <NavLink to="/shop" onClick={onClose} className={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
+              {t('nav.shop', 'Shop')}
             </NavLink>
           )}
         </nav>

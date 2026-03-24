@@ -240,6 +240,35 @@ describe('SettingsPage', () => {
     expect(stored.filterInvalidScores).toBe(true);
   });
 
+  it('toggles Disable Item Shop Highlighting', () => {
+    renderSettings();
+    const toggle = screen.getByText('Disable Item Shop Highlighting').closest('button')!;
+    fireEvent.click(toggle);
+
+    const stored = JSON.parse(localStorage.getItem('fst:appSettings')!);
+    expect(stored.disableShopHighlighting).toBe(true);
+  });
+
+  it('toggles Hide Item Shop and auto-enables highlighting', () => {
+    renderSettings();
+    const toggle = screen.getByText('Hide Item Shop').closest('button')!;
+    fireEvent.click(toggle);
+
+    const stored = JSON.parse(localStorage.getItem('fst:appSettings')!);
+    expect(stored.hideItemShop).toBe(true);
+    expect(stored.disableShopHighlighting).toBe(true);
+  });
+
+  it('toggles Hide Item Shop back off without changing highlighting', () => {
+    localStorage.setItem('fst:appSettings', JSON.stringify({ hideItemShop: true, disableShopHighlighting: true }));
+    renderSettings();
+    const toggle = screen.getByText('Hide Item Shop').closest('button')!;
+    fireEvent.click(toggle);
+
+    const stored = JSON.parse(localStorage.getItem('fst:appSettings')!);
+    expect(stored.hideItemShop).toBe(false);
+  });
+
   it('renders core version', () => {
     renderSettings();
     expect(screen.getByText('@festival/core Version')).toBeDefined();

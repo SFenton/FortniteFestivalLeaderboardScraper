@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import Sidebar from '../../../../src/components/shell/desktop/Sidebar';
+import { SettingsProvider } from '../../../../src/contexts/SettingsContext';
 
 vi.mock('../../../../src/components/shell/desktop/Sidebar.module.css', () => ({
   default: {
@@ -32,7 +33,7 @@ function renderSidebar(overrides: Partial<Parameters<typeof Sidebar>[0]> = {}) {
     onSelectPlayer: vi.fn(),
     ...overrides,
   };
-  return { ...render(<MemoryRouter><Sidebar {...defaults} /></MemoryRouter>), props: defaults };
+  return { ...render(<MemoryRouter><SettingsProvider><Sidebar {...defaults} /></SettingsProvider></MemoryRouter>), props: defaults };
 }
 
 describe('Sidebar', () => {
@@ -95,11 +96,11 @@ describe('Sidebar', () => {
 
   it('unmounts after transition ends while closed', () => {
     const { container, rerender } = render(
-      <MemoryRouter><Sidebar player={null} open={true} onClose={vi.fn()} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} /></MemoryRouter>,
+      <MemoryRouter><SettingsProvider><Sidebar player={null} open={true} onClose={vi.fn()} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} /></SettingsProvider></MemoryRouter>,
     );
     // Close it
     rerender(
-      <MemoryRouter><Sidebar player={null} open={false} onClose={vi.fn()} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} /></MemoryRouter>,
+      <MemoryRouter><SettingsProvider><Sidebar player={null} open={false} onClose={vi.fn()} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} /></SettingsProvider></MemoryRouter>,
     );
     const sidebar = container.querySelector('.sidebar');
     if (sidebar) fireEvent.transitionEnd(sidebar);
@@ -123,7 +124,9 @@ describe('Sidebar — route-specific active styling', () => {
   it('shows active styling on settings route', () => {
     render(
       <MemoryRouter initialEntries={['/settings']}>
+        <SettingsProvider>
         <Sidebar player={null} open={true} onClose={vi.fn()} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} />
+        </SettingsProvider>
       </MemoryRouter>,
     );
     const settingsLink = screen.getByText('Settings');
@@ -138,7 +141,9 @@ describe('Sidebar — route-specific active styling', () => {
   it('renders with active styling on suggestions route', () => {
     render(
       <MemoryRouter initialEntries={['/suggestions']}>
+        <SettingsProvider>
         <Sidebar player={{ accountId: 'p1', displayName: 'P' } as any} open={true} onClose={vi.fn()} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} />
+        </SettingsProvider>
       </MemoryRouter>,
     );
     const link = screen.getByText('Suggestions');
@@ -148,7 +153,9 @@ describe('Sidebar — route-specific active styling', () => {
   it('renders with active styling on statistics route', () => {
     render(
       <MemoryRouter initialEntries={['/statistics']}>
+        <SettingsProvider>
         <Sidebar player={{ accountId: 'p1', displayName: 'P' } as any} open={true} onClose={vi.fn()} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} />
+        </SettingsProvider>
       </MemoryRouter>,
     );
     const link = screen.getByText('Statistics');

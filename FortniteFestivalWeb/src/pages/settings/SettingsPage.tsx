@@ -301,6 +301,31 @@ export default function SettingsPage() {
           </Card>
           </FadeInDiv>
 
+          {/* ── Item Shop ── */}
+          <FadeInDiv delay={stagger(staggerIndex++)}>
+          <SectionHeader title={t('settings.itemShop', 'Item Shop')} description={t('settings.itemShopHint', 'Control how Item Shop availability is displayed.')} />
+          <Card>
+            <ToggleRow
+              label={t('settings.disableShopHighlighting', 'Disable Item Shop Highlighting')}
+              description={t('settings.disableShopHighlightingDesc', 'Turn off the pulsing highlight on songs available in the Item Shop.')}
+              checked={settings.hideItemShop || settings.disableShopHighlighting}
+              onToggle={() => updateSettings({ disableShopHighlighting: !settings.disableShopHighlighting })}
+              disabled={settings.hideItemShop}
+              large={isMobile}
+            />
+            <ToggleRow
+              label={t('settings.hideItemShop', 'Hide Item Shop')}
+              description={t('settings.hideItemShopDesc', 'Hide all Item Shop UI elements including navigation, buttons, and sort options.')}
+              checked={settings.hideItemShop}
+              onToggle={() => updateSettings({
+                hideItemShop: !settings.hideItemShop,
+                ...(!settings.hideItemShop ? { disableShopHighlighting: true } : {}),
+              })}
+              large={isMobile}
+            />
+          </Card>
+          </FadeInDiv>
+
           {/* ── Instruments ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
           <SectionHeader title={t('settings.showInstruments')} description={t('settings.showInstrumentsHint')} />

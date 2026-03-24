@@ -5,9 +5,10 @@
  * Used by SongDetailPage (no instrument section, unlike SongInfoHeader).
  */
 import { useTranslation } from 'react-i18next';
-import { IoFlash } from 'react-icons/io5';
+import { IoFlash, IoBagHandle } from 'react-icons/io5';
 import { Font, Gap, Radius } from '@festival/theme';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
+import { useShopState } from '../../../hooks/data/useShopState';
 import type { ServerSong as Song } from '@festival/core/api/serverTypes';
 import css from './SongDetailHeader.module.css';
 
@@ -29,6 +30,12 @@ export default function SongDetailHeader({
 }: SongDetailHeaderProps) {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
+  const { isShopVisible, isShopHighlighted, getShopUrl } = useShopState();
+  /* v8 ignore start -- shop branch coverage depends on ShopContext mock state */
+  const shopUrl = song ? getShopUrl(song.songId) : undefined;
+  const showShop = isShopVisible && !!shopUrl;
+  const shopPulse = showShop && song ? isShopHighlighted(song.songId) : false;
+  /* v8 ignore stop */
   const artSize = collapsed ? 80 : 120;
   const transition = noTransition ? undefined : 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)';
 
@@ -51,6 +58,21 @@ export default function SongDetailHeader({
           <IoFlash size={16} style={{ marginRight: Gap.md }} />
           {t('common.viewPaths')}
         </button>
+      )}
+      {!isMobile && showShop && (
+        /* v8 ignore start — external link */
+        <a href={shopUrl} target="_blank" rel="noopener noreferrer" className={shopPulse ? `${css.shopButton} ${css.shopPulse}` : css.shopButton}>
+          <IoBagHandle size={16} style={{ marginRight: Gap.md }} />
+          {t('common.itemShop', 'Item Shop')}
+        </a>
+        /* v8 ignore stop */
+      )}
+      {isMobile && showShop && (
+        /* v8 ignore start — mobile shop icon */
+        <a href={shopUrl} target="_blank" rel="noopener noreferrer" className={shopPulse ? `${css.shopCircle} ${css.shopCirclePulse}` : css.shopCircle} aria-label={t('common.itemShop', 'Item Shop')}>
+          <IoBagHandle size={24} />
+        </a>
+        /* v8 ignore stop */
       )}
     </div>
     /* v8 ignore stop */

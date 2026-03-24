@@ -130,3 +130,45 @@
   height: 80px;
   flex-shrink: 0;
 }
+
+/* ── Item Shop pulse animation ── */
+
+@keyframes shopPulse {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes shopPulseMild {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.45; }
+}
+
+.shopPulse {
+  position: relative;
+}
+
+.shopPulse::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 2px solid var(--color-accent-blue);
+  opacity: 0;
+  animation: shopPulse 2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.shopPulseMild {
+  position: relative;
+}
+
+.shopPulseMild::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1.5px solid var(--color-accent-blue);
+  opacity: 0;
+  animation: shopPulseMild 2.5s ease-in-out infinite;
+  pointer-events: none;
+}

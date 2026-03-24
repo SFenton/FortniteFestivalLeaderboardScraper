@@ -339,6 +339,10 @@
       "metadata": {
         "title": "Song Metadata",
         "description": "When filtering to a single instrument, see more details about your best score. Customize the order, and what appears, in Settings."
+      },
+      "shop": {
+        "title": "Item Shop Highlights",
+        "description": "Songs currently available in the Item Shop are highlighted with a pulsing glow so you can spot them at a glance."
       }
     },
     "statistics": {
@@ -426,6 +430,11 @@
         "title": "Optimal Paths",
         "descriptionMobile": "Tap \"View Paths\" in the action button to see the optimal score path for any instrument and difficulty.",
         "descriptionDesktop": "Tap \"View Paths\" in the header to see the optimal score path for any instrument and difficulty."
+      },
+      "shop": {
+        "title": "Item Shop Link",
+        "descriptionMobile": "When a song is in the Item Shop, a shop icon appears on the song card. Tap it to go straight to the store.",
+        "descriptionDesktop": "When a song is in the Item Shop, an Item Shop button appears in the header. Tap it to go straight to the store."
       }
     },
     "playerHistory": {

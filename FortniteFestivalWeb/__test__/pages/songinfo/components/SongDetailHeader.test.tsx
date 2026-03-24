@@ -5,7 +5,6 @@
  */
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
 import { TestProviders } from '../../../helpers/TestProviders';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions, stubIntersectionObserver } from '../../../helpers/browserStubs';
 
@@ -31,6 +30,7 @@ vi.mock('react-icons/io5', () => {
     IoSettingsSharp: Stub, IoRefresh: Stub, IoAdd: Stub, IoRemove: Stub,
     IoCheckmarkCircle: Stub, IoAlertCircle: Stub, IoSwapVerticalSharp: Stub,
     IoSparkles: Stub, IoStatsChart: Stub, IoSettings: Stub, IoFlash: Stub,
+    IoBagHandle: Stub, IoFunnel: Stub, IoPersonAdd: Stub,
   };
 });
 
@@ -68,9 +68,9 @@ describe('SongDetailHeader', () => {
 
   it('renders with noTransition=true and collapsed=true', () => {
     const { container } = render(
-      <MemoryRouter>
+      <TestProviders>
         <SongDetailHeader song={baseSong} songId="s1" collapsed noTransition onOpenPaths={vi.fn()} />
-      </MemoryRouter>,
+      </TestProviders>,
     );
     const header = container.firstElementChild as HTMLElement;
     expect(header).toBeTruthy();
@@ -78,9 +78,9 @@ describe('SongDetailHeader', () => {
 
   it('renders with noTransition=false and collapsed=false', () => {
     const { container } = render(
-      <MemoryRouter>
+      <TestProviders>
         <SongDetailHeader song={baseSong} songId="s1" collapsed={false} noTransition={false} onOpenPaths={vi.fn()} />
-      </MemoryRouter>,
+      </TestProviders>,
     );
     const header = container.firstElementChild as HTMLElement;
     expect(header).toBeTruthy();
@@ -88,9 +88,9 @@ describe('SongDetailHeader', () => {
 
   it('renders without song (placeholder art)', () => {
     render(
-      <MemoryRouter>
+      <TestProviders>
         <SongDetailHeader song={undefined} songId="s1" collapsed={false} onOpenPaths={vi.fn()} />
-      </MemoryRouter>,
+      </TestProviders>,
     );
     expect(screen.getByText('s1')).toBeTruthy();
   });

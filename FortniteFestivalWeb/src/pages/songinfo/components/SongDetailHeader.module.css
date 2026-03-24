@@ -47,3 +47,75 @@
   align-self: center;
   height: var(--size-xl);
 }
+
+/* ── Item Shop button (desktop) ── */
+
+.shopButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 32px 0 var(--gap-section);
+  border-radius: var(--radius-full);
+  background-color: var(--color-accent-blue);
+  color: var(--color-text-primary);
+  font-size: var(--font-lg);
+  font-weight: var(--weight-semibold);
+  text-decoration: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  align-self: center;
+  height: var(--size-xl);
+}
+
+@keyframes shopBreathe {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.shopPulse {
+  position: relative;
+  background-color: transparent;
+  isolation: isolate;
+}
+
+.shopPulse::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: var(--color-accent-blue);
+  animation: shopBreathe 3s ease-in-out infinite;
+  z-index: -1;
+}
+
+/* ── Item Shop circle (mobile) ── */
+
+.shopCircle {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background-color: var(--color-accent-blue);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-primary);
+  text-decoration: none;
+  flex-shrink: 0;
+  align-self: center;
+}
+
+.shopCirclePulse {
+  position: relative;
+  background-color: transparent;
+  isolation: isolate;
+}
+
+.shopCirclePulse::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: var(--color-accent-blue);
+  animation: shopBreathe 3s ease-in-out infinite;
+  z-index: -1;
+}

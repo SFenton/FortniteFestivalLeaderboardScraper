@@ -1,0 +1,18 @@
+/* Demo song rows for shop-highlight first-run slide. */
+
+.list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+}
+
+.mobileTopRow {
+  composes: mobileTopRow from '../../../../styles/songRow.module.css';
+}
+
+/* ── Shop row pulse (matches SongRow.shopHighlight in prod) ── */
+
+.shopRow {
+  composes: shopPulse from '../../../../styles/shared.module.css';
+}

@@ -35,6 +35,7 @@ type SortModalProps = {
   savedDraft?: SortDraft;
   instrumentFilter: InstrumentKey | null;
   hasPlayer?: boolean;
+  hideItemShop?: boolean;
   metadataVisibility?: MetadataVisibility;
   onChange: (d: SortDraft) => void;
   onCancel: () => void;
@@ -42,7 +43,7 @@ type SortModalProps = {
   onApply: () => void;
 };
 
-export default function SortModal({ visible, draft, savedDraft, instrumentFilter, hasPlayer, metadataVisibility: mv, onChange, onCancel, onReset, onApply }: SortModalProps) {
+export default function SortModal({ visible, draft, savedDraft, instrumentFilter, hasPlayer, hideItemShop, metadataVisibility: mv, onChange, onCancel, onReset, onApply }: SortModalProps) {
   const setMode = (sortMode: SongSortMode) => onChange({ ...draft, sortMode });
 
   const hasChanges = useMemo(() => {
@@ -98,6 +99,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
             <RadioRow label="Title" selected={draft.sortMode === 'title'} onSelect={() => setMode('title')} />
             <RadioRow label="Artist" selected={draft.sortMode === 'artist'} onSelect={() => setMode('artist')} />
             <RadioRow label="Year" selected={draft.sortMode === 'year'} onSelect={() => setMode('year')} />
+            {!hideItemShop && <RadioRow label="Item Shop" selected={draft.sortMode === 'shop'} onSelect={() => setMode('shop')} />}
             <RadioRow label="Has FC" selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />
           </Accordion>
         </ModalSection>
@@ -106,6 +108,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
           <RadioRow label="Title" selected={draft.sortMode === 'title'} onSelect={() => setMode('title')} />
           <RadioRow label="Artist" selected={draft.sortMode === 'artist'} onSelect={() => setMode('artist')} />
           <RadioRow label="Year" selected={draft.sortMode === 'year'} onSelect={() => setMode('year')} />
+          {!hideItemShop && <RadioRow label="Item Shop" selected={draft.sortMode === 'shop'} onSelect={() => setMode('shop')} />}
           <RadioRow label="Has FC" selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />
         </ModalSection>
       )}

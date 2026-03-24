@@ -6,6 +6,7 @@ import { barSelectSlide } from './pages/BarSelect';
 import { viewAllSlide } from './pages/ViewAll';
 import { topScoresSlide } from './pages/TopScores';
 import { pathsMobileSlide, pathsDesktopSlide } from './pages/PathPreview';
+import { shopButtonMobileSlide, shopButtonDesktopSlide } from './pages/ShopButton';
 import type { FirstRunSlideDef } from '../../../firstRun/types';
 
 export function songInfoSlides(isMobile: boolean): FirstRunSlideDef[] {
@@ -15,5 +16,6 @@ export function songInfoSlides(isMobile: boolean): FirstRunSlideDef[] {
     viewAllSlide,
     topScoresSlide,
     isMobile ? pathsMobileSlide : pathsDesktopSlide,
+    isMobile ? shopButtonMobileSlide : shopButtonDesktopSlide,
   ];
 }

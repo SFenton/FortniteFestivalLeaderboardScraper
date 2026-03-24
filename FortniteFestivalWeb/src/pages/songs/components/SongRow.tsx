@@ -4,6 +4,7 @@
  */
 import { memo, useMemo, useRef, useCallback, Fragment, type CSSProperties } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { IoBagHandle, IoChevronForward } from 'react-icons/io5';
 import { formatPercentileBucket } from '@festival/core';
 import type { ServerSong as Song, PlayerScore, SongDifficulty, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../../../components/display/InstrumentIcons';
@@ -128,6 +129,8 @@ export const SongRow = memo(function SongRow({ song,
   sortMode,
   isMobile,
   staggerDelay,
+  shopHighlight,
+  externalHref,
 }: {
   song: Song;
   score?: PlayerScore;
@@ -140,6 +143,9 @@ export const SongRow = memo(function SongRow({ song,
   sortMode: SongSortMode;
   isMobile: boolean;
   staggerDelay?: number;
+  shopHighlight?: boolean;
+  /** When set, the row links to this external URL in a new tab instead of routing internally. */
+  externalHref?: string;
 }) {
   const instrumentChips = useMemo(() => {
     if (!showInstrumentIcons || instrumentFilter != null) return null;
@@ -190,7 +196,23 @@ export const SongRow = memo(function SongRow({ song,
     return result;
   }, [score, displayOrder, songIntensityRaw, instrumentChips]);
 
+  const rowClass = isMobile ? s.rowMobile : s.row;
+  const rowClassName = shopHighlight ? `${rowClass} ${s.shopHighlight}` : rowClass;
+
   const songInfo = <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} />;
+
+  // External link: render <a> instead of <Link>
+  const defaultTo = `/songs/${song.songId}${instrumentFilter != null ? `?instrument=${encodeURIComponent(instrument)}` : ''}`;
+  const linkProps = externalHref
+    ? { href: externalHref, target: '_blank' as const, rel: 'noopener noreferrer' }
+    : undefined;
+
+  const externalIndicator = externalHref ? (
+    <div className={s.externalIndicator}>
+      <IoBagHandle size={16} />
+      <IoChevronForward size={14} />
+    </div>
+  ) : null;
 
   const chipRow = instrumentChips && instrumentChips.length > 0 ? (
     <div className={s.instrumentStatusRow}>
@@ -209,19 +231,45 @@ export const SongRow = memo(function SongRow({ song,
     const bottomEntries = primaryKey ? entries.filter(e => e.key !== primaryKey) : entries;
     /* v8 ignore stop */
     return (
-      <Link ref={linkRef} to={`/songs/${song.songId}${instrumentFilter != null ? `?instrument=${encodeURIComponent(instrument)}` : ''}`} state={{ backTo: location.pathname }} className={s.rowMobile} style={animStyle} onAnimationEnd={handleAnimEnd}>
+      externalHref ? (
+        <a ref={linkRef as React.Ref<HTMLAnchorElement>} {...linkProps} className={rowClassName} style={animStyle} onAnimationEnd={handleAnimEnd}>
+          <div className={s.mobileTopRow}>
+            {songInfo}
+            {scoreEntry && <div className={s.detailStrip}>{scoreEntry.el}</div>}
+          </div>
+          {bottomEntries.length > 0 && <MetadataBottomRow entries={bottomEntries} />}
+          {externalIndicator}
+        </a>
+      ) : (
+      <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={animStyle} onAnimationEnd={handleAnimEnd}>
         <div className={s.mobileTopRow}>
           {songInfo}
           {scoreEntry && <div className={s.detailStrip}>{scoreEntry.el}</div>}
         </div>
         {bottomEntries.length > 0 && <MetadataBottomRow entries={bottomEntries} />}
       </Link>
+      )
     );
   }
 
   if (isMobile && chipRow) {
     return (
-      <Link ref={linkRef} to={`/songs/${song.songId}`} state={{ backTo: location.pathname }} className={s.rowMobile} style={animStyle} onAnimationEnd={handleAnimEnd}>
+      externalHref ? (
+        <a ref={linkRef as React.Ref<HTMLAnchorElement>} {...linkProps} className={rowClassName} style={animStyle} onAnimationEnd={handleAnimEnd}>
+          <div className={s.mobileTopRow}>
+            {songInfo}
+          </div>
+          <div className={s.instrumentStatusRow} style={{ justifyContent: 'center' }}>
+            {instrumentChips!.map(c => (
+              <div key={c.key} className={s.instrumentStatusChip} style={{ backgroundColor: c.fill, borderColor: c.stroke }}>
+                <InstrumentIcon instrument={c.key} size={24} />
+              </div>
+            ))}
+          </div>
+          {externalIndicator}
+        </a>
+      ) : (
+      <Link ref={linkRef} to={`/songs/${song.songId}`} state={{ backTo: location.pathname }} className={rowClassName} style={animStyle} onAnimationEnd={handleAnimEnd}>
         <div className={s.mobileTopRow}>
           {songInfo}
         </div>
@@ -233,11 +281,24 @@ export const SongRow = memo(function SongRow({ song,
           ))}
         </div>
       </Link>
+      )
     );
   }
 
   return (
-    <Link ref={linkRef} to={`/songs/${song.songId}${instrumentFilter != null ? `?instrument=${encodeURIComponent(instrument)}` : ''}`} state={{ backTo: location.pathname }} className={s.row} style={animStyle} onAnimationEnd={handleAnimEnd}>
+    externalHref ? (
+      <a ref={linkRef as React.Ref<HTMLAnchorElement>} {...linkProps} className={rowClassName} style={animStyle} onAnimationEnd={handleAnimEnd}>
+        {songInfo}
+        {chipRow}
+        {entries.length > 0 && (
+          <div className={s.scoreMeta}>
+            {entries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}
+          </div>
+        )}
+        {externalIndicator}
+      </a>
+    ) : (
+    <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={animStyle} onAnimationEnd={handleAnimEnd}>
       {songInfo}
       {chipRow}
       {entries.length > 0 && (
@@ -246,5 +307,6 @@ export const SongRow = memo(function SongRow({ song,
         </div>
       )}
     </Link>
+    )
   );
 });

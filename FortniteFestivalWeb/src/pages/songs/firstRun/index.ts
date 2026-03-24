@@ -8,9 +8,10 @@ import { navigationMobileSlide, navigationDesktopSlide } from './pages/Navigatio
 import { filterSlide } from './pages/Filter';
 import { songIconsSlide } from './pages/SongIcons';
 import { metadataSlide } from './pages/MetadataFilter';
+import { shopHighlightSlide } from './pages/ShopHighlight';
 import type { FirstRunSlideDef } from '../../../firstRun/types';
 
 export function songSlides(isMobile: boolean): FirstRunSlideDef[] {
   const navSlide = isMobile ? navigationMobileSlide : navigationDesktopSlide;
-  return [songListSlide, sortSlide, navSlide, filterSlide, songIconsSlide, metadataSlide];
+  return [songListSlide, sortSlide, navSlide, filterSlide, songIconsSlide, metadataSlide, shopHighlightSlide];
 }

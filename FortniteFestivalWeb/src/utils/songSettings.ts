@@ -12,6 +12,7 @@ export type SongSortMode =
   | 'title'
   | 'artist'
   | 'year'
+  | 'shop'
   | 'hasfc'
   | 'score'
   | 'percentage'

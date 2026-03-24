@@ -7,6 +7,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SettingsProvider } from '../../src/contexts/SettingsContext';
 import { FestivalProvider } from '../../src/contexts/FestivalContext';
+import { ShopProvider } from '../../src/contexts/ShopContext';
 import { FabSearchProvider } from '../../src/contexts/FabSearchContext';
 import { SearchQueryProvider } from '../../src/contexts/SearchQueryContext';
 import { PlayerDataProvider } from '../../src/contexts/PlayerDataContext';
@@ -28,6 +29,7 @@ export function TestProviders({ children, route = '/', accountId }: { children: 
     <QueryClientProvider client={qc}>
     <SettingsProvider>
       <FestivalProvider>
+        <ShopProvider>
         <FabSearchProvider>
           <SearchQueryProvider>
             <PlayerDataProvider accountId={accountId}>
@@ -39,6 +41,7 @@ export function TestProviders({ children, route = '/', accountId }: { children: 
             </PlayerDataProvider>
           </SearchQueryProvider>
         </FabSearchProvider>
+        </ShopProvider>
       </FestivalProvider>
     </SettingsProvider>
     </QueryClientProvider>

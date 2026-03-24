@@ -93,3 +93,16 @@
   gap: var(--gap-xl);
   flex-shrink: 0;
 }
+
+.shopHighlight {
+  composes: shopPulse from '../../../styles/shared.module.css';
+}
+
+.externalIndicator {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xs);
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--color-text-subtle);
+}
