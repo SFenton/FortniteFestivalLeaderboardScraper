@@ -267,3 +267,55 @@ export type PlayerStatsResponse = {
   accountId: string;
   stats: PlayerStatEntry[];
 };
+
+// ─── Rivals types ──────────────────────────────────────────────
+
+export type RivalComboSummary = {
+  combo: string;
+  aboveCount: number;
+  belowCount: number;
+};
+
+export type RivalsOverviewResponse = {
+  accountId: string;
+  computedAt: string | null;
+  combos: RivalComboSummary[];
+};
+
+export type RivalSummary = {
+  accountId: string;
+  displayName: string | null;
+  rivalScore: number;
+  sharedSongCount: number;
+  aheadCount: number;
+  behindCount: number;
+  avgSignedDelta: number;
+};
+
+export type RivalsListResponse = {
+  combo: string;
+  above: RivalSummary[];
+  below: RivalSummary[];
+};
+
+export type RivalSongComparison = {
+  songId: string;
+  title: string | null;
+  artist: string | null;
+  instrument: string;
+  userRank: number;
+  rivalRank: number;
+  rankDelta: number;
+  userScore: number | null;
+  rivalScore: number | null;
+};
+
+export type RivalDetailResponse = {
+  rival: { accountId: string; displayName: string | null };
+  combo: string;
+  totalSongs: number;
+  offset: number;
+  limit: number;
+  sort: string;
+  songs: RivalSongComparison[];
+};

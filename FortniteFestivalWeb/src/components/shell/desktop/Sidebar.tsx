@@ -84,6 +84,11 @@ export default function Sidebar({ player, open, onClose, onDeselect, onSelectPla
               {t('nav.statistics')}
             </NavLink>
           )}
+          {player && (
+            <NavLink to={`/player/${player.accountId}/rivals`} onClick={onClose} className={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
+              {t('nav.rivals', 'Rivals')}
+            </NavLink>
+          )}
           {!settings.hideItemShop && (
             <NavLink to="/shop" onClick={onClose} className={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
               {t('nav.shop', 'Shop')}

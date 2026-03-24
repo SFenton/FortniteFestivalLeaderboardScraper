@@ -9,6 +9,9 @@ import type {
   ServerInstrumentKey as InstrumentKey,
   AllLeaderboardsResponse,
   PlayerStatsResponse,
+  RivalsOverviewResponse,
+  RivalsListResponse,
+  RivalDetailResponse,
 } from '@festival/core/api/serverTypes';
 
 const BASE = '';
@@ -87,4 +90,17 @@ export const api = {
     get<PlayerStatsResponse>(`/api/player/${encodeURIComponent(accountId)}/stats`),
 
   getVersion: () => get<{ version: string }>('/api/version'),
+
+  getRivalsOverview: (accountId: string) =>
+    get<RivalsOverviewResponse>(`/api/player/${encodeURIComponent(accountId)}/rivals`),
+
+  getRivalsList: (accountId: string, combo: string) =>
+    get<RivalsListResponse>(
+      `/api/player/${encodeURIComponent(accountId)}/rivals/${encodeURIComponent(combo)}`,
+    ),
+
+  getRivalDetail: (accountId: string, combo: string, rivalId: string, sort = 'closest') =>
+    get<RivalDetailResponse>(
+      `/api/player/${encodeURIComponent(accountId)}/rivals/${encodeURIComponent(combo)}/${encodeURIComponent(rivalId)}?limit=0&sort=${encodeURIComponent(sort)}`,
+    ),
 };

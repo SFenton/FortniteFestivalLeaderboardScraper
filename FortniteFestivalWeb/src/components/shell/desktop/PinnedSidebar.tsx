@@ -1,6 +1,6 @@
 import { NavLink, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { IoPerson, IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings, IoBagHandle } from 'react-icons/io5';
+import { IoPerson, IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings, IoBagHandle, IoPeople } from 'react-icons/io5';
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
 import { useSettings } from '../../../contexts/SettingsContext';
 import s from './PinnedSidebar.module.css';
@@ -32,6 +32,12 @@ export default function PinnedSidebar({ player, onDeselect, onSelectPlayer }: Pi
           <NavLink to="/statistics" className={({ isActive }) => isActive ? s.linkActive : s.link}>
             <span className={s.linkIcon}><IoStatsChart size={20} /></span>
             {t('nav.statistics')}
+          </NavLink>
+        )}
+        {player && (
+          <NavLink to={`/player/${player.accountId}/rivals`} className={({ isActive }) => isActive ? s.linkActive : s.link}>
+            <span className={s.linkIcon}><IoPeople size={20} /></span>
+            {t('nav.rivals', 'Rivals')}
           </NavLink>
         )}
         {!settings.hideItemShop && (

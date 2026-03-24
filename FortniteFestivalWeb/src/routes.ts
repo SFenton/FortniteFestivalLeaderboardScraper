@@ -5,6 +5,10 @@ export const Routes = {
   leaderboard: (songId: string, instrument: string) => `/songs/${songId}/${instrument}`,
   playerHistory: (songId: string, instrument: string) => `/songs/${songId}/${instrument}/history`,
   player: (accountId: string) => `/player/${accountId}`,
+  rivals: (accountId: string) => `/player/${accountId}/rivals`,
+  rivalDetail: (accountId: string, rivalId: string) => `/player/${accountId}/rivals/${rivalId}`,
+  rivalCategory: (accountId: string, rivalId: string, categoryKey: string) =>
+    `/player/${accountId}/rivals/${rivalId}/${categoryKey}`,
   statistics: '/statistics',
   suggestions: '/suggestions',
   shop: '/shop',
@@ -17,4 +21,7 @@ export const RoutePatterns = {
   leaderboard: /^\/songs\/[^/]+\/[^/]+$/,
   history: /\/history$/,
   player: /^\/player\//,
+  rivals: /^\/player\/[^/]+\/rivals$/,
+  rivalDetail: /^\/player\/[^/]+\/rivals\/[^/]+$/,
+  rivalCategory: /^\/player\/[^/]+\/rivals\/[^/]+\/[^/]+$/,
 } as const;

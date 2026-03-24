@@ -1,0 +1,77 @@
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-xl);
+  padding: var(--gap-lg) var(--gap-section);
+  border-bottom: 1px solid var(--color-border-subtle);
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition: background-color 0.12s;
+}
+
+.row:hover {
+  background-color: var(--color-surface-hover);
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.direction {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  font-size: 18px;
+}
+
+.dirAbove {
+  composes: direction;
+  color: var(--color-status-red);
+}
+
+.dirBelow {
+  composes: direction;
+  color: var(--color-status-green);
+}
+
+.info {
+  flex: 1;
+  min-width: 0;
+}
+
+.name {
+  font-size: var(--font-md);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta {
+  font-size: var(--font-sm);
+  color: var(--color-text-subtle);
+  display: flex;
+  gap: var(--gap-md);
+  flex-wrap: wrap;
+}
+
+.delta {
+  font-size: var(--font-md);
+  font-weight: 600;
+  text-align: right;
+  flex-shrink: 0;
+  min-width: 64px;
+}
+
+.deltaPositive {
+  composes: delta;
+  color: var(--color-status-green);
+}
+
+.deltaNegative {
+  composes: delta;
+  color: var(--color-status-red);
+}

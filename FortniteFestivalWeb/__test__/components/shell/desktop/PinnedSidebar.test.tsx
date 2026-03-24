@@ -39,12 +39,14 @@ describe('PinnedSidebar', () => {
     renderPinned({ player: { accountId: 'a1', displayName: 'TestP' } });
     expect(screen.getByText('Suggestions')).toBeTruthy();
     expect(screen.getByText('Statistics')).toBeTruthy();
+    expect(screen.getByText('Rivals')).toBeTruthy();
   });
 
   it('hides Suggestions and Statistics links when player is null', () => {
     renderPinned({ player: null });
     expect(screen.queryByText('Suggestions')).toBeNull();
     expect(screen.queryByText('Statistics')).toBeNull();
+    expect(screen.queryByText('Rivals')).toBeNull();
   });
 
   it('shows player displayName when player is set', () => {

@@ -37,4 +37,18 @@ describe('queryKeys', () => {
   it('version() returns ["version"]', () => {
     expect(queryKeys.version()).toEqual(['version']);
   });
+
+  it('rivalsOverview() returns key with accountId', () => {
+    expect(queryKeys.rivalsOverview('acc-1')).toEqual(['rivalsOverview', 'acc-1']);
+  });
+
+  it('rivalsList() returns key with accountId and combo', () => {
+    expect(queryKeys.rivalsList('acc-1', 'Solo_Guitar')).toEqual(['rivalsList', 'acc-1', 'Solo_Guitar']);
+  });
+
+  it('rivalDetail() returns key with accountId, combo, and rivalId', () => {
+    expect(queryKeys.rivalDetail('acc-1', 'Solo_Guitar', 'rival-1')).toEqual(
+      ['rivalDetail', 'acc-1', 'Solo_Guitar', 'rival-1'],
+    );
+  });
 });

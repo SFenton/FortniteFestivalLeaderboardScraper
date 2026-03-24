@@ -19,6 +19,9 @@ const PlayerPage = lazy(() => import('./pages/player/PlayerPage'));
 const SuggestionsPage = lazy(() => import('./pages/suggestions/SuggestionsPage'));
 const SettingsPage = lazy(() => import('./pages/settings/SettingsPage'));
 const ShopPage = lazy(() => import('./pages/shop/ShopPage'));
+const RivalsPage = lazy(() => import('./pages/rivals/RivalsPage'));
+const RivalDetailPage = lazy(() => import('./pages/rivals/RivalDetailPage'));
+const RivalCategoryPage = lazy(() => import('./pages/rivals/RivalCategoryPage'));
 /* v8 ignore stop */
 import { Size, QUERY_NARROW_GRID } from '@festival/theme';
 import appCss from './App.module.css';
@@ -195,6 +198,9 @@ function AppShell() {
     if (parts[0] === 'songs' && parts.length === 4) return `/songs/${parts[1]}/${parts[2]}`;
     if (parts[0] === 'songs' && parts.length === 3) return `/songs/${parts[1]}`;
     if (parts[0] === 'songs' && parts.length === 2) return AppRoutes.songs;
+    if (parts[0] === 'player' && parts.length === 5) return `/player/${parts[1]}/rivals/${parts[3]}`;
+    if (parts[0] === 'player' && parts.length === 4) return `/player/${parts[1]}/rivals`;
+    if (parts[0] === 'player' && parts.length === 3) return `/player/${parts[1]}`;
     if (parts[0] === 'player' && parts.length === 2) return AppRoutes.songs;
     return null;
   }, [location.pathname]);
@@ -273,6 +279,9 @@ function AppShell() {
           <Route path="/songs/:songId/:instrument" element={<ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardPage /></ErrorBoundary>} />
           <Route path="/songs/:songId/:instrument/history" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerHistoryPage /></ErrorBoundary>} />
           <Route path="/player/:accountId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage /></ErrorBoundary>} />
+          <Route path="/player/:accountId/rivals" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalsPage /></ErrorBoundary>} />
+          <Route path="/player/:accountId/rivals/:rivalId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalDetailPage /></ErrorBoundary>} />
+          <Route path="/player/:accountId/rivals/:rivalId/:categoryKey" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalCategoryPage /></ErrorBoundary>} />
           {player ? (
             <Route path="/statistics" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage accountId={player.accountId} /></ErrorBoundary>} />
           ) : (

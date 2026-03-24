@@ -138,6 +138,48 @@ describe('api/client', () => {
     });
   });
 
+  describe('getRivalsOverview', () => {
+    it('fetches rivals overview for account', async () => {
+      const data = { accountId: 'acc-1', computedAt: '2026-01-01T00:00:00Z', combos: [] };
+      mockFetchOk(data);
+      const result = await api.getRivalsOverview('acc-1');
+      expect(result).toEqual(data);
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals');
+    });
+  });
+
+  describe('getRivalsList', () => {
+    it('fetches rival list for combo', async () => {
+      const data = { combo: 'Solo_Guitar', above: [], below: [] };
+      mockFetchOk(data);
+      const result = await api.getRivalsList('acc-1', 'Solo_Guitar');
+      expect(result).toEqual(data);
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals/Solo_Guitar');
+    });
+
+    it('encodes combo with special characters', async () => {
+      mockFetchOk({ combo: 'Solo_Guitar+Solo_Bass', above: [], below: [] });
+      await api.getRivalsList('acc-1', 'Solo_Guitar+Solo_Bass');
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals/Solo_Guitar%2BSolo_Bass');
+    });
+  });
+
+  describe('getRivalDetail', () => {
+    it('fetches rival detail with default sort', async () => {
+      const data = { rival: { accountId: 'r1', displayName: 'Rival' }, combo: 'Solo_Guitar', totalSongs: 5, offset: 0, limit: 0, sort: 'closest', songs: [] };
+      mockFetchOk(data);
+      const result = await api.getRivalDetail('acc-1', 'Solo_Guitar', 'r1');
+      expect(result).toEqual(data);
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals/Solo_Guitar/r1?limit=0&sort=closest');
+    });
+
+    it('passes custom sort parameter', async () => {
+      mockFetchOk({ rival: { accountId: 'r1', displayName: null }, combo: 'Solo_Guitar', totalSongs: 0, offset: 0, limit: 0, sort: 'they_lead', songs: [] });
+      await api.getRivalDetail('acc-1', 'Solo_Guitar', 'r1', 'they_lead');
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/acc-1/rivals/Solo_Guitar/r1?limit=0&sort=they_lead');
+    });
+  });
+
   describe('error handling', () => {
     it('throws on non-ok GET response', async () => {
       mockFetchError(404, 'Not Found');

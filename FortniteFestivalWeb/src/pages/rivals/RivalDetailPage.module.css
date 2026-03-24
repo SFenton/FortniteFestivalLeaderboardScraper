@@ -1,0 +1,159 @@
+.page {
+  composes: pageShell from '../../styles/shared.module.css';
+  color: var(--color-text-primary);
+  position: relative;
+}
+
+.scrollArea {
+  composes: scrollContainer from '../../styles/shared.module.css';
+  position: relative;
+}
+
+.container {
+  composes: pageContent from '../../styles/shared.module.css';
+  position: relative;
+  z-index: 1;
+  padding-top: var(--gap-section);
+  padding-bottom: var(--gap-section);
+}
+
+.stickyHeader {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: var(--gap-md) var(--layout-padding-h) var(--gap-section);
+}
+
+.headerContent {
+  max-width: var(--max-width-card);
+  margin: 0 auto;
+}
+
+.headerTitle {
+  font-size: var(--font-title);
+  font-weight: 700;
+}
+
+.headerSubtitle {
+  font-size: var(--font-sm);
+  color: var(--color-text-subtle);
+  margin-top: var(--gap-xs);
+}
+
+.spinnerOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+}
+
+/* — Category card (matches Suggestions CategoryCard) — */
+
+.card {
+  composes: frostedCard from '../../styles/shared.module.css';
+  border-radius: var(--radius-md);
+  margin-bottom: var(--gap-section);
+  overflow: hidden;
+}
+
+.cardHeader {
+  padding: var(--gap-xl) var(--gap-section);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.cardHeaderClickable {
+  composes: cardHeader;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-xl);
+  cursor: pointer;
+  transition: background-color 0.12s;
+}
+
+.cardHeaderClickable:hover {
+  background-color: var(--color-surface-hover);
+}
+
+.chevron {
+  color: var(--color-text-subtle);
+  flex-shrink: 0;
+}
+
+.cardTitle {
+  display: block;
+  font-size: var(--font-lg);
+  font-weight: var(--weight-bold);
+  color: var(--color-text-primary);
+  margin-bottom: var(--gap-xs);
+}
+
+.cardTitlePositive {
+  composes: cardTitle;
+  color: var(--color-status-green);
+}
+
+.cardTitleNegative {
+  composes: cardTitle;
+  color: var(--color-status-red);
+}
+
+.cardTitleNeutral {
+  composes: cardTitle;
+}
+
+.cardDesc {
+  display: block;
+  font-size: var(--font-sm);
+  color: var(--color-text-tertiary);
+}
+
+.songList {
+  display: flex;
+  flex-direction: column;
+}
+
+.viewAll {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gap-sm);
+  padding: var(--gap-lg) var(--gap-section);
+  border-top: 1px solid var(--color-border-subtle);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-subtle);
+  cursor: pointer;
+  transition: background-color 0.12s;
+}
+
+.viewAll:hover {
+  background-color: var(--color-surface-hover);
+}
+
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gap-md);
+  padding: 48px var(--gap-xl);
+  color: var(--color-text-subtle);
+  text-align: center;
+}
+
+.emptyTitle {
+  font-size: var(--font-lg);
+  font-weight: 600;
+}
+
+.center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-lg);
+}

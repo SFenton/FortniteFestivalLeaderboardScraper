@@ -200,7 +200,8 @@
     "songInfo": "Song Info",
     "suggestions": "Suggestions",
     "statistics": "Statistics",
-    "settings": "Settings"
+    "settings": "Settings",
+    "rivals": "Rivals"
   },
   "chart": {
     "scoreHistory": "Score History",
@@ -447,6 +448,43 @@
         "descriptionMobile": "Tap the sort button in the action menu to reorder by date, score, accuracy, or season — ascending or descending.",
         "descriptionDesktop": "Tap the sort button in the header to reorder by date, score, accuracy, or season — ascending or descending."
       }
+    }
+  },
+  "rivals": {
+    "title": "Rivals",
+    "lastComputed": "Last computed: {{date}}",
+    "aboveYou": "Above You",
+    "belowYou": "Below You",
+    "sharedSongs": "{{count}} shared",
+    "avgDelta": "Avg \u0394 {{delta}}",
+    "ahead": "{{count}} ahead",
+    "behind": "{{count}} behind",
+    "noPlayer": "Track a player to see their rivals.",
+    "computing": "Rivals are being computed\u2026",
+    "noRivals": "Not enough data to identify rivals yet.",
+    "noRivalsCombo": "No rivals found for this instrument combination.",
+    "combo": "Combined",
+    "viewRivals": "View Rivals",
+    "detail": {
+      "vs": "vs. {{name}}",
+      "summary": "{{total}} shared songs \u00b7 {{ahead}} ahead / {{behind}} behind",
+      "closestBattles": "Closest Battles",
+      "closestBattlesDesc": "Songs where you and your rival are neck and neck.",
+      "almostPassed": "Almost Passed",
+      "almostPassedDesc": "You're just behind \u2014 one good run could flip these.",
+      "slippingAway": "Slipping Away",
+      "slippingAwayDesc": "They're pulling further ahead on these songs.",
+      "barelyWinning": "Barely Winning",
+      "barelyWinningDesc": "You're just ahead \u2014 don't let them catch up.",
+      "pullingForward": "Pulling Forward",
+      "pullingForwardDesc": "You have a solid lead on these songs.",
+      "dominatingThem": "Dominating Them",
+      "dominatingThemDesc": "You're far ahead \u2014 these are your strongest matchups.",
+      "you": "You",
+      "them": "Them",
+      "rankDelta": "\u0394 {{delta}} ranks",
+      "noSongs": "No song data for this rival.",
+      "viewAll": "View all {{count}} songs"
     }
   }
 }

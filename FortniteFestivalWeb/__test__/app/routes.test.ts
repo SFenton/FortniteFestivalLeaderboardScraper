@@ -33,6 +33,20 @@ describe('Routes', () => {
   it('generates player path', () => {
     expect(Routes.player('player-id-1')).toBe('/player/player-id-1');
   });
+
+  it('generates rivals path', () => {
+    expect(Routes.rivals('player-id-1')).toBe('/player/player-id-1/rivals');
+  });
+
+  it('generates rival detail path', () => {
+    expect(Routes.rivalDetail('player-id-1', 'rival-id-2')).toBe('/player/player-id-1/rivals/rival-id-2');
+  });
+
+  it('generates rival category path', () => {
+    expect(Routes.rivalCategory('player-id-1', 'rival-id-2', 'closest_battles')).toBe(
+      '/player/player-id-1/rivals/rival-id-2/closest_battles',
+    );
+  });
 });
 
 describe('RoutePatterns', () => {
@@ -85,6 +99,44 @@ describe('RoutePatterns', () => {
 
     it('matches /player/ prefix', () => {
       expect(RoutePatterns.player.test('/player/')).toBe(true);
+    });
+  });
+
+  describe('rivals', () => {
+    it('matches /player/id/rivals', () => {
+      expect(RoutePatterns.rivals.test('/player/some-id/rivals')).toBe(true);
+    });
+
+    it('does not match /player/id/rivals/detail', () => {
+      expect(RoutePatterns.rivals.test('/player/some-id/rivals/detail')).toBe(false);
+    });
+
+    it('does not match /player/id', () => {
+      expect(RoutePatterns.rivals.test('/player/some-id')).toBe(false);
+    });
+  });
+
+  describe('rivalDetail', () => {
+    it('matches /player/id/rivals/rival-id', () => {
+      expect(RoutePatterns.rivalDetail.test('/player/some-id/rivals/rival-id')).toBe(true);
+    });
+
+    it('does not match /player/id/rivals', () => {
+      expect(RoutePatterns.rivalDetail.test('/player/some-id/rivals')).toBe(false);
+    });
+
+    it('does not match /player/id/rivals/rival-id/category', () => {
+      expect(RoutePatterns.rivalDetail.test('/player/some-id/rivals/rival-id/closest_battles')).toBe(false);
+    });
+  });
+
+  describe('rivalCategory', () => {
+    it('matches /player/id/rivals/rival-id/category', () => {
+      expect(RoutePatterns.rivalCategory.test('/player/some-id/rivals/rival-id/closest_battles')).toBe(true);
+    });
+
+    it('does not match /player/id/rivals/rival-id', () => {
+      expect(RoutePatterns.rivalCategory.test('/player/some-id/rivals/rival-id')).toBe(false);
     });
   });
 });

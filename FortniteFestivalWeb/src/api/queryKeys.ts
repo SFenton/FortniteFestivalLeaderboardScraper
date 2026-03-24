@@ -16,4 +16,8 @@ export const queryKeys = {
     ['allLeaderboards', songId, { top, leeway }] as const,
   playerStats: (accountId: string) => ['playerStats', accountId] as const,
   version: () => ['version'] as const,
+  rivalsOverview: (accountId: string) => ['rivalsOverview', accountId] as const,
+  rivalsList: (accountId: string, combo: string) => ['rivalsList', accountId, combo] as const,
+  rivalDetail: (accountId: string, combo: string, rivalId: string) =>
+    ['rivalDetail', accountId, combo, rivalId] as const,
 };
