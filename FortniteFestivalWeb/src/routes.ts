@@ -6,6 +6,8 @@ export const Routes = {
   playerHistory: (songId: string, instrument: string) => `/songs/${songId}/${instrument}/history`,
   player: (accountId: string) => `/player/${accountId}`,
   rivals: (accountId: string) => `/player/${accountId}/rivals`,
+  commonRivals: (accountId: string) => `/player/${accountId}/rivals/common`,
+  instrumentRivals: (accountId: string, instrument: string) => `/player/${accountId}/rivals/instrument/${instrument}`,
   rivalDetail: (accountId: string, rivalId: string) => `/player/${accountId}/rivals/${rivalId}`,
   rivalCategory: (accountId: string, rivalId: string, categoryKey: string) =>
     `/player/${accountId}/rivals/${rivalId}/${categoryKey}`,
@@ -22,6 +24,8 @@ export const RoutePatterns = {
   history: /\/history$/,
   player: /^\/player\//,
   rivals: /^\/player\/[^/]+\/rivals$/,
+  commonRivals: /^\/player\/[^/]+\/rivals\/common$/,
+  instrumentRivals: /^\/player\/[^/]+\/rivals\/instrument\/[^/]+$/,
   rivalDetail: /^\/player\/[^/]+\/rivals\/[^/]+$/,
   rivalCategory: /^\/player\/[^/]+\/rivals\/[^/]+\/[^/]+$/,
 } as const;

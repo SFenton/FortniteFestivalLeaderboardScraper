@@ -22,6 +22,8 @@ const ShopPage = lazy(() => import('./pages/shop/ShopPage'));
 const RivalsPage = lazy(() => import('./pages/rivals/RivalsPage'));
 const RivalDetailPage = lazy(() => import('./pages/rivals/RivalDetailPage'));
 const RivalCategoryPage = lazy(() => import('./pages/rivals/RivalCategoryPage'));
+const InstrumentRivalsPage = lazy(() => import('./pages/rivals/InstrumentRivalsPage'));
+const CommonRivalsPage = lazy(() => import('./pages/rivals/CommonRivalsPage'));
 /* v8 ignore stop */
 import { Size, QUERY_NARROW_GRID } from '@festival/theme';
 import appCss from './App.module.css';
@@ -280,6 +282,8 @@ function AppShell() {
           <Route path="/songs/:songId/:instrument/history" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerHistoryPage /></ErrorBoundary>} />
           <Route path="/player/:accountId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage /></ErrorBoundary>} />
           <Route path="/player/:accountId/rivals" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalsPage /></ErrorBoundary>} />
+          <Route path="/player/:accountId/rivals/common" element={<ErrorBoundary fallback={<RouteErrorFallback />}><CommonRivalsPage /></ErrorBoundary>} />
+          <Route path="/player/:accountId/rivals/instrument/:instrument" element={<ErrorBoundary fallback={<RouteErrorFallback />}><InstrumentRivalsPage /></ErrorBoundary>} />
           <Route path="/player/:accountId/rivals/:rivalId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalDetailPage /></ErrorBoundary>} />
           <Route path="/player/:accountId/rivals/:rivalId/:categoryKey" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalCategoryPage /></ErrorBoundary>} />
           {player ? (

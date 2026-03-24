@@ -8,10 +8,13 @@ import { useScrollMask } from '../../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
+import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
+import { IoChevronForward } from 'react-icons/io5';
 import { InstrumentHeaderSize } from '@festival/core';
-import type { RivalsListResponse, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import { serverInstrumentLabel, type RivalsListResponse, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { RivalSummary } from '@festival/core/api/serverTypes';
 import { deriveComboFromSettings } from './helpers/comboUtils';
 import RivalRow from './components/RivalRow';
 import { Routes } from '../../routes';
@@ -30,6 +33,7 @@ export default function RivalsPage() {
   const navigate = useNavigate();
   const { settings } = useSettings();
   const isMobile = useIsMobile();
+  const { player } = useTrackedPlayer();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const activeInstruments = visibleInstruments(settings);
@@ -40,6 +44,23 @@ export default function RivalsPage() {
   const [comboRivals, setComboRivals] = useState<RivalsListResponse | null>(null);
   const [comboLoading, setComboLoading] = useState(false);
   const [computedAt, setComputedAt] = useState<string | null>(null);
+  const [playerName, setPlayerName] = useState<string | null>(null);
+
+  // Resolve player display name
+  /* v8 ignore start — async data fetch */
+  useEffect(() => {
+    if (!accountId) return;
+    if (player?.accountId === accountId) {
+      setPlayerName(player.displayName);
+      return;
+    }
+    let cancelled = false;
+    api.getPlayer(accountId).then(res => {
+      if (!cancelled) setPlayerName(res.displayName);
+    }).catch(() => { /* ignored */ });
+    return () => { cancelled = true; };
+  }, [accountId, player]);
+  /* v8 ignore stop */
 
   // Fetch overview for computedAt timestamp
   /* v8 ignore start — async data fetch */
@@ -116,6 +137,48 @@ export default function RivalsPage() {
   const comboReady = !combo || !comboLoading;
   const allReady = allInstrumentsReady && comboReady;
 
+  // Common rivals: rivals that appear in ALL loaded instrument lists (2+ instruments)
+  const commonRivals = useMemo<{ above: RivalSummary[]; below: RivalSummary[] }>(() => {
+    const loaded = instrumentRivals.filter(r => r.data);
+    if (loaded.length < 2) return { above: [], below: [] };
+
+    // Build a map of accountId → count of instruments where they appear
+    const countMap = new Map<string, number>();
+    const summaryMap = new Map<string, { above: RivalSummary[]; below: RivalSummary[] }>();
+    for (const entry of loaded) {
+      const seen = new Set<string>();
+      for (const rival of [...entry.data!.above, ...entry.data!.below]) {
+        if (seen.has(rival.accountId)) continue;
+        seen.add(rival.accountId);
+        countMap.set(rival.accountId, (countMap.get(rival.accountId) ?? 0) + 1);
+        if (!summaryMap.has(rival.accountId)) summaryMap.set(rival.accountId, { above: [], below: [] });
+        const bucket = summaryMap.get(rival.accountId)!;
+        if (entry.data!.above.some(r => r.accountId === rival.accountId)) bucket.above.push(rival);
+        else bucket.below.push(rival);
+      }
+    }
+
+    // Keep only rivals present in ALL loaded instruments
+    const threshold = loaded.length;
+    const above: RivalSummary[] = [];
+    const below: RivalSummary[] = [];
+    for (const [accountId, count] of countMap) {
+      if (count < threshold) continue;
+      const bucket = summaryMap.get(accountId)!;
+      // Determine direction: majority vote across instruments
+      const dir = bucket.above.length >= bucket.below.length ? 'above' : 'below';
+      // Pick the best summary (highest sharedSongCount) for display
+      const allEntries = [...bucket.above, ...bucket.below];
+      const best = allEntries.reduce((a, b) => a.sharedSongCount >= b.sharedSongCount ? a : b);
+      (dir === 'above' ? above : below).push(best);
+    }
+
+    // Sort each group by rivalScore descending (most competitive first)
+    above.sort((a, b) => b.rivalScore - a.rivalScore);
+    below.sort((a, b) => b.rivalScore - a.rivalScore);
+    return { above, below };
+  }, [instrumentRivals]);
+
   const { phase } = useLoadPhase(allReady);
   const updateScrollMask = useScrollMask(scrollRef, [phase]);
   const { rushOnScroll } = useStaggerRush(scrollRef);
@@ -142,14 +205,25 @@ export default function RivalsPage() {
     animation: `fadeInUp 400ms ease-out ${delayMs}ms forwards`,
   });
 
+  /** Compute CSS variable for min name width based on longest name in a rival list. */
+  const nameWidthVar = (rivals: RivalSummary[]): React.CSSProperties => {
+    const maxLen = rivals.reduce((max, r) => Math.max(max, (r.displayName ?? 'Unknown Player').length), 0);
+    return { '--rival-name-width': `${Math.ceil(maxLen * 0.85)}ch` } as React.CSSProperties;
+  };
+
   const navigateToRival = (rivalId: string) => {
     navigate(Routes.rivalDetail(accountId, rivalId), { state: { combo } });
   };
 
-  const hasAnyRivals = instrumentRivals.some(r => r.data && (r.data.above.length > 0 || r.data.below.length > 0))
-    || (comboRivals && (comboRivals.above.length > 0 || comboRivals.below.length > 0));
+  const PREVIEW_COUNT = 3;
 
+  const hasAnyRivals = instrumentRivals.some(r => r.data && (r.data.above.length > 0 || r.data.below.length > 0))
+    || (comboRivals && (comboRivals.above.length > 0 || comboRivals.below.length > 0))
+    || (commonRivals.above.length > 0 || commonRivals.below.length > 0);
+
+  const staggerInterval = 125;
   let staggerIdx = 0;
+  const nextStagger = (): React.CSSProperties => stagger((++staggerIdx) * staggerInterval);
 
   return (
     <div className={s.page}>
@@ -166,11 +240,6 @@ export default function RivalsPage() {
           <div className={s.stickyHeader}>
             <div className={s.headerContent} style={stagger(100)} onAnimationEnd={clearAnim}>
               <div className={s.headerTitle}>{t('rivals.title')}</div>
-              {computedAt && (
-                <div className={s.headerSubtitle}>
-                  {t('rivals.lastComputed', { date: new Date(computedAt).toLocaleDateString() })}
-                </div>
-              )}
             </div>
           </div>
           <div ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
@@ -181,39 +250,99 @@ export default function RivalsPage() {
                 </div>
               )}
 
+              {/* Common rivals (appears in ALL selected instruments, 2+ required) */}
+              {(commonRivals.above.length > 0 || commonRivals.below.length > 0) && (
+                <div className={s.section}>
+                  <div
+                    className={s.sectionHeaderClickable}
+                    style={nextStagger()}
+                    onAnimationEnd={clearAnim}
+                    onClick={() => navigate(Routes.commonRivals(accountId))}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={e => { if (e.key === 'Enter') navigate(Routes.commonRivals(accountId)); }}
+                  >
+                    <div className={s.cardHeaderText}>
+                      <span className={s.cardTitle}>{t('rivals.commonRivalsShort', 'Common Rivals')}</span>
+                    </div>
+                    <span className={s.seeAll}>{t('rivals.seeAll', 'See All')}</span>
+                    <IoChevronForward size={20} className={s.chevron} />
+                  </div>
+                  <div className={s.rivalList} style={nameWidthVar([...commonRivals.above, ...commonRivals.below])}>
+                    {[...commonRivals.above, ...commonRivals.below].map(rival => (
+                      <RivalRow
+                        key={rival.accountId}
+                        rival={rival}
+                        direction={commonRivals.above.includes(rival) ? 'above' : 'below'}
+                        onClick={() => navigateToRival(rival.accountId)}
+                        style={nextStagger()}
+                        onAnimationEnd={clearAnim}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Combo section (if 2+ instruments enabled) */}
               {combo && comboRivals && (comboRivals.above.length > 0 || comboRivals.below.length > 0) && (
-                <div className={s.card} style={stagger(200 + staggerIdx++ * 150)} onAnimationEnd={clearAnim}>
-                  <div className={s.cardHeader}>
-                    <div className={s.cardHeaderRow}>
-                      <div>
-                        <span className={s.cardTitle}>{t('rivals.combo')}</span>
-                        <span className={s.cardDesc}>{t('rivals.sharedSongs', { count: comboRivals.above.length + comboRivals.below.length })}</span>
-                      </div>
+                <div className={s.section}>
+                  <div className={s.sectionHeader} style={nextStagger()} onAnimationEnd={clearAnim}>
+                    <div>
+                      <span className={s.cardTitle}>{t('rivals.instrumentRivalsShort', { instrument: t('rivals.combo') })}</span>
                     </div>
                   </div>
-                  {renderDirectionGroups(comboRivals, navigateToRival, t)}
+                  <div className={s.rivalList} style={nameWidthVar([...comboRivals.above, ...comboRivals.below])}>
+                    {[...comboRivals.above, ...comboRivals.below].map(rival => (
+                      <RivalRow
+                        key={rival.accountId}
+                        rival={rival}
+                        direction={comboRivals.above.some(r => r.accountId === rival.accountId) ? 'above' : 'below'}
+                        onClick={() => navigateToRival(rival.accountId)}
+                        style={nextStagger()}
+                        onAnimationEnd={clearAnim}
+                      />
+                    ))}
+                  </div>
                 </div>
               )}
 
               {/* Per-instrument sections */}
               {instrumentRivals.map(entry => {
                 if (!entry.data || (entry.data.above.length === 0 && entry.data.below.length === 0)) return null;
-                const delay = 200 + staggerIdx++ * 150;
+                const previewAbove = entry.data.above.slice(0, PREVIEW_COUNT);
+                const previewBelow = entry.data.below.slice(0, PREVIEW_COUNT);
+                const allPreview = [...previewAbove, ...previewBelow];
+                const navigateToInstrument = () => navigate(Routes.instrumentRivals(accountId, entry.instrument));
                 return (
-                  <div key={entry.instrument} className={s.card} style={stagger(delay)} onAnimationEnd={clearAnim}>
-                    <div className={s.cardHeader}>
-                      <div className={s.cardHeaderRow}>
-                        <div>
-                          <span className={s.cardTitle}>{t(`instruments.${entry.instrument}`, entry.instrument)}</span>
-                          <span className={s.cardDesc}>
-                            {t('rivals.ahead', { count: entry.data.above.length })} / {t('rivals.behind', { count: entry.data.below.length })}
-                          </span>
-                        </div>
-                        <InstrumentHeader instrument={entry.instrument} size={InstrumentHeaderSize.SM} iconOnly />
+                  <div key={entry.instrument} className={s.section}>
+                    <div
+                      className={s.sectionHeaderClickable}
+                      style={nextStagger()}
+                      onAnimationEnd={clearAnim}
+                      onClick={navigateToInstrument}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={e => { if (e.key === 'Enter') navigateToInstrument(); }}
+                    >
+                      <InstrumentHeader instrument={entry.instrument} size={InstrumentHeaderSize.SM} iconOnly />
+                      <div className={s.cardHeaderText}>
+                        <span className={s.cardTitle}>{t('rivals.instrumentRivalsShort', { instrument: serverInstrumentLabel(entry.instrument) })}</span>
                       </div>
+                      <span className={s.seeAll}>{t('rivals.seeAll', 'See All')}</span>
+                      <IoChevronForward size={20} className={s.chevron} />
                     </div>
-                    {renderDirectionGroups(entry.data, navigateToRival, t)}
+                    <div className={s.rivalList} style={nameWidthVar(allPreview)}>
+                      {allPreview.map(rival => (
+                        <RivalRow
+                          key={rival.accountId}
+                          rival={rival}
+                          direction={previewAbove.includes(rival) ? 'above' : 'below'}
+                          onClick={() => navigateToRival(rival.accountId)}
+                          style={nextStagger()}
+                          onAnimationEnd={clearAnim}
+                        />
+                      ))}
+                    </div>
                   </div>
                 );
               })}
@@ -225,47 +354,4 @@ export default function RivalsPage() {
   );
 }
 
-function renderDirectionGroups(
-  data: RivalsListResponse,
-  onRivalClick: (rivalId: string) => void,
-  t: (key: string, opts?: Record<string, unknown>) => string,
-) {
-  return (
-    <>
-      {data.above.length > 0 && (
-        <>
-          <div className={s.directionLabelAbove}>
-            {t('rivals.aboveYou')} ({data.above.length})
-          </div>
-          <div className={s.rivalList}>
-            {data.above.map(rival => (
-              <RivalRow
-                key={rival.accountId}
-                rival={rival}
-                direction="above"
-                onClick={() => onRivalClick(rival.accountId)}
-              />
-            ))}
-          </div>
-        </>
-      )}
-      {data.below.length > 0 && (
-        <>
-          <div className={s.directionLabelBelow}>
-            {t('rivals.belowYou')} ({data.below.length})
-          </div>
-          <div className={s.rivalList}>
-            {data.below.map(rival => (
-              <RivalRow
-                key={rival.accountId}
-                rival={rival}
-                direction="below"
-                onClick={() => onRivalClick(rival.accountId)}
-              />
-            ))}
-          </div>
-        </>
-      )}
-    </>
-  );
-}
+/* v8 ignore stop */

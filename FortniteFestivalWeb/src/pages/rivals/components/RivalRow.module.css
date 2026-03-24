@@ -1,77 +1,148 @@
 .row {
+  composes: frostedCard from '../../../styles/shared.module.css';
   display: flex;
   align-items: center;
   gap: var(--gap-xl);
-  padding: var(--gap-lg) var(--gap-section);
-  border-bottom: 1px solid var(--color-border-subtle);
+  padding: var(--gap-lg) var(--gap-xl);
+  border-radius: var(--radius-md);
   text-decoration: none;
   color: inherit;
   cursor: pointer;
-  transition: background-color 0.12s;
+  position: relative;
+  overflow: hidden;
 }
 
-.row:hover {
-  background-color: var(--color-surface-hover);
+.row::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  z-index: 0;
 }
 
-.row:last-child {
-  border-bottom: none;
+.rowWinning::after {
+  background: linear-gradient(to right, rgba(76, 175, 80, 0.30) 0%, transparent 50%);
 }
 
-.direction {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 28px;
-  font-size: 18px;
+.rowLosing::after {
+  background: linear-gradient(to left, rgba(244, 67, 54, 0.30) 0%, transparent 50%);
 }
 
-.dirAbove {
-  composes: direction;
-  color: var(--color-status-red);
-}
-
-.dirBelow {
-  composes: direction;
-  color: var(--color-status-green);
-}
-
-.info {
+.content {
   flex: 1;
   min-width: 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  gap: var(--gap-md) var(--gap-xl);
+  position: relative;
+  z-index: 1;
 }
 
 .name {
-  font-size: var(--font-md);
+  font-size: var(--font-lg);
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: var(--rival-name-width, 120px);
+  grid-column: 1;
+  grid-row: 1;
+  padding: 0 2px;
 }
 
-.meta {
-  font-size: var(--font-sm);
-  color: var(--color-text-subtle);
-  display: flex;
-  gap: var(--gap-md);
-  flex-wrap: wrap;
-}
-
-.delta {
-  font-size: var(--font-md);
+.shared {
+  font-size: var(--font-lg);
   font-weight: 600;
-  text-align: right;
-  flex-shrink: 0;
-  min-width: 64px;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  grid-column: 2;
+  grid-row: 1;
+  align-self: baseline;
+  padding: 0 2px;
 }
 
-.deltaPositive {
-  composes: delta;
+.pillRow {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--gap-sm);
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+.pill {
+  display: inline-block;
+  padding: var(--gap-xs) var(--gap-sm);
+  border-radius: var(--radius-xs);
+  font-size: var(--font-md);
+  font-weight: var(--weight-semibold);
+  border: 2px solid;
+  white-space: nowrap;
+}
+
+.pillAhead {
+  composes: pill;
+  background-color: rgba(76, 175, 80, 0.15);
   color: var(--color-status-green);
+  border-color: rgba(76, 175, 80, 0.3);
 }
 
-.deltaNegative {
-  composes: delta;
+.pillBehind {
+  composes: pill;
+  background-color: rgba(244, 67, 54, 0.15);
   color: var(--color-status-red);
+  border-color: rgba(244, 67, 54, 0.3);
+}
+
+/* All cards go single-row when container is wide enough */
+@container (min-width: 620px) {
+  .content {
+    grid-template-columns: 1fr auto auto;
+    grid-template-rows: auto;
+    align-items: center;
+  }
+
+  .name {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .shared {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: center;
+  }
+
+  .pillRow {
+    grid-column: 3;
+    grid-row: 1;
+    justify-content: flex-end;
+  }
+}
+
+/* All cards stack to single column when container is narrow */
+@container (max-width: 380px) {
+  .content {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+  }
+
+  .name {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .shared {
+    grid-column: 1;
+    grid-row: 2;
+    justify-self: start;
+  }
+
+  .pillRow {
+    flex-direction: column;
+    align-items: flex-start;
+    grid-column: 1;
+    grid-row: 3;
+  }
 }
