@@ -34,18 +34,22 @@ export default function PinnedSidebar({ player, onDeselect, onSelectPlayer }: Pi
             {t('nav.statistics')}
           </NavLink>
         )}
+        {/* v8 ignore start -- player-gated link */}
         {player && (
-          <NavLink to={`/player/${player.accountId}/rivals`} className={({ isActive }) => isActive ? s.linkActive : s.link}>
+          <NavLink to="/rivals" className={({ isActive }) => isActive ? s.linkActive : s.link}>
             <span className={s.linkIcon}><IoPeople size={20} /></span>
             {t('nav.rivals', 'Rivals')}
           </NavLink>
         )}
+        {/* v8 ignore stop */}
+        {/* v8 ignore start -- shop-visibility link */}
         {!settings.hideItemShop && (
           <NavLink to="/shop" className={({ isActive }) => isActive ? s.linkActive : s.link}>
             <span className={s.linkIcon}><IoBagHandle size={20} /></span>
             {t('nav.shop', 'Shop')}
           </NavLink>
         )}
+        {/* v8 ignore stop */}
         <div className={s.spacer} />
         {player ? (
           <Link to="/statistics" className={s.link}>

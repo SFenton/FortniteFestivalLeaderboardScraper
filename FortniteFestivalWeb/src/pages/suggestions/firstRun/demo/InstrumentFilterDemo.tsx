@@ -53,7 +53,7 @@ export default function InstrumentFilterDemo() {
     });
   };
 
-  const handleSelectInstrument = useCallback((k: string | null) => {
+  const handleSelectInstrument = useCallback((k: typeof instrument) => {
     /* v8 ignore start -- instrument always set when switching */
     if (instrument) { togglesRef.current[instrument] = toggles; }
     /* v8 ignore stop */
@@ -87,7 +87,7 @@ export default function InstrumentFilterDemo() {
   }), []);
 
   const h = useSlideHeight();
-  const [maxToggles, setMaxToggles] = useState(SUGGESTION_TYPES.length);
+  const [maxToggles, setMaxToggles] = useState<number>(SUGGESTION_TYPES.length);
   const [showHeader, setShowHeader] = useState(true);
 
   useEffect(() => {

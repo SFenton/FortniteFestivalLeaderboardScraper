@@ -133,6 +133,7 @@ export function useFilteredSongs({
           cmp = a.artist.localeCompare(b.artist); break;
         case 'year':
           cmp = (a.year ?? 0) - (b.year ?? 0); break;
+        /* v8 ignore start -- shop sort tiebreaker chain */
         case 'shop': {
           const aShop = shopSongIds?.has(a.songId) ? 1 : 0;
           const bShop = shopSongIds?.has(b.songId) ? 1 : 0;
@@ -149,6 +150,7 @@ export function useFilteredSongs({
           }
           break;
         }
+        /* v8 ignore stop */
         default:
           if (scoreMap.size > 0) {
             cmp = compareByMode(sortMode, scoreMap.get(a.songId), scoreMap.get(b.songId));

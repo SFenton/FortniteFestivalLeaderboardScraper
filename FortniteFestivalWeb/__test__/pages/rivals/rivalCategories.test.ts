@@ -46,8 +46,8 @@ describe('categorizeRivalSongs', () => {
     const songs = [makeSong({ rankDelta: 0 })];
     const cats = categorizeRivalSongs(songs);
     expect(cats.length).toBe(1);
-    expect(cats[0].key).toBe('closest_battles');
-    expect(cats[0].sentiment).toBe('neutral');
+    expect(cats[0]!.key).toBe('closest_battles');
+    expect(cats[0]!.sentiment).toBe('neutral');
   });
 
   it('splits mixed deltas into correct categories', () => {
@@ -98,7 +98,7 @@ describe('categorizeRivalSongs', () => {
     // First song should have smallest |delta|
     const deltas = closest!.songs.map(s => Math.abs(s.rankDelta));
     for (let i = 1; i < deltas.length; i++) {
-      expect(deltas[i]).toBeGreaterThanOrEqual(deltas[i - 1]);
+      expect(deltas[i]).toBeGreaterThanOrEqual(deltas[i - 1]!);
     }
   });
 

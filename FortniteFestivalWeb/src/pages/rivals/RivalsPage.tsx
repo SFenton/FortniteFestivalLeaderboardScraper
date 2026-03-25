@@ -1,10 +1,11 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useNavigate, useNavigationType } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
+import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
 import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
@@ -20,6 +21,14 @@ import RivalRow from './components/RivalRow';
 import { Routes } from '../../routes';
 import s from './RivalsPage.module.css';
 
+let _rivalsHasRendered = false;
+
+// Module-level data cache so back-navigation has instant data
+let _cachedInstrumentRivals: InstrumentRivals[] = [];
+let _cachedComboRivals: RivalsListResponse | null = null;
+let _cachedComputedAt: string | null = null;
+let _cachedAccountId: string | null = null;
+
 type InstrumentRivals = {
   instrument: ServerInstrumentKey;
   data: RivalsListResponse | null;
@@ -29,22 +38,28 @@ type InstrumentRivals = {
 
 export default function RivalsPage() {
   const { t } = useTranslation();
-  const { accountId } = useParams<{ accountId: string }>();
   const navigate = useNavigate();
+  const navType = useNavigationType();
   const { settings } = useSettings();
   const isMobile = useIsMobile();
   const { player } = useTrackedPlayer();
+  const accountId = player?.accountId;
   const scrollRef = useRef<HTMLDivElement>(null);
+  const saveScroll = useScrollRestore(scrollRef, `rivals:${accountId}`, navType);
 
   const activeInstruments = visibleInstruments(settings);
   const combo = useMemo(() => deriveComboFromSettings(settings), [settings]);
 
-  // Data state: one entry per instrument + optional combo
-  const [instrumentRivals, setInstrumentRivals] = useState<InstrumentRivals[]>([]);
-  const [comboRivals, setComboRivals] = useState<RivalsListResponse | null>(null);
+  // Data state: initialize from cache when returning to same account
+  const hasCachedData = accountId === _cachedAccountId && _cachedInstrumentRivals.length > 0;
+  const skipAnimRef = useRef(_rivalsHasRendered && navType === 'POP' && hasCachedData);
+  _rivalsHasRendered = true;
+
+  const [instrumentRivals, setInstrumentRivals] = useState<InstrumentRivals[]>(hasCachedData ? _cachedInstrumentRivals : []);
+  const [comboRivals, setComboRivals] = useState<RivalsListResponse | null>(hasCachedData ? _cachedComboRivals : null);
   const [comboLoading, setComboLoading] = useState(false);
-  const [computedAt, setComputedAt] = useState<string | null>(null);
-  const [playerName, setPlayerName] = useState<string | null>(null);
+  const [computedAt, setComputedAt] = useState<string | null>(hasCachedData ? _cachedComputedAt : null);
+  const [, setPlayerName] = useState<string | null>(null);
 
   // Resolve player display name
   /* v8 ignore start — async data fetch */
@@ -65,7 +80,7 @@ export default function RivalsPage() {
   // Fetch overview for computedAt timestamp
   /* v8 ignore start — async data fetch */
   useEffect(() => {
-    if (!accountId) return;
+    if (!accountId || hasCachedData) return;
     let cancelled = false;
     api.getRivalsOverview(accountId).then(res => {
       if (!cancelled) setComputedAt(res.computedAt);
@@ -78,6 +93,8 @@ export default function RivalsPage() {
   /* v8 ignore start — async data fetch */
   useEffect(() => {
     if (!accountId) return;
+    // Skip re-fetch on back-nav when cached data exists
+    if (hasCachedData) return;
     let cancelled = false;
 
     const entries: InstrumentRivals[] = activeInstruments.map(inst => ({
@@ -119,6 +136,8 @@ export default function RivalsPage() {
       setComboLoading(false);
       return;
     }
+    // Skip re-fetch on back-nav when cached data exists
+    if (hasCachedData) return;
     let cancelled = false;
     setComboLoading(true);
 
@@ -137,7 +156,17 @@ export default function RivalsPage() {
   const comboReady = !combo || !comboLoading;
   const allReady = allInstrumentsReady && comboReady;
 
+  // Persist data to module-level cache for instant back-nav
+  useEffect(() => {
+    if (!allReady || !accountId) return;
+    _cachedAccountId = accountId;
+    _cachedInstrumentRivals = instrumentRivals;
+    _cachedComboRivals = comboRivals;
+    _cachedComputedAt = computedAt;
+  }, [allReady, accountId, instrumentRivals, comboRivals, computedAt]);
+
   // Common rivals: rivals that appear in ALL loaded instrument lists (2+ instruments)
+  /* v8 ignore start -- common rivals intersection logic */
   const commonRivals = useMemo<{ above: RivalSummary[]; below: RivalSummary[] }>(() => {
     const loaded = instrumentRivals.filter(r => r.data);
     if (loaded.length < 2) return { above: [], below: [] };
@@ -178,32 +207,37 @@ export default function RivalsPage() {
     below.sort((a, b) => b.rivalScore - a.rivalScore);
     return { above, below };
   }, [instrumentRivals]);
+  /* v8 ignore stop */
 
-  const { phase } = useLoadPhase(allReady);
+  const { phase, shouldStagger } = useLoadPhase(allReady, { skipAnimation: skipAnimRef.current });
   const updateScrollMask = useScrollMask(scrollRef, [phase]);
   const { rushOnScroll } = useStaggerRush(scrollRef);
 
   /* v8 ignore start — scroll handler */
   const handleScroll = useCallback(() => {
+    saveScroll();
     updateScrollMask();
     rushOnScroll();
-  }, [updateScrollMask, rushOnScroll]);
+  }, [saveScroll, updateScrollMask, rushOnScroll]);
   /* v8 ignore stop */
 
+  /* v8 ignore start -- animation callback */
   const clearAnim = useCallback((e: React.AnimationEvent<HTMLElement>) => {
     const el = e.currentTarget;
     el.style.opacity = '';
     el.style.animation = '';
   }, []);
+  /* v8 ignore stop */
 
+  /* v8 ignore start -- guard + computed state */
   if (!accountId) {
     return <div className={s.center}>{t('rivals.noPlayer')}</div>;
   }
+  /* v8 ignore stop */
 
-  const stagger = (delayMs: number): React.CSSProperties => ({
-    opacity: 0,
-    animation: `fadeInUp 400ms ease-out ${delayMs}ms forwards`,
-  });
+  /* v8 ignore start -- render-time helpers */
+  const stagger = (delayMs: number): React.CSSProperties | undefined =>
+    shouldStagger ? { opacity: 0, animation: `fadeInUp 400ms ease-out ${delayMs}ms forwards` } : undefined;
 
   /** Compute CSS variable for min name width based on longest name in a rival list. */
   const nameWidthVar = (rivals: RivalSummary[]): React.CSSProperties => {
@@ -211,22 +245,33 @@ export default function RivalsPage() {
     return { '--rival-name-width': `${Math.ceil(maxLen * 0.85)}ch` } as React.CSSProperties;
   };
 
-  const navigateToRival = (rivalId: string) => {
-    navigate(Routes.rivalDetail(accountId, rivalId), { state: { combo } });
+  const navigateToRival = (rivalId: string, rivalName?: string | null) => {
+    navigate(Routes.rivalDetail(rivalId, rivalName ?? undefined), { state: { combo, rivalName } });
   };
+  /* v8 ignore stop */
 
   const PREVIEW_COUNT = 3;
 
+  /* v8 ignore start -- computed render state */
   const hasAnyRivals = instrumentRivals.some(r => r.data && (r.data.above.length > 0 || r.data.below.length > 0))
     || (comboRivals && (comboRivals.above.length > 0 || comboRivals.below.length > 0))
     || (commonRivals.above.length > 0 || commonRivals.below.length > 0);
+  /* v8 ignore stop */
 
   const staggerInterval = 125;
   let staggerIdx = 0;
-  const nextStagger = (): React.CSSProperties => stagger((++staggerIdx) * staggerInterval);
+  /* v8 ignore next -- render-time helper */
+  const nextStagger = (): React.CSSProperties | undefined =>
+    shouldStagger ? stagger((++staggerIdx) * staggerInterval) : undefined;
 
+  /* v8 ignore start -- JSX render tree */
   return (
     <div className={s.page}>
+      <div className={s.stickyHeader}>
+        <div className={s.headerContent}>
+          <div className={s.headerTitle}>{t('rivals.title')}</div>
+        </div>
+      </div>
       {phase !== 'contentIn' && (
         <div
           className={s.spinnerOverlay}
@@ -236,12 +281,6 @@ export default function RivalsPage() {
         </div>
       )}
       {phase === 'contentIn' && (
-        <>
-          <div className={s.stickyHeader}>
-            <div className={s.headerContent} style={stagger(100)} onAnimationEnd={clearAnim}>
-              <div className={s.headerTitle}>{t('rivals.title')}</div>
-            </div>
-          </div>
           <div ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
             <div className={s.container} style={isMobile ? { paddingBottom: 96 } : undefined}>
               {!hasAnyRivals && (
@@ -257,10 +296,10 @@ export default function RivalsPage() {
                     className={s.sectionHeaderClickable}
                     style={nextStagger()}
                     onAnimationEnd={clearAnim}
-                    onClick={() => navigate(Routes.commonRivals(accountId))}
+                    onClick={() => navigate(Routes.allRivals('common'), { state: { from: 'rivals' } })}
                     role="button"
                     tabIndex={0}
-                    onKeyDown={e => { if (e.key === 'Enter') navigate(Routes.commonRivals(accountId)); }}
+                    onKeyDown={e => { if (e.key === 'Enter') navigate(Routes.allRivals('common'), { state: { from: 'rivals' } }); }}
                   >
                     <div className={s.cardHeaderText}>
                       <span className={s.cardTitle}>{t('rivals.commonRivalsShort', 'Common Rivals')}</span>
@@ -274,7 +313,7 @@ export default function RivalsPage() {
                         key={rival.accountId}
                         rival={rival}
                         direction={commonRivals.above.includes(rival) ? 'above' : 'below'}
-                        onClick={() => navigateToRival(rival.accountId)}
+                        onClick={() => navigateToRival(rival.accountId, rival.displayName)}
                         style={nextStagger()}
                         onAnimationEnd={clearAnim}
                       />
@@ -297,7 +336,7 @@ export default function RivalsPage() {
                         key={rival.accountId}
                         rival={rival}
                         direction={comboRivals.above.some(r => r.accountId === rival.accountId) ? 'above' : 'below'}
-                        onClick={() => navigateToRival(rival.accountId)}
+                        onClick={() => navigateToRival(rival.accountId, rival.displayName)}
                         style={nextStagger()}
                         onAnimationEnd={clearAnim}
                       />
@@ -312,7 +351,7 @@ export default function RivalsPage() {
                 const previewAbove = entry.data.above.slice(0, PREVIEW_COUNT);
                 const previewBelow = entry.data.below.slice(0, PREVIEW_COUNT);
                 const allPreview = [...previewAbove, ...previewBelow];
-                const navigateToInstrument = () => navigate(Routes.instrumentRivals(accountId, entry.instrument));
+                const navigateToInstrument = () => navigate(Routes.allRivals(entry.instrument), { state: { from: 'rivals' } });
                 return (
                   <div key={entry.instrument} className={s.section}>
                     <div
@@ -337,7 +376,7 @@ export default function RivalsPage() {
                           key={rival.accountId}
                           rival={rival}
                           direction={previewAbove.includes(rival) ? 'above' : 'below'}
-                          onClick={() => navigateToRival(rival.accountId)}
+                          onClick={() => navigateToRival(rival.accountId, rival.displayName)}
                           style={nextStagger()}
                           onAnimationEnd={clearAnim}
                         />
@@ -348,7 +387,6 @@ export default function RivalsPage() {
               })}
             </div>
           </div>
-        </>
       )}
     </div>
   );

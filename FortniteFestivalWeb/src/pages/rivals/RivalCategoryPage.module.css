@@ -15,6 +15,9 @@
   z-index: 1;
   padding-top: var(--gap-section);
   padding-bottom: var(--gap-section);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-section);
 }
 
 .stickyHeader {

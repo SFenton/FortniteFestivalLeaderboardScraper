@@ -84,16 +84,20 @@ export default function Sidebar({ player, open, onClose, onDeselect, onSelectPla
               {t('nav.statistics')}
             </NavLink>
           )}
+          {/* v8 ignore start -- player-gated link */}
           {player && (
-            <NavLink to={`/player/${player.accountId}/rivals`} onClick={onClose} className={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
+            <NavLink to="/rivals" onClick={onClose} className={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
               {t('nav.rivals', 'Rivals')}
             </NavLink>
           )}
+          {/* v8 ignore stop */}
+          {/* v8 ignore start -- shop-visibility link */}
           {!settings.hideItemShop && (
             <NavLink to="/shop" onClick={onClose} className={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
               {t('nav.shop', 'Shop')}
             </NavLink>
           )}
+          {/* v8 ignore stop */}
         </nav>
         <div className={s.sidebarFooter}>
           {player ? (

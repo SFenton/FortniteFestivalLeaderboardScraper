@@ -15,6 +15,9 @@
   z-index: 1;
   padding-top: var(--gap-section);
   padding-bottom: var(--gap-section);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-section);
 }
 
 .stickyHeader {
@@ -86,7 +89,7 @@
   display: block;
   font-size: var(--font-lg);
   font-weight: var(--weight-bold);
-  color: var(--color-text-primary);
+  color: #fff;
   margin-bottom: var(--gap-xs);
 }
 
@@ -107,12 +110,13 @@
 .cardDesc {
   display: block;
   font-size: var(--font-sm);
-  color: var(--color-text-tertiary);
+  color: #fff;
 }
 
 .songList {
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 
 .viewAll {

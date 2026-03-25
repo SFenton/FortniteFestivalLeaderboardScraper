@@ -287,7 +287,6 @@ describe('SettingsPage', () => {
   ] as const)('opens %s first-run replay carousel', async (label, _idx) => {
     renderSettings();
     // There are multiple buttons per row; find the one whose sibling text matches the label
-    const buttons = screen.getAllByText('Show');
     const row = screen.getByText(label).closest('button')!;
     expect(row).toBeTruthy();
 

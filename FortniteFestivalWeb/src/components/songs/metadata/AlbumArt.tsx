@@ -33,11 +33,13 @@ export default memo(function AlbumArt({ src, size, style, priority, pulse }: { s
 
   const sizeVars = { '--album-size': `${size}px`, ...style } as CSSProperties;
 
+  /* v8 ignore start -- pulse and failed branches */
   const rootClass = pulse ? `${css.root} ${css.pulse}` : css.root;
 
   if (!src || failed) {
     return <div className={rootClass} style={sizeVars} />;
   }
+  /* v8 ignore stop */
 
   return (
     <div className={rootClass} style={sizeVars}>

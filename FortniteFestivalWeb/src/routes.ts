@@ -5,12 +5,12 @@ export const Routes = {
   leaderboard: (songId: string, instrument: string) => `/songs/${songId}/${instrument}`,
   playerHistory: (songId: string, instrument: string) => `/songs/${songId}/${instrument}/history`,
   player: (accountId: string) => `/player/${accountId}`,
-  rivals: (accountId: string) => `/player/${accountId}/rivals`,
-  commonRivals: (accountId: string) => `/player/${accountId}/rivals/common`,
-  instrumentRivals: (accountId: string, instrument: string) => `/player/${accountId}/rivals/instrument/${instrument}`,
-  rivalDetail: (accountId: string, rivalId: string) => `/player/${accountId}/rivals/${rivalId}`,
-  rivalCategory: (accountId: string, rivalId: string, categoryKey: string) =>
-    `/player/${accountId}/rivals/${rivalId}/${categoryKey}`,
+  rivals: '/rivals',
+  allRivals: (category: string) => `/rivals/all?category=${encodeURIComponent(category)}`,
+  rivalDetail: (rivalId: string, rivalName?: string) =>
+    `/rivals/${rivalId}${rivalName ? `?name=${encodeURIComponent(rivalName)}` : ''}`,
+  rivalry: (rivalId: string, mode: string) =>
+    `/rivals/${rivalId}/rivalry?mode=${encodeURIComponent(mode)}`,
   statistics: '/statistics',
   suggestions: '/suggestions',
   shop: '/shop',
@@ -23,9 +23,8 @@ export const RoutePatterns = {
   leaderboard: /^\/songs\/[^/]+\/[^/]+$/,
   history: /\/history$/,
   player: /^\/player\//,
-  rivals: /^\/player\/[^/]+\/rivals$/,
-  commonRivals: /^\/player\/[^/]+\/rivals\/common$/,
-  instrumentRivals: /^\/player\/[^/]+\/rivals\/instrument\/[^/]+$/,
-  rivalDetail: /^\/player\/[^/]+\/rivals\/[^/]+$/,
-  rivalCategory: /^\/player\/[^/]+\/rivals\/[^/]+\/[^/]+$/,
+  rivals: /^\/rivals$/,
+  allRivals: /^\/rivals\/all/,
+  rivalDetail: /^\/rivals\/[^/]+$/,
+  rivalry: /^\/rivals\/[^/]+\/rivalry/,
 } as const;

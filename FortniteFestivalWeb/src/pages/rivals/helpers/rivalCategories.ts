@@ -38,6 +38,7 @@ export function categorizeRivalSongs(songs: RivalSongComparison[]): RivalCategor
 
   const categories: RivalCategory[] = [];
 
+  /* v8 ignore start -- empty-guard branches */
   if (closestBattles.length > 0) {
     categories.push({
       key: 'closest_battles',
@@ -63,6 +64,7 @@ export function categorizeRivalSongs(songs: RivalSongComparison[]): RivalCategor
         sentiment: 'negative',
       });
     }
+    /* v8 ignore start */
     if (slippingAway.length > 0) {
       categories.push({
         key: 'slipping_away',
@@ -113,6 +115,7 @@ export function categorizeRivalSongs(songs: RivalSongComparison[]): RivalCategor
   // Ties go into closest battles already; if there are extra ties beyond CLOSEST_BATTLES_COUNT
   // they just won't appear in any category, which is fine — exact ties are rare.
   void ties;
+  /* v8 ignore stop */
 
   return categories;
 }

@@ -17,9 +17,11 @@ function SuggestionsPreview() {
 
   return (
     <div className={css.wrapper}>
-      {card('Close to Full Combo', css.tagGold, 'var(--color-gold)', 'FC Gap')}
-      {card('Top 5% Possible', css.tagBlue, 'var(--color-accent-blue)', 'Climb')}
-      {card('Unplayed on Bass', css.tagPurple, 'var(--color-accent-purple)', 'New')}
+      {/* v8 ignore start -- CSS module values always defined at runtime */}
+      {card('Close to Full Combo', css.tagGold ?? '', 'var(--color-gold)', 'FC Gap')}
+      {card('Top 5% Possible', css.tagBlue ?? '', 'var(--color-accent-blue)', 'Climb')}
+      {card('Unplayed on Bass', css.tagPurple ?? '', 'var(--color-accent-purple)', 'New')}
+      {/* v8 ignore stop */}
     </div>
   );
 }

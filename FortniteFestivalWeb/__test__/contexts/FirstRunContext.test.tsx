@@ -5,8 +5,6 @@ import { FirstRunProvider, useFirstRunContext } from '../../src/contexts/FirstRu
 import { contentHash, loadSeenSlides } from '../../src/firstRun/types';
 import type { FirstRunSlideDef } from '../../src/firstRun/types';
 
-const STORAGE_KEY = 'fst:firstRun';
-
 function wrapper({ children }: { children: ReactNode }) {
   return <FirstRunProvider>{children}</FirstRunProvider>;
 }
@@ -98,8 +96,8 @@ describe('FirstRunContext', () => {
 
     const stored = loadSeenSlides();
     expect(stored['x']).toBeDefined();
-    expect(stored['x'].version).toBe(1);
-    expect(stored['x'].hash).toBe(contentHash(slide.title + slide.description));
+    expect(stored['x']!.version).toBe(1);
+    expect(stored['x']!.hash).toBe(contentHash(slide.title + slide.description));
   });
 
   it('resetPage clears seen state for that page only', () => {

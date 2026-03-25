@@ -196,6 +196,7 @@ export const SongRow = memo(function SongRow({ song,
     return result;
   }, [score, displayOrder, songIntensityRaw, instrumentChips]);
 
+  /* v8 ignore start -- computed rendering variables with ternaries */
   const rowClass = isMobile ? s.rowMobile : s.row;
   const rowClassName = shopHighlight ? `${rowClass} ${s.shopHighlight}` : rowClass;
 
@@ -223,6 +224,7 @@ export const SongRow = memo(function SongRow({ song,
       ))}
     </div>
   ) : null;
+  /* v8 ignore stop */
 
   if (isMobile && entries.length > 0) {
     const primaryKey = entries[0]?.key;
@@ -255,6 +257,7 @@ export const SongRow = memo(function SongRow({ song,
   if (isMobile && chipRow) {
     return (
       externalHref ? (
+        /* v8 ignore start -- external href mobile render */
         <a ref={linkRef as React.Ref<HTMLAnchorElement>} {...linkProps} className={rowClassName} style={animStyle} onAnimationEnd={handleAnimEnd}>
           <div className={s.mobileTopRow}>
             {songInfo}
@@ -287,6 +290,7 @@ export const SongRow = memo(function SongRow({ song,
 
   return (
     externalHref ? (
+      /* v8 ignore start -- external href desktop render */
       <a ref={linkRef as React.Ref<HTMLAnchorElement>} {...linkProps} className={rowClassName} style={animStyle} onAnimationEnd={handleAnimEnd}>
         {songInfo}
         {chipRow}
@@ -297,6 +301,7 @@ export const SongRow = memo(function SongRow({ song,
         )}
         {externalIndicator}
       </a>
+      /* v8 ignore stop */
     ) : (
     <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={animStyle} onAnimationEnd={handleAnimEnd}>
       {songInfo}

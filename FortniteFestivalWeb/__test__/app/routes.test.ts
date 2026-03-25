@@ -34,17 +34,45 @@ describe('Routes', () => {
     expect(Routes.player('player-id-1')).toBe('/player/player-id-1');
   });
 
-  it('generates rivals path', () => {
-    expect(Routes.rivals('player-id-1')).toBe('/player/player-id-1/rivals');
+  it('has rivals route', () => {
+    expect(Routes.rivals).toBe('/rivals');
+  });
+
+  it('generates all rivals path with category', () => {
+    expect(Routes.allRivals('common')).toBe('/rivals/all?category=common');
+  });
+
+  it('generates all rivals path with instrument category', () => {
+    expect(Routes.allRivals('Solo_Guitar')).toBe('/rivals/all?category=Solo_Guitar');
+  });
+
+  it('generates all rivals path with combo category', () => {
+    expect(Routes.allRivals('combo')).toBe('/rivals/all?category=combo');
+  });
+
+  it('encodes special characters in category', () => {
+    expect(Routes.allRivals('Solo_Guitar+Solo_Bass')).toBe(
+      '/rivals/all?category=Solo_Guitar%2BSolo_Bass',
+    );
   });
 
   it('generates rival detail path', () => {
-    expect(Routes.rivalDetail('player-id-1', 'rival-id-2')).toBe('/player/player-id-1/rivals/rival-id-2');
+    expect(Routes.rivalDetail('rival-id-2')).toBe('/rivals/rival-id-2');
   });
 
-  it('generates rival category path', () => {
-    expect(Routes.rivalCategory('player-id-1', 'rival-id-2', 'closest_battles')).toBe(
-      '/player/player-id-1/rivals/rival-id-2/closest_battles',
+  it('generates rival detail path with name', () => {
+    expect(Routes.rivalDetail('rival-id-2', 'TestName')).toBe('/rivals/rival-id-2?name=TestName');
+  });
+
+  it('generates rivalry path', () => {
+    expect(Routes.rivalry('rival-id-2', 'closest_battles')).toBe(
+      '/rivals/rival-id-2/rivalry?mode=closest_battles',
+    );
+  });
+
+  it('encodes special characters in rivalry mode', () => {
+    expect(Routes.rivalry('rival-id-2', 'almost_passed')).toBe(
+      '/rivals/rival-id-2/rivalry?mode=almost_passed',
     );
   });
 });
@@ -103,40 +131,58 @@ describe('RoutePatterns', () => {
   });
 
   describe('rivals', () => {
-    it('matches /player/id/rivals', () => {
-      expect(RoutePatterns.rivals.test('/player/some-id/rivals')).toBe(true);
+    it('matches /rivals', () => {
+      expect(RoutePatterns.rivals.test('/rivals')).toBe(true);
     });
 
-    it('does not match /player/id/rivals/detail', () => {
-      expect(RoutePatterns.rivals.test('/player/some-id/rivals/detail')).toBe(false);
+    it('does not match /rivals/detail', () => {
+      expect(RoutePatterns.rivals.test('/rivals/detail')).toBe(false);
+    });
+  });
+
+  describe('allRivals', () => {
+    it('matches /rivals/all', () => {
+      expect(RoutePatterns.allRivals.test('/rivals/all')).toBe(true);
     });
 
-    it('does not match /player/id', () => {
-      expect(RoutePatterns.rivals.test('/player/some-id')).toBe(false);
+    it('matches /rivals/all?category=common', () => {
+      expect(RoutePatterns.allRivals.test('/rivals/all?category=common')).toBe(true);
+    });
+
+    it('matches /rivals/all?category=Solo_Guitar', () => {
+      expect(RoutePatterns.allRivals.test('/rivals/all?category=Solo_Guitar')).toBe(true);
+    });
+
+    it('does not match /rivals', () => {
+      expect(RoutePatterns.allRivals.test('/rivals')).toBe(false);
     });
   });
 
   describe('rivalDetail', () => {
-    it('matches /player/id/rivals/rival-id', () => {
-      expect(RoutePatterns.rivalDetail.test('/player/some-id/rivals/rival-id')).toBe(true);
+    it('matches /rivals/rival-id', () => {
+      expect(RoutePatterns.rivalDetail.test('/rivals/rival-id')).toBe(true);
     });
 
-    it('does not match /player/id/rivals', () => {
-      expect(RoutePatterns.rivalDetail.test('/player/some-id/rivals')).toBe(false);
+    it('does not match /rivals', () => {
+      expect(RoutePatterns.rivalDetail.test('/rivals')).toBe(false);
     });
 
-    it('does not match /player/id/rivals/rival-id/category', () => {
-      expect(RoutePatterns.rivalDetail.test('/player/some-id/rivals/rival-id/closest_battles')).toBe(false);
+    it('does not match /rivals/rival-id/rivalry', () => {
+      expect(RoutePatterns.rivalDetail.test('/rivals/rival-id/rivalry')).toBe(false);
     });
   });
 
-  describe('rivalCategory', () => {
-    it('matches /player/id/rivals/rival-id/category', () => {
-      expect(RoutePatterns.rivalCategory.test('/player/some-id/rivals/rival-id/closest_battles')).toBe(true);
+  describe('rivalry', () => {
+    it('matches /rivals/rival-id/rivalry', () => {
+      expect(RoutePatterns.rivalry.test('/rivals/rival-id/rivalry')).toBe(true);
     });
 
-    it('does not match /player/id/rivals/rival-id', () => {
-      expect(RoutePatterns.rivalCategory.test('/player/some-id/rivals/rival-id')).toBe(false);
+    it('matches /rivals/rival-id/rivalry?mode=closest_battles', () => {
+      expect(RoutePatterns.rivalry.test('/rivals/rival-id/rivalry?mode=closest_battles')).toBe(true);
+    });
+
+    it('does not match /rivals/rival-id', () => {
+      expect(RoutePatterns.rivalry.test('/rivals/rival-id')).toBe(false);
     });
   });
 });

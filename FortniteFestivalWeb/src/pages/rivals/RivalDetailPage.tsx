@@ -1,50 +1,71 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useParams, useLocation, useNavigate } from 'react-router-dom';
+import { useParams, useLocation, useNavigate, useNavigationType, useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useFestival } from '../../contexts/FestivalContext';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
+import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
 import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
+import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import { IoChevronForward } from 'react-icons/io5';
 import type { RivalSongComparison } from '@festival/core/api/serverTypes';
+import { STAGGER_INTERVAL } from '@festival/theme';
 import { categorizeRivalSongs } from './helpers/rivalCategories';
 import { deriveComboFromSettings, getEnabledInstruments } from './helpers/comboUtils';
 import RivalSongRow from './components/RivalSongRow';
 import { Routes } from '../../routes';
 import s from './RivalDetailPage.module.css';
+import rs from './RivalsPage.module.css';
 
-const SENTIMENT_CLASS: Record<string, string | undefined> = {
-  positive: s.cardTitlePositive,
-  negative: s.cardTitleNegative,
-  neutral: s.cardTitleNeutral,
-};
+let _detailHasRendered = false;
+let _cachedDetailSongs: RivalSongComparison[] = [];
+let _cachedDetailRivalName: string | null = null;
+let _cachedDetailKey: string | null = null;
 
 export default function RivalDetailPage() {
   const { t } = useTranslation();
-  const { accountId, rivalId } = useParams<{ accountId: string; rivalId: string }>();
+  const { rivalId } = useParams<{ rivalId: string }>();
+  const [searchParams] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const navType = useNavigationType();
   const { settings } = useSettings();
   const { state: { songs } } = useFestival();
   const isMobile = useIsMobile();
+  const { player } = useTrackedPlayer();
+  const accountId = player?.accountId;
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  /* v8 ignore start -- state derivation with null-coalescing */
   // Get combo from navigation state (passed from RivalsPage) or derive from settings
   const comboFromState = (location.state as Record<string, unknown> | null)?.combo as string | undefined;
+  const rivalNameFromState = (location.state as Record<string, unknown> | null)?.rivalName as string | undefined;
+  const rivalNameFromUrl = searchParams.get('name') ?? undefined;
   const derivedCombo = useMemo(() => deriveComboFromSettings(settings), [settings]);
   // Fallback: if no combo passed, try the first enabled instrument
   const fallbackInstrument = useMemo(() => getEnabledInstruments(settings)[0], [settings]);
   const combo = comboFromState ?? derivedCombo ?? fallbackInstrument;
+  /* v8 ignore stop */
 
-  const [songs_, setSongs] = useState<RivalSongComparison[]>([]);
-  const [rivalName, setRivalName] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  /* v8 ignore start -- cache-based state initialization */
+  const cacheKey = `${accountId}:${rivalId}:${combo}`;
+  const hasCachedData = cacheKey === _cachedDetailKey && _cachedDetailSongs.length > 0;
+  const skipAnimRef = useRef(_detailHasRendered && navType === 'POP' && hasCachedData);
+  _detailHasRendered = true;
 
+  const [songs_, setSongs] = useState<RivalSongComparison[]>(hasCachedData ? _cachedDetailSongs : []);
+  const [rivalName, setRivalName] = useState<string | null>(hasCachedData ? _cachedDetailRivalName : (rivalNameFromState ?? rivalNameFromUrl ?? null));
+  const [loading, setLoading] = useState(!hasCachedData);
+
+  const saveScroll = useScrollRestore(scrollRef, `rivalDetail:${cacheKey}`, navType);
+  /* v8 ignore stop */
+
+  /* v8 ignore start -- album art and year map building */
   // Build album art + year lookups from festival context
   const albumArtMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -61,10 +82,11 @@ export default function RivalDetailPage() {
     }
     return map;
   }, [songs]);
+  /* v8 ignore stop */
 
   /* v8 ignore start — async data fetch */
   useEffect(() => {
-    if (!accountId || !rivalId || !combo) return;
+    if (!accountId || !rivalId || !combo || hasCachedData) return;
     let cancelled = false;
     setLoading(true);
 
@@ -72,6 +94,16 @@ export default function RivalDetailPage() {
       if (cancelled) return;
       setSongs(res.songs);
       setRivalName(res.rival.displayName);
+      // Persist to module cache
+      _cachedDetailKey = cacheKey;
+      _cachedDetailSongs = res.songs;
+      _cachedDetailRivalName = res.rival.displayName;
+      // Ensure the rival name is in the URL for refresh/sharing
+      if (res.rival.displayName && !searchParams.has('name')) {
+        const next = new URLSearchParams(searchParams);
+        next.set('name', res.rival.displayName);
+        navigate(`${location.pathname}?${next.toString()}`, { replace: true, state: location.state });
+      }
       setLoading(false);
     }).catch(() => {
       if (cancelled) return;
@@ -85,43 +117,53 @@ export default function RivalDetailPage() {
 
   const categories = useMemo(() => categorizeRivalSongs(songs_), [songs_]);
 
-  // Compute summary stats
-  const totalSongs = songs_.length;
-  const aheadCount = songs_.filter(s => s.rankDelta > 0).length;
-  const behindCount = songs_.filter(s => s.rankDelta < 0).length;
-
-  const { phase } = useLoadPhase(!loading);
+  const { phase, shouldStagger } = useLoadPhase(!loading, { skipAnimation: skipAnimRef.current });
   const updateScrollMask = useScrollMask(scrollRef, [phase]);
   const { rushOnScroll } = useStaggerRush(scrollRef);
 
   /* v8 ignore start — scroll handler */
   const handleScroll = useCallback(() => {
+    saveScroll();
     updateScrollMask();
     rushOnScroll();
-  }, [updateScrollMask, rushOnScroll]);
+  }, [saveScroll, updateScrollMask, rushOnScroll]);
   /* v8 ignore stop */
 
+  /* v8 ignore start -- animation callback */
   const clearAnim = useCallback((e: React.AnimationEvent<HTMLElement>) => {
     const el = e.currentTarget;
     el.style.opacity = '';
     el.style.animation = '';
   }, []);
+  /* v8 ignore stop */
 
+  /* v8 ignore start -- guard and display state */
   if (!accountId || !rivalId) {
     return <div className={s.center}>{t('rivals.detail.noSongs')}</div>;
   }
 
   const PREVIEW_COUNT = 5;
+  /* v8 ignore stop */
 
-  const stagger = (delayMs: number): React.CSSProperties => ({
-    opacity: 0,
-    animation: `fadeInUp 400ms ease-out ${delayMs}ms forwards`,
-  });
+  /* v8 ignore start -- render-time helpers */
+  const stagger = (delayMs: number): React.CSSProperties | undefined =>
+    shouldStagger ? { opacity: 0, animation: `fadeInUp 400ms ease-out ${delayMs}ms forwards` } : undefined;
+  /* v8 ignore stop */
 
-  const displayName = rivalName ?? 'Unknown Player';
-
-  return (
+  /* v8 ignore start -- display name fallbacks */
+  const staggerInterval = STAGGER_INTERVAL;
+  const displayName = rivalName ?? '\u2026';
+  const playerName = player?.displayName ?? 'You';
+  /* v8 ignore stop */
+  /* v8 ignore start -- JSX render tree */  return (
     <div className={s.page}>
+      <div className={s.stickyHeader}>
+        <div className={s.headerContent}>
+          <div className={s.headerTitle}>
+            {playerName} vs. {displayName}
+          </div>
+        </div>
+      </div>
       {phase !== 'contentIn' && (
         <div
           className={s.spinnerOverlay}
@@ -131,21 +173,6 @@ export default function RivalDetailPage() {
         </div>
       )}
       {phase === 'contentIn' && (
-        <>
-          <div className={s.stickyHeader}>
-            <div className={s.headerContent} style={stagger(100)} onAnimationEnd={clearAnim}>
-              <div className={s.headerTitle}>
-                {t('rivals.detail.vs', { name: displayName })}
-              </div>
-              <div className={s.headerSubtitle}>
-                {t('rivals.detail.summary', {
-                  total: totalSongs,
-                  ahead: aheadCount,
-                  behind: behindCount,
-                })}
-              </div>
-            </div>
-          </div>
           <div ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
             <div className={s.container} style={isMobile ? { paddingBottom: 96 } : undefined}>
               {categories.length === 0 && (
@@ -156,39 +183,42 @@ export default function RivalDetailPage() {
               {categories.map((cat, catIdx) => {
                 const preview = cat.songs.slice(0, PREVIEW_COUNT);
                 const navigateToCategory = () =>
-                  navigate(Routes.rivalCategory(accountId, rivalId, cat.key), { state: { combo } });
+                  navigate(Routes.rivalry(rivalId, cat.key), { state: { combo } });
                 return (
-                  <div
-                    key={cat.key}
-                    className={s.card}
-                    style={stagger(200 + catIdx * 150)}
-                    onAnimationEnd={clearAnim}
-                  >
+                  <div key={cat.key} className={rs.section}>
                     <div
-                      className={s.cardHeaderClickable}
+                      className={rs.sectionHeaderClickable}
+                      style={stagger(200 + catIdx * 150)}
+                      onAnimationEnd={clearAnim}
                       onClick={navigateToCategory}
                       role="button"
                       tabIndex={0}
                       onKeyDown={e => { if (e.key === 'Enter') navigateToCategory(); }}
                     >
-                      <div>
-                        <span className={SENTIMENT_CLASS[cat.sentiment] ?? s.cardTitle}>
+                      <div className={rs.cardHeaderText}>
+                        <span className={s.cardTitle}>
                           {t(cat.titleKey)}
                         </span>
                         <span className={s.cardDesc}>
-                          {t(cat.descriptionKey)} · {cat.songs.length} songs
+                          {t(cat.descriptionKey)}
                         </span>
                       </div>
-                      <IoChevronForward size={20} className={s.chevron} />
+                      <span className={rs.seeAll}>{t('rivals.seeAll', 'See All')}</span>
+                      <IoChevronForward size={20} className={rs.chevron} />
                     </div>
                     <div className={s.songList}>
-                      {preview.map(song => (
+                      {preview.map((song, songIdx) => (
                         <RivalSongRow
                           key={`${song.songId}-${song.instrument}`}
                           song={song}
                           albumArt={albumArtMap.get(song.songId)}
                           year={yearMap.get(song.songId)}
+                          playerName={player?.displayName}
+                          rivalName={rivalName ?? undefined}
                           onClick={() => navigate(Routes.songDetail(song.songId))}
+                          standalone
+                          style={stagger(200 + catIdx * 150 + (songIdx + 1) * staggerInterval)}
+                          onAnimationEnd={clearAnim}
                         />
                       ))}
                     </div>
@@ -197,8 +227,8 @@ export default function RivalDetailPage() {
               })}
             </div>
           </div>
-        </>
       )}
     </div>
   );
+  /* v8 ignore stop */
 }

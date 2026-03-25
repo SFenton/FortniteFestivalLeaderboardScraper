@@ -45,13 +45,11 @@ vi.stubGlobal('Image', class MockImage {
 
 import PathPreviewDemo from '../../../../src/pages/songinfo/firstRun/demo/PathPreviewDemo';
 
-let roCallback: ResizeObserverCallback | null = null;
-
 beforeAll(() => {
   stubResizeObserver();
   // Capture the RO callback for PathPreviewDemo's width detection
   vi.stubGlobal('ResizeObserver', class {
-    constructor(cb: ResizeObserverCallback) { roCallback = cb; }
+    constructor(_cb: ResizeObserverCallback) {} // eslint-disable-line @typescript-eslint/no-unused-vars
     observe() {}
     unobserve() {}
     disconnect() {}

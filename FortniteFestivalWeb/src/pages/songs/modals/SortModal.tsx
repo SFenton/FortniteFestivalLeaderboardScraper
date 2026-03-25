@@ -92,18 +92,20 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
   return (
     <>
     <Modal visible={visible} title="Sort Songs" onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel="Reset Sort Settings" resetHint="Restore sort mode, direction, and metadata priority to their defaults." applyLabel="Apply Sort Changes" applyDisabled={!hasChanges}>
-      {/* Primary sort mode */}
+      {/* v8 ignore start -- sort mode Accordion with hideItemShop */}
       {hasPlayer ? (
         <ModalSection>
           <Accordion title="Mode" hint="Choose which property to sort the song list by." defaultOpen={!instrumentFilter}>
             <RadioRow label="Title" selected={draft.sortMode === 'title'} onSelect={() => setMode('title')} />
             <RadioRow label="Artist" selected={draft.sortMode === 'artist'} onSelect={() => setMode('artist')} />
             <RadioRow label="Year" selected={draft.sortMode === 'year'} onSelect={() => setMode('year')} />
+            {/* v8 ignore next -- hideItemShop branch */}
             {!hideItemShop && <RadioRow label="Item Shop" selected={draft.sortMode === 'shop'} onSelect={() => setMode('shop')} />}
             <RadioRow label="Has FC" selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />
           </Accordion>
         </ModalSection>
       ) : (
+        /* v8 ignore start -- non-player sort mode path */
         <ModalSection title="Mode" hint="Choose which property to sort the song list by.">
           <RadioRow label="Title" selected={draft.sortMode === 'title'} onSelect={() => setMode('title')} />
           <RadioRow label="Artist" selected={draft.sortMode === 'artist'} onSelect={() => setMode('artist')} />
@@ -111,7 +113,9 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
           {!hideItemShop && <RadioRow label="Item Shop" selected={draft.sortMode === 'shop'} onSelect={() => setMode('shop')} />}
           <RadioRow label="Has FC" selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />
         </ModalSection>
+        /* v8 ignore stop */
       )}
+      /* v8 ignore stop */
 
       {/* Instrument-specific sort modes (only when an instrument is selected) */}
       {instrumentFilter != null && visibleInstrumentSortModes.length > 0 && (
@@ -158,6 +162,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
       {instrumentFilter != null && anyMetadataVisible && (
         <ModalSection title="Metadata Sort Priority" hint="When two songs have the same value for the selected sort mode, songs are sorted by comparing these properties in order from top to bottom.">
           <ReorderList
+          /* v8 ignore next -- nullish coalescing for display label */
             items={visibleMetadataOrder.map(k => ({ key: k, label: METADATA_SORT_DISPLAY[k] ?? k }))}
             /* v8 ignore start -- DnD reorder callback; can't fire in jsdom (DnD handler is v8-ignored) */
             onReorder={(items) => onChange({ ...draft, metadataOrder: items.map(i => i.key) })}

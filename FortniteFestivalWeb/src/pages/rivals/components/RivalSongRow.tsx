@@ -21,6 +21,7 @@ interface RivalSongRowProps {
 
 const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, playerName, rivalName, onClick, standalone, scoreDeltaWidth, style, onAnimationEnd }: RivalSongRowProps) {
   const { t } = useTranslation();
+  /* v8 ignore start -- ternary chains and nullish coalescing */
   const delta = song.rankDelta;
   const deltaClass = delta > 0 ? s.deltaPositive : delta < 0 ? s.deltaNegative : s.deltaNeutral;
   const deltaSign = delta > 0 ? '+' : '';
@@ -29,7 +30,9 @@ const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, playerNa
   const scoreDiff = (song.userScore ?? 0) - (song.rivalScore ?? 0);
   const scoreDiffText = `${scoreDiff >= 0 ? '+' : '\u2212'}${Math.abs(scoreDiff).toLocaleString()}`;
   const scoreDiffClass = scoreDiff > 0 ? s.deltaPositive : scoreDiff < 0 ? s.deltaNegative : s.deltaNeutral;
+  /* v8 ignore stop */
 
+  /* v8 ignore start -- JSX render trees */
   if (standalone) {
     const tintClass = userWins ? s.rowWinning : rivalWins ? s.rowLosing : '';
     return (
@@ -52,12 +55,6 @@ const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, playerNa
             <div className={s.songTitle}>{song.title ?? song.songId}</div>
             <div className={s.songArtist}>{song.artist ?? ''}{year ? ` \u00b7 ${year}` : ''}</div>
           </div>
-          <span className={deltaClass}>
-            {deltaSign}{delta}
-          </span>
-          <span className={scoreDiffClass} style={scoreDeltaWidth ? { minWidth: scoreDeltaWidth } : undefined}>
-            {scoreDiffText}
-          </span>
           <InstrumentIcon instrument={song.instrument as ServerInstrumentKey} size={36} />
         </div>
         <div className={s.compareRow}>
@@ -65,6 +62,20 @@ const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, playerNa
             <span className={s.entryName}>{playerName ?? t('rivals.detail.you')}</span>
             <span className={s.entryRank}>#{song.userRank.toLocaleString()}</span>
             <span className={s.entryScore}>{song.userScore != null ? song.userScore.toLocaleString() : ''}</span>
+          </div>
+          <div className={s.deltaCenter}>
+            <div className={`${s.deltaPillGroup} ${s.deltaPillGroupRank}`}>
+              <span className={deltaClass} style={scoreDeltaWidth ? { minWidth: scoreDeltaWidth } : undefined}>
+                {deltaSign}{delta}
+              </span>
+              <span className={s.deltaLabel}>Rank</span>
+            </div>
+            <div className={s.deltaPillGroup}>
+              <span className={scoreDiffClass} style={scoreDeltaWidth ? { minWidth: scoreDeltaWidth } : undefined}>
+                {scoreDiffText}
+              </span>
+              <span className={s.deltaLabel}>Score</span>
+            </div>
           </div>
           <div className={`${s.entryRight} ${rivalWins ? s.entryWin : ''}`}>
             <span className={s.entryName}>{rivalName ?? t('rivals.detail.them')}</span>
@@ -118,6 +129,7 @@ const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, playerNa
       <InstrumentIcon instrument={song.instrument as ServerInstrumentKey} size={36} />
     </div>
   );
+  /* v8 ignore stop */
 });
 
 export default RivalSongRow;

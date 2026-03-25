@@ -66,7 +66,6 @@ describe('useShopWebSocket', () => {
     act(() => { vi.advanceTimersByTime(10); });
 
     // Get the WS instance and send a snapshot
-    const ws = (globalThis as any).WebSocket as unknown;
     // We need the actual instance - let's re-approach
     // The hook creates a WS internally; we simulate via the class
     // Since our mock fires onopen in setTimeout(0), advance timers

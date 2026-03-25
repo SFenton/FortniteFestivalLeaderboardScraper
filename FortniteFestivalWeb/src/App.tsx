@@ -21,9 +21,8 @@ const SettingsPage = lazy(() => import('./pages/settings/SettingsPage'));
 const ShopPage = lazy(() => import('./pages/shop/ShopPage'));
 const RivalsPage = lazy(() => import('./pages/rivals/RivalsPage'));
 const RivalDetailPage = lazy(() => import('./pages/rivals/RivalDetailPage'));
-const RivalCategoryPage = lazy(() => import('./pages/rivals/RivalCategoryPage'));
-const InstrumentRivalsPage = lazy(() => import('./pages/rivals/InstrumentRivalsPage'));
-const CommonRivalsPage = lazy(() => import('./pages/rivals/CommonRivalsPage'));
+const RivalCategoryPage = lazy(() => import('./pages/rivals/RivalryPage'));
+const AllRivalsPage = lazy(() => import('./pages/rivals/AllRivalsPage'));
 /* v8 ignore stop */
 import { Size, QUERY_NARROW_GRID } from '@festival/theme';
 import appCss from './App.module.css';
@@ -84,7 +83,7 @@ const CHANGELOG_STORAGE_KEY = 'fst:changelog';
 const ANIMATED_BG_ROUTES = new Set(['/', AppRoutes.songs, AppRoutes.suggestions, AppRoutes.statistics, AppRoutes.settings, AppRoutes.shop]);
 /* v8 ignore start — route detection helper */
 function isAnimatedBgRoute(pathname: string) {
-  return ANIMATED_BG_ROUTES.has(pathname) || RoutePatterns.player.test(pathname);
+  return ANIMATED_BG_ROUTES.has(pathname) || RoutePatterns.player.test(pathname) || pathname.startsWith('/rivals');
 }
 /* v8 ignore stop */
 
@@ -200,8 +199,8 @@ function AppShell() {
     if (parts[0] === 'songs' && parts.length === 4) return `/songs/${parts[1]}/${parts[2]}`;
     if (parts[0] === 'songs' && parts.length === 3) return `/songs/${parts[1]}`;
     if (parts[0] === 'songs' && parts.length === 2) return AppRoutes.songs;
-    if (parts[0] === 'player' && parts.length === 5) return `/player/${parts[1]}/rivals/${parts[3]}`;
-    if (parts[0] === 'player' && parts.length === 4) return `/player/${parts[1]}/rivals`;
+    if (parts[0] === 'rivals' && parts.length === 4) return `/rivals/${parts[1]}`;
+    if (parts[0] === 'rivals' && parts.length >= 2) return '/rivals';
     if (parts[0] === 'player' && parts.length === 3) return `/player/${parts[1]}`;
     if (parts[0] === 'player' && parts.length === 2) return AppRoutes.songs;
     return null;
@@ -281,11 +280,26 @@ function AppShell() {
           <Route path="/songs/:songId/:instrument" element={<ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardPage /></ErrorBoundary>} />
           <Route path="/songs/:songId/:instrument/history" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerHistoryPage /></ErrorBoundary>} />
           <Route path="/player/:accountId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage /></ErrorBoundary>} />
-          <Route path="/player/:accountId/rivals" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalsPage /></ErrorBoundary>} />
-          <Route path="/player/:accountId/rivals/common" element={<ErrorBoundary fallback={<RouteErrorFallback />}><CommonRivalsPage /></ErrorBoundary>} />
-          <Route path="/player/:accountId/rivals/instrument/:instrument" element={<ErrorBoundary fallback={<RouteErrorFallback />}><InstrumentRivalsPage /></ErrorBoundary>} />
-          <Route path="/player/:accountId/rivals/:rivalId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalDetailPage /></ErrorBoundary>} />
-          <Route path="/player/:accountId/rivals/:rivalId/:categoryKey" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalCategoryPage /></ErrorBoundary>} />
+          {player ? (
+            <Route path="/rivals" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalsPage /></ErrorBoundary>} />
+          ) : (
+            <Route path="/rivals" element={<Navigate to={AppRoutes.songs} replace />} />
+          )}
+          {player ? (
+            <Route path="/rivals/all" element={<ErrorBoundary fallback={<RouteErrorFallback />}><AllRivalsPage /></ErrorBoundary>} />
+          ) : (
+            <Route path="/rivals/all" element={<Navigate to={AppRoutes.songs} replace />} />
+          )}
+          {player ? (
+            <Route path="/rivals/:rivalId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalDetailPage /></ErrorBoundary>} />
+          ) : (
+            <Route path="/rivals/:rivalId" element={<Navigate to={AppRoutes.songs} replace />} />
+          )}
+          {player ? (
+            <Route path="/rivals/:rivalId/rivalry" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalCategoryPage /></ErrorBoundary>} />
+          ) : (
+            <Route path="/rivals/:rivalId/rivalry" element={<Navigate to={AppRoutes.songs} replace />} />
+          )}
           {player ? (
             <Route path="/statistics" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage accountId={player.accountId} /></ErrorBoundary>} />
           ) : (
