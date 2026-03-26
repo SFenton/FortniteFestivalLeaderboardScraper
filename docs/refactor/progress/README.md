@@ -21,7 +21,9 @@ Track progress across all 16 phases of the FST architecture refactor. Each phase
 | 13 | Performance / Memory / Storage | ⬜ Not Started | — | [phase-13-perf-memory-storage.md](phase-13-perf-memory-storage.md) |
 | 14 | Documentation Wiki | ⬜ Not Started | — | [phase-14-documentation.md](phase-14-documentation.md) |
 | 15 | Agent Tooling | ⬜ Not Started | — | [phase-15-agent-tooling.md](phase-15-agent-tooling.md) |
-| 16 | CSS → useStyles + Theme | 🔵 In Progress | Phases 1-5 | [phase-16-css-to-usestyles.md](phase-16-css-to-usestyles.md) |
+| 16 | CSS → useStyles + Theme | ✅ Complete | Phases 1-5 | [phase-16-css-to-usestyles.md](phase-16-css-to-usestyles.md) |
+| 17 | String Union → Const Enum | ⬜ Not Started | — | — |
+| 18 | Modal Style & Structure Cleanup | ⬜ Not Started | Phase 16 | [phase-18-modal-cleanup.md](phase-18-modal-cleanup.md) |
 
 ## Status Legend
 

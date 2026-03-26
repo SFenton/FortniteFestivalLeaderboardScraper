@@ -1267,6 +1267,88 @@ String unions are currently persisted to localStorage. Add a migration layer:
 - All switch statements on sort/sync modes use enum constants
 - localStorage round-trip preserves settings across upgrade
 - TypeScript reports exhaustiveness errors for unhandled enum cases
+
+---
+
+## Phase 18: Modal Style & Structure Cleanup
+
+**Goal**: Bring all modal components into alignment with the `useStyles()` + `useMemo` convention (Phase 16), eliminate ~40 magic numbers in favor of `@festival/theme` tokens, extract duplicated styles/patterns into shared components, and consolidate modal shell usage so no modal builds its own overlay/panel/animation from scratch.
+
+**Motivation**: Phase 16 migrated 93 CSS modules to `useStyles()`, but several modal files were left with module-level `const` style objects, inline magic numbers, and duplicated UI patterns. Additionally, 3 modals (PathsModal, ChangelogModal, ConfirmAlert) bypass `<ModalShell>` entirely, reimplementing overlay/animation/keyboard-dismiss logic from scratch.
+
+### 18.1 — Add Missing Theme Tokens
+
+Add `@festival/theme` tokens for all magic numbers found in modals:
+
+- `ZIndex.modalPanel` (currently hardcoded `1001`)
+- `Size.radioDot` (18), toggle track/thumb sizes (36/20/16 + large variants 44/24/20)
+- `Size.directionIconBtn` (40), direction icon margin (-12)
+- `Size.pathsInstrumentBtn` (64), `Size.pathsInstrumentIcon` (48)
+- `Size.pathsAccordionInst` (160), `Size.pathsAccordionDiff` (120)
+- `Size.starSmall` (14)
+- `Layout.searchModalDesktopW` (420), `Layout.searchModalDesktopH` (600), `Layout.searchPillH` (48)
+
+### 18.2 — Migrate modalStyles.ts to Theme Tokens
+
+Replace all magic numbers in `modalStyles.ts` with the tokens added in 18.1. Update all 11 consumer files. Evaluate whether to convert to a `useModalStyles()` hook (no reactive deps → module-level `const` is acceptable, but tokens must be used).
+
+### 18.3 — Migrate filterStyles.ts to Theme Tokens
+
+Same treatment for `filterStyles.ts`. Update consumers: FilterModal, SuggestionsFilterModal, InstrumentSelector.
+
+### 18.4 — Extract Shared DirectionPicker
+
+`directionStyles` is duplicated near-identically across SortModal and PlayerScoreSortModal. Extract a `<DirectionPicker>` component (or shared style factory) with props for ascending state and onChange. Replace `size={20}` with `Size.iconDefault`, `width: 40` with `Size.directionIconBtn`, `fontWeight: 700` with `Weight.bold`. Delete both local `directionStyles`.
+
+### 18.5 — Deduplicate PathsModal Instrument Picker
+
+PathsModal defines its own instrument picker (instrumentRow, instrumentBtn, instrumentCircle/Active) that duplicates `filterStyles` with hardcoded `'#2ECC71'` and `width: 64`. Replace with `filterStyles` imports (parameterize color if needed). Replace local `TRANSITION_MS = 300` with the `@festival/theme` export.
+
+### 18.6 — Migrate PathsModal to ModalShell
+
+Replace PathsModal's hand-built overlay/panel/animation/escape-key logic (~50 lines) with `<ModalShell>` and `desktopStyle`/`mobileStyle` overrides for 90vw/90vh sizing. Instrument picker + difficulty grid go into ModalShell's children.
+
+### 18.7 — Migrate Remaining Module-Level Styles to useStyles
+
+- SortModal: move remaining local styles into `useStyles()` or shared imports
+- PlayerScoreSortModal: same
+- MobilePlayerSearchModal: consolidate `searchPill` / `SEARCH_MODAL_DESKTOP` into `useModalSearchStyles()`
+- PathsModal: consolidate `usePathsModalStyles()` to cover all local styles
+
+### 18.8 — Evaluate CenteredDialogShell
+
+ChangelogModal and ConfirmAlert both build their own centered overlay + scale/fade animation + escape key. Evaluate if a `<CenteredDialogShell>` component is warranted. If the two are different enough, document the decision and keep standalone.
+
+### 18.9 — Update Tests
+
+Update assertions referencing changed style values or removed style objects. Verify all ~2274 tests pass and coverage stays ≥ 95%.
+
+### Phase 18 File Impact
+
+| Metric | Estimate |
+|---|---|
+| Theme tokens added | ~15-20 |
+| Style files refactored | 2 (modalStyles.ts, filterStyles.ts) |
+| Components extracted | 1-2 (DirectionPicker, optionally CenteredDialogShell) |
+| Modal files updated | 8-10 |
+| Duplicated style blocks removed | 3 |
+| Magic numbers eliminated | ~40 |
+| Tests updated | 5-10 |
+
+**Verification:**
+- `grep -rn "1001\b" src/` returns zero style-context matches (replaced by `ZIndex.modalPanel`)
+- `grep -rn "directionStyles" src/` returns zero matches outside shared component
+- `grep -rn "#2ECC71" src/` returns zero matches (replaced by theme token)
+- No hand-built overlay/panel in any modal (except centered dialogs if CenteredDialogShell not adopted)
+- No module-level `const styles` in any modal file
+- All tests pass, coverage ≥ 95%
+
+### Phase 18 Dependencies
+
+Depends on Phase 16 (useStyles convention must be established first). Can run in parallel with Phase 17.
+
+---
+
 - All frosted surfaces must use `<FrostedCard>`
 - All page headers must use `<PageHeader>`
 - All lists must use `<ItemList>`
@@ -1381,12 +1463,14 @@ Update `.vscode/mcp.json`:
 | **14. Documentation** | — | **anything (updated as phases complete)** |
 | **15. Agent Tooling** | — | **anything (MCP server independent)** |
 | **16. CSS → useStyles** | **After 1-5** (architecture stable) | 7, 8, 11, 14, 15 |
+| **17. String Union → Const Enum** | — | anything |
+| **18. Modal Style & Structure Cleanup** | **16** | 17 |
 
 **Phase 16 ordering note**: The theme package restructure (16.1) can start immediately. The useStyles hook creation (16.4) and shared factories (16.5) can start immediately. The actual CSS module migration (16.6) should happen after Phases 1-5 so that we migrate the final architecture, not the pre-refactor layout. Otherwise we'd be converting CSS modules that are about to be restructured.
 
 ### Updated Scope
 
-- **Total phases**: 16
+- **Total phases**: 18
 - **Total new web files**: ~15-20 (components, hooks, fixtures) + ~10 new theme files
 - **Total web files refactored**: ~60-70 (architecture) + ~96 CSS modules eliminated
 - **Total CSS modules eliminated**: 96 → 0 (replaced by useStyles)
