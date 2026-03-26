@@ -8,7 +8,7 @@ import {
 } from '../../../player/helpers/playerStats';
 import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, type ServerInstrumentKey as InstrumentKey, type PlayerResponse, type ServerSong as Song } from '@festival/core/api/serverTypes';
 import { Gap, Layout, Radius, frostedCard, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
-import s from '../../../../components/player/PlayerPage.module.css';
+import { playerPageStyles as pps } from '../../../../components/player/playerPageStyles';
 import { SelectProfilePill } from '../../../../components/player/SelectProfilePill';
 import SyncBanner from '../../../../components/page/SyncBanner';
 import { useSettings, isInstrumentVisible } from '../../../../contexts/SettingsContext';
@@ -214,8 +214,8 @@ export default function PlayerContent({
     <Page
       scrollRef={scrollRef}
       scrollDeps={fadeDeps}
-      scrollClassName={s.scrollArea}
-      containerClassName={s.container}
+      scrollStyle={pps.scrollArea}
+      containerStyle={pps.container}
       before={
         <PageHeader
           title={data.displayName}
@@ -247,7 +247,7 @@ export default function PlayerContent({
       ) : undefined}
     >
         <div style={{ ...(hasFab ? { paddingBottom: Layout.fabPaddingBottom } : {}) }}>
-          <div className={s.gridList} style={{ ...(isNarrowGrid ? { gridTemplateColumns: 'minmax(0, 1fr)' } : {}) }}>
+          <div style={{ ...pps.gridList, ...(isNarrowGrid ? { gridTemplateColumns: 'minmax(0, 1fr)' } : {}) }}>
             {(() => {
               // Compute which items are in the initial viewport by accumulating
               // estimated row heights.  The grid is 2-col: span items take a full
@@ -289,7 +289,7 @@ export default function PlayerContent({
               return items.map((item, i) => {
                 const delay = skipAnim ? undefined : (i < visibleCount ? (i + 1) * STAGGER_ENTRY_OFFSET : lastVisibleDelay);
                 return (
-                  <FadeIn key={item.key} delay={delay} className={item.span ? s.gridFullWidth : undefined} style={item.style}>
+                  <FadeIn key={item.key} delay={delay} style={item.span ? { ...pps.gridFullWidth, ...item.style } : item.style}>
                     {item.node}
                   </FadeIn>
                 );

@@ -10,8 +10,9 @@ import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { InstrumentSelector, type InstrumentSelectorItem } from '../../../../components/common/InstrumentSelector';
 import ArcSpinner, { SpinnerSize } from '../../../../components/common/ArcSpinner';
 import FadeIn from '../../../../components/page/FadeIn';
-import pathCss from '../../../songinfo/components/path/PathsModal.module.css';
-import css from './PathPreviewDemo.module.css';
+import anim from '../../../../styles/animations.module.css';
+import inst from '../../../../styles/instrumentSelector.module.css';
+import fx from '../../../../styles/effects.module.css';
 
 const FADE_MS = TRANSITION_MS;
 const INSTRUMENTS: InstrumentKey[] = ['Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals'];
@@ -122,10 +123,10 @@ export default function PathPreviewDemo() {
     [],
   );
   const selectorClassNames = useMemo(() => ({
-    row: css.iconRow,
-    button: css.iconButton,
-    buttonActive: css.iconButtonActive,
-    arrowButton: css.arrowButton,
+    row: inst.iconRow,
+    button: inst.iconButton,
+    buttonActive: inst.iconButtonActive,
+    arrowButton: inst.arrowButton,
   }), []);
 
   const s = usePathStyles(spinnerVisible, imageVisible);
@@ -175,7 +176,7 @@ export default function PathPreviewDemo() {
 
       {showDifficulty && (
         <FadeIn delay={showInstruments ? STAGGER_INTERVAL : 0}>
-          <div className={css.diffGrid}>
+          <div className={fx.diffGrid}>
             {DIFFICULTIES.map((diff) => (
               <button
                 key={diff}
@@ -190,16 +191,16 @@ export default function PathPreviewDemo() {
       )}
 
       <FadeIn delay={(showInstruments ? STAGGER_INTERVAL : 0) + (showDifficulty ? STAGGER_INTERVAL : 0)} style={{ flex: 1, minHeight: 0 }}>
-        <div className={css.imageArea}>
+        <div className={fx.imageAreaMask}>
           {/* Spinner — matches production .spinnerWrap + fade */}
           {spinnerMounted && (
-            <div className={pathCss.spinnerWrap} style={s.spinnerFade}>
+            <div className={anim.spinnerWrap} style={s.spinnerFade}>
               <ArcSpinner size={SpinnerSize.MD} />
             </div>
           )}
           {/* Error — matches production */}
           {error && phase === ImagePhase.Idle && (
-            <div className={pathCss.spinnerWrap}>
+            <div className={anim.spinnerWrap}>
               <p style={s.errorText}>{t('paths.notAvailable')}</p>
             </div>
           )}

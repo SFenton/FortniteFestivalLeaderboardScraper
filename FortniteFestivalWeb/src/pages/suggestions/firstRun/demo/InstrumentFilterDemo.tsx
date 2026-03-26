@@ -12,7 +12,7 @@ import { SUGGESTION_TYPES } from '@festival/core/suggestions/suggestionFilterCon
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { Gap, Layout, TRANSITION_MS } from '@festival/theme';
 import { useDemoStyles } from '../../../songs/firstRun/demo/FilterDemo';
-import css from '../../../songs/firstRun/demo/FilterDemo.module.css';
+import css from '../../../../styles/instrumentSelector.module.css';
 
 type ToggleState = { label: string; desc: string; on: boolean };
 

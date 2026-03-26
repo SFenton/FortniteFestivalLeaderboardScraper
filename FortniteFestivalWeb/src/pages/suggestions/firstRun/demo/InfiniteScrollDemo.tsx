@@ -11,7 +11,7 @@ import FadeIn from '../../../../components/page/FadeIn';
 import { useFestival } from '../../../../contexts/FestivalContext';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { STAGGER_INTERVAL } from '@festival/theme';
-import css from './InfiniteScrollDemo.module.css';
+import fx from '../../../../styles/effects.module.css';
 
 type CategoryTemplate = {
   key: string;
@@ -120,8 +120,8 @@ export default function InfiniteScrollDemo() {
         // Update fade mask class
         const atTop = offsetRef.current <= 0;
         const atBottom = offsetRef.current >= maxOffset - 1;
-        viewport.className = `${css.viewport} ${
-          atTop && atBottom ? '' : atTop ? css.fadeBottom : atBottom ? css.fadeTop : css.fadeBoth
+        viewport.className = `${fx.infiniteViewport} ${
+          atTop && atBottom ? '' : atTop ? fx.fadeBottom : atBottom ? fx.fadeTop : fx.fadeBoth
         }`;
       }
       lastTime = time;
@@ -144,12 +144,12 @@ export default function InfiniteScrollDemo() {
   const contentHeight = innerRef.current?.scrollHeight ?? 0;
   const maxOffset = h ? contentHeight - h : 0;
   const atBottom = maxOffset <= 0 || offsetRef.current >= maxOffset - 1;
-  const initialMask = atTop && atBottom ? '' : atTop ? css.fadeBottom : atBottom ? css.fadeTop : css.fadeBoth;
+  const initialMask = atTop && atBottom ? '' : atTop ? fx.fadeBottom : atBottom ? fx.fadeTop : fx.fadeBoth;
   /* v8 ignore stop */
 
   return (
-    <div ref={viewportRef} className={`${css.viewport} ${initialMask}`}>
-      <div ref={innerRef} className={css.innerTrack}>
+    <div ref={viewportRef} className={`${fx.infiniteViewport} ${initialMask}`}>
+      <div ref={innerRef} className={fx.innerTrack}>
         {categories.map((cat, i) => (
           <FadeIn key={i} delay={i * STAGGER_INTERVAL}>
             <CategoryCard category={cat} albumArtMap={albumArtMap} scoresIndex={emptyScores} />

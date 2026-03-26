@@ -18,7 +18,7 @@ import { CardPhase, ACCURACY_SCALE } from '@festival/core';
 import { InstrumentSelector } from '../../../../components/common/InstrumentSelector';
 import { LeaderboardEntry } from '../../../leaderboard/global/components/LeaderboardEntry';
 import { Colors, Font, Gap, Size, Layout, Radius, Weight, CHART_ANIM_DURATION, CHART_ANIM_SETTLE, frostedCard, padding, border, transition } from '@festival/theme';
-import s from './ScoreHistoryChart.module.css';
+import s from '../../../../styles/instrumentSelector.module.css';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { useChartData, type ChartPoint } from '../../../../hooks/chart/useChartData';
 import { useChartDimensions } from '../../../../hooks/chart/useChartDimensions';

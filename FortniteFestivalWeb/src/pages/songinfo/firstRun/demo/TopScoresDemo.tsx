@@ -7,7 +7,7 @@ import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import InstrumentHeader from '../../../../components/display/InstrumentHeader';
 import { LeaderboardEntry } from '../../../leaderboard/global/components/LeaderboardEntry';
 import FadeIn from '../../../../components/page/FadeIn';
-import css from './TopScoresDemo.module.css';
+import anim from '../../../../styles/animations.module.css';
 
 const ENTRY_HEIGHT = 44;
 const LABEL_HEIGHT = 32;
@@ -61,7 +61,7 @@ export default function TopScoresDemo() {
           </FadeIn>
         ))}
         <FadeIn delay={(maxEntries + 1) * STAGGER_INTERVAL}>
-          <div className={css.pulseWrap} style={s.pulseWrap}>
+          <div className={anim.pulseWrap} style={s.pulseWrap}>
             <div style={s.viewAllRow}>
               {t('songDetail.viewFullLeaderboard', 'View full leaderboard')}
             </div>

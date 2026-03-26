@@ -17,7 +17,7 @@ import MiniStars from '../../../components/songs/metadata/MiniStars';
 import DifficultyBars from '../../../components/songs/metadata/DifficultyBars';
 import ScorePill from '../../../components/songs/metadata/ScorePill';
 import type { SongSortMode } from '../../../utils/songSettings';
-import css from './SongRow.module.css';
+import anim from '../../../styles/animations.module.css';
 
 const INSTRUMENT_DIFFICULTY_KEY: Record<string, keyof SongDifficulty> = {
   Solo_Guitar: 'guitar',
@@ -201,7 +201,7 @@ export const SongRow = memo(function SongRow({ song,
 
   /* v8 ignore start -- computed rendering variables with ternaries */
   const rowStyle = isMobile ? s.rowMobile : s.row;
-  const rowClassName = shopHighlight ? css.shopHighlight : undefined;
+  const rowClassName = shopHighlight ? anim.shopHighlight : undefined;
 
   const songInfo = <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} />;
 

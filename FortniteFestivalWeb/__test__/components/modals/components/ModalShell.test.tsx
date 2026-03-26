@@ -96,8 +96,9 @@ describe('ModalShell', () => {
         <div>Content</div>
       </ModalShell>,
     );
-    // Overlay is the first child div with the overlay class
-    const overlay = container.querySelector('[class*="overlay"]');
+    // Overlay is the first sibling of the dialog (positioned fixed, inset 0)
+    const dialog = screen.getByRole('dialog');
+    const overlay = dialog.previousElementSibling;
     expect(overlay).toBeTruthy();
     fireEvent.click(overlay!);
     expect(onClose).toHaveBeenCalledTimes(1);
@@ -160,7 +161,9 @@ describe('ModalShell', () => {
       </ModalShell>,
     );
     const dialog = screen.getByRole('dialog');
-    expect(dialog.className).toContain('Mobile');
+    // Mobile panel has left/right set to 0
+    expect(dialog.style.left).toBe('0px');
+    expect(dialog.style.right).toBe('0px');
   });
 
   it('renders desktop panel class when isMobile is false', () => {
@@ -171,7 +174,8 @@ describe('ModalShell', () => {
       </ModalShell>,
     );
     const dialog = screen.getByRole('dialog');
-    expect(dialog.className).toContain('Desktop');
+    // Desktop panel has width 80vw
+    expect(dialog.style.width).toBe('80vw');
   });
 
   /* ── Custom desktop class ── */
@@ -193,8 +197,8 @@ describe('ModalShell', () => {
         <div>Content</div>
       </ModalShell>,
     );
-    const overlay = document.querySelector('[class*="overlay"]');
-    const style = overlay?.getAttribute('style') ?? '';
+    const dialog = screen.getByRole('dialog');
+    const style = dialog.getAttribute('style') ?? '';
     expect(style).toContain('500ms');
   });
 

@@ -1,7 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useState, useCallback, memo, useMemo, type CSSProperties } from 'react';
 import { Colors, Radius, Position, Overflow, Display, Align, Justify, PointerEvents, ObjectFit, transition, TRANSITION_MS, IconSize } from '@festival/theme';
-import css from './AlbumArt.module.css';
+import anim from '../../../styles/animations.module.css';
 
 const spinnerSize = IconSize.sm;
 
@@ -36,7 +36,7 @@ export default memo(function AlbumArt({ src, size, style, priority, pulse }: { s
   const sizeVars = { ...styles.root, width: size, height: size, ...style } as CSSProperties;
 
   /* v8 ignore start -- pulse and failed branches */
-  const rootClass = pulse ? css.pulse : undefined;
+  const rootClass = pulse ? anim.albumPulse : undefined;
 
   if (!src || failed) {
     return <div className={rootClass} style={sizeVars} />;
@@ -47,7 +47,7 @@ export default memo(function AlbumArt({ src, size, style, priority, pulse }: { s
     <div className={rootClass} style={sizeVars}>
       {!loaded && (
         <div style={styles.spinnerWrap}>
-          <div className={css.spinnerCircle} style={{ width: spinnerSize, height: spinnerSize }} />
+          <div className={anim.spinnerCircle} style={{ width: spinnerSize, height: spinnerSize }} />
         </div>
       )}
       <img

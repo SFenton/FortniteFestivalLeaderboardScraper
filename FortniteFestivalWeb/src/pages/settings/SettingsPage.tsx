@@ -9,7 +9,7 @@ import SectionHeader from '../../components/common/SectionHeader';
 import { ReorderList } from '../../components/sort/ReorderList';
 import { METADATA_SORT_DISPLAY } from '../../utils/songSettings';
 import ConfirmAlert from '../../components/modals/ConfirmAlert';
-import modalCss from '../../components/modals/Modal.module.css';
+import { modalStyles as modalCss } from '../../components/modals/modalStyles';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { Colors, Font, Gap, Weight, Radius, Layout, Display, Align, Justify, Overflow, CssValue, LineHeight, TextAlign, frostedCard, btnDanger, btnPrimary, flexColumn, flexRow, flexBetween, padding, transition, CssProp, FAST_FADE_MS } from '@festival/theme';
@@ -403,33 +403,33 @@ export default function SettingsPage() {
           <FadeInDiv delay={stagger(staggerIndex++)}>
           <SectionHeader title={t('firstRun.settings.showFirstRunTitle')} description={t('firstRun.settings.showFirstRunHint')} />
           <Card>
-            <button className={modalCss.toggleRow} onClick={songsReplay.open}>
-              <div className={modalCss.toggleContent}>
-                <div className={modalCss.toggleLabel}>{t('nav.songs')}</div>
+            <button style={modalCss.toggleRow} onClick={songsReplay.open}>
+              <div style={modalCss.toggleContent}>
+                <div style={modalCss.toggleLabel}>{t('nav.songs')}</div>
               </div>
               <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
-            <button className={modalCss.toggleRow} onClick={songInfoReplay.open}>
-              <div className={modalCss.toggleContent}>
-                <div className={modalCss.toggleLabel}>{t('nav.songInfo', 'Song Info')}</div>
+            <button style={modalCss.toggleRow} onClick={songInfoReplay.open}>
+              <div style={modalCss.toggleContent}>
+                <div style={modalCss.toggleLabel}>{t('nav.songInfo', 'Song Info')}</div>
               </div>
               <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
-            <button className={modalCss.toggleRow} onClick={statsReplay.open}>
-              <div className={modalCss.toggleContent}>
-                <div className={modalCss.toggleLabel}>{t('nav.statistics')}</div>
+            <button style={modalCss.toggleRow} onClick={statsReplay.open}>
+              <div style={modalCss.toggleContent}>
+                <div style={modalCss.toggleLabel}>{t('nav.statistics')}</div>
               </div>
               <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
-            <button className={modalCss.toggleRow} onClick={suggestionsReplay.open}>
-              <div className={modalCss.toggleContent}>
-                <div className={modalCss.toggleLabel}>{t('nav.suggestions')}</div>
+            <button style={modalCss.toggleRow} onClick={suggestionsReplay.open}>
+              <div style={modalCss.toggleContent}>
+                <div style={modalCss.toggleLabel}>{t('nav.suggestions')}</div>
               </div>
               <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
-            <button className={modalCss.toggleRow} onClick={playerHistoryReplay.open}>
-              <div className={modalCss.toggleContent}>
-                <div className={modalCss.toggleLabel}>{t('history.title')}</div>
+            <button style={modalCss.toggleRow} onClick={playerHistoryReplay.open}>
+              <div style={modalCss.toggleContent}>
+                <div style={modalCss.toggleLabel}>{t('history.title')}</div>
               </div>
               <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>

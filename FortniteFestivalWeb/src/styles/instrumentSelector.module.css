@@ -1,4 +1,8 @@
-/* Minimal: InstrumentSelector classNames only. Other styles migrated to useDemoStyles(). */
+/*
+ * InstrumentSelector className classes — shared across ScoreHistoryChart,
+ * FilterDemo, PathPreviewDemo, InstrumentFilterDemo.
+ * InstrumentSelector requires CSS class strings for its classNames prop.
+ */
 
 .iconRow {
   display: flex;
@@ -6,7 +10,6 @@
   align-items: center;
   gap: var(--gap-lg);
   width: 100%;
-  overflow: hidden;
 }
 
 .iconButton {
@@ -17,7 +20,7 @@
   height: var(--size-3xl);
   padding: 0;
   cursor: pointer;
-  transition: all var(--duration-quick) ease;
+  transition: all 0.15s ease;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -44,6 +47,13 @@
   align-items: center;
   justify-content: center;
   color: var(--color-text-secondary);
-  line-height: 0;
-  transition: all var(--duration-quick) ease;
+  font-size: var(--font-display);
+  font-weight: var(--weight-bold);
+  line-height: var(--line-height-tight);
+  transition: all 0.15s ease;
+}
+
+/* SVG stroke transition for ScoreHistoryChart bars */
+.chartBar {
+  transition: stroke var(--duration-fast) ease;
 }

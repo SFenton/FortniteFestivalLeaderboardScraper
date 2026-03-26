@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import css from '../Modal.module.css';
+import { modalStyles } from '../modalStyles';
 
 export interface BulkActionsProps {
   onSelectAll: () => void;
@@ -9,9 +9,9 @@ export interface BulkActionsProps {
 export function BulkActions({ onSelectAll, onClearAll }: BulkActionsProps) {
   const { t } = useTranslation();
   return (
-    <div className={css.bulkWrap}>
-      <button className={css.bulkSelectBtn} onClick={onSelectAll}>{t('common.selectAll')}</button>
-      <button className={css.bulkClearBtn} onClick={onClearAll}>{t('common.clearAll')}</button>
+    <div style={modalStyles.bulkWrap}>
+      <button style={modalStyles.bulkSelectBtn} onClick={onSelectAll}>{t('common.selectAll')}</button>
+      <button style={modalStyles.bulkClearBtn} onClick={onClearAll}>{t('common.clearAll')}</button>
     </div>
   );
 }

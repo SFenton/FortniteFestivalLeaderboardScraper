@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import css from '../Modal.module.css';
+import { modalStyles } from '../modalStyles';
 
 export interface ModalSectionProps {
   title?: string;
@@ -9,9 +9,9 @@ export interface ModalSectionProps {
 
 export const ModalSection = memo(function ModalSection({ title, hint, children }: ModalSectionProps) {
   return (
-    <div className={css.sectionWrap}>
-      {title && <div className={css.sectionTitle}>{title}</div>}
-      {hint && <div className={css.sectionHint}>{hint}</div>}
+    <div style={modalStyles.sectionWrap}>
+      {title && <div style={modalStyles.sectionTitle}>{title}</div>}
+      {hint && <div style={modalStyles.sectionHint}>{hint}</div>}
       {children}
     </div>
   );

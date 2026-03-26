@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
 import { ModalSection } from './components/ModalSection';
 import ModalShell from './components/ModalShell';
-import css from './Modal.module.css';
+import { modalStyles } from './modalStyles';
 
 type ModalProps = {
   visible: boolean;
@@ -31,19 +31,19 @@ export default function Modal({ visible, title, onClose, onApply, onReset, reset
   return (
     <ModalShell visible={visible} title={title} onClose={onClose}>
       {/* Content */}
-      <div ref={scrollRef} onScroll={handleContentScroll} className={css.contentScroll}>
+      <div ref={scrollRef} onScroll={handleContentScroll} style={modalStyles.contentScroll}>
         {children}
         {onReset && (
           <ModalSection title={resetLabel ?? 'Reset'} hint={resetHint}>
-            <button className={css.resetBtn} onClick={onReset}>{resetLabel ?? t('common.reset')}</button>
+            <button style={modalStyles.resetBtn} onClick={onReset}>{resetLabel ?? t('common.reset')}</button>
           </ModalSection>
         )}
       </div>
 
       {/* Footer */}
-      <div className={css.footerWrap}>
+      <div style={modalStyles.footerWrap}>
         <button
-          className={`${css.applyBtn} ${applyDisabled ? css.applyBtnDisabled : ''}`}
+          style={applyDisabled ? { ...modalStyles.applyBtn, ...modalStyles.applyBtnDisabled } : modalStyles.applyBtn}
           onClick={onApply}
           disabled={applyDisabled}
         >

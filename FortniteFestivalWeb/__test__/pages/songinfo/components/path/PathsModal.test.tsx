@@ -5,9 +5,8 @@ import PathsModal from '../../../../../src/pages/songinfo/components/path/PathsM
 /* ── Mocks ── */
 
 // Mock CSS modules
-vi.mock('../../../../../src/pages/songinfo/components/path/PathsModal.module.css', () => ({
+vi.mock('../../../../../src/styles/animations.module.css', () => ({
   default: {
-    header: 'header', title: 'title', closeBtn: 'closeBtn',
     spinnerWrap: 'spinnerWrap',
   },
 }));

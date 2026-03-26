@@ -5,8 +5,8 @@ import StatBox from '../../../../components/player/StatBox';
 import FadeIn from '../../../../components/page/FadeIn';
 import { useIsMobileChrome } from '../../../../hooks/ui/useIsMobile';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
-import s from '../../../../components/player/PlayerPage.module.css';
-import css from './DrillDownDemo.module.css'; // minimal: ::after + @keyframes only
+import { playerPageStyles as pps } from '../../../../components/player/playerPageStyles';
+import anim from '../../../../styles/animations.module.css';
 
 const cardStyle = { ...frostedCard, borderRadius: Radius.md };
 /* v8 ignore start -- NOOP is passed as prop but never invoked in test (pointerEvents: none) */
@@ -29,10 +29,10 @@ export default function DrillDownDemo() {
   const visible = DEMO_BOXES.slice(0, maxItems);
 
   return (
-    <div className={s.gridList} style={st.grid}>
+    <div style={{ ...pps.gridList, ...st.grid }}>
       {visible.map((box, i) => (
         <FadeIn key={box.label} delay={i * STAGGER_ENTRY_OFFSET} style={cardStyle}>
-          <div className={box.clickable ? css.pulseWrap : undefined} style={box.clickable ? st.pulseWrap : undefined}>
+          <div className={box.clickable ? anim.pulseWrap : undefined} style={box.clickable ? st.pulseWrap : undefined}>
             <StatBox label={box.label} value={box.value} color={box.color} onClick={box.clickable ? NOOP : undefined} />
           </div>
         </FadeIn>

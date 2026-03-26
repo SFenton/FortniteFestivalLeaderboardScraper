@@ -2,7 +2,7 @@
 import { Size } from '@festival/theme';
 import { useState } from 'react';
 import { IoChevronDown } from 'react-icons/io5';
-import css from '../modals/Modal.module.css';
+import { modalStyles as ms } from '../modals/modalStyles';
 
 export interface AccordionProps {
   title: string;
@@ -16,16 +16,16 @@ export function Accordion({ title, hint, icon, defaultOpen = false, children }: 
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div>
-      <button className={css.accordionHeader} onClick={() => setOpen(o => !o)}>
-        {icon && <span className={css.accordionIcon}>{icon}</span>}
-        <div className={css.accordionTitleGroup}>
-          <span className={css.accordionTitle}>{title}</span>
-          {hint && <span className={css.accordionHint}>{hint}</span>}
+      <button style={ms.accordionHeader} onClick={() => setOpen(o => !o)}>
+        {icon && <span style={ms.accordionIcon}>{icon}</span>}
+        <div style={ms.accordionTitleGroup}>
+          <span style={ms.accordionTitle}>{title}</span>
+          {hint && <span style={ms.accordionHint}>{hint}</span>}
         </div>
-        <IoChevronDown className={css.accordionChevron} style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }} size={Size.iconChevron} />
+        <IoChevronDown style={{ ...ms.accordionChevron, transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }} size={Size.iconChevron} />
       </button>
-      <div className={css.accordionBodyWrap} style={{ gridTemplateRows: open ? '1fr' : '0fr' }}>
-        <div className={css.accordionBodyInner}>{children}</div>
+      <div style={{ ...ms.accordionBodyWrap, gridTemplateRows: open ? '1fr' : '0fr' }}>
+        <div style={ms.accordionBodyInner}>{children}</div>
       </div>
     </div>
   );

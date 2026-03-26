@@ -25,7 +25,7 @@ const RivalCategoryPage = lazy(() => import('./pages/rivals/RivalryPage'));
 const AllRivalsPage = lazy(() => import('./pages/rivals/AllRivalsPage'));
 /* v8 ignore stop */
 import { Size, QUERY_NARROW_GRID } from '@festival/theme';
-import appCss from './App.module.css';
+import { appStyles } from './appStyles';
 import { resetSongSettingsForDeselect, loadSongSettings, SONG_SETTINGS_CHANGED_EVENT } from './utils/songSettings';
 import BackLink from './components/shell/mobile/BackLink';
 import MobileHeader from './components/shell/mobile/MobileHeader';
@@ -222,7 +222,7 @@ function AppShell() {
 
   return (
     <PlayerDataProvider accountId={player?.accountId}>
-    <div className={appCss.shell}>
+    <div style={appStyles.shell}>
       <ScrollToTop />
 
       {/* v8 ignore start — sidebar callbacks tested via Sidebar.test / PinnedSidebar.test */}
@@ -262,7 +262,7 @@ function AppShell() {
       {/* v8 ignore stop */}
 
       {/* v8 ignore start — wideDesktop layout tested via PinnedSidebar.test */}
-      <div className={wideDesktop ? appCss.contentRow : appCss.contentColumn}>
+      <div style={wideDesktop ? appStyles.contentRow : appStyles.contentColumn}>
       {wideDesktop && (
         <PinnedSidebar
           player={player}
@@ -270,7 +270,7 @@ function AppShell() {
           onSelectPlayer={() => setPlayerModalOpen(true)}
         />
       )}
-      <div id="main-content" className={`${appCss.content}${wideDesktop ? ` ${appCss.contentPinned}` : ''}`}>
+      <div id="main-content" style={wideDesktop ? { ...appStyles.content, ...appStyles.contentPinned } : appStyles.content}>
       {/* v8 ignore stop */}
         <Suspense fallback={<SuspenseFallback />}>
         <Routes>
@@ -316,7 +316,7 @@ function AppShell() {
         </Suspense>
       </div>
       {/* v8 ignore start — wideDesktop spacer */}
-      {wideDesktop && <div className={appCss.rightSpacer} />}
+      {wideDesktop && <div style={appStyles.rightSpacer} />}
       {/* v8 ignore stop */}
 
       {/* v8 ignore start — mobile FAB configuration tested via MobileFabController + FloatingActionButton tests */}

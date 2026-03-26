@@ -13,7 +13,8 @@ import {
   Display, Position, Overflow, TextAlign, Cursor, CssValue, CssProp,
   frostedCard, border, padding, transition, transitions,
 } from '@festival/theme';
-import css from './PathsModal.module.css';
+import { modalStyles } from '../../../../components/modals/modalStyles';
+import anim from '../../../../styles/animations.module.css';
 import { ZoomableImage } from './ZoomableImage';
 
 const TRANSITION_MS = 300;
@@ -226,9 +227,9 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
         style={isMobile ? mobilePanel : desktopPanel}
         onTransitionEnd={handleTransitionEnd}
       >
-        <div className={css.header}>
-          <h2 className={css.title}>Paths</h2>
-          <button className={css.closeBtn} onClick={onClose} aria-label="Close"><IoClose size={18} /></button>
+        <div style={modalStyles.headerWrap}>
+          <h2 style={modalStyles.headerTitle}>Paths</h2>
+          <button style={modalStyles.closeBtn} onClick={onClose} aria-label="Close"><IoClose size={18} /></button>
         </div>
         {isMobile ? (
           <div style={st.controls}>
@@ -416,7 +417,7 @@ function PathImage({ songId, instrument, difficulty }: { songId: string; instrum
   return (
     <div ref={scrollRef} onScroll={handleScroll} style={imageAreaStyle}>
       {spinnerMounted && (
-        <div className={css.spinnerWrap} style={{
+        <div className={anim.spinnerWrap} style={{
           opacity: spinnerVisible ? 1 : 0,
           transition: `opacity ${FADE_MS}ms ease`,
         }}>
@@ -424,7 +425,7 @@ function PathImage({ songId, instrument, difficulty }: { songId: string; instrum
         </div>
       )}
       {error && phase === 'idle' && (
-        <div className={css.spinnerWrap}>
+        <div className={anim.spinnerWrap}>
           <p style={{ color: Colors.textMuted, fontSize: Font.md }}>Path not available</p>
         </div>
       )}

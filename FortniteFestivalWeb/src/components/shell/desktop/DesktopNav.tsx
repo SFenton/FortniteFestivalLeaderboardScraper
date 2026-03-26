@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import HamburgerButton from './HamburgerButton';
 import PlayerSearchBar from '../../player/PlayerSearchBar';
 import HeaderProfileButton from './HeaderProfileButton';
-import appCss from '../../../App.module.css';
+import { appStyles } from '../../../appStyles';
 import { headerSearchStyles } from './HeaderSearch';
 
 export interface DesktopNavProps {
@@ -30,20 +30,20 @@ export default function DesktopNav({ hasPlayer, onOpenSidebar, onProfileClick, i
   );
 
   return (
-    <nav className={`sa-top ${appCss.nav}${isWideDesktop ? ` ${appCss.navWide}` : ''}`}>
+    <nav className="sa-top" style={isWideDesktop ? { ...appStyles.nav, ...appStyles.navWide } : appStyles.nav}>
       {isWideDesktop ? (
         <>
-          <div className={appCss.sidebarSpacer} />
-          <div className={appCss.navWideInner}>
-            <div className={appCss.spacer} />
+          <div style={appStyles.sidebarSpacer} />
+          <div style={appStyles.navWideInner}>
+            <div style={appStyles.spacer} />
             {searchBar}
           </div>
-          <div className={appCss.rightSpacer} />
+          <div style={appStyles.rightSpacer} />
         </>
       ) : (
         <>
           <HamburgerButton onClick={onOpenSidebar} />
-          <div className={appCss.spacer} />
+          <div style={appStyles.spacer} />
           {searchBar}
           <HeaderProfileButton hasPlayer={hasPlayer} onClick={onProfileClick} />
         </>

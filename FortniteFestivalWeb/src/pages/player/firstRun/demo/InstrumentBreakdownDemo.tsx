@@ -11,7 +11,7 @@ import type { PlayerScore } from '@festival/core/api/serverTypes';
 import FadeIn from '../../../../components/page/FadeIn';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { useIsMobileChrome } from '../../../../hooks/ui/useIsMobile';
-import s from '../../../../components/player/PlayerPage.module.css';
+import { playerPageStyles as pps } from '../../../../components/player/playerPageStyles';
 
 const TOTAL_SONGS = 206;
 const CARD_HEIGHT = 100;
@@ -60,9 +60,9 @@ export default function InstrumentBreakdownDemo() {
     : { width: '100%', overflow: 'visible' as const, pointerEvents: 'none' as const };
 
   return (
-    <div className={s.gridList} style={gridStyle}>
+    <div style={{ ...pps.gridList, ...gridStyle }}>
       {headerItem && (
-        <FadeIn key={headerItem.key} delay={0} className={s.gridFullWidth}>
+        <FadeIn key={headerItem.key} delay={0} style={pps.gridFullWidth}>
           {headerItem.node}
         </FadeIn>
       )}

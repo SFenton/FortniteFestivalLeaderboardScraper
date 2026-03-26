@@ -1,6 +1,0 @@
-/* Minimal CSS - hover states that cannot be expressed inline. */
-
-.sectionHeaderClickable:hover {
-  color: var(--color-text-secondary);
-}
-

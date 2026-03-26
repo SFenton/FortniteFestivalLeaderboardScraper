@@ -279,6 +279,8 @@ export const Layout = {
   chartXAxisAngle: -35,
   /** Width of the pinned sidebar on wide desktop. */
   sidebarWidth: 240,
+  /** Horizontal padding for pinned (wide desktop) mode. */
+  paddingHorizontalPinned: 10,
   /** Max-width for desktop header search input. */
   searchMaxWidth: 320,
   /** Max-height for search dropdown results. */

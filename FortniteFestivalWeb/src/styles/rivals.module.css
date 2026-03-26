@@ -1,0 +1,116 @@
+/*
+ * Rival component CSS — pseudo-elements + container queries.
+ * Classes are prefixed (rivalRow / rivalSong) to avoid collisions in the shared file.
+ */
+
+/* ═══ RivalRow ═══ */
+
+.rivalRow::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  z-index: 0;
+}
+
+.rivalRowWinning::after {
+  background: linear-gradient(to right, rgba(76, 175, 80, 0.30) 0%, transparent 50%);
+}
+
+.rivalRowLosing::after {
+  background: linear-gradient(to left, rgba(244, 67, 54, 0.30) 0%, transparent 50%);
+}
+
+@container (min-width: 620px) {
+  .rivalRowContent {
+    grid-template-columns: 1fr auto auto;
+    grid-template-rows: auto;
+    align-items: center;
+  }
+
+  .rivalRowShared {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: center;
+  }
+
+  .rivalRowPillRow {
+    grid-column: 3;
+    grid-row: 1;
+    justify-content: flex-end;
+  }
+}
+
+@container (max-width: 380px) {
+  .rivalRowContent {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+  }
+
+  .rivalRowShared {
+    grid-column: 1;
+    grid-row: 2;
+    justify-self: start;
+  }
+
+  .rivalRowPillRow {
+    flex-direction: column;
+    align-items: flex-start;
+    grid-column: 1;
+    grid-row: 3;
+  }
+}
+
+/* ═══ RivalSongRow ═══ */
+
+.rivalSongRow {
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.rivalSongRow:hover {
+  background-color: var(--color-surface-hover);
+}
+
+.rivalSongRow:last-child {
+  border-bottom: none;
+}
+
+.rivalSongStandalone::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  z-index: 0;
+}
+
+.rivalSongWinning::after {
+  background: linear-gradient(to right, rgba(76, 175, 80, 0.30) 0%, transparent 50%);
+}
+
+.rivalSongLosing::after {
+  background: linear-gradient(to left, rgba(244, 67, 54, 0.30) 0%, transparent 50%);
+}
+
+@container (max-width: 360px) {
+  .rivalSongCompareRow {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .rivalSongDeltaCenter {
+    grid-column: 1 / -1;
+    order: -1;
+    padding-bottom: var(--gap-sm);
+  }
+
+  .rivalSongDeltaPillGroup {
+    flex-direction: row;
+    gap: var(--gap-sm);
+  }
+
+  .rivalSongDeltaPillGroupRank {
+    flex-direction: row-reverse;
+    gap: var(--gap-sm);
+  }
+}

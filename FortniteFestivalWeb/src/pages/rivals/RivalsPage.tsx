@@ -22,7 +22,7 @@ import type { RivalSummary } from '@festival/core/api/serverTypes';
 import { deriveComboFromSettings } from './helpers/comboUtils';
 import RivalRow from './components/RivalRow';
 import { Routes } from '../../routes';
-import s from './RivalsPage.module.css';
+import fx from '../../styles/effects.module.css';
 import { useRivalsSharedStyles } from './useRivalsSharedStyles';
 import Page, { usePageScrollRef } from '../Page';
 
@@ -271,7 +271,7 @@ export default function RivalsPage() {
               {(commonRivals.above.length > 0 || commonRivals.below.length > 0) && (
                 <div style={styles.section}>
                   <div
-                    className={s.sectionHeaderClickable}
+                    className={fx.sectionHeaderClickable}
                     style={{ ...styles.sectionHeaderClickable, ...nextStagger() }}
                     onAnimationEnd={clearAnim}
                     onClick={() => navigate(Routes.allRivals('common'), { state: { from: 'rivals' } })}
@@ -333,7 +333,7 @@ export default function RivalsPage() {
                 return (
                   <div key={entry.instrument} style={styles.section}>
                     <div
-                      className={s.sectionHeaderClickable}
+                      className={fx.sectionHeaderClickable}
                       style={{ ...styles.sectionHeaderClickable, ...nextStagger() }}
                       onAnimationEnd={clearAnim}
                       onClick={navigateToInstrument}

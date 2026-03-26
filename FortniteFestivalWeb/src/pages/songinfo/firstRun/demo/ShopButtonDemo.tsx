@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { IoBagHandle } from 'react-icons/io5';
 import { Gap, Colors, Font, Weight, Radius, Display, Align, Justify, Layout, IconSize, CssValue, padding } from '@festival/theme';
 import { useSettings } from '../../../../contexts/SettingsContext';
-import css from './ShopButtonDemo.module.css';
+import anim from '../../../../styles/animations.module.css';
 
 /**
  * Demo component for the SongInfo FRE slide showing the Item Shop button.
@@ -21,7 +21,7 @@ export default function ShopButtonDemo({ mobile }: { mobile?: boolean }) {
   if (mobile) {
     return (
       <div style={s.wrap}>
-        <div className={pulse ? `${css.shopCircle} ${css.pulse}` : css.shopCircle} style={s.shopCircle}>
+        <div className={pulse ? anim.shopCircleBreathe : undefined} style={s.shopCircle}>
           <IoBagHandle size={72} />
         </div>
       </div>
@@ -30,7 +30,7 @@ export default function ShopButtonDemo({ mobile }: { mobile?: boolean }) {
 
   return (
     <div style={s.wrap}>
-      <div className={pulse ? `${css.shopButton} ${css.shopPulse}` : css.shopButton} style={s.shopButton}>
+      <div className={pulse ? anim.shopBreathe : undefined} style={s.shopButton}>
         <IoBagHandle size={IconSize.md} style={s.iconMargin} />
         {t('shop.itemShop')}
       </div>

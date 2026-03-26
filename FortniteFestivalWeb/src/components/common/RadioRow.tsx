@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import css from '../modals/Modal.module.css';
+import { modalStyles } from '../modals/modalStyles';
 
 export interface RadioRowProps {
   label: string;
@@ -10,10 +10,10 @@ export interface RadioRowProps {
 export const RadioRow = memo(function RadioRow({ label, selected, onSelect }: RadioRowProps) {
   return (
     <button
-      className={selected ? css.radioRowSelected : css.radioRow}
+      style={selected ? modalStyles.radioRowSelected : modalStyles.radioRow}
       onClick={onSelect}
     >
-      <span className={selected ? css.radioDotSelected : css.radioDot} />
+      <span style={selected ? modalStyles.radioDotSelected : modalStyles.radioDot} />
       <span>{label}</span>
     </button>
   );

@@ -2,7 +2,7 @@
 import { forwardRef, useRef, useImperativeHandle, useMemo, type KeyboardEventHandler } from 'react';
 import { IoSearch } from 'react-icons/io5';
 import { IconSize, Colors, Font, Gap, Display, Align, Cursor, CssValue } from '@festival/theme';
-import css from './SearchBar.module.css'; // minimal: ::placeholder only
+import fx from '../../styles/effects.module.css';
 
 export interface SearchBarProps {
   value: string;
@@ -64,7 +64,7 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
       {!hideIcon && <IoSearch size={IconSize.xs} style={s.searchIcon} />}
       <input
         ref={inputRef}
-        className={`${css.searchInput}${inputClassName ? ` ${inputClassName}` : ''}`}
+        className={`${fx.searchPlaceholder}${inputClassName ? ` ${inputClassName}` : ''}`}
         style={s.searchInput}
         placeholder={placeholder}
         value={value}

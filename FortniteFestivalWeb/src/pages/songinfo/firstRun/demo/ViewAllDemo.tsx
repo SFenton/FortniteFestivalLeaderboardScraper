@@ -6,7 +6,7 @@ import { useFestival } from '../../../../contexts/FestivalContext';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { LeaderboardEntry } from '../../../leaderboard/global/components/LeaderboardEntry';
 import FadeIn from '../../../../components/page/FadeIn';
-import css from './ViewAllDemo.module.css';
+import anim from '../../../../styles/animations.module.css';
 
 const ROW_HEIGHT = 44;
 const BTN_HEIGHT = 44;
@@ -66,7 +66,7 @@ export default function ViewAllDemo() {
           </FadeIn>
         ))}
         <FadeIn delay={maxCards * STAGGER_INTERVAL}>
-          <div className={css.pulseWrap} style={s.pulseWrap}>
+          <div className={anim.pulseWrap} style={s.pulseWrap}>
             <div style={s.viewAllBtn}>
               {t('chart.viewAllScores')}
             </div>

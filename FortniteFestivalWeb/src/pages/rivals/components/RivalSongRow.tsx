@@ -4,7 +4,7 @@ import type { RivalSongComparison, ServerInstrumentKey } from '@festival/core/ap
 import { Colors, Font, Weight, Gap, Radius, Layout, Border, Display, Align, Justify, Position, Cursor, Overflow, WhiteSpace, TextAlign, TextTransform, FontVariant, ObjectFit, frostedCard, flexColumn, flexRow, flexCenter, truncate, padding, border, transition, FAST_FADE_MS } from '@festival/theme';
 import { CssProp } from '@festival/theme';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
-import s from './RivalSongRow.module.css';
+import s from '../../../styles/rivals.module.css';
 
 interface RivalSongRowProps {
   song: RivalSongComparison;
@@ -37,10 +37,10 @@ const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, playerNa
 
   /* v8 ignore start -- JSX render trees */
   if (standalone) {
-    const tintClass = userWins ? s.rowWinning : rivalWins ? s.rowLosing : '';
+    const tintClass = userWins ? s.rivalSongWinning : rivalWins ? s.rivalSongLosing : '';
     return (
       <div
-        className={`${s.rowStandalone} ${tintClass}`}
+        className={`${s.rivalSongStandalone} ${tintClass}`}
         style={{ ...st.rowStandalone, ...style }}
         onClick={onClick}
         role="button"
@@ -93,7 +93,7 @@ const RivalSongRow = memo(function RivalSongRow({ song, albumArt, year, playerNa
   // Inline row inside a card (no second row)
   return (
     <div
-      className={s.row}
+      className={s.rivalSongRow}
       style={{ ...st.row, ...style }}
       onClick={onClick}
       role="button"

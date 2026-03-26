@@ -653,7 +653,7 @@ describe('SongsPage — extra coverage', () => {
     renderSongsPage('/songs', 'test-player-1');
     await act(async () => { vi.advanceTimersByTime(1000); });
     await waitFor(() => {
-      const input = document.querySelector('input[class*="searchInput"]') as HTMLInputElement;
+      const input = document.querySelector('input[class*="searchPlaceholder"]') as HTMLInputElement;
       expect(input).toBeTruthy();
     });
   });
@@ -661,7 +661,7 @@ describe('SongsPage — extra coverage', () => {
   it('filters songs when search input changes', async () => {
     renderSongsPage('/songs', 'test-player-1');
     await act(async () => { vi.advanceTimersByTime(1000); });
-    const input = document.querySelector('input[class*="searchInput"]') as HTMLInputElement;
+    const input = document.querySelector('input[class*="searchPlaceholder"]') as HTMLInputElement;
     if (input) {
       fireEvent.change(input, { target: { value: 'Alpha' } });
       await act(async () => { vi.advanceTimersByTime(500); });

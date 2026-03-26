@@ -1,6 +1,0 @@
-/* Minimal CSS — only pseudo-element classes that cannot be inline. */
-
-.shopHighlight {
-  composes: shopPulse from '../../../styles/shared.module.css';
-}
-

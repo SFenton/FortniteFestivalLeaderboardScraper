@@ -9,7 +9,7 @@ import { useTranslation } from 'react-i18next';
 import { IoClose } from 'react-icons/io5';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../../../hooks/ui/useVisualViewport';
-import css from '../Modal.module.css';
+import { modalStyles as css } from '../modalStyles';
 
 const DEFAULT_TRANSITION_MS = 300;
 
@@ -20,6 +20,8 @@ export interface ModalShellProps {
   children: ReactNode;
   /** Override desktop panel width (default: uses panelDesktop CSS class). */
   desktopClassName?: string;
+  /** Extra inline styles merged onto the desktop panel (applied after desktopClassName). */
+  desktopStyle?: React.CSSProperties;
   /** Transition duration in ms. Default: 300. */
   transitionMs?: number;
   /** Called when the open animation completes. */
@@ -34,6 +36,7 @@ export default function ModalShell({
   onClose,
   children,
   desktopClassName,
+  desktopStyle,
   transitionMs = DEFAULT_TRANSITION_MS,
   onOpenComplete,
   onCloseComplete,
@@ -77,19 +80,19 @@ export default function ModalShell({
 
   if (!mounted) return null;
 
-  const transVar = { '--modal-transition-ms': `${transitionMs}ms` } as React.CSSProperties;
+  const transMs = `${transitionMs}ms`;
+  const overlayTransition = `opacity ${transMs} ease`;
+  const mobileTransition = `transform ${transMs} ease`;
+  const desktopTransition = `opacity ${transMs} ease, transform ${transMs} ease`;
 
   const panelStyle: React.CSSProperties = isMobile
-    ? { top: vvOffsetTop + vvHeight * 0.2, height: vvHeight * 0.8, transform: animIn ? 'translateY(0)' : 'translateY(100%)' }
-    : { transform: animIn ? 'translate(-50%, -50%)' : 'translate(-50%, -40%)', opacity: animIn ? 1 : 0 };
-
-  const panelClass = isMobile ? css.panelMobile : (desktopClassName ?? css.panelDesktop);
+    ? { ...css.panelMobile, transition: mobileTransition, top: vvOffsetTop + vvHeight * 0.2, height: vvHeight * 0.8, transform: animIn ? 'translateY(0)' : 'translateY(100%)' }
+    : { ...css.panelDesktop, transition: desktopTransition, transform: animIn ? 'translate(-50%, -50%)' : 'translate(-50%, -40%)', opacity: animIn ? 1 : 0, ...desktopStyle };
 
   return (
     <>
       <div
-        className={css.overlay}
-        style={{ ...transVar, opacity: animIn ? 1 : 0 }}
+        style={{ ...css.overlay, transition: overlayTransition, opacity: animIn ? 1 : 0 }}
         onClick={onClose}
       />
       <div
@@ -97,13 +100,13 @@ export default function ModalShell({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={panelClass}
-        style={{ ...transVar, ...panelStyle }}
+        className={!isMobile ? desktopClassName : undefined}
+        style={panelStyle}
         onTransitionEnd={handleTransitionEnd}
       >
-        <div className={css.headerWrap}>
-          <h2 className={css.headerTitle}>{title}</h2>
-          <button className={css.closeBtn} onClick={onClose} aria-label={t('common.close')}><IoClose size={18} /></button>
+        <div style={css.headerWrap}>
+          <h2 style={css.headerTitle}>{title}</h2>
+          <button style={css.closeBtn} onClick={onClose} aria-label={t('common.close')}><IoClose size={18} /></button>
         </div>
         {children}
       </div>

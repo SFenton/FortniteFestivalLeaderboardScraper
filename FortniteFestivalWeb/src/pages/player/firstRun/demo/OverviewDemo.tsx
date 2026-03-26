@@ -11,7 +11,7 @@ import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS } from '@festival/core/api/se
 import FadeIn from '../../../../components/page/FadeIn';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { useIsMobileChrome } from '../../../../hooks/ui/useIsMobile';
-import s from '../../../../components/player/PlayerPage.module.css';
+import { playerPageStyles as pps } from '../../../../components/player/playerPageStyles';
 
 const DEMO_STATS: OverallStats = {
   songsPlayed: 142,
@@ -51,13 +51,12 @@ export default function OverviewDemo() {
     : { width: CssValue.full, overflow: Overflow.visible, pointerEvents: PointerEvents.none };
 
   return (
-    <div className={s.gridList} style={gridStyle}>
+    <div style={{ ...pps.gridList, ...gridStyle }}>
       {visible.map((item, i) => (
         <FadeIn key={item.key} delay={i * 80}
           /* v8 ignore start -- item.span depends on buildOverallSummaryItems output; not all branches reachable with static data */
-          className={item.span ? s.gridFullWidth : undefined}
+          style={item.span ? { ...pps.gridFullWidth, ...item.style } : item.style}
           /* v8 ignore stop */
-          style={item.style}
         >
           {item.node}
         </FadeIn>

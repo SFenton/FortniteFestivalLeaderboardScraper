@@ -17,7 +17,6 @@ import { serverInstrumentLabel, type RivalsListResponse, type RivalSummary, type
 import RivalRow from './components/RivalRow';
 import { Routes } from '../../routes';
 import { deriveComboFromSettings } from './helpers/comboUtils';
-import s from './RivalsPage.module.css';
 import { SPINNER_FADE_MS, Layout } from '@festival/theme';
 import Page, { usePageScrollRef } from '../Page';
 import EmptyState from '../../components/common/EmptyState';
@@ -192,7 +191,7 @@ export default function AllRivalsPage() {
   const { forDelay: stagger, next: nextStagger, clearAnim } = useStagger(shouldStagger);
 
   if (!accountId) {
-    return <div className={s.center}>{t('rivals.noPlayer')}</div>;
+    return <div>{t('rivals.noPlayer')}</div>;
   }
 
   /** Compute CSS variable for min name width based on longest name in a rival list. */
@@ -220,11 +219,11 @@ export default function AllRivalsPage() {
     <Page
       scrollRef={scrollRef}
       scrollDeps={[phase]}
-      containerClassName={s.container}
+      containerClassName={undefined}
       before={<>
         <PageHeader
           title={
-            <h1 className={s.headerTitle} style={{ display: 'flex', alignItems: 'center', gap: 'var(--gap-sm)', margin: 0 }}>
+            <h1 style={{ display: 'flex', alignItems: 'center', gap: 'var(--gap-sm)', margin: 0 }}>
               {isInstrument && instrument && (
                 <InstrumentHeader instrument={instrument} size={InstrumentHeaderSize.SM} iconOnly />
               )}
@@ -235,7 +234,6 @@ export default function AllRivalsPage() {
         />
         {phase !== LoadPhase.ContentIn && (
           <div
-            className={s.spinnerOverlay}
             style={phase === LoadPhase.SpinnerOut ? { animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards` } : undefined}
           >
             <ArcSpinner />
@@ -250,8 +248,8 @@ export default function AllRivalsPage() {
               )}
 
               {hasRivals && (
-                <div className={s.section} style={{ paddingTop: 'var(--gap-md)' }}>
-                  <div className={s.rivalList} style={nameWidthVar(allRivals)}>
+                <div style={{ paddingTop: 'var(--gap-md)' }}>
+                  <div style={nameWidthVar(allRivals)}>
                     {allRivals.map(rival => (
                       <RivalRow
                         key={rival.accountId}

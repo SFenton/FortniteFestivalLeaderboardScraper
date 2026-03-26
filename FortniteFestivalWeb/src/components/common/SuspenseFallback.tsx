@@ -3,11 +3,11 @@
  * Displays the shared arc spinner centered in the viewport.
  */
 import ArcSpinner from './ArcSpinner';
-import css from '../../pages/Page.module.css';
+import { pageCss } from '../../pages/Page';
 
 export default function SuspenseFallback() {
   return (
-    <div className={css.spinnerOverlay}>
+    <div style={pageCss.spinnerOverlay}>
       <ArcSpinner />
     </div>
   );

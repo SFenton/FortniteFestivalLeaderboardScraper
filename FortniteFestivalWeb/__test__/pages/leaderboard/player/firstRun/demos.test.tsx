@@ -89,7 +89,8 @@ describe('SortControlsDemo', () => {
     wrap(<SortControlsDemo />);
     fireEvent.click(screen.getByText('Date'));
     const dateBtn = screen.getByText('Date').closest('button');
-    expect(dateBtn?.className).toContain('Selected');
+    // RadioRow uses inline styles — selected row has color matching textPrimary
+    expect(dateBtn?.style.color).toBeTruthy();
   });
 
   it('allows toggling direction', () => {

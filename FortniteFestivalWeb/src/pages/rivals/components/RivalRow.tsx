@@ -2,7 +2,7 @@ import { memo, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RivalSummary } from '@festival/core/api/serverTypes';
 import { Colors, Font, Weight, Gap, Radius, Display, Align, Justify, Position, Cursor, Overflow, WhiteSpace, Border, frostedCard, flexRow, truncate, padding, border } from '@festival/theme';
-import s from './RivalRow.module.css';
+import s from '../../../styles/rivals.module.css';
 
 interface RivalRowProps {
   rival: RivalSummary;
@@ -18,11 +18,11 @@ const RivalRow = memo(function RivalRow({ rival, direction, onClick, style, onAn
   const name = rival.displayName ?? 'Unknown Player';
   const st = useRivalRowStyles();
 
-  const tintClass = direction === 'below' ? s.rowWinning : s.rowLosing;
+  const tintClass = direction === 'below' ? s.rivalRowWinning : s.rivalRowLosing;
 
   return (
     <div
-      className={`${s.row} ${tintClass}`}
+      className={`${s.rivalRow} ${tintClass}`}
       style={{ ...st.row, ...style }}
       onClick={onClick}
       role="button"

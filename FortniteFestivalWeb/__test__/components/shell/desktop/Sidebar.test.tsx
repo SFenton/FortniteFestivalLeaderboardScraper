@@ -4,17 +4,6 @@ import { MemoryRouter } from 'react-router-dom';
 import Sidebar from '../../../../src/components/shell/desktop/Sidebar';
 import { SettingsProvider } from '../../../../src/contexts/SettingsContext';
 
-vi.mock('../../../../src/components/shell/desktop/Sidebar.module.css', () => ({
-  default: {
-    overlay: 'overlay', sidebar: 'sidebar', sidebarHeader: 'sidebarHeader',
-    brand: 'brand', sidebarNav: 'sidebarNav', sidebarLink: 'sidebarLink',
-    sidebarLinkActive: 'sidebarLinkActive', sidebarFooter: 'sidebarFooter',
-    sidebarPlayerRow: 'sidebarPlayerRow', playerLink: 'playerLink',
-    deselectBtn: 'deselectBtn', selectPlayerBtn: 'selectPlayerBtn',
-    profileCircle: 'profileCircle', profileCircleEmpty: 'profileCircleEmpty',
-  },
-}));
-
 beforeEach(() => {
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => { cb(0); return 0; });
   vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
@@ -85,8 +74,12 @@ describe('Sidebar', () => {
 
   it('calls onClose when overlay is clicked', () => {
     const { props, container } = renderSidebar();
-    const overlay = container.querySelector('.overlay');
-    if (overlay) fireEvent.click(overlay);
+    // Sidebar renders: <Fragment><div (overlay)>...<div (sidebar)>...</Fragment>
+    // Find the overlay: it's the first div with position:fixed and z-index:200
+    const allDivs = container.querySelectorAll('div');
+    const overlay = Array.from(allDivs).find(el => el.style.zIndex === '200' && el.style.position === 'fixed');
+    expect(overlay).toBeTruthy();
+    fireEvent.click(overlay!);
     expect(props.onClose).toHaveBeenCalled();
   });
 
@@ -104,10 +97,11 @@ describe('Sidebar', () => {
     rerender(
       <MemoryRouter><SettingsProvider><Sidebar player={null} open={false} onClose={vi.fn()} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} /></SettingsProvider></MemoryRouter>,
     );
-    const sidebar = container.querySelector('.sidebar');
+    // Sidebar is the second child (after overlay) — find via text content
+    const sidebar = screen.queryByText('Festival Score Tracker')?.closest('div[style]');
     if (sidebar) fireEvent.transitionEnd(sidebar);
     // After transition, should be unmounted
-    expect(container.querySelector('.sidebar')).toBeNull();
+    expect(screen.queryByText('Festival Score Tracker')).toBeNull();
   });
 
   it('renders Settings link', () => {
@@ -132,7 +126,8 @@ describe('Sidebar — route-specific active styling', () => {
       </MemoryRouter>,
     );
     const settingsLink = screen.getByText('Settings');
-    expect(settingsLink.closest('a')?.className).toContain('sidebarLinkActive');
+    // Active link has border-left style with accent purple
+    expect(settingsLink.closest('a')?.style.borderLeft).toContain('solid');
   });
 
   it('shows player name as link', () => {
@@ -149,7 +144,7 @@ describe('Sidebar — route-specific active styling', () => {
       </MemoryRouter>,
     );
     const link = screen.getByText('Suggestions');
-    expect(link.closest('a')?.className).toContain('sidebarLinkActive');
+    expect(link.closest('a')?.style.borderLeft).toContain('solid');
   });
 
   it('renders with active styling on statistics route', () => {
@@ -161,6 +156,6 @@ describe('Sidebar — route-specific active styling', () => {
       </MemoryRouter>,
     );
     const link = screen.getByText('Statistics');
-    expect(link.closest('a')?.className).toContain('sidebarLinkActive');
+    expect(link.closest('a')?.style.borderLeft).toContain('solid');
   });
 });

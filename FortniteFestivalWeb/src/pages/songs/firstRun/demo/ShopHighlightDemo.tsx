@@ -7,7 +7,7 @@ import { useShop } from '../../../../contexts/ShopContext';
 import { Layout, FADE_DURATION, STAGGER_INTERVAL, Gap, CssValue, flexColumn } from '@festival/theme';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { fitRows } from '../../../../hooks/data/useDemoSongs';
-import css from './ShopHighlightDemo.module.css';
+import anim from '../../../../styles/animations.module.css';
 import { songRow, songRowMobile, mobileTopRow } from '../../../../styles/songRowStyles';
 
 const ROW_H = Layout.demoRowHeight;
@@ -62,7 +62,7 @@ export default function ShopHighlightDemo() {
     <div style={{ width: CssValue.full, ...flexColumn, gap: Gap.sm }}>
       {rows.map(({ song, inShop }, i) => {
         const baseStyle = isMobile ? songRowMobile : songRow;
-        const className = inShop ? css.shopRow : undefined;
+        const className = inShop ? anim.shopHighlight : undefined;
         return (
           <div key={i} className={className}
             style={initialDone

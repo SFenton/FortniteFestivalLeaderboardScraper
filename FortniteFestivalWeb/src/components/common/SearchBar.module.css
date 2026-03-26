@@ -1,4 +1,0 @@
-/* Minimal CSS for pseudo-element that can't be expressed as inline style. */
-.searchInput::placeholder {
-  color: var(--color-text-placeholder);
-}

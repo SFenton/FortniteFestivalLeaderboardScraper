@@ -50,7 +50,9 @@ describe('Modal', () => {
     const { container } = renderModal();
     // Flush mount/animIn effects
     await act(async () => {});
-    const scrollArea = container.querySelector('[class*="contentScroll"]');
+    // Content scroll area is the div with overflow-y: auto inside the dialog
+    const dialog = screen.getByRole('dialog');
+    const scrollArea = Array.from(dialog.querySelectorAll('div')).find(el => el.style.overflowY === 'auto');
     expect(scrollArea).toBeTruthy();
     fireEvent.scroll(scrollArea!);
     // handleContentScroll ran without error (calls updateScrollMask internally)

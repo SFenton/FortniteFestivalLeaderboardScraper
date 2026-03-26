@@ -13,7 +13,7 @@ import {
   Display, Align, Justify, Position, Cursor, Overflow, CssValue, CssProp,
   flexCenter, border, transition, IconSize, TRANSITION_MS, NAV_TRANSITION_MS,
 } from '@festival/theme';
-import css from './FilterDemo.module.css';
+import css from '../../../../styles/instrumentSelector.module.css';
 
 /** Shared demo styles used by FilterDemo, SortDemo, InstrumentFilterDemo, SortControlsDemo. */
 export function useDemoStyles() {

@@ -15,7 +15,7 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { SortableRow } from './SortableRow';
-import css from '../modals/Modal.module.css';
+import { modalStyles } from '../modals/modalStyles';
 import type { ReorderItem } from './reorderTypes';
 export type { ReorderItem };
 
@@ -45,7 +45,7 @@ export function ReorderList({ items, onReorder }: ReorderListProps) {
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
       <SortableContext items={items.map(i => i.key)} strategy={verticalListSortingStrategy}>
-        <div className={css.reorderList}>
+        <div style={modalStyles.reorderList}>
           {items.map((item) => (
             <SortableRow key={item.key} item={item} />
           ))}

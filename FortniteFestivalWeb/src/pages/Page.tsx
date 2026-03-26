@@ -82,6 +82,8 @@ export interface PageProps {
   className?: string;
   /** Extra className appended to the scroll area. */
   scrollClassName?: string;
+  /** Inline styles merged onto the scroll area div. */
+  scrollStyle?: React.CSSProperties;
   /** Extra className appended to the container. */
   containerClassName?: string;
   /** Inline styles merged onto the container div. */
@@ -102,6 +104,7 @@ export default function Page({
   containerVariant = 'default',
   className,
   scrollClassName,
+  scrollStyle,
   containerClassName,
   containerStyle,
   before,
@@ -121,7 +124,7 @@ export default function Page({
   return (
     <div data-testid="page-root" className={className} style={pgStyle}>
       {before}
-      <div data-testid="scroll-area" ref={scrollRef} className={scrollClassName} style={saStyle}>
+      <div data-testid="scroll-area" ref={scrollRef} className={scrollClassName} style={{ ...saStyle, ...scrollStyle }}>
         <div className={containerClassName} style={{ ...cStyle, ...containerStyle }}>
           {children}
         </div>

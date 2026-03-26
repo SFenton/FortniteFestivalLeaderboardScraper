@@ -22,7 +22,7 @@ import { deriveComboFromSettings, getEnabledInstruments } from './helpers/comboU
 import RivalSongRow from './components/RivalSongRow';
 import { Routes } from '../../routes';
 import { useRivalsSharedStyles } from './useRivalsSharedStyles';
-import s from './RivalsPage.module.css';
+import fx from '../../styles/effects.module.css';
 import Page, { usePageScrollRef } from '../Page';
 
 let _cachedDetailSongs: RivalSongComparison[] = [];
@@ -144,7 +144,7 @@ export default function RivalDetailPage() {
                 return (
                   <div key={cat.key} style={styles.section}>
                     <div
-                      className={s.sectionHeaderClickable}
+                      className={fx.sectionHeaderClickable}
                       style={{ ...styles.sectionHeaderClickable, ...stagger(200 + catIdx * 150) }}
                       onAnimationEnd={clearAnim}
                       onClick={navigateToCategory}

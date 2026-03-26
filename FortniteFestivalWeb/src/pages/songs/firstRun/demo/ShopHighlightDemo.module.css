@@ -1,7 +1,0 @@
-/* Minimal CSS - @keyframes composition that cannot be inline. */
-
-/* Shop row pulse (matches SongRow.shopHighlight in prod) */
-.shopRow {
-  composes: shopPulse from '../../../../styles/shared.module.css';
-}
-

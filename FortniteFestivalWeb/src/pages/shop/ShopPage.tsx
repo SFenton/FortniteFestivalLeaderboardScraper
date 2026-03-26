@@ -18,7 +18,7 @@ import { visibleInstruments } from '../../contexts/SettingsContext';
 import { DEFAULT_INSTRUMENT, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { loadSongSettings } from '../../utils/songSettings';
 import ShopCard from './components/ShopCard';
-import css from './ShopPage.module.css';
+import fx from '../../styles/effects.module.css';
 import type { CSSProperties } from 'react';
 import Page, { usePageScrollRef } from '../Page';
 import EmptyState from '../../components/common/EmptyState';
@@ -153,7 +153,7 @@ export default function ShopPage() {
               subtitle={t('shop.emptyHint', 'Check back later — the shop updates regularly.')}
             />
           ) : effectiveView === 'grid' ? (
-            <div className={css.grid} key={`grid-${staggerGen}`}>
+            <div className={fx.shopGrid} key={`grid-${staggerGen}`}>
               {sorted.map((song, i) => (
                 <ShopCard key={song.songId} song={song}
                   staggerDelay={shouldStagger ? calcStagger(Math.min(i, maxVisibleGrid - 1), gridInterval, maxVisibleGrid) : undefined}

@@ -1,0 +1,127 @@
+/*
+ * Shared animation classes — @keyframes + pseudo-element rules that can't be inline.
+ * Consumed by components via CSS module imports.
+ */
+
+/* ── Spinner ── */
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spinner {
+  border-style: solid;
+  border-width: 2px;
+  border-color: rgba(255, 255, 255, 0.10);
+  border-top-color: var(--spinner-color, var(--color-accent-purple));
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.spinnerCircle {
+  composes: spinner;
+  border-top-color: var(--color-accent-purple);
+}
+
+/* ── Spinner fade-in (PathsModal / PathImage / PathPreviewDemo) ── */
+
+@keyframes spinnerFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.spinnerWrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: spinnerFadeIn 300ms ease;
+}
+
+/* ── Shop border-pulse (SongRow highlight, AlbumArt pulse) ── */
+
+@keyframes shopPulse {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.7; }
+}
+
+.shopPulse {
+  position: relative;
+}
+
+.shopPulse::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 2px solid var(--color-accent-blue);
+  opacity: 0;
+  animation: shopPulse 2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.albumPulse {
+  composes: shopPulse;
+}
+
+.shopHighlight {
+  composes: shopPulse;
+}
+
+/* ── Shop breathe (SongDetailHeader + ShopButtonDemo) ── */
+
+@keyframes shopBreathe {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.shopBreathe {
+  position: relative;
+  background-color: transparent;
+  isolation: isolate;
+}
+
+.shopBreathe::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: var(--color-accent-blue);
+  animation: shopBreathe 3s ease-in-out infinite;
+  z-index: -1;
+}
+
+.shopCircleBreathe {
+  position: relative;
+  background-color: transparent;
+  isolation: isolate;
+}
+
+.shopCircleBreathe::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: var(--color-accent-blue);
+  animation: shopBreathe 3s ease-in-out infinite;
+  z-index: -1;
+}
+
+/* ── Blue border pulse (DrillDownDemo / TopScoresDemo / ViewAllDemo) ── */
+
+@keyframes pulse {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.7; }
+}
+
+.pulseWrap::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 2px solid var(--color-accent-blue);
+  opacity: 0;
+  animation: pulse 2s ease-in-out infinite;
+  pointer-events: none;
+}

@@ -11,12 +11,27 @@ import { useFadeSpinner } from '../../../hooks/ui/useFadeSpinner';
 import ModalShell from '../../modals/components/ModalShell';
 import {
   Gap, Radius, Font, Weight, Colors, Layout, Display, Align, Justify,
-  Overflow, CssValue, TextAlign, LineHeight, Cursor, WhiteSpace, PointerEvents, IconSize,
+  Overflow, CssValue, TextAlign, LineHeight, Cursor, WhiteSpace, PointerEvents, IconSize, BoxSizing,
   flexColumn, flexCenter,
-  btnDanger, padding, Border, BorderStyle,
+  btnDanger, padding, Border,
   MODAL_STAGGER_MS,
 } from '@festival/theme';
-import css from './MobilePlayerSearchModal.module.css';
+
+const SEARCH_MODAL_DESKTOP: React.CSSProperties = { width: 420, height: 600, maxHeight: '90vh' };
+
+const searchPill: CSSProperties = {
+  display: Display.flex,
+  alignItems: Align.center,
+  gap: Gap.sm,
+  height: 48,
+  padding: padding(0, Gap.xl),
+  boxSizing: BoxSizing.borderBox,
+  borderRadius: Radius.full,
+  border: `${Border.thin}px solid ${Colors.borderPrimary}`,
+  backgroundColor: Colors.backgroundCard,
+  cursor: Cursor.text,
+  flexShrink: 0,
+};
 
 const MODAL_TRANSITION_MS = 250;
 
@@ -97,7 +112,7 @@ export default function MobilePlayerSearchModal({
       visible={visible}
       title={effectiveTitle}
       onClose={onClose}
-      desktopClassName={css.panelDesktop}
+      desktopStyle={SEARCH_MODAL_DESKTOP}
       transitionMs={MODAL_TRANSITION_MS}
       onOpenComplete={handleOpenComplete}
       onCloseComplete={handleCloseComplete}
@@ -120,8 +135,7 @@ export default function MobilePlayerSearchModal({
               placeholder={t('common.searchPlayer')}
               onKeyDown={e => { if (e.key === 'Enter') inputRef.current?.blur(); }}
               enterKeyHint="done"
-              className={css.searchPill}
-              style={stagger(0)}
+              style={{ ...searchPill, ...stagger(0) }}
             />
             <div style={{ ...st.results, ...stagger(150) }}>
               {spinner.visible && <div style={{ ...st.spinnerWrap, opacity: spinner.opacity, transition: 'opacity 250ms ease' }} onTransitionEnd={spinner.onTransitionEnd}><ArcSpinner size={SpinnerSize.MD} /></div>}

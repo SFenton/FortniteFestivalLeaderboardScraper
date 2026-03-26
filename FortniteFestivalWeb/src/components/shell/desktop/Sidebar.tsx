@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { IoPerson } from 'react-icons/io5';
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
 import { useSettings } from '../../../contexts/SettingsContext';
-import s from './Sidebar.module.css';
+import { sidebarStyles as s } from './sidebarStyles';
 
 const SIDEBAR_DURATION = 250;
 
@@ -57,66 +57,64 @@ export default function Sidebar({ player, open, onClose, onDeselect, onSelectPla
   return (
     <>
       <div
-        className={s.overlay}
-        style={{ opacity: visible ? 1 : 0, transition: `opacity ${SIDEBAR_DURATION}ms ease` }}
+        style={{ ...s.overlay, opacity: visible ? 1 : 0, transition: `opacity ${SIDEBAR_DURATION}ms ease` }}
         onClick={onClose}
       />
       <div
         ref={sidebarRef}
-        className={s.sidebar}
-        style={{ transform: visible ? 'translateX(0)' : 'translateX(-100%)', transition: `transform ${SIDEBAR_DURATION}ms ease` }}
+        style={{ ...s.sidebar, transform: visible ? 'translateX(0)' : 'translateX(-100%)', transition: `transform ${SIDEBAR_DURATION}ms ease` }}
         onTransitionEnd={handleTransitionEnd}
       >
-        <div className={s.sidebarHeader}>
-          <span className={s.brand}>{t('common.brandName')}</span>
+        <div style={s.sidebarHeader}>
+          <span style={s.brand}>{t('common.brandName')}</span>
         </div>
-        <nav className={s.sidebarNav}>
-          <NavLink to="/songs" onClick={onClose} className={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
+        <nav style={s.sidebarNav}>
+          <NavLink to="/songs" onClick={onClose} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
             {t('nav.songs')}
           </NavLink>
           {player && (
-            <NavLink to="/suggestions" onClick={onClose} className={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
+            <NavLink to="/suggestions" onClick={onClose} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
               {t('nav.suggestions')}
             </NavLink>
           )}
           {player && (
-            <NavLink to="/statistics" onClick={onClose} className={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
+            <NavLink to="/statistics" onClick={onClose} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
               {t('nav.statistics')}
             </NavLink>
           )}
           {/* v8 ignore start -- player-gated link */}
           {player && (
-            <NavLink to="/rivals" onClick={onClose} className={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
+            <NavLink to="/rivals" onClick={onClose} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
               {t('nav.rivals', 'Rivals')}
             </NavLink>
           )}
           {/* v8 ignore stop */}
           {/* v8 ignore start -- shop-visibility link */}
           {!settings.hideItemShop && (
-            <NavLink to="/shop" onClick={onClose} className={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
+            <NavLink to="/shop" onClick={onClose} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
               {t('nav.shop', 'Shop')}
             </NavLink>
           )}
           {/* v8 ignore stop */}
         </nav>
-        <div className={s.sidebarFooter}>
+        <div style={s.sidebarFooter}>
           {player ? (
-            <div className={s.sidebarPlayerRow}>
-              <Link to="/statistics" onClick={onClose} className={s.playerLink}>
-                <span className={s.profileCircle}><IoPerson size={14} /></span>
+            <div style={s.sidebarPlayerRow}>
+              <Link to="/statistics" onClick={onClose} style={s.playerLink}>
+                <span style={s.profileCircle}><IoPerson size={14} /></span>
                 {player.displayName}
               </Link>
-              <button className={s.deselectBtn} onClick={onDeselect}>
+              <button style={s.deselectBtn} onClick={onDeselect}>
                 {t('common.deselect')}
               </button>
             </div>
           ) : (
-            <button className={s.selectPlayerBtn} onClick={onSelectPlayer}>
-              <span className={s.profileCircleEmpty}><IoPerson size={14} /></span>
+            <button style={s.selectPlayerBtn} onClick={onSelectPlayer}>
+              <span style={s.profileCircleEmpty}><IoPerson size={14} /></span>
               {t('common.selectPlayerProfile')}
             </button>
           )}
-          <NavLink to="/settings" onClick={onClose} className={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
+          <NavLink to="/settings" onClick={onClose} style={({ isActive }) => isActive ? s.sidebarLinkActive : s.sidebarLink}>
             {t('nav.settings')}
           </NavLink>
         </div>

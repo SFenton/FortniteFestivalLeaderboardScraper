@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import css from '../modals/Modal.module.css';
+import { modalStyles as ms } from '../modals/modalStyles';
 
 export interface ToggleRowProps {
   label: React.ReactNode;
@@ -12,25 +12,31 @@ export interface ToggleRowProps {
 }
 
 export const ToggleRow = memo(function ToggleRow({ label, description, checked, onToggle, disabled, icon, large }: ToggleRowProps) {
-  const rowClass = `${large ? css.toggleRowLarge : css.toggleRow} ${disabled ? css.toggleRowDisabled : ''}`;
-  const trackClass = large
-    ? `${checked ? css.toggleTrackLargeOn : css.toggleTrackLarge} ${disabled ? css.toggleTrackDisabled : ''}`
-    : `${css.toggleTrack} ${checked ? css.toggleTrackOn : ''} ${disabled ? css.toggleTrackDisabled : ''}`;
-  const thumbClass = `${large ? css.toggleThumbLarge : css.toggleThumb} ${checked ? (large ? css.toggleThumbLargeOn : css.toggleThumbOn) : ''}`;
+  const rowStyle = {
+    ...(large ? ms.toggleRowLarge : ms.toggleRow),
+    ...(disabled ? ms.toggleRowDisabled : {}),
+  };
+  const trackStyle = large
+    ? { ...(checked ? ms.toggleTrackLargeOn : ms.toggleTrackLarge), ...(disabled ? ms.toggleTrackDisabled : {}) }
+    : { ...ms.toggleTrack, ...(checked ? ms.toggleTrackOn : {}), ...(disabled ? ms.toggleTrackDisabled : {}) };
+  const thumbStyle = {
+    ...(large ? ms.toggleThumbLarge : ms.toggleThumb),
+    ...(checked ? (large ? ms.toggleThumbLargeOn : ms.toggleThumbOn) : {}),
+  };
 
   return (
     <button
-      className={rowClass}
+      style={rowStyle}
       onClick={disabled ? undefined : onToggle}
       disabled={disabled}
     >
-      {icon && <div className={css.toggleIcon}>{icon}</div>}
-      <div className={css.toggleContent}>
-        <div className={`${css.toggleLabel} ${large ? css.toggleLabelLarge : ''}`}>{label}</div>
-        {description && <div className={`${css.toggleDesc} ${large ? css.toggleDescLarge : ''}`}>{description}</div>}
+      {icon && <div style={ms.toggleIcon}>{icon}</div>}
+      <div style={ms.toggleContent}>
+        <div style={large ? { ...ms.toggleLabel, ...ms.toggleLabelLarge } : ms.toggleLabel}>{label}</div>
+        {description && <div style={large ? { ...ms.toggleDesc, ...ms.toggleDescLarge } : ms.toggleDesc}>{description}</div>}
       </div>
-      <div className={trackClass}>
-        <div className={thumbClass} />
+      <div style={trackStyle}>
+        <div style={thumbStyle} />
       </div>
     </button>
   );

@@ -19,8 +19,10 @@ import { useIsMobileChrome, useIsWideDesktop } from '../../../../hooks/ui/useIsM
 import { usePlayerData } from '../../../../contexts/PlayerDataContext';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import FadeIn from '../../../../components/page/FadeIn';
-import sidebarCss from '../../../../components/shell/desktop/Sidebar.module.css';
-import s from '../pages/Navigation.module.css';
+import { sidebarStyles as sidebarCss } from '../../../../components/shell/desktop/sidebarStyles';
+
+const centerWrap: CSSProperties = { ...flexCenter, width: CssValue.full, height: CssValue.full };
+const compactNav: CSSProperties = { width: CssValue.full, maxWidth: 260, padding: 0, flex: CssValue.none };
 
 type Tab = { key: TabKey; label: string; icon: React.ReactNode };
 
@@ -67,7 +69,7 @@ function MobileNav({ tabs }: { tabs: Tab[] }) {
 
   return (
     <FadeIn delay={TRANSITION_MS} style={{ width: '100%' }}>
-      <nav ref={navRef} className={`${bottomNavCss.navFrosted} ${s.mobileNav}`} style={st.nav}>
+      <nav ref={navRef} className={bottomNavCss.navFrosted} style={st.nav}>
       {visibleTabs.map((tab) => {
         const isActive = active === tab.key;
         return (
@@ -113,6 +115,8 @@ function useMobileNavStyles() {
         zIndex: ZIndex.popover,
         position: Position.relative,
         padding: padding(Gap.sm, Gap.none, Gap.md),
+        borderRadius: Radius.md,
+        width: CssValue.full,
       } as CSSProperties,
       tab,
       tabActive: {
@@ -160,7 +164,7 @@ function DesktopNav({ tabs }: { tabs: Tab[] }) {
   const ps = usePinnedSidebarStyles();
 
   return (
-    <FadeIn delay={TRANSITION_MS} className={s.centerWrap}>
+    <FadeIn delay={TRANSITION_MS} style={centerWrap}>
       <aside style={ps.nav}>
         {visibleTabs.map((tab) => {
           const isActive = active === tab.key;
@@ -189,15 +193,15 @@ function CompactNav({ tabs }: { tabs: Tab[] }) {
   /* v8 ignore stop */
 
   return (
-    <FadeIn delay={TRANSITION_MS} className={s.centerWrap}>
-      <div className={`${sidebarCss.sidebarNav} ${s.compactNav}`}>
+    <FadeIn delay={TRANSITION_MS} style={centerWrap}>
+      <div style={{ ...sidebarCss.sidebarNav, ...compactNav }}>
         {visibleTabs.map((tab) => {
           const isActive = active === tab.key;
           return (
             <button
               key={tab.key}
               onClick={() => setActive(tab.key)}
-              className={isActive ? sidebarCss.sidebarLinkActive : sidebarCss.sidebarLink}
+              style={isActive ? sidebarCss.sidebarLinkActive : sidebarCss.sidebarLink}
             >
               {tab.label}
             </button>

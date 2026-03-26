@@ -11,7 +11,7 @@ import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/se
 import { useScrollMask } from '../../../../hooks/ui/useScrollMask';
 import { ZoomableImage } from './ZoomableImage';
 import ArcSpinner from '../../../../components/common/ArcSpinner';
-import css from './PathsModal.module.css';
+import anim from '../../../../styles/animations.module.css';
 
 const FADE_MS = TRANSITION_MS;
 
@@ -118,7 +118,7 @@ export function PathImage({ songId, instrument, difficulty }: PathImageProps) {
       padding: Gap.section,
     }}>
       {spinnerMounted && (
-        <div className={css.spinnerWrap} style={{
+        <div className={anim.spinnerWrap} style={{
           opacity: spinnerVisible ? 1 : 0,
           transition: `opacity ${FADE_MS}ms ease`,
         }}>
@@ -126,7 +126,7 @@ export function PathImage({ songId, instrument, difficulty }: PathImageProps) {
         </div>
       )}
       {error && phase === ImagePhase.Idle && (
-        <div className={css.spinnerWrap}>
+        <div className={anim.spinnerWrap}>
           <p style={{ color: Colors.textMuted, fontSize: Font.md }}>{t('paths.notAvailable')}</p>
         </div>
       )}

@@ -1,0 +1,101 @@
+/*
+ * CSS-only visual effects that can't be expressed as inline styles:
+ * backdrop-filter, ::placeholder, :hover, @media queries, mask-image.
+ */
+
+/* ── BottomNav frosted glass ── */
+.navFrosted {
+  background-color: rgba(11,3,24,0.40);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+}
+
+/* ── SearchBar placeholder color ── */
+.searchPlaceholder::placeholder {
+  color: var(--color-text-placeholder);
+}
+
+/* ── RivalsPage section header hover ── */
+.sectionHeaderClickable:hover {
+  color: var(--color-text-secondary);
+}
+
+/* ── ShopPage responsive grid ── */
+.shopGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--gap-lg);
+  padding-bottom: var(--gap-xl);
+}
+
+@media (min-width: 600px) {
+  .shopGrid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (min-width: 860px) {
+  .shopGrid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (min-width: 1100px) {
+  .shopGrid {
+    grid-template-columns: repeat(5, 1fr);
+  }
+}
+
+/* ── PathPreviewDemo responsive diff grid ── */
+.diffGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--gap-md);
+  width: 100%;
+}
+
+@media (max-width: 420px) {
+  .diffGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ── PathPreviewDemo image area mask ── */
+.imageAreaMask {
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  overflow: hidden;
+  position: relative;
+  mask-image: linear-gradient(to bottom, black calc(100% - 48px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 48px), transparent 100%);
+}
+
+/* ── InfiniteScrollDemo ── */
+.infiniteViewport {
+  overflow: hidden;
+  width: 100%;
+  position: relative;
+  pointer-events: none;
+}
+
+.innerTrack {
+  will-change: transform;
+}
+
+/* Edge fade masks — 36px gradient matching useScrollFade's DEFAULT_DISTANCE */
+.fadeBottom {
+  mask-image: linear-gradient(to bottom, black calc(100% - 36px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 36px), transparent 100%);
+}
+
+.fadeTop {
+  mask-image: linear-gradient(to bottom, transparent 0%, black 36px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 36px);
+}
+
+.fadeBoth {
+  mask-image: linear-gradient(to bottom, transparent 0%, black 36px, black calc(100% - 36px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 36px, black calc(100% - 36px), transparent 100%);
+}

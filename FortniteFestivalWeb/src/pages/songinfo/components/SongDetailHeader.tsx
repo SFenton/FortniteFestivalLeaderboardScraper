@@ -15,7 +15,7 @@ import {
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import { useShopState } from '../../../hooks/data/useShopState';
 import type { ServerSong as Song } from '@festival/core/api/serverTypes';
-import css from './SongDetailHeader.module.css';
+import anim from '../../../styles/animations.module.css';
 
 export interface SongDetailHeaderProps {
   song: Song | undefined;
@@ -65,7 +65,7 @@ export default function SongDetailHeader({
       )}
       {!isMobile && showShop && (
         /* v8 ignore start — external link */
-        <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopButtonPulse : s.shopButton} className={shopPulse ? css.shopPulse : undefined}>
+        <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopButtonPulse : s.shopButton} className={shopPulse ? anim.shopBreathe : undefined}>
           <IoBagHandle size={IconSize.action} style={{ marginRight: Gap.md }} />
           {t('common.itemShop', 'Item Shop')}
         </a>
@@ -73,7 +73,7 @@ export default function SongDetailHeader({
       )}
       {isMobile && showShop && (
         /* v8 ignore start — mobile shop icon */
-        <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopCirclePulse : s.shopCircle} className={shopPulse ? css.shopCirclePulse : undefined} aria-label={t('common.itemShop', 'Item Shop')}>
+        <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopCirclePulse : s.shopCircle} className={shopPulse ? anim.shopCircleBreathe : undefined} aria-label={t('common.itemShop', 'Item Shop')}>
           <IoBagHandle size={IconSize.sm} />
         </a>
         /* v8 ignore stop */
