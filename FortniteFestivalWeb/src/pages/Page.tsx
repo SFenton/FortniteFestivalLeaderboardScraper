@@ -1,28 +1,40 @@
 /**
  * Shared page shell that provides the standard layout, scroll infrastructure,
- * scroll-mask fade, and stagger-rush behaviour used by every page.
+ * scroll-mask fade, stagger-rush behaviour, and scroll restoration used by every page.
  *
  * Usage:
- *   <Page scrollRef={scrollRef} scrollDeps={[items.length]} onScroll={onScroll}>
+ *   <Page scrollRestoreKey="songs" scrollDeps={[items.length]}>
  *     {content}
  *   </Page>
  *
  * Pages still own their own state, data fetching, and load-phase logic.
  * Page just removes the boilerplate outer DOM + scroll hook wiring.
+ *
+ * Pages that need direct access to the scroll element (virtualizers, auto-scroll)
+ * use `usePageScroll()` which returns `{ scrollRef, scrollTo }`.
  */
-import { useMemo, useRef, type ReactNode, type RefObject, type CSSProperties } from 'react';
-import { Colors, ZIndex, MaxWidth, Layout, Overflow, Position, Size, Spinner, Border, flexColumn, flexCenter, fixedFill, CssValue, Opacity, BorderStyle, PointerEvents, padding } from '@festival/theme';
+import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode, type RefObject, type CSSProperties } from 'react';
+import { useNavigationType } from 'react-router-dom';
+import { Colors, ZIndex, MaxWidth, Layout, Overflow, Position, Size, Spinner, Border, flexColumn, flexCenter, fixedFill, CssValue, Opacity, BorderStyle, PointerEvents, padding, SPINNER_FADE_MS } from '@festival/theme';
 import { useScrollMask, type ScrollMaskOptions } from '../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../hooks/ui/useStaggerRush';
+import { useScrollRestore } from '../hooks/ui/useScrollRestore';
+import { useScrollContainer } from '../contexts/ScrollContainerContext';
+import { useRegisterFirstRun } from '../hooks/ui/useRegisterFirstRun';
+import { useFirstRun } from '../hooks/ui/useFirstRun';
+import FirstRunCarousel from '../components/firstRun/FirstRunCarousel';
+import type { FirstRunSlideDef, FirstRunGateContext } from '../firstRun/types';
+import { LoadPhase } from '@festival/core';
+import ArcSpinner from '../components/common/ArcSpinner';
 
 /** Page-level style objects — importable by SuspenseFallback, PlayerPage consumers, etc. */
 export const pageCss = {
-  page: { ...flexColumn, minHeight: CssValue.full, color: Colors.textPrimary } as CSSProperties,
-  pageWithBg: { ...flexColumn, minHeight: CssValue.full, color: Colors.textPrimary, backgroundColor: Colors.backgroundApp, position: Position.relative } as CSSProperties,
-  pageWithBgClip: { ...flexColumn, minHeight: CssValue.full, color: Colors.textPrimary, backgroundColor: Colors.backgroundApp, position: Position.relative, overflow: Overflow.hidden } as CSSProperties,
-  scrollArea: { flex: 1, minHeight: 0 } as CSSProperties,
-  scrollAreaRelative: { flex: 1, minHeight: 0, position: Position.relative } as CSSProperties,
-  scrollAreaRelativeZ: { flex: 1, minHeight: 0, position: Position.relative, zIndex: ZIndex.base } as CSSProperties,
+  page: { ...flexColumn, flex: 1, minHeight: 0, color: Colors.textPrimary } as CSSProperties,
+  pageWithBg: { ...flexColumn, flex: 1, minHeight: 0, color: Colors.textPrimary, backgroundColor: Colors.backgroundApp, position: Position.relative } as CSSProperties,
+  pageWithBgClip: { ...flexColumn, flex: 1, minHeight: 0, color: Colors.textPrimary, backgroundColor: Colors.backgroundApp, position: Position.relative, overflow: Overflow.hidden } as CSSProperties,
+  scrollArea: { flex: 1, minHeight: 0, overflowY: Overflow.auto } as CSSProperties,
+  scrollAreaRelative: { flex: 1, minHeight: 0, overflowY: Overflow.auto, position: Position.relative } as CSSProperties,
+  scrollAreaRelativeZ: { flex: 1, minHeight: 0, overflowY: Overflow.auto, position: Position.relative, zIndex: ZIndex.base } as CSSProperties,
   container: { maxWidth: MaxWidth.card, margin: CssValue.marginCenter, width: CssValue.full, padding: padding(0, Layout.paddingHorizontal) } as CSSProperties,
   containerZ: { maxWidth: MaxWidth.card, margin: CssValue.marginCenter, width: CssValue.full, padding: padding(0, Layout.paddingHorizontal), position: Position.relative, zIndex: ZIndex.base } as CSSProperties,
   bgImage: { ...fixedFill, backgroundSize: 'cover', backgroundPosition: 'center', opacity: Opacity.backgroundImage, pointerEvents: PointerEvents.none } as CSSProperties,
@@ -66,12 +78,17 @@ function pageStyle(v: PageVariant): CSSProperties {
 
 /* ── Props ── */
 export interface PageProps {
-  /** Ref to the scroll container. Consumers need this for scroll-restore, virtualizers, etc. */
-  scrollRef: RefObject<HTMLDivElement | null>;
+  /**
+   * Optional external ref to the scroll container. When omitted, Page creates
+   * its own ref internally. Use `usePageScroll()` for read access instead.
+   */
+  scrollRef?: RefObject<HTMLDivElement | null>;
   /** Extra scroll-mask dependency values (e.g. [items.length, phase]). */
   scrollDeps?: readonly unknown[];
   /** Scroll-mask options (fade size). */
   scrollMaskOptions?: ScrollMaskOptions;
+  /** When set, Page auto-calls useScrollRestore with this cache key. */
+  scrollRestoreKey?: string;
   /** Page outer wrapper variant. */
   variant?: PageVariant;
   /** Scroll area variant. */
@@ -88,17 +105,46 @@ export interface PageProps {
   containerClassName?: string;
   /** Inline styles merged onto the container div. */
   containerStyle?: React.CSSProperties;
-  /** Content rendered before the scroll area (e.g. sticky headers sitting outside scroll). */
+  /** Content rendered before the scroll area (e.g. headers sitting outside scroll). */
   before?: ReactNode;
   /** Content rendered after the scroll area (e.g. modals, footers). */
   after?: ReactNode;
+  /** Ref that receives the stagger-rush reset function. Call `ref.current()` to allow re-stagger. */
+  staggerRushRef?: React.MutableRefObject<(() => void) | undefined>;
+  /**
+   * When provided, Page listens to scroll position and calls `onCollapse`
+   * when scrollTop crosses the threshold (default 40px).
+   * Set `disabled: true` on mobile to skip the listener entirely.
+   */
+  headerCollapse?: {
+    disabled?: boolean;
+    threshold?: number;
+    onCollapse: (collapsed: boolean) => void;
+  };
+  /**
+   * When provided, Page handles first-run registration, gate evaluation, and
+   * carousel rendering automatically. The carousel is appended after `after`.
+   * SettingsPage (replay hub) should NOT use this — it manages replays manually.
+   */
+  firstRun?: {
+    key: string;
+    label: string;
+    slides: FirstRunSlideDef[];
+    gateContext: FirstRunGateContext;
+  };
+  /**
+   * When provided, Page auto-renders a centered spinner before the `before` slot
+   * during Loading/SpinnerOut phases, and applies a fade-out animation during SpinnerOut.
+   */
+  loadPhase?: LoadPhase;
   children: ReactNode;
 }
 
 export default function Page({
-  scrollRef,
+  scrollRef: externalScrollRef,
   scrollDeps,
   scrollMaskOptions,
+  scrollRestoreKey,
   variant = 'default',
   scrollVariant = 'default',
   containerVariant = 'default',
@@ -109,20 +155,67 @@ export default function Page({
   containerStyle,
   before,
   after,
+  staggerRushRef,
+  headerCollapse,
+  firstRun: firstRunConfig,
+  loadPhase,
   children,
 }: PageProps) {
+  const internalRef = useRef<HTMLDivElement>(null);
+  const scrollRef = externalScrollRef ?? internalRef;
+
+  // Register this page's scroll area in the shared ScrollContainerContext
+  // so all scroll hooks (useScrollRestore, useScrollMask, etc.) find it.
+  const scrollContainerRef = useScrollContainer();
+  useEffect(() => {
+    scrollContainerRef.current = scrollRef.current;
+    return () => { scrollContainerRef.current = null; };
+  });
+
   const stableScrollDeps = useMemo(() => scrollDeps ?? [], [scrollDeps]);
-  // Scroll mask and stagger rush now listen to window scroll internally —
-  // no need to wire them into an onScroll handler on a container div.
   useScrollMask(scrollRef, stableScrollDeps, scrollMaskOptions);
-  useStaggerRush(scrollRef);
+  const { resetRush } = useStaggerRush(scrollRef);
+  if (staggerRushRef) staggerRushRef.current = resetRush;
+
+  // Auto scroll-restore when key is provided
+  const navType = useNavigationType();
+  useScrollRestore(scrollRestoreKey ?? '', scrollRestoreKey ? navType : '');
+
+  // Header collapse: listen to scroll-area scrollTop and call onCollapse
+  const lastCollapsedRef = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (!headerCollapse || headerCollapse.disabled) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const threshold = headerCollapse.threshold ?? 40;
+    const onScroll = () => {
+      const collapsed = el.scrollTop > threshold;
+      if (collapsed !== lastCollapsedRef.current) {
+        lastCollapsedRef.current = collapsed;
+        headerCollapse.onCollapse(collapsed);
+      }
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }); // intentionally no deps — re-subscribe on every render to capture latest headerCollapse
 
   const pgStyle = pageStyle(variant);
   const saStyle = scrollAreaStyle(scrollVariant);
   const cStyle = containerBaseStyle(containerVariant);
 
+  const pageScrollValue = useMemo(() => ({ scrollRef, resetRush }), [scrollRef, resetRush]);
+
   return (
+    <PageScrollContext.Provider value={pageScrollValue}>
     <div data-testid="page-root" className={className} style={pgStyle}>
+      {loadPhase != null && loadPhase !== LoadPhase.ContentIn && (
+        <div style={loadPhase === LoadPhase.SpinnerOut
+          ? { ...pageCss.spinnerOverlay, animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards` }
+          : pageCss.spinnerOverlay}
+        >
+          <ArcSpinner />
+        </div>
+      )}
       {before}
       <div data-testid="scroll-area" ref={scrollRef} className={scrollClassName} style={{ ...saStyle, ...scrollStyle }}>
         <div className={containerClassName} style={{ ...cStyle, ...containerStyle }}>
@@ -130,8 +223,18 @@ export default function Page({
         </div>
       </div>
       {after}
+      {firstRunConfig && <PageFirstRun config={firstRunConfig} />}
     </div>
+    </PageScrollContext.Provider>
   );
+}
+
+/** Separated component so hooks only run when firstRun config is provided. */
+function PageFirstRun({ config }: { config: NonNullable<PageProps['firstRun']> }) {
+  useRegisterFirstRun(config.key, config.label, config.slides);
+  const firstRun = useFirstRun(config.key, config.gateContext);
+  if (!firstRun.show) return null;
+  return <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />;
 }
 
 import BackgroundImage from '../components/page/BackgroundImage';
@@ -143,9 +246,29 @@ export function PageBackground({ src }: { src: string | undefined }) {
   return <BackgroundImage src={src} />;
 }
 
+/* ── usePageScroll — access the active page's scroll element ── */
+
+interface PageScrollContextValue {
+  scrollRef: RefObject<HTMLDivElement | null>;
+  /** Reset the stagger-rush flag so the next scroll triggers rush again. */
+  resetRush: () => void;
+}
+
+const noop = () => {};
+const PageScrollContext = createContext<PageScrollContextValue>({ scrollRef: { current: null }, resetRush: noop });
+
 /**
- * Standard hook to get the scroll ref that pages pass to <Page>.
- * Just a typed useRef — exists so pages don't need to import useRef + type.
+ * Returns the active `<Page>`'s scroll-area ref and stagger-rush reset.
+ *
+ * Use this when a page needs direct scroll access (virtualizers, auto-scroll)
+ * or needs to re-trigger stagger animations on data change.
+ */
+export function usePageScroll(): PageScrollContextValue {
+  return useContext(PageScrollContext);
+}
+
+/**
+ * @deprecated Use `usePageScroll()` instead. `<Page>` now owns its scroll ref internally.
  */
 export function usePageScrollRef() {
   return useRef<HTMLDivElement>(null);

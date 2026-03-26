@@ -12,6 +12,7 @@ import { FabSearchProvider } from '../../src/contexts/FabSearchContext';
 import { SearchQueryProvider } from '../../src/contexts/SearchQueryContext';
 import { PlayerDataProvider } from '../../src/contexts/PlayerDataContext';
 import { FirstRunProvider } from '../../src/contexts/FirstRunContext';
+import { ScrollContainerProvider } from '../../src/contexts/ScrollContainerContext';
 
 /** Create a QueryClient configured for tests: no retries, no gc delays. */
 export function createTestQueryClient() {
@@ -34,9 +35,11 @@ export function TestProviders({ children, route = '/', accountId }: { children: 
           <SearchQueryProvider>
             <PlayerDataProvider accountId={accountId}>
               <FirstRunProvider>
+                <ScrollContainerProvider>
                 <MemoryRouter initialEntries={[route]}>
                   {children}
                 </MemoryRouter>
+                </ScrollContainerProvider>
               </FirstRunProvider>
             </PlayerDataProvider>
           </SearchQueryProvider>

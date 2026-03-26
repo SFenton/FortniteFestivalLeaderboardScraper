@@ -13,25 +13,20 @@ import {
 } from '@festival/core/api/serverTypes';
 import { Gap, Colors, Font, Layout, MaxWidth, Position, ZIndex, Display, Overflow, Align, Justify, CssValue, flexCenter, flexColumn, padding, GridTemplate, SPINNER_FADE_MS } from '@festival/theme';
 import ArcSpinner from '../../components/common/ArcSpinner';
-import BackgroundImage from '../../components/page/BackgroundImage';
-import Page, { usePageScrollRef } from '../Page';
+import { useScrollContainer } from '../../contexts/ScrollContainerContext';
+import Page from '../Page';
+import SongInfoHeader from '../../components/songs/headers/SongInfoHeader';
 import ScoreHistoryChart from './components/chart/ScoreHistoryChart';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
-import { useScrollMask } from '../../hooks/ui/useScrollMask';
-import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useStagger } from '../../hooks/ui/useStagger';
-import PageHeader from '../../components/common/PageHeader';
 import { useScoreFilter } from '../../hooks/data/useScoreFilter';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
+import { useShopState } from '../../hooks/data/useShopState';
 import { LoadPhase } from '@festival/core';
 import PathsModal from './components/path/PathsModal';
-import SongDetailHeader from './components/SongDetailHeader';
 import InstrumentCard from './components/InstrumentCard';
-import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
-import { useFirstRun } from '../../hooks/ui/useFirstRun';
-import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
 import { songInfoSlides } from './firstRun';
 
 import { songDetailCache } from '../../api/pageCache';
@@ -64,14 +59,13 @@ export default function SongDetailPage() {
   // First-run carousel
   const isMobile = useIsMobile();
   const songInfoSlidesMemo = useMemo(() => songInfoSlides(isMobile), [isMobile]);
-  useRegisterFirstRun('songinfo', t('nav.songInfo', 'Song Info'), songInfoSlidesMemo);
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player }), [player]);
-  const firstRun = useFirstRun('songinfo', firstRunGateCtx);
 
   const activeInstruments = visibleInstruments(settings);
   const fabSearch = useFabSearch();
   const { filterPlayerScores, filterHistory: filterScoreHistory, leewayParam } = useScoreFilter();
   const [pathsOpen, setPathsOpen] = useState(false);
+  const { isShopVisible, isShopHighlighted, getShopUrl } = useShopState();
 
   const navType = useNavigationType();
   const location = useLocation();
@@ -104,7 +98,8 @@ export default function SongDetailPage() {
   /* v8 ignore stop */
 
   const song = songs.find((s) => s.songId === songId);
-  const scrollRef = usePageScrollRef();
+  const shopUrl = song ? getShopUrl(song.songId) : undefined;
+  const showShop = isShopVisible && !!shopUrl;
 
   /* v8 ignore start — async data fetch effects with cancellation */
   // Fetch player scores
@@ -240,23 +235,23 @@ export default function SongDetailPage() {
   const { forDelay: stagger, clearAnim } = useStagger(!skipAnim);
   const hasFab = useIsMobile();
   const [headerCollapsed, setHeaderCollapsed] = useState(hasFab || (skipAnim && (cached?.scrollTop ?? 0) > 40));
-  useScrollMask(scrollRef, [phase, activeInstruments.length]);
   const userScrolledRef = useRef(false);
-  useStaggerRush(scrollRef);
+  const scrollContainerRef = useScrollContainer();
 
-  // Window scroll listener for header collapse + cache update
+  // Cache scroll position on scroll (header collapse is handled by Page's headerCollapse prop)
   useEffect(() => {
+    const scrollEl = scrollContainerRef.current;
+    if (!scrollEl) return;
     const onScroll = () => {
       userScrolledRef.current = true;
       if (songId) {
         const entry = songDetailCache.get(songId);
-        if (entry) entry.scrollTop = window.scrollY;
+        if (entry) entry.scrollTop = scrollEl.scrollTop;
       }
-      if (!hasFab) setHeaderCollapsed(window.scrollY > 40);
     };
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
-  }, [hasFab, songId]);
+    scrollEl.addEventListener('scroll', onScroll, { passive: true });
+    return () => scrollEl.removeEventListener('scroll', onScroll);
+  }, [songId, scrollContainerRef]);
 
   const hasScrolled = useRef(false);
 
@@ -275,7 +270,7 @@ export default function SongDetailPage() {
       playerScores,
       scoreHistory,
       accountId: player?.accountId,
-      scrollTop: scrollRef.current?.scrollTop ?? 0,
+      scrollTop: scrollContainerRef.current?.scrollTop ?? 0,
     });
   }, [allReady, songId, instrumentData, playerScores, scoreHistory, player?.accountId]);
   /* v8 ignore stop */
@@ -285,8 +280,8 @@ export default function SongDetailPage() {
     if (navType === 'PUSH' || !allCached || !songId) return;
     const saved = songDetailCache.get(songId);
     /* v8 ignore start — scroll restore */
-  if (saved && saved.scrollTop > 0 && scrollRef.current) {
-      scrollRef.current.scrollTop = saved.scrollTop;
+  if (saved && saved.scrollTop > 0) {
+      scrollContainerRef.current?.scrollTo(0, saved.scrollTop);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only scroll restore
   }, []);
@@ -307,10 +302,12 @@ export default function SongDetailPage() {
       const targetRect = target.getBoundingClientRect();
       const nav = document.querySelector('nav');
       const navHeight = nav ? nav.getBoundingClientRect().height : 0;
+      const scrollEl = scrollContainerRef.current;
+      const scrollRect = scrollEl?.getBoundingClientRect();
       const padding = 24;
-      const desiredBottom = window.innerHeight - navHeight - padding;
+      const desiredBottom = (scrollRect ? scrollRect.bottom : window.innerHeight) - navHeight - padding;
       const scrollBy = targetRect.bottom - desiredBottom;
-      if (scrollBy > 0) window.scrollTo({ top: window.scrollY + scrollBy, behavior: 'smooth' });
+      if (scrollBy > 0 && scrollEl) scrollEl.scrollTo({ top: scrollEl.scrollTop + scrollBy, behavior: 'smooth' });
     }, 1500);
     return () => clearTimeout(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- autoScroll frozen at mount
@@ -325,41 +322,31 @@ export default function SongDetailPage() {
 
   return (
     <Page
-      scrollRef={scrollRef}
       scrollDeps={[phase, activeInstruments.length]}
       variant="withBgClip"
+      headerCollapse={{ disabled: hasFab, onCollapse: setHeaderCollapsed }}
+      firstRun={{ key: 'songinfo', label: t('nav.songInfo', 'Song Info'), slides: songInfoSlidesMemo, gateContext: firstRunGateCtx }}
+      loadPhase={phase}
       before={<>
-        <BackgroundImage src={song?.albumArt} />
-        {phase !== LoadPhase.ContentIn && (
-          <div
-            style={phase === LoadPhase.SpinnerOut
-                ? { ...styles.spinnerOverlay, ...styles.spinnerFadeOut }
-                : styles.spinnerOverlay}
-          >
-            <ArcSpinner />
-          </div>
-        )}
         {/* v8 ignore start — stagger animation rendering */}
         {phase === LoadPhase.ContentIn && (
-          <PageHeader
-            title={
-              <div style={stagger(150)} onAnimationEnd={clearAnim}>
-                <SongDetailHeader song={song} songId={songId} collapsed={!!(hasFab || headerCollapsed)} noTransition={hasFab} onOpenPaths={() => setPathsOpen(true)} />
-              </div>
-            }
-            style={{
-              padding: hasFab || headerCollapsed
-                ? 'var(--gap-md) var(--layout-padding-h) var(--gap-section)'
-                : 'var(--layout-padding-top) var(--layout-padding-h) var(--gap-section)',
-            }}
-          />
+          <div style={stagger(150)} onAnimationEnd={clearAnim}>
+            <SongInfoHeader
+              song={song}
+              songId={songId!}
+              collapsed={!!(hasFab || headerCollapsed)}
+              animate={!hasFab}
+              onOpenPaths={() => setPathsOpen(true)}
+              shopUrl={showShop ? shopUrl : undefined}
+              shopPulse={showShop && song ? isShopHighlighted(song.songId) : false}
+            />
+          </div>
       )}
       </>}
       after={<>
         {/* v8 ignore start -- songId always truthy from route params */}
         {songId && <PathsModal visible={pathsOpen} songId={songId} onClose={() => setPathsOpen(false)} />}
         {/* v8 ignore stop */}
-        {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
       </>}
     >
       {phase === LoadPhase.ContentIn && (
@@ -426,7 +413,7 @@ function useSongDetailStyles(hasFab: boolean) {
       ...flexCenter,
       minHeight: CssValue.viewportFull,
       color: Colors.textSecondary,
-      backgroundColor: Colors.bgApp,
+      backgroundColor: Colors.backgroundApp,
       fontSize: Font.lg,
     } as CSSProperties,
     spinnerOverlay: {

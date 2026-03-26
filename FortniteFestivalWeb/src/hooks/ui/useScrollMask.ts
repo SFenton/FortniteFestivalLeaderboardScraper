@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
+import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 
 export interface ScrollMaskOptions {
   /** Fade zone size in pixels. Default: 40 */
@@ -8,10 +9,11 @@ export interface ScrollMaskOptions {
 const DEFAULT_SIZE = 40;
 
 /**
- * Applies a CSS `mask-image` on a container based on the browser's scroll
- * position relative to the container's bounds.
+ * Applies a CSS `mask-image` on a container based on the scroll container's
+ * scroll position relative to the container's bounds.
  *
- * Uses window scroll events (no per-element scroll container required).
+ * Uses the app's scroll container (via ScrollContainerContext) instead of
+ * window scroll events.
  * Fades content at whichever edges have more content above/below the viewport.
  */
 export function useScrollMask(
@@ -22,14 +24,17 @@ export function useScrollMask(
   const size = options.size ?? DEFAULT_SIZE;
   const rafId = useRef(0);
   const lastState = useRef(-1);
+  const scrollContainerRef = useScrollContainer();
 
   const update = useCallback(() => {
     const el = containerRef.current;
-    if (!el) return;
+    const scrollEl = scrollContainerRef.current;
+    if (!el || !scrollEl) return;
 
+    const scrollRect = scrollEl.getBoundingClientRect();
     const rect = el.getBoundingClientRect();
-    const atTop = rect.top >= 0;
-    const atBottom = rect.bottom <= window.innerHeight + 1;
+    const atTop = rect.top >= scrollRect.top;
+    const atBottom = rect.bottom <= scrollRect.bottom + 1;
 
     const state = (atTop && atBottom) ? 0 : atTop ? 1 : atBottom ? 2 : 3;
     if (state === lastState.current) return;
@@ -48,7 +53,7 @@ export function useScrollMask(
 
     el.style.maskImage = mask;
     el.style.webkitMaskImage = mask;
-  }, [size, containerRef]);
+  }, [size, containerRef, scrollContainerRef]);
 
   /** rAF-throttled wrapper — at most one update per animation frame. */
   const throttledUpdate = useCallback(() => {
@@ -62,11 +67,13 @@ export function useScrollMask(
   // Cancel pending rAF on unmount
   useEffect(() => () => { cancelAnimationFrame(rafId.current); }, []);
 
-  // Listen to window scroll
+  // Listen to scroll container
   useEffect(() => {
-    window.addEventListener('scroll', throttledUpdate, { passive: true });
-    return () => window.removeEventListener('scroll', throttledUpdate);
-  }, [throttledUpdate]);
+    const scrollEl = scrollContainerRef.current;
+    if (!scrollEl) return;
+    scrollEl.addEventListener('scroll', throttledUpdate, { passive: true });
+    return () => scrollEl.removeEventListener('scroll', throttledUpdate);
+  }, [throttledUpdate, scrollContainerRef]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { update(); }, [update, ...deps]);

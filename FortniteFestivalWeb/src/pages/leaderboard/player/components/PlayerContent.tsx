@@ -1,7 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useLocation, useNavigationType } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   computeOverallStats,
   groupByInstrument,
@@ -16,8 +16,8 @@ import { loadSongSettings, saveSongSettings } from '../../../../utils/songSettin
 import Page from '../../../Page';
 import PageHeader from '../../../../components/common/PageHeader';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
-import { useScrollRestore } from '../../../../hooks/ui/useScrollRestore';
 import { useMediaQuery } from '../../../../hooks/ui/useMediaQuery';
+import { useSettings, isInstrumentVisible } from '../../../../contexts/SettingsContext';
 import { IS_IOS, IS_ANDROID, IS_PWA } from '@festival/ui-utils';
 import { useTrackedPlayer } from '../../../../hooks/data/useTrackedPlayer';
 import { useScoreFilter } from '../../../../hooks/data/useScoreFilter';
@@ -56,9 +56,6 @@ export default function PlayerContent({
   const { settings } = useSettings();
   const location = useLocation();
   const navigate = useNavigate();
-  const navType = useNavigationType();
-  const scrollRef = useRef<HTMLDivElement>(null);
-  useScrollRestore(`statistics:${data.accountId}`, navType);
   const { player: trackedPlayer, setPlayer } = useTrackedPlayer();
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
   const { filterPlayerScores } = useScoreFilter();
@@ -212,7 +209,7 @@ export default function PlayerContent({
 
   return (
     <Page
-      scrollRef={scrollRef}
+      scrollRestoreKey={`statistics:${data.accountId}`}
       scrollDeps={fadeDeps}
       scrollStyle={pps.scrollArea}
       containerStyle={pps.container}

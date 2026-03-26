@@ -1,11 +1,10 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useParams, useLocation, useNavigate, useNavigationType, useSearchParams } from 'react-router-dom';
+import { useParams, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useSongLookups } from '../../hooks/data/useSongLookups';
-import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useStagger } from '../../hooks/ui/useStagger';
 import EmptyState from '../../components/common/EmptyState';
@@ -23,7 +22,7 @@ import RivalSongRow from './components/RivalSongRow';
 import { Routes } from '../../routes';
 import { useRivalsSharedStyles } from './useRivalsSharedStyles';
 import fx from '../../styles/effects.module.css';
-import Page, { usePageScrollRef } from '../Page';
+import Page from '../Page';
 
 let _cachedDetailSongs: RivalSongComparison[] = [];
 let _cachedDetailRivalName: string | null = null;
@@ -35,12 +34,10 @@ export default function RivalDetailPage() {
   const [searchParams] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const navType = useNavigationType();
   const { settings } = useSettings();
   const isMobile = useIsMobile();
   const { player } = useTrackedPlayer();
   const accountId = player?.accountId;
-  const scrollRef = usePageScrollRef();
 
   /* v8 ignore start -- state derivation with null-coalescing */
   // Get combo from navigation state (passed from RivalsPage) or derive from settings
@@ -60,8 +57,6 @@ export default function RivalDetailPage() {
   const [songs_, setSongs] = useState<RivalSongComparison[]>(hasCachedData ? _cachedDetailSongs : []);
   const [rivalName, setRivalName] = useState<string | null>(hasCachedData ? _cachedDetailRivalName : (rivalNameFromState ?? rivalNameFromUrl ?? null));
   const [loading, setLoading] = useState(!hasCachedData);
-
-  useScrollRestore(`rivalDetail:${cacheKey}`, navType);
   /* v8 ignore stop */
 
   const { albumArtMap, yearMap } = useSongLookups();
@@ -118,7 +113,7 @@ export default function RivalDetailPage() {
   /* v8 ignore stop */
   /* v8 ignore start -- JSX render tree */  return (
     <Page
-      scrollRef={scrollRef}
+      scrollRestoreKey={`rivalDetail:${cacheKey}`}
       scrollDeps={[phase]}
       containerStyle={styles.container}
       before={<>

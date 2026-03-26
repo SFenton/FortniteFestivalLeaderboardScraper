@@ -1,4 +1,5 @@
 import { useEffect, useCallback } from 'react';
+import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 
 /**
  * Module-level store keyed by `cacheKey`.
@@ -19,25 +20,29 @@ export function clearScrollCache(key?: string): void {
  * Saves scroll position on every scroll and restores it on mount when
  * the user navigated back (POP).
  *
- * Uses the browser's native scroll (window.scrollY) since the app shell
- * no longer has per-page scroll containers.
+ * Uses the app's scroll container element (via ScrollContainerContext)
+ * instead of the browser's native window scroll.
  *
  * @param cacheKey    Unique key for this page / route (e.g. 'songs', `songDetail:${id}`)
  * @param _navType    React Router navigation type (kept for API compat, not used)
- * @returns `saveScroll` — call from a scroll handler or attach to window
+ * @returns `saveScroll` — call from a scroll handler or attach to container
  */
 export function useScrollRestore(
   cacheKey: string,
   _navType: string,
 ): () => void {
+  const scrollContainerRef = useScrollContainer();
+
   // Restore scroll position on mount when revisiting a page.
   useEffect(() => {
     const saved = scrollStore.get(cacheKey);
     if (saved == null || saved <= 0) return;
+    const container = scrollContainerRef.current;
+    if (!container) return;
 
     const tryRestore = () => {
-      if (document.documentElement.scrollHeight >= saved) {
-        window.scrollTo(0, saved);
+      if (container.scrollHeight >= saved) {
+        container.scrollTo(0, saved);
       }
     };
     tryRestore();
@@ -45,17 +50,19 @@ export function useScrollRestore(
     return () => cancelAnimationFrame(raf);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- mount-only
 
-  // Persist scroll position on every call.
+  // Persist scroll position on every scroll.
   useEffect(() => {
-    const handler = () => { scrollStore.set(cacheKey, window.scrollY); };
-    window.addEventListener('scroll', handler, { passive: true });
-    return () => window.removeEventListener('scroll', handler);
-  }, [cacheKey]);
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const handler = () => { scrollStore.set(cacheKey, container.scrollTop); };
+    container.addEventListener('scroll', handler, { passive: true });
+    return () => container.removeEventListener('scroll', handler);
+  }, [cacheKey, scrollContainerRef]);
 
   // Return a manual save function for imperative use.
   const saveScroll = useCallback(() => {
-    scrollStore.set(cacheKey, window.scrollY);
-  }, [cacheKey]);
+    scrollStore.set(cacheKey, scrollContainerRef.current?.scrollTop ?? 0);
+  }, [cacheKey, scrollContainerRef]);
 
   return saveScroll;
 }

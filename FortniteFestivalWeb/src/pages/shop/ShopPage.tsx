@@ -8,8 +8,6 @@ import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useMediaQuery } from '../../hooks/ui/useMediaQuery';
-import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
-import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
 import { ActionPill } from '../../components/common/ActionPill';
 import { Size, QUERY_NARROW_GRID, Colors, Font, Weight, Gap, MaxWidth, Layout, Display, CssValue, flexColumn, padding } from '@festival/theme';
 import { staggerDelay as calcStagger, estimateVisibleCount } from '@festival/ui-utils';
@@ -20,7 +18,7 @@ import { loadSongSettings } from '../../utils/songSettings';
 import ShopCard from './components/ShopCard';
 import fx from '../../styles/effects.module.css';
 import type { CSSProperties } from 'react';
-import Page, { usePageScrollRef } from '../Page';
+import Page from '../Page';
 import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
 
@@ -40,9 +38,8 @@ export default function ShopPage() {
   const { settings } = useSettings();
   const isMobileChrome = useIsMobileChrome();
   const navType = useNavigationType();
-  const scrollRef = usePageScrollRef();
-  useScrollRestore('shop', navType);
-  const { resetRush } = useStaggerRush(scrollRef);
+  const staggerRushRef = useRef<(() => void) | undefined>(undefined);
+  const resetRush = useCallback(() => staggerRushRef.current?.(), []);
 
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(loadViewMode);
   const isNarrow = useMediaQuery(QUERY_NARROW_GRID);
@@ -128,7 +125,8 @@ export default function ShopPage() {
 
   return (
     <Page
-      scrollRef={scrollRef}
+      scrollRestoreKey="shop"
+      staggerRushRef={staggerRushRef}
       scrollDeps={[shopSongs]}
       containerStyle={shopStyles.contentArea}
       before={

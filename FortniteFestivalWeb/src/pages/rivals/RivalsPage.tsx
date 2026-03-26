@@ -1,10 +1,9 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useNavigationType } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
-import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useStagger } from '../../hooks/ui/useStagger';
 import EmptyState from '../../components/common/EmptyState';
@@ -24,7 +23,7 @@ import RivalRow from './components/RivalRow';
 import { Routes } from '../../routes';
 import fx from '../../styles/effects.module.css';
 import { useRivalsSharedStyles } from './useRivalsSharedStyles';
-import Page, { usePageScrollRef } from '../Page';
+import Page from '../Page';
 
 // Module-level data cache so back-navigation has instant data
 let _cachedInstrumentRivals: InstrumentRivals[] = [];
@@ -42,13 +41,10 @@ type InstrumentRivals = {
 export default function RivalsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const navType = useNavigationType();
   const { settings } = useSettings();
   const isMobile = useIsMobile();
   const { player } = useTrackedPlayer();
   const accountId = player?.accountId;
-  const scrollRef = usePageScrollRef();
-  useScrollRestore(`rivals:${accountId}`, navType);
 
   const activeInstruments = visibleInstruments(settings);
   const combo = useMemo(() => deriveComboFromSettings(settings), [settings]);
@@ -247,7 +243,7 @@ export default function RivalsPage() {
   /* v8 ignore start -- JSX render tree */
   return (
     <Page
-      scrollRef={scrollRef}
+      scrollRestoreKey={`rivals:${accountId}`}
       scrollDeps={[phase]}
       containerStyle={styles.container}
       before={<>

@@ -1,13 +1,14 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useParams, useNavigationType } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { IoSwapVerticalSharp } from 'react-icons/io5';
-import { useWindowVirtualizer } from '@tanstack/react-virtual';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useFestival } from '../../../contexts/FestivalContext';
 import { useTrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
 import { useFabSearch } from '../../../contexts/FabSearchContext';
 import { useModalState } from '../../../hooks/ui/useModalState';
+import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import { api } from '../../../api/client';
 import {
   type ServerInstrumentKey as InstrumentKey,
@@ -20,24 +21,17 @@ import type { PlayerScoreSortMode, PlayerScoreSortDraft } from './modals/PlayerS
 import { Gap, Size, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, Colors, Radius, Layout, MaxWidth, Font, Border, Overflow, Position, Display, Align, CssValue, CssProp, flexRow, flexColumn, flexCenter, frostedCard, padding, border, transition, SPINNER_FADE_MS } from '@festival/theme';
 import ArcSpinner from '../../../components/common/ArcSpinner';
 import { ActionPill } from '../../../components/common/ActionPill';
-import Page, { usePageScrollRef } from '../../Page';
+import Page from '../../Page';
 import { PageMessage } from '../../PageMessage';
 import { staggerDelay, estimateVisibleCount } from '@festival/ui-utils';
-import { useScrollMask } from '../../../hooks/ui/useScrollMask';
-import { useStaggerRush } from '../../../hooks/ui/useStaggerRush';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import { useScoreFilter } from '../../../hooks/data/useScoreFilter';
 import { useSortedScoreHistory } from '../../../hooks/data/useSortedScoreHistory';
 import { PlayerScoreSortMode as CoreSortMode } from '@festival/core';
 import { LoadPhase } from '@festival/core';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
-import { useHeaderCollapse } from '../../../hooks/ui/useHeaderCollapse';
-import { useScrollRestore } from '../../../hooks/ui/useScrollRestore';
 import { useLoadPhase } from '../../../hooks/data/useLoadPhase';
 import { IS_IOS, IS_ANDROID, IS_PWA } from '@festival/ui-utils';
-import { useRegisterFirstRun } from '../../../hooks/ui/useRegisterFirstRun';
-import { useFirstRun } from '../../../hooks/ui/useFirstRun';
-import FirstRunCarousel from '../../../components/firstRun/FirstRunCarousel';
 import { playerHistorySlides } from './firstRun';
 
 export default function PlayerHistoryPage() {
@@ -53,27 +47,21 @@ export default function PlayerHistoryPage() {
 
   const song = songs.find((s) => s.songId === songId);
   const instKey = instrument as InstrumentKey;
-  const navType = useNavigationType();
 
   const showAccuracy = useMediaQuery(QUERY_SHOW_ACCURACY);
   const showSeason = useMediaQuery(QUERY_SHOW_SEASON);
   const isMobile = !showAccuracy;
   const hasFab = useIsMobile();
 
-  // First-run carousel
   const historySlidesMemo = useMemo(() => playerHistorySlides(hasFab), [hasFab]);
-  useRegisterFirstRun('playerhistory', t('history.title'), historySlidesMemo);
-  const firstRun = useFirstRun('playerhistory', { hasPlayer: !!player });
+  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player }), [player]);
 
   const [history, setHistory] = useState<ScoreHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { filterHistory } = useScoreFilter();
-  const scrollRef = usePageScrollRef();
-  useScrollRestore(`history:${songId}:${instKey}`, navType);
-  const [headerCollapsed, updateHeaderCollapse] = useHeaderCollapse({ disabled: hasFab, forcedValue: hasFab });
+  const [headerCollapsed, setHeaderCollapsed] = useState(hasFab);
   const { phase: loadPhase } = useLoadPhase(!loading && !error);
-  useScrollMask(scrollRef, [loadPhase, history.length]);
 
   // Sort state
   const DEFAULT_SORT: PlayerScoreSortDraft = { sortMode: 'score', sortAscending: false };
@@ -106,7 +94,8 @@ export default function PlayerHistoryPage() {
   }, [fabSearch]);
   /* v8 ignore stop */
 
-  const { resetRush } = useStaggerRush(scrollRef);
+  const staggerRushRef = useRef<(() => void) | undefined>(undefined);
+  const resetRush = useCallback(() => staggerRushRef.current?.(), []);
 
   /* v8 ignore start — async data fetch with cancellation */
   useEffect(() => {
@@ -166,10 +155,12 @@ export default function PlayerHistoryPage() {
   const staggerDoneRef = useRef(false);
   const listParentRef = useRef<HTMLDivElement>(null);
   const maxStagger = useMemo(() => estimateVisibleCount(ROW_HEIGHT), [ROW_HEIGHT]);
-  const virtualizer = useWindowVirtualizer({
+  const scrollContainerRef = useScrollContainer();
+  const virtualizer = useVirtualizer({
     count: loadPhase === 'contentIn' ? sortedHistory.length : 0,
     estimateSize: () => ROW_HEIGHT + ROW_GAP,
     overscan: 10,
+    getScrollElement: () => scrollContainerRef.current,
     scrollMargin: listParentRef.current?.offsetTop ?? 0,
   });
   /* v8 ignore stop */
@@ -180,8 +171,11 @@ export default function PlayerHistoryPage() {
 
   return (
     <Page
-      scrollRef={scrollRef}
+      scrollRestoreKey={`history:${songId}:${instKey}`}
       scrollDeps={[loadPhase, history.length]}
+      staggerRushRef={staggerRushRef}
+      headerCollapse={{ disabled: hasFab, onCollapse: setHeaderCollapsed }}
+      firstRun={{ key: 'playerhistory', label: t('history.title'), slides: historySlidesMemo, gateContext: firstRunGateCtx }}
       before={
         <SongInfoHeader
           song={song}
@@ -211,7 +205,6 @@ export default function PlayerHistoryPage() {
           onReset={sortModal.reset}
           onApply={applySort}
         />
-        {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
       </>}
     >
 

@@ -121,9 +121,9 @@ function useStyles() {
         overflow: Overflow.hidden,
         background: CssValue.transparent,
         position: Position.sticky,
-        top: Layout.desktopNavHeight,
+        top: 0,
         alignSelf: Align.start,
-        height: `calc(100dvh - ${Layout.desktopNavHeight}px)`,
+        height: CssValue.full,
         zIndex: ZIndex.base,
       } as CSSProperties,
       nav: {

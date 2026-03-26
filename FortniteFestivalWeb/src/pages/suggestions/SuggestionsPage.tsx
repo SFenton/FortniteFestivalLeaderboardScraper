@@ -1,16 +1,12 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigationType } from 'react-router-dom';
 import { IoFunnel } from 'react-icons/io5';
 import { ActionPill } from '../../components/common/ActionPill';
 import InfiniteScroll from 'react-infinite-scroll-component';
 import { useFestival } from '../../contexts/FestivalContext';
 import { usePlayerData } from '../../contexts/PlayerDataContext';
 import { useSuggestions } from '../../hooks/data/useSuggestions';
-import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
-import { useFirstRun } from '../../hooks/ui/useFirstRun';
-import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
 import { suggestionsSlides } from './firstRun';
 import { serverSongToCore, buildScoresIndex } from '../../utils/suggestionAdapter';
 import SuggestionsFilterModal from './modals/SuggestionsFilterModal';
@@ -27,14 +23,13 @@ import {
 } from '@festival/theme';
 import { LoadPhase } from '@festival/core';
 import ArcSpinner from '../../components/common/ArcSpinner';
-import Page, { usePageScrollRef } from '../Page';
+import Page from '../Page';
+import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useScrollFade } from '../../hooks/ui/useScrollFade';
-import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
-import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import { useModalState } from '../../hooks/ui/useModalState';
 import FadeIn from '../../components/page/FadeIn';
@@ -57,13 +52,9 @@ let _suggestionsHasRendered = false;
 /* v8 ignore start — render orchestrator; business logic tested in suggestionsHelpers.ts (35 unit tests), component exercised by 42 integration tests */
 export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
   const { t } = useTranslation();
-  const navType = useNavigationType();
   const { settings: appSettings } = useSettings();
 
-  // First-run carousel
-  useRegisterFirstRun('suggestions', t('nav.suggestions'), suggestionsSlides);
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: true }), []);
-  const firstRun = useFirstRun('suggestions', firstRunGateCtx);
   const {
     state: { songs, currentSeason, isLoading },
   } = useFestival();
@@ -85,9 +76,8 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
 
   const albumArtMap = useMemo(() => buildAlbumArtMap(songs), [songs]);
 
-  const scrollRef = usePageScrollRef();
   const listRef = useRef<HTMLDivElement>(null);
-  useScrollRestore('suggestions', navType);
+  const scrollContainerRef = useScrollContainer();
 
   // Use server-provided season, fall back to highest season in player scores
   const effectiveSeason = useMemo(
@@ -205,7 +195,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
   
   useEffect(() => {
     if (!effectiveHasMore) return;
-    const el = scrollRef.current;
+    const el = scrollContainerRef.current;
     if (!el) return;
     const id = setTimeout(() => {
       if (el.scrollHeight <= el.clientHeight) {
@@ -230,9 +220,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
   const { phase } = useLoadPhase(dataReady, { skipAnimation: skipAnim });
 
   // Per-card scroll fade
-  const updateCardFade = useScrollFade(scrollRef, listRef, [phase, visibleCategories]);
-
-  useStaggerRush(scrollRef);
+  const updateCardFade = useScrollFade(scrollContainerRef, listRef, [phase, visibleCategories]);
   
 
   // Track how many category cards have already been revealed so that newly
@@ -286,22 +274,12 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
 
   return (
     <Page
-      scrollRef={scrollRef}
+      scrollRestoreKey="suggestions"
       scrollDeps={[phase, visibleCategories]}
+      firstRun={{ key: 'suggestions', label: t('nav.suggestions'), slides: suggestionsSlides, gateContext: firstRunGateCtx }}
+      loadPhase={phase}
       containerStyle={{ paddingTop: isMobile ? Gap.sm : Gap.md }}
       before={<>
-        {/* Spinner overlay -- visible during loading & spinnerOut */}
-        {phase !== LoadPhase.ContentIn && (
-          <div
-            style={{ ...suggestionsStyles.spinnerOverlay,
-              ...(phase === LoadPhase.SpinnerOut
-                ? { animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards` }
-                : {}),
-            }}
-          >
-            <ArcSpinner />
-          </div>
-        )}
         {!isMobileChrome && (
           <PageHeader
             actions={
@@ -328,7 +306,6 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
           onReset={resetFilter}
           onApply={applyFilter}
         />
-        {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
       </>}
     >
         {visibleCategories.length === 0 && (categories.length > 0 || !effectiveHasMore) ? (

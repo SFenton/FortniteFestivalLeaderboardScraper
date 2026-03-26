@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode, type CSSProperties } from 'react';
-import { Colors, Font, Weight, Gap, MaxWidth, Layout, ZIndex, BoxSizing, Position, CssValue, padding, flexBetween, flexRow } from '@festival/theme';
+import { Colors, Font, Weight, Gap, MaxWidth, Layout, BoxSizing, CssValue, padding, flexBetween, flexRow } from '@festival/theme';
 
 export interface PageHeaderProps {
   /** Page title text. Optional — omit for actions-only headers. */
@@ -8,8 +8,6 @@ export interface PageHeaderProps {
   subtitle?: string;
   /** Optional action elements (pills, buttons) rendered on the right. */
   actions?: ReactNode;
-  /** When true (default), the header uses position: sticky. Set false to opt out. */
-  sticky?: boolean;
   /** Extra inline styles (e.g. for stagger animation). */
   style?: CSSProperties;
   /** Animation end handler. */
@@ -21,20 +19,18 @@ export interface PageHeaderProps {
 /**
  * Standardized page header with consistent alignment.
  *
- * Applies `max-width / margin: 0 auto / padding: 0 paddingHorizontal`
- * so the title left-edge aligns with `<Page>` content and the sidebar's navigation items
- * on wide desktop.
+ * Renders in the `before` slot of `<Page>` — sits above the scroll area
+ * so content clips at its bottom edge. No sticky positioning needed.
  */
 export default function PageHeader({
   title,
   subtitle,
   actions,
-  sticky = true,
   style,
   onAnimationEnd,
   className,
 }: PageHeaderProps) {
-  const s = useStyles(!!sticky);
+  const s = useStyles();
 
   return (
     <div className={className} style={{ ...s.header, ...style }} onAnimationEnd={onAnimationEnd}>
@@ -55,7 +51,7 @@ export default function PageHeader({
   );
 }
 
-function useStyles(sticky: boolean) {
+function useStyles() {
   return useMemo(() => ({
     header: {
       maxWidth: MaxWidth.card,
@@ -63,7 +59,6 @@ function useStyles(sticky: boolean) {
       width: CssValue.full,
       padding: padding(Gap.md, Layout.paddingHorizontal),
       boxSizing: BoxSizing.borderBox,
-      ...(sticky ? { position: Position.sticky, top: Layout.desktopNavHeight, zIndex: ZIndex.dropdown } : {}),
     } as CSSProperties,
     row: {
       ...flexBetween,
@@ -89,5 +84,5 @@ function useStyles(sticky: boolean) {
       gap: Gap.md,
       flexShrink: 0,
     } as CSSProperties,
-  }), [sticky]);
+  }), []);
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useScrollFade } from '../../../src/hooks/ui/useScrollFade';
+import { createScrollContainerWrapper } from '../../Helpers/scrollContainerWrapper';
 
 function makeListEl(childCount: number) {
   const list = document.createElement('div');
@@ -16,52 +17,58 @@ describe('useScrollFade', () => {
   afterEach(() => { vi.restoreAllMocks(); });
 
   it('returns an update function', () => {
+    const { wrapper } = createScrollContainerWrapper();
     const scrollRef = { current: null };
     const listRef = { current: null };
-    const { result } = renderHook(() => useScrollFade(scrollRef as any, listRef as any));
+    const { result } = renderHook(() => useScrollFade(scrollRef as any, listRef as any), { wrapper });
     expect(typeof result.current).toBe('function');
   });
 
   it('tolerates null refs', () => {
+    const { wrapper } = createScrollContainerWrapper();
     const scrollRef = { current: null };
     const listRef = { current: null };
-    const { result } = renderHook(() => useScrollFade(scrollRef as any, listRef as any));
+    const { result } = renderHook(() => useScrollFade(scrollRef as any, listRef as any), { wrapper });
     expect(() => result.current()).not.toThrow();
   });
 
   it('sets up IntersectionObserver on list children', () => {
+    const { wrapper } = createScrollContainerWrapper();
     const listEl = makeListEl(3);
     const scrollRef = { current: document.createElement('div') };
     const listRef = { current: listEl };
-    renderHook(() => useScrollFade(scrollRef as any, listRef as any));
+    renderHook(() => useScrollFade(scrollRef as any, listRef as any), { wrapper });
     // The stub IntersectionObserver from setup.ts should be called with 3 children
     // Just verify the hook didn't throw and returned a function
   });
 
-  it('registers window scroll listener', () => {
-    const addSpy = vi.spyOn(window, 'addEventListener');
+  it('registers scroll container listener', () => {
+    const { wrapper, mockEl } = createScrollContainerWrapper();
+    const addSpy = vi.spyOn(mockEl, 'addEventListener');
     const listEl = makeListEl(2);
     const scrollRef = { current: document.createElement('div') };
     const listRef = { current: listEl };
-    renderHook(() => useScrollFade(scrollRef as any, listRef as any));
+    renderHook(() => useScrollFade(scrollRef as any, listRef as any), { wrapper });
     expect(addSpy).toHaveBeenCalledWith('scroll', expect.any(Function), { passive: true });
   });
 
   it('cleans up scroll listener on unmount', () => {
-    const removeSpy = vi.spyOn(window, 'removeEventListener');
+    const { wrapper, mockEl } = createScrollContainerWrapper();
+    const removeSpy = vi.spyOn(mockEl, 'removeEventListener');
     const listEl = makeListEl(2);
     const scrollRef = { current: document.createElement('div') };
     const listRef = { current: listEl };
-    const { unmount } = renderHook(() => useScrollFade(scrollRef as any, listRef as any));
+    const { unmount } = renderHook(() => useScrollFade(scrollRef as any, listRef as any), { wrapper });
     unmount();
     expect(removeSpy).toHaveBeenCalledWith('scroll', expect.any(Function));
   });
 
   it('respects custom distance option', () => {
+    const { wrapper } = createScrollContainerWrapper();
     const listEl = makeListEl(3);
     const scrollRef = { current: document.createElement('div') };
     const listRef = { current: listEl };
     // Should not throw with custom distance
-    renderHook(() => useScrollFade(scrollRef as any, listRef as any, [], { distance: 20 }));
+    renderHook(() => useScrollFade(scrollRef as any, listRef as any, [], { distance: 20 }), { wrapper });
   });
 });

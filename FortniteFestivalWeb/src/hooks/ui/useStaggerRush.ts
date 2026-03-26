@@ -1,11 +1,12 @@
 import { FADE_DURATION } from '@festival/theme';
 import { useCallback, useEffect, useRef } from 'react';
+import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 
 /**
  * On first user-initiated scroll, collapse all pending stagger animation delays
  * to 0ms so remaining items fade in simultaneously.
  *
- * Listens to window scroll events (browser-native scroll model).
+ * Listens to the app's scroll container (via ScrollContainerContext).
  * Elements already animating or finished are unaffected.
  *
  * @param containerRef  Ref to the container whose children have stagger animations.
@@ -13,6 +14,7 @@ import { useCallback, useEffect, useRef } from 'react';
  */
 export function useStaggerRush(containerRef: React.RefObject<HTMLElement | null>) {
   const rushedRef = useRef(false);
+  const scrollContainerRef = useScrollContainer();
 
   const rushOnScroll = useCallback(() => {
     if (rushedRef.current) return;
@@ -32,11 +34,13 @@ export function useStaggerRush(containerRef: React.RefObject<HTMLElement | null>
     if (rushed) rushedRef.current = true;
   }, [containerRef]);
 
-  // Automatically listen to window scroll
+  // Automatically listen to scroll container
   useEffect(() => {
-    window.addEventListener('scroll', rushOnScroll, { passive: true });
-    return () => window.removeEventListener('scroll', rushOnScroll);
-  }, [rushOnScroll]);
+    const scrollEl = scrollContainerRef.current;
+    if (!scrollEl) return;
+    scrollEl.addEventListener('scroll', rushOnScroll, { passive: true });
+    return () => scrollEl.removeEventListener('scroll', rushOnScroll);
+  }, [rushOnScroll, scrollContainerRef]);
 
   const resetRush = useCallback(() => { rushedRef.current = false; }, []);
 

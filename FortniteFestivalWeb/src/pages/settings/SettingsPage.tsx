@@ -1,7 +1,6 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigationType } from 'react-router-dom';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { ToggleRow } from '../../components/common/ToggleRow';
@@ -21,10 +20,9 @@ import { suggestionsSlides } from '../suggestions/firstRun';
 import { songSlides } from '../songs/firstRun';
 import { songInfoSlides } from '../songinfo/firstRun';
 import { playerHistorySlides } from '../leaderboard/player/firstRun';
-import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
 import { useStagger } from '../../hooks/ui/useStagger';
 import { api } from '../../api/client';
-import Page, { usePageScrollRef } from '../Page';
+import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
 
 import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
@@ -163,12 +161,9 @@ function LeewaySlider({ value, onChange }: { value: number; onChange: (v: number
 
 export default function SettingsPage() {
   const { t } = useTranslation();
-  const navType = useNavigationType();
   const { settings, updateSettings, resetSettings } = useSettings();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
-  const scrollRef = usePageScrollRef();
-  useScrollRestore('settings', navType);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Register first-run slides so replay is always available from Settings
@@ -236,7 +231,7 @@ export default function SettingsPage() {
 
   return (
     <Page
-      scrollRef={scrollRef}
+      scrollRestoreKey="settings"
       containerStyle={st.container}
       before={<PageHeader title={t('settings.title')} />}
       after={<>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, type RefObject } from 'react';
+import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 
 export interface ScrollFadeOptions {
   /** How many pixels the fade zone extends inward from each scroll edge. Default: 36 */
@@ -20,15 +21,18 @@ const DEFAULT_STOPS: ReadonlyArray<readonly [number, number]> = [
 /* eslint-enable no-magic-numbers */
 
 /**
- * Applies per-child mask-image fading at the viewport edges using
+ * Applies per-child mask-image fading at the scroll container edges using
  * IntersectionObserver for efficient tracking. Only children near the
  * edges get `getBoundingClientRect` calls — typically 0–2 at any time.
+ *
+ * Uses the app's scroll container (via ScrollContainerContext) instead of
+ * the browser viewport.
  *
  * @param scrollRef  Ref to the scrollable container (or viewport parent)
  * @param listRef    Ref to the direct parent of the items to fade
  * @param deps       Extra dependency array — when any value changes, observers reconnect
  * @param options    Fade distance and curve configuration
- * @returns          `update` handler (called automatically on window scroll)
+ * @returns          `update` handler (called automatically on scroll)
  */
 export function useScrollFade(
   scrollRef: RefObject<HTMLElement | null>,
@@ -39,32 +43,35 @@ export function useScrollFade(
   const distance = options.distance ?? DEFAULT_DISTANCE;
   const stops = options.stops ?? DEFAULT_STOPS;
   const rafId = useRef(0);
+  const scrollContainerRef = useScrollContainer();
 
   // Track which children are near viewport edges
   const edgeChildrenRef = useRef(new Set<HTMLElement>());
 
   const applyMasks = useCallback(() => {
     const listEl = listRef.current;
-    if (!listEl) return;
+    const scrollEl = scrollContainerRef.current;
+    if (!listEl || !scrollEl) return;
 
-    const vh = window.innerHeight;
-    const atTop = window.scrollY <= 0;
-    const atBottom = window.scrollY + vh >= document.documentElement.scrollHeight - 1;
-    const topFadeDistance = atTop ? 0 : Math.min(window.scrollY, distance);
+    const scrollRect = scrollEl.getBoundingClientRect();
+    const vh = scrollRect.height;
+    const atTop = scrollEl.scrollTop <= 0;
+    const atBottom = scrollEl.scrollTop + vh >= scrollEl.scrollHeight - 1;
+    const topFadeDistance = atTop ? 0 : Math.min(scrollEl.scrollTop, distance);
 
     // Only process children that IntersectionObserver flagged as near edges
     for (const child of edgeChildrenRef.current) {
       const rect = child.getBoundingClientRect();
 
-      const needsTop = !atTop && rect.top < topFadeDistance;
-      const needsBottom = !atBottom && rect.bottom > vh - distance;
+      const needsTop = !atTop && rect.top < scrollRect.top + topFadeDistance;
+      const needsBottom = !atBottom && rect.bottom > scrollRect.bottom - distance;
 
       if (!needsTop && !needsBottom) {
         child.style.maskImage = '';
         child.style.webkitMaskImage = '';
       } else if (needsTop && needsBottom) {
-        const clipTop = -rect.top;
-        const clipBottom = vh - rect.top;
+        const clipTop = scrollRect.top - rect.top;
+        const clipBottom = scrollRect.bottom - rect.top;
         const topStops = stops.map(([t, a]) =>
           `rgba(0,0,0,${a}) ${clipTop + t * topFadeDistance}px`
         );
@@ -75,7 +82,7 @@ export function useScrollFade(
         child.style.maskImage = mask;
         child.style.webkitMaskImage = mask;
       } else if (needsTop) {
-        const clipTop = -rect.top;
+        const clipTop = scrollRect.top - rect.top;
         const s = stops.map(([t, a]) =>
           `rgba(0,0,0,${a}) ${clipTop + t * topFadeDistance}px`
         ).join(', ');
@@ -83,7 +90,7 @@ export function useScrollFade(
         child.style.maskImage = mask;
         child.style.webkitMaskImage = mask;
       } else {
-        const clipBottom = vh - rect.top;
+        const clipBottom = scrollRect.bottom - rect.top;
         const s = stops.slice().reverse().map(([t, a]) =>
           `rgba(0,0,0,${a}) ${clipBottom - t * distance}px`
         ).join(', ');
@@ -103,7 +110,7 @@ export function useScrollFade(
         }
       }
     }
-  }, [distance, stops, listRef]);
+  }, [distance, stops, listRef, scrollContainerRef]);
 
   const throttledUpdate = useCallback(() => {
     if (rafId.current) return;
@@ -113,9 +120,10 @@ export function useScrollFade(
     });
   }, [applyMasks]);
 
-  // Set up IntersectionObserver to track children near viewport edges
+  // Set up IntersectionObserver to track children near scroll container edges
   useEffect(() => {
     const listEl = listRef.current;
+    const scrollEl = scrollContainerRef.current;
     if (!listEl) return;
 
     // Observe with margin that extends the "near edge" zone
@@ -137,6 +145,7 @@ export function useScrollFade(
         throttledUpdate();
       },
       {
+        root: scrollEl ?? undefined,
         // rootMargin extends the observation zone so items entering the fade distance are caught early
         rootMargin: `${distance}px 0px ${distance}px 0px`,
         threshold: [0, 0.1, 0.9, 1],
@@ -149,13 +158,15 @@ export function useScrollFade(
 
     return () => observer.disconnect();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [distance, throttledUpdate, ...deps]);
+  }, [distance, throttledUpdate, scrollContainerRef, ...deps]);
 
-  // Listen to window scroll for mask updates on tracked elements
+  // Listen to scroll container for mask updates on tracked elements
   useEffect(() => {
-    window.addEventListener('scroll', throttledUpdate, { passive: true });
-    return () => window.removeEventListener('scroll', throttledUpdate);
-  }, [throttledUpdate]);
+    const scrollEl = scrollContainerRef.current;
+    if (!scrollEl) return;
+    scrollEl.addEventListener('scroll', throttledUpdate, { passive: true });
+    return () => scrollEl.removeEventListener('scroll', throttledUpdate);
+  }, [throttledUpdate, scrollContainerRef]);
 
   useEffect(() => () => { cancelAnimationFrame(rafId.current); }, []);
 

@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { SuggestionGenerator } from '@festival/core/suggestions/suggestionGenerator';
 import type { SuggestionCategory } from '@festival/core/suggestions/types';
 import type { Song as CoreSong, LeaderboardData } from '@festival/core/models';
+import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 
 const BATCH_SIZE = 6;
 const INITIAL_BATCH = 10;
@@ -33,13 +34,14 @@ export function useSuggestions(
 
   // Restore scroll position after mount — read from _cache directly
   // so it picks up the latest value even after StrictMode double-render
+  const scrollContainerRef = useScrollContainer();
   useEffect(() => {
     const scrollY = _cache?.accountId === accountId ? _cache.scrollY : 0;
     /* v8 ignore start — scroll position restore */
     if (scrollY > 0) {
       /* v8 ignore start */
-      const t1 = setTimeout(() => window.scrollTo(0, scrollY), 0);
-      const t2 = setTimeout(() => window.scrollTo(0, scrollY), 100);
+      const t1 = setTimeout(() => scrollContainerRef.current?.scrollTo(0, scrollY), 0);
+      const t2 = setTimeout(() => scrollContainerRef.current?.scrollTo(0, scrollY), 100);
       return () => { clearTimeout(t1); clearTimeout(t2); };
       /* v8 ignore stop */
     }
@@ -48,15 +50,17 @@ export function useSuggestions(
 
   // Continuously save scroll position so browser back works
   useEffect(() => {
+    const scrollEl = scrollContainerRef.current;
+    if (!scrollEl) return;
     /* v8 ignore start — scroll position tracking */
     const onScroll = () => {
-      if (_cache?.accountId === accountId && window.scrollY > 0) {
-        _cache.scrollY = window.scrollY;
+      if (_cache?.accountId === accountId && scrollEl.scrollTop > 0) {
+        _cache.scrollY = scrollEl.scrollTop;
       /* v8 ignore stop */
       }
     };
-    window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
+    scrollEl.addEventListener('scroll', onScroll, { passive: true });
+    return () => scrollEl.removeEventListener('scroll', onScroll);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

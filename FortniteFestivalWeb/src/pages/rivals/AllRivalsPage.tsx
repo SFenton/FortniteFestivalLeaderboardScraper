@@ -1,10 +1,9 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useSearchParams, useNavigationType } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
-import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useStagger } from '../../hooks/ui/useStagger';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
@@ -18,7 +17,7 @@ import RivalRow from './components/RivalRow';
 import { Routes } from '../../routes';
 import { deriveComboFromSettings } from './helpers/comboUtils';
 import { SPINNER_FADE_MS, Layout } from '@festival/theme';
-import Page, { usePageScrollRef } from '../Page';
+import Page from '../Page';
 import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
 
@@ -38,13 +37,10 @@ export default function AllRivalsPage() {
   const [searchParams] = useSearchParams();
   const category = searchParams.get('category') ?? 'common';
   const navigate = useNavigate();
-  const navType = useNavigationType();
   const { settings } = useSettings();
   const isMobile = useIsMobile();
   const { player } = useTrackedPlayer();
   const accountId = player?.accountId;
-  const scrollRef = usePageScrollRef();
-  useScrollRestore(`rivals-all:${accountId}:${category}`, navType);
 
   const activeInstruments = visibleInstruments(settings);
   const combo = useMemo(() => deriveComboFromSettings(settings), [settings]);
@@ -217,7 +213,7 @@ export default function AllRivalsPage() {
 
   return (
     <Page
-      scrollRef={scrollRef}
+      scrollRestoreKey={`rivals-all:${accountId}:${category}`}
       scrollDeps={[phase]}
       containerClassName={undefined}
       before={<>

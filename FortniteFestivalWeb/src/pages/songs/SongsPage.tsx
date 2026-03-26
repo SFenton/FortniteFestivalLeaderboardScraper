@@ -2,7 +2,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigationType } from 'react-router-dom';
-import { useWindowVirtualizer } from '@tanstack/react-virtual';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { staggerDelay, estimateVisibleCount } from '@festival/ui-utils';
 import { useFestival } from '../../contexts/FestivalContext';
 import { usePlayerData } from '../../contexts/PlayerDataContext';
@@ -10,21 +10,18 @@ import { useSettings } from '../../contexts/SettingsContext';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useSearchQuery } from '../../contexts/SearchQueryContext';
-import { useScrollMask } from '../../hooks/ui/useScrollMask';
-import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
-import { useScrollRestore, clearScrollCache } from '../../hooks/ui/useScrollRestore';
+import { clearScrollCache } from '../../hooks/ui/useScrollRestore';
 import { useFilteredSongs } from '../../hooks/data/useFilteredSongs';
 import { useShopState } from '../../hooks/data/useShopState';
 import { useShop } from '../../contexts/ShopContext';
 import { useModalState } from '../../hooks/ui/useModalState';
-import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
-import { useFirstRun } from '../../hooks/ui/useFirstRun';
-import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
 import { songSlides } from './firstRun';
 import { type PlayerScore, type ServerInstrumentKey as InstrumentKey, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
 import { LoadPhase } from '@festival/core';
-import { Gap, Colors, Font, Layout, MaxWidth, Position, ZIndex, Display, Align, Justify, BoxSizing, CssValue, Overflow, flexCenter, flexColumn, padding } from '@festival/theme';
+import { Gap, Colors, Font, Layout, MaxWidth, BoxSizing, CssValue, flexCenter, padding } from '@festival/theme';
 import { LoadGate } from '../../components/page/LoadGate';
+import Page from '../Page';
+import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import SyncBanner from '../../components/page/SyncBanner';
 import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
@@ -56,20 +53,16 @@ export default function SongsPage() {
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
 
-  // First-run carousel — registration is early; gating deferred until playerData is available
   const songsSlidesMemo = useMemo(() => songSlides(isMobileChrome), [isMobileChrome]);
-  useRegisterFirstRun('songs', t('nav.songs'), songsSlidesMemo);
 
   const fabSearch = useFabSearch();
   const searchQuery = useSearchQuery();
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const staggerRushRef = useRef<(() => void) | undefined>(undefined);
+  const resetRush = useCallback(() => staggerRushRef.current?.(), []);
   const navType = useNavigationType();
   const location = useLocation();
   const forceRestagger = !!(location.state as Record<string, unknown> | null)?.restagger;
   const isBackNav = navType === 'POP';
-
-  // Unified scroll position save/restore
-  useScrollRestore('songs', navType);
 
   const [search, setSearchLocal] = useState(searchQuery.query);
   const setSearch = useCallback((q: string) => {
@@ -163,7 +156,6 @@ export default function SongsPage() {
   /* v8 ignore stop */
   const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress } = usePlayerData();
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!playerData, shopHighlightEnabled: !appSettings.hideItemShop && !appSettings.disableShopHighlighting }), [playerData, appSettings.hideItemShop, appSettings.disableShopHighlighting]);
-  const firstRun = useFirstRun('songs', firstRunGateCtx);
 
   // Build lookup: songId â†’ PlayerScore for the selected instrument
   /* v8 ignore start — scoreMap: instrument filter loop */
@@ -338,29 +330,28 @@ export default function SongsPage() {
   }, [loadPhase, shouldStagger, maxVisibleSongs]);
   /* v8 ignore stop */
 
+  const scrollContainerRef = useScrollContainer();
+
   // Scroll to top when content transitions in after a settings change (not on initial mount or back nav)
   /* v8 ignore start — scroll reset on settings change */
   useEffect(() => {
-    if (loadPhase === LoadPhase.ContentIn && isSettingsChangeRef.current && scrollRef.current) {
+    if (loadPhase === LoadPhase.ContentIn && isSettingsChangeRef.current) {
       isSettingsChangeRef.current = false;
-      scrollRef.current.scrollTop = 0;
+      scrollContainerRef.current?.scrollTo(0, 0);
       clearScrollCache('songs');
     }
-  }, [loadPhase]);
+  }, [loadPhase, scrollContainerRef]);
   /* v8 ignore stop */
 
-  // Container-level scroll fade + stagger rush auto-listen to window scroll
-  useScrollMask(scrollRef, [loadPhase, filtered]);
-  const { resetRush } = useStaggerRush(scrollRef);
-
-  // â”€â”€ Virtual list â”€â”€
+  // ── Virtual list ──
   const ROW_HEIGHT = isMobile ? 122 : 68; // row + 2px gap
   const listParentRef = useRef<HTMLDivElement>(null);
-  const virtualizer = useWindowVirtualizer({
+  const virtualizer = useVirtualizer({
     count: loadPhase === LoadPhase.ContentIn ? filtered.length : 0,
     estimateSize: () => ROW_HEIGHT,
     overscan: 8,
     gap: 2,
+    getScrollElement: () => scrollContainerRef.current,
     scrollMargin: listParentRef.current?.offsetTop ?? 0,
   });
 
@@ -371,31 +362,75 @@ export default function SongsPage() {
   }
 
   return (
-    <div>
-      <LoadGate phase={loadPhase} overlay>
-      {!isMobileChrome && (
-        <PageHeader
-          title={
-            <div style={{ visibility: (toolbarShownRef.current || loadPhase === LoadPhase.ContentIn) ? 'visible' : 'hidden' } as CSSProperties}>
-              <SongsToolbar
-                search={search}
-                onSearchChange={setSearch}
-                instrument={settings.instrument}
-                sortActive={sortActive}
-                filtersActive={filtersActive}
-                hasSongs={songs.length > 0 && !isLoading}
-                hasPlayer={hasPlayer}
-                filteredCount={filtered.length}
-                totalCount={songs.length}
-                onOpenSort={openSort}
-                onOpenFilter={openFilter}
-              />
-            </div>
-          }
+    <Page
+      scrollRestoreKey="songs"
+      scrollDeps={[loadPhase, filtered]}
+      staggerRushRef={staggerRushRef}
+      firstRun={{ key: 'songs', label: t('nav.songs'), slides: songsSlidesMemo, gateContext: firstRunGateCtx }}
+      containerStyle={{ paddingTop: isMobile ? Gap.sm : Gap.md }}
+      before={<>
+        <LoadGate phase={loadPhase} overlay>
+        {!isMobileChrome && (
+          <PageHeader
+            title={
+              <div style={{ visibility: (toolbarShownRef.current || loadPhase === LoadPhase.ContentIn) ? 'visible' : 'hidden' } as CSSProperties}>
+                <SongsToolbar
+                  search={search}
+                  onSearchChange={setSearch}
+                  instrument={settings.instrument}
+                  sortActive={sortActive}
+                  filtersActive={filtersActive}
+                  hasSongs={songs.length > 0 && !isLoading}
+                  hasPlayer={hasPlayer}
+                  filteredCount={filtered.length}
+                  totalCount={songs.length}
+                  onOpenSort={openSort}
+                  onOpenFilter={openFilter}
+                />
+              </div>
+            }
+          />
+        )}
+        </LoadGate>
+      </>}
+      after={<>
+        <SortModal
+          visible={sortModal.visible}
+          draft={sortModal.draft}
+          savedDraft={{
+            sortMode: settings.sortMode,
+            sortAscending: settings.sortAscending,
+            metadataOrder: settings.metadataOrder,
+            instrumentOrder: settings.instrumentOrder,
+          }}
+          instrumentFilter={instrument}
+          hasPlayer={!!playerData}
+          hideItemShop={appSettings.hideItemShop}
+          metadataVisibility={{
+            score: appSettings.metadataShowScore,
+            percentage: appSettings.metadataShowPercentage,
+            percentile: appSettings.metadataShowPercentile,
+            seasonachieved: appSettings.metadataShowSeasonAchieved,
+            intensity: appSettings.metadataShowDifficulty,
+            stars: appSettings.metadataShowStars,
+          }}
+          onChange={sortModal.setDraft}
+          onCancel={sortModal.close}
+          onReset={resetSort}
+          onApply={applySort}
         />
-      )}
-      <div ref={scrollRef}>
-        <div style={{ ...songsStyles.container, paddingTop: isMobile ? Gap.sm : Gap.md }}>
+        <FilterModal
+          visible={filterModal.visible}
+          draft={filterModal.draft}
+          savedDraft={{ ...settings.filters, instrumentFilter: settings.instrument }}
+          availableSeasons={availableSeasons}
+          onChange={filterModal.setDraft}
+          onCancel={filterModal.close}
+          onReset={resetFilter}
+          onApply={applyFilter}
+        />
+      </>}
+    >
         {isSyncing && playerData && (
           <SyncBanner
             displayName={playerData.displayName}
@@ -454,49 +489,8 @@ export default function SongsPage() {
             })}
           </div>
         )}
-        </div>
-      </div>
-
-      {isMobileChrome && <div style={songsStyles.fabSpacer} />}
-      </LoadGate>
-
-      <SortModal
-        visible={sortModal.visible}
-        draft={sortModal.draft}
-        savedDraft={{
-          sortMode: settings.sortMode,
-          sortAscending: settings.sortAscending,
-          metadataOrder: settings.metadataOrder,
-          instrumentOrder: settings.instrumentOrder,
-        }}
-        instrumentFilter={instrument}
-        hasPlayer={!!playerData}
-        hideItemShop={appSettings.hideItemShop}
-        metadataVisibility={{
-          score: appSettings.metadataShowScore,
-          percentage: appSettings.metadataShowPercentage,
-          percentile: appSettings.metadataShowPercentile,
-          seasonachieved: appSettings.metadataShowSeasonAchieved,
-          intensity: appSettings.metadataShowDifficulty,
-          stars: appSettings.metadataShowStars,
-        }}
-        onChange={sortModal.setDraft}
-        onCancel={sortModal.close}
-        onReset={resetSort}
-        onApply={applySort}
-      />
-      <FilterModal
-        visible={filterModal.visible}
-        draft={filterModal.draft}
-        savedDraft={{ ...settings.filters, instrumentFilter: settings.instrument }}
-        availableSeasons={availableSeasons}
-        onChange={filterModal.setDraft}
-        onCancel={filterModal.close}
-        onReset={resetFilter}
-        onApply={applyFilter}
-      />
-      {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
-    </div>
+        {isMobileChrome && <div style={songsStyles.fabSpacer} />}
+    </Page>
   );
 }
 
@@ -516,7 +510,7 @@ function useSongsStyles() {
       ...flexCenter,
       minHeight: CssValue.viewportFull,
       color: Colors.textSecondary,
-      backgroundColor: Colors.bgApp,
+      backgroundColor: Colors.backgroundApp,
       fontSize: Font.lg,
     } as CSSProperties,
     fabSpacer: {

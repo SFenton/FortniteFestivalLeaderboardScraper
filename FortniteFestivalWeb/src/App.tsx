@@ -52,6 +52,7 @@ import { queryClient } from './api/queryClient';
 import { Routes as AppRoutes, RoutePatterns } from './routes';
 import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
 import { useShopState } from './hooks/data/useShopState';
+import { ScrollContainerProvider, useScrollContainer } from './contexts/ScrollContainerContext';
 
 export default function App() {
   return (
@@ -63,7 +64,9 @@ export default function App() {
         <FabSearchProvider>
           <SearchQueryProvider>
             <HashRouter>
+              <ScrollContainerProvider>
               <AppShell />
+              </ScrollContainerProvider>
             </HashRouter>
           </SearchQueryProvider>
         </FabSearchProvider>
@@ -262,6 +265,7 @@ function AppShell() {
       {/* v8 ignore stop */}
 
       {/* v8 ignore start — wideDesktop layout tested via PinnedSidebar.test */}
+      <div style={appStyles.scrollContainer}>
       <div style={wideDesktop ? appStyles.contentRow : appStyles.contentColumn}>
       {wideDesktop && (
         <PinnedSidebar
@@ -318,6 +322,8 @@ function AppShell() {
       {/* v8 ignore start — wideDesktop spacer */}
       {wideDesktop && <div style={appStyles.rightSpacer} />}
       {/* v8 ignore stop */}
+      </div>
+      </div>
 
       {/* v8 ignore start — mobile FAB configuration tested via MobileFabController + FloatingActionButton tests */}
       {isMobile && <BottomNav player={player} activeTab={activeTab} onTabClick={handleTabClick} />}
@@ -458,7 +464,6 @@ function AppShell() {
       />
       {showChangelog && <ChangelogModal onDismiss={dismissChangelog} />}
       {/* v8 ignore stop */}
-      </div>
     </div>
     </PlayerDataProvider>
   );
@@ -467,6 +472,7 @@ function AppShell() {
 /* v8 ignore start — scroll restoration utility */
 function ScrollToTop() {
   const { pathname } = useLocation();
+  const scrollContainerRef = useScrollContainer();
   useEffect(() => {
     if ('scrollRestoration' in history) {
       history.scrollRestoration = 'manual';
@@ -476,8 +482,8 @@ function ScrollToTop() {
     if (pathname === AppRoutes.suggestions || pathname === AppRoutes.songs) return;
     // Song detail pages manage their own scroll restoration
     if (RoutePatterns.songDetail.test(pathname)) return;
-    window.scrollTo(0, 0);
-  }, [pathname]);
+    scrollContainerRef.current?.scrollTo(0, 0);
+  }, [pathname, scrollContainerRef]);
   return null;
 }
 /* v8 ignore stop */

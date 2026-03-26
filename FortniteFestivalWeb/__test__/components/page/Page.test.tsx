@@ -1,11 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { useRef } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import Page from '../../../src/pages/Page';
 
 function PageWrapper(props: Partial<React.ComponentProps<typeof Page>> & { children?: React.ReactNode }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  return <Page scrollRef={scrollRef} {...props}>{props.children ?? <div>Page content</div>}</Page>;
+  return <MemoryRouter><Page {...props}>{props.children ?? <div>Page content</div>}</Page></MemoryRouter>;
 }
 
 describe('Page', () => {
