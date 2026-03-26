@@ -7,7 +7,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { IoBagHandle, IoChevronForward } from 'react-icons/io5';
 import { formatPercentileBucket } from '@festival/core';
 import type { ServerSong as Song, PlayerScore, SongDifficulty, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
-import { Colors, Gap, Radius, Font, Weight, Size, frostedCard, flexRow, flexColumn, flexCenter, truncate, WhiteSpace, Overflow, TextAlign, Cursor, CssValue, Align, Justify, Display, Position, Layout, BorderStyle, padding } from '@festival/theme';
+import { Colors, Gap, Radius, Font, Weight, InstrumentSize, frostedCard, flexRow, flexColumn, flexCenter, truncate, WhiteSpace, Overflow, TextAlign, Cursor, CssValue, Align, Justify, Display, Position, Layout, BorderStyle, padding } from '@festival/theme';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../../../components/display/InstrumentIcons';
 import AccuracyDisplay from '../../../components/songs/metadata/AccuracyDisplay';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
@@ -330,7 +330,7 @@ function useStyles() {
     detailStrip: { ...flexRow, gap: Gap.xl, flexShrink: 0, marginLeft: CssValue.auto } as CSSProperties,
     metadataWrap: { display: Display.flex, flexWrap: 'wrap', alignItems: Align.center, justifyContent: Justify.end, gap: Gap.lg } as CSSProperties,
     instrumentStatusRow: { display: Display.flex, gap: Gap.sm, alignItems: Align.center, flexShrink: 0 } as CSSProperties,
-    instrumentStatusChip: { width: Size.instrumentBtn, height: Size.instrumentBtn, borderRadius: CssValue.circle, borderWidth: Gap.xs, borderStyle: BorderStyle.solid, ...flexCenter } as CSSProperties,
+    instrumentStatusChip: { width: InstrumentSize.chip, height: InstrumentSize.chip, borderRadius: CssValue.circle, borderWidth: Gap.xs, borderStyle: BorderStyle.solid, ...flexCenter } as CSSProperties,
     rowText: { ...flexColumn, gap: Gap.xs, minWidth: 0, flex: 1 } as CSSProperties,
     rowTitle: { fontSize: Font.md, fontWeight: Weight.semibold, ...truncate } as CSSProperties,
     rowArtist: { fontSize: Font.sm, color: Colors.textSubtle, ...truncate } as CSSProperties,
