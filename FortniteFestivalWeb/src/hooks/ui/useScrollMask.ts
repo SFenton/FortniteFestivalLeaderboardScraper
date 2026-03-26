@@ -19,7 +19,7 @@ export function useScrollMask(
 ): () => void {
   const size = options.size ?? DEFAULT_SIZE;
   const rafId = useRef(0);
-  const lastState = useRef(-1);
+  const hasMask = useRef(false);
   const scrollContainerRef = useScrollContainer();
 
   const update = useCallback(() => {
@@ -32,21 +32,29 @@ export function useScrollMask(
     const atTop = rect.top >= scrollRect.top;
     const atBottom = rect.bottom <= scrollRect.bottom + 1;
 
-    const state = (atTop && atBottom) ? 0 : atTop ? 1 : atBottom ? 2 : 3;
-    if (state === lastState.current) return;
-    lastState.current = state;
-
-    let mask: string;
-    if (state === 0) {
-      mask = '';
-    } else if (state === 1) {
-      mask = `linear-gradient(to bottom, black calc(100% - ${size}px), transparent)`;
-    } else if (state === 2) {
-      mask = `linear-gradient(to bottom, transparent, black ${size}px)`;
-    } else {
-      mask = `linear-gradient(to bottom, transparent, black ${size}px, black calc(100% - ${size}px), transparent)`;
+    if (atTop && atBottom) {
+      if (hasMask.current) {
+        hasMask.current = false;
+        el.style.maskImage = '';
+        el.style.webkitMaskImage = '';
+      }
+      return;
     }
 
+    // Positions within element coordinate space where viewport edges sit
+    const topEdge = scrollRect.top - rect.top;
+    const bottomEdge = scrollRect.bottom - rect.top;
+
+    let mask: string;
+    if (atTop) {
+      mask = `linear-gradient(to bottom, black ${bottomEdge - size}px, transparent ${bottomEdge}px)`;
+    } else if (atBottom) {
+      mask = `linear-gradient(to bottom, transparent ${topEdge}px, black ${topEdge + size}px)`;
+    } else {
+      mask = `linear-gradient(to bottom, transparent ${topEdge}px, black ${topEdge + size}px, black ${bottomEdge - size}px, transparent ${bottomEdge}px)`;
+    }
+
+    hasMask.current = true;
     el.style.maskImage = mask;
     el.style.webkitMaskImage = mask;
   }, [size, containerRef, scrollContainerRef]);
