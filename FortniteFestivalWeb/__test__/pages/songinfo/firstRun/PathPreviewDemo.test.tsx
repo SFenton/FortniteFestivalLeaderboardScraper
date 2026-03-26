@@ -129,8 +129,8 @@ describe('PathPreviewDemo', () => {
 
     const bassBtn = screen.getByTitle('Bass');
     await act(async () => { fireEvent.click(bassBtn); });
-    // Button should now be active
-    expect(bassBtn.className).toContain('Active');
+    // Button should now be active (inline style sets backgroundColor)
+    expect(bassBtn.style.backgroundColor).toBeTruthy();
   });
 
   it('changes difficulty on button click', async () => {
@@ -160,7 +160,7 @@ describe('PathPreviewDemo', () => {
       await vi.advanceTimersByTimeAsync(2000);
     });
 
-    expect(bassBtn.className).toContain('Active');
+    expect(bassBtn.style.backgroundColor).toBeTruthy();
   });
 
   it('renders with zero slide height', async () => {

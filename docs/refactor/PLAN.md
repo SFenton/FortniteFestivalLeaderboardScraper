@@ -1413,11 +1413,11 @@ Update `.vscode/mcp.json`:
 | Metric | Plan | Actual |
 |---|---|---|
 | CSS modules at start | 96 | 96 |
-| CSS modules deleted | 96 | 92 (fully deleted) |
-| CSS modules remaining | 0 | 4 (consolidated minimal files in `src/styles/`) |
-| Reason for remaining 4 | — | CSS-only features: `::after`, `@keyframes`, `@media`, `@container`, `:hover`, `backdrop-filter`, `mask-image`, `::placeholder` |
-| CSS lines eliminated | ~6,500 | ~6,200 (~95%) |
-| CSS lines remaining | 0 | ~300 (across 4 files — irreducible minimum) |
+| CSS modules deleted | 96 | 93 (fully deleted) |
+| CSS modules remaining | 0 | 3 (consolidated minimal files in `src/styles/`) |
+| Reason for remaining 3 | — | CSS-only features: `::after`, `@keyframes`, `@media`, `@container`, `:hover`, `backdrop-filter`, `mask-image`, `::placeholder` |
+| CSS lines eliminated | ~6,500 | ~6,400 (~98%) |
+| CSS lines remaining | 0 | ~230 (across 3 files — irreducible minimum) |
 | Theme constants added | — | 100+ (Layout, Animation, CssEnum, Shadow, etc.) |
 | Theme helpers added | — | `border()`, `padding()`, `margin()`, `transition()`, `transitions()`, `scale()`, `translateY()`, `scaleTranslateY()` |
 | Theme factories added | — | `frostedCard`, `modalOverlay`, `modalCard`, `btnPrimary`, `btnDanger`, `purpleGlass`, `flexColumn`, `flexRow`, `flexCenter`, `flexBetween`, `truncate`, `absoluteFill`, `fixedFill`, `centerVertical` |
@@ -1427,12 +1427,11 @@ Update `.vscode/mcp.json`:
 | Shared style exports created | — | `modalStyles.ts`, `playerPageStyles.ts`, `songRowStyles.ts`, `filterStyles.ts`, `sidebarStyles.ts`, `appStyles.ts`, `useRivalsSharedStyles.ts` |
 | Tests passing | — | 2,274 / 2,274 (172 test files) |
 
-### Final CSS Module Inventory (4 files)
+### Final CSS Module Inventory (3 files)
 
 ```
 src/styles/
   animations.module.css      — @keyframes + ::after/::before animation pseudo-elements
-  instrumentSelector.module.css — InstrumentSelector className API (external component contract)
   rivals.module.css          — Rival gradient ::after overlays + @container responsive queries
   effects.module.css         — backdrop-filter, mask-image, ::placeholder, :hover, @media grids
 ```
@@ -1606,23 +1605,23 @@ After migration:
 
 | Metric | Count |
 |---|---|
-| CSS modules fully deleted | 92 |
-| CSS modules consolidated to `src/styles/` | 4 (minimal, CSS-only features) |
-| Dead CSS files deleted | shared.module.css, songRow.module.css, 90 component-level .module.css files |
+| CSS modules fully deleted | 93 |
+| CSS modules consolidated to `src/styles/` | 3 (minimal, CSS-only features) |
+| Dead CSS files deleted | shared.module.css, PathsModal.module.css, instrumentSelector.module.css, songRow.module.css, 90 component-level .module.css files |
 | Shared style exports created | 7 (.ts files replacing CSS imports) |
 | Theme package files added/modified | 6 (cssEnums.ts, cssHelpers.ts, factories.ts, frostedStyles.ts, spacing.ts, animation.ts) |
 | Theme constants added | 100+ |
 | Translation keys added | 20+ |
-| Test assertions updated | 50+ (class name → style property/DOM structure queries) |
+| Test assertions updated | 52+ (class name → style property/DOM structure queries) |
 | Global CSS remaining | 3 (index.css, keyframes.css, theme.css — ~120 lines total) |
-| Net CSS reduction | ~95% of all CSS lines |
+| Net CSS reduction | ~98% of all CSS lines |
 
 **Verification:**
-- Zero `.module.css` files remain in `src/`
+- Only 3 `.module.css` files remain in `src/styles/` (irreducible: `::after`, `@keyframes`, `@media`, `@container`, `backdrop-filter`, `mask-image`)
 - All styling flows through `useStyles()` or inline `style={}` backed by theme constants
 - `@festival/theme` has single-responsibility modules, each ≤ 80 lines
 - React Native can import any theme module without web-specific dependencies
-- ESLint warns on any `.module.css` import
+- InstrumentSelector accepts `styles` prop (inline overrides) as preferred alternative to `classNames`
 
 ---
 

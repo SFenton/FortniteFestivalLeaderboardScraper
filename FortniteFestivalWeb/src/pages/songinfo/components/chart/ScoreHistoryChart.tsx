@@ -17,8 +17,7 @@ import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, type ServerInstrumentKey as 
 import { CardPhase, ACCURACY_SCALE } from '@festival/core';
 import { InstrumentSelector } from '../../../../components/common/InstrumentSelector';
 import { LeaderboardEntry } from '../../../leaderboard/global/components/LeaderboardEntry';
-import { Colors, Font, Gap, Size, Layout, Radius, Weight, CHART_ANIM_DURATION, CHART_ANIM_SETTLE, frostedCard, padding, border, transition } from '@festival/theme';
-import s from '../../../../styles/instrumentSelector.module.css';
+import { Colors, Font, Gap, Size, Layout, Radius, Weight, CHART_ANIM_DURATION, CHART_ANIM_SETTLE, frostedCard, padding, border, transition, flexCenter, Cursor, Position, Overflow, Opacity, Display, Align, Justify, CssValue } from '@festival/theme';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { useChartData, type ChartPoint } from '../../../../hooks/chart/useChartData';
 import { useChartDimensions } from '../../../../hooks/chart/useChartDimensions';
@@ -40,43 +39,32 @@ const X_AXIS_ANGLE = -35;
 
 /* ── Inline style constants (migrated from CSS module) ── */
 const FAST_TRANSITION = 'all 0.15s ease';
-const circleBtn: React.CSSProperties = {
-  background: 'none', border: border(1, Colors.borderPrimary), borderRadius: '50%',
-  width: Size.lg, height: Size.lg, padding: 0, cursor: 'pointer',
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-  color: Colors.textSecondary, transition: FAST_TRANSITION,
-};
-const st = {
-  iconRowWrap: { width: '100%' } as React.CSSProperties,
-  chartContainer: {
-    ...frostedCard, borderRadius: Radius.lg, padding: padding(Gap.sm, Gap.xl, Gap.xl),
-    display: 'flex', flexDirection: 'column' as const, alignItems: 'center',
-  } as React.CSSProperties,
-  placeholder: { color: Colors.textMuted, fontSize: Font.md, fontStyle: 'italic', textAlign: 'center' as const, padding: padding(Gap.section, 0), width: '100%' } as React.CSSProperties,
-  legend: { display: 'flex', justifyContent: 'center', gap: Gap.xl, fontSize: Font.md, color: Colors.textPrimary, paddingTop: 36 } as React.CSSProperties,
-  legendItem: { display: 'inline-flex', alignItems: 'center', gap: Gap.sm } as React.CSSProperties,
-  legendGradient: { display: 'inline-block', width: Size.xs, height: 12, borderRadius: 2, background: 'linear-gradient(to right, rgb(220,40,40), rgb(46,204,113))' } as React.CSSProperties,
-  legendGold: { display: 'inline-block', width: Size.xs, height: 12, borderRadius: 2, backgroundColor: Colors.gold } as React.CSSProperties,
-  chartHeader: { textAlign: 'center' as const, marginBottom: Gap.md } as React.CSSProperties,
-  chartTitle: { color: Colors.textPrimary, fontSize: Font.title, fontWeight: Weight.bold } as React.CSSProperties,
-  chartSubtitle: { color: Colors.textMuted, fontSize: Font.lg, marginTop: Gap.xs } as React.CSSProperties,
-  scoreCard: { display: 'flex', alignItems: 'center', gap: Gap.xl, height: Size.xl, fontSize: Font.md, color: 'inherit', width: '100%', boxSizing: 'border-box' as const } as React.CSSProperties,
-  scoreListCard: {
-    ...frostedCard, display: 'flex', alignItems: 'center', gap: Gap.xl,
-    padding: padding(0, Gap.xl), height: Size.xl, borderRadius: Radius.md,
-    fontSize: Font.md, color: 'inherit', transition: transition('border-color', 150),
-  } as React.CSSProperties,
-  chartPagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: Gap.md, paddingTop: Gap.xl, paddingBottom: Gap.md } as React.CSSProperties,
-  chartPageButton: { ...circleBtn } as React.CSSProperties,
-  chartPageButtonDisabled: { ...circleBtn, opacity: 0.3, cursor: 'default' } as React.CSSProperties,
-  viewAllButton: {
-    ...frostedCard, display: 'flex', alignItems: 'center', justifyContent: 'center',
-    width: '100%', height: Size.xl, marginTop: Gap.sm, borderRadius: Radius.md,
-    color: Colors.textPrimary, fontSize: Font.md, fontWeight: Weight.semibold,
-    cursor: 'pointer', transition: transition('background-color', 150),
-  } as React.CSSProperties,
-} as const;
+const selectorStyles = (() => {
+  const circleBtn: React.CSSProperties = {
+    background: CssValue.none, border: border(1, Colors.borderPrimary), borderRadius: CssValue.circle,
+    width: Size.iconLg, height: Size.iconLg, padding: 0, cursor: Cursor.pointer,
+    ...flexCenter, color: Colors.textSecondary, transition: FAST_TRANSITION,
+  };
+  const selectorIconBtn: React.CSSProperties = {
+    background: CssValue.none, border: CssValue.none, borderRadius: CssValue.circle,
+    width: Layout.demoInstrumentBtn, height: Layout.demoInstrumentBtn,
+    padding: 0, cursor: Cursor.pointer, transition: FAST_TRANSITION,
+    ...flexCenter, opacity: Opacity.disabled,
+    position: Position.relative, overflow: Overflow.hidden,
+  };
+  return {
+    row: { display: Display.flex, justifyContent: Justify.center, alignItems: Align.center, gap: Gap.lg, width: CssValue.full } as React.CSSProperties,
+    button: selectorIconBtn,
+    buttonActive: { ...selectorIconBtn, backgroundColor: Colors.statusGreen, opacity: 1 } as React.CSSProperties,
+    arrowButton: { ...circleBtn } as React.CSSProperties,
+  };
+})();
 
+const chartCircleBtn: React.CSSProperties = {
+  background: CssValue.none, border: border(1, Colors.borderPrimary), borderRadius: CssValue.circle,
+  width: Size.iconLg, height: Size.iconLg, padding: 0, cursor: Cursor.pointer,
+  ...flexCenter, color: Colors.textSecondary, transition: FAST_TRANSITION,
+};
 type ScoreHistoryChartProps = {
   songId: string;
   accountId: string;
@@ -101,6 +89,7 @@ export default memo(function ScoreHistoryChart({
   const navigate = useNavigate();
   const { t } = useTranslation();
   const isMobile = useIsMobile();
+  const st = useChartStyles();
   const [selected, setSelected] = useState<InstrumentKey>(defaultInstrument ?? DEFAULT_INSTRUMENT);
 
   const { songHistory: _songHistory, chartData, loading, instrumentCounts } = useChartData(accountId, songId, selected, historyProp);
@@ -176,12 +165,7 @@ export default memo(function ScoreHistoryChart({
     [availableInstruments],
   );
 
-  const selectorClassNames = useMemo(() => ({
-    row: s.iconRow,
-    button: s.iconButton,
-    buttonActive: s.iconButtonActive,
-    arrowButton: s.arrowButton,
-  }), []);
+  const selectorStyleOverrides = useMemo(() => selectorStyles, []);
 
   const compactLabels = useMemo(() => ({
     previous: t('aria.previousInstrument'),
@@ -228,7 +212,7 @@ export default memo(function ScoreHistoryChart({
               required
               compact={compact}
               compactLabels={compactLabels}
-              classNames={selectorClassNames}
+              styles={selectorStyleOverrides}
             />
           </div>
         )}
@@ -368,8 +352,8 @@ export default memo(function ScoreHistoryChart({
                   const path = `M${x + rad},${y + h} Q${x},${y + h} ${x},${y + h - rad} L${x},${y + rad} Q${x},${y} ${x + rad},${y} L${x + w - rad},${y} Q${x + w},${y} ${x + w},${y + rad} L${x + w},${y + h - rad} Q${x + w},${y + h} ${x + w - rad},${y + h} Z`;
                   return (
                     <path
-                      className={s.chartBar}
                       d={path}
+                      style={{ transition: transition('stroke', 150) }}
                       fill={fill}
                       fillOpacity={fillOp}
                       stroke={isSelected ? Colors.accentPurple : 'transparent'}
@@ -534,4 +518,37 @@ export default memo(function ScoreHistoryChart({
     </div>
   );
 });
+
+function useChartStyles() {
+  return useMemo(() => ({
+    iconRowWrap: { width: '100%' } as React.CSSProperties,
+    chartContainer: {
+      ...frostedCard, borderRadius: Radius.lg, padding: padding(Gap.sm, Gap.xl, Gap.xl),
+      display: 'flex', flexDirection: 'column' as const, alignItems: 'center',
+    } as React.CSSProperties,
+    placeholder: { color: Colors.textMuted, fontSize: Font.md, fontStyle: 'italic', textAlign: 'center' as const, padding: padding(Gap.section, 0), width: '100%' } as React.CSSProperties,
+    legend: { display: 'flex', justifyContent: 'center', gap: Gap.xl, fontSize: Font.md, color: Colors.textPrimary, paddingTop: 36 } as React.CSSProperties,
+    legendItem: { display: 'inline-flex', alignItems: 'center', gap: Gap.sm } as React.CSSProperties,
+    legendGradient: { display: 'inline-block', width: Size.iconXs, height: 12, borderRadius: 2, background: 'linear-gradient(to right, rgb(220,40,40), rgb(46,204,113))' } as React.CSSProperties,
+    legendGold: { display: 'inline-block', width: Size.iconXs, height: 12, borderRadius: 2, backgroundColor: Colors.gold } as React.CSSProperties,
+    chartHeader: { textAlign: 'center' as const, marginBottom: Gap.md } as React.CSSProperties,
+    chartTitle: { color: Colors.textPrimary, fontSize: Font.title, fontWeight: Weight.bold } as React.CSSProperties,
+    chartSubtitle: { color: Colors.textMuted, fontSize: Font.lg, marginTop: Gap.xs } as React.CSSProperties,
+    scoreCard: { display: 'flex', alignItems: 'center', gap: Gap.xl, height: Size.iconXl, fontSize: Font.md, color: 'inherit', width: '100%', boxSizing: 'border-box' as const } as React.CSSProperties,
+    scoreListCard: {
+      ...frostedCard, display: 'flex', alignItems: 'center', gap: Gap.xl,
+      padding: padding(0, Gap.xl), height: Size.iconXl, borderRadius: Radius.md,
+      fontSize: Font.md, color: 'inherit', transition: transition('border-color', 150),
+    } as React.CSSProperties,
+    chartPagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: Gap.md, paddingTop: Gap.xl, paddingBottom: Gap.md } as React.CSSProperties,
+    chartPageButton: { ...chartCircleBtn } as React.CSSProperties,
+    chartPageButtonDisabled: { ...chartCircleBtn, opacity: 0.3, cursor: 'default' } as React.CSSProperties,
+    viewAllButton: {
+      ...frostedCard, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      width: '100%', height: Size.iconXl, marginTop: Gap.sm, borderRadius: Radius.md,
+      color: Colors.textPrimary, fontSize: Font.md, fontWeight: Weight.semibold,
+      cursor: 'pointer', transition: transition('background-color', 150),
+    } as React.CSSProperties,
+  }), []);
+}
 

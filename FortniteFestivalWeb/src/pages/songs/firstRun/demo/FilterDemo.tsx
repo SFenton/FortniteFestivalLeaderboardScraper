@@ -13,7 +13,7 @@ import {
   Display, Align, Justify, Position, Cursor, Overflow, CssValue, CssProp,
   flexCenter, border, transition, IconSize, TRANSITION_MS, NAV_TRANSITION_MS,
 } from '@festival/theme';
-import css from '../../../../styles/instrumentSelector.module.css';
+
 
 /** Shared demo styles used by FilterDemo, SortDemo, InstrumentFilterDemo, SortControlsDemo. */
 export function useDemoStyles() {
@@ -151,12 +151,12 @@ export default function FilterDemo() {
     return () => ro.disconnect();
   }, [instruments.length]);
 
-  const selectorClassNames = useMemo(() => ({
-    row: css.iconRow,
-    button: css.iconButton,
-    buttonActive: css.iconButtonActive,
-    arrowButton: css.arrowButton,
-  }), []);
+  const selectorStyleOverrides = useMemo(() => ({
+    row: s.iconRow,
+    button: s.iconButton,
+    buttonActive: s.iconButtonActive,
+    arrowButton: s.arrowButton,
+  }), [s]);
 
   const [maxToggles, setMaxToggles] = useState(4);
   const [showHeader, setShowHeader] = useState(true);
@@ -190,7 +190,7 @@ export default function FilterDemo() {
             selected={instrument}
             onSelect={handleSelectInstrument}
             compact={compact}
-            classNames={selectorClassNames}
+            styles={selectorStyleOverrides}
           />
         </div>
       </FadeIn>

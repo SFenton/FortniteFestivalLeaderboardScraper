@@ -3,7 +3,7 @@
  * Replaces songRow.module.css — import and spread into style props.
  */
 import type { CSSProperties } from 'react';
-import { frostedCard, flexRow, flexColumn, Gap, Radius } from '@festival/theme';
+import { frostedCard, flexRow, flexColumn, flexCenter, Gap, Radius, Size } from '@festival/theme';
 
 /** Desktop row: horizontal flex with frosted card surface. */
 export const songRow: CSSProperties = {
@@ -59,5 +59,16 @@ export const instrumentStatusRow: CSSProperties = {
   display: 'flex',
   gap: Gap.sm,
   alignItems: 'center',
+  flexShrink: 0,
+};
+
+/** Single instrument status chip (round icon with bg/border color). */
+export const instrumentStatusChip: CSSProperties = {
+  ...flexCenter,
+  width: Size.instrumentBtn,
+  height: Size.instrumentBtn,
+  borderRadius: '50%',
+  borderWidth: 2,
+  borderStyle: 'solid',
   flexShrink: 0,
 };

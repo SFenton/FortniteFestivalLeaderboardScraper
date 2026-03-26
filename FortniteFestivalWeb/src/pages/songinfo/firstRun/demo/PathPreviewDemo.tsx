@@ -8,10 +8,10 @@ import { Layout, Gap, Radius, Weight, Display, Align, Justify, Cursor, CssValue,
 import { useFestival } from '../../../../contexts/FestivalContext';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { InstrumentSelector, type InstrumentSelectorItem } from '../../../../components/common/InstrumentSelector';
+import { useDemoStyles } from '../../../songs/firstRun/demo/FilterDemo';
 import ArcSpinner, { SpinnerSize } from '../../../../components/common/ArcSpinner';
 import FadeIn from '../../../../components/page/FadeIn';
 import anim from '../../../../styles/animations.module.css';
-import inst from '../../../../styles/instrumentSelector.module.css';
 import fx from '../../../../styles/effects.module.css';
 
 const FADE_MS = TRANSITION_MS;
@@ -122,12 +122,13 @@ export default function PathPreviewDemo() {
     () => INSTRUMENTS.map((key) => ({ key })),
     [],
   );
-  const selectorClassNames = useMemo(() => ({
-    row: inst.iconRow,
-    button: inst.iconButton,
-    buttonActive: inst.iconButtonActive,
-    arrowButton: inst.arrowButton,
-  }), []);
+  const demoSty = useDemoStyles();
+  const selectorStyleOverrides = useMemo(() => ({
+    row: demoSty.iconRow,
+    button: demoSty.iconButton,
+    buttonActive: demoSty.iconButtonActive,
+    arrowButton: demoSty.arrowButton,
+  }), [demoSty]);
 
   const s = usePathStyles(spinnerVisible, imageVisible);
 
@@ -169,7 +170,7 @@ export default function PathPreviewDemo() {
             onSelect={(key) => { /* v8 ignore next -- guard for null key from InstrumentSelector */ if (key) setSelectedInst(key); }}
             required
             compact={compact}
-            classNames={selectorClassNames}
+            styles={selectorStyleOverrides}
           />
         </FadeIn>
       )}

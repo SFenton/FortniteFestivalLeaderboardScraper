@@ -15,7 +15,10 @@ import MiniStars from '../metadata/MiniStars';
 import DifficultyBars from '../metadata/DifficultyBars';
 import ScorePill from '../metadata/ScorePill';
 import type { SongSortMode } from '../../../utils/songSettings';
-import s from './SongRow.module.css';
+import {
+  songRow, songRowMobile, mobileTopRow, scoreMeta, detailStrip,
+  metadataWrap, instrumentStatusRow, instrumentStatusChip,
+} from '../../../styles/songRowStyles';
 
 const INSTRUMENT_DIFFICULTY_KEY: Record<string, keyof SongDifficulty> = {
   Solo_Guitar: 'guitar',
@@ -77,7 +80,7 @@ type MetadataEntry = { key: string; el: React.ReactNode };
 function MetadataBottomRow({ entries }: { entries: MetadataEntry[] }) {
   if (entries.length === 0) return null;
   return (
-    <div className={s.metadataWrap}>
+    <div style={metadataWrap}>
       {entries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}
     </div>
   );
@@ -187,9 +190,9 @@ export const SongRow = memo(function SongRow({ song,
   const songInfo = <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} />;
 
   const chipRow = instrumentChips && instrumentChips.length > 0 ? (
-    <div className={s.instrumentStatusRow}>
+    <div style={instrumentStatusRow}>
       {instrumentChips.map(c => (
-        <div key={c.key} className={s.instrumentStatusChip} style={{ backgroundColor: c.fill, borderColor: c.stroke }}>
+        <div key={c.key} style={{ ...instrumentStatusChip, backgroundColor: c.fill, borderColor: c.stroke }}>
           <InstrumentIcon instrument={c.key} size={24} />
         </div>
       ))}
@@ -201,10 +204,10 @@ export const SongRow = memo(function SongRow({ song,
     const scoreEntry = primaryKey ? entries.find(e => e.key === primaryKey) : null;
     const bottomEntries = primaryKey ? entries.filter(e => e.key !== primaryKey) : entries;
     return (
-      <Link ref={linkRef} to={`/songs/${song.songId}${instrumentFilter != null ? `?instrument=${encodeURIComponent(instrument)}` : ''}`} state={{ backTo: location.pathname }} className={s.rowMobile} style={animStyle} onAnimationEnd={handleAnimEnd}>
-        <div className={s.mobileTopRow}>
+      <Link ref={linkRef} to={`/songs/${song.songId}${instrumentFilter != null ? `?instrument=${encodeURIComponent(instrument)}` : ''}`} state={{ backTo: location.pathname }} style={{ ...songRowMobile, ...animStyle }} onAnimationEnd={handleAnimEnd}>
+        <div style={mobileTopRow}>
           {songInfo}
-          {scoreEntry && <div className={s.detailStrip}>{scoreEntry.el}</div>}
+          {scoreEntry && <div style={detailStrip}>{scoreEntry.el}</div>}
         </div>
         {bottomEntries.length > 0 && <MetadataBottomRow entries={bottomEntries} />}
       </Link>
@@ -213,13 +216,13 @@ export const SongRow = memo(function SongRow({ song,
 
   if (isMobile && chipRow) {
     return (
-      <Link ref={linkRef} to={`/songs/${song.songId}`} state={{ backTo: location.pathname }} className={s.rowMobile} style={animStyle} onAnimationEnd={handleAnimEnd}>
-        <div className={s.mobileTopRow}>
+      <Link ref={linkRef} to={`/songs/${song.songId}`} state={{ backTo: location.pathname }} style={{ ...songRowMobile, ...animStyle }} onAnimationEnd={handleAnimEnd}>
+        <div style={mobileTopRow}>
           {songInfo}
         </div>
-        <div className={s.instrumentStatusRow} style={{ justifyContent: 'center' }}>
+        <div style={{ ...instrumentStatusRow, justifyContent: 'center' }}>
           {instrumentChips!.map(c => (
-            <div key={c.key} className={s.instrumentStatusChip} style={{ backgroundColor: c.fill, borderColor: c.stroke }}>
+            <div key={c.key} style={{ ...instrumentStatusChip, backgroundColor: c.fill, borderColor: c.stroke }}>
               <InstrumentIcon instrument={c.key} size={24} />
             </div>
           ))}
@@ -229,11 +232,11 @@ export const SongRow = memo(function SongRow({ song,
   }
 
   return (
-    <Link ref={linkRef} to={`/songs/${song.songId}${instrumentFilter != null ? `?instrument=${encodeURIComponent(instrument)}` : ''}`} state={{ backTo: location.pathname }} className={s.row} style={animStyle} onAnimationEnd={handleAnimEnd}>
+    <Link ref={linkRef} to={`/songs/${song.songId}${instrumentFilter != null ? `?instrument=${encodeURIComponent(instrument)}` : ''}`} state={{ backTo: location.pathname }} style={{ ...songRow, ...animStyle }} onAnimationEnd={handleAnimEnd}>
       {songInfo}
       {chipRow}
       {entries.length > 0 && (
-        <div className={s.scoreMeta}>
+        <div style={scoreMeta}>
           {entries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}
         </div>
       )}

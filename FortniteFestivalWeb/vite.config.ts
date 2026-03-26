@@ -42,7 +42,6 @@ export default defineConfig(({ mode }) => {
           'src/vite-env.d.ts',
           'src/main.tsx',
           'src/stubs/**',
-          'src/components/songs/rows/**',
           'src/utils/platform.ts',
           'src/components/sort/reorderTypes.ts',
           'src/pages/player/helpers/playerPageTypes.ts',

@@ -4,7 +4,7 @@
  * Shows a row of instrument circle buttons; clicking one expands children below it.
  * Used in FilterModal, SuggestionsFilterModal, PathsModal, and ScoreHistoryChart.
  */
-import { useCallback } from 'react';
+import { useCallback, type CSSProperties } from 'react';
 import { Size } from '@festival/theme';
 import { SERVER_INSTRUMENT_LABELS, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { InstrumentIcon } from '../display/InstrumentIcons';
@@ -22,6 +22,14 @@ export interface InstrumentSelectorClassNames {
   arrowButton?: string;
 }
 
+/** Inline style overrides — preferred over classNames for new code. */
+export interface InstrumentSelectorStyleOverrides {
+  row?: CSSProperties;
+  button?: CSSProperties;
+  buttonActive?: CSSProperties;
+  arrowButton?: CSSProperties;
+}
+
 export interface InstrumentSelectorProps {
   instruments: InstrumentSelectorItem[];
   selected: ServerInstrumentKey | null;
@@ -32,21 +40,30 @@ export interface InstrumentSelectorProps {
   compact?: boolean;
   /** Accessible labels for compact arrow buttons. */
   compactLabels?: { previous?: string; next?: string };
-  /** Override CSS class names for custom styling. */
+  /** @deprecated Prefer `styles` for new code. Override CSS class names for custom styling. */
   classNames?: InstrumentSelectorClassNames;
+  /** Inline style overrides. Takes precedence over classNames. */
+  styles?: InstrumentSelectorStyleOverrides;
   children?: React.ReactNode;
 }
 
 export function InstrumentSelector({
   instruments, selected, onSelect, required, compact,
-  compactLabels, classNames, children,
+  compactLabels, classNames, styles: sty, children,
 }: InstrumentSelectorProps) {
   const hasSelection = selected != null;
 
-  const rowClass = classNames?.row;
-  const btnClass = classNames?.button;
-  const btnActiveClass = classNames?.buttonActive ?? btnClass;
-  const arrowClass = classNames?.arrowButton ?? '';
+  // Style overrides (sty) take precedence over classNames, which take precedence over defaults.
+  const rowClass = sty ? undefined : classNames?.row;
+  const btnClass = sty ? undefined : classNames?.button;
+  const btnActiveClass = sty ? undefined : (classNames?.buttonActive ?? classNames?.button);
+  const arrowClass = sty ? undefined : classNames?.arrowButton;
+
+  const rowStyle = sty?.row ?? (rowClass ? undefined : filterStyles.instrumentRow);
+  const btnStyle = sty?.button;
+  const btnActiveStyle = sty?.buttonActive ?? sty?.button;
+  const arrowStyle = sty?.arrowButton;
+  const useStyOverride = !!sty;
 
   const cycle = useCallback((dir: 1 | -1) => {
     /* v8 ignore start */
@@ -59,16 +76,16 @@ export function InstrumentSelector({
 
   return (
     <>
-      <div className={rowClass} style={rowClass ? undefined : filterStyles.instrumentRow}>
+      <div className={rowClass} style={rowStyle}>
         {compact ? (
           <>
-            <button onClick={() => cycle(-1)} className={arrowClass} aria-label={compactLabels?.previous}>
+            <button onClick={() => cycle(-1)} className={arrowClass || undefined} style={arrowStyle} aria-label={compactLabels?.previous}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
-            <button className={btnActiveClass} style={btnActiveClass ? undefined : filterStyles.instrumentBtn}>
+            <button className={btnActiveClass || undefined} style={btnActiveStyle ?? (btnActiveClass ? undefined : filterStyles.instrumentBtn)}>
               {selected && <InstrumentIcon instrument={selected} size={Size.iconInstrument} />}
             </button>
-            <button onClick={() => cycle(1)} className={arrowClass} aria-label={compactLabels?.next}>
+            <button onClick={() => cycle(1)} className={arrowClass || undefined} style={arrowStyle} aria-label={compactLabels?.next}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
           </>
@@ -78,15 +95,25 @@ export function InstrumentSelector({
             return (
               <button
                 key={inst.key}
-                className={isSelected ? btnActiveClass : btnClass}
-                style={(isSelected ? btnActiveClass : btnClass) ? undefined : filterStyles.instrumentBtn}
+                className={(isSelected ? btnActiveClass : btnClass) || undefined}
+                style={
+                  useStyOverride
+                    ? (isSelected ? btnActiveStyle : btnStyle)
+                    : ((isSelected ? btnActiveClass : btnClass) ? undefined : filterStyles.instrumentBtn)
+                }
                 onClick={() => onSelect(isSelected && !required ? null : inst.key)}
                 title={inst.label ?? SERVER_INSTRUMENT_LABELS[inst.key]}
               >
-                <div style={isSelected ? filterStyles.instrumentCircleActive : filterStyles.instrumentCircle} />
-                <div style={filterStyles.instrumentIconWrap}>
+                {useStyOverride ? (
                   <InstrumentIcon instrument={inst.key} size={Size.iconInstrument} />
-                </div>
+                ) : (
+                  <>
+                    <div style={isSelected ? filterStyles.instrumentCircleActive : filterStyles.instrumentCircle} />
+                    <div style={filterStyles.instrumentIconWrap}>
+                      <InstrumentIcon instrument={inst.key} size={Size.iconInstrument} />
+                    </div>
+                  </>
+                )}
               </button>
             );
           })

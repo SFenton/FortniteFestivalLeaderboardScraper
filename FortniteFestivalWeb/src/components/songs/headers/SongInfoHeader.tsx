@@ -4,7 +4,7 @@
  * and SongDetailPage. Shows album art, song title/artist, and optionally an
  * instrument icon. Supports collapsed/expanded sizing for scroll-driven transitions.
  */
-import { type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Colors, Font, Gap, Radius, Layout, Weight, ObjectFit, Size, flexRow, flexCenter } from '@festival/theme';
 import type { CSSProperties } from 'react';
@@ -13,15 +13,7 @@ import { InstrumentIcon } from '../../display/InstrumentIcons';
 import BackgroundImage from '../../page/BackgroundImage';
 import PageHeader from '../../common/PageHeader';
 
-const s = {
-  headerLeft: { ...flexRow, gap: Gap.section, minWidth: 0 } as CSSProperties,
-  headerRight: { ...flexRow, gap: Gap.md, flexShrink: 0, paddingRight: Gap.md } as CSSProperties,
-  headerArt: { borderRadius: Radius.md, objectFit: ObjectFit.cover, flexShrink: 0 } as CSSProperties,
-  artPlaceholder: { backgroundColor: Colors.accentPurpleDark, flexShrink: 0 } as CSSProperties,
-  songTitle: { fontSize: Font.title, fontWeight: Weight.bold, margin: 0 } as CSSProperties,
-  songArtist: { fontSize: Font.md, color: Colors.textSubtle, margin: 0 } as CSSProperties,
-  instIconWrap: { ...flexCenter, width: Size.iconXl, height: Size.iconXl } as CSSProperties,
-};
+
 
 export interface SongInfoHeaderProps {
   /** Song data (may be undefined while loading). */
@@ -46,6 +38,7 @@ export default function SongInfoHeader({ song,
   animate,
 }: SongInfoHeaderProps) {
   const { t } = useTranslation();
+  const s = useStyles();
   const artSize = collapsed ? 80 : 120;
   const borderRadius = collapsed ? Radius.md : Radius.lg;
   const transition = animate ? 'all 300ms cubic-bezier(0.4, 0, 0.2, 1)' : undefined;
@@ -99,4 +92,16 @@ export default function SongInfoHeader({ song,
       />
     </>
   );
+}
+
+function useStyles() {
+  return useMemo(() => ({
+    headerLeft: { ...flexRow, gap: Gap.section, minWidth: 0 } as CSSProperties,
+    headerRight: { ...flexRow, gap: Gap.md, flexShrink: 0, paddingRight: Gap.md } as CSSProperties,
+    headerArt: { borderRadius: Radius.md, objectFit: ObjectFit.cover, flexShrink: 0 } as CSSProperties,
+    artPlaceholder: { backgroundColor: Colors.accentPurpleDark, flexShrink: 0 } as CSSProperties,
+    songTitle: { fontSize: Font.title, fontWeight: Weight.bold, margin: 0 } as CSSProperties,
+    songArtist: { fontSize: Font.md, color: Colors.textSubtle, margin: 0 } as CSSProperties,
+    instIconWrap: { ...flexCenter, width: Size.iconXl, height: Size.iconXl } as CSSProperties,
+  }), []);
 }

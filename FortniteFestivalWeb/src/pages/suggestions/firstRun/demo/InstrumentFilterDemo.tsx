@@ -12,7 +12,7 @@ import { SUGGESTION_TYPES } from '@festival/core/suggestions/suggestionFilterCon
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { Gap, Layout, TRANSITION_MS } from '@festival/theme';
 import { useDemoStyles } from '../../../songs/firstRun/demo/FilterDemo';
-import css from '../../../../styles/instrumentSelector.module.css';
+
 
 type ToggleState = { label: string; desc: string; on: boolean };
 
@@ -81,12 +81,12 @@ export default function InstrumentFilterDemo() {
     return () => ro.disconnect();
   }, [instruments.length]);
 
-  const selectorClassNames = useMemo(() => ({
-    row: css.iconRow,
-    button: css.iconButton,
-    buttonActive: css.iconButtonActive,
-    arrowButton: css.arrowButton,
-  }), []);
+  const selectorStyleOverrides = useMemo(() => ({
+    row: s.iconRow,
+    button: s.iconButton,
+    buttonActive: s.iconButtonActive,
+    arrowButton: s.arrowButton,
+  }), [s]);
 
   const h = useSlideHeight();
   const [maxToggles, setMaxToggles] = useState<number>(SUGGESTION_TYPES.length);
@@ -120,7 +120,7 @@ export default function InstrumentFilterDemo() {
             selected={instrument}
             onSelect={handleSelectInstrument}
             compact={compact}
-            classNames={selectorClassNames}
+            styles={selectorStyleOverrides}
           />
         </div>
       </FadeIn>

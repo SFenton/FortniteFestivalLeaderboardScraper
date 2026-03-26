@@ -2,7 +2,7 @@
  * Toolbar with search, instrument indicator, sort and filter buttons.
  * Extracted from SongsPage.
  */
-import { useState, useEffect, useRef, type CSSProperties } from 'react';
+import { useState, useEffect, useRef, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoSwapVerticalSharp, IoFunnel } from 'react-icons/io5';
 import { Colors, Font, Gap, Radius, Size, FAST_FADE_MS, frostedCard, flexRow, flexCenter, Display, Align, Justify, Cursor, BoxSizing, Overflow, CssValue, transition, transitions } from '@festival/theme';
@@ -12,20 +12,6 @@ import SearchBar from '../../../components/common/SearchBar';
 import { ActionPill } from '../../../components/common/ActionPill';
 
 const FAST = FAST_FADE_MS;
-
-const styles = {
-  toolbar: { ...flexRow, flexWrap: 'wrap', gap: 0, marginBottom: Gap.md } as CSSProperties,
-  searchWrap: { ...frostedCard, flex: 1, minWidth: 200, height: Size.iconXl, ...flexRow, gap: Gap.sm, padding: `0 ${Gap.xl}px`, boxSizing: BoxSizing.borderBox, borderRadius: Radius.full, cursor: Cursor.text, marginRight: Gap.xl } as CSSProperties,
-  searchInput: { flex: 1, background: CssValue.none, border: CssValue.none, outline: CssValue.none, color: Colors.textPrimary, fontSize: Font.md } as CSSProperties,
-  sortGroup: { display: Display.flex } as CSSProperties,
-  instSlot: { width: Size.iconXl, marginRight: Gap.xl, opacity: 1, overflow: Overflow.hidden, flexShrink: 0, transition: transitions(transition('opacity', FAST), transition('width', FAST), transition('margin-right', FAST)), ...flexCenter } as CSSProperties,
-  instSlotHidden: { width: 0, marginRight: 0, opacity: 0, overflow: Overflow.hidden, flexShrink: 0, transition: transitions(transition('opacity', FAST), `width ${FAST}ms ease ${FAST}ms`, `margin-right ${FAST}ms ease ${FAST}ms`), display: Display.flex, alignItems: Align.center, justifyContent: Justify.center } as CSSProperties,
-  sortSlot: { opacity: 1, maxWidth: Size.iconXl * 3, transition: transitions(transition('opacity', FAST), transition('max-width', FAST)) } as CSSProperties,
-  sortSlotHidden: { opacity: 0, maxWidth: 0, transition: transitions(transition('opacity', FAST), `max-width ${FAST}ms ease ${FAST}ms`) } as CSSProperties,
-  filterSlot: { opacity: 1, maxWidth: Size.iconXl * 3, marginLeft: Gap.sm, transition: transitions(transition('opacity', FAST), transition('max-width', FAST), transition('margin-left', FAST)) } as CSSProperties,
-  filterSlotHidden: { opacity: 0, maxWidth: 0, marginLeft: 0, transition: transitions(transition('opacity', FAST), `max-width ${FAST}ms ease ${FAST}ms`, `margin-left ${FAST}ms ease ${FAST}ms`) } as CSSProperties,
-  count: { fontSize: Font.sm, color: Colors.textTertiary, marginBottom: Gap.md } as CSSProperties,
-} as const;
 
 /** Total duration for fade-out + width-collapse before unmount (opacity + delayed width + buffer). */
 const INST_LEAVE_MS = FAST_FADE_MS * 2 + FAST_FADE_MS / 10;
@@ -58,6 +44,7 @@ export function SongsToolbar({
   onOpenFilter,
 }: SongsToolbarProps) {
   const { t } = useTranslation();
+  const styles = useStyles();
 
   // Track displayed instrument for fade transitions
   const [displayedInst, setDisplayedInst] = useState(instrument);
@@ -153,4 +140,20 @@ export function SongsToolbar({
       )}
     </>
   );
+}
+
+function useStyles() {
+  return useMemo(() => ({
+    toolbar: { ...flexRow, flexWrap: 'wrap', gap: 0, marginBottom: Gap.md } as CSSProperties,
+    searchWrap: { ...frostedCard, flex: 1, minWidth: 200, height: Size.iconXl, ...flexRow, gap: Gap.sm, padding: `0 ${Gap.xl}px`, boxSizing: BoxSizing.borderBox, borderRadius: Radius.full, cursor: Cursor.text, marginRight: Gap.xl } as CSSProperties,
+    searchInput: { flex: 1, background: CssValue.none, border: CssValue.none, outline: CssValue.none, color: Colors.textPrimary, fontSize: Font.md } as CSSProperties,
+    sortGroup: { display: Display.flex } as CSSProperties,
+    instSlot: { width: Size.iconXl, marginRight: Gap.xl, opacity: 1, overflow: Overflow.hidden, flexShrink: 0, transition: transitions(transition('opacity', FAST), transition('width', FAST), transition('margin-right', FAST)), ...flexCenter } as CSSProperties,
+    instSlotHidden: { width: 0, marginRight: 0, opacity: 0, overflow: Overflow.hidden, flexShrink: 0, transition: transitions(transition('opacity', FAST), `width ${FAST}ms ease ${FAST}ms`, `margin-right ${FAST}ms ease ${FAST}ms`), display: Display.flex, alignItems: Align.center, justifyContent: Justify.center } as CSSProperties,
+    sortSlot: { opacity: 1, maxWidth: Size.iconXl * 3, transition: transitions(transition('opacity', FAST), transition('max-width', FAST)) } as CSSProperties,
+    sortSlotHidden: { opacity: 0, maxWidth: 0, transition: transitions(transition('opacity', FAST), `max-width ${FAST}ms ease ${FAST}ms`) } as CSSProperties,
+    filterSlot: { opacity: 1, maxWidth: Size.iconXl * 3, marginLeft: Gap.sm, transition: transitions(transition('opacity', FAST), transition('max-width', FAST), transition('margin-left', FAST)) } as CSSProperties,
+    filterSlotHidden: { opacity: 0, maxWidth: 0, marginLeft: 0, transition: transitions(transition('opacity', FAST), `max-width ${FAST}ms ease ${FAST}ms`, `margin-left ${FAST}ms ease ${FAST}ms`) } as CSSProperties,
+    count: { fontSize: Font.sm, color: Colors.textTertiary, marginBottom: Gap.md } as CSSProperties,
+  }), []);
 }
