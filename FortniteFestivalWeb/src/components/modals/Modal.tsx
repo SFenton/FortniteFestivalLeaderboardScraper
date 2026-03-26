@@ -34,7 +34,7 @@ export default function Modal({ visible, title, onClose, onApply, onReset, reset
       <div ref={scrollRef} onScroll={handleContentScroll} style={modalStyles.contentScroll}>
         {children}
         {onReset && (
-          <ModalSection title={resetLabel ?? 'Reset'} hint={resetHint}>
+          <ModalSection title={resetLabel ?? t('common.reset')} hint={resetHint}>
             <button style={modalStyles.resetBtn} onClick={onReset}>{resetLabel ?? t('common.reset')}</button>
           </ModalSection>
         )}
@@ -47,7 +47,7 @@ export default function Modal({ visible, title, onClose, onApply, onReset, reset
           onClick={onApply}
           disabled={applyDisabled}
         >
-          {applyLabel ?? 'Apply'}
+          {applyLabel ?? t('common.apply')}
         </button>
       </div>
     </ModalShell>

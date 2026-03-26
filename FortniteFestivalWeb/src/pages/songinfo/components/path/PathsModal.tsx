@@ -1,6 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
 import { IoClose, IoChevronDown } from 'react-icons/io5';
+import { useTranslation } from 'react-i18next';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { useScrollMask } from '../../../../hooks/ui/useScrollMask';
 import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../../../../hooks/ui/useVisualViewport';
@@ -20,7 +21,6 @@ import { ZoomableImage } from './ZoomableImage';
 const TRANSITION_MS = 300;
 const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const;
 type Difficulty = typeof DIFFICULTIES[number];
-const DIFFICULTY_LABELS: Record<Difficulty, string> = { easy: 'Easy', medium: 'Medium', hard: 'Hard', expert: 'Expert' };
 
 const ACCORDION_EASE = 'cubic-bezier(0.4, 0, 0.2, 1)';
 const DIFF_TRANSITION = transitions(
@@ -97,6 +97,7 @@ type PathsModalProps = {
 };
 
 export default function PathsModal({ visible, songId, onClose }: PathsModalProps) {
+  const { t } = useTranslation();
   const isMobile = useIsMobile();
   const vvHeight = useVisualViewportHeight();
   const vvOffsetTop = useVisualViewportOffsetTop();
@@ -223,13 +224,13 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
         ref={panelRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Paths"
+        aria-label={t('paths.title')}
         style={isMobile ? mobilePanel : desktopPanel}
         onTransitionEnd={handleTransitionEnd}
       >
         <div style={modalStyles.headerWrap}>
-          <h2 style={modalStyles.headerTitle}>Paths</h2>
-          <button style={modalStyles.closeBtn} onClick={onClose} aria-label="Close"><IoClose size={18} /></button>
+          <h2 style={modalStyles.headerTitle}>{t('paths.title')}</h2>
+          <button style={modalStyles.closeBtn} onClick={onClose} aria-label={t('common.close')}><IoClose size={18} /></button>
         </div>
         {isMobile ? (
           <div style={st.controls}>
@@ -240,7 +241,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
                 <IoChevronDown size={16} style={{ ...st.chevron, transform: instOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
               </button>
               <button style={st.mobileSelector} onClick={toggleDiff}>
-                <span style={st.mobileSelectorLabel}>{DIFFICULTY_LABELS[difficulty]}</span>
+                <span style={st.mobileSelectorLabel}>{t(`paths.${difficulty}`)}</span>
                 <IoChevronDown size={16} style={{ ...st.chevron, transform: diffOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
               </button>
             </div>
@@ -274,7 +275,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
                     onClick={() => { setDifficulty(d); setDiffOpen(false); }}
                     /* v8 ignore stop */
                   >
-                    {DIFFICULTY_LABELS[d]}
+                    {t(`paths.${d}`)}
                   </button>
                 ))}
               </div>
@@ -307,7 +308,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
                   style={difficulty === d ? st.diffBtnActive : st.diffBtn}
                   onClick={() => setDifficulty(d)}
                 >
-                  {DIFFICULTY_LABELS[d]}
+                  {t(`paths.${d}`)}
                 </button>
               ))}
             </div>
@@ -324,6 +325,7 @@ const FADE_MS = 300;
 const MIN_SPINNER_MS = 400;
 
 function PathImage({ songId, instrument, difficulty }: { songId: string; instrument: InstrumentKey; difficulty: Difficulty }) {
+  const { t } = useTranslation();
   const [phase, setPhase] = useState<Phase>('spinner');
   const [displaySrc, setDisplaySrc] = useState('');
   const [error, setError] = useState(false);
@@ -426,7 +428,7 @@ function PathImage({ songId, instrument, difficulty }: { songId: string; instrum
       )}
       {error && phase === 'idle' && (
         <div className={anim.spinnerWrap}>
-          <p style={{ color: Colors.textMuted, fontSize: Font.md }}>Path not available</p>
+          <p style={{ color: Colors.textMuted, fontSize: Font.md }}>{t('paths.notAvailable')}</p>
         </div>
       )}
       {imageMounted && (

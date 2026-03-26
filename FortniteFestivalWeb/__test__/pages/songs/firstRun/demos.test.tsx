@@ -208,7 +208,7 @@ describe('SortDemo', () => {
   it('renders mode hint at large height', () => {
     mockSlideHeight = 1000;
     wrap(<SortDemo />);
-    expect(screen.getByText('Choose which property to sort by.')).toBeTruthy();
+    expect(screen.getByText('Choose which property to sort the song list by.')).toBeTruthy();
   });
 
   it('hides direction selector at very small height', () => {

@@ -67,31 +67,31 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
 
   return (
     <>
-    <Modal visible={visible} title="Filter Songs" onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel="Reset Filter Settings" resetHint="Restore all filter options to their defaults." applyLabel="Apply Filter Changes" applyDisabled={!hasChanges}>
+    <Modal visible={visible} title={t('common.filterSongs')} onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel={t('filter.resetLabel')} resetHint={t('filter.resetHint')} applyLabel={t('filter.applyLabel')} applyDisabled={!hasChanges}>
       {/* Global filters */}
       <ModalSection>
-        <Accordion title="Global Score & FC Toggles" hint="Toggles that impact all instruments globally. Turning these on or off will enable or disable them across all instruments.">
+        <Accordion title={t('filter.globalToggles')} hint={t('filter.globalTogglesHint')}>
           <ToggleRow
-            label="Missing Scores"
-            description="Songs missing scores on all visible instruments."
+            label={t('filter.missingScores')}
+            description={t('filter.missingScoresDesc')}
             checked={allOn(draft.missingScores)}
             onToggle={() => toggleGlobal('missingScores')}
           />
           <ToggleRow
-            label="Has Scores"
-            description="Songs with scores on all visible instruments."
+            label={t('filter.hasScores')}
+            description={t('filter.hasScoresDesc')}
             checked={allOn(draft.hasScores)}
             onToggle={() => toggleGlobal('hasScores')}
           />
           <ToggleRow
-            label="Missing FCs"
-            description="Songs missing FCs on all visible instruments."
+            label={t('filter.missingFCs')}
+            description={t('filter.missingFCsDesc')}
             checked={allOn(draft.missingFCs)}
             onToggle={() => toggleGlobal('missingFCs')}
           />
           <ToggleRow
-            label="Has FCs"
-            description="Songs with FCs on all visible instruments."
+            label={t('filter.hasFCs')}
+            description={t('filter.hasFCsDesc')}
             checked={allOn(draft.hasFCs)}
             onToggle={() => toggleGlobal('hasFCs')}
           />
@@ -99,30 +99,30 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
       </ModalSection>
 
       {/* Missing filters nstrument accordions */}
-      <ModalSection title="Individual Score & FC Toggles" hint="Toggles that impact individual instruments. Turning these on or off will not impact other individual instruments. These filters are computed per-instrument and then OR'd with other instruments. (Example: Lead &ldquo;has scores&rdquo; and Drums &ldquo;missing scores&rdquo; will yield all songs where Lead has a score OR drums do not have a score.)">
+      <ModalSection title={t('filter.individualToggles')} hint={t('filter.individualTogglesHint')}>
         {visibleKeys.map(key => (
           <Accordion key={key} title={INSTRUMENT_LABELS[key]} icon={<InstrumentIcon instrument={key} size={28} />}>
             <ToggleRow
-              label={`Missing ${INSTRUMENT_LABELS[key]} Scores`}
-              description={`Songs missing scores on ${INSTRUMENT_LABELS[key]}.`}
+              label={t('filter.instrumentMissingScores', { instrument: INSTRUMENT_LABELS[key] })}
+              description={t('filter.instrumentMissingScoresDesc', { instrument: INSTRUMENT_LABELS[key] })}
               checked={draft.missingScores[key] ?? false}
               onToggle={() => toggleMissingScores(key)}
             />
             <ToggleRow
-              label={`Has ${INSTRUMENT_LABELS[key]} Scores`}
-              description={`Songs with scores on ${INSTRUMENT_LABELS[key]}.`}
+              label={t('filter.instrumentHasScores', { instrument: INSTRUMENT_LABELS[key] })}
+              description={t('filter.instrumentHasScoresDesc', { instrument: INSTRUMENT_LABELS[key] })}
               checked={draft.hasScores[key] ?? false}
               onToggle={() => toggleHasScores(key)}
             />
             <ToggleRow
-              label={`Missing ${INSTRUMENT_LABELS[key]} FCs`}
-              description={`Songs missing FCs on ${INSTRUMENT_LABELS[key]}.`}
+              label={t('filter.instrumentMissingFCs', { instrument: INSTRUMENT_LABELS[key] })}
+              description={t('filter.instrumentMissingFCsDesc', { instrument: INSTRUMENT_LABELS[key] })}
               checked={draft.missingFCs[key] ?? false}
               onToggle={() => toggleMissingFCs(key)}
             />
             <ToggleRow
-              label={`Has ${INSTRUMENT_LABELS[key]} FCs`}
-              description={`Songs with FCs on ${INSTRUMENT_LABELS[key]}.`}
+              label={t('filter.instrumentHasFCs', { instrument: INSTRUMENT_LABELS[key] })}
+              description={t('filter.instrumentHasFCsDesc', { instrument: INSTRUMENT_LABELS[key] })}
               checked={draft.hasFCs[key] ?? false}
               onToggle={() => toggleHasFCs(key)}
             />
@@ -131,7 +131,7 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
       </ModalSection>
 
       {/* Instrument selector */}
-      <ModalSection title="Selected Instrument Filters" hint="Select an instrument to only show its metadata on each song row. When none is selected, all instruments are shown.">
+      <ModalSection title={t('filter.instrumentFilters')} hint={t('filter.instrumentFiltersHint')}>
         <div style={filterStyles.instrumentRow}>
           {visibleKeys.map(key => {
             const selected = draft.instrumentFilter === key;
@@ -156,7 +156,7 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
       <div style={{ ...filterStyles.instrumentFiltersWrap, gridTemplateRows: hasInstrument ? '1fr' : '0fr' }}>
         <div style={filterStyles.instrumentFiltersInner}>
           <ModalSection>
-            <Accordion title="Season" hint="Filter by the season in which the score was achieved.">
+            <Accordion title={t('filter.seasonTitle')} hint={t('filter.seasonHint')}>
               <SeasonToggles
                 availableSeasons={availableSeasons}
                 seasonFilter={draft.seasonFilter}
@@ -166,7 +166,7 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
           </ModalSection>
 
           <ModalSection>
-            <Accordion title="Percentile" hint="Show or hide songs based on their leaderboard ranking bracket.">
+            <Accordion title={t('filter.percentileTitle')} hint={t('filter.percentileHint')}>
               <PercentileToggles
                 percentileFilter={draft.percentileFilter}
                 onChange={percentileFilter => onChange({ ...draft, percentileFilter })}
@@ -175,7 +175,7 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
           </ModalSection>
 
           <ModalSection>
-            <Accordion title="Stars" hint="Filter songs by the number of stars on your high score.">
+            <Accordion title={t('filter.starsTitle')} hint={t('filter.starsHint')}>
               <StarsToggles
                 starsFilter={draft.starsFilter}
                 onChange={starsFilter => onChange({ ...draft, starsFilter })}
@@ -184,7 +184,7 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
           </ModalSection>
 
           <ModalSection>
-            <Accordion title="Song Intensity" hint="Filter by the song's difficulty rating for the selected instrument.">
+            <Accordion title={t('filter.intensityTitle')} hint={t('filter.intensityHint')}>
               <DifficultyToggles
                 difficultyFilter={draft.difficultyFilter}
                 onChange={difficultyFilter => onChange({ ...draft, difficultyFilter })}
@@ -210,6 +210,7 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
 /* -- Toggle components for composite filters -- */
 
 function SeasonToggles({ availableSeasons, seasonFilter, onChange }: { availableSeasons: number[]; seasonFilter: Record<number, boolean>; onChange: (f: Record<number, boolean>) => void }) {
+  const { t } = useTranslation();
   const seasons = [...availableSeasons, 0];
 
   const isOn = (s: number) => seasonFilter[s] !== false;
@@ -229,7 +230,7 @@ function SeasonToggles({ availableSeasons, seasonFilter, onChange }: { available
     <>
       <BulkActions onSelectAll={selectAll} onClearAll={clearAll} />
       {seasons.map(s => (
-        <ToggleRow key={s} label={s === 0 ? 'No Score' : `Season ${s}`} checked={isOn(s)} onToggle={() => toggleSeason(s)} />
+        <ToggleRow key={s} label={s === 0 ? t('filter.noScore') : t('filter.seasonLabel', { season: s })} checked={isOn(s)} onToggle={() => toggleSeason(s)} />
       ))}
     </>
   );
@@ -237,6 +238,7 @@ function SeasonToggles({ availableSeasons, seasonFilter, onChange }: { available
 
 /* v8 ignore start -- V8 misses inline callbacks inside un-exported sub-components; covered via ModalCallbacks tests */
 function PercentileToggles({ percentileFilter, onChange }: { percentileFilter: Record<number, boolean>; onChange: (f: Record<number, boolean>) => void }) {
+  const { t } = useTranslation();
   const allKeys = [0, ...PERCENTILE_THRESHOLDS];
   const isOn = (p: number) => percentileFilter[p] !== false;
   const toggleP = (p: number) => onChange({ ...percentileFilter, [p]: !isOn(p) });
@@ -255,16 +257,17 @@ function PercentileToggles({ percentileFilter, onChange }: { percentileFilter: R
     <>
       <BulkActions onSelectAll={selectAll} onClearAll={clearAll} />
       {allKeys.map(p => (
-        <ToggleRow key={p} label={p === 0 ? 'No Score' : `Top ${p}%`} checked={isOn(p)} onToggle={() => toggleP(p)} />
+        <ToggleRow key={p} label={p === 0 ? t('filter.noScore') : t('filter.topPercent', { percent: p })} checked={isOn(p)} onToggle={() => toggleP(p)} />
       ))}
     </>
   );
 }
 function StarsToggles({ starsFilter, onChange }: { starsFilter: Record<number, boolean>; onChange: (f: Record<number, boolean>) => void }) {
+  const { t } = useTranslation();
   const allKeys = [6, 5, 4, 3, 2, 1, 0];
 
   const starLabel = (k: number) => {
-    if (k === 0) return 'No Score';
+    if (k === 0) return t('filter.noScore');
     const isGold = k === 6;
     const count = isGold ? 5 : k;
     const src = isGold ? `${import.meta.env.BASE_URL}star_gold.png` : `${import.meta.env.BASE_URL}star_white.png`;
@@ -303,9 +306,10 @@ function StarsToggles({ starsFilter, onChange }: { starsFilter: Record<number, b
 /* v8 ignore stop */
 
 function DifficultyToggles({ difficultyFilter, onChange }: { difficultyFilter: Record<number, boolean>; onChange: (f: Record<number, boolean>) => void }) {
+  const { t } = useTranslation();
   const allKeys = [1, 2, 3, 4, 5, 6, 7, 0];
   const diffLabel = (k: number): React.ReactNode =>
-    k === 0 ? 'No Score' : <DifficultyBars level={k} />;
+    k === 0 ? t('filter.noScore') : <DifficultyBars level={k} />;
 
   const isOn = (d: number) => difficultyFilter[d] !== false;
   const toggleD = (d: number) => onChange({ ...difficultyFilter, [d]: !isOn(d) });

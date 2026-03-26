@@ -133,10 +133,10 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
 
   return (
     <>
-    <Modal visible={visible} title="Filter Suggestions" onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel="Reset Suggestion Filters" resetHint="Restore all suggestion filter options to their defaults." applyLabel="Apply Filter Changes" applyDisabled={!hasChanges}>
+    <Modal visible={visible} title={t('common.filterSuggestions')} onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel={t('suggestionsFilter.resetLabel')} resetHint={t('suggestionsFilter.resetHint')} applyLabel={t('filter.applyLabel')} applyDisabled={!hasChanges}>
       {/* Instruments */}
       <ModalSection>
-        <Accordion title="Instruments" hint="Choose which instruments appear in your suggestions.">
+        <Accordion title={t('suggestionsFilter.instruments')} hint={t('suggestionsFilter.instrumentsHint')}>
           {visibleInstruments.map(inst => (
             <ToggleRow
               key={inst.key}
@@ -155,7 +155,7 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
 
       {/* General type toggles */}
       <ModalSection>
-        <Accordion title="General" hint="Toggle broad suggestion types on or off.">
+        <Accordion title={t('suggestionsFilter.general')} hint={t('suggestionsFilter.generalHint')}>
           {SUGGESTION_TYPES.map(st => (
             <ToggleRow
               key={st.id}
@@ -169,7 +169,7 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
       </ModalSection>
 
       {/* Instrument-specific type toggles */}
-      <ModalSection title="Instrument-Specific" hint="Select an instrument to filter its suggestion types individually.">
+      <ModalSection title={t('suggestionsFilter.instrumentSpecific')} hint={t('suggestionsFilter.instrumentSpecificHint')}>
         <div style={filterStyles.instrumentRow}>
           {visibleInstruments.map(inst => {
             const isSelected = effectiveSelectedInstrument === inst.key;

@@ -39,7 +39,7 @@ export default function ChangelogModal({ onDismiss }: { onDismiss: () => void })
       <div style={s.card} onClick={e => e.stopPropagation()}>
         <div style={s.header}>
           <h2 style={s.title}>{t('changelog.title')} <span style={s.dot}>·</span> {APP_VERSION}</h2>
-          <button style={s.closeBtn} onClick={onDismiss} aria-label="Close">
+          <button style={s.closeBtn} onClick={onDismiss} aria-label={t('common.close')}>
             <IoClose size={18} />
           </button>
         </div>

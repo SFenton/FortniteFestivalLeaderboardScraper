@@ -370,7 +370,7 @@ describe('PathsModal', () => {
       // Step 3: useEffect for 'imageReady' runs rAF(sync) → setPhase('fadeInImage') + setTimeout(idle,300)
       await act(async () => { vi.advanceTimersByTime(310); });
 
-      expect(screen.getByText('Path not available')).toBeDefined();
+      expect(screen.getByText('Paths not available')).toBeDefined();
     });
 
     it('transitions through fadeOutImage when changing instrument', async () => {

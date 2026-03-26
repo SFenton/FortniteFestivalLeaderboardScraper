@@ -80,36 +80,35 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
 
   return (
     <>
-    <Modal visible={visible} title="Sort Songs" onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel="Reset Sort Settings" resetHint="Restore sort mode, direction, and metadata priority to their defaults." applyLabel="Apply Sort Changes" applyDisabled={!hasChanges}>
+    <Modal visible={visible} title={t('common.sortSongs')} onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel={t('sort.resetLabel')} resetHint={t('sort.resetHint')} applyLabel={t('sort.applyLabel')} applyDisabled={!hasChanges}>
       {/* v8 ignore start -- sort mode Accordion with hideItemShop */}
       {hasPlayer ? (
         <ModalSection>
-          <Accordion title="Mode" hint="Choose which property to sort the song list by." defaultOpen={!instrumentFilter}>
-            <RadioRow label="Title" selected={draft.sortMode === 'title'} onSelect={() => setMode('title')} />
-            <RadioRow label="Artist" selected={draft.sortMode === 'artist'} onSelect={() => setMode('artist')} />
-            <RadioRow label="Year" selected={draft.sortMode === 'year'} onSelect={() => setMode('year')} />
+          <Accordion title={t('sort.mode')} hint={t('sort.modeHint')} defaultOpen={!instrumentFilter}>
+            <RadioRow label={t('sort.title')} selected={draft.sortMode === 'title'} onSelect={() => setMode('title')} />
+            <RadioRow label={t('sort.artist')} selected={draft.sortMode === 'artist'} onSelect={() => setMode('artist')} />
+            <RadioRow label={t('sort.year')} selected={draft.sortMode === 'year'} onSelect={() => setMode('year')} />
             {/* v8 ignore next -- hideItemShop branch */}
-            {!hideItemShop && <RadioRow label="Item Shop" selected={draft.sortMode === 'shop'} onSelect={() => setMode('shop')} />}
-            <RadioRow label="Has FC" selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />
+            {!hideItemShop && <RadioRow label={t('sort.itemShop')} selected={draft.sortMode === 'shop'} onSelect={() => setMode('shop')} />}
+            <RadioRow label={t('sort.hasFC')} selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />
           </Accordion>
         </ModalSection>
       ) : (
         /* v8 ignore start -- non-player sort mode path */
-        <ModalSection title="Mode" hint="Choose which property to sort the song list by.">
-          <RadioRow label="Title" selected={draft.sortMode === 'title'} onSelect={() => setMode('title')} />
-          <RadioRow label="Artist" selected={draft.sortMode === 'artist'} onSelect={() => setMode('artist')} />
-          <RadioRow label="Year" selected={draft.sortMode === 'year'} onSelect={() => setMode('year')} />
-          {!hideItemShop && <RadioRow label="Item Shop" selected={draft.sortMode === 'shop'} onSelect={() => setMode('shop')} />}
-          <RadioRow label="Has FC" selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />
+        <ModalSection title={t('sort.mode')} hint={t('sort.modeHint')}>
+          <RadioRow label={t('sort.title')} selected={draft.sortMode === 'title'} onSelect={() => setMode('title')} />
+          <RadioRow label={t('sort.artist')} selected={draft.sortMode === 'artist'} onSelect={() => setMode('artist')} />
+          <RadioRow label={t('sort.year')} selected={draft.sortMode === 'year'} onSelect={() => setMode('year')} />
+          {!hideItemShop && <RadioRow label={t('sort.itemShop')} selected={draft.sortMode === 'shop'} onSelect={() => setMode('shop')} />}
+          <RadioRow label={t('sort.hasFC')} selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />
         </ModalSection>
         /* v8 ignore stop */
       )}
-      /* v8 ignore stop */
 
       {/* Instrument-specific sort modes (only when an instrument is selected) */}
       {instrumentFilter != null && visibleInstrumentSortModes.length > 0 && (
         <ModalSection>
-          <Accordion title="Filtered Instrument Sort Mode" hint="Filtering to a single instrument enables more sort options.">
+          <Accordion title={t('sort.filteredInstrumentMode')} hint={t('sort.filteredInstrumentHint')}>
             {visibleInstrumentSortModes.map(({ mode, label }) => (
               <RadioRow key={mode} label={label} selected={draft.sortMode === mode} onSelect={() => setMode(mode)} />
             ))}
@@ -121,16 +120,16 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
       <ModalSection>
         <div style={directionStyles.inner}>
           <div style={directionStyles.textCol}>
-            <div style={directionStyles.title}>Sort Direction</div>
+            <div style={directionStyles.title}>{t('sort.direction')}</div>
             <div style={directionStyles.hint}>
-              {draft.sortAscending ? 'Ascending (A\u2013Z, low\u2013high)' : 'Descending (Z\u2013A, high\u2013low)'}
+              {draft.sortAscending ? t('sort.ascendingHintSongs') : t('sort.descendingHintSongs')}
             </div>
           </div>
           <div style={directionStyles.icons}>
             <button
               style={directionStyles.iconBtn}
               onClick={() => onChange({ ...draft, sortAscending: true })}
-              aria-label="Ascending"
+              aria-label={t('aria.ascending')}
             >
               <div style={{ ...directionStyles.iconCircle, ...(draft.sortAscending ? directionStyles.iconCircleActive : {}) }} />
               <IoArrowUp size={20} style={{ position: 'relative' as const, zIndex: 1, color: draft.sortAscending ? Colors.textPrimary : Colors.textMuted, transition: 'color 200ms ease' }} />
@@ -138,7 +137,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
             <button
               style={directionStyles.iconBtn}
               onClick={() => onChange({ ...draft, sortAscending: false })}
-              aria-label="Descending"
+              aria-label={t('aria.descending')}
             >
               <div style={{ ...directionStyles.iconCircle, ...(!draft.sortAscending ? directionStyles.iconCircleActive : {}) }} />
               <IoArrowDown size={20} style={{ position: 'relative' as const, zIndex: 1, color: !draft.sortAscending ? Colors.textPrimary : Colors.textMuted, transition: 'color 200ms ease' }} />
@@ -149,7 +148,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
 
       {/* Metadata sort priority (only when an instrument is selected) */}
       {instrumentFilter != null && anyMetadataVisible && (
-        <ModalSection title="Metadata Sort Priority" hint="When two songs have the same value for the selected sort mode, songs are sorted by comparing these properties in order from top to bottom.">
+        <ModalSection title={t('sort.metadataPriority')} hint={t('sort.metadataPriorityHint')}>
           <ReorderList
           /* v8 ignore next -- nullish coalescing for display label */
             items={visibleMetadataOrder.map(k => ({ key: k, label: METADATA_SORT_DISPLAY[k] ?? k }))}
@@ -163,7 +162,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
       {/* Primary Instrument Order (only when NO instrument is selected and sorting by Has FC) */}
       {instrumentFilter == null && draft.sortMode === 'hasfc' && (
         <ModalSection>
-          <Accordion title="Primary Instrument Order" hint="Instruments are checked in this order when sorting by Has FC." defaultOpen>
+          <Accordion title={t('sort.instrumentOrder')} hint={t('sort.instrumentOrderHint')} defaultOpen>
             <ReorderList
               items={draft.instrumentOrder.map(k => ({ key: k, label: INSTRUMENT_LABELS[k] }))}
               /* v8 ignore start -- DnD reorder callback; can't fire in jsdom */
