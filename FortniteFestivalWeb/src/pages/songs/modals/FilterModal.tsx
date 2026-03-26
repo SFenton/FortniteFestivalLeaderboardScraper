@@ -66,8 +66,14 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
   const { hasChanges, confirmOpen, setConfirmOpen, handleClose, confirmDiscard } = useModalDraft(draft, savedDraft, onCancel);
 
   return (
-    <>
-    <Modal visible={visible} title={t('common.filterSongs')} onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel={t('filter.resetLabel')} resetHint={t('filter.resetHint')} applyLabel={t('filter.applyLabel')} applyDisabled={!hasChanges}>
+    <Modal visible={visible} title={t('common.filterSongs')} onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel={t('filter.resetLabel')} resetHint={t('filter.resetHint')} applyLabel={t('filter.applyLabel')} applyDisabled={!hasChanges} afterPanel={confirmOpen ? (
+        <ConfirmAlert
+          title={t('filter.cancelTitle')}
+          message={t('filter.cancelMessage')}
+          onNo={() => setConfirmOpen(false)}
+          onYes={confirmDiscard}
+        />
+      ) : null}>
       {/* Global filters */}
       <ModalSection>
         <Accordion title={t('filter.globalToggles')} hint={t('filter.globalTogglesHint')}>
@@ -194,16 +200,6 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
         </div>
       </div>
     </Modal>
-
-      {confirmOpen && (
-        <ConfirmAlert
-          title={t('filter.cancelTitle')}
-          message={t('filter.cancelMessage')}
-          onNo={() => setConfirmOpen(false)}
-          onYes={confirmDiscard}
-        />
-      )}
-    </>
   );
 }
 

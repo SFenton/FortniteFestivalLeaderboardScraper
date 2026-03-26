@@ -37,7 +37,6 @@ export default function PlayerScoreSortModal({ visible, draft, savedDraft, onCha
   );
 
   return (
-    <>
       <Modal
         visible={visible}
         title={t('common.sortPlayerScores')}
@@ -48,6 +47,14 @@ export default function PlayerScoreSortModal({ visible, draft, savedDraft, onCha
         resetHint={t('sort.resetHint')}
         applyLabel={t('sort.applyLabel')}
         applyDisabled={!hasChanges}
+        afterPanel={confirmOpen ? (
+          <ConfirmAlert
+            title={t('sort.cancelTitle')}
+            message={t('sort.cancelMessage')}
+            onNo={() => setConfirmOpen(false)}
+            onYes={confirmDiscard}
+          />
+        ) : null}
       >
         <ModalSection title={t('sort.mode')} hint={t('sort.modeHint')}>
           <RadioRow label={t('sort.date')} selected={draft.sortMode === 'date'} onSelect={() => setMode('date')} />
@@ -85,16 +92,6 @@ export default function PlayerScoreSortModal({ visible, draft, savedDraft, onCha
           </div>
         </ModalSection>
       </Modal>
-
-      {confirmOpen && (
-        <ConfirmAlert
-          title={t('sort.cancelTitle')}
-          message={t('sort.cancelMessage')}
-          onNo={() => setConfirmOpen(false)}
-          onYes={confirmDiscard}
-        />
-      )}
-    </>
   );
 }
 

@@ -34,7 +34,7 @@ const pillStyle: CSSProperties = {
 const pillActiveOverrides: CSSProperties = {
   backgroundColor: Colors.accentBlue,
   backgroundImage: 'none',
-  borderColor: 'transparent',
+  border: '1px solid transparent',
   boxShadow: 'none',
   color: '#FFFFFF',
 };

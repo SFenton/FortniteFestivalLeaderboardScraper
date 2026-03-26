@@ -132,8 +132,14 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
   };
 
   return (
-    <>
-    <Modal visible={visible} title={t('common.filterSuggestions')} onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel={t('suggestionsFilter.resetLabel')} resetHint={t('suggestionsFilter.resetHint')} applyLabel={t('filter.applyLabel')} applyDisabled={!hasChanges}>
+    <Modal visible={visible} title={t('common.filterSuggestions')} onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel={t('suggestionsFilter.resetLabel')} resetHint={t('suggestionsFilter.resetHint')} applyLabel={t('filter.applyLabel')} applyDisabled={!hasChanges} afterPanel={confirmOpen ? (
+        <ConfirmAlert
+          title={t('suggestionsFilter.cancelTitle')}
+          message={t('suggestionsFilter.cancelMessage')}
+          onNo={() => setConfirmOpen(false)}
+          onYes={confirmDiscard}
+        />
+      ) : null}>
       {/* Instruments */}
       <ModalSection>
         <Accordion title={t('suggestionsFilter.instruments')} hint={t('suggestionsFilter.instrumentsHint')}>
@@ -209,16 +215,6 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
         </div>
       </ModalSection>
     </Modal>
-
-      {confirmOpen && (
-        <ConfirmAlert
-          title={t('suggestionsFilter.cancelTitle')}
-          message={t('suggestionsFilter.cancelMessage')}
-          onNo={() => setConfirmOpen(false)}
-          onYes={confirmDiscard}
-        />
-      )}
-    </>
   );
 }
 

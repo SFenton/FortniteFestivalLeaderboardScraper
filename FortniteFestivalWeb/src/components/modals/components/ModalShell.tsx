@@ -29,6 +29,8 @@ export interface ModalShellProps {
   onOpenComplete?: () => void;
   /** Called after the close animation completes and the modal unmounts. */
   onCloseComplete?: () => void;
+  /** Content rendered inside the portal but after the panel (e.g. ConfirmAlert). */
+  afterPanel?: ReactNode;
 }
 
 export default function ModalShell({
@@ -41,6 +43,7 @@ export default function ModalShell({
   transitionMs = DEFAULT_TRANSITION_MS,
   onOpenComplete,
   onCloseComplete,
+  afterPanel,
 }: ModalShellProps) {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
@@ -111,6 +114,7 @@ export default function ModalShell({
         </div>
         {children}
       </div>
+      {afterPanel}
     </>,
     document.body,
   );

@@ -79,8 +79,14 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
   const anyMetadataVisible = !mv || (mv.score || mv.percentage || mv.percentile || mv.stars || mv.seasonachieved || mv.intensity);
 
   return (
-    <>
-    <Modal visible={visible} title={t('common.sortSongs')} onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel={t('sort.resetLabel')} resetHint={t('sort.resetHint')} applyLabel={t('sort.applyLabel')} applyDisabled={!hasChanges}>
+    <Modal visible={visible} title={t('common.sortSongs')} onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel={t('sort.resetLabel')} resetHint={t('sort.resetHint')} applyLabel={t('sort.applyLabel')} applyDisabled={!hasChanges} afterPanel={confirmOpen ? (
+        <ConfirmAlert
+          title={t('sort.cancelTitle')}
+          message={t('sort.cancelMessage')}
+          onNo={() => setConfirmOpen(false)}
+          onYes={confirmDiscard}
+        />
+      ) : null}>
       {/* v8 ignore start -- sort mode Accordion with hideItemShop */}
       {hasPlayer ? (
         <ModalSection>
@@ -173,16 +179,6 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
         </ModalSection>
       )}
     </Modal>
-
-      {confirmOpen && (
-        <ConfirmAlert
-          title={t('sort.cancelTitle')}
-          message={t('sort.cancelMessage')}
-          onNo={() => setConfirmOpen(false)}
-          onYes={confirmDiscard}
-        />
-      )}
-    </>
   );
 }
 

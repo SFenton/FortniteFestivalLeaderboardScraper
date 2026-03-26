@@ -205,8 +205,8 @@ describe('PlayerScoreSortModal', () => {
     props.draft = draft;
     renderModal(props);
     fireEvent.click(screen.getByLabelText('Close'));
-    // i18n: sort.cancelTitle = 'Cancel Sort Changes'
-    expect(screen.getByText('Cancel Sort Changes')).toBeDefined();
+    // i18n: sort.cancelTitle = 'Discard Sort Changes'
+    expect(screen.getByText('Discard Sort Changes')).toBeDefined();
     // i18n: sort.cancelMessage = 'Are you sure you want to discard your sort changes?'
     expect(screen.getByText('Are you sure you want to discard your sort changes?')).toBeDefined();
   });
@@ -219,7 +219,7 @@ describe('PlayerScoreSortModal', () => {
     fireEvent.click(screen.getByLabelText('Close'));
     fireEvent.click(screen.getByText('No'));
     expect(props.onCancel).not.toHaveBeenCalled();
-    expect(screen.queryByText('Cancel Sort Changes')).toBeNull();
+    expect(screen.queryByText('Discard Sort Changes')).toBeNull();
   });
 
   it('confirm dialog "Yes" calls onCancel', () => {

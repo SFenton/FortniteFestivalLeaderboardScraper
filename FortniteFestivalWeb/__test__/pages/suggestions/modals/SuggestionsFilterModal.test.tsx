@@ -292,7 +292,7 @@ describe('SuggestionsFilterModal', () => {
     props.draft = draft;
     renderModal(props);
     fireEvent.click(screen.getByLabelText('Close'));
-    expect(screen.getByText('Cancel Suggestion Filter Changes')).toBeDefined();
+    expect(screen.getByText('Discard Suggestion Filter Changes')).toBeDefined();
   });
 
   it('confirm dialog "No" dismisses the dialog', () => {
@@ -304,7 +304,7 @@ describe('SuggestionsFilterModal', () => {
     fireEvent.click(screen.getByLabelText('Close'));
     fireEvent.click(screen.getByText('No'));
     expect(props.onCancel).not.toHaveBeenCalled();
-    expect(screen.queryByText('Cancel Suggestion Filter Changes')).toBeNull();
+    expect(screen.queryByText('Discard Suggestion Filter Changes')).toBeNull();
   });
 
   it('confirm dialog "Yes" calls onCancel', () => {
