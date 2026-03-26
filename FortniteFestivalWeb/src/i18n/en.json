@@ -249,7 +249,7 @@
     "resetLabel": "Reset Sort Settings",
     "resetHint": "Restore sort mode, direction, and metadata priority to their defaults.",
     "applyLabel": "Apply Sort Changes",
-    "cancelTitle": "Cancel Sort Changes",
+    "cancelTitle": "Discard Sort Changes",
     "cancelMessage": "Are you sure you want to discard your sort changes?",
     "ascendingHintSongs": "Ascending (A–Z, low–high)",
     "descendingHintSongs": "Descending (Z–A, high–low)",
@@ -286,7 +286,7 @@
     "resetLabel": "Reset Filter Settings",
     "resetHint": "Restore all filter options to their defaults.",
     "applyLabel": "Apply Filter Changes",
-    "cancelTitle": "Cancel Filter Changes",
+    "cancelTitle": "Discard Filter Changes",
     "cancelMessage": "Are you sure you want to discard your filter changes?",
     "globalToggles": "Global Score & FC Toggles",
     "globalTogglesHint": "Toggles that impact all instruments globally. Turning these on or off will enable or disable them across all instruments.",
@@ -332,7 +332,7 @@
     "generalHint": "Toggle broad suggestion types on or off.",
     "instrumentSpecific": "Instrument-Specific",
     "instrumentSpecificHint": "Select an instrument to filter its suggestion types individually.",
-    "cancelTitle": "Cancel Suggestion Filter Changes",
+    "cancelTitle": "Discard Suggestion Filter Changes",
     "cancelMessage": "Are you sure you want to discard your suggestion filter changes?"
   },
   "paths": {
