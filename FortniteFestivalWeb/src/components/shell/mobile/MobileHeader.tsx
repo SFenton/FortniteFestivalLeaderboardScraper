@@ -85,7 +85,7 @@ function useStyles() {
       fontWeight: Weight.bold,
       color: Colors.textPrimary,
       whiteSpace: WhiteSpace.nowrap,
-      lineHeight: InstrumentSize.sm,
+      lineHeight: `${InstrumentSize.sm}px`,
     } as CSSProperties,
     titleBack: {
       display: Display.inlineFlex,
@@ -97,7 +97,7 @@ function useStyles() {
       textDecoration: CssValue.none,
       whiteSpace: WhiteSpace.nowrap,
       marginLeft: -Gap.sm,
-      lineHeight: InstrumentSize.sm,
+      lineHeight: `${InstrumentSize.sm}px`,
     } as CSSProperties,
   }), []);
 }
