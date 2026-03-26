@@ -9,7 +9,7 @@ export const appStyles = {
   contentRow: { flex: 1, ...flexRow, maxWidth: wideMaxWidth, margin: CssValue.marginCenter, width: CssValue.full, minHeight: 0 } as CSSProperties,
   contentColumn: { flex: 1, ...flexColumn, minHeight: 0 } as CSSProperties,
   rightSpacer: { width: Layout.sidebarWidth, flexShrink: 0 } as CSSProperties,
-  nav: { display: Display.flex, alignItems: Align.center, gap: Gap.xl, padding: `${Layout.paddingTop}px ${Layout.paddingHorizontal}px ${Gap.md}px`, maxWidth: MaxWidth.card, margin: CssValue.marginCenter, width: CssValue.full, boxSizing: BoxSizing.borderBox, backgroundColor: 'transparent', flexShrink: 0, zIndex: ZIndex.popover, position: Position.relative, touchAction: 'none' } as CSSProperties,
+  nav: { display: Display.flex, alignItems: Align.center, gap: Gap.xl, padding: `${Layout.paddingTop}px ${Layout.paddingHorizontal}px ${Gap.md}px`, maxWidth: MaxWidth.card, margin: CssValue.marginCenter, width: CssValue.full, boxSizing: BoxSizing.borderBox, backgroundColor: 'transparent', flexShrink: 0, zIndex: ZIndex.popover, position: Position.sticky, top: 0, touchAction: 'none' } as CSSProperties,
   navWide: { gap: 0, maxWidth: wideMaxWidth, paddingLeft: 0, paddingRight: 0, padding: `${Layout.paddingTop}px 0 ${Gap.md}px` } as CSSProperties,
   sidebarSpacer: { width: Layout.sidebarWidth, flexShrink: 0 } as CSSProperties,
   navWideInner: { flex: 1, display: Display.flex, alignItems: Align.center, gap: Gap.xl, maxWidth: MaxWidth.card, margin: CssValue.marginCenter, padding: `0 ${Layout.paddingHorizontalPinned}px`, boxSizing: BoxSizing.borderBox } as CSSProperties,

@@ -251,7 +251,7 @@ export default function RivalsPage() {
       scrollDeps={[phase]}
       containerStyle={styles.container}
       before={<>
-        <PageHeader title={t('rivals.title')} sticky />
+        <PageHeader title={t('rivals.title')} />
         {phase !== LoadPhase.ContentIn && (
           <div
             style={phase === LoadPhase.SpinnerOut ? { ...styles.spinnerOverlay, ...styles.spinnerFadeOut } : styles.spinnerOverlay}

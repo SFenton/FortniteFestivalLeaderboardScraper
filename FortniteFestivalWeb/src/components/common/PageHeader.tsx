@@ -8,7 +8,7 @@ export interface PageHeaderProps {
   subtitle?: string;
   /** Optional action elements (pills, buttons) rendered on the right. */
   actions?: ReactNode;
-  /** When true, the header uses position: sticky. */
+  /** When true (default), the header uses position: sticky. Set false to opt out. */
   sticky?: boolean;
   /** Extra inline styles (e.g. for stagger animation). */
   style?: CSSProperties;
@@ -29,7 +29,7 @@ export default function PageHeader({
   title,
   subtitle,
   actions,
-  sticky,
+  sticky = true,
   style,
   onAnimationEnd,
   className,
@@ -63,7 +63,7 @@ function useStyles(sticky: boolean) {
       width: CssValue.full,
       padding: padding(Gap.md, Layout.paddingHorizontal),
       boxSizing: BoxSizing.borderBox,
-      ...(sticky ? { position: Position.sticky, top: Gap.none, zIndex: ZIndex.dropdown } : {}),
+      ...(sticky ? { position: Position.sticky, top: Layout.desktopNavHeight, zIndex: ZIndex.dropdown } : {}),
     } as CSSProperties,
     row: {
       ...flexBetween,

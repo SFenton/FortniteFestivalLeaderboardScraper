@@ -288,6 +288,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
     <Page
       scrollRef={scrollRef}
       scrollDeps={[phase, visibleCategories]}
+      containerStyle={{ paddingTop: isMobile ? Gap.sm : Gap.md }}
       before={<>
         {/* Spinner overlay -- visible during loading & spinnerOut */}
         {phase !== LoadPhase.ContentIn && (
@@ -330,7 +331,6 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
         {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
       </>}
     >
-      <div style={{ ...suggestionsStyles.container, paddingTop: isMobile ? Gap.sm : Gap.md }}>
         {visibleCategories.length === 0 && (categories.length > 0 || !effectiveHasMore) ? (
           <EmptyState
             title={t('suggestions.noSuggestions')}
@@ -351,12 +351,6 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
             <div ref={listRef}>
             {visibleCategories.map((cat, idx) => {
               const delay = computeDelay(idx);
-              // Always render the same FadeIn → CategoryCard tree structure so
-              // React never switches element types on the same key (which would
-              // unmount/remount all children and reset AlbumArt loaded state).
-              // delay === -1  → already revealed, pass undefined to skip animation
-              // delay === null → hidden (waiting for contentIn phase)
-              // delay >= 0    → stagger animation
               return (
                 <FadeIn key={`${idx}-${cat.key}`} delay={delay === -1 ? undefined : (delay ?? 0)} hidden={delay === null}>
                   <CategoryCard category={cat} albumArtMap={albumArtMap} scoresIndex={scoresIndex} />
@@ -366,7 +360,6 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
             </div>
           </InfiniteScroll>
         )}
-      </div>
       {isMobileChrome && <div style={suggestionsStyles.fabSpacer} />}
     </Page>
   );

@@ -223,6 +223,8 @@ export const Layout = {
   filterToggleRowHeight: 56,
   chartMargin: { top: 16, right: 24, bottom: 0, left: 24 },
   axisLabelOffset: 8,
+  /** Height of the sticky desktop nav bar (paddingTop + entryRowHeight + paddingBottom). */
+  desktopNavHeight: 72,
   /** Content visible height minus shell chrome (header ~64 + bottom nav ~80 + padding ~56). */
   shellChromeHeight: 200,
   /** Min-height for centered page messages (empty states, loading hints). */

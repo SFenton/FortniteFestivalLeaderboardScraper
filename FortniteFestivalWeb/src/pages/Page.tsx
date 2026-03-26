@@ -17,9 +17,9 @@ import { useStaggerRush } from '../hooks/ui/useStaggerRush';
 
 /** Page-level style objects — importable by SuspenseFallback, PlayerPage consumers, etc. */
 export const pageCss = {
-  page: { ...flexColumn, height: CssValue.full, color: Colors.textPrimary } as CSSProperties,
-  pageWithBg: { ...flexColumn, height: CssValue.full, color: Colors.textPrimary, backgroundColor: Colors.backgroundApp, position: Position.relative } as CSSProperties,
-  pageWithBgClip: { ...flexColumn, height: CssValue.full, color: Colors.textPrimary, backgroundColor: Colors.backgroundApp, position: Position.relative, overflow: Overflow.hidden } as CSSProperties,
+  page: { ...flexColumn, minHeight: CssValue.full, color: Colors.textPrimary } as CSSProperties,
+  pageWithBg: { ...flexColumn, minHeight: CssValue.full, color: Colors.textPrimary, backgroundColor: Colors.backgroundApp, position: Position.relative } as CSSProperties,
+  pageWithBgClip: { ...flexColumn, minHeight: CssValue.full, color: Colors.textPrimary, backgroundColor: Colors.backgroundApp, position: Position.relative, overflow: Overflow.hidden } as CSSProperties,
   scrollArea: { flex: 1, minHeight: 0 } as CSSProperties,
   scrollAreaRelative: { flex: 1, minHeight: 0, position: Position.relative } as CSSProperties,
   scrollAreaRelativeZ: { flex: 1, minHeight: 0, position: Position.relative, zIndex: ZIndex.base } as CSSProperties,

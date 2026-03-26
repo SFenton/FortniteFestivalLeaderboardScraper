@@ -304,25 +304,13 @@ export default function SongDetailPage() {
       const target = document.getElementById(`player-score-${defaultInstrument}`)
         ?? document.getElementById(`instrument-card-${defaultInstrument}`);
       if (!target) return;
-      // Find the scrollable ancestor (e.g. #main-content with overflow: auto)
-      let scrollContainer: HTMLElement | null = target.parentElement;
-      while (scrollContainer) {
-        const style = getComputedStyle(scrollContainer);
-        if (
-          scrollContainer.scrollHeight > scrollContainer.clientHeight &&
-          (style.overflowY === 'auto' || style.overflowY === 'scroll')
-        ) break;
-        scrollContainer = scrollContainer.parentElement;
-      }
-      if (!scrollContainer) return;
-      const containerRect = scrollContainer.getBoundingClientRect();
       const targetRect = target.getBoundingClientRect();
       const nav = document.querySelector('nav');
       const navHeight = nav ? nav.getBoundingClientRect().height : 0;
       const padding = 24;
-      const desiredBottom = containerRect.bottom - navHeight - padding;
-      const scrollTop = scrollContainer.scrollTop + targetRect.bottom - desiredBottom;
-      scrollContainer.scrollTo({ top: Math.max(0, scrollTop), behavior: 'smooth' });
+      const desiredBottom = window.innerHeight - navHeight - padding;
+      const scrollBy = targetRect.bottom - desiredBottom;
+      if (scrollBy > 0) window.scrollTo({ top: window.scrollY + scrollBy, behavior: 'smooth' });
     }, 1500);
     return () => clearTimeout(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- autoScroll frozen at mount

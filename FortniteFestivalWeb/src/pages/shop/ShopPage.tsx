@@ -130,6 +130,7 @@ export default function ShopPage() {
     <Page
       scrollRef={scrollRef}
       scrollDeps={[shopSongs]}
+      containerStyle={shopStyles.contentArea}
       before={
         <PageHeader
           title={t('nav.shop')}
@@ -146,7 +147,6 @@ export default function ShopPage() {
         />
       }
     >
-        <div style={shopStyles.contentArea}>
           {sorted.length === 0 ? (
             <EmptyState
               title={t('shop.empty', 'No songs in the Item Shop')}
@@ -178,7 +178,6 @@ export default function ShopPage() {
               ))}
             </div>
           )}
-        </div>
         {isMobileChrome && <div style={shopStyles.fabSpacer} />}
     </Page>
   );
@@ -188,10 +187,7 @@ export default function ShopPage() {
 function useShopPageStyles() {
   return useMemo(() => ({
     contentArea: {
-      maxWidth: MaxWidth.card,
-      margin: CssValue.marginCenter,
-      width: CssValue.full,
-      padding: padding(Gap.md, Layout.paddingHorizontal, 0),
+      paddingTop: Gap.md,
     } as CSSProperties,
     count: {
       fontSize: Font.sm,

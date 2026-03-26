@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties }
 import { useTranslation } from 'react-i18next';
 import { useParams, useNavigationType } from 'react-router-dom';
 import { IoSwapVerticalSharp } from 'react-icons/io5';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import { useFestival } from '../../../contexts/FestivalContext';
 import { useTrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
 import { useFabSearch } from '../../../contexts/FabSearchContext';
@@ -164,12 +164,13 @@ export default function PlayerHistoryPage() {
   const ROW_HEIGHT = isMobile ? 44 : 52;
   const ROW_GAP = Gap.sm;
   const staggerDoneRef = useRef(false);
+  const listParentRef = useRef<HTMLDivElement>(null);
   const maxStagger = useMemo(() => estimateVisibleCount(ROW_HEIGHT), [ROW_HEIGHT]);
-  const virtualizer = useVirtualizer({
+  const virtualizer = useWindowVirtualizer({
     count: loadPhase === 'contentIn' ? sortedHistory.length : 0,
-    getScrollElement: () => scrollRef.current,
     estimateSize: () => ROW_HEIGHT + ROW_GAP,
     overscan: 10,
+    scrollMargin: listParentRef.current?.offsetTop ?? 0,
   });
   /* v8 ignore stop */
 
@@ -231,7 +232,7 @@ export default function PlayerHistoryPage() {
             )}
             {/* v8 ignore start — virtual list rendering */}
             {loadPhase === LoadPhase.ContentIn && (
-            <div key={staggerKey} style={{ ...histStyles.list, ...(hasFab ? { paddingBottom: Layout.fabPaddingBottom } : {}), height: virtualizer.getTotalSize() }}>
+            <div key={staggerKey} ref={listParentRef} style={{ ...histStyles.list, ...(hasFab ? { paddingBottom: Layout.fabPaddingBottom } : {}), height: virtualizer.getTotalSize() }}>
               {virtualizer.getVirtualItems().map((virtualRow) => {
                 const i = virtualRow.index;
                 const h = sortedHistory[i]!;
@@ -252,8 +253,7 @@ export default function PlayerHistoryPage() {
                   key={`${h.changedAt}-${h.newScore}`}
                   ref={virtualizer.measureElement}
                   data-index={virtualRow.index}
-                  style={histStyles.virtualRow}
-                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                  style={{ ...histStyles.virtualRow, transform: `translateY(${virtualRow.start - virtualizer.options.scrollMargin}px)` }}
                 >
                 <div
                   style={{ ...rowStyle, ...staggerStyle }}

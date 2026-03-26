@@ -122,7 +122,7 @@ export default function RivalDetailPage() {
       scrollDeps={[phase]}
       containerStyle={styles.container}
       before={<>
-        <PageHeader title={`${playerName} vs. ${displayName}`} sticky />
+        <PageHeader title={`${playerName} vs. ${displayName}`} />
         {phase !== LoadPhase.ContentIn && (
           <div
             style={phase === LoadPhase.SpinnerOut ? { ...styles.spinnerOverlay, ...styles.spinnerFadeOut } : styles.spinnerOverlay}

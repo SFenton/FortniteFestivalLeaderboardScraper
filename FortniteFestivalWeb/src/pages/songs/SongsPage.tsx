@@ -2,7 +2,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigationType } from 'react-router-dom';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { useWindowVirtualizer } from '@tanstack/react-virtual';
 import { staggerDelay, estimateVisibleCount } from '@festival/ui-utils';
 import { useFestival } from '../../contexts/FestivalContext';
 import { usePlayerData } from '../../contexts/PlayerDataContext';
@@ -356,12 +356,12 @@ export default function SongsPage() {
   // â”€â”€ Virtual list â”€â”€
   const ROW_HEIGHT = isMobile ? 122 : 68; // row + 2px gap
   const listParentRef = useRef<HTMLDivElement>(null);
-  const virtualizer = useVirtualizer({
+  const virtualizer = useWindowVirtualizer({
     count: loadPhase === LoadPhase.ContentIn ? filtered.length : 0,
-    getScrollElement: () => scrollRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 8,
     gap: 2,
+    scrollMargin: listParentRef.current?.offsetTop ?? 0,
   });
 
   const songsStyles = useSongsStyles();
@@ -428,7 +428,7 @@ export default function SongsPage() {
                       top: 0,
                       left: 0,
                       width: '100%',
-                      transform: `translateY(${virtualRow.start}px)`,
+                      transform: `translateY(${virtualRow.start - virtualizer.options.scrollMargin}px)`,
                     }}
                     ref={virtualizer.measureElement}
                     data-index={virtualRow.index}
