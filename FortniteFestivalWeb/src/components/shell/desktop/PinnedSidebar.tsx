@@ -116,6 +116,7 @@ function useStyles() {
     return {
       sidebar: {
         width: Layout.sidebarWidth,
+        height: '100%',
         flexShrink: 0,
         ...flexColumn,
         overflow: Overflow.hidden,
