@@ -8,6 +8,7 @@ import { SearchQueryProvider } from '../../../../../src/contexts/SearchQueryCont
 import { PlayerDataProvider } from '../../../../../src/contexts/PlayerDataContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../../../helpers/browserStubs';
+import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef } from '../../../../../src/contexts/ScrollContainerContext';
 import PlayerContent from '../../../../../src/pages/leaderboard/player/components/PlayerContent';
 import { SyncPhase } from '@festival/core';
 
@@ -50,6 +51,27 @@ beforeEach(() => {
   mockApi.trackPlayer.mockResolvedValue({ accountId: 'p1', displayName: 'TestPlayer', trackingStarted: false, backfillStatus: '' });
 });
 
+function ShellInjector({ children }: { children: React.ReactNode }) {
+  const sRef = useScrollContainer();
+  const setPortalNode = useHeaderPortalRef();
+
+  return (
+    <>
+      <div ref={setPortalNode} />
+      <div ref={(el) => {
+        if (el && !sRef.current) {
+          Object.defineProperty(el, 'scrollHeight', { value: 5000, writable: true, configurable: true });
+          Object.defineProperty(el, 'scrollTop', { value: 0, writable: true, configurable: true });
+          el.scrollTo = (() => {}) as any;
+          sRef.current = el;
+        }
+      }}>
+        {children}
+      </div>
+    </>
+  );
+}
+
 function Providers({ children, accountId }: { children: React.ReactNode; accountId?: string }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return (
@@ -59,7 +81,11 @@ function Providers({ children, accountId }: { children: React.ReactNode; account
         <FabSearchProvider>
           <SearchQueryProvider>
             <PlayerDataProvider accountId={accountId}>
+              <ScrollContainerProvider>
+              <ShellInjector>
               <MemoryRouter>{children}</MemoryRouter>
+              </ShellInjector>
+              </ScrollContainerProvider>
             </PlayerDataProvider>
           </SearchQueryProvider>
         </FabSearchProvider>

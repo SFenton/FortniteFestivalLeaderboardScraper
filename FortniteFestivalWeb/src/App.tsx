@@ -52,7 +52,7 @@ import { queryClient } from './api/queryClient';
 import { Routes as AppRoutes, RoutePatterns } from './routes';
 import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
 import { useShopState } from './hooks/data/useShopState';
-import { ScrollContainerProvider, useScrollContainer } from './contexts/ScrollContainerContext';
+import { ScrollContainerProvider, useShellRefs, useScrollContainer } from './contexts/ScrollContainerContext';
 
 export default function App() {
   return (
@@ -102,6 +102,7 @@ function AppShell() {
   const isWideDesktop = useIsWideDesktop();
   const fabSearch = useFabSearch();
   const { isShopVisible, getShopUrl } = useShopState();
+  const { scrollRef: shellScrollRef, portalRefCallback: shellPortalRefCallback } = useShellRefs();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [playerModalOpen, setPlayerModalOpen] = useState(false);
   const [findPlayerOpen, setFindPlayerOpen] = useState(false);
@@ -265,7 +266,8 @@ function AppShell() {
       {/* v8 ignore stop */}
 
       {/* v8 ignore start — wideDesktop layout tested via PinnedSidebar.test */}
-      <div style={appStyles.scrollContainer}>
+      <div ref={shellPortalRefCallback} style={appStyles.headerPortal} />
+      <div ref={shellScrollRef} style={appStyles.scrollContainer}>
       <div style={wideDesktop ? appStyles.contentRow : appStyles.contentColumn}>
       {wideDesktop && (
         <PinnedSidebar

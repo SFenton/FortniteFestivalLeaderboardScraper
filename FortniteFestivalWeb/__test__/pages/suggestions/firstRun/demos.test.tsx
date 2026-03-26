@@ -192,7 +192,7 @@ describe('InfiniteScrollDemo', () => {
     mockSlideHeight = 350;
     const { container } = wrap(<InfiniteScrollDemo />);
     // viewportRef gets style.height set
-    const viewport = container.firstChild as HTMLElement;
+    const viewport = container.querySelector('[data-testid="test-scroll-container"]')!.firstChild as HTMLElement;
     expect(viewport.style.height).toBe('350px');
   });
 

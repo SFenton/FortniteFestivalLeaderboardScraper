@@ -20,8 +20,7 @@ export function clearScrollCache(key?: string): void {
  * Saves scroll position on every scroll and restores it on mount when
  * the user navigated back (POP).
  *
- * Uses the app's scroll container element (via ScrollContainerContext)
- * instead of the browser's native window scroll.
+ * Uses the app's scroll container element (via ScrollContainerContext).
  *
  * @param cacheKey    Unique key for this page / route (e.g. 'songs', `songDetail:${id}`)
  * @param _navType    React Router navigation type (kept for API compat, not used)

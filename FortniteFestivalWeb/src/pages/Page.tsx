@@ -14,12 +14,13 @@
  * use `usePageScroll()` which returns `{ scrollRef, scrollTo }`.
  */
 import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode, type RefObject, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigationType } from 'react-router-dom';
-import { Colors, ZIndex, MaxWidth, Layout, Overflow, Position, Size, Spinner, Border, flexColumn, flexCenter, fixedFill, CssValue, Opacity, BorderStyle, PointerEvents, padding, SPINNER_FADE_MS } from '@festival/theme';
+import { Colors, ZIndex, MaxWidth, Layout, Position, Size, Spinner, Border, flexColumn, flexCenter, fixedFill, CssValue, Opacity, BorderStyle, PointerEvents, padding, SPINNER_FADE_MS } from '@festival/theme';
 import { useScrollMask, type ScrollMaskOptions } from '../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../hooks/ui/useStaggerRush';
 import { useScrollRestore } from '../hooks/ui/useScrollRestore';
-import { useScrollContainer } from '../contexts/ScrollContainerContext';
+import { useScrollContainer, useHeaderPortal } from '../contexts/ScrollContainerContext';
 import { useRegisterFirstRun } from '../hooks/ui/useRegisterFirstRun';
 import { useFirstRun } from '../hooks/ui/useFirstRun';
 import FirstRunCarousel from '../components/firstRun/FirstRunCarousel';
@@ -29,12 +30,12 @@ import ArcSpinner from '../components/common/ArcSpinner';
 
 /** Page-level style objects — importable by SuspenseFallback, PlayerPage consumers, etc. */
 export const pageCss = {
-  page: { ...flexColumn, flex: 1, minHeight: 0, color: Colors.textPrimary } as CSSProperties,
-  pageWithBg: { ...flexColumn, flex: 1, minHeight: 0, color: Colors.textPrimary, backgroundColor: Colors.backgroundApp, position: Position.relative } as CSSProperties,
-  pageWithBgClip: { ...flexColumn, flex: 1, minHeight: 0, color: Colors.textPrimary, backgroundColor: Colors.backgroundApp, position: Position.relative, overflow: Overflow.hidden } as CSSProperties,
-  scrollArea: { flex: 1, minHeight: 0, overflowY: Overflow.auto } as CSSProperties,
-  scrollAreaRelative: { flex: 1, minHeight: 0, overflowY: Overflow.auto, position: Position.relative } as CSSProperties,
-  scrollAreaRelativeZ: { flex: 1, minHeight: 0, overflowY: Overflow.auto, position: Position.relative, zIndex: ZIndex.base } as CSSProperties,
+  page: { ...flexColumn, flex: 1, color: Colors.textPrimary } as CSSProperties,
+  pageWithBg: { ...flexColumn, flex: 1, color: Colors.textPrimary, backgroundColor: Colors.backgroundApp, position: Position.relative } as CSSProperties,
+  pageWithBgClip: { ...flexColumn, flex: 1, color: Colors.textPrimary, backgroundColor: Colors.backgroundApp, position: Position.relative } as CSSProperties,
+  scrollArea: { flex: 1 } as CSSProperties,
+  scrollAreaRelative: { flex: 1, position: Position.relative } as CSSProperties,
+  scrollAreaRelativeZ: { flex: 1, position: Position.relative, zIndex: ZIndex.base } as CSSProperties,
   container: { maxWidth: MaxWidth.card, margin: CssValue.marginCenter, width: CssValue.full, padding: padding(0, Layout.paddingHorizontal) } as CSSProperties,
   containerZ: { maxWidth: MaxWidth.card, margin: CssValue.marginCenter, width: CssValue.full, padding: padding(0, Layout.paddingHorizontal), position: Position.relative, zIndex: ZIndex.base } as CSSProperties,
   bgImage: { ...fixedFill, backgroundSize: 'cover', backgroundPosition: 'center', opacity: Opacity.backgroundImage, pointerEvents: PointerEvents.none } as CSSProperties,
@@ -163,14 +164,8 @@ export default function Page({
 }: PageProps) {
   const internalRef = useRef<HTMLDivElement>(null);
   const scrollRef = externalScrollRef ?? internalRef;
-
-  // Register this page's scroll area in the shared ScrollContainerContext
-  // so all scroll hooks (useScrollRestore, useScrollMask, etc.) find it.
   const scrollContainerRef = useScrollContainer();
-  useEffect(() => {
-    scrollContainerRef.current = scrollRef.current;
-    return () => { scrollContainerRef.current = null; };
-  });
+  const portalTarget = useHeaderPortal();
 
   const stableScrollDeps = useMemo(() => scrollDeps ?? [], [scrollDeps]);
   useScrollMask(scrollRef, stableScrollDeps, scrollMaskOptions);
@@ -181,11 +176,11 @@ export default function Page({
   const navType = useNavigationType();
   useScrollRestore(scrollRestoreKey ?? '', scrollRestoreKey ? navType : '');
 
-  // Header collapse: listen to scroll-area scrollTop and call onCollapse
+  // Header collapse: listen to scrollContainer scrollTop and call onCollapse
   const lastCollapsedRef = useRef<boolean | null>(null);
   useEffect(() => {
     if (!headerCollapse || headerCollapse.disabled) return;
-    const el = scrollRef.current;
+    const el = scrollContainerRef.current;
     if (!el) return;
     const threshold = headerCollapse.threshold ?? 40;
     const onScroll = () => {
@@ -207,7 +202,8 @@ export default function Page({
 
   return (
     <PageScrollContext.Provider value={pageScrollValue}>
-    <div data-testid="page-root" className={className} style={pgStyle}>
+    {before && portalTarget && createPortal(before, portalTarget)}
+    <div data-testid="page-root" ref={scrollRef} className={className} style={pgStyle}>
       {loadPhase != null && loadPhase !== LoadPhase.ContentIn && (
         <div style={loadPhase === LoadPhase.SpinnerOut
           ? { ...pageCss.spinnerOverlay, animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards` }
@@ -216,8 +212,7 @@ export default function Page({
           <ArcSpinner />
         </div>
       )}
-      {before}
-      <div data-testid="scroll-area" ref={scrollRef} className={scrollClassName} style={{ ...saStyle, ...scrollStyle }}>
+      <div data-testid="scroll-area" className={scrollClassName} style={{ ...saStyle, ...scrollStyle }}>
         <div className={containerClassName} style={{ ...cStyle, ...containerStyle }}>
           {children}
         </div>

@@ -96,14 +96,14 @@ describe('OverviewDemo', () => {
     mockIsMobileChrome = true;
     const { container } = wrap(<OverviewDemo />);
     // Mobile uses single-column grid
-    const grid = container.firstChild as HTMLElement;
+    const grid = container.querySelector('[data-testid="test-scroll-container"]')!.firstChild as HTMLElement;
     expect(grid.style.gridTemplateColumns).toBe('1fr');
   });
 
   it('renders desktop layout when isMobileChrome is false', () => {
     mockIsMobileChrome = false;
     const { container } = wrap(<OverviewDemo />);
-    const grid = container.firstChild as HTMLElement;
+    const grid = container.querySelector('[data-testid="test-scroll-container"]')!.firstChild as HTMLElement;
     // Desktop does not force single-column
     expect(grid.style.gridTemplateColumns).not.toBe('1fr');
   });
@@ -133,14 +133,14 @@ describe('InstrumentBreakdownDemo', () => {
   it('renders mobile layout when isMobileChrome is true', () => {
     mockIsMobileChrome = true;
     const { container } = wrap(<InstrumentBreakdownDemo />);
-    const grid = container.firstChild as HTMLElement;
+    const grid = container.querySelector('[data-testid="test-scroll-container"]')!.firstChild as HTMLElement;
     expect(grid.style.gridTemplateColumns).toBe('1fr');
   });
 
   it('renders desktop layout when isMobileChrome is false', () => {
     mockIsMobileChrome = false;
     const { container } = wrap(<InstrumentBreakdownDemo />);
-    const grid = container.firstChild as HTMLElement;
+    const grid = container.querySelector('[data-testid="test-scroll-container"]')!.firstChild as HTMLElement;
     expect(grid.style.gridTemplateColumns).not.toBe('1fr');
   });
 
@@ -305,14 +305,14 @@ describe('DrillDownDemo', () => {
   it('renders mobile layout when isMobileChrome is true', () => {
     mockIsMobileChrome = true;
     const { container } = wrap(<DrillDownDemo />);
-    const grid = container.firstChild as HTMLElement;
+    const grid = container.querySelector('[data-testid="test-scroll-container"]')!.firstChild as HTMLElement;
     expect(grid.style.gridTemplateColumns).toBe('1fr');
   });
 
   it('renders desktop layout when isMobileChrome is false', () => {
     mockIsMobileChrome = false;
     const { container } = wrap(<DrillDownDemo />);
-    const grid = container.firstChild as HTMLElement;
+    const grid = container.querySelector('[data-testid="test-scroll-container"]')!.firstChild as HTMLElement;
     expect(grid.style.gridTemplateColumns).not.toBe('1fr');
   });
 

@@ -19,8 +19,8 @@ export interface PageHeaderProps {
 /**
  * Standardized page header with consistent alignment.
  *
- * Renders in the `before` slot of `<Page>` — sits above the scroll area
- * so content clips at its bottom edge. No sticky positioning needed.
+ * Rendered above the scroll container via portal — no sticky positioning needed.
+ * Content scrolls independently below this header.
  */
 export default function PageHeader({
   title,

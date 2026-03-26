@@ -13,8 +13,8 @@ import {
 } from '@festival/core/api/serverTypes';
 import { Gap, Colors, Font, Layout, MaxWidth, Position, ZIndex, Display, Overflow, Align, Justify, CssValue, flexCenter, flexColumn, padding, GridTemplate, SPINNER_FADE_MS } from '@festival/theme';
 import ArcSpinner from '../../components/common/ArcSpinner';
-import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import Page from '../Page';
+import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import SongInfoHeader from '../../components/songs/headers/SongInfoHeader';
 import ScoreHistoryChart from './components/chart/ScoreHistoryChart';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';

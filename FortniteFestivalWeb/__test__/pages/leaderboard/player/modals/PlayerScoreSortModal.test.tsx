@@ -38,7 +38,7 @@ describe('PlayerScoreSortModal', () => {
     const { container } = render(
       <TestProviders><PlayerScoreSortModal {...defaultProps()} visible={false} /></TestProviders>,
     );
-    expect(container.innerHTML).toBe('');
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it('renders modal title when visible', () => {

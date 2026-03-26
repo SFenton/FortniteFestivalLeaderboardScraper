@@ -115,7 +115,7 @@ describe('SongDetailPage', () => {
   it('renders without crashing', async () => {
     const { container } = renderSongDetail();
     await waitFor(() => {
-      expect(container.innerHTML).toBeTruthy();
+      expect(document.body.innerHTML).toBeTruthy();
     });
   });
 
@@ -129,15 +129,15 @@ describe('SongDetailPage', () => {
   it('renders song artist', async () => {
     const { container } = renderSongDetail();
     await waitFor(() => {
-      expect(container.textContent).toContain('Test Song');
+      expect(document.body.textContent).toContain('Test Song');
     });
-    expect(container.textContent).toContain('Artist A');
+    expect(document.body.textContent).toContain('Artist A');
   });
 
   it('renders instrument cards after loading', async () => {
     const { container } = renderSongDetail();
     await waitFor(() => {
-      expect(container.textContent).toContain('Lead');
+      expect(document.body.textContent).toContain('Lead');
     });
   });
 
@@ -182,17 +182,17 @@ describe('SongDetailPage', () => {
   it('renders leaderboard entries in instrument cards', async () => {
     const { container } = renderSongDetail();
     await waitFor(() => {
-      expect(container.textContent).toContain('Test Song');
+      expect(document.body.textContent).toContain('Test Song');
     });
     await waitFor(() => {
-      expect(container.textContent).toContain('P1');
+      expect(document.body.textContent).toContain('P1');
     });
   });
 
   it('renders score values from leaderboard entries', async () => {
     const { container } = renderSongDetail();
     await waitFor(() => {
-      expect(container.textContent).toContain('145,000');
+      expect(document.body.textContent).toContain('145,000');
     });
   });
 
@@ -236,7 +236,7 @@ describe('SongDetailPage', () => {
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player-1', displayName: 'TestPlayer' }));
     const { container } = renderSongDetail('/songs/song-1', 'test-player-1');
     await waitFor(() => {
-      expect(container.textContent).toContain('Test Song');
+      expect(document.body.textContent).toContain('Test Song');
     });
     await waitFor(() => {
       expect(mockApi.getPlayerHistory).toHaveBeenCalled();
@@ -249,7 +249,7 @@ describe('SongDetailPage', () => {
     mockApi.getPlayerHistory.mockRejectedValue(new Error('History fetch fail'));
     const { container } = renderSongDetail('/songs/song-1', 'test-player-1');
     await waitFor(() => {
-      expect(container.textContent).toContain('Test Song');
+      expect(document.body.textContent).toContain('Test Song');
     });
   });
 
@@ -258,29 +258,29 @@ describe('SongDetailPage', () => {
     mockApi.getPlayer.mockResolvedValue({ accountId: '', displayName: '', totalScores: 0, scores: [] });
     const { container } = renderSongDetail('/songs/song-1');
     await waitFor(() => {
-      expect(container.textContent).toContain('Test Song');
+      expect(document.body.textContent).toContain('Test Song');
     });
     await waitFor(() => {
-      expect(container.textContent).toContain('Lead');
+      expect(document.body.textContent).toContain('Lead');
     });
   });
 
   it('triggers scroll handler on scroll', async () => {
     const { container } = renderSongDetail();
     await waitFor(() => {
-      expect(container.textContent).toContain('Test Song');
+      expect(document.body.textContent).toContain('Test Song');
     });
     const scrollArea = container.querySelector('[data-testid="scroll-area"]');
     if (scrollArea) {
       fireEvent.scroll(scrollArea);
     }
-    expect(container.textContent).toContain('Test Song');
+    expect(document.body.textContent).toContain('Test Song');
   });
 
   it('calculates global score width from leaderboard entries', async () => {
     const { container } = renderSongDetail();
     await waitFor(() => {
-      expect(container.textContent).toContain('145,000');
+      expect(document.body.textContent).toContain('145,000');
     });
   });
 
@@ -292,23 +292,23 @@ describe('SongDetailPage', () => {
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player-1', displayName: 'TestPlayer' }));
     const { container } = renderSongDetail('/songs/song-1', 'test-player-1');
     await waitFor(() => {
-      expect(container.textContent).toContain('Test Song');
+      expect(document.body.textContent).toContain('Test Song');
     });
   });
 
   it('renders album art background via PageBackground', async () => {
     const { container } = renderSongDetail();
     await waitFor(() => {
-      expect(container.textContent).toContain('Test Song');
+      expect(document.body.textContent).toContain('Test Song');
     });
-    expect(container.innerHTML).toContain('art.jpg');
+    expect(document.body.innerHTML).toContain('art.jpg');
   });
 
   it('handles missing song gracefully when songs list doesn\'t contain songId', async () => {
     mockApi.getSongs.mockResolvedValue({ songs: [], count: 0, currentSeason: 5 });
     const { container } = renderSongDetail('/songs/nonexistent');
     await waitFor(() => {
-      expect(container.innerHTML).toBeTruthy();
+      expect(document.body.innerHTML).toBeTruthy();
     });
   });
 
@@ -322,7 +322,7 @@ describe('SongDetailPage', () => {
     });
     const { container } = renderSongDetail('/songs/song-1', 'test-player-1');
     await waitFor(() => {
-      expect(container.textContent).toContain('Test Song');
+      expect(document.body.textContent).toContain('Test Song');
     });
   });
 
@@ -335,18 +335,18 @@ describe('SongDetailPage', () => {
       </TestProviders>,
     );
     await waitFor(() => {
-      expect(container.textContent).toContain('Test Song');
+      expect(document.body.textContent).toContain('Test Song');
     });
   });
 
   it('handles resize events', async () => {
     const { container } = renderSongDetail();
     await waitFor(() => {
-      expect(container.textContent).toContain('Test Song');
+      expect(document.body.textContent).toContain('Test Song');
     });
     act(() => { window.dispatchEvent(new Event('resize')); });
     await waitFor(() => {
-      expect(container.textContent).toContain('Test Song');
+      expect(document.body.textContent).toContain('Test Song');
     });
   });
 
@@ -354,7 +354,7 @@ describe('SongDetailPage', () => {
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player-1', displayName: 'TestPlayer' }));
     const { container } = renderSongDetail('/songs/song-1', 'test-player-1');
     await waitFor(() => {
-      expect(container.textContent).toContain('Test Song');
+      expect(document.body.textContent).toContain('Test Song');
     });
     await waitFor(() => {
       expect(mockApi.getPlayerHistory).toHaveBeenCalled();
@@ -373,20 +373,20 @@ describe('SongDetailPage', () => {
     });
     const { container } = renderSongDetail();
     await waitFor(() => {
-      expect(container.textContent).toContain('Test Song');
+      expect(document.body.textContent).toContain('Test Song');
     });
     const scrollArea = container.querySelector('[data-testid="scroll-area"]');
     if (scrollArea) {
       Object.defineProperty(scrollArea, 'scrollTop', { value: 100, writable: true, configurable: true });
       fireEvent.scroll(scrollArea);
     }
-    expect(container.textContent).toContain('Test Song');
+    expect(document.body.textContent).toContain('Test Song');
   });
 
   it('computes globalScoreWidth from entries', async () => {
     const { container } = renderSongDetail();
     await waitFor(() => {
-      expect(container.textContent).toContain('Lead');
+      expect(document.body.textContent).toContain('Lead');
     });
   });
 });
@@ -454,7 +454,7 @@ describe('SongDetailPage — extra coverage', () => {
     mockApi.getAllLeaderboards.mockResolvedValue({ songId: 'xyz', instruments: [] });
     const { container } = renderSongDetail('/songs/xyz', 'test-player-1');
     await waitFor(() => {
-      expect(container.innerHTML.length).toBeGreaterThan(0);
+      expect(document.body.innerHTML.length).toBeGreaterThan(0);
     });
   });
 

@@ -6,12 +6,6 @@ const DEFAULT_THRESHOLD = 40;
 /**
  * Tracks whether a page header should be collapsed based on the scroll
  * container's scrollTop position.
- *
- * @param opts.threshold  Pixel distance to trigger collapse (default 40)
- * @param opts.disabled   When true, returns the `forcedValue` without reading scroll
- * @param opts.forcedValue Value to use when disabled (default `false`)
- * @returns `[collapsed, onScroll]` — `onScroll` is provided for manual trigger but
- *          the hook also listens to the scroll container automatically.
  */
 export function useHeaderCollapse(
   opts?: { threshold?: number; disabled?: boolean; forcedValue?: boolean },

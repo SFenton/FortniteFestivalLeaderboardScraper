@@ -123,7 +123,7 @@ function useStyles() {
         position: Position.sticky,
         top: 0,
         alignSelf: Align.start,
-        height: CssValue.full,
+        height: '100dvh',
         zIndex: ZIndex.base,
       } as CSSProperties,
       nav: {

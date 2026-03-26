@@ -21,21 +21,20 @@ const DEFAULT_STOPS: ReadonlyArray<readonly [number, number]> = [
 /* eslint-enable no-magic-numbers */
 
 /**
- * Applies per-child mask-image fading at the scroll container edges using
+ * Applies per-child mask-image fading at the viewport scroll edges using
  * IntersectionObserver for efficient tracking. Only children near the
  * edges get `getBoundingClientRect` calls — typically 0–2 at any time.
  *
- * Uses the app's scroll container (via ScrollContainerContext) instead of
- * the browser viewport.
+ * Uses the app's scroll container (via ScrollContainerContext).
  *
- * @param scrollRef  Ref to the scrollable container (or viewport parent)
+ * @param _scrollRef Deprecated — kept for API compat, no longer used
  * @param listRef    Ref to the direct parent of the items to fade
  * @param deps       Extra dependency array — when any value changes, observers reconnect
  * @param options    Fade distance and curve configuration
  * @returns          `update` handler (called automatically on scroll)
  */
 export function useScrollFade(
-  scrollRef: RefObject<HTMLElement | null>,
+  _scrollRef: RefObject<HTMLElement | null>,
   listRef: RefObject<HTMLElement | null>,
   deps: readonly unknown[] = [],
   options: ScrollFadeOptions = {},
@@ -45,7 +44,7 @@ export function useScrollFade(
   const rafId = useRef(0);
   const scrollContainerRef = useScrollContainer();
 
-  // Track which children are near viewport edges
+  // Track which children are near scroll container edges
   const edgeChildrenRef = useRef(new Set<HTMLElement>());
 
   const applyMasks = useCallback(() => {

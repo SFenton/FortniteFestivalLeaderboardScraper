@@ -39,7 +39,7 @@ describe('FilterModal', () => {
       <TestProviders><FilterModal {...defaultProps()} visible={false} /></TestProviders>,
     );
     // ModalShell returns null when not visible
-    expect(container.innerHTML).toBe('');
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it('renders modal title when visible', () => {

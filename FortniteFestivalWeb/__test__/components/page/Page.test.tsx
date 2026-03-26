@@ -1,10 +1,41 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import React, { type ReactNode } from 'react';
 import Page from '../../../src/pages/Page';
+import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef } from '../../../src/contexts/ScrollContainerContext';
+
+function ShellInjector({ children }: { children: ReactNode }) {
+  const sRef = useScrollContainer();
+  const setPortalNode = useHeaderPortalRef();
+
+  return (
+    <>
+      <div ref={setPortalNode} data-testid="test-header-portal" />
+      <div ref={(el) => {
+        if (el && !sRef.current) {
+          Object.defineProperty(el, 'scrollHeight', { value: 5000, writable: true, configurable: true });
+          Object.defineProperty(el, 'scrollTop', { value: 0, writable: true, configurable: true });
+          el.scrollTo = (() => {}) as any;
+          sRef.current = el;
+        }
+      }} data-testid="test-scroll-container">
+        {children}
+      </div>
+    </>
+  );
+}
 
 function PageWrapper(props: Partial<React.ComponentProps<typeof Page>> & { children?: React.ReactNode }) {
-  return <MemoryRouter><Page {...props}>{props.children ?? <div>Page content</div>}</Page></MemoryRouter>;
+  return (
+    <ScrollContainerProvider>
+      <ShellInjector>
+        <MemoryRouter>
+          <Page {...props}>{props.children ?? <div>Page content</div>}</Page>
+        </MemoryRouter>
+      </ShellInjector>
+    </ScrollContainerProvider>
+  );
 }
 
 describe('Page', () => {

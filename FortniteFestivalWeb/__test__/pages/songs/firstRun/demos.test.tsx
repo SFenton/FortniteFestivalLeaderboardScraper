@@ -111,7 +111,7 @@ describe('DemoSongRow', () => {
         <span>anim</span>
       </DemoSongRow>,
     );
-    const div = container.firstChild as HTMLElement;
+    const div = container.querySelector('[data-testid="test-scroll-container"]')!.firstChild as HTMLElement;
     expect(div.style.opacity).toBe('0');
     expect(div.style.animation).toContain('fadeInUp');
   });
@@ -122,7 +122,7 @@ describe('DemoSongRow', () => {
         <span>done</span>
       </DemoSongRow>,
     );
-    const div = container.firstChild as HTMLElement;
+    const div = container.querySelector('[data-testid="test-scroll-container"]')!.firstChild as HTMLElement;
     expect(div.style.opacity).toBe('1');
     expect(div.style.transition).toContain('opacity');
   });
@@ -133,7 +133,7 @@ describe('DemoSongRow', () => {
         <span>fading</span>
       </DemoSongRow>,
     );
-    const div = container.firstChild as HTMLElement;
+    const div = container.querySelector('[data-testid="test-scroll-container"]')!.firstChild as HTMLElement;
     expect(div.style.opacity).toBe('0');
   });
 });

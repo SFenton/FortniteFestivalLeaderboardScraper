@@ -38,8 +38,6 @@ describe('useScrollFade', () => {
     const scrollRef = { current: document.createElement('div') };
     const listRef = { current: listEl };
     renderHook(() => useScrollFade(scrollRef as any, listRef as any), { wrapper });
-    // The stub IntersectionObserver from setup.ts should be called with 3 children
-    // Just verify the hook didn't throw and returned a function
   });
 
   it('registers scroll container listener', () => {
@@ -68,7 +66,6 @@ describe('useScrollFade', () => {
     const listEl = makeListEl(3);
     const scrollRef = { current: document.createElement('div') };
     const listRef = { current: listEl };
-    // Should not throw with custom distance
     renderHook(() => useScrollFade(scrollRef as any, listRef as any, [], { distance: 20 }), { wrapper });
   });
 });

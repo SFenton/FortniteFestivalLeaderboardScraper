@@ -45,7 +45,7 @@ describe('SortModal', () => {
     const { container } = render(
       <TestProviders><SortModal {...defaultProps()} visible={false} /></TestProviders>,
     );
-    expect(container.innerHTML).toBe('');
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it('renders modal title when visible', () => {

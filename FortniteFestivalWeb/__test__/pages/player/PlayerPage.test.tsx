@@ -252,7 +252,7 @@ describe('PlayerPage', () => {
     });
     const { container } = renderPlayerPage('/player/test-player-1');
     await waitFor(() => {
-      expect(container.textContent).toContain('TestPlayer');
+      expect(document.body.textContent).toContain('TestPlayer');
     });
   });
 
@@ -278,7 +278,7 @@ describe('PlayerPage', () => {
       resolvePlayer!(MOCK_PLAYER);
     });
     await waitFor(() => {
-      expect(container.textContent).toContain('TestPlayer');
+      expect(document.body.textContent).toContain('TestPlayer');
     });
   });
 });
@@ -482,22 +482,22 @@ describe('PlayerPage — coverage: instrument stats + percentile + top/bottom so
     const { container } = renderPlayerPage('/player/rich-player');
 
     await waitFor(() => {
-      expect(container.textContent).toContain('RichPlayer');
+      expect(document.body.textContent).toContain('RichPlayer');
     });
 
     await waitFor(() => {
-      expect(container.textContent).toContain('Instrument Statistics');
+      expect(document.body.textContent).toContain('Instrument Statistics');
     }, { timeout: 3000 });
 
-    expect(container.textContent).toContain('Lead');
-    expect(container.textContent).toContain('Bass');
-    expect(container.textContent).toContain('Drums');
+    expect(document.body.textContent).toContain('Lead');
+    expect(document.body.textContent).toContain('Bass');
+    expect(document.body.textContent).toContain('Drums');
 
-    expect(container.textContent).toContain('Songs Played');
-    expect(container.textContent).toContain('Full Combos');
-    expect(container.textContent).toContain('Gold Stars');
-    expect(container.textContent).toContain('Avg Accuracy');
-    expect(container.textContent).toContain('Best Rank');
+    expect(document.body.textContent).toContain('Songs Played');
+    expect(document.body.textContent).toContain('Full Combos');
+    expect(document.body.textContent).toContain('Gold Stars');
+    expect(document.body.textContent).toContain('Avg Accuracy');
+    expect(document.body.textContent).toContain('Best Rank');
   });
 
   it('renders top and bottom songs sections', async () => {
@@ -508,12 +508,12 @@ describe('PlayerPage — coverage: instrument stats + percentile + top/bottom so
     const { container } = renderPlayerPage('/player/top-bot');
 
     await waitFor(() => {
-      expect(container.textContent).toContain('Top Songs Per Instrument');
+      expect(document.body.textContent).toContain('Top Songs Per Instrument');
     }, { timeout: 3000 });
 
-    expect(container.textContent).toContain('Top Five Songs');
-    expect(container.textContent).toContain('Bottom Five Songs');
-    expect(container.textContent).toContain('Song Alpha');
+    expect(document.body.textContent).toContain('Top Five Songs');
+    expect(document.body.textContent).toContain('Bottom Five Songs');
+    expect(document.body.textContent).toContain('Song Alpha');
   });
 
   it('renders percentile distribution rows', async () => {
@@ -524,11 +524,11 @@ describe('PlayerPage — coverage: instrument stats + percentile + top/bottom so
     const { container } = renderPlayerPage('/player/pct-player');
 
     await waitFor(() => {
-      expect(container.textContent).toContain('Percentile');
+      expect(document.body.textContent).toContain('Percentile');
     }, { timeout: 3000 });
 
     await waitFor(() => {
-      expect(container.textContent).toMatch(/Top \d+%/);
+      expect(document.body.textContent).toMatch(/Top \d+%/);
     });
   });
 });
@@ -551,11 +551,11 @@ describe('PlayerPage — coverage: sync banner', () => {
     const { container } = renderPlayerPage('/player/syncing-player');
 
     await waitFor(() => {
-      expect(container.textContent).toContain('RichPlayer');
+      expect(document.body.textContent).toContain('RichPlayer');
     });
 
     await waitFor(() => {
-      expect(container.textContent).toContain('Syncing');
+      expect(document.body.textContent).toContain('Syncing');
     }, { timeout: 3000 });
   });
 
@@ -572,14 +572,14 @@ describe('PlayerPage — coverage: sync banner', () => {
     const { container } = renderPlayerPage('/player/history-player');
 
     await waitFor(() => {
-      expect(container.textContent).toContain('RichPlayer');
+      expect(document.body.textContent).toContain('RichPlayer');
     });
 
     await waitFor(() => {
       expect(
-        container.textContent!.includes('Syncing') ||
-        container.textContent!.includes('Reconstructing') ||
-        container.textContent!.includes('history')
+        document.body.textContent!.includes('Syncing') ||
+        document.body.textContent!.includes('Reconstructing') ||
+        document.body.textContent!.includes('history')
       ).toBe(true);
     }, { timeout: 3000 });
   });
@@ -600,11 +600,11 @@ describe('PlayerPage — coverage: profile switch', () => {
     const { container } = renderPlayerPage('/player/another-player', 'existing-tracked');
 
     await waitFor(() => {
-      expect(container.textContent).toContain('AnotherPlayer');
+      expect(document.body.textContent).toContain('AnotherPlayer');
     });
 
     await waitFor(() => {
-      expect(container.textContent).toContain('Select Player Profile');
+      expect(document.body.textContent).toContain('Select Player Profile');
     }, { timeout: 3000 });
 
     const btn = Array.from(container.querySelectorAll('button')).find(
@@ -613,7 +613,7 @@ describe('PlayerPage — coverage: profile switch', () => {
     if (btn) {
       fireEvent.click(btn);
       await waitFor(() => {
-        expect(container.textContent).toContain('Switch to');
+        expect(document.body.textContent).toContain('Switch to');
       });
     }
   });
@@ -632,11 +632,11 @@ describe('PlayerPage — coverage: stagger calculations', () => {
     const { container } = renderPlayerPage('/player/stagger-player');
 
     await waitFor(() => {
-      expect(container.textContent).toContain('RichPlayer');
+      expect(document.body.textContent).toContain('RichPlayer');
     });
 
     await waitFor(() => {
-      expect(container.textContent).toContain('Instrument Statistics');
+      expect(document.body.textContent).toContain('Instrument Statistics');
     }, { timeout: 3000 });
 
     container.querySelectorAll('[style*="animation"]');
@@ -657,11 +657,11 @@ describe('PlayerPage — coverage: stagger calculations', () => {
 
     const { container } = renderPlayerPage('/player/revisit-player');
     await waitFor(() => {
-      expect(container.textContent).toContain('RevisitPlayer');
+      expect(document.body.textContent).toContain('RevisitPlayer');
     });
 
     await waitFor(() => {
-      expect(container.textContent).toContain('Instrument Statistics');
+      expect(document.body.textContent).toContain('Instrument Statistics');
     }, { timeout: 3000 });
   });
 });

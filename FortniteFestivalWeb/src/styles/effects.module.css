@@ -10,6 +10,13 @@
   -webkit-backdrop-filter: blur(12px) saturate(1.2);
 }
 
+/* ── PageHeader frosted glass (content scrolls behind sticky header) ── */
+.headerFrosted {
+  background-color: rgba(11,3,24,0.85);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+}
+
 /* ── SearchBar placeholder color ── */
 .searchPlaceholder::placeholder {
   color: var(--color-text-placeholder);

@@ -11,10 +11,6 @@ const DEFAULT_SIZE = 40;
 /**
  * Applies a CSS `mask-image` on a container based on the scroll container's
  * scroll position relative to the container's bounds.
- *
- * Uses the app's scroll container (via ScrollContainerContext) instead of
- * window scroll events.
- * Fades content at whichever edges have more content above/below the viewport.
  */
 export function useScrollMask(
   containerRef: RefObject<HTMLElement | null>,
