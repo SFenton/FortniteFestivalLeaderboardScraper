@@ -42,13 +42,13 @@ describe('Modal', () => {
 
   it('renders action buttons', () => {
     const { container } = render(<Modal {...defaults}><p>C</p></Modal>);
-    const buttons = container.querySelectorAll('button');
+    const buttons = document.body.querySelectorAll('button');
     expect(buttons.length).toBeGreaterThanOrEqual(2); // Apply + Cancel at minimum
   });
 
   it('calls onApply when apply clicked', () => {
     const { container } = render(<Modal {...defaults}><p>C</p></Modal>);
-    const applyBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Apply'));
+    const applyBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('Apply'));
     if (applyBtn) fireEvent.click(applyBtn);
     expect(defaults.onApply).toHaveBeenCalled();
   });
@@ -56,19 +56,19 @@ describe('Modal', () => {
   it('calls onClose when cancel clicked', () => {
     const { container } = render(<Modal {...defaults}><p>C</p></Modal>);
     // Cancel button may use "close" handler -- find by excluding Apply and Reset
-    const buttons = Array.from(container.querySelectorAll('button'));
+    const buttons = Array.from(document.body.querySelectorAll('button'));
     const cancelBtn = buttons.find(b => {
       const t = b.textContent || '';
       return !t.includes('Apply') && !t.includes('Reset') && t.length > 0;
     });
     if (cancelBtn) fireEvent.click(cancelBtn);
     // onClose is called either via cancel or Escape
-    expect(container.innerHTML).toBeTruthy();
+    expect(document.body.innerHTML).toBeTruthy();
   });
 
   it('calls onReset when reset clicked', () => {
     const { container } = render(<Modal {...defaults}><p>C</p></Modal>);
-    const resetBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Reset'));
+    const resetBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('Reset'));
     if (resetBtn) fireEvent.click(resetBtn);
     expect(defaults.onReset).toHaveBeenCalled();
   });
@@ -80,12 +80,12 @@ describe('Modal', () => {
 
   it('supports custom apply label', () => {
     const { container } = render(<Modal {...defaults} applyLabel="Confirm"><p>C</p></Modal>);
-    expect(container.textContent).toContain('Confirm');
+    expect(document.body.textContent).toContain('Confirm');
   });
 
   it('disables apply button when applyDisabled', () => {
     const { container } = render(<Modal {...defaults} applyDisabled><p>C</p></Modal>);
-    const applyBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Apply'));
+    const applyBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('Apply'));
     expect(applyBtn?.disabled).toBe(true);
   });
 });
@@ -96,13 +96,13 @@ import ChangelogModal from '../../../src/components/modals/ChangelogModal';
 describe('ChangelogModal', () => {
   it('renders changelog content', () => {
     const { container } = render(<ChangelogModal onDismiss={vi.fn()} />);
-    expect(container.innerHTML.length).toBeGreaterThan(50);
+    expect(document.body.innerHTML.length).toBeGreaterThan(50);
   });
 
   it('calls onDismiss when dismiss button clicked', () => {
     const onDismiss = vi.fn();
     const { container } = render(<ChangelogModal onDismiss={onDismiss} />);
-    const buttons = container.querySelectorAll('button');
+    const buttons = document.body.querySelectorAll('button');
     // Click any button -- the dismiss button
     if (buttons.length > 0) fireEvent.click(buttons[0]!);
     expect(onDismiss).toHaveBeenCalled();
@@ -118,7 +118,7 @@ describe('PathImage', () => {
     const { container } = render(
       <PathImage songId="song-1" instrument={'Solo_Guitar' as any} difficulty={Difficulty.Expert} />,
     );
-    expect(container.innerHTML).toBeTruthy();
+    expect(document.body.innerHTML).toBeTruthy();
   });
 
   it('renders loading state initially', () => {
@@ -126,7 +126,7 @@ describe('PathImage', () => {
       <PathImage songId="song-1" instrument={'Solo_Guitar' as any} difficulty={Difficulty.Hard} />,
     );
     // Should show spinner or loading state before image loads
-    expect(container.innerHTML).toBeTruthy();
+    expect(document.body.innerHTML).toBeTruthy();
   });
 });
 
@@ -146,12 +146,12 @@ describe('PlayerScoreSortModal', () => {
 
   it('renders sort options when visible', () => {
     const { container } = render(<PlayerScoreSortModal {...defaults} />);
-    expect(container.textContent).toContain('Score');
+    expect(document.body.textContent).toContain('Score');
   });
 
   it('calls onApply when apply button clicked', () => {
     const { container } = render(<PlayerScoreSortModal {...defaults} />);
-    const applyBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Apply'));
+    const applyBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('Apply'));
     if (applyBtn) fireEvent.click(applyBtn);
     expect(defaults.onApply).toHaveBeenCalled();
   });
@@ -159,14 +159,14 @@ describe('PlayerScoreSortModal', () => {
   it('calls onChange when sort option selected', () => {
     const { container } = render(<PlayerScoreSortModal {...defaults} />);
     // Click on a radio/button element that represents a sort option
-    const dateOpt = Array.from(container.querySelectorAll('button, [role="radio"]')).find(el => el.textContent?.includes('Date'));
+    const dateOpt = Array.from(document.body.querySelectorAll('button, [role="radio"]')).find(el => el.textContent?.includes('Date'));
     if (dateOpt) fireEvent.click(dateOpt);
     expect(defaults.onChange).toHaveBeenCalled();
   });
 
   it('does not render when not visible', () => {
     const { container } = render(<PlayerScoreSortModal {...defaults} visible={false} />);
-    expect(container.textContent?.includes('Score') ?? false).toBe(false);
+    expect(document.body.textContent?.includes('Score') ?? false).toBe(false);
   });
 });
 
@@ -190,14 +190,14 @@ describe('ReorderList', () => {
   it('renders move buttons for each item', () => {
     const { container } = render(<ReorderList items={items} onReorder={vi.fn()} />);
     // ReorderList may use drag handles or buttons
-    const interactiveEls = container.querySelectorAll('button, [role="button"], [draggable]');
+    const interactiveEls = document.body.querySelectorAll('button, [role="button"], [draggable]');
     expect(interactiveEls.length + items.length).toBeGreaterThanOrEqual(3);
   });
 
   it('calls onReorder when move button clicked', () => {
     const onReorder = vi.fn();
     const { container } = render(<ReorderList items={items} onReorder={onReorder} />);
-    const buttons = container.querySelectorAll('button');
+    const buttons = document.body.querySelectorAll('button');
     // Click a down button to move first item down
     if (buttons.length > 0) {
       fireEvent.click(buttons[buttons.length - 1]!);
@@ -222,7 +222,7 @@ describe('DifficultyToggles', () => {
   it('calls onChange when toggled', () => {
     const onChange = vi.fn();
     const { container } = render(<DifficultyToggles difficultyFilter={{ 1: true, 2: false, 3: false, 4: false, 5: false }} onChange={onChange} />);
-    const btn = container.querySelector('button');
+    const btn = document.body.querySelector('button');
     if (btn) fireEvent.click(btn);
     expect(onChange).toHaveBeenCalled();
   });
@@ -231,13 +231,13 @@ describe('DifficultyToggles', () => {
 describe('PercentileToggles', () => {
   it('renders percentile ranges', () => {
     const { container } = render(<PercentileToggles percentileFilter={{ 0: true, 25: false, 50: false, 75: false, 90: false }} onChange={vi.fn()} />);
-    expect(container.querySelectorAll('button').length).toBeGreaterThanOrEqual(1);
+    expect(document.body.querySelectorAll('button').length).toBeGreaterThanOrEqual(1);
   });
 
   it('calls onChange when toggled', () => {
     const onChange = vi.fn();
     const { container } = render(<PercentileToggles percentileFilter={{ 0: true }} onChange={onChange} />);
-    const btn = container.querySelector('button');
+    const btn = document.body.querySelector('button');
     if (btn) fireEvent.click(btn);
     expect(onChange).toHaveBeenCalled();
   });
@@ -255,13 +255,13 @@ function ModalProviders({ children }: { children: React.ReactNode }) {
 describe('SeasonToggles', () => {
   it('renders season options', () => {
     const { container } = render(<ModalProviders><SeasonToggles seasonFilter={{ 1: true, 2: false, 3: false }} onChange={vi.fn()} /></ModalProviders>);
-    expect(container.querySelectorAll('button').length).toBeGreaterThanOrEqual(1);
+    expect(document.body.querySelectorAll('button').length).toBeGreaterThanOrEqual(1);
   });
 
   it('calls onChange when toggled', () => {
     const onChange = vi.fn();
     const { container } = render(<ModalProviders><SeasonToggles seasonFilter={{ 1: true }} onChange={onChange} /></ModalProviders>);
-    const btn = container.querySelector('button');
+    const btn = document.body.querySelector('button');
     if (btn) fireEvent.click(btn);
     expect(onChange).toHaveBeenCalled();
   });
@@ -270,13 +270,13 @@ describe('SeasonToggles', () => {
 describe('StarsToggles', () => {
   it('renders star options', () => {
     const { container } = render(<StarsToggles starsFilter={{ 0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true }} onChange={vi.fn()} />);
-    expect(container.querySelectorAll('button').length).toBeGreaterThanOrEqual(1);
+    expect(document.body.querySelectorAll('button').length).toBeGreaterThanOrEqual(1);
   });
 
   it('calls onChange when toggled', () => {
     const onChange = vi.fn();
     const { container } = render(<StarsToggles starsFilter={{ 6: true }} onChange={onChange} />);
-    const btn = container.querySelector('button');
+    const btn = document.body.querySelector('button');
     if (btn) fireEvent.click(btn);
     expect(onChange).toHaveBeenCalled();
   });
@@ -301,31 +301,31 @@ describe('FilterModal', () => {
 
   it('renders when visible', () => {
     const { container } = render(<ModalProviders><FilterModal {...defaults} /></ModalProviders>);
-    expect(container.innerHTML.length).toBeGreaterThan(50);
+    expect(document.body.innerHTML.length).toBeGreaterThan(50);
   });
 
   it('calls onApply on apply click', () => {
     const { container } = render(<ModalProviders><FilterModal {...defaults} /></ModalProviders>);
-    const applyBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Apply'));
+    const applyBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('Apply'));
     if (applyBtn) fireEvent.click(applyBtn);
     expect(defaults.onApply).toHaveBeenCalled();
   });
 
   it('renders filter sections', () => {
     const { container } = render(<ModalProviders><FilterModal {...defaults} /></ModalProviders>);
-    expect(container.innerHTML.length).toBeGreaterThan(50);
+    expect(document.body.innerHTML.length).toBeGreaterThan(50);
   });
 
   it('calls onReset on reset click', () => {
     const { container } = render(<ModalProviders><FilterModal {...defaults} /></ModalProviders>);
-    const resetBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Reset'));
+    const resetBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('Reset'));
     if (resetBtn) fireEvent.click(resetBtn);
     expect(defaults.onReset).toHaveBeenCalled();
   });
 
   it('does not render when not visible', () => {
     const { container } = render(<ModalProviders><FilterModal {...defaults} visible={false} /></ModalProviders>);
-    expect(container.innerHTML.length).toBeLessThan(100);
+    expect(document.body.innerHTML.length).toBeLessThan(100);
   });
 });
 
@@ -341,24 +341,24 @@ describe('SortModal', () => {
 
   it('renders when visible', () => {
     const { container } = render(<SortModal {...defaults} />);
-    expect(container.innerHTML.length).toBeGreaterThan(50);
+    expect(document.body.innerHTML.length).toBeGreaterThan(50);
   });
 
   it('calls onApply on apply click', () => {
     const { container } = render(<SortModal {...defaults} />);
-    const applyBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Apply'));
+    const applyBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('Apply'));
     if (applyBtn) fireEvent.click(applyBtn);
     expect(defaults.onApply).toHaveBeenCalled();
   });
 
   it('does not render when not visible', () => {
     const { container } = render(<SortModal {...defaults} visible={false} />);
-    expect(container.innerHTML.length).toBeLessThan(50);
+    expect(document.body.innerHTML.length).toBeLessThan(50);
   });
 
   it('renders sort mode options', () => {
     const { container } = render(<SortModal {...defaults} />);
-    expect(container.textContent).toContain('Title');
+    expect(document.body.textContent).toContain('Title');
   });
 });
 
@@ -378,22 +378,22 @@ describe('SuggestionsFilterModal', () => {
 
   it('renders when visible', () => {
     const { container } = render(<SuggestionsFilterModal {...defaults} />);
-    expect(container.innerHTML.length).toBeGreaterThan(50);
+    expect(document.body.innerHTML.length).toBeGreaterThan(50);
   });
 
   it('calls onApply on apply click', () => {
     const { container } = render(<SuggestionsFilterModal {...defaults} />);
-    const buttons = Array.from(container.querySelectorAll('button'));
+    const buttons = Array.from(document.body.querySelectorAll('button'));
     const applyBtn = buttons.find(b => b.textContent?.includes('Apply'));
     if (applyBtn) {
       fireEvent.click(applyBtn);
     }
     // Apply may or may not fire (depends on modal implementation)
-    expect(container.innerHTML.length).toBeGreaterThan(50);
+    expect(document.body.innerHTML.length).toBeGreaterThan(50);
   });
 
   it('does not render when not visible', () => {
     const { container } = render(<SuggestionsFilterModal {...defaults} visible={false} />);
-    expect(container.innerHTML.length).toBeLessThan(50);
+    expect(document.body.innerHTML.length).toBeLessThan(50);
   });
 });

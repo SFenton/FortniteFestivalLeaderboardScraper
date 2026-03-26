@@ -9,7 +9,7 @@ import {
   Colors, Font, Weight, Gap, Radius, Border, Layout, ZIndex,
   Display, Align, Justify, Position, Cursor, BoxSizing, CssValue, CssProp,
   flexColumn, flexRow, flexCenter, purpleGlass, transition, transitions, padding, border, margin,
-  Overflow, FAST_FADE_MS, LINK_TRANSITION_MS,
+  Overflow, FAST_FADE_MS, LINK_TRANSITION_MS, PointerEvents,
 } from '@festival/theme';
 
 interface PinnedSidebarProps {
@@ -120,11 +120,8 @@ function useStyles() {
         ...flexColumn,
         overflow: Overflow.hidden,
         background: CssValue.transparent,
-        position: Position.sticky,
-        top: 0,
-        alignSelf: Align.start,
-        height: '100dvh',
         zIndex: ZIndex.base,
+        pointerEvents: PointerEvents.auto,
       } as CSSProperties,
       nav: {
         ...flexColumn,

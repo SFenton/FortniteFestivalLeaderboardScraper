@@ -24,7 +24,7 @@ const RivalDetailPage = lazy(() => import('./pages/rivals/RivalDetailPage'));
 const RivalCategoryPage = lazy(() => import('./pages/rivals/RivalryPage'));
 const AllRivalsPage = lazy(() => import('./pages/rivals/AllRivalsPage'));
 /* v8 ignore stop */
-import { Size, QUERY_NARROW_GRID } from '@festival/theme';
+import { Size, Layout, QUERY_NARROW_GRID } from '@festival/theme';
 import { appStyles } from './appStyles';
 import { resetSongSettingsForDeselect, loadSongSettings, SONG_SETTINGS_CHANGED_EVENT } from './utils/songSettings';
 import BackLink from './components/shell/mobile/BackLink';
@@ -52,7 +52,7 @@ import { queryClient } from './api/queryClient';
 import { Routes as AppRoutes, RoutePatterns } from './routes';
 import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
 import { useShopState } from './hooks/data/useShopState';
-import { ScrollContainerProvider, useShellRefs, useScrollContainer } from './contexts/ScrollContainerContext';
+import { ScrollContainerProvider, useShellRefs, useScrollContainer, useHeaderPortalHeight } from './contexts/ScrollContainerContext';
 
 export default function App() {
   return (
@@ -87,6 +87,95 @@ const ANIMATED_BG_ROUTES = new Set(['/', AppRoutes.songs, AppRoutes.suggestions,
 /* v8 ignore start — route detection helper */
 function isAnimatedBgRoute(pathname: string) {
   return ANIMATED_BG_ROUTES.has(pathname) || RoutePatterns.player.test(pathname) || pathname.startsWith('/rivals');
+}
+/* v8 ignore stop */
+
+/* v8 ignore start — wide desktop layout wrapper with overlay architecture */
+function WideDesktopLayout({
+  shellScrollRef,
+  shellPortalRefCallback,
+  player,
+  onDeselect,
+  onSelectPlayer,
+}: {
+  shellScrollRef: React.RefObject<HTMLDivElement | null>;
+  shellPortalRefCallback: (el: HTMLDivElement | null) => void;
+  player: TrackedPlayer | null;
+  onDeselect: () => void;
+  onSelectPlayer: () => void;
+}) {
+  const headerHeight = useHeaderPortalHeight();
+  return (
+    <div style={appStyles.bodySection}>
+      {/* Scroll container starts below the header overlay — content can never reach it */}
+      <div ref={shellScrollRef} style={{ ...appStyles.scrollContainerFull, top: headerHeight }}>
+        <div style={appStyles.scrollContentRow}>
+          <div style={appStyles.sidebarGutter} />
+          <div style={appStyles.centerColumn}>
+            <div id="main-content" style={{ ...appStyles.content, ...appStyles.contentPinned }}>
+              <Suspense fallback={<SuspenseFallback />}>
+              <Routes>
+                <Route path="/" element={<Navigate to={AppRoutes.songs} replace />} />
+                <Route path="/songs" element={<SongsPage />} />
+                <Route path="/songs/:songId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SongDetailPage /></ErrorBoundary>} />
+                <Route path="/songs/:songId/:instrument" element={<ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardPage /></ErrorBoundary>} />
+                <Route path="/songs/:songId/:instrument/history" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerHistoryPage /></ErrorBoundary>} />
+                <Route path="/player/:accountId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage /></ErrorBoundary>} />
+                {player ? (
+                  <Route path="/rivals" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalsPage /></ErrorBoundary>} />
+                ) : (
+                  <Route path="/rivals" element={<Navigate to={AppRoutes.songs} replace />} />
+                )}
+                {player ? (
+                  <Route path="/rivals/all" element={<ErrorBoundary fallback={<RouteErrorFallback />}><AllRivalsPage /></ErrorBoundary>} />
+                ) : (
+                  <Route path="/rivals/all" element={<Navigate to={AppRoutes.songs} replace />} />
+                )}
+                {player ? (
+                  <Route path="/rivals/:rivalId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalDetailPage /></ErrorBoundary>} />
+                ) : (
+                  <Route path="/rivals/:rivalId" element={<Navigate to={AppRoutes.songs} replace />} />
+                )}
+                {player ? (
+                  <Route path="/rivals/:rivalId/rivalry" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalCategoryPage /></ErrorBoundary>} />
+                ) : (
+                  <Route path="/rivals/:rivalId/rivalry" element={<Navigate to={AppRoutes.songs} replace />} />
+                )}
+                {player ? (
+                  <Route path="/statistics" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage accountId={player.accountId} /></ErrorBoundary>} />
+                ) : (
+                  <Route path="/statistics" element={<Navigate to={AppRoutes.songs} replace />} />
+                )}
+                {player ? (
+                  <Route path="/suggestions" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SuggestionsPage accountId={player.accountId} /></ErrorBoundary>} />
+                ) : (
+                  <Route path="/suggestions" element={<Navigate to={AppRoutes.songs} replace />} />
+                )}
+                <Route path="/shop" element={<ErrorBoundary fallback={<RouteErrorFallback />}><ShopPage /></ErrorBoundary>} />
+                <Route path="/settings" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SettingsPage /></ErrorBoundary>} />
+              </Routes>
+              </Suspense>
+            </div>
+          </div>
+          <div style={appStyles.rightGutter} />
+        </div>
+      </div>
+      {/* Sidebar overlay — pointer-events: none lets wheel through */}
+      <div style={appStyles.sidebarOverlay}>
+        <PinnedSidebar
+          player={player}
+          onDeselect={onDeselect}
+          onSelectPlayer={onSelectPlayer}
+        />
+      </div>
+      {/* Header overlay — pointer-events: none lets wheel through */}
+      <div style={appStyles.headerOverlay}>
+        <div style={{ width: Layout.sidebarWidth, flexShrink: 0 }} />
+        <div ref={shellPortalRefCallback} style={appStyles.headerPortalWide} />
+        <div style={{ width: Layout.sidebarWidth, flexShrink: 0 }} />
+      </div>
+    </div>
+  );
 }
 /* v8 ignore stop */
 
@@ -266,19 +355,21 @@ function AppShell() {
       {/* v8 ignore stop */}
 
       {/* v8 ignore start — wideDesktop layout tested via PinnedSidebar.test */}
-      <div ref={shellPortalRefCallback} style={appStyles.headerPortal} />
-      <div ref={shellScrollRef} style={appStyles.scrollContainer}>
-      <div style={wideDesktop ? appStyles.contentRow : appStyles.contentColumn}>
-      {wideDesktop && (
-        <PinnedSidebar
+      {wideDesktop ? (
+        <WideDesktopLayout
+          shellScrollRef={shellScrollRef}
+          shellPortalRefCallback={shellPortalRefCallback}
           player={player}
           onDeselect={handleDeselect}
           onSelectPlayer={() => setPlayerModalOpen(true)}
         />
-      )}
-      <div id="main-content" style={wideDesktop ? { ...appStyles.content, ...appStyles.contentPinned } : appStyles.content}>
-      {/* v8 ignore stop */}
-        <Suspense fallback={<SuspenseFallback />}>
+      ) : (
+        <>
+        <div ref={shellPortalRefCallback} style={appStyles.headerPortal} />
+        <div ref={shellScrollRef} style={appStyles.scrollContainer}>
+        <div style={appStyles.contentColumn}>
+        <div id="main-content" style={appStyles.content}>
+          <Suspense fallback={<SuspenseFallback />}>
         <Routes>
           <Route path="/" element={<Navigate to={AppRoutes.songs} replace />} />
           <Route path="/songs" element={<SongsPage />} />
@@ -319,13 +410,12 @@ function AppShell() {
           <Route path="/shop" element={<ErrorBoundary fallback={<RouteErrorFallback />}><ShopPage /></ErrorBoundary>} />
           <Route path="/settings" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SettingsPage /></ErrorBoundary>} />
         </Routes>
-        </Suspense>
-      </div>
-      {/* v8 ignore start — wideDesktop spacer */}
-      {wideDesktop && <div style={appStyles.rightSpacer} />}
-      {/* v8 ignore stop */}
-      </div>
-      </div>
+          </Suspense>
+        </div>
+        </div>
+        </div>
+        </>
+      )}
 
       {/* v8 ignore start — mobile FAB configuration tested via MobileFabController + FloatingActionButton tests */}
       {isMobile && <BottomNav player={player} activeTab={activeTab} onTabClick={handleTabClick} />}

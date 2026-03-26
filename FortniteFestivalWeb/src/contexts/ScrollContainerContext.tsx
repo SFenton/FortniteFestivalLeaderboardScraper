@@ -1,4 +1,4 @@
-import { createContext, useContext, useRef, useState, useCallback, type ReactNode, type RefObject } from 'react';
+import { createContext, useContext, useRef, useState, useCallback, useEffect, type ReactNode, type RefObject } from 'react';
 
 /* ── Scroll container ── */
 const ScrollContainerContext = createContext<RefObject<HTMLDivElement | null>>({ current: null });
@@ -12,8 +12,9 @@ export function useScrollContainer(): RefObject<HTMLDivElement | null> {
 interface HeaderPortalValue {
   node: HTMLDivElement | null;
   setNode: (el: HTMLDivElement | null) => void;
+  height: number;
 }
-const HeaderPortalContext = createContext<HeaderPortalValue>({ node: null, setNode: () => {} });
+const HeaderPortalContext = createContext<HeaderPortalValue>({ node: null, setNode: () => {}, height: 0 });
 
 /** Returns the portal target DOM node (or null before mount). */
 export function useHeaderPortal(): HTMLDivElement | null {
@@ -25,11 +26,31 @@ export function useHeaderPortalRef(): (el: HTMLDivElement | null) => void {
   return useContext(HeaderPortalContext).setNode;
 }
 
+/** Returns the current measured height of the header portal content. */
+export function useHeaderPortalHeight(): number {
+  return useContext(HeaderPortalContext).height;
+}
+
 /* ── Combined provider ── */
 export function ScrollContainerProvider({ children }: { children: ReactNode }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [portalNode, setPortalNode] = useState<HTMLDivElement | null>(null);
-  const portalValue: HeaderPortalValue = { node: portalNode, setNode: setPortalNode };
+  const [portalHeight, setPortalHeight] = useState(0);
+
+  // Observe portal target height changes
+  useEffect(() => {
+    if (!portalNode) { setPortalHeight(0); return; }
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setPortalHeight(entry.contentRect.height);
+      }
+    });
+    ro.observe(portalNode);
+    setPortalHeight(portalNode.offsetHeight);
+    return () => ro.disconnect();
+  }, [portalNode]);
+
+  const portalValue: HeaderPortalValue = { node: portalNode, setNode: setPortalNode, height: portalHeight };
   return (
     <ScrollContainerContext.Provider value={scrollRef}>
       <HeaderPortalContext.Provider value={portalValue}>

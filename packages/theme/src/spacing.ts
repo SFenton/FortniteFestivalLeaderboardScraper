@@ -311,4 +311,32 @@ export const Layout = {
   buttonCloseSize: 36,
   /** Size of circular navigation arrow buttons. */
   buttonNavSize: 40,
+  /** Size of modal close button circle. */
+  modalCloseSize: 32,
+  /** Size of radio button dot. */
+  radioDotSize: 18,
+  /** Width of toggle switch track (standard). */
+  toggleTrackWidth: 36,
+  /** Height of toggle switch track (standard). */
+  toggleTrackHeight: 20,
+  /** Radius of toggle switch track (standard). */
+  toggleTrackRadius: 10,
+  /** Size of toggle switch thumb (standard). */
+  toggleThumbSize: 16,
+  /** Inset of toggle thumb from track edge. */
+  toggleThumbInset: 2,
+  /** Offset of thumb when toggle is ON (standard). */
+  toggleThumbOnOffset: 18,
+  /** Width of toggle switch track (large). */
+  toggleTrackLargeWidth: 44,
+  /** Height of toggle switch track (large). */
+  toggleTrackLargeHeight: 24,
+  /** Radius of toggle switch track (large). */
+  toggleTrackLargeRadius: 12,
+  /** Size of toggle switch thumb (large). */
+  toggleThumbLargeSize: 20,
+  /** Offset of thumb when large toggle is ON. */
+  toggleThumbLargeOnOffset: 22,
+  /** Desktop modal panel z-index (overlay + 1). */
+  modalPanelZ: 1001,
 } as const;

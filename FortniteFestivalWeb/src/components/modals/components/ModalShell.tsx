@@ -5,6 +5,7 @@
  * compose from this to avoid reimplementing the same infrastructure.
  */
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { IoClose } from 'react-icons/io5';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
@@ -89,7 +90,7 @@ export default function ModalShell({
     ? { ...css.panelMobile, transition: mobileTransition, top: vvOffsetTop + vvHeight * 0.2, height: vvHeight * 0.8, transform: animIn ? 'translateY(0)' : 'translateY(100%)' }
     : { ...css.panelDesktop, transition: desktopTransition, transform: animIn ? 'translate(-50%, -50%)' : 'translate(-50%, -40%)', opacity: animIn ? 1 : 0, ...desktopStyle };
 
-  return (
+  return createPortal(
     <>
       <div
         style={{ ...css.overlay, transition: overlayTransition, opacity: animIn ? 1 : 0 }}
@@ -110,6 +111,7 @@ export default function ModalShell({
         </div>
         {children}
       </div>
-    </>
+    </>,
+    document.body,
   );
 }

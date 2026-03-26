@@ -56,7 +56,7 @@ describe('Modal', () => {
     expect(scrollArea).toBeTruthy();
     fireEvent.scroll(scrollArea!);
     // handleContentScroll ran without error (calls updateScrollMask internally)
-    expect(container.textContent).toContain('Tall content');
+    expect(document.body.textContent).toContain('Tall content');
   });
 
   it('calls onApply when apply button is clicked', async () => {
