@@ -4,11 +4,11 @@ import SongInfo from '../../../../components/songs/metadata/SongInfo';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { useFestival } from '../../../../contexts/FestivalContext';
 import { useShop } from '../../../../contexts/ShopContext';
-import { Layout, FADE_DURATION, STAGGER_INTERVAL } from '@festival/theme';
+import { Layout, FADE_DURATION, STAGGER_INTERVAL, Gap, CssValue, flexColumn } from '@festival/theme';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { fitRows } from '../../../../hooks/data/useDemoSongs';
 import css from './ShopHighlightDemo.module.css';
-import rowCss from './SongRowDemo.module.css';
+import { songRow, songRowMobile, mobileTopRow } from '../../../../styles/songRowStyles';
 
 const ROW_H = Layout.demoRowHeight;
 const ROW_H_MOBILE = Layout.demoRowMobileHeight;
@@ -59,19 +59,18 @@ export default function ShopHighlightDemo() {
   if (rows.length === 0) return null;
 
   return (
-    <div className={css.list}>
+    <div style={{ width: CssValue.full, ...flexColumn, gap: Gap.sm }}>
       {rows.map(({ song, inShop }, i) => {
-        const baseClass = isMobile ? rowCss.rowMobile : rowCss.row;
-        const className = inShop ? `${baseClass} ${css.shopRow}` : baseClass;
+        const baseStyle = isMobile ? songRowMobile : songRow;
+        const className = inShop ? css.shopRow : undefined;
         return (
           <div key={i} className={className}
             style={initialDone
-              ? undefined
-              : { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${i * STAGGER_INTERVAL}ms forwards` }
-            }
+              ? baseStyle
+              : { ...baseStyle, opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${i * STAGGER_INTERVAL}ms forwards` }}
           >
             {isMobile ? (
-              <div className={css.mobileTopRow}>
+              <div style={mobileTopRow}>
                 <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} />
               </div>
             ) : (

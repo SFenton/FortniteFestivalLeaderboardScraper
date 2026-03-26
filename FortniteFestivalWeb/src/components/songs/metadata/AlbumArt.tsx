@@ -1,8 +1,9 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useState, useCallback, memo, type CSSProperties } from 'react';
+import { useState, useCallback, memo, useMemo, type CSSProperties } from 'react';
+import { Colors, Radius, Position, Overflow, Display, Align, Justify, PointerEvents, ObjectFit, transition, TRANSITION_MS, IconSize } from '@festival/theme';
 import css from './AlbumArt.module.css';
 
-const spinnerSize = 24;
+const spinnerSize = IconSize.sm;
 
 // Track URLs that have loaded successfully so virtualized rows that remount
 // can skip the spinner / opacity-0 → 1 transition entirely.
@@ -14,6 +15,7 @@ export function _resetLoadedSrcs() { loadedSrcs.clear(); }
 export function _markLoaded(src: string) { loadedSrcs.add(src); }
 
 export default memo(function AlbumArt({ src, size, style, priority, pulse }: { src?: string; size: number; style?: CSSProperties; priority?: boolean; pulse?: boolean }) {
+  const styles = useStyles();
   const alreadyKnown = !!(src && loadedSrcs.has(src));
   const [loaded, setLoaded] = useState(alreadyKnown);
   const [failed, setFailed] = useState(false);
@@ -31,10 +33,10 @@ export default memo(function AlbumArt({ src, size, style, priority, pulse }: { s
   }, [src]);
   /* v8 ignore stop */
 
-  const sizeVars = { '--album-size': `${size}px`, ...style } as CSSProperties;
+  const sizeVars = { ...styles.root, width: size, height: size, ...style } as CSSProperties;
 
   /* v8 ignore start -- pulse and failed branches */
-  const rootClass = pulse ? `${css.root} ${css.pulse}` : css.root;
+  const rootClass = pulse ? css.pulse : undefined;
 
   if (!src || failed) {
     return <div className={rootClass} style={sizeVars} />;
@@ -44,7 +46,7 @@ export default memo(function AlbumArt({ src, size, style, priority, pulse }: { s
   return (
     <div className={rootClass} style={sizeVars}>
       {!loaded && (
-        <div className={css.spinnerWrap}>
+        <div style={styles.spinnerWrap}>
           <div className={css.spinnerCircle} style={{ width: spinnerSize, height: spinnerSize }} />
         </div>
       )}
@@ -56,11 +58,17 @@ export default memo(function AlbumArt({ src, size, style, priority, pulse }: { s
         fetchPriority={priority ? 'high' : undefined}
         onLoad={handleLoad}
         onError={handleError}
-        className={css.image}
         /* v8 ignore start — loaded state depends on image onLoad (not available in jsdom) */
-        style={{ width: size, height: size, borderRadius: 'var(--radius-xs)', opacity: loaded ? 1 : 0 }}
+        style={{ width: size, height: size, borderRadius: Radius.xs, opacity: loaded ? 1 : 0, objectFit: ObjectFit.cover, transition: transition('opacity', TRANSITION_MS) } as CSSProperties}
         /* v8 ignore stop */
       />
     </div>
   );
 });
+
+function useStyles() {
+  return useMemo(() => ({
+    root: { borderRadius: Radius.xs, flexShrink: 0, position: Position.relative, overflow: Overflow.hidden, backgroundColor: Colors.transparent } as CSSProperties,
+    spinnerWrap: { position: Position.absolute, inset: 0, display: Display.flex, alignItems: Align.center, justifyContent: Justify.center, pointerEvents: PointerEvents.none } as CSSProperties,
+  }), []);
+}

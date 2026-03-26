@@ -1,25 +1,4 @@
-.searchBar {
-  display: flex;
-  align-items: center;
-  gap: var(--gap-md);
-  cursor: text;
-}
-
-.searchIcon {
-  color: var(--color-text-tertiary);
-  flex-shrink: 0;
-}
-
-.searchInput {
-  flex: 1;
-  background: transparent;
-  border: none;
-  outline: none;
-  color: var(--color-text-primary);
-  font-size: var(--font-md);
-  min-width: 0;
-}
-
+/* Minimal CSS for pseudo-element that can't be expressed as inline style. */
 .searchInput::placeholder {
   color: var(--color-text-placeholder);
 }

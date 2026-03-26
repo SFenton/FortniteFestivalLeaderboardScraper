@@ -63,8 +63,10 @@ describe('ConfirmAlert', () => {
   it('card click does not propagate to overlay', () => {
     const onNo = vi.fn();
     const { container } = render(<ConfirmAlert {...defaultProps} onNo={onNo} />);
-    const card = container.querySelector('[class*="card"]');
-    if (card) fireEvent.click(card);
+    // Card is the second child inside the overlay
+    const overlay = container.firstElementChild as HTMLElement;
+    const card = overlay.firstElementChild as HTMLElement;
+    fireEvent.click(card);
     expect(onNo).not.toHaveBeenCalled();
   });
 });

@@ -61,8 +61,8 @@ describe('InstrumentSelector', () => {
         onSelect: () => {},
       }),
     );
-    // No collapsible wrapper rendered
-    expect(container.querySelectorAll('[style]')).toHaveLength(0);
+    // No collapsible grid-template-rows wrapper rendered
+    expect(container.querySelector('[style*="grid-template-rows"]')).toBeNull();
   });
 
   it('renders children in a collapsible wrapper', () => {

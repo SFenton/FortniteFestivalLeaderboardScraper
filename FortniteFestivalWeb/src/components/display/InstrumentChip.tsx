@@ -1,11 +1,8 @@
-/**
- * Single instrument status chip — circle with fill/stroke based on score + FC status.
- * Shared between SongIconsDemo (first-run) and production SongRow.
- */
-import { memo } from 'react';
+/* eslint-disable react/forbid-dom-props -- useStyles pattern */
+import { memo, useMemo } from 'react';
 import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
-import { InstrumentIcon } from './InstrumentIcons';
-import css from './InstrumentChip.module.css';
+import { InstrumentSize, Gap, Border, CssValue, Display, Align, Justify, BorderStyle } from '@festival/theme';
+import { InstrumentIcon, getInstrumentStatusVisual } from './InstrumentIcons';
 
 export interface InstrumentChipProps {
   instrument: ServerInstrumentKey;
@@ -15,10 +12,28 @@ export interface InstrumentChipProps {
 }
 
 export const InstrumentChip = memo(function InstrumentChip({ instrument, hasScore, isFC, size = 24 }: InstrumentChipProps) {
-  const status = isFC ? 'fc' : hasScore ? 'scored' : 'none';
+  const visual = getInstrumentStatusVisual(hasScore, isFC);
+  const s = useStyles(visual.fill, visual.stroke);
   return (
-    <div className={css.chip} data-status={status}>
+    <div style={s.chip}>
       <InstrumentIcon instrument={instrument} size={size} />
     </div>
   );
 });
+
+function useStyles(fill: string, stroke: string) {
+  return useMemo(() => ({
+    chip: {
+      width: InstrumentSize.chip,
+      height: InstrumentSize.chip,
+      borderRadius: CssValue.circle,
+      borderWidth: Gap.xs,
+      borderStyle: BorderStyle.solid,
+      borderColor: stroke,
+      backgroundColor: fill,
+      display: Display.flex,
+      alignItems: Align.center,
+      justifyContent: Justify.center,
+    },
+  }), [fill, stroke]);
+}

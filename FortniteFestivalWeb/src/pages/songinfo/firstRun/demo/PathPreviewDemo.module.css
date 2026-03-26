@@ -1,9 +1,9 @@
-.wrapper {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: var(--gap-md);
-}
+/*
+ * Minimal CSS — keeps only rules that cannot be expressed as inline styles:
+ * - InstrumentSelector classNames (external component API requires CSS classes)
+ * - .diffGrid @media query for responsive grid
+ * - .imageArea mask-image
+ */
 
 .iconRow {
   display: flex;
@@ -64,14 +64,6 @@
   }
 }
 
-.diffBtn {
-  composes: diffBtn from '../../../songinfo/components/path/PathsModal.module.css';
-}
-
-.diffBtnActive {
-  composes: diffBtnActive from '../../../songinfo/components/path/PathsModal.module.css';
-}
-
 .imageArea {
   flex: 1;
   height: 100%;
@@ -81,21 +73,4 @@
   position: relative;
   mask-image: linear-gradient(to bottom, black calc(100% - 48px), transparent 100%);
   -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 48px), transparent 100%);
-}
-
-.pathImg {
-  width: 100%;
-  display: block;
-  object-fit: cover;
-  object-position: top left;
-}
-
-.placeholderWrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  position: absolute;
-  inset: 0;
 }

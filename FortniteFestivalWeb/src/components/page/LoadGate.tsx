@@ -1,26 +1,7 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-/**
- * Renders a spinner during loading/spinnerOut phases and children during contentIn.
- *
- * Replaces the repeated pattern across pages:
- *   {phase !== 'contentIn' && <spinner />}
- *   {phase === 'contentIn' && content}
- *
- * @example
- *   <LoadGate phase={phase}>
- *     <div>Main content</div>
- *   </LoadGate>
- *
- * @example overlay spinner (SongsPage, SuggestionsPage)
- *   <LoadGate phase={phase} overlay>
- *     <div>Main content (always in DOM, spinner floats above)</div>
- *   </LoadGate>
- */
-import { type ReactNode } from 'react';
+import { useMemo, type ReactNode, type CSSProperties } from 'react';
 import { LoadPhase } from '@festival/core';
-import { SPINNER_FADE_MS } from '@festival/theme';
+import { ZIndex, Layout, SPINNER_FADE_MS, flexCenter, fixedFill } from '@festival/theme';
 import ArcSpinner from '../common/ArcSpinner';
-import css from './LoadGate.module.css';
 
 export interface LoadGateProps {
   /** Current load phase from useLoadPhase or manual state. */
@@ -46,11 +27,12 @@ export function LoadGate({
 }: LoadGateProps) {
   const isContentIn = phase === CONTENT_IN;
   const isSpinnerOut = phase === SPINNER_OUT;
+  const s = useStyles(!!overlay, isSpinnerOut, fadeDuration);
 
   const spinner = !isContentIn ? (
     <div
-      className={spinnerClassName ?? (overlay ? css.spinnerOverlay : css.spinnerContainer)}
-      style={isSpinnerOut ? { animation: `fadeOut ${fadeDuration}ms ease-out forwards` } : undefined}
+      className={spinnerClassName}
+      style={spinnerClassName ? s.fadeOut : (overlay ? s.spinnerOverlay : s.spinnerContainer)}
     >
       <ArcSpinner />
     </div>
@@ -71,4 +53,29 @@ export function LoadGate({
       {isContentIn && children}
     </>
   );
+}
+
+function useStyles(overlay: boolean, isSpinnerOut: boolean, fadeDuration: number) {
+  return useMemo(() => {
+    const fadeAnim = isSpinnerOut
+      ? { animation: `fadeOut ${fadeDuration}ms ease-out forwards` }
+      : {};
+    return {
+      spinnerOverlay: {
+        ...fixedFill,
+        zIndex: ZIndex.dropdown,
+        ...flexCenter,
+        ...fadeAnim,
+      } as CSSProperties,
+      /** Viewport minus shell chrome (header + bottom nav + padding) keeps spinner visually centered. */
+      spinnerContainer: {
+        ...flexCenter,
+        minHeight: `calc(100vh - ${Layout.shellChromeHeight}px)`,
+        ...fadeAnim,
+      } as CSSProperties,
+      fadeOut: isSpinnerOut
+        ? { animation: `fadeOut ${fadeDuration}ms ease-out forwards` } as CSSProperties
+        : undefined,
+    };
+  }, [overlay, isSpinnerOut, fadeDuration]);
 }

@@ -1,29 +1,12 @@
-.wrap {
-  display: flex;
-  justify-content: center;
-  padding: 4px;
-}
-
-/* ── Desktop Item Shop pill (matches SongDetailHeader.shopButton) ── */
-
-.shopButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 48px 0 36px;
-  border-radius: var(--radius-full);
-  background-color: var(--color-accent-blue);
-  color: var(--color-text-primary);
-  font-size: 28px;
-  font-weight: var(--weight-semibold);
-  flex-shrink: 0;
-  height: 72px;
-}
+/* Minimal CSS — only ::before pseudo-elements + @keyframes (cannot be inlined) */
 
 @keyframes shopBreathe {
   0%, 100% { opacity: 0.5; }
   50% { opacity: 1; }
 }
+
+.shopButton { /* class anchor for className toggling */ }
+.shopCircle { /* class anchor for className toggling */ }
 
 .shopPulse {
   position: relative;
@@ -39,20 +22,6 @@
   background-color: var(--color-accent-blue);
   animation: shopBreathe 3s ease-in-out infinite;
   z-index: -1;
-}
-
-/* ── Mobile circular icon (matches SongDetailHeader.shopCircle) ── */
-
-.shopCircle {
-  width: 128px;
-  height: 128px;
-  border-radius: 50%;
-  background-color: var(--color-accent-blue);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-text-primary);
-  flex-shrink: 0;
 }
 
 .pulse {

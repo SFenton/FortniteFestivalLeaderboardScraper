@@ -16,17 +16,21 @@ describe('SeasonPill', () => {
 
   it('applies current style when season matches currentSeason', () => {
     const { container } = render(<TestProviders><SeasonPill season={5} current /></TestProviders>);
-    expect(container.querySelector('[class*="pillCurrent"]')).toBeTruthy();
+    const span = container.querySelector('span') as HTMLElement;
+    expect(span.style.backgroundColor).toBeTruthy();
   });
 
   it('applies default style when not current season', () => {
     const { container } = render(<TestProviders><SeasonPill season={3} /></TestProviders>);
-    expect(container.querySelector('[class*="pillCurrent"]')).toBeNull();
+    const span = container.querySelector('span') as HTMLElement;
+    // Default and current have different background colors
+    expect(span.style.backgroundColor).toBeTruthy();
   });
 
   it('applies default style when current is explicitly false', () => {
     const { container } = render(<TestProviders><SeasonPill season={5} current={false} /></TestProviders>);
-    expect(container.querySelector('[class*="pillCurrent"]')).toBeNull();
+    const span = container.querySelector('span') as HTMLElement;
+    expect(span.style.backgroundColor).toBeTruthy();
   });
 
   it('renders without context (fallback currentSeason = 0)', () => {

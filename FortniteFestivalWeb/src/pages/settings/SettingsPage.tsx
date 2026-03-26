@@ -12,8 +12,7 @@ import ConfirmAlert from '../../components/modals/ConfirmAlert';
 import modalCss from '../../components/modals/Modal.module.css';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
-import { Colors, Font, Gap } from '@festival/theme';
-import { useScrollMask } from '../../hooks/ui/useScrollMask';
+import { Colors, Font, Gap, Weight, Radius, Layout, Display, Align, Justify, Overflow, CssValue, LineHeight, TextAlign, frostedCard, btnDanger, btnPrimary, flexColumn, flexRow, flexBetween, padding, transition, CssProp, FAST_FADE_MS } from '@festival/theme';
 import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
 import { useFirstRunReplay } from '../../hooks/ui/useFirstRun';
 import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
@@ -22,10 +21,11 @@ import { suggestionsSlides } from '../suggestions/firstRun';
 import { songSlides } from '../songs/firstRun';
 import { songInfoSlides } from '../songinfo/firstRun';
 import { playerHistorySlides } from '../leaderboard/player/firstRun';
-import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
 import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
+import { useStagger } from '../../hooks/ui/useStagger';
 import { api } from '../../api/client';
-import css from './SettingsPage.module.css';
+import Page, { usePageScrollRef } from '../Page';
+import PageHeader from '../../components/common/PageHeader';
 
 import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../../hooks/data/useVersions';
 
@@ -167,13 +167,8 @@ export default function SettingsPage() {
   const { settings, updateSettings, resetSettings } = useSettings();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const saveScroll = useScrollRestore(scrollRef, 'settings', navType);
-  const updateScrollMask = useScrollMask(scrollRef, []);
-  const { rushOnScroll } = useStaggerRush(scrollRef);
-  /* v8 ignore start — scroll handler */
-  const handleScroll = useCallback(() => { saveScroll(); updateScrollMask(); rushOnScroll(); }, [saveScroll, updateScrollMask, rushOnScroll]);
-  /* v8 ignore stop */
+  const scrollRef = usePageScrollRef();
+  useScrollRestore('settings', navType);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Register first-run slides so replay is always available from Settings
@@ -192,10 +187,12 @@ export default function SettingsPage() {
   const suggestionsReplay = useFirstRunReplay('suggestions');
   const playerHistoryReplay = useFirstRunReplay('playerhistory');
   const [serviceVersion, setServiceVersion] = useState<string | null>(null);
-  // Capture skip decision at mount time (ref avoids StrictMode double-mount issues)
+  // Skip stagger on revisit
   const skipAnimRef = useRef(_hasRendered);
-  const skipAnim = skipAnimRef.current;
   _hasRendered = true;
+  const { forIndex: staggerForIndex } = useStagger(!skipAnimRef.current);
+
+  const st = useSettingsStyles(isMobile, settings.filterInvalidScores);
 
   /* v8 ignore start — version fetch + settings callbacks */
   useEffect(() => {
@@ -235,13 +232,32 @@ export default function SettingsPage() {
   /* v8 ignore stop */
 
   let staggerIndex = 0;
-  const stagger = (idx: number) => skipAnim ? undefined : idx * 125;
+  const stagger = (idx: number) => staggerForIndex(idx);
 
   return (
-    <div className={css.page}>
-      <div ref={scrollRef} onScroll={handleScroll} className={css.scrollArea}>
-      <div className={isMobile ? css.containerMobile : css.container}>
-        <div className={css.cardColumn}>
+    <Page
+      scrollRef={scrollRef}
+      containerStyle={st.container}
+      before={<PageHeader title={t('settings.title')} />}
+      after={<>
+        {showResetConfirm && (
+          /* v8 ignore start — confirm dialog callbacks */
+          <ConfirmAlert
+            title={t('settings.resetConfirmTitle')}
+            message={t('settings.resetConfirmMessage')}
+            onNo={() => setShowResetConfirm(false)}
+            onYes={() => { setShowResetConfirm(false); resetSettings(); }}
+          />
+          /* v8 ignore stop */
+        )}
+        {songsReplay.show && <FirstRunCarousel slides={songsReplay.slides} onDismiss={songsReplay.dismiss} />}
+        {songInfoReplay.show && <FirstRunCarousel slides={songInfoReplay.slides} onDismiss={songInfoReplay.dismiss} />}
+        {statsReplay.show && <FirstRunCarousel slides={statsReplay.slides} onDismiss={statsReplay.dismiss} />}
+        {suggestionsReplay.show && <FirstRunCarousel slides={suggestionsReplay.slides} onDismiss={suggestionsReplay.dismiss} />}
+        {playerHistoryReplay.show && <FirstRunCarousel slides={playerHistoryReplay.slides} onDismiss={playerHistoryReplay.dismiss} />}
+      </>}
+    >
+      <div style={st.cardColumn}>
 
           {/* ── App Settings ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
@@ -263,11 +279,11 @@ export default function SettingsPage() {
             />
             {settings.songRowVisualOrderEnabled && (
               <div>
-                <div className={css.innerSectionTitle}>{t('settings.songRowVisualOrder')}</div>
-                <div className={css.sectionHint}>
+                <div style={st.innerSectionTitle}>{t('settings.songRowVisualOrder')}</div>
+                <div style={st.sectionHint}>
                   {t('settings.songRowVisualOrderDesc')}
                 </div>
-                <div className={css.reorderListWrap}>
+                <div style={st.reorderListWrap}>
                   <ReorderList
                     items={visualOrderItems}
                     /* v8 ignore start -- DnD reorder callback; can't fire in jsdom */
@@ -284,11 +300,11 @@ export default function SettingsPage() {
               onToggle={() => updateSettings({ filterInvalidScores: !settings.filterInvalidScores })}
               large={isMobile}
             />
-            <div className={settings.filterInvalidScores ? css.collapseGridOpen : css.collapseGridClosed}>
-              <div className={css.collapseInner}>
-                <div className={css.leewayContent}>
-                  <div className={css.innerSectionTitle}>{t('settings.maxScoreLeeway')}</div>
-                  <div className={isMobile ? css.leewayDescMobile : css.leewayDesc}>
+            <div style={st.collapseGrid}>
+              <div style={st.collapseInner}>
+                <div style={st.leewayContent}>
+                  <div style={st.innerSectionTitle}>{t('settings.maxScoreLeeway')}</div>
+                  <div style={st.leewayDesc}>
                     {t('settings.maxScoreLeewayDesc', { leeway: settings.filterInvalidScoresLeeway, maxScore: (100000 * (1 + settings.filterInvalidScoresLeeway / 100)).toLocaleString() })}
                   </div>
                   <LeewaySlider
@@ -364,21 +380,21 @@ export default function SettingsPage() {
           <FadeInDiv delay={stagger(staggerIndex++)}>
           <SectionHeader title={t('settings.versionTitle')} description={t('settings.versionHint')} />
           <Card>
-            <div className={css.versionRow}>
+            <div style={st.versionRow}>
               <span>{t('settings.appVersion')}</span>
-              <span className={css.versionValue}>{APP_VERSION}</span>
+              <span style={st.versionValue}>{APP_VERSION}</span>
             </div>
-            <div className={css.versionRow}>
+            <div style={st.versionRow}>
               <span>{t('settings.serviceVersion')}</span>
-              <span className={css.versionValue}>{serviceVersion ?? t('common.loading')}</span>
+              <span style={st.versionValue}>{serviceVersion ?? t('common.loading')}</span>
             </div>
-            <div className={css.versionRow}>
+            <div style={st.versionRow}>
               <span>{t('settings.coreVersion')}</span>
-              <span className={css.versionValue}>{CORE_VERSION}</span>
+              <span style={st.versionValue}>{CORE_VERSION}</span>
             </div>
-            <div className={css.versionRow}>
+            <div style={st.versionRow}>
               <span>{t('settings.themeVersion')}</span>
-              <span className={css.versionValue}>{THEME_VERSION}</span>
+              <span style={st.versionValue}>{THEME_VERSION}</span>
             </div>
           </Card>
           </FadeInDiv>
@@ -391,43 +407,43 @@ export default function SettingsPage() {
               <div className={modalCss.toggleContent}>
                 <div className={modalCss.toggleLabel}>{t('nav.songs')}</div>
               </div>
-              <span className={css.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+              <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
             <button className={modalCss.toggleRow} onClick={songInfoReplay.open}>
               <div className={modalCss.toggleContent}>
                 <div className={modalCss.toggleLabel}>{t('nav.songInfo', 'Song Info')}</div>
               </div>
-              <span className={css.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+              <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
             <button className={modalCss.toggleRow} onClick={statsReplay.open}>
               <div className={modalCss.toggleContent}>
                 <div className={modalCss.toggleLabel}>{t('nav.statistics')}</div>
               </div>
-              <span className={css.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+              <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
             <button className={modalCss.toggleRow} onClick={suggestionsReplay.open}>
               <div className={modalCss.toggleContent}>
                 <div className={modalCss.toggleLabel}>{t('nav.suggestions')}</div>
               </div>
-              <span className={css.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+              <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
             <button className={modalCss.toggleRow} onClick={playerHistoryReplay.open}>
               <div className={modalCss.toggleContent}>
                 <div className={modalCss.toggleLabel}>{t('history.title')}</div>
               </div>
-              <span className={css.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+              <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
           </Card>
           </FadeInDiv>
 
           {/* ── Reset ── */}
           <FadeInDiv delay={stagger(staggerIndex)}>
-          <div className={isMobile ? css.resetRowMobile : css.resetRow}>
+          <div style={st.resetRow}>
             <div>
               <SectionHeader title={t('settings.resetSection')} description={t('settings.resetDescription')} flush />
             </div>
             <button
-              className={isMobile ? css.resetButtonMobile : css.resetButton}
+              style={st.resetButton}
               onClick={() => setShowResetConfirm(true)}
             >
               {t('settings.resetAll')}
@@ -436,29 +452,102 @@ export default function SettingsPage() {
           </FadeInDiv>
 
         </div>
-      </div>
-      {isMobileChrome && <div className={css.fabSpacer} />}
-      </div>
-      {showResetConfirm && (
-        /* v8 ignore start — confirm dialog callbacks */
-        <ConfirmAlert
-          title={t('settings.resetConfirmTitle')}
-          message={t('settings.resetConfirmMessage')}
-          onNo={() => setShowResetConfirm(false)}
-          onYes={() => { setShowResetConfirm(false); resetSettings(); }}
-        />
-        /* v8 ignore stop */
-      )}
-      {songsReplay.show && <FirstRunCarousel slides={songsReplay.slides} onDismiss={songsReplay.dismiss} />}
-      {songInfoReplay.show && <FirstRunCarousel slides={songInfoReplay.slides} onDismiss={songInfoReplay.dismiss} />}
-      {statsReplay.show && <FirstRunCarousel slides={statsReplay.slides} onDismiss={statsReplay.dismiss} />}
-      {suggestionsReplay.show && <FirstRunCarousel slides={suggestionsReplay.slides} onDismiss={suggestionsReplay.dismiss} />}
-      {playerHistoryReplay.show && <FirstRunCarousel slides={playerHistoryReplay.slides} onDismiss={playerHistoryReplay.dismiss} />}
-    </div>
+      {isMobileChrome && <div style={st.fabSpacer} />}
+    </Page>
   );
 }
 
 function Card({ children }: { children: React.ReactNode }) {
-  return <div className={css.card}>{children}</div>;
+  const st = useCardStyles();
+  return <div style={st.card}>{children}</div>;
 }
 
+function useCardStyles() {
+  return useMemo(() => ({
+    card: {
+      ...frostedCard,
+      borderRadius: Radius.md,
+      padding: padding(Layout.paddingTop),
+      ...flexColumn,
+      gap: Gap.md,
+    } as CSSProperties,
+  }), []);
+}
+
+function useSettingsStyles(isMobile: boolean, filterOpen: boolean) {
+  return useMemo(() => ({
+    container: {
+      paddingTop: isMobile ? Gap.md : Layout.paddingTop,
+      paddingBottom: Layout.paddingTop,
+    } as CSSProperties,
+    cardColumn: {
+      ...flexColumn,
+      gap: Gap.section,
+    } as CSSProperties,
+    innerSectionTitle: {
+      fontSize: Font.md,
+      fontWeight: Weight.bold,
+      color: Colors.textPrimary,
+      marginBottom: Gap.sm,
+    } as CSSProperties,
+    sectionHint: {
+      fontSize: Font.md,
+      color: Colors.textSecondary,
+      lineHeight: LineHeight.relaxed,
+      marginBottom: Gap.md,
+    } as CSSProperties,
+    reorderListWrap: {
+      marginTop: Gap.md,
+    } as CSSProperties,
+    collapseGrid: {
+      display: Display.grid,
+      gridTemplateRows: filterOpen ? '1fr' : '0fr',
+      transition: transition(CssProp.gridTemplateRows, FAST_FADE_MS),
+    } as CSSProperties,
+    collapseInner: {
+      overflow: Overflow.hidden,
+      minHeight: 0,
+    } as CSSProperties,
+    leewayContent: {
+      paddingLeft: Gap.xl,
+      paddingRight: Layout.settingsSliderPadding,
+      paddingBottom: Gap.md,
+    } as CSSProperties,
+    leewayDesc: {
+      fontSize: isMobile ? Font.md : Font.sm,
+      color: Colors.textMuted,
+      lineHeight: LineHeight.relaxed,
+      marginBottom: Gap.md,
+    } as CSSProperties,
+    versionRow: {
+      ...flexBetween,
+      padding: padding(Gap.sm, Gap.none),
+      fontSize: Font.md,
+    } as CSSProperties,
+    versionValue: {
+      color: Colors.textSecondary,
+    } as CSSProperties,
+    resetRow: {
+      ...flexBetween,
+      gap: Gap.xl,
+      ...(isMobile ? { ...flexColumn, alignItems: Align.stretch } : {}),
+    } as CSSProperties,
+    resetButton: {
+      ...btnDanger,
+      padding: isMobile ? padding(Gap.xl) : padding(Gap.md, Gap.xl),
+      fontSize: isMobile ? Font.md : Font.sm,
+      flexShrink: 0,
+      ...(isMobile ? { width: CssValue.full, textAlign: TextAlign.center } : {}),
+    } as CSSProperties,
+    firstRunBtn: {
+      ...btnPrimary,
+      padding: padding(Gap.sm, Gap.section),
+      fontSize: Font.md,
+      flexShrink: 0,
+    } as CSSProperties,
+    fabSpacer: {
+      height: Layout.fabBottom,
+      flexShrink: 0,
+    } as CSSProperties,
+  }), [isMobile, filterOpen]);
+}

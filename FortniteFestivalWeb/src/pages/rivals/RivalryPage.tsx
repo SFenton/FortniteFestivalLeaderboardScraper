@@ -1,25 +1,28 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useLocation, useNavigate, useNavigationType, useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
-import { useFestival } from '../../contexts/FestivalContext';
 import { useSettings } from '../../contexts/SettingsContext';
-import { useScrollMask } from '../../hooks/ui/useScrollMask';
+import { useSongLookups } from '../../hooks/data/useSongLookups';
 import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
-import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
-import { useLoadPhase } from '../../hooks/data/useLoadPhase';
+import { usePageTransition } from '../../hooks/ui/usePageTransition';
+import { useStagger } from '../../hooks/ui/useStagger';
+import EmptyState from '../../components/common/EmptyState';
+import PageHeader from '../../components/common/PageHeader';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import type { RivalSongComparison } from '@festival/core/api/serverTypes';
-import { STAGGER_INTERVAL } from '@festival/theme';
+import { STAGGER_INTERVAL, Gap, Position, ZIndex, Display, Align, Justify, Colors, Font, Layout, flexColumn, flexCenter, padding } from '@festival/theme';
+import { LoadPhase } from '@festival/core';
 import { deriveComboFromSettings, getEnabledInstruments } from './helpers/comboUtils';
 import { categorizeRivalSongs } from './helpers/rivalCategories';
 import RivalSongRow from './components/RivalSongRow';
 import { Routes } from '../../routes';
 
-import s from './RivalCategoryPage.module.css';
+import { useRivalsSharedStyles } from './useRivalsSharedStyles';
+import Page, { usePageScrollRef } from '../Page';
 
 const MODE_TITLE_KEYS: Record<string, string> = {
   closest_battles: 'rivals.detail.closestBattles',
@@ -30,7 +33,6 @@ const MODE_TITLE_KEYS: Record<string, string> = {
   dominating_them: 'rivals.detail.dominatingThem',
 };
 
-let _rivalryHasRendered = false;
 let _cachedRivalrySongs: RivalSongComparison[] = [];
 let _cachedRivalryName: string | null = null;
 let _cachedRivalryKey: string | null = null;
@@ -46,11 +48,10 @@ export default function RivalryPage() {
   const navigate = useNavigate();
   const navType = useNavigationType();
   const { settings } = useSettings();
-  const { state: { songs } } = useFestival();
   const isMobile = useIsMobile();
   const { player } = useTrackedPlayer();
   const accountId = player?.accountId;
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollRef = usePageScrollRef();
 
   /* v8 ignore start -- state derivation with null-coalescing */
   const comboFromState = (location.state as Record<string, unknown> | null)?.combo as string | undefined;
@@ -62,33 +63,15 @@ export default function RivalryPage() {
   /* v8 ignore start -- cache-based state initialization */
   const cacheKey = `${accountId}:${rivalId}:${combo}`;
   const hasCachedData = cacheKey === _cachedRivalryKey && _cachedRivalrySongs.length > 0;
-  const skipAnimRef = useRef(_rivalryHasRendered && navType === 'POP' && hasCachedData);
-  _rivalryHasRendered = true;
 
   const [allSongs, setAllSongs] = useState<RivalSongComparison[]>(hasCachedData ? _cachedRivalrySongs : []);
   const [rivalName, setRivalName] = useState<string | null>(hasCachedData ? _cachedRivalryName : null);
   const [loading, setLoading] = useState(!hasCachedData);
 
-  const saveScroll = useScrollRestore(scrollRef, `rivalry:${cacheKey}:${mode}`, navType);
+  useScrollRestore(`rivalry:${cacheKey}:${mode}`, navType);
   /* v8 ignore stop */
 
-  /* v8 ignore start -- album art and year map building */
-  const albumArtMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const song of songs) {
-      if (song.albumArt) map.set(song.songId, song.albumArt);
-    }
-    return map;
-  }, [songs]);
-
-  const yearMap = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const song of songs) {
-      if (song.year) map.set(song.songId, song.year);
-    }
-    return map;
-  }, [songs]);
-  /* v8 ignore stop */
+  const { albumArtMap, yearMap } = useSongLookups();
 
   /* v8 ignore start — async data fetch */
   useEffect(() => {
@@ -136,38 +119,18 @@ export default function RivalryPage() {
   }, [category]);
   /* v8 ignore stop */
 
-  const { phase, shouldStagger } = useLoadPhase(!loading, { skipAnimation: skipAnimRef.current });
-  const updateScrollMask = useScrollMask(scrollRef, [phase]);
-  const { rushOnScroll } = useStaggerRush(scrollRef);
+  const { phase, shouldStagger } = usePageTransition(`rivalry:${cacheKey}:${mode}`, !loading, hasCachedData);
+  const { forDelay: stagger, clearAnim } = useStagger(shouldStagger);
 
-  /* v8 ignore start — scroll handler */
-  const handleScroll = useCallback(() => {
-    saveScroll();
-    updateScrollMask();
-    rushOnScroll();
-  }, [saveScroll, updateScrollMask, rushOnScroll]);
-  /* v8 ignore stop */
-
-  /* v8 ignore start -- animation callback */
-  const clearAnim = useCallback((e: React.AnimationEvent<HTMLElement>) => {
-    const el = e.currentTarget;
-    el.style.opacity = '';
-    el.style.animation = '';
-  }, []);
-  /* v8 ignore stop */
+  const styles = useRivalsSharedStyles();
 
   /* v8 ignore start -- guard */
   if (!accountId || !rivalId) {
-    return <div className={s.center}>{t('rivals.detail.noSongs')}</div>;
+    return <div style={styles.center}>{t('rivals.detail.noSongs')}</div>;
   }
   /* v8 ignore stop */
 
   /* v8 ignore start -- render-time helpers */
-  const stagger = (delayMs: number): React.CSSProperties | undefined =>
-    shouldStagger ? { opacity: 0, animation: `fadeInUp 400ms ease-out ${delayMs}ms forwards` } : undefined;
-  /* v8 ignore stop */
-
-  /* v8 ignore start -- display state */
   const staggerInterval = STAGGER_INTERVAL;
   let staggerIdx = 0;
 
@@ -176,29 +139,27 @@ export default function RivalryPage() {
 
   /* v8 ignore start -- JSX render tree */
   return (
-    <div className={s.page}>
-      <div className={s.stickyHeader}>
-        <div className={s.headerContent}>
-          <div className={s.headerTitle}>{title}</div>
-        </div>
-      </div>
-      {phase !== 'contentIn' && (
-        <div
-          className={s.spinnerOverlay}
-          style={phase === 'spinnerOut' ? { animation: 'fadeOut 500ms ease-out forwards' } : undefined}
-        >
-          <ArcSpinner />
-        </div>
-      )}
-      {phase === 'contentIn' && (
-          <div ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
-            <div className={s.container} style={isMobile ? { paddingBottom: 96 } : undefined}>
+    <Page
+      scrollRef={scrollRef}
+      scrollDeps={[phase]}
+      containerStyle={styles.container}
+      before={<>
+        <PageHeader title={title} sticky />
+        {phase !== LoadPhase.ContentIn && (
+          <div
+            style={phase === LoadPhase.SpinnerOut ? { ...styles.spinnerOverlay, ...styles.spinnerFadeOut } : styles.spinnerOverlay}
+          >
+            <ArcSpinner />
+          </div>
+        )}
+      </>}
+    >
+      {phase === LoadPhase.ContentIn && (
+            <div style={isMobile ? { paddingBottom: Layout.fabPaddingBottom } : undefined}>
               {!category || category.songs.length === 0 ? (
-                <div className={s.emptyState} style={stagger(200)} onAnimationEnd={clearAnim}>
-                  <div className={s.emptyTitle}>{t('rivals.detail.noSongs')}</div>
-                </div>
+                <EmptyState title={t('rivals.detail.noSongs')} style={stagger(200)} onAnimationEnd={clearAnim} />
               ) : (
-                <div className={s.songList} style={{ paddingTop: 'var(--gap-md)' }}>
+                <div style={{ ...styles.songList, paddingTop: Gap.md }}>
                   {category.songs.map((song) => (
                     <RivalSongRow
                       key={`${song.songId}-${song.instrument}`}
@@ -217,9 +178,8 @@ export default function RivalryPage() {
                 </div>
               )}
             </div>
-          </div>
       )}
-    </div>
+    </Page>
   );
   /* v8 ignore stop */
 }

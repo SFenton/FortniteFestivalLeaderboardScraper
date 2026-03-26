@@ -144,8 +144,8 @@ describe('HeaderSearch', () => {
       activeIndex: 0,
     };
     render(<MemoryRouter><HeaderSearch /></MemoryRouter>);
-    // First result should have active class
+    // First result should have active background style
     const buttons = screen.getAllByRole('button');
-    expect(buttons[0]?.className).toContain('Active');
+    expect(buttons[0]?.style.backgroundColor).toBeTruthy();
   });
 });

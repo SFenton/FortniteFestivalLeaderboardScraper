@@ -37,7 +37,13 @@
     "serviceDown": "The service may be down unexpectedly. Please refresh to try again.",
     "selectAll": "Select All",
     "clearAll": "Clear All",
-    "close": "Close"
+    "close": "Close",
+    "reload": "Reload"
+  },
+  "error": {
+    "unexpectedCrash": "An unexpected error occurred. Try reloading the page.",
+    "routeLoadFailed": "An error occurred loading this page. Try going back or reloading.",
+    "goToSongs": "Go to Songs"
   },
   "songs": {
     "title": "Songs",
@@ -67,7 +73,8 @@
     "next": "Next ›",
     "last": "Last »",
     "notFound": "Not found",
-    "failedToLoad": "Failed to load leaderboard"
+    "failedToLoad": "Failed to load leaderboard",
+    "viewFull": "View full leaderboard"
   },
   "player": {
     "title": "Statistics",
@@ -201,7 +208,15 @@
     "suggestions": "Suggestions",
     "statistics": "Statistics",
     "settings": "Settings",
-    "rivals": "Rivals"
+    "rivals": "Rivals",
+    "shop": "Item Shop"
+  },
+  "shop": {
+    "viewGrid": "Grid",
+    "viewList": "List",
+    "itemShop": "Item Shop",
+    "empty": "No songs in the Item Shop",
+    "emptyHint": "Check back later \u2014 the shop updates regularly."
   },
   "chart": {
     "scoreHistory": "Score History",
@@ -261,7 +276,10 @@
     "intensity": "Song Intensity"
   },
   "format": {
-    "noScore": "—"
+    "noScore": "—",
+    "seasonShort": "S{{season}}",
+    "songCount": "{{count}} song",
+    "songCount_other": "{{count}} songs"
   },
   "filter": {
     "resetLabel": "Reset Filter Settings",

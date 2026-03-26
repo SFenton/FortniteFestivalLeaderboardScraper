@@ -1,44 +1,6 @@
-.nav {
-  display: flex;
-  justify-content: space-around;
-  align-items: center;
-  background-color: var(--color-glass-nav);
+/* Minimal: backdrop-filter requires CSS for vendor prefix. */
+.navFrosted {
+  background-color: rgba(11,3,24,0.40);
   backdrop-filter: blur(12px) saturate(1.2);
   -webkit-backdrop-filter: blur(12px) saturate(1.2);
-  border-top: 1px solid var(--color-glass-border);
-  flex-shrink: 0;
-  z-index: 100;
-  position: relative;
-  padding: var(--gap-sm) 0 var(--gap-md);
-}
-
-.tab {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding: var(--gap-sm) var(--gap-xl);
-  color: var(--color-text-tertiary);
-  font-size: var(--font-xs);
-  font-weight: 500;
-  background: none;
-  border: none;
-  cursor: pointer;
-  min-width: 64px;
-  transition: color 0.15s;
-}
-
-.tabActive {
-  composes: tab;
-  color: var(--color-accent-purple);
-  font-weight: 700;
-}
-
-.tabIcon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 20px;
-  line-height: 24px;
 }

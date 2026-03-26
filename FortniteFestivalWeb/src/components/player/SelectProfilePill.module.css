@@ -1,8 +1,0 @@
-.pill {
-  composes: pillBase from '../common/ActionPill.module.css';
-  composes: purpleGlass from '../../styles/shared.module.css';
-  padding: 0 var(--size-md) 0 var(--gap-section);
-  color: var(--color-text-primary);
-  font-size: var(--font-lg);
-  transition: opacity var(--duration-normal) ease, transform var(--duration-normal) ease;
-}

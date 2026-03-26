@@ -12,9 +12,7 @@ function setViewportWidth(width: number) {
   };
 }
 
-vi.mock('../../../../../src/pages/songinfo/components/chart/ScoreHistoryChart.module.css', () => ({
-  default: { scoreCardList: 'scoreCardList', scoreListCard: 'scoreListCard', scoreListCardBest: 'scoreListCardBest', scoreCardDate: 'scoreCardDate', scoreCardScore: 'scoreCardScore' },
-}));
+// ScoreHistoryChart.module.css no longer imported by ScoreCardList (styles are inline)
 
 vi.mock('../../../../../src/components/songs/metadata/AccuracyDisplay', () => ({
   default: ({ accuracy }: any) => <span data-testid="accuracy">{accuracy}</span>,
@@ -52,7 +50,7 @@ describe('ScoreCardList', () => {
     const { container } = render(
       <ScoreCardList displayedCards={cards} listHeight={200} listPhase="idle" />,
     );
-    expect(container.querySelector('.scoreCardList')).toBeTruthy();
+    expect(container.querySelector('div > div')).toBeTruthy();
     expect(container.textContent).toContain('150,000');
   });
 
@@ -61,7 +59,7 @@ describe('ScoreCardList', () => {
     const { container } = render(
       <ScoreCardList displayedCards={cards} listHeight={200} listPhase="in" />,
     );
-    const card = container.querySelector('.scoreListCardBest, .scoreListCard');
+    const card = container.querySelector(':scope > div > div > div');
     expect(card?.getAttribute('style')).toContain('fadeInUp');
   });
 
@@ -70,7 +68,7 @@ describe('ScoreCardList', () => {
     const { container } = render(
       <ScoreCardList displayedCards={cards} listHeight={200} listPhase="out" />,
     );
-    const card = container.querySelector('.scoreListCardBest, .scoreListCard');
+    const card = container.querySelector(':scope > div > div > div');
     const style = card?.getAttribute('style') ?? '';
     expect(style).toContain('translateY');
     expect(style).toContain('opacity: 0');
@@ -84,7 +82,7 @@ describe('ScoreCardList', () => {
     const { container } = render(
       <ScoreCardList displayedCards={cards} listHeight={300} listPhase="in" />,
     );
-    const cardEls = container.querySelectorAll('.scoreListCardBest, .scoreListCard');
+    const cardEls = container.querySelectorAll(':scope > div > div > div');
     expect(cardEls.length).toBe(2);
   });
 
@@ -92,7 +90,7 @@ describe('ScoreCardList', () => {
     const { container } = render(
       <ScoreCardList displayedCards={[]} listHeight={100} listPhase="idle" />,
     );
-    expect(container.querySelector('.scoreCardList')).toBeTruthy();
+    expect(container.firstElementChild).toBeTruthy();
   });
 
   it('renders season pill when season is present', () => {

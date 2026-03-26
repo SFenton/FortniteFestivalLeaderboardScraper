@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+/* eslint-disable react/forbid-dom-props -- useStyles pattern */
+import { useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { InstrumentHeaderSize } from '@festival/core';
-import { STAGGER_INTERVAL } from '@festival/theme';
+import { STAGGER_INTERVAL, frostedCard, Radius, Font, Gap, Weight, Display, Align, Justify, CssValue, PointerEvents, Layout, Colors, Position, Overflow, flexColumn, padding } from '@festival/theme';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import InstrumentHeader from '../../../../components/display/InstrumentHeader';
 import { LeaderboardEntry } from '../../../leaderboard/global/components/LeaderboardEntry';
@@ -32,17 +33,19 @@ export default function TopScoresDemo() {
     return Math.max(1, Math.min(4, Math.floor(available / (ENTRY_HEIGHT + GAP))));
   }, [h]);
 
+  const s = useStyles();
+
   return (
-    <div className={css.wrapper}>
+    <div style={s.wrapper}>
       <FadeIn delay={0}>
-        <div className={css.cardLabel}>
+        <div style={s.cardLabel}>
           <InstrumentHeader instrument="Solo_Guitar" size={InstrumentHeaderSize.MD} />
         </div>
       </FadeIn>
-      <div className={css.list}>
+      <div style={s.list}>
         {ENTRIES.slice(0, maxEntries).map((entry, i) => (
           <FadeIn key={i} delay={(i + 1) * STAGGER_INTERVAL}>
-            <div className={css.entryRow}>
+            <div style={s.entryRow}>
               <LeaderboardEntry
                 rank={entry.rank}
                 displayName={entry.name}
@@ -58,8 +61,8 @@ export default function TopScoresDemo() {
           </FadeIn>
         ))}
         <FadeIn delay={(maxEntries + 1) * STAGGER_INTERVAL}>
-          <div className={css.pulseWrap}>
-            <div className={css.viewAllRow}>
+          <div className={css.pulseWrap} style={s.pulseWrap}>
+            <div style={s.viewAllRow}>
               {t('songDetail.viewFullLeaderboard', 'View full leaderboard')}
             </div>
           </div>
@@ -67,4 +70,38 @@ export default function TopScoresDemo() {
       </div>
     </div>
   );
+}
+
+function useStyles() {
+  return useMemo(() => ({
+    wrapper: { width: CssValue.full, pointerEvents: PointerEvents.none } as CSSProperties,
+    cardLabel: { display: Display.flex, alignItems: Align.center, gap: Gap.md, paddingBottom: Gap.xs } as CSSProperties,
+    list: { ...flexColumn, gap: Gap.sm } as CSSProperties,
+    entryRow: {
+      ...frostedCard,
+      display: Display.flex,
+      alignItems: Align.center,
+      gap: Gap.xl,
+      padding: padding(0, Gap.xl),
+      height: Layout.entryRowHeight,
+      borderRadius: Radius.md,
+      fontSize: Font.md,
+    } as CSSProperties,
+    pulseWrap: {
+      position: Position.relative,
+      overflow: Overflow.hidden,
+      borderRadius: Radius.md,
+    } as CSSProperties,
+    viewAllRow: {
+      ...frostedCard,
+      display: Display.flex,
+      alignItems: Align.center,
+      justifyContent: Justify.center,
+      height: Layout.entryRowHeight,
+      borderRadius: Radius.md,
+      color: Colors.textPrimary,
+      fontSize: Font.md,
+      fontWeight: Weight.semibold,
+    } as CSSProperties,
+  }), []);
 }

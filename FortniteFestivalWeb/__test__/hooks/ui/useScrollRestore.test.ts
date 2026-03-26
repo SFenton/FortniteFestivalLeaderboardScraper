@@ -1,86 +1,66 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useScrollRestore, clearScrollCache } from '../../../src/hooks/ui/useScrollRestore';
-
-function createMockScrollEl(initial = 0) {
-  return {
-    scrollTop: initial,
-    scrollHeight: 5000,
-    clientHeight: 800,
-  } as unknown as HTMLElement;
-}
 
 describe('useScrollRestore', () => {
   beforeEach(() => {
     clearScrollCache();
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    Object.defineProperty(window, 'scrollY', { value: 0, writable: true, configurable: true });
+    Object.defineProperty(document.documentElement, 'scrollHeight', { value: 5000, writable: true, configurable: true });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('saves scroll position via returned function', () => {
-    const el = createMockScrollEl();
-    const ref = { current: el };
-    const { result } = renderHook(() => useScrollRestore(ref as any, 'test-key', 'PUSH'));
+    const { result } = renderHook(() => useScrollRestore('test-key', 'PUSH'));
 
-    el.scrollTop = 300;
+    Object.defineProperty(window, 'scrollY', { value: 300, writable: true, configurable: true });
     act(() => { result.current(); });
 
-    // Verify it was saved by mounting a new hook instance with POP
-    el.scrollTop = 0;
-    renderHook(() => useScrollRestore(ref as any, 'test-key', 'POP'));
-    // The restore happens in useEffect so scrollTop is set asynchronously
-    // but we can at least verify the hook doesn't throw
+    // Verify by mounting a new hook — the restore effect calls window.scrollTo
+    renderHook(() => useScrollRestore('test-key', 'POP'));
+    expect(window.scrollTo).toHaveBeenCalledWith(0, 300);
   });
 
   it('preserves stored position on PUSH navigation', () => {
-    const el = createMockScrollEl();
-    const ref = { current: el };
-
-    // Save a position
-    const { result } = renderHook(() => useScrollRestore(ref as any, 'test-key', 'POP'));
-    el.scrollTop = 500;
+    const { result } = renderHook(() => useScrollRestore('test-key', 'POP'));
+    Object.defineProperty(window, 'scrollY', { value: 500, writable: true, configurable: true });
     act(() => { result.current(); });
 
-    // PUSH should NOT clear stored position — tab switches preserve scroll
-    el.scrollTop = 0;
-    renderHook(() => useScrollRestore(ref as any, 'test-key', 'PUSH'));
-    // The restore effect fires and sets scrollTop back to 500
-    expect(el.scrollTop).toBe(500);
+    renderHook(() => useScrollRestore('test-key', 'PUSH'));
+    expect(window.scrollTo).toHaveBeenCalledWith(0, 500);
   });
 
   it('clearScrollCache clears all entries', () => {
-    const el = createMockScrollEl();
-    const ref = { current: el };
-    const { result } = renderHook(() => useScrollRestore(ref as any, 'key1', 'POP'));
-    el.scrollTop = 100;
+    const { result } = renderHook(() => useScrollRestore('key1', 'POP'));
+    Object.defineProperty(window, 'scrollY', { value: 100, writable: true, configurable: true });
     act(() => { result.current(); });
 
     clearScrollCache();
 
-    // After clearing, a POP nav should not restore
-    el.scrollTop = 0;
-    renderHook(() => useScrollRestore(ref as any, 'key1', 'POP'));
-    // scrollTop should remain 0 (no stored position to restore)
-    expect(el.scrollTop).toBe(0);
+    const scrollToSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    scrollToSpy.mockClear();
+    renderHook(() => useScrollRestore('key1', 'POP'));
+    expect(scrollToSpy).not.toHaveBeenCalledWith(0, 100);
   });
 
   it('clearScrollCache with specific key', () => {
-    const el = createMockScrollEl();
-    const ref = { current: el };
-
-    // Save positions for two keys
-    const { result: r1 } = renderHook(() => useScrollRestore(ref as any, 'key-a', 'POP'));
-    el.scrollTop = 200;
+    const { result: r1 } = renderHook(() => useScrollRestore('key-a', 'POP'));
+    Object.defineProperty(window, 'scrollY', { value: 200, writable: true, configurable: true });
     act(() => { r1.current(); });
 
-    const { result: r2 } = renderHook(() => useScrollRestore(ref as any, 'key-b', 'POP'));
-    el.scrollTop = 400;
+    const { result: r2 } = renderHook(() => useScrollRestore('key-b', 'POP'));
+    Object.defineProperty(window, 'scrollY', { value: 400, writable: true, configurable: true });
     act(() => { r2.current(); });
 
-    // Clear only key-a
     clearScrollCache('key-a');
 
-    // key-a should be gone
-    el.scrollTop = 0;
-    renderHook(() => useScrollRestore(ref as any, 'key-a', 'POP'));
-    expect(el.scrollTop).toBe(0);
+    const scrollToSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    scrollToSpy.mockClear();
+    renderHook(() => useScrollRestore('key-a', 'POP'));
+    expect(scrollToSpy).not.toHaveBeenCalledWith(0, 200);
   });
 });

@@ -1,10 +1,10 @@
-import { useMemo } from 'react';
-import { STAGGER_INTERVAL } from '@festival/theme';
+/* eslint-disable react/forbid-dom-props -- useStyles pattern */
+import { useMemo, type CSSProperties } from 'react';
+import { STAGGER_INTERVAL, frostedCard, Radius, Font, Gap, Display, Align, CssValue, PointerEvents, Layout, flexColumn, padding } from '@festival/theme';
 import { useFestival } from '../../../../contexts/FestivalContext';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { LeaderboardEntry } from '../../../leaderboard/global/components/LeaderboardEntry';
 import FadeIn from '../../../../components/page/FadeIn';
-import css from './HistoryDemo.module.css';
 
 const ROW_HEIGHT = 44;
 const DAY_OFFSETS = [0, 7, 21, 35, 56];
@@ -41,18 +41,20 @@ export default function HistoryDemo() {
     return Math.max(1, Math.min(5, Math.floor(h / ROW_HEIGHT)));
   }, [h]);
 
+  const s = useStyles();
+
   return (
-    <div className={css.wrapper}>
-      <div className={css.list}>
-        {scores.slice(0, maxRows).map((s, i) => (
+    <div style={s.wrapper}>
+      <div style={s.list}>
+        {scores.slice(0, maxRows).map((sc, i) => (
           <FadeIn key={i} delay={i * STAGGER_INTERVAL}>
-            <div className={css.card}>
+            <div style={s.card}>
               <LeaderboardEntry
-                label={s.label}
+                label={sc.label}
                 displayName=""
-                score={s.score}
-                accuracy={s.accuracy}
-                isFullCombo={s.isFC}
+                score={sc.score}
+                accuracy={sc.accuracy}
+                isFullCombo={sc.isFC}
                 showAccuracy
                 scoreWidth="7ch"
               />
@@ -62,4 +64,21 @@ export default function HistoryDemo() {
       </div>
     </div>
   );
+}
+
+function useStyles() {
+  return useMemo(() => ({
+    wrapper: { width: CssValue.full, pointerEvents: PointerEvents.none } as CSSProperties,
+    list: { ...flexColumn, gap: Gap.sm } as CSSProperties,
+    card: {
+      ...frostedCard,
+      display: Display.flex,
+      alignItems: Align.center,
+      gap: Gap.xl,
+      padding: padding(0, Gap.xl),
+      height: Layout.entryRowHeight,
+      borderRadius: Radius.md,
+      fontSize: Font.md,
+    } as CSSProperties,
+  }), []);
 }

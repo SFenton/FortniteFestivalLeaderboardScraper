@@ -8,7 +8,6 @@ import { SUGGESTION_TYPES } from '@festival/core/suggestions/suggestionFilterCon
 import { Layout } from '@festival/theme';
 import FadeIn from '../../../../components/page/FadeIn';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
-import css from './GlobalFilterDemo.module.css';
 
 export default function GlobalFilterDemo() {
   const h = useSlideHeight();
@@ -29,7 +28,7 @@ export default function GlobalFilterDemo() {
   const visible = SUGGESTION_TYPES.slice(0, maxToggles);
 
   return (
-    <FadeIn delay={0} className={css.wrapper}>
+    <FadeIn delay={0} style={{ width: '100%' }}>
       {visible.map(st => (
         <ToggleRow
           key={st.id}

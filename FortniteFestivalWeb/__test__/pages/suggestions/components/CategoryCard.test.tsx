@@ -98,16 +98,16 @@ describe('CategoryCard', () => {
   it('does not render instrument icon for global category', () => {
     const cat = makeCategory('variety_pack', [makeSong('s1')]);
     renderCategoryCard(cat);
-    // No instrument icon in header
-    const header = screen.getByText('Category variety_pack').closest('[class*="cardHeader"]');
-    expect(header?.querySelector('[data-testid^="instrument-"]')).toBeNull();
+    // No instrument icon in header — only category title present
+    expect(screen.queryByTestId('instrument-guitar')).toBeNull();
+    expect(screen.queryByTestId('instrument-bass')).toBeNull();
   });
 
   it('renders empty song list', () => {
     const cat = makeCategory('test_cat', []);
-    const { container } = renderCategoryCard(cat);
-    const songList = container.querySelector('[class*="songList"]');
-    expect(songList?.children.length).toBe(0);
+    renderCategoryCard(cat);
+    // No song links rendered
+    expect(screen.queryAllByRole('link').length).toBe(0);
   });
 });
 
@@ -261,12 +261,12 @@ describe('SongRow (CategoryCard)', () => {
   });
 
   it('renders instrumentChips without leaderboardData', () => {
-    const { container } = renderSongRow({
+    renderSongRow({
       categoryKey: 'some_generic_cat',
       leaderboardData: undefined,
     });
-    // All chips should render with no-score styling
-    const chips = container.querySelectorAll('[class*="instrumentChip"]');
-    expect(chips.length).toBeGreaterThan(0);
+    // All 6 instrument icons should render (one per instrument key)
+    const icons = screen.getAllByTestId(/^instrument-/);
+    expect(icons.length).toBeGreaterThan(0);
   });
 });

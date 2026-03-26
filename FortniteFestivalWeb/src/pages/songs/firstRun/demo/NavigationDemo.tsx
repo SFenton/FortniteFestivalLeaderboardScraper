@@ -1,19 +1,24 @@
 /**
  * First-run demo: interactive navigation preview.
- * Reuses production CSS modules from BottomNav, PinnedSidebar, and Sidebar
+ * Reuses production style objects from BottomNav, PinnedSidebar, and Sidebar
  * so the demo visuals stay in sync with the real UI.
  */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings } from 'react-icons/io5';
 import { TabKey } from '@festival/core';
-import { Size, Layout, TRANSITION_MS } from '@festival/theme';
+import {
+  Colors, Font, Weight, Gap, Layout, ZIndex, Radius, Border,
+  Display, Align, Justify, Position, BoxSizing, Cursor, CssValue, CssProp,
+  flexRow, flexColumn, flexCenter, purpleGlass, transition, padding, border,
+  Size, TRANSITION_MS, NAV_TRANSITION_MS,
+} from '@festival/theme';
+import { bottomNavCss } from '../../../../components/shell/mobile/BottomNav';
+import { usePinnedSidebarStyles } from '../../../../components/shell/desktop/PinnedSidebar';
 import { useIsMobileChrome, useIsWideDesktop } from '../../../../hooks/ui/useIsMobile';
 import { usePlayerData } from '../../../../contexts/PlayerDataContext';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import FadeIn from '../../../../components/page/FadeIn';
-import bottomCss from '../../../../components/shell/mobile/BottomNav.module.css';
-import pinnedCss from '../../../../components/shell/desktop/PinnedSidebar.module.css';
 import sidebarCss from '../../../../components/shell/desktop/Sidebar.module.css';
 import s from '../pages/Navigation.module.css';
 
@@ -58,18 +63,20 @@ function MobileNav({ tabs }: { tabs: Tab[] }) {
     return () => ro.disconnect();
   }, [tabs]);
 
+  const st = useMobileNavStyles();
+
   return (
     <FadeIn delay={TRANSITION_MS} style={{ width: '100%' }}>
-      <nav ref={navRef} className={`${bottomCss.nav} ${s.mobileNav}`}>
+      <nav ref={navRef} className={`${bottomNavCss.navFrosted} ${s.mobileNav}`} style={st.nav}>
       {visibleTabs.map((tab) => {
         const isActive = active === tab.key;
         return (
           <button
             key={tab.key}
             onClick={() => setActive(tab.key)}
-            className={isActive ? bottomCss.tabActive : bottomCss.tab}
+            style={isActive ? st.tabActive : st.tab}
           >
-            <span className={bottomCss.tabIcon}>{tab.icon}</span>
+            <span style={st.tabIcon}>{tab.icon}</span>
             {tab.label}
           </button>
         );
@@ -77,6 +84,49 @@ function MobileNav({ tabs }: { tabs: Tab[] }) {
       </nav>
     </FadeIn>
   );
+}
+
+function useMobileNavStyles() {
+  return useMemo(() => {
+    const tab: CSSProperties = {
+      flex: 1,
+      ...flexColumn,
+      alignItems: Align.center,
+      gap: Gap.xs,
+      padding: padding(Gap.sm, Gap.xl),
+      color: Colors.textTertiary,
+      fontSize: Font.xs,
+      fontWeight: Weight.normal,
+      background: CssValue.none,
+      border: CssValue.none,
+      cursor: Cursor.pointer,
+      minWidth: Layout.bottomNavTabButtonMin,
+      transition: transition(CssProp.color, NAV_TRANSITION_MS),
+    };
+    return {
+      nav: {
+        display: Display.flex,
+        justifyContent: Justify.around,
+        alignItems: Align.center,
+        borderTop: border(Border.thin, Colors.glassBorder),
+        flexShrink: 0,
+        zIndex: ZIndex.popover,
+        position: Position.relative,
+        padding: padding(Gap.sm, Gap.none, Gap.md),
+      } as CSSProperties,
+      tab,
+      tabActive: {
+        ...tab,
+        color: Colors.accentPurple,
+        fontWeight: Weight.bold,
+      } as CSSProperties,
+      tabIcon: {
+        ...flexCenter,
+        fontSize: Font.xl,
+        lineHeight: Gap.section,
+      } as CSSProperties,
+    };
+  }, []);
 }
 
 /* ── Shared: visible-tab calculator ── */
@@ -107,19 +157,20 @@ function DesktopNav({ tabs }: { tabs: Tab[] }) {
   /* v8 ignore start -- tabs always has ≥2 entries from useTabs() */
   const [active, setActive] = useState<TabKey>(tabs[0]?.key ?? TabKey.Songs);
   /* v8 ignore stop */
+  const ps = usePinnedSidebarStyles();
 
   return (
     <FadeIn delay={TRANSITION_MS} className={s.centerWrap}>
-      <aside className={`${pinnedCss.nav} ${s.pinnedNav}`}>
+      <aside style={ps.nav}>
         {visibleTabs.map((tab) => {
           const isActive = active === tab.key;
           return (
             <button
               key={tab.key}
               onClick={() => setActive(tab.key)}
-              className={isActive ? pinnedCss.linkActive : pinnedCss.link}
+              style={isActive ? ps.linkActive : ps.link}
             >
-              <span className={pinnedCss.linkIcon}>{tab.icon}</span>
+              <span style={ps.linkIcon}>{tab.icon}</span>
               {tab.label}
             </button>
           );

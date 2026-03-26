@@ -17,8 +17,7 @@ import { DEMO_SWAP_INTERVAL_MS, Layout } from '@festival/theme';
 import type { SongDisplay as DemoSong } from '@festival/core/api/serverTypes';
 import { useDemoSongs, FADE_MS, shuffle } from '../../../../hooks/data/useDemoSongs';
 import { DemoSongRow } from './DemoSongRow';
-import css from './SongRowDemo.module.css';
-import baseCss from '../../../../styles/songRow.module.css';
+import { scoreMeta, metadataWrap, mobileTopRow, detailStrip } from '../../../../styles/songRowStyles';
 
 /* ── Song pool comes from useDemoSongs hook ── */
 
@@ -54,7 +53,7 @@ function MetadataStrip({ layout, meta }: { layout: MetadataLayout; meta: MetaVal
     [MetadataLayout.PercentileScore]: <><PercentilePill display={meta.percentile} /><ScorePill score={meta.score} width="78px" bold /></>,
   };
   return (
-    <div className={baseCss.scoreMeta}>
+    <div style={scoreMeta}>
       {pills[layout]}
     </div>
   );
@@ -62,7 +61,7 @@ function MetadataStrip({ layout, meta }: { layout: MetadataLayout; meta: MetaVal
 
 function MobileMetadataStrip({ meta }: { meta: MetaValues }) {
   return (
-    <div className={baseCss.metadataWrap}>
+    <div style={metadataWrap}>
       <AccuracyDisplay accuracy={meta.accuracy} isFullCombo={meta.fc} />
       <MiniStars starsCount={meta.stars} isFullCombo={meta.fc} />
       <PercentilePill display={meta.percentile} />
@@ -171,12 +170,12 @@ export default function MetadataDemo() {
 
   if (isMobile) {
     return (
-      <div className={css.list}>
+      <div>
         {rows.map((row, i) => (
           <DemoSongRow key={i} index={i} initialDone={initialDone} fadingIdx={fadingIdx} mobile>
-            <div className={css.mobileTopRow}>
+            <div style={mobileTopRow}>
               <SongInfo albumArt={row.song.albumArt} title={row.song.title} artist={row.song.artist} year={row.song.year} />
-              <div className={baseCss.detailStrip}>
+              <div style={detailStrip}>
                 <ScorePill score={row.meta.score} width="78px" bold />
               </div>
             </div>
@@ -188,7 +187,7 @@ export default function MetadataDemo() {
   }
 
   return (
-    <div className={css.list}>
+    <div>
       {rows.map((row, i) => (
         <DemoSongRow key={i} index={i} initialDone={initialDone} fadingIdx={fadingIdx}>
           <SongInfo albumArt={row.song.albumArt} title={row.song.title} artist={row.song.artist} year={row.song.year} />

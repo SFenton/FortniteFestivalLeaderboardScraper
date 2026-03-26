@@ -17,7 +17,7 @@ import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, type ServerInstrumentKey as 
 import { CardPhase, ACCURACY_SCALE } from '@festival/core';
 import { InstrumentSelector } from '../../../../components/common/InstrumentSelector';
 import { LeaderboardEntry } from '../../../leaderboard/global/components/LeaderboardEntry';
-import { Colors, Font, Gap, Size, Layout, Radius, CHART_ANIM_DURATION, CHART_ANIM_SETTLE } from '@festival/theme';
+import { Colors, Font, Gap, Size, Layout, Radius, Weight, CHART_ANIM_DURATION, CHART_ANIM_SETTLE, frostedCard, padding, border, transition } from '@festival/theme';
 import s from './ScoreHistoryChart.module.css';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { useChartData, type ChartPoint } from '../../../../hooks/chart/useChartData';
@@ -37,6 +37,45 @@ const X_AXIS_TICK = { ...AXIS_TICK, dy: 16 };
 
 /** X-axis label rotation angle. */
 const X_AXIS_ANGLE = -35;
+
+/* ── Inline style constants (migrated from CSS module) ── */
+const FAST_TRANSITION = 'all 0.15s ease';
+const circleBtn: React.CSSProperties = {
+  background: 'none', border: border(1, Colors.borderPrimary), borderRadius: '50%',
+  width: Size.lg, height: Size.lg, padding: 0, cursor: 'pointer',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  color: Colors.textSecondary, transition: FAST_TRANSITION,
+};
+const st = {
+  iconRowWrap: { width: '100%' } as React.CSSProperties,
+  chartContainer: {
+    ...frostedCard, borderRadius: Radius.lg, padding: padding(Gap.sm, Gap.xl, Gap.xl),
+    display: 'flex', flexDirection: 'column' as const, alignItems: 'center',
+  } as React.CSSProperties,
+  placeholder: { color: Colors.textMuted, fontSize: Font.md, fontStyle: 'italic', textAlign: 'center' as const, padding: padding(Gap.section, 0), width: '100%' } as React.CSSProperties,
+  legend: { display: 'flex', justifyContent: 'center', gap: Gap.xl, fontSize: Font.md, color: Colors.textPrimary, paddingTop: 36 } as React.CSSProperties,
+  legendItem: { display: 'inline-flex', alignItems: 'center', gap: Gap.sm } as React.CSSProperties,
+  legendGradient: { display: 'inline-block', width: Size.xs, height: 12, borderRadius: 2, background: 'linear-gradient(to right, rgb(220,40,40), rgb(46,204,113))' } as React.CSSProperties,
+  legendGold: { display: 'inline-block', width: Size.xs, height: 12, borderRadius: 2, backgroundColor: Colors.gold } as React.CSSProperties,
+  chartHeader: { textAlign: 'center' as const, marginBottom: Gap.md } as React.CSSProperties,
+  chartTitle: { color: Colors.textPrimary, fontSize: Font.title, fontWeight: Weight.bold } as React.CSSProperties,
+  chartSubtitle: { color: Colors.textMuted, fontSize: Font.lg, marginTop: Gap.xs } as React.CSSProperties,
+  scoreCard: { display: 'flex', alignItems: 'center', gap: Gap.xl, height: Size.xl, fontSize: Font.md, color: 'inherit', width: '100%', boxSizing: 'border-box' as const } as React.CSSProperties,
+  scoreListCard: {
+    ...frostedCard, display: 'flex', alignItems: 'center', gap: Gap.xl,
+    padding: padding(0, Gap.xl), height: Size.xl, borderRadius: Radius.md,
+    fontSize: Font.md, color: 'inherit', transition: transition('border-color', 150),
+  } as React.CSSProperties,
+  chartPagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: Gap.md, paddingTop: Gap.xl, paddingBottom: Gap.md } as React.CSSProperties,
+  chartPageButton: { ...circleBtn } as React.CSSProperties,
+  chartPageButtonDisabled: { ...circleBtn, opacity: 0.3, cursor: 'default' } as React.CSSProperties,
+  viewAllButton: {
+    ...frostedCard, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    width: '100%', height: Size.xl, marginTop: Gap.sm, borderRadius: Radius.md,
+    color: Colors.textPrimary, fontSize: Font.md, fontWeight: Weight.semibold,
+    cursor: 'pointer', transition: transition('background-color', 150),
+  } as React.CSSProperties,
+} as const;
 
 type ScoreHistoryChartProps = {
   songId: string;
@@ -176,12 +215,12 @@ export default memo(function ScoreHistoryChart({
   /* v8 ignore stop */
 
   return (
-    <div className={s.wrapper}>
+    <div>
       {/* Chart area */}
-      <div className={s.chartContainer} ref={chartContainerRef}>
+      <div style={st.chartContainer} ref={chartContainerRef}>
         {/* Instrument icons */}
         {availableInstruments.length > 1 && (
-          <div ref={iconRowRef} className={s.iconRowWrap}>
+          <div ref={iconRowRef} style={st.iconRowWrap}>
             <InstrumentSelector
               instruments={selectorItems}
               selected={selected}
@@ -193,16 +232,16 @@ export default memo(function ScoreHistoryChart({
             />
           </div>
         )}
-        <div className={s.chartHeader}>
-          <div className={s.chartTitle}>{t('chart.scoreHistory')}</div>
-          <div className={s.chartSubtitle}>{t('chart.selectBarHint')}</div>
+        <div style={st.chartHeader}>
+          <div style={st.chartTitle}>{t('chart.scoreHistory')}</div>
+          <div style={st.chartSubtitle}>{t('chart.selectBarHint')}</div>
         </div>
         {/* v8 ignore start — chart conditional rendering */}
       {loading && (
-          <div className={s.placeholder}>{t('chart.loadingHistory')}</div>
+          <div style={st.placeholder}>{t('chart.loadingHistory')}</div>
         )}
         {!loading && chartData.length === 0 && (
-          <div className={s.placeholder}>
+          <div style={st.placeholder}>
             {t('chart.noHistory', {instrument: instrumentLabel(selected)})}
           </div>
         )}
@@ -266,20 +305,20 @@ export default memo(function ScoreHistoryChart({
                   const hasFc = visibleChartData.some(p => p.accuracy >= 100 && p.isFullCombo);
                   const hasNonFc = visibleChartData.some(p => !(p.accuracy >= 100 && p.isFullCombo));
                   return (
-                  <div className={s.legend}>
+                  <div style={st.legend}>
                     {hasNonFc && (
-                    <span className={s.legendItem}>
-                      <span className={s.legendGradient} />
+                    <span style={st.legendItem}>
+                      <span style={st.legendGradient} />
                       {t('chart.accuracy')}
                     </span>
                     )}
                     {hasFc && (
-                    <span className={s.legendItem}>
-                      <span className={s.legendGold} />
+                    <span style={st.legendItem}>
+                      <span style={st.legendGold} />
                       {t('chart.accuracyFC')}
                     </span>
                     )}
-                    <span className={s.legendItem}>
+                    <span style={st.legendItem}>
                       <svg width={24} height={12} style={{ verticalAlign: 'middle' }}>
                         <line x1={0} y1={6} x2={18} y2={6} stroke={Colors.accentBlueBright} strokeWidth={2} />
                         <circle cx={18} cy={6} r={3} fill={Colors.accentBlueBright} />
@@ -365,7 +404,9 @@ export default memo(function ScoreHistoryChart({
             ...(!isMobile ? { width: '50%', marginLeft: 'auto', marginRight: 'auto' } : {}),
           }}>
             {displayedPoint && (
-              <div className={`${s.scoreCard}${!isMobile ? ` ${s.scoreListCard}` : ''}`} style={{
+              <div style={{
+                ...st.scoreCard,
+                ...(!isMobile ? st.scoreListCard : {}),
                 opacity: (cardPhase === CardPhase.Open || cardPhase === CardPhase.SwapOut || cardPhase === CardPhase.SwapIn) ? 1 : 0,
                 transform: (cardPhase === CardPhase.Open || cardPhase === CardPhase.SwapOut || cardPhase === CardPhase.SwapIn) ? 'translateY(0)' : 'translateY(-8px)',
                 transition: 'opacity 0.15s ease, transform 0.15s ease',
@@ -398,9 +439,9 @@ export default memo(function ScoreHistoryChart({
         {/* Chart pagination controls */}
         {/* v8 ignore start — pagination animation callbacks */}
         {!loading && needsPagination && (
-          <div className={s.chartPagination}>
+          <div style={st.chartPagination}>
             <button
-              className={backDisabled ? s.chartPageButtonDisabled : s.chartPageButton}
+              style={backDisabled ? st.chartPageButtonDisabled : st.chartPageButton}
               disabled={backDisabled}
               onClick={() => {
                 const target = selectedIndex - maxBars;
@@ -418,7 +459,7 @@ export default memo(function ScoreHistoryChart({
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M9 3L4 8L9 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M14 3L9 8L14 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
             <button
-              className={backDisabled ? s.chartPageButtonDisabled : s.chartPageButton}
+              style={backDisabled ? st.chartPageButtonDisabled : st.chartPageButton}
               disabled={backDisabled}
               onClick={() => {
                 const target = selectedIndex - 1;
@@ -436,7 +477,7 @@ export default memo(function ScoreHistoryChart({
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
             <button
-              className={forwardDisabled ? s.chartPageButtonDisabled : s.chartPageButton}
+              style={forwardDisabled ? st.chartPageButtonDisabled : st.chartPageButton}
               disabled={forwardDisabled}
               onClick={() => {
                 const target = selectedIndex + 1;
@@ -454,7 +495,7 @@ export default memo(function ScoreHistoryChart({
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
             <button
-              className={forwardDisabled ? s.chartPageButtonDisabled : s.chartPageButton}
+              style={forwardDisabled ? st.chartPageButtonDisabled : st.chartPageButton}
               disabled={forwardDisabled}
               onClick={() => {
                 const target = selectedIndex + maxBars;
@@ -483,7 +524,7 @@ export default memo(function ScoreHistoryChart({
         scoreWidth={scoreWidthProp}
       />
       {chartData.length > 5 && (
-        <button className={s.viewAllButton} onClick={() => {
+        <button style={st.viewAllButton} onClick={() => {
           /* v8 ignore next — navigation */
           navigate(`/songs/${songId}/${selected}/history`);
         }}>

@@ -515,8 +515,8 @@ describe('FilterModal', () => {
     // savedDraft is the default (no filters), so there are changes
     renderModal(props);
     fireEvent.click(screen.getByLabelText('Close'));
-    expect(screen.getByText('Cancel Song Filter Changes')).toBeDefined();
-    expect(screen.getByText('Are you sure you want to discard your song filter changes?')).toBeDefined();
+    expect(screen.getByText('Cancel Filter Changes')).toBeDefined();
+    expect(screen.getByText('Are you sure you want to discard your filter changes?')).toBeDefined();
   });
 
   it('confirm dialog "No" dismisses the dialog but stays open', () => {
@@ -529,7 +529,7 @@ describe('FilterModal', () => {
     fireEvent.click(screen.getByText('No'));
     expect(props.onCancel).not.toHaveBeenCalled();
     // Confirm dialog should be gone
-    expect(screen.queryByText('Cancel Song Filter Changes')).toBeNull();
+    expect(screen.queryByText('Cancel Filter Changes')).toBeNull();
   });
 
   it('confirm dialog "Yes" calls onCancel', () => {

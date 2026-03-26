@@ -1,19 +1,18 @@
-import { useState, useCallback, type RefObject } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 
 const DEFAULT_THRESHOLD = 40;
 
 /**
- * Tracks whether a page header should be collapsed based on the scroll
- * position of a container element.
+ * Tracks whether a page header should be collapsed based on the browser's
+ * scroll position (window.scrollY).
  *
- * @param scrollRef  Ref to the scroll container
  * @param opts.threshold  Pixel distance to trigger collapse (default 40)
  * @param opts.disabled   When true, returns the `forcedValue` without reading scroll
  * @param opts.forcedValue Value to use when disabled (default `false`)
- * @returns `[collapsed, onScroll]` — wire `onScroll` into the container's scroll handler
+ * @returns `[collapsed, onScroll]` — `onScroll` is provided for manual trigger but
+ *          the hook also listens to window scroll automatically.
  */
 export function useHeaderCollapse(
-  scrollRef: RefObject<HTMLElement | null>,
   opts?: { threshold?: number; disabled?: boolean; forcedValue?: boolean },
 ): [boolean, () => void] {
   const threshold = opts?.threshold ?? DEFAULT_THRESHOLD;
@@ -24,11 +23,14 @@ export function useHeaderCollapse(
 
   const update = useCallback(() => {
     if (disabled) return;
-    /* v8 ignore start -- scrollTop: DOM scroll API not available in jsdom */
-    const el = scrollRef.current;
-    if (el) setCollapsed(el.scrollTop > threshold);
-    /* v8 ignore stop */
-  }, [scrollRef, threshold, disabled]);
+    setCollapsed(window.scrollY > threshold);
+  }, [threshold, disabled]);
+
+  useEffect(() => {
+    if (disabled) return;
+    window.addEventListener('scroll', update, { passive: true });
+    return () => window.removeEventListener('scroll', update);
+  }, [update, disabled]);
 
   return [disabled ? forcedValue : collapsed, update];
 }

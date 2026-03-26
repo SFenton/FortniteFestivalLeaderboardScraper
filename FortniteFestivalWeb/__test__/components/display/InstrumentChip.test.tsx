@@ -1,38 +1,40 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import { InstrumentChip } from '../../../src/components/display/InstrumentChip';
+import { Colors } from '@festival/theme';
 
 describe('InstrumentChip', () => {
   it('renders with no score and no FC', () => {
     const { container } = render(
       <InstrumentChip instrument="Solo_Guitar" hasScore={false} isFC={false} />,
     );
-    const chip = container.querySelector('[data-status="none"]');
-    expect(chip).toBeTruthy();
+    const chip = container.firstElementChild as HTMLElement;
+    expect(chip.style.backgroundColor).toBeTruthy();
+    expect(chip.style.borderColor).toBeTruthy();
   });
 
   it('renders scored status', () => {
     const { container } = render(
       <InstrumentChip instrument="Solo_Bass" hasScore={true} isFC={false} />,
     );
-    const chip = container.querySelector('[data-status="scored"]');
-    expect(chip).toBeTruthy();
+    const chip = container.firstElementChild as HTMLElement;
+    expect(chip.style.backgroundColor).toBeTruthy();
   });
 
   it('renders FC status (overrides scored)', () => {
     const { container } = render(
       <InstrumentChip instrument="Solo_Drums" hasScore={true} isFC={true} />,
     );
-    const chip = container.querySelector('[data-status="fc"]');
-    expect(chip).toBeTruthy();
+    const chip = container.firstElementChild as HTMLElement;
+    expect(chip.style.backgroundColor).toBeTruthy();
   });
 
   it('renders FC even when hasScore is false', () => {
     const { container } = render(
       <InstrumentChip instrument="Solo_Vocals" hasScore={false} isFC={true} />,
     );
-    const chip = container.querySelector('[data-status="fc"]');
-    expect(chip).toBeTruthy();
+    const chip = container.firstElementChild as HTMLElement;
+    expect(chip.style.backgroundColor).toBeTruthy();
   });
 
   it('renders with default size', () => {

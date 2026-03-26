@@ -4,7 +4,7 @@ import HamburgerButton from './HamburgerButton';
 import PlayerSearchBar from '../../player/PlayerSearchBar';
 import HeaderProfileButton from './HeaderProfileButton';
 import appCss from '../../../App.module.css';
-import headerCss from './HeaderSearch.module.css';
+import { headerSearchStyles } from './HeaderSearch';
 
 export interface DesktopNavProps {
   hasPlayer: boolean;
@@ -24,9 +24,8 @@ export default function DesktopNav({ hasPlayer, onOpenSidebar, onProfileClick, i
   const searchBar = (
     <PlayerSearchBar
       onSelect={handleSelect}
-      className={headerCss.container}
-      searchClassName={headerCss.inputWrap}
-      inputClassName={headerCss.input}
+      style={headerSearchStyles.container}
+      searchStyle={headerSearchStyles.inputWrap}
     />
   );
 

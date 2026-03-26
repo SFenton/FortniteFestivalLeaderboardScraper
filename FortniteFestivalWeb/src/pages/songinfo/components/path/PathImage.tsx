@@ -6,7 +6,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ImagePhase, type Difficulty } from '@festival/core';
-import { Colors, Font, TRANSITION_MS, MIN_SPINNER_MS } from '@festival/theme';
+import { Colors, Font, Gap, TRANSITION_MS, MIN_SPINNER_MS } from '@festival/theme';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { useScrollMask } from '../../../../hooks/ui/useScrollMask';
 import { ZoomableImage } from './ZoomableImage';
@@ -112,7 +112,11 @@ export function PathImage({ songId, instrument, difficulty }: PathImageProps) {
 
   return (
     /* v8 ignore start — phase-dependent rendering */
-    <div ref={scrollRef} onScroll={handleScroll} className={css.imageArea}>
+    <div ref={scrollRef} onScroll={handleScroll} style={{
+      flex: 1, overflow: 'auto', position: 'relative' as const,
+      display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+      padding: Gap.section,
+    }}>
       {spinnerMounted && (
         <div className={css.spinnerWrap} style={{
           opacity: spinnerVisible ? 1 : 0,

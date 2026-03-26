@@ -1,13 +1,8 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-/**
- * Reusable search bar with icon, input, and click-to-focus wrapper.
- * Used across desktop header, songs toolbar, player search modal,
- * and floating action button.
- */
-import { forwardRef, useRef, useImperativeHandle, type KeyboardEventHandler } from 'react';
+/* eslint-disable react/forbid-dom-props -- useStyles pattern */
+import { forwardRef, useRef, useImperativeHandle, useMemo, type KeyboardEventHandler } from 'react';
 import { IoSearch } from 'react-icons/io5';
-import { Size } from '@festival/theme';
-import css from './SearchBar.module.css';
+import { IconSize, Colors, Font, Gap, Display, Align, Cursor, CssValue } from '@festival/theme';
+import css from './SearchBar.module.css'; // minimal: ::placeholder only
 
 export interface SearchBarProps {
   value: string;
@@ -57,19 +52,20 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
     blur: () => inputRef.current?.blur(),
   }));
 
-  const wrapperClass = className ? `${css.searchBar} ${className}` : css.searchBar;
-  const inputClass = inputClassName ? `${css.searchInput} ${inputClassName}` : css.searchInput;
+  const s = useStyles();
+  const wrapperClass = className;
 
   return (
     <div
       className={wrapperClass}
-      style={style}
+      style={{ ...s.searchBar, ...style }}
       onClick={() => inputRef.current?.focus()}
     >
-      {!hideIcon && <IoSearch size={Size.iconXs} className={css.searchIcon} />}
+      {!hideIcon && <IoSearch size={IconSize.xs} style={s.searchIcon} />}
       <input
         ref={inputRef}
-        className={inputClass}
+        className={`${css.searchInput}${inputClassName ? ` ${inputClassName}` : ''}`}
+        style={s.searchInput}
         placeholder={placeholder}
         value={value}
         onChange={e => onChange(e.target.value)}
@@ -83,3 +79,27 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
 });
 
 export default SearchBar;
+
+function useStyles() {
+  return useMemo(() => ({
+    searchBar: {
+      display: Display.flex,
+      alignItems: Align.center,
+      gap: Gap.md,
+      cursor: Cursor.text,
+    },
+    searchIcon: {
+      color: Colors.textTertiary,
+      flexShrink: 0,
+    },
+    searchInput: {
+      flex: 1,
+      background: CssValue.transparent,
+      border: CssValue.none,
+      outline: CssValue.none,
+      color: Colors.textPrimary,
+      fontSize: Font.md,
+      minWidth: Gap.none,
+    },
+  }), []);
+}

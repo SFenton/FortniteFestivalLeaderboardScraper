@@ -1,7 +1,14 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
+import { Colors, ZIndex, Position, Overflow, PointerEvents, fixedFill, absoluteFill } from '@festival/theme';
 import { type ServerSong as Song } from '@festival/core/api/serverTypes';
-import css from './AnimatedBackground.module.css';
+
+const BG_DURATION = 1000;
+const abStyles = {
+  container: { ...fixedFill, overflow: Overflow.hidden, zIndex: ZIndex.background, pointerEvents: PointerEvents.none } as CSSProperties,
+  layer: { ...absoluteFill, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', willChange: 'transform, opacity' } as CSSProperties,
+  dim: { ...absoluteFill, backgroundColor: Colors.backgroundBlack } as CSSProperties,
+};
 
 const FADE_DURATION = 1000; // 1s crossfade
 const DISPLAY_DURATION = 5000; // 5s per image
@@ -65,8 +72,12 @@ export function AnimatedBackground({
       .map((s) => s.albumArt)
       .filter((url): url is string => !!url);
     if (candidates.length === 0) return [];
-    const shuffled = [...candidates].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, Math.min(100, shuffled.length));
+    // Fisher-Yates shuffle (unbiased, unlike .sort(() => Math.random() - 0.5))
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+    }
+    return candidates.slice(0, Math.min(100, candidates.length));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candidateCount]);
 
@@ -176,20 +187,18 @@ export function AnimatedBackground({
   /* v8 ignore stop */
 
   return (
-    <div className={css.container} style={{ '--fade-ms': `${FADE_DURATION}ms`, opacity: containerVisible ? 1 : 0 } as CSSProperties}>
+    <div style={{ ...abStyles.container, transition: `opacity ${BG_DURATION}ms ease`, opacity: containerVisible ? 1 : 0 }}>
       <div
         ref={layerARef}
-        className={css.layer}
-        style={{ opacity: opacityA, backgroundImage: `url(${uriA})` }}
+        style={{ ...abStyles.layer, opacity: opacityA, backgroundImage: `url(${uriA})`, transition: `opacity ${FADE_DURATION}ms ease` }}
       />
       {uriB && imageUris.length > 1 && (
         <div
           ref={layerBRef}
-          className={css.layer}
-          style={{ opacity: opacityB, backgroundImage: `url(${uriB})` }}
+          style={{ ...abStyles.layer, opacity: opacityB, backgroundImage: `url(${uriB})`, transition: `opacity ${FADE_DURATION}ms ease` }}
         />
       )}
-      <div className={css.dim} style={{ opacity: dimOpacity }} />
+      <div style={{ ...abStyles.dim, opacity: dimOpacity }} />
     </div>
   );
 }

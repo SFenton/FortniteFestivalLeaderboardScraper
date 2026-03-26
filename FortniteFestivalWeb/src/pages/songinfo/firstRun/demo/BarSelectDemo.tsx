@@ -7,7 +7,7 @@ import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { useChartDimensions } from '../../../../hooks/chart/useChartDimensions';
 import { LeaderboardEntry } from '../../../leaderboard/global/components/LeaderboardEntry';
 import FadeIn from '../../../../components/page/FadeIn';
-import css from './ChartDemo.module.css';
+import { useChartDemoStyles } from './ChartDemo';
 
 const CYCLE_MS = 2500;
 const CARD_HEIGHT = 44;
@@ -100,10 +100,12 @@ export default function BarSelectDemo() {
     };
   }, [selectedIdx]);
 
+  const s = useChartDemoStyles();
+
   return (
-    <div className={css.wrapper}>
+    <div style={s.wrapper}>
       <FadeIn delay={0}>
-        <div className={css.chartCard} ref={chartContainerRef} style={{ pointerEvents: 'none' }}>
+        <div style={s.chartCardNoEvents} ref={chartContainerRef}>
           <ResponsiveContainer width="100%" height={chartHeight}>
             <ComposedChart data={visibleData} margin={Layout.chartMargin} barCategoryGap="10%">
               <CartesianGrid strokeDasharray="3 3" stroke={Colors.borderSubtle} horizontal={false} vertical={false} />
@@ -150,20 +152,20 @@ export default function BarSelectDemo() {
               />
               <Tooltip content={() => null} cursor={{ fill: 'transparent', stroke: 'transparent' }} />
               <Legend content={() => (
-                <div className={css.legend}>
+                <div style={s.legend}>
                   {hasNonFc && (
-                    <span className={css.legendItem}>
+                    <span style={s.legendItem}>
                       <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 2, background: 'linear-gradient(to right, rgb(220,40,40), rgb(46,204,113))' }} />
                       {t('chart.accuracy')}
                     </span>
                   )}
                   {hasFc && (
-                    <span className={css.legendItem}>
+                    <span style={s.legendItem}>
                       <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 2, backgroundColor: Colors.gold }} />
                       {t('chart.accuracyFC')}
                     </span>
                   )}
-                  <span className={css.legendItem}>
+                  <span style={s.legendItem}>
                     <svg width={24} height={12} style={{ verticalAlign: 'middle' }}>
                       <line x1={0} y1={6} x2={18} y2={6} stroke={Colors.accentBlueBright} strokeWidth={2} />
                       <circle cx={18} cy={6} r={3} fill={Colors.accentBlueBright} />
@@ -176,7 +178,7 @@ export default function BarSelectDemo() {
               <Line yAxisId="score" type="monotone" dataKey="score" stroke={Colors.accentBlueBright} strokeWidth={2} dot={{ fill: Colors.accentBlueBright, r: Size.dotRadius }} isAnimationActive={false} />
             </ComposedChart>
           </ResponsiveContainer>
-          <div className={css.detailCardBorderless} style={{ opacity: detailVisible ? 1 : 0, marginTop: Gap.xl }}>
+          <div style={{ ...s.detailCardBorderless, opacity: detailVisible ? 1 : 0, marginTop: Gap.xl }}>
             <LeaderboardEntry
               label={visibleData[selectedIdx]!.cardLabel}
               displayName=""

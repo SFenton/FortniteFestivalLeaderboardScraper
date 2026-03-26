@@ -1,27 +1,30 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useNavigationType } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
-import { useScrollMask } from '../../hooks/ui/useScrollMask';
 import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
-import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
-import { useLoadPhase } from '../../hooks/data/useLoadPhase';
+import { usePageTransition } from '../../hooks/ui/usePageTransition';
+import { useStagger } from '../../hooks/ui/useStagger';
+import EmptyState from '../../components/common/EmptyState';
+import PageHeader from '../../components/common/PageHeader';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
 import { IoChevronForward } from 'react-icons/io5';
 import { InstrumentHeaderSize } from '@festival/core';
+import { LoadPhase } from '@festival/core';
+import { Gap, Colors, Font, Weight, Radius, Layout, Position, ZIndex, Display, Align, Justify, Cursor, CssValue, WhiteSpace, flexColumn, flexCenter, flexRow, frostedCard, padding, transition, CssProp, NAV_TRANSITION_MS } from '@festival/theme';
 import { serverInstrumentLabel, type RivalsListResponse, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import type { RivalSummary } from '@festival/core/api/serverTypes';
 import { deriveComboFromSettings } from './helpers/comboUtils';
 import RivalRow from './components/RivalRow';
 import { Routes } from '../../routes';
 import s from './RivalsPage.module.css';
-
-let _rivalsHasRendered = false;
+import { useRivalsSharedStyles } from './useRivalsSharedStyles';
+import Page, { usePageScrollRef } from '../Page';
 
 // Module-level data cache so back-navigation has instant data
 let _cachedInstrumentRivals: InstrumentRivals[] = [];
@@ -44,16 +47,14 @@ export default function RivalsPage() {
   const isMobile = useIsMobile();
   const { player } = useTrackedPlayer();
   const accountId = player?.accountId;
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const saveScroll = useScrollRestore(scrollRef, `rivals:${accountId}`, navType);
+  const scrollRef = usePageScrollRef();
+  useScrollRestore(`rivals:${accountId}`, navType);
 
   const activeInstruments = visibleInstruments(settings);
   const combo = useMemo(() => deriveComboFromSettings(settings), [settings]);
 
   // Data state: initialize from cache when returning to same account
   const hasCachedData = accountId === _cachedAccountId && _cachedInstrumentRivals.length > 0;
-  const skipAnimRef = useRef(_rivalsHasRendered && navType === 'POP' && hasCachedData);
-  _rivalsHasRendered = true;
 
   const [instrumentRivals, setInstrumentRivals] = useState<InstrumentRivals[]>(hasCachedData ? _cachedInstrumentRivals : []);
   const [comboRivals, setComboRivals] = useState<RivalsListResponse | null>(hasCachedData ? _cachedComboRivals : null);
@@ -209,36 +210,21 @@ export default function RivalsPage() {
   }, [instrumentRivals]);
   /* v8 ignore stop */
 
-  const { phase, shouldStagger } = useLoadPhase(allReady, { skipAnimation: skipAnimRef.current });
-  const updateScrollMask = useScrollMask(scrollRef, [phase]);
-  const { rushOnScroll } = useStaggerRush(scrollRef);
-
-  /* v8 ignore start — scroll handler */
-  const handleScroll = useCallback(() => {
-    saveScroll();
-    updateScrollMask();
-    rushOnScroll();
-  }, [saveScroll, updateScrollMask, rushOnScroll]);
-  /* v8 ignore stop */
-
-  /* v8 ignore start -- animation callback */
-  const clearAnim = useCallback((e: React.AnimationEvent<HTMLElement>) => {
-    const el = e.currentTarget;
-    el.style.opacity = '';
-    el.style.animation = '';
-  }, []);
-  /* v8 ignore stop */
+  const { phase, shouldStagger } = usePageTransition(`rivals:${accountId}`, allReady, hasCachedData);
+  const { forDelay: stagger, next: nextStagger, clearAnim } = useStagger(shouldStagger);
+  const shared = useRivalsSharedStyles();
+  const styles = useMemo(() => ({
+    ...shared,
+    container: { ...shared.container, paddingTop: Layout.paddingTop } as CSSProperties,
+  }), [shared]);
 
   /* v8 ignore start -- guard + computed state */
   if (!accountId) {
-    return <div className={s.center}>{t('rivals.noPlayer')}</div>;
+    return <div style={styles.center}>{t('rivals.noPlayer')}</div>;
   }
   /* v8 ignore stop */
 
   /* v8 ignore start -- render-time helpers */
-  const stagger = (delayMs: number): React.CSSProperties | undefined =>
-    shouldStagger ? { opacity: 0, animation: `fadeInUp 400ms ease-out ${delayMs}ms forwards` } : undefined;
-
   /** Compute CSS variable for min name width based on longest name in a rival list. */
   const nameWidthVar = (rivals: RivalSummary[]): React.CSSProperties => {
     const maxLen = rivals.reduce((max, r) => Math.max(max, (r.displayName ?? 'Unknown Player').length), 0);
@@ -258,56 +244,48 @@ export default function RivalsPage() {
     || (commonRivals.above.length > 0 || commonRivals.below.length > 0);
   /* v8 ignore stop */
 
-  const staggerInterval = 125;
-  let staggerIdx = 0;
-  /* v8 ignore next -- render-time helper */
-  const nextStagger = (): React.CSSProperties | undefined =>
-    shouldStagger ? stagger((++staggerIdx) * staggerInterval) : undefined;
-
   /* v8 ignore start -- JSX render tree */
   return (
-    <div className={s.page}>
-      <div className={s.stickyHeader}>
-        <div className={s.headerContent}>
-          <div className={s.headerTitle}>{t('rivals.title')}</div>
-        </div>
-      </div>
-      {phase !== 'contentIn' && (
-        <div
-          className={s.spinnerOverlay}
-          style={phase === 'spinnerOut' ? { animation: 'fadeOut 500ms ease-out forwards' } : undefined}
-        >
-          <ArcSpinner />
-        </div>
-      )}
-      {phase === 'contentIn' && (
-          <div ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
-            <div className={s.container} style={isMobile ? { paddingBottom: 96 } : undefined}>
+    <Page
+      scrollRef={scrollRef}
+      scrollDeps={[phase]}
+      containerStyle={styles.container}
+      before={<>
+        <PageHeader title={t('rivals.title')} sticky />
+        {phase !== LoadPhase.ContentIn && (
+          <div
+            style={phase === LoadPhase.SpinnerOut ? { ...styles.spinnerOverlay, ...styles.spinnerFadeOut } : styles.spinnerOverlay}
+          >
+            <ArcSpinner />
+          </div>
+        )}
+      </>}
+    >
+      {phase === LoadPhase.ContentIn && (
+            <div style={isMobile ? { paddingBottom: Layout.fabPaddingBottom } : undefined}>
               {!hasAnyRivals && (
-                <div className={s.emptyState} style={stagger(200)} onAnimationEnd={clearAnim}>
-                  <div className={s.emptyTitle}>{t('rivals.noRivals')}</div>
-                </div>
+                <EmptyState title={t('rivals.noRivals')} style={stagger(200)} onAnimationEnd={clearAnim} />
               )}
 
               {/* Common rivals (appears in ALL selected instruments, 2+ required) */}
               {(commonRivals.above.length > 0 || commonRivals.below.length > 0) && (
-                <div className={s.section}>
+                <div style={styles.section}>
                   <div
                     className={s.sectionHeaderClickable}
-                    style={nextStagger()}
+                    style={{ ...styles.sectionHeaderClickable, ...nextStagger() }}
                     onAnimationEnd={clearAnim}
                     onClick={() => navigate(Routes.allRivals('common'), { state: { from: 'rivals' } })}
                     role="button"
                     tabIndex={0}
                     onKeyDown={e => { if (e.key === 'Enter') navigate(Routes.allRivals('common'), { state: { from: 'rivals' } }); }}
                   >
-                    <div className={s.cardHeaderText}>
-                      <span className={s.cardTitle}>{t('rivals.commonRivalsShort', 'Common Rivals')}</span>
+                    <div style={styles.cardHeaderText}>
+                      <span style={styles.cardTitle}>{t('rivals.commonRivalsShort', 'Common Rivals')}</span>
                     </div>
-                    <span className={s.seeAll}>{t('rivals.seeAll', 'See All')}</span>
-                    <IoChevronForward size={20} className={s.chevron} />
+                    <span style={styles.seeAll}>{t('rivals.seeAll', 'See All')}</span>
+                    <IoChevronForward size={20} style={styles.chevron} />
                   </div>
-                  <div className={s.rivalList} style={nameWidthVar([...commonRivals.above, ...commonRivals.below])}>
+                  <div style={{ ...styles.rivalList, ...nameWidthVar([...commonRivals.above, ...commonRivals.below]) }}>
                     {[...commonRivals.above, ...commonRivals.below].map(rival => (
                       <RivalRow
                         key={rival.accountId}
@@ -324,13 +302,13 @@ export default function RivalsPage() {
 
               {/* Combo section (if 2+ instruments enabled) */}
               {combo && comboRivals && (comboRivals.above.length > 0 || comboRivals.below.length > 0) && (
-                <div className={s.section}>
-                  <div className={s.sectionHeader} style={nextStagger()} onAnimationEnd={clearAnim}>
+                <div style={styles.section}>
+                  <div style={{ ...styles.sectionHeader, ...nextStagger() }} onAnimationEnd={clearAnim}>
                     <div>
-                      <span className={s.cardTitle}>{t('rivals.instrumentRivalsShort', { instrument: t('rivals.combo') })}</span>
+                      <span style={styles.cardTitle}>{t('rivals.instrumentRivalsShort', { instrument: t('rivals.combo') })}</span>
                     </div>
                   </div>
-                  <div className={s.rivalList} style={nameWidthVar([...comboRivals.above, ...comboRivals.below])}>
+                  <div style={{ ...styles.rivalList, ...nameWidthVar([...comboRivals.above, ...comboRivals.below]) }}>
                     {[...comboRivals.above, ...comboRivals.below].map(rival => (
                       <RivalRow
                         key={rival.accountId}
@@ -353,10 +331,10 @@ export default function RivalsPage() {
                 const allPreview = [...previewAbove, ...previewBelow];
                 const navigateToInstrument = () => navigate(Routes.allRivals(entry.instrument), { state: { from: 'rivals' } });
                 return (
-                  <div key={entry.instrument} className={s.section}>
+                  <div key={entry.instrument} style={styles.section}>
                     <div
                       className={s.sectionHeaderClickable}
-                      style={nextStagger()}
+                      style={{ ...styles.sectionHeaderClickable, ...nextStagger() }}
                       onAnimationEnd={clearAnim}
                       onClick={navigateToInstrument}
                       role="button"
@@ -364,13 +342,13 @@ export default function RivalsPage() {
                       onKeyDown={e => { if (e.key === 'Enter') navigateToInstrument(); }}
                     >
                       <InstrumentHeader instrument={entry.instrument} size={InstrumentHeaderSize.SM} iconOnly />
-                      <div className={s.cardHeaderText}>
-                        <span className={s.cardTitle}>{t('rivals.instrumentRivalsShort', { instrument: serverInstrumentLabel(entry.instrument) })}</span>
+                      <div style={styles.cardHeaderText}>
+                        <span style={styles.cardTitle}>{t('rivals.instrumentRivalsShort', { instrument: serverInstrumentLabel(entry.instrument) })}</span>
                       </div>
-                      <span className={s.seeAll}>{t('rivals.seeAll', 'See All')}</span>
-                      <IoChevronForward size={20} className={s.chevron} />
+                      <span style={styles.seeAll}>{t('rivals.seeAll', 'See All')}</span>
+                      <IoChevronForward size={20} style={styles.chevron} />
                     </div>
-                    <div className={s.rivalList} style={nameWidthVar(allPreview)}>
+                    <div style={{ ...styles.rivalList, ...nameWidthVar(allPreview) }}>
                       {allPreview.map(rival => (
                         <RivalRow
                           key={rival.accountId}
@@ -386,9 +364,8 @@ export default function RivalsPage() {
                 );
               })}
             </div>
-          </div>
       )}
-    </div>
+    </Page>
   );
 }
 

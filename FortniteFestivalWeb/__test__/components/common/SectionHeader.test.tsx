@@ -21,17 +21,16 @@ describe('SectionHeader', () => {
     expect(screen.getByText('Some hint text')).toBeTruthy();
   });
 
-  it('applies description class when flush is false', () => {
+  it('applies description style when flush is false', () => {
     const { container } = render(<SectionHeader title="T" description="D" />);
     const descDiv = container.querySelectorAll('div')[1];
-    expect(descDiv!.className).toContain('description');
-    expect(descDiv!.className).not.toContain('Flush');
+    expect(descDiv!.style.marginBottom).not.toBe('0');
   });
 
-  it('applies descriptionFlush class when flush is true', () => {
+  it('applies descriptionFlush style when flush is true', () => {
     const { container } = render(<SectionHeader title="T" description="D" flush />);
     const descDiv = container.querySelectorAll('div')[1];
-    expect(descDiv!.className).toContain('descriptionFlush');
+    expect(descDiv!.style.marginBottom).toBe('0px');
   });
 
   it('does not render description div for empty string', () => {
@@ -40,9 +39,9 @@ describe('SectionHeader', () => {
     expect(divs).toHaveLength(1);
   });
 
-  it('applies title class to the title div', () => {
+  it('applies title style to the title div', () => {
     const { container } = render(<SectionHeader title="Styled" />);
     const titleDiv = container.querySelector('div');
-    expect(titleDiv?.className).toContain('title');
+    expect(titleDiv?.style.fontWeight).toBe('700');
   });
 });

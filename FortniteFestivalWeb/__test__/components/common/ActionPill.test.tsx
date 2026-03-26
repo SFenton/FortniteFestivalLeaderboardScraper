@@ -19,18 +19,22 @@ describe('ActionPill', () => {
   it('applies active class when active', () => {
     const { container } = render(<ActionPill icon={<span>I</span>} label="Sort" onClick={vi.fn()} active />);
     const btn = container.querySelector('button');
-    expect(btn?.className).toContain('Active');
+    // Active pill sets backgroundImage to 'none' (removes frosted noise)
+    expect(btn?.style.backgroundImage).toBe('none');
   });
 
   it('applies inactive class when not active', () => {
     const { container } = render(<ActionPill icon={<span>I</span>} label="Sort" onClick={vi.fn()} />);
     const btn = container.querySelector('button');
-    expect(btn?.className).not.toContain('Active');
+    expect(btn?.style.backgroundImage).not.toBe('none');
   });
 
   it('renders dot when dot is true', () => {
     const { container } = render(<ActionPill icon={<span>I</span>} label="Sort" onClick={vi.fn()} dot />);
-    expect(container.querySelector('[class*="dot"]')).toBeTruthy();
+    // Dot is a small circle span (6px wide with border-radius: 50%)
+    const spans = container.querySelectorAll('button span');
+    const dotSpan = spans[spans.length - 1];
+    expect(dotSpan?.style.width).toBe('6px');
   });
 
   it('applies custom className', () => {

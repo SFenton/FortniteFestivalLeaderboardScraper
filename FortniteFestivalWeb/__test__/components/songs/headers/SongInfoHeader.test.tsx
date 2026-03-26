@@ -42,6 +42,13 @@ beforeAll(() => {
 
 import SongInfoHeader from '../../../../src/components/songs/headers/SongInfoHeader';
 
+/** Find the album art img (has explicit width, unlike BackgroundImage's display:none probe). */
+function findArtImg(container: HTMLElement): HTMLImageElement | null {
+  return Array.from(container.querySelectorAll('img')).find(
+    (i) => i.style.width,
+  ) as HTMLImageElement ?? null;
+}
+
 describe('SongInfoHeader', () => {
   const baseSong = { songId: 's1', title: 'TestSong', artist: 'TestArtist', year: 2024, albumArt: 'https://example.com/art.jpg' };
 
@@ -62,7 +69,7 @@ describe('SongInfoHeader', () => {
         <SongInfoHeader song={baseSong as any} songId="s1" collapsed={true} />
       </TestProviders>,
     );
-    const img = container.querySelector('[class*="headerArt"]') as HTMLImageElement;
+    const img = findArtImg(container);
     expect(img?.style.width).toBe('80px');
   });
 
@@ -72,7 +79,7 @@ describe('SongInfoHeader', () => {
         <SongInfoHeader song={baseSong as any} songId="s1" collapsed={false} />
       </TestProviders>,
     );
-    const img = container.querySelector('[class*="headerArt"]') as HTMLImageElement;
+    const img = findArtImg(container);
     expect(img?.style.width).toBe('120px');
   });
 
@@ -112,8 +119,12 @@ describe('SongInfoHeader', () => {
         <SongInfoHeader song={noArt as any} songId="s1" collapsed={false} />
       </TestProviders>,
     );
-    expect(container.querySelector('img')).toBeNull();
-    expect(container.querySelector('[class*="artPlaceholder"]')).toBeTruthy();
+    expect(findArtImg(container)).toBeNull();
+    // Art placeholder div has explicit size and backgroundColor
+    const placeholder = Array.from(container.querySelectorAll('div')).find(
+      (el) => el.style.backgroundColor && el.style.width === '120px',
+    );
+    expect(placeholder).toBeTruthy();
   });
 
   it('shows instrument icon and label', () => {
@@ -122,7 +133,7 @@ describe('SongInfoHeader', () => {
         <SongInfoHeader song={baseSong as any} songId="s1" collapsed={false} instrument={'Solo_Guitar' as any} />
       </TestProviders>,
     );
-    expect(container.querySelector('[class*="headerRight"]')).toBeTruthy();
+    expect(container.querySelector('img[alt="Solo_Guitar"]')).toBeTruthy();
   });
 
   it('shows actions slot', () => {
@@ -140,7 +151,8 @@ describe('SongInfoHeader', () => {
         <SongInfoHeader song={baseSong as any} songId="s1" collapsed={false} />
       </TestProviders>,
     );
-    expect(container.querySelector('[class*="headerRight"]')).toBeNull();
+    // All imgs have empty alt (album art + BackgroundImage probe) — no instrument icons
+    expect(Array.from(container.querySelectorAll('img')).every((i) => i.alt === '')).toBe(true);
   });
 
   it('uses animate transitions', () => {
@@ -149,7 +161,7 @@ describe('SongInfoHeader', () => {
         <SongInfoHeader song={baseSong as any} songId="s1" collapsed={true} animate />
       </TestProviders>,
     );
-    const img = container.querySelector('[class*="headerArt"]') as HTMLImageElement;
+    const img = findArtImg(container);
     expect(img?.style.transition).toBeTruthy();
   });
 
@@ -159,7 +171,7 @@ describe('SongInfoHeader', () => {
         <SongInfoHeader song={baseSong as any} songId="s1" collapsed={true} instrument={'Solo_Guitar' as any} animate />
       </TestProviders>,
     );
-    const iconWrap = container.querySelector('[class*="instIconWrap"]');
+    const iconWrap = container.querySelector('img[alt="Solo_Guitar"]');
     expect(iconWrap).toBeTruthy();
   });
 });

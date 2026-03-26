@@ -3,11 +3,10 @@
  * Instrument icon component using the same PNG assets as the React Native mobile app.
  * Assets are served from /instruments/ in the public folder.
  */
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import type { InstrumentKey } from '@festival/core/instruments';
 import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
-import { Colors } from '@festival/theme';
-import iconCss from './InstrumentIcons.module.css';
+import { Colors, ObjectFit } from '@festival/theme';
 
 type AnyInstrumentKey = InstrumentKey | ServerInstrumentKey;
 
@@ -31,14 +30,14 @@ const ICON_PATHS: Record<AnyInstrumentKey, string> = {
 type IconProps = { size?: number; style?: React.CSSProperties };
 
 export const InstrumentIcon = memo(function InstrumentIcon({ instrument, size = 20, style }: IconProps & { instrument: AnyInstrumentKey }) {
+  const iconStyle = useMemo(() => ({ objectFit: ObjectFit.contain, ...style }), [style]);
   return (
     <img
       src={ICON_PATHS[instrument]}
       alt={instrument}
       width={size}
       height={size}
-      className={iconCss.icon}
-      style={style}
+      style={iconStyle}
     />
   );
 });

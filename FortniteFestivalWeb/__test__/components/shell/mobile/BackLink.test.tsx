@@ -32,12 +32,14 @@ describe('BackLink', () => {
 
   it('renders with animated wrapper by default', () => {
     const { container } = renderWithRouter(<BackLink fallback="/songs" />);
-    expect(container.querySelector('[class*="Animated"]')).toBeTruthy();
+    const wrapper = container.firstElementChild as HTMLElement;
+    expect(wrapper.style.animation).toContain('fadeIn');
   });
 
-  it('renders without animated wrapper when animate=false', () => {
+  it('renders without animation when animate=false', () => {
     const { container } = renderWithRouter(<BackLink fallback="/songs" animate={false} />);
-    expect(container.querySelector('[class*="wrapperAnimated"]')).toBeNull();
+    const wrapper = container.firstElementChild as HTMLElement;
+    expect(wrapper.style.animation).toBeFalsy();
   });
 
   it('calls navigate(-1) on click', () => {

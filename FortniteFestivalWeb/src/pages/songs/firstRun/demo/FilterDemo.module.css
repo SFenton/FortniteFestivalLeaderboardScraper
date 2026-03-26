@@ -1,4 +1,4 @@
-/* Instrument selector styles for first-run filter demo — mirrors ScoreHistoryChart pattern. */
+/* Minimal: InstrumentSelector classNames only. Other styles migrated to useDemoStyles(). */
 
 .iconRow {
   display: flex;
@@ -46,36 +46,4 @@
   color: var(--color-text-secondary);
   line-height: 0;
   transition: all var(--duration-quick) ease;
-}
-
-.wrapper {
-  width: 100%;
-}
-
-.instrumentSection {
-  margin-bottom: var(--gap-md);
-}
-
-.modeSection {
-  margin-bottom: var(--gap-lg);
-}
-
-.modeSectionCompact {
-  margin-bottom: 0;
-}
-
-/* ── Section headers shared by Filter & Sort demos ── */
-
-.sectionHeader {
-  font-size: var(--font-lg);
-  font-weight: 700;
-  color: var(--color-text-primary);
-  margin-bottom: var(--gap-sm);
-}
-
-.sectionHint {
-  font-size: var(--font-sm);
-  color: var(--color-text-secondary);
-  margin-bottom: var(--gap-md);
-  line-height: 1.4;
 }

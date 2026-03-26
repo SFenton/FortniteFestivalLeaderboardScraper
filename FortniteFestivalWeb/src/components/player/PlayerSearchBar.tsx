@@ -4,12 +4,16 @@
  *
  * Used in: DesktopNav header, Sidebar, and anywhere a player name search is needed.
  */
-import { useCallback } from 'react';
+import { useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAccountSearch } from '../../hooks/data/useAccountSearch';
 import SearchBar from '../common/SearchBar';
 import { type AccountSearchResult } from '@festival/core/api/serverTypes';
-import css from './PlayerSearchBar.module.css';
+import {
+  Colors, Font, Gap, Radius, Border, ZIndex, Layout,
+  Display, Position, TextAlign, Cursor, Overflow,
+  border, padding,
+} from '@festival/theme';
 
 export interface PlayerSearchBarProps {
   /** Called when a player is selected from results. */
@@ -22,6 +26,10 @@ export interface PlayerSearchBarProps {
   inputClassName?: string;
   /** Extra className for the outer container (positioning). */
   className?: string;
+  /** Inline style for the outer container. */
+  style?: React.CSSProperties;
+  /** Inline style for the SearchBar wrapper. */
+  searchStyle?: React.CSSProperties;
   /** Re-open results when the input is focused and there are cached results. */
   reopenOnFocus?: boolean;
 }
@@ -32,6 +40,8 @@ export default function PlayerSearchBar({
   searchClassName,
   inputClassName,
   className,
+  style: containerStyle,
+  searchStyle,
   reopenOnFocus = true,
 }: PlayerSearchBarProps) {
   const { t } = useTranslation();
@@ -41,11 +51,10 @@ export default function PlayerSearchBar({
   );
 
   const s = useAccountSearch(handleSelect);
-
-  const containerClass = className ? `${css.container} ${className}` : css.container;
+  const styles = useStyles();
 
   return (
-    <div ref={s.containerRef} className={containerClass}>
+    <div ref={s.containerRef} className={className} style={{ ...styles.container, ...containerStyle }}>
       <SearchBar
         value={s.query}
         onChange={s.handleChange}
@@ -56,13 +65,14 @@ export default function PlayerSearchBar({
         /* v8 ignore stop */
         className={searchClassName}
         inputClassName={inputClassName}
+        style={searchStyle}
       />
       {s.isOpen && (
-        <div className={css.dropdown}>
+        <div style={styles.dropdown}>
           {s.results.map((r, i) => (
             <button
               key={r.accountId}
-              className={i === s.activeIndex ? css.resultActive : css.result}
+              style={i === s.activeIndex ? styles.resultActive : styles.result}
               onClick={() => s.selectResult(r)}
               /* v8 ignore start */
               onMouseEnter={() => s.setActiveIndex(i)}
@@ -75,4 +85,43 @@ export default function PlayerSearchBar({
       )}
     </div>
   );
+}
+
+function useStyles() {
+  return useMemo(() => {
+    const result = {
+      display: Display.block,
+      width: '100%',
+      padding: padding(Gap.md, Gap.xl),
+      textAlign: TextAlign.left,
+      color: Colors.textPrimary,
+      fontSize: Font.sm,
+      background: 'none',
+      border: 'none',
+      cursor: Cursor.pointer,
+    } as const;
+
+    return {
+      container: {
+        position: Position.relative,
+      } as const,
+      dropdown: {
+        position: Position.absolute,
+        top: `calc(100% + ${Layout.dropdownGap}px)`,
+        left: 0,
+        right: 0,
+        borderRadius: Radius.sm,
+        backgroundColor: Colors.backgroundCard,
+        border: border(Border.thin, Colors.borderPrimary),
+        zIndex: ZIndex.modalOverlay,
+        maxHeight: Layout.dropdownMaxHeight,
+        overflowY: Overflow.auto,
+      } as const,
+      result,
+      resultActive: {
+        ...result,
+        backgroundColor: Colors.surfaceSubtle,
+      } as const,
+    };
+  }, []);
 }

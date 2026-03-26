@@ -1,8 +1,9 @@
-import { memo } from 'react';
+import { memo, useMemo, type CSSProperties } from 'react';
 import { formatPercentileBucket } from '@festival/core';
+import { Colors, Font, Weight, Gap, Radius, Layout, Display, Align, TextAlign, CssValue, FAST_FADE_MS, border, transition, padding, frostedCard, flexRow, truncate } from '@festival/theme';
+import { CssProp } from '@festival/theme';
 import SongInfo from '../../../components/songs/metadata/SongInfo';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
-import s from './PlayerSongRow.module.css';
 
 export interface PlayerSongRowProps {
   songId: string;
@@ -25,10 +26,11 @@ const PlayerSongRow = memo(function PlayerSongRow({
   percentile,
   onClick,
 }: PlayerSongRowProps) {
+  const s = useStyles();
   return (
-    <a key={songId} href={href} onClick={onClick} className={s.songListRow}>
+    <a key={songId} href={href} onClick={onClick} style={s.songListRow}>
       <SongInfo albumArt={albumArt} title={title} artist={artist} year={year} />
-      <div className={s.topSongRight}>
+      <div style={s.topSongRight}>
         {percentile != null && (
           <PercentilePill
             display={formatPercentileBucket(percentile)}
@@ -40,3 +42,23 @@ const PlayerSongRow = memo(function PlayerSongRow({
 });
 
 export default PlayerSongRow;
+
+function useStyles() {
+  return useMemo(() => ({
+    songListRow: {
+      ...frostedCard,
+      ...flexRow,
+      gap: Gap.xl,
+      padding: padding(0, Gap.xl),
+      height: Layout.playerSongRowHeight,
+      borderRadius: Radius.md,
+      textDecoration: CssValue.none,
+      color: CssValue.inherit,
+      transition: transition(CssProp.backgroundColor, FAST_FADE_MS),
+    } as CSSProperties,
+    topSongRight: {
+      textAlign: TextAlign.right,
+      flexShrink: 0,
+    } as CSSProperties,
+  }), []);
+}

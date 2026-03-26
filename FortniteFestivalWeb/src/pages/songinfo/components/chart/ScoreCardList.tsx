@@ -5,13 +5,23 @@
  */
 import { memo } from 'react';
 import { ACCURACY_SCALE } from '@festival/core';
-import { Gap, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON } from '@festival/theme';
+import { Colors, Gap, Radius, Font, Size, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, frostedCard, padding, border, transition } from '@festival/theme';
 import { LeaderboardEntry } from '../../../leaderboard/global/components/LeaderboardEntry';
 import { useMediaQuery } from '../../../../hooks/ui/useMediaQuery';
 import type { ChartPoint } from '../../../../hooks/chart/useChartData';
-import s from './ScoreHistoryChart.module.css';
 
 type ListPhase = 'idle' | 'in' | 'out';
+
+const scoreListCardBase: React.CSSProperties = {
+  ...frostedCard, display: 'flex', alignItems: 'center', gap: Gap.xl,
+  padding: padding(0, Gap.xl), height: Size.xl, borderRadius: Radius.md,
+  fontSize: Font.md, color: 'inherit', transition: transition('border-color', 150),
+};
+const scoreListCardBestStyle: React.CSSProperties = {
+  ...scoreListCardBase,
+  backgroundColor: Colors.purpleHighlight,
+  border: border(1, Colors.purpleHighlightBorder),
+};
 
 interface Props {
   displayedCards: ChartPoint[];
@@ -27,11 +37,14 @@ const ScoreCardList = memo(function ScoreCardList({ displayedCards, listHeight, 
   if (displayedCards.length === 0 && listHeight === 0) return null;
 
   return (
-    <div className={s.scoreCardListWrap} style={{
+    <div style={{
+      overflow: 'clip',
+      overflowClipMargin: 24,
+      transition: 'height 0.3s ease',
       height: listHeight,
       marginTop: Gap.xl,
     }}>
-      <div className={s.scoreCardList}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: Gap.sm }}>
         {displayedCards.map((point, i) => {
           let animStyle: React.CSSProperties = {};
           if (listPhase === 'out') {
@@ -48,7 +61,7 @@ const ScoreCardList = memo(function ScoreCardList({ displayedCards, listHeight, 
           }
 
           return (
-            <div key={point.date} className={i === 0 ? s.scoreListCardBest : s.scoreListCard} style={animStyle}>
+            <div key={point.date} style={{ ...(i === 0 ? scoreListCardBestStyle : scoreListCardBase), ...animStyle }}>
               <LeaderboardEntry
                 label={new Date(point.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                 displayName=""

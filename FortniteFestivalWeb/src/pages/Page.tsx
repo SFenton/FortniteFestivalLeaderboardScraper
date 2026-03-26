@@ -10,43 +10,58 @@
  * Pages still own their own state, data fetching, and load-phase logic.
  * Page just removes the boilerplate outer DOM + scroll hook wiring.
  */
-import { useCallback, useMemo, useRef, type ReactNode, type RefObject } from 'react';
+import { useMemo, useRef, type ReactNode, type RefObject, type CSSProperties } from 'react';
+import { Colors, ZIndex, MaxWidth, Layout, Overflow, Position, Size, Spinner, Border, flexColumn, flexCenter, fixedFill, CssValue, Opacity, BorderStyle, PointerEvents, padding } from '@festival/theme';
 import { useScrollMask, type ScrollMaskOptions } from '../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../hooks/ui/useStaggerRush';
-import css from './Page.module.css';
 
-export { css as pageCss };
+/** Page-level style objects — importable by SuspenseFallback, PlayerPage consumers, etc. */
+export const pageCss = {
+  page: { ...flexColumn, height: CssValue.full, color: Colors.textPrimary } as CSSProperties,
+  pageWithBg: { ...flexColumn, height: CssValue.full, color: Colors.textPrimary, backgroundColor: Colors.backgroundApp, position: Position.relative } as CSSProperties,
+  pageWithBgClip: { ...flexColumn, height: CssValue.full, color: Colors.textPrimary, backgroundColor: Colors.backgroundApp, position: Position.relative, overflow: Overflow.hidden } as CSSProperties,
+  scrollArea: { flex: 1, minHeight: 0 } as CSSProperties,
+  scrollAreaRelative: { flex: 1, minHeight: 0, position: Position.relative } as CSSProperties,
+  scrollAreaRelativeZ: { flex: 1, minHeight: 0, position: Position.relative, zIndex: ZIndex.base } as CSSProperties,
+  container: { maxWidth: MaxWidth.card, margin: CssValue.marginCenter, width: CssValue.full, padding: padding(0, Layout.paddingHorizontal) } as CSSProperties,
+  containerZ: { maxWidth: MaxWidth.card, margin: CssValue.marginCenter, width: CssValue.full, padding: padding(0, Layout.paddingHorizontal), position: Position.relative, zIndex: ZIndex.base } as CSSProperties,
+  bgImage: { ...fixedFill, backgroundSize: 'cover', backgroundPosition: 'center', opacity: Opacity.backgroundImage, pointerEvents: PointerEvents.none } as CSSProperties,
+  bgDim: { ...fixedFill, backgroundColor: Colors.overlayDark, pointerEvents: PointerEvents.none } as CSSProperties,
+  spinnerOverlay: { ...fixedFill, zIndex: ZIndex.dropdown, ...flexCenter } as CSSProperties,
+  spinnerContainer: { ...flexCenter, minHeight: `calc(100vh - ${Layout.shellChromeHeight}px)` } as CSSProperties,
+  arcSpinner: { width: Size.iconXl, height: Size.iconXl, borderStyle: BorderStyle.solid, borderWidth: Border.spinnerLg, borderColor: Spinner.trackColor, borderTopColor: Colors.accentPurple, borderRadius: CssValue.circle, animation: `spin ${Spinner.duration} linear infinite` } as CSSProperties,
+};
 
 /* ── Scroll area variant ── */
 export type ScrollAreaVariant = 'default' | 'relative' | 'relativeZ';
 
-function scrollAreaCls(v: ScrollAreaVariant) {
+function scrollAreaStyle(v: ScrollAreaVariant): CSSProperties {
   /* v8 ignore start */
-  if (v === 'relativeZ') return css.scrollAreaRelativeZ;
-  if (v === 'relative') return css.scrollAreaRelative;
+  if (v === 'relativeZ') return pageCss.scrollAreaRelativeZ;
+  if (v === 'relative') return pageCss.scrollAreaRelative;
   /* v8 ignore stop */
-  return css.scrollArea;
+  return pageCss.scrollArea;
 }
 
 /* ── Container variant ── */
 export type ContainerVariant = 'default' | 'z';
 
-function containerCls(v: ContainerVariant) {
+function containerBaseStyle(v: ContainerVariant): CSSProperties {
   /* v8 ignore start */
-  if (v === 'z') return css.containerZ;
+  if (v === 'z') return pageCss.containerZ;
   /* v8 ignore stop */
-  return css.container;
+  return pageCss.container;
 }
 
 /* ── Page variant (outer wrapper) ── */
 export type PageVariant = 'default' | 'withBg' | 'withBgClip';
 
-function pageCls(v: PageVariant) {
+function pageStyle(v: PageVariant): CSSProperties {
   /* v8 ignore start */
-  if (v === 'withBgClip') return css.pageWithBgClip;
-  if (v === 'withBg') return css.pageWithBg;
+  if (v === 'withBgClip') return pageCss.pageWithBgClip;
+  if (v === 'withBg') return pageCss.pageWithBg;
   /* v8 ignore stop */
-  return css.page;
+  return pageCss.page;
 }
 
 /* ── Props ── */
@@ -57,8 +72,6 @@ export interface PageProps {
   scrollDeps?: readonly unknown[];
   /** Scroll-mask options (fade size). */
   scrollMaskOptions?: ScrollMaskOptions;
-  /** Additional scroll handler called after mask + rush. */
-  onScroll?: () => void;
   /** Page outer wrapper variant. */
   variant?: PageVariant;
   /** Scroll area variant. */
@@ -71,6 +84,8 @@ export interface PageProps {
   scrollClassName?: string;
   /** Extra className appended to the container. */
   containerClassName?: string;
+  /** Inline styles merged onto the container div. */
+  containerStyle?: React.CSSProperties;
   /** Content rendered before the scroll area (e.g. sticky headers sitting outside scroll). */
   before?: ReactNode;
   /** Content rendered after the scroll area (e.g. modals, footers). */
@@ -82,41 +97,32 @@ export default function Page({
   scrollRef,
   scrollDeps,
   scrollMaskOptions,
-  onScroll,
   variant = 'default',
   scrollVariant = 'default',
   containerVariant = 'default',
   className,
   scrollClassName,
   containerClassName,
+  containerStyle,
   before,
   after,
   children,
 }: PageProps) {
   const stableScrollDeps = useMemo(() => scrollDeps ?? [], [scrollDeps]);
-  const updateScrollMask = useScrollMask(scrollRef, stableScrollDeps, scrollMaskOptions);
-  const { rushOnScroll } = useStaggerRush(scrollRef);
+  // Scroll mask and stagger rush now listen to window scroll internally —
+  // no need to wire them into an onScroll handler on a container div.
+  useScrollMask(scrollRef, stableScrollDeps, scrollMaskOptions);
+  useStaggerRush(scrollRef);
 
-  /* v8 ignore start — scroll handler */
-  const handleScroll = useCallback(() => {
-    updateScrollMask();
-    rushOnScroll();
-    onScroll?.();
-    /* v8 ignore stop */
-  }, [updateScrollMask, rushOnScroll, onScroll]);
-
-  const pgClass = pageCls(variant);
-  const pageClassName = className ? `${pgClass} ${className}` : pgClass;
-  const saClass = scrollAreaCls(scrollVariant);
-  const scrollClass = scrollClassName ? `${saClass} ${scrollClassName}` : saClass;
-  const cClass = containerCls(containerVariant);
-  const contClass = containerClassName ? `${cClass} ${containerClassName}` : cClass;
+  const pgStyle = pageStyle(variant);
+  const saStyle = scrollAreaStyle(scrollVariant);
+  const cStyle = containerBaseStyle(containerVariant);
 
   return (
-    <div className={pageClassName}>
+    <div data-testid="page-root" className={className} style={pgStyle}>
       {before}
-      <div ref={scrollRef} onScroll={handleScroll} className={scrollClass}>
-        <div className={contClass}>
+      <div data-testid="scroll-area" ref={scrollRef} className={scrollClassName} style={saStyle}>
+        <div className={containerClassName} style={{ ...cStyle, ...containerStyle }}>
           {children}
         </div>
       </div>

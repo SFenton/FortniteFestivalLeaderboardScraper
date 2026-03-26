@@ -476,7 +476,7 @@ function ScrollToTop() {
     if (pathname === AppRoutes.suggestions || pathname === AppRoutes.songs) return;
     // Song detail pages manage their own scroll restoration
     if (RoutePatterns.songDetail.test(pathname)) return;
-    document.getElementById('main-content')?.scrollTo(0, 0);
+    window.scrollTo(0, 0);
   }, [pathname]);
   return null;
 }

@@ -8,6 +8,7 @@ import ConfirmAlert from '../../../components/modals/ConfirmAlert';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
 import type { InstrumentKey } from '@festival/core/instruments';
 import { InstrumentKeys } from '@festival/core/instruments';
+import { useModalDraft } from '../../../hooks/ui/useModalDraft';
 import {
   SUGGESTION_TYPES,
   globalKeyFor,
@@ -15,7 +16,8 @@ import {
 } from '@festival/core/suggestions/suggestionFilterConfig';
 import type { SuggestionTypeId } from '@festival/core/suggestions/suggestionFilterConfig';
 import { Size } from '@festival/theme';
-import filterCss from '../../songs/modals/FilterModal.module.css';
+import { filterStyles } from '../../songs/modals/filterStyles';
+import { useTranslation } from 'react-i18next';
 
 // ---------------------------------------------------------------------------
 // Filter draft type â€“ mirrors the RN SuggestionsInstrumentFilters
@@ -92,6 +94,7 @@ type SuggestionsFilterModalProps = {
 };
 
 export default function SuggestionsFilterModal({ visible, draft, savedDraft, instrumentVisibility, onChange, onCancel, onReset, onApply }: SuggestionsFilterModalProps) {
+  const { t } = useTranslation();
   const [selectedInstrument, setSelectedInstrument] = useState<InstrumentKey | null>(null);
 
   const visibleInstruments = INSTRUMENTS.filter(i => instrumentVisibility[i.showKey as keyof InstrumentVisibility]);
@@ -99,23 +102,7 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
 
   const toggle = (key: string) => onChange({ ...draft, [key]: !draft[key] });
 
-  const hasChanges = useMemo(() => {
-    if (!savedDraft) return true;
-    return JSON.stringify(draft) !== JSON.stringify(savedDraft);
-  }, [draft, savedDraft]);
-
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const handleClose = useCallback(() => {
-    if (hasChanges) {
-      setConfirmOpen(true);
-    } else {
-      onCancel();
-    }
-  }, [hasChanges, onCancel]);
-  const confirmDiscard = useCallback(() => {
-    setConfirmOpen(false);
-    onCancel();
-  }, [onCancel]);
+  const { hasChanges, confirmOpen, setConfirmOpen, handleClose, confirmDiscard } = useModalDraft(draft, savedDraft, onCancel);
 
   const toggleGlobal = (typeId: SuggestionTypeId) => {
     const gk = globalKeyFor(typeId);
@@ -154,7 +141,7 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
             <ToggleRow
               key={inst.key}
               label={
-                <span className={filterCss.instrumentLabel}>
+                <span style={filterStyles.instrumentLabel}>
                   <InstrumentIcon instrument={inst.key} size={Size.iconTab} />
                   {inst.label}
                 </span>
@@ -183,18 +170,18 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
 
       {/* Instrument-specific type toggles */}
       <ModalSection title="Instrument-Specific" hint="Select an instrument to filter its suggestion types individually.">
-        <div className={filterCss.instrumentRow}>
+        <div style={filterStyles.instrumentRow}>
           {visibleInstruments.map(inst => {
             const isSelected = effectiveSelectedInstrument === inst.key;
             return (
               <button
                 key={inst.key}
-                className={filterCss.instrumentBtn}
+                style={filterStyles.instrumentBtn}
                 onClick={() => setSelectedInstrument(cur => cur === inst.key ? null : inst.key)}
                 title={inst.label}
               >
-                <div className={isSelected ? filterCss.instrumentCircleActive : filterCss.instrumentCircle} />
-                <div className={filterCss.instrumentIconWrap}>
+                <div style={isSelected ? filterStyles.instrumentCircleActive : filterStyles.instrumentCircle} />
+                <div style={filterStyles.instrumentIconWrap}>
                   <InstrumentIcon instrument={inst.key} size={Size.iconInstrument} />
                 </div>
               </button>
@@ -202,8 +189,8 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
           })}
         </div>
 
-        <div className={filterCss.instrumentFiltersWrap} style={{ gridTemplateRows: effectiveSelectedInstrument ? '1fr' : '0fr' }}>
-          <div className={filterCss.instrumentFiltersInner}>
+        <div style={{ ...filterStyles.instrumentFiltersWrap, gridTemplateRows: effectiveSelectedInstrument ? '1fr' : '0fr' }}>
+          <div style={filterStyles.instrumentFiltersInner}>
             {effectiveSelectedInstrument && (
               SUGGESTION_TYPES.map(st => {
                 const key = perInstrumentKeyFor(effectiveSelectedInstrument, st.id);
@@ -225,8 +212,8 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
 
       {confirmOpen && (
         <ConfirmAlert
-          title="Cancel Suggestion Filter Changes"
-          message="Are you sure you want to discard your suggestion filter changes?"
+          title={t('suggestionsFilter.cancelTitle')}
+          message={t('suggestionsFilter.cancelMessage')}
           onNo={() => setConfirmOpen(false)}
           onYes={confirmDiscard}
         />

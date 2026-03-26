@@ -1,9 +1,9 @@
-import { useMemo } from 'react';
-import { STAGGER_INTERVAL } from '@festival/theme';
+/* eslint-disable react/forbid-dom-props -- useStyles pattern */
+import { useMemo, type CSSProperties } from 'react';
+import { STAGGER_INTERVAL, frostedCard, Radius, Font, Gap, Display, Align, CssValue, PointerEvents, Layout, Colors, Border, flexColumn, padding, border } from '@festival/theme';
 import { useSlideHeight } from '../../../../../firstRun/SlideHeightContext';
 import { LeaderboardEntry } from '../../../global/components/LeaderboardEntry';
 import FadeIn from '../../../../../components/page/FadeIn';
-import css from './ScoreListDemo.module.css';
 
 const ROW_HEIGHT = 44;
 const DAY_OFFSETS = [0, 7, 21, 35, 56];
@@ -25,12 +25,14 @@ export default function ScoreListDemo() {
     return Math.max(1, Math.min(5, Math.floor(h / ROW_HEIGHT)));
   }, [h]);
 
+  const s = useStyles();
+
   return (
-    <div className={css.wrapper}>
-      <div className={css.list}>
+    <div style={s.wrapper}>
+      <div style={s.list}>
         {LABELS.slice(0, maxRows).map((label, i) => (
           <FadeIn key={i} delay={i * STAGGER_INTERVAL}>
-            <div className={i === HIGH_SCORE_IDX ? css.rowHighlight : css.row}>
+            <div style={i === HIGH_SCORE_IDX ? s.rowHighlight : s.row}>
               <LeaderboardEntry
                 label={label}
                 displayName=""
@@ -47,4 +49,29 @@ export default function ScoreListDemo() {
       </div>
     </div>
   );
+}
+
+function useStyles() {
+  return useMemo(() => {
+    const row: CSSProperties = {
+      ...frostedCard,
+      display: Display.flex,
+      alignItems: Align.center,
+      gap: Gap.xl,
+      padding: padding(0, Gap.xl),
+      height: Layout.entryRowHeight,
+      borderRadius: Radius.md,
+      fontSize: Font.md,
+    };
+    return {
+      wrapper: { width: CssValue.full, pointerEvents: PointerEvents.none } as CSSProperties,
+      list: { display: Display.flex, flexDirection: 'column', gap: Gap.sm } as CSSProperties,
+      row,
+      rowHighlight: {
+        ...row,
+        backgroundColor: Colors.purpleHighlight,
+        border: border(Border.thin, Colors.purpleHighlightBorder),
+      } as CSSProperties,
+    };
+  }, []);
 }

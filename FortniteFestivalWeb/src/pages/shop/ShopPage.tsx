@@ -8,19 +8,21 @@ import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useMediaQuery } from '../../hooks/ui/useMediaQuery';
-import { useScrollMask } from '../../hooks/ui/useScrollMask';
 import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
 import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
 import { ActionPill } from '../../components/common/ActionPill';
-import { Size, QUERY_NARROW_GRID } from '@festival/theme';
+import { Size, QUERY_NARROW_GRID, Colors, Font, Weight, Gap, MaxWidth, Layout, Display, CssValue, flexColumn, padding } from '@festival/theme';
 import { staggerDelay as calcStagger, estimateVisibleCount } from '@festival/ui-utils';
 import { SongRow } from '../songs/components/SongRow';
 import { visibleInstruments } from '../../contexts/SettingsContext';
 import { DEFAULT_INSTRUMENT, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
-import { Gap } from '@festival/theme';
 import { loadSongSettings } from '../../utils/songSettings';
 import ShopCard from './components/ShopCard';
 import css from './ShopPage.module.css';
+import type { CSSProperties } from 'react';
+import Page, { usePageScrollRef } from '../Page';
+import EmptyState from '../../components/common/EmptyState';
+import PageHeader from '../../components/common/PageHeader';
 
 /* v8 ignore start -- page component with multiple context/hook dependencies */
 const STORAGE_KEY = 'fst:shopView';
@@ -38,19 +40,15 @@ export default function ShopPage() {
   const { settings } = useSettings();
   const isMobileChrome = useIsMobileChrome();
   const navType = useNavigationType();
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const saveScroll = useScrollRestore(scrollRef, 'shop', navType);
-  const updateScrollMask = useScrollMask(scrollRef, [shopSongs]);
-  const { rushOnScroll, resetRush } = useStaggerRush(scrollRef);
-  const programmaticScrollRef = useRef(false);
-  /* v8 ignore start — scroll handler */
-  const handleScroll = useCallback(() => { saveScroll(); updateScrollMask(); if (!programmaticScrollRef.current) rushOnScroll(); programmaticScrollRef.current = false; }, [saveScroll, updateScrollMask, rushOnScroll]);
-  /* v8 ignore stop */
+  const scrollRef = usePageScrollRef();
+  useScrollRestore('shop', navType);
+  const { resetRush } = useStaggerRush(scrollRef);
 
   const [viewMode, setViewMode] = useState<'grid' | 'list'>(loadViewMode);
   const isNarrow = useMediaQuery(QUERY_NARROW_GRID);
   const effectiveView = isNarrow ? 'list' : viewMode;
   const [staggerGen, setStaggerGen] = useState(0);
+  const shopStyles = useShopPageStyles();
 
   const toggleView = useCallback(() => {
     programmaticScrollRef.current = true;
@@ -129,31 +127,31 @@ export default function ShopPage() {
   /* v8 ignore stop */
 
   return (
-    <div className={css.page}>
-      <div className={css.header}>
-        <div className={css.container}>
-          <div className={css.toolbar}>
-            <h1 className={css.title}>{t('nav.shop', 'Item Shop')}</h1>
-            <div className={css.toolbarRight}>
-              <span className={css.count}>{sorted.length} {sorted.length === 1 ? 'song' : 'songs'}</span>
-              {!isNarrow && !isMobileChrome && (
-                <ActionPill
-                  icon={viewMode === 'grid' ? <IoList size={Size.iconAction} /> : <IoGrid size={Size.iconAction} />}
-                  label={viewMode === 'grid' ? 'List' : 'Grid'}
-                  onClick={toggleView}
-                />
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-      <div ref={scrollRef} onScroll={handleScroll} className={css.scrollArea}>
-        <div className={css.container} style={{ paddingTop: Gap.md }}>
+    <Page
+      scrollRef={scrollRef}
+      scrollDeps={[shopSongs]}
+      before={
+        <PageHeader
+          title={t('nav.shop')}
+          actions={<>
+            <span style={shopStyles.count}>{t('format.songCount', { count: sorted.length })}</span>
+            {!isNarrow && !isMobileChrome && (
+              <ActionPill
+                icon={viewMode === 'grid' ? <IoList size={Size.iconAction} /> : <IoGrid size={Size.iconAction} />}
+                label={viewMode === 'grid' ? t('shop.viewList', 'List') : t('shop.viewGrid', 'Grid')}
+                onClick={toggleView}
+              />
+            )}
+          </>}
+        />
+      }
+    >
+        <div style={shopStyles.contentArea}>
           {sorted.length === 0 ? (
-            <div className={css.emptyState}>
-              <div className={css.emptyTitle}>{t('shop.empty', 'No songs in the Item Shop')}</div>
-              <div className={css.emptySubtitle}>{t('shop.emptyHint', 'Check back later — the shop updates regularly.')}</div>
-            </div>
+            <EmptyState
+              title={t('shop.empty', 'No songs in the Item Shop')}
+              subtitle={t('shop.emptyHint', 'Check back later — the shop updates regularly.')}
+            />
           ) : effectiveView === 'grid' ? (
             <div className={css.grid} key={`grid-${staggerGen}`}>
               {sorted.map((song, i) => (
@@ -163,7 +161,7 @@ export default function ShopPage() {
               ))}
             </div>
           ) : (
-            <div className={css.list} key={`list-${staggerGen}`}>
+            <div style={shopStyles.list} key={`list-${staggerGen}`}>
               {sorted.map((song, i) => (
                 <SongRow
                   key={song.songId}
@@ -181,9 +179,32 @@ export default function ShopPage() {
             </div>
           )}
         </div>
-        {isMobileChrome && <div className={css.fabSpacer} />}
-      </div>
-    </div>
+        {isMobileChrome && <div style={shopStyles.fabSpacer} />}
+    </Page>
   );
 }
 /* v8 ignore stop */
+
+function useShopPageStyles() {
+  return useMemo(() => ({
+    contentArea: {
+      maxWidth: MaxWidth.card,
+      margin: CssValue.marginCenter,
+      width: CssValue.full,
+      padding: padding(Gap.md, Layout.paddingHorizontal, 0),
+    } as CSSProperties,
+    count: {
+      fontSize: Font.sm,
+      color: Colors.textSubtle,
+    } as CSSProperties,
+    list: {
+      ...flexColumn,
+      gap: Gap.xs,
+      paddingBottom: Gap.xl,
+    } as CSSProperties,
+    fabSpacer: {
+      height: Layout.fabBottom,
+      flexShrink: 0,
+    } as CSSProperties,
+  }), []);
+}

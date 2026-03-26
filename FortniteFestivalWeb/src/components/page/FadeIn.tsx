@@ -1,6 +1,5 @@
-import { useCallback, memo, type CSSProperties, type ReactNode, type ElementType, type ComponentPropsWithRef } from 'react';
-import { FADE_DURATION } from '@festival/theme';
-import css from './FadeIn.module.css';
+import { useCallback, useMemo, memo, type CSSProperties, type ReactNode, type ElementType, type ComponentPropsWithRef } from 'react';
+import { Opacity, FADE_DURATION } from '@festival/theme';
 
 type FadeInOwnProps<T extends ElementType = 'div'> = {
   /** Render as a different element type (e.g. Link, 'a', 'span'). Default: 'div'. */
@@ -42,17 +41,16 @@ function FadeInInner<T extends ElementType = 'div'>({
     /* v8 ignore stop */
   }, []);
 
+  const s = useStyles(delay, hidden);
   const Component: ElementType = as ?? 'div';
 
   if (delay == null) return <Component className={className} style={style} {...rest}>{children}</Component>;
 
-  if (hidden) return <Component className={[css.hidden, className].filter(Boolean).join(' ')} style={style} {...rest}>{children}</Component>;
-
   return (
     <Component
-      className={className ? `${css.wrapper} ${className}` : css.wrapper}
-      style={{ '--fade-animation': `fadeInUp ${FADE_DURATION}ms ease-out ${delay}ms forwards`, ...style } as CSSProperties}
-      onAnimationEnd={handleEnd}
+      className={className}
+      style={{ ...s.wrapper, ...style }}
+      onAnimationEnd={hidden ? undefined : handleEnd}
       {...rest}
     >
       {children}
@@ -62,3 +60,13 @@ function FadeInInner<T extends ElementType = 'div'>({
 
 const FadeIn = memo(FadeInInner) as typeof FadeInInner;
 export default FadeIn;
+
+function useStyles(delay: number | undefined, hidden: boolean | undefined) {
+  return useMemo(() => ({
+    wrapper: delay == null
+      ? undefined
+      : hidden
+        ? { opacity: Opacity.none } as CSSProperties
+        : { opacity: Opacity.none, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${delay}ms forwards` } as CSSProperties,
+  }), [delay, hidden]);
+}

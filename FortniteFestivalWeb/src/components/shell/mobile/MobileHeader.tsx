@@ -1,11 +1,15 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
+/* eslint-disable react/forbid-dom-props -- useStyles pattern */
+import { useMemo, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { IoChevronBack } from 'react-icons/io5';
 import { InstrumentIcon } from '../../display/InstrumentIcons';
 import BackLink from './BackLink';
-import css from './MobileHeader.module.css';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
-import { Size, TRANSITION_MS } from '@festival/theme';
+import {
+  Colors, Font, Weight, Gap, Layout, MaxWidth, ZIndex, InstrumentSize,
+  Display, Align, Position, WhiteSpace, BoxSizing, CssValue, CssProp,
+  flexRow, padding, transition, TRANSITION_MS,
+} from '@festival/theme';
 
 export interface MobileHeaderProps {
   navTitle: string | null;
@@ -27,27 +31,28 @@ export default function MobileHeader({
   isSongsRoute,
 }: MobileHeaderProps) {
   const navigate = useNavigate();
+  const s = useStyles();
 
   /* v8 ignore start — conditional rendering tested via AppMobile integration */
   if (navTitle) {
     return (
-      <div key={locationKey} className={`sa-top ${css.header}`} style={shouldAnimate ? { animation: `fadeIn ${TRANSITION_MS}ms ease-out` } : undefined}>
+      <div key={locationKey} className="sa-top" style={{ ...s.header, ...(shouldAnimate ? { animation: `fadeIn ${TRANSITION_MS}ms ease-out` } : undefined) }}>
         {backFallback ? (
           <a
             href="#"
             /* v8 ignore start */
             onClick={(e) => { e.preventDefault(); navigate(-1); }}
             /* v8 ignore stop */
-            className={css.titleBack}
+            style={s.titleBack}
           >
-            <IoChevronBack size={Size.iconNav} />
+            <IoChevronBack size={InstrumentSize.sm} />
             <span>{navTitle}</span>
           </a>
         ) : (
-          <span className={css.title}>{navTitle}</span>
+          <span style={s.title}>{navTitle}</span>
         )}
         {isSongsRoute && songInstrument && (
-          <InstrumentIcon instrument={songInstrument} size={Size.iconInstrumentSm} style={{ marginLeft: 'auto' }} />
+          <InstrumentIcon instrument={songInstrument} size={InstrumentSize.sm} style={{ marginLeft: CssValue.auto }} />
         )}
       </div>
     );
@@ -59,4 +64,40 @@ export default function MobileHeader({
 
   return null;
   /* v8 ignore stop */
+}
+
+function useStyles() {
+  return useMemo(() => ({
+    header: {
+      ...flexRow,
+      padding: padding(Layout.paddingTop + Gap.md, Layout.paddingHorizontal, Gap.md),
+      maxWidth: MaxWidth.card,
+      margin: CssValue.marginCenter,
+      width: CssValue.full,
+      boxSizing: BoxSizing.borderBox,
+      flexShrink: 0,
+      zIndex: ZIndex.popover,
+      position: Position.relative,
+      touchAction: CssValue.none,
+    } as CSSProperties,
+    title: {
+      fontSize: Font.title,
+      fontWeight: Weight.bold,
+      color: Colors.textPrimary,
+      whiteSpace: WhiteSpace.nowrap,
+      lineHeight: InstrumentSize.sm,
+    } as CSSProperties,
+    titleBack: {
+      display: Display.inlineFlex,
+      alignItems: Align.center,
+      gap: Gap.sm,
+      fontSize: Font.title,
+      fontWeight: Weight.bold,
+      color: Colors.textPrimary,
+      textDecoration: CssValue.none,
+      whiteSpace: WhiteSpace.nowrap,
+      marginLeft: -Gap.sm,
+      lineHeight: InstrumentSize.sm,
+    } as CSSProperties,
+  }), []);
 }

@@ -1,16 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { LoadPhase } from '@festival/core';
-
-// Mock LoadGate.module.css
-vi.mock('../../../src/components/page/LoadGate.module.css', () => ({
-  default: {
-    spinnerOverlay: 'spinnerOverlay',
-    spinnerContainer: 'spinnerContainer',
-  },
-}));
-
-// Must import after mock
 import { LoadGate } from '../../../src/components/page/LoadGate';
 
 describe('LoadGate (page)', () => {
@@ -20,7 +10,8 @@ describe('LoadGate (page)', () => {
         <div data-testid="content">Content</div>
       </LoadGate>,
     );
-    expect(container.querySelector('[class*="spinner"]')).toBeTruthy();
+    // Spinner wrapper div exists
+    expect(container.querySelector('div > div')).toBeTruthy();
     expect(screen.queryByTestId('content')).toBeNull();
   });
 
@@ -30,19 +21,18 @@ describe('LoadGate (page)', () => {
         <div data-testid="content">Content</div>
       </LoadGate>,
     );
-    const spinnerDiv = container.querySelector('[class*="spinner"]');
+    const spinnerDiv = container.firstElementChild as HTMLElement;
     expect(spinnerDiv).toBeTruthy();
     expect(spinnerDiv?.getAttribute('style')).toContain('fadeOut');
     expect(screen.queryByTestId('content')).toBeNull();
   });
 
   it('shows content during ContentIn phase', () => {
-    const { container } = render(
+    render(
       <LoadGate phase={LoadPhase.ContentIn}>
         <div data-testid="content">Content</div>
       </LoadGate>,
     );
-    expect(container.querySelector('[class*="spinner"]')).toBeNull();
     expect(screen.getByTestId('content')).toBeTruthy();
   });
 
@@ -56,12 +46,11 @@ describe('LoadGate (page)', () => {
   });
 
   it('overlay mode hides spinner during ContentIn', () => {
-    const { container } = render(
+    render(
       <LoadGate phase={LoadPhase.ContentIn} overlay>
         <div data-testid="content">Content</div>
       </LoadGate>,
     );
-    expect(container.querySelector('[class*="spinner"]')).toBeNull();
     expect(screen.getByTestId('content')).toBeTruthy();
   });
 

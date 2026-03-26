@@ -37,8 +37,8 @@ describe('AccuracyDisplay', () => {
     const span = container.querySelector('span');
     expect(span).toBeTruthy();
     expect(span?.textContent).toBe('99%');
-    // Should have a className from AccuracyDisplay.module.css
-    expect(span?.className).toBeTruthy();
+    // Should have FC badge styling applied via inline style
+    expect(span?.style.fontStyle).toBe('italic');
   });
 
   it('applies color style for non-FC accuracy', () => {

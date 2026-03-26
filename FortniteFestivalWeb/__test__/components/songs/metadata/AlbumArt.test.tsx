@@ -36,7 +36,7 @@ describe('AlbumArt — branch coverage', () => {
   it('renders with src and shows spinner', () => {
     const { container } = render(<AlbumArt src="https://example.com/art.jpg" size={40} />);
     expect(container.querySelector('img')).toBeTruthy();
-    expect(container.querySelector('[class*="spinnerWrap"]')).toBeTruthy();
+    expect(container.querySelector('[class*="spinnerCircle"]')).toBeTruthy();
   });
 
   it('renders with priority loading', () => {
@@ -63,8 +63,7 @@ describe('AlbumArt — loadedSrcs cache', () => {
 
   it('shows spinner on first mount for unknown src', () => {
     const { container } = render(<AlbumArt src="https://example.com/new.jpg" size={40} />);
-    expect(container.querySelector('[class*="spinnerWrap"]')).toBeTruthy();
-    // Image starts at opacity 0
+    expect(container.querySelector('[class*="spinnerCircle"]')).toBeTruthy();
     const img = container.querySelector('img') as HTMLElement;
     expect(img?.style.opacity).toBe('0');
   });
@@ -73,7 +72,7 @@ describe('AlbumArt — loadedSrcs cache', () => {
     _markLoaded('https://example.com/cached.jpg');
     const { container } = render(<AlbumArt src="https://example.com/cached.jpg" size={40} />);
     // No spinner visible
-    expect(container.querySelector('[class*="spinnerWrap"]')).toBeNull();
+    expect(container.querySelector('[class*="spinnerCircle"]')).toBeNull();
     // Image starts at full opacity
     const img = container.querySelector('img') as HTMLElement;
     expect(img?.style.opacity).toBe('1');
@@ -83,6 +82,6 @@ describe('AlbumArt — loadedSrcs cache', () => {
     _markLoaded('https://example.com/cached.jpg');
     _resetLoadedSrcs();
     const { container } = render(<AlbumArt src="https://example.com/cached.jpg" size={40} />);
-    expect(container.querySelector('[class*="spinnerWrap"]')).toBeTruthy();
+    expect(container.querySelector('[class*="spinnerCircle"]')).toBeTruthy();
   });
 });

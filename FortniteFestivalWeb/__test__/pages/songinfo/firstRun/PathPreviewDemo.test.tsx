@@ -82,9 +82,11 @@ describe('PathPreviewDemo', () => {
   });
 
   it('renders difficulty buttons', async () => {
-    const { container } = await act(async () => wrap(<PathPreviewDemo />));
-    const diffButtons = container.querySelectorAll('[class*="diffBtn"]');
-    expect(diffButtons.length).toBe(4);
+    await act(async () => wrap(<PathPreviewDemo />));
+    expect(screen.getByText('Easy')).toBeTruthy();
+    expect(screen.getByText('Medium')).toBeTruthy();
+    expect(screen.getByText('Hard')).toBeTruthy();
+    expect(screen.getByText('Expert')).toBeTruthy();
   });
 
   it('shows spinner initially while loading', async () => {
@@ -103,7 +105,7 @@ describe('PathPreviewDemo', () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
 
-    const imgs = container.querySelectorAll('img[class*="pathImg"]');
+    const imgs = container.querySelectorAll('img[alt*="path"]');
     expect(imgs.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -118,7 +120,7 @@ describe('PathPreviewDemo', () => {
     });
 
     // After error, the image area should NOT contain a path image
-    const pathImgs = container.querySelectorAll('img[class*="pathImg"]');
+    const pathImgs = container.querySelectorAll('img[alt*="path"]');
     expect(pathImgs.length).toBe(0);
   });
 
@@ -174,7 +176,8 @@ describe('PathPreviewDemo', () => {
     // At 50px height, showInstruments should be false (needs >= 136)
     // The wrapper should exist but instruments may be hidden
     const { container } = await act(async () => wrap(<PathPreviewDemo />));
-    expect(container.querySelector('[class*="wrapper"]')).toBeTruthy();
+    // Wrapper renders with inline styles — just check the container isn't empty
+    expect(container.firstElementChild).toBeTruthy();
   });
 
   it('handles empty songs list', async () => {
@@ -183,7 +186,7 @@ describe('PathPreviewDemo', () => {
     // With no songs, songId is null, so no image load is triggered
     // Component should still render its structure
     const { container } = await act(async () => wrap(<PathPreviewDemo />));
-    expect(container.querySelector('[class*="wrapper"]')).toBeTruthy();
+    expect(container.firstElementChild).toBeTruthy();
     mockSongsData.push({ songId: 'demo-song', title: 'Demo', artist: 'Epic Games Test', year: 2024, albumArt: '', difficulty: {}, maxScores: {} });
   });
 

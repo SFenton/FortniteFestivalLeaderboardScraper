@@ -80,9 +80,9 @@ describe('FirstRunCarousel', () => {
     // Advance through FAST_FADE_MS
     act(() => { vi.advanceTimersByTime(200); });
 
-    // Second slide dot should now be active
+    // Second slide dot should now be active (has scale transform)
     const dots = screen.getAllByLabelText(/Slide \d/);
-    expect(dots[1]?.className).toContain('Active');
+    expect(dots[1]?.style.transform).toBe('scale(1.25)');
 
     vi.useRealTimers();
   });

@@ -7,14 +7,8 @@ import PathsModal from '../../../../../src/pages/songinfo/components/path/PathsM
 // Mock CSS modules
 vi.mock('../../../../../src/pages/songinfo/components/path/PathsModal.module.css', () => ({
   default: {
-    header: 'header', title: 'title', closeBtn: 'closeBtn', controls: 'controls',
-    mobileRow: 'mobileRow', mobileSelector: 'mobileSelector', mobileSelectorLabel: 'mobileSelectorLabel',
-    chevron: 'chevron', accordion: 'accordion', instrumentRow: 'instrumentRow',
-    instrumentBtn: 'instrumentBtn', instrumentCircle: 'instrumentCircle',
-    instrumentCircleActive: 'instrumentCircleActive', diffGridMobile: 'diffGridMobile',
-    diffBtnSmall: 'diffBtnSmall', diffBtnActive: 'diffBtnActive',
-    diffGridDesktop: 'diffGridDesktop', diffBtn: 'diffBtn',
-    imageArea: 'imageArea', spinnerWrap: 'spinnerWrap', spinner: 'spinner', pathImg: 'pathImg',
+    header: 'header', title: 'title', closeBtn: 'closeBtn',
+    spinnerWrap: 'spinnerWrap',
   },
 }));
 

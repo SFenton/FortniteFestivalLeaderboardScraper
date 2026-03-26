@@ -6,11 +6,22 @@
  */
 import { type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Font, Gap, Radius, Layout } from '@festival/theme';
+import { Colors, Font, Gap, Radius, Layout, Weight, ObjectFit, Size, flexRow, flexCenter } from '@festival/theme';
+import type { CSSProperties } from 'react';
 import { type ServerSong as Song, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { InstrumentIcon } from '../../display/InstrumentIcons';
 import BackgroundImage from '../../page/BackgroundImage';
-import css from './SongInfoHeader.module.css';
+import PageHeader from '../../common/PageHeader';
+
+const s = {
+  headerLeft: { ...flexRow, gap: Gap.section, minWidth: 0 } as CSSProperties,
+  headerRight: { ...flexRow, gap: Gap.md, flexShrink: 0, paddingRight: Gap.md } as CSSProperties,
+  headerArt: { borderRadius: Radius.md, objectFit: ObjectFit.cover, flexShrink: 0 } as CSSProperties,
+  artPlaceholder: { backgroundColor: Colors.accentPurpleDark, flexShrink: 0 } as CSSProperties,
+  songTitle: { fontSize: Font.title, fontWeight: Weight.bold, margin: 0 } as CSSProperties,
+  songArtist: { fontSize: Font.md, color: Colors.textSubtle, margin: 0 } as CSSProperties,
+  instIconWrap: { ...flexCenter, width: Size.iconXl, height: Size.iconXl } as CSSProperties,
+};
 
 export interface SongInfoHeaderProps {
   /** Song data (may be undefined while loading). */
@@ -42,51 +53,50 @@ export default function SongInfoHeader({ song,
   return (
     <>
       <BackgroundImage src={song?.albumArt} />
-      <div
-        className={css.headerBar}
+      <PageHeader
         style={{
           paddingTop: collapsed ? Gap.md : Layout.paddingTop,
           paddingBottom: Gap.section,
           transition: animate ? 'padding 300ms cubic-bezier(0.4, 0, 0.2, 1)' : undefined,
-        }}
-      >
-      <div className={css.headerContent} style={{ transition: animate ? 'margin 300ms cubic-bezier(0.4, 0, 0.2, 1)' : undefined }}>
-        <div className={css.headerLeft}>
-          {song?.albumArt ? (
-            <img
-              src={song.albumArt}
-              alt=""
-              className={css.headerArt}
-              style={{ width: artSize, height: artSize, borderRadius, transition }}
-            />
-          ) : (
-            <div
-              className={css.artPlaceholder}
-              style={{ width: artSize, height: artSize, borderRadius, transition }}
-            />
-          )}
-          <div>
-            <h1 className={css.songTitle} style={{ marginBottom: collapsed ? Gap.xs : Gap.sm, transition }}>
-              {song?.title ?? songId}
-            </h1>
-            <p className={css.songArtist} style={{ fontSize: collapsed ? Font.md : Font.lg, transition }}>
-              {song?.artist ?? t('common.unknownArtist')}
-              {song?.year ? ` \u00b7 ${song.year}` : ''}
-            </p>
+          position: 'relative',
+          zIndex: 'var(--z-dropdown)',
+          flexShrink: 0,
+        } as React.CSSProperties}
+        title={
+          <div style={s.headerLeft}>
+            {song?.albumArt ? (
+              <img
+                src={song.albumArt}
+                alt=""
+                style={{ ...s.headerArt, width: artSize, height: artSize, borderRadius, transition }}
+              />
+            ) : (
+              <div
+                style={{ ...s.artPlaceholder, width: artSize, height: artSize, borderRadius, transition }}
+              />
+            )}
+            <div>
+              <h1 style={{ ...s.songTitle, marginBottom: collapsed ? Gap.xs : Gap.sm, transition }}>
+                {song?.title ?? songId}
+              </h1>
+              <p style={{ ...s.songArtist, fontSize: collapsed ? Font.md : Font.lg, transition }}>
+                {song?.artist ?? t('common.unknownArtist')}
+                {song?.year ? ` \u00b7 ${song.year}` : ''}
+              </p>
+            </div>
           </div>
-        </div>
-        {(instrument || actions) && (
-          <div className={css.headerRight}>
+        }
+        actions={(instrument || actions) ? (
+          <>
             {instrument && (
-              <div className={css.instIconWrap}>
+              <div style={s.instIconWrap}>
                 <InstrumentIcon instrument={instrument} size={48} />
               </div>
             )}
             {actions}
-          </div>
-        )}
-      </div>
-    </div>
+          </>
+        ) : undefined}
+      />
     </>
   );
 }

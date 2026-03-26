@@ -1,5 +1,9 @@
-import { Component, type ReactNode } from 'react';
-import css from './ErrorBoundary.module.css';
+import { Component, type ReactNode, type CSSProperties } from 'react';
+import i18next from 'i18next';
+import {
+  Colors, Font, Gap, Radius, Cursor, CssValue, Display,
+  flexColumn, padding,
+} from '@festival/theme';
 
 interface Props {
   children: ReactNode;
@@ -13,6 +17,9 @@ interface State {
 /**
  * Root-level error boundary that catches unhandled render errors
  * and displays a recovery UI instead of a white screen.
+ *
+ * Uses i18next.t() directly (not the hook) since this is a class component.
+ * If i18n itself has crashed, the keys render as-is — still legible.
  */
 export default class ErrorBoundary extends Component<Props, State> {
   state: State = { hasError: false };
@@ -31,11 +38,11 @@ export default class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       if (this.props.fallback) return this.props.fallback;
       return (
-        <div className={css.container}>
-          <h1 className={css.title}>Something went wrong</h1>
-          <p className={css.message}>An unexpected error occurred. Try reloading the page.</p>
-          <button onClick={this.handleReload} className={css.reloadBtn}>
-            Reload
+        <div style={styles.container}>
+          <h1 style={styles.title}>{i18next.t('common.error')}</h1>
+          <p style={styles.message}>{i18next.t('error.unexpectedCrash')}</p>
+          <button onClick={this.handleReload} style={styles.reloadBtn}>
+            {i18next.t('common.reload')}
           </button>
         </div>
       );
@@ -43,3 +50,34 @@ export default class ErrorBoundary extends Component<Props, State> {
     return this.props.children;
   }
 }
+
+const styles: Record<string, CSSProperties> = {
+  container: {
+    ...flexColumn,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: CssValue.viewportFull,
+    color: Colors.textPrimary,
+    textAlign: 'center',
+    padding: Gap.section,
+    gap: Gap.xl,
+  },
+  title: {
+    fontSize: Font['2xl'],
+    margin: Gap.none,
+  },
+  message: {
+    fontSize: Font.md,
+    color: Colors.textSecondary,
+    margin: Gap.none,
+  },
+  reloadBtn: {
+    padding: padding(Gap.lg, Gap.section),
+    borderRadius: Radius.xs,
+    border: CssValue.none,
+    background: Colors.accentPurple,
+    color: Colors.textPrimary,
+    fontSize: Font.md,
+    cursor: Cursor.pointer,
+  },
+};

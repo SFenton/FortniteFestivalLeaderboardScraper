@@ -342,8 +342,8 @@ describe('SortModal', () => {
     props.draft = draft;
     renderModal(props);
     fireEvent.click(screen.getByLabelText('Close'));
-    expect(screen.getByText('Cancel Song Sort Changes')).toBeDefined();
-    expect(screen.getByText('Are you sure you want to discard your song sort changes?')).toBeDefined();
+    expect(screen.getByText('Cancel Sort Changes')).toBeDefined();
+    expect(screen.getByText('Are you sure you want to discard your sort changes?')).toBeDefined();
   });
 
   it('confirm dialog "No" dismisses the dialog', () => {
@@ -355,7 +355,7 @@ describe('SortModal', () => {
     fireEvent.click(screen.getByLabelText('Close'));
     fireEvent.click(screen.getByText('No'));
     expect(props.onCancel).not.toHaveBeenCalled();
-    expect(screen.queryByText('Cancel Song Sort Changes')).toBeNull();
+    expect(screen.queryByText('Cancel Sort Changes')).toBeNull();
   });
 
   it('confirm dialog "Yes" calls onCancel', () => {

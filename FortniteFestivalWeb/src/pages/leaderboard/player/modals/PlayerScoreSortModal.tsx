@@ -25,24 +25,16 @@ type PlayerScoreSortModalProps = {
   onApply: () => void;
 };
 
+import { useModalDraft } from '../../../../hooks/ui/useModalDraft';
+
 export default function PlayerScoreSortModal({ visible, draft, savedDraft, onChange, onCancel, onReset, onApply }: PlayerScoreSortModalProps) {
   const { t } = useTranslation();
   const setMode = (sortMode: PlayerScoreSortMode) => onChange({ ...draft, sortMode });
 
-  const hasChanges = useMemo(() => {
-    if (!savedDraft) return true;
-    return draft.sortMode !== savedDraft.sortMode || draft.sortAscending !== savedDraft.sortAscending;
-  }, [draft, savedDraft]);
-
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const handleClose = useCallback(() => {
-    if (hasChanges) setConfirmOpen(true);
-    else onCancel();
-  }, [hasChanges, onCancel]);
-  const confirmDiscard = useCallback(() => {
-    setConfirmOpen(false);
-    onCancel();
-  }, [onCancel]);
+  const { hasChanges, confirmOpen, setConfirmOpen, handleClose, confirmDiscard } = useModalDraft(
+    draft, savedDraft, onCancel,
+    (a, b) => a.sortMode === b.sortMode && a.sortAscending === b.sortAscending,
+  );
 
   return (
     <>

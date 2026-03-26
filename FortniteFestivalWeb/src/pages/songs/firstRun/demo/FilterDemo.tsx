@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+/* eslint-disable react/forbid-dom-props -- useStyles pattern */
+import { useState, useEffect, useRef, useMemo, useCallback, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { INSTRUMENT_LABELS } from '@festival/core/api/serverTypes';
@@ -7,8 +8,77 @@ import { ToggleRow } from '../../../../components/common/ToggleRow';
 import FadeIn from '../../../../components/page/FadeIn';
 import { useSettings, visibleInstruments } from '../../../../contexts/SettingsContext';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
-import { Gap, Layout, TRANSITION_MS } from '@festival/theme';
-import s from './FilterDemo.module.css';
+import {
+  Colors, Font, Weight, Gap, Layout, Opacity, LineHeight, Border,
+  Display, Align, Justify, Position, Cursor, Overflow, CssValue, CssProp,
+  flexCenter, border, transition, IconSize, TRANSITION_MS, NAV_TRANSITION_MS,
+} from '@festival/theme';
+import css from './FilterDemo.module.css';
+
+/** Shared demo styles used by FilterDemo, SortDemo, InstrumentFilterDemo, SortControlsDemo. */
+export function useDemoStyles() {
+  return useMemo(() => {
+    const iconButton: CSSProperties = {
+      background: CssValue.none,
+      border: CssValue.none,
+      borderRadius: CssValue.circle,
+      width: Layout.demoInstrumentBtn,
+      height: Layout.demoInstrumentBtn,
+      padding: Gap.none,
+      cursor: Cursor.pointer,
+      transition: transition(CssProp.all, NAV_TRANSITION_MS),
+      ...flexCenter,
+      opacity: Opacity.disabled,
+      position: Position.relative,
+      overflow: Overflow.hidden,
+    };
+    return {
+      iconRow: {
+        display: Display.flex,
+        justifyContent: Justify.center,
+        alignItems: Align.center,
+        gap: Gap.lg,
+        width: CssValue.full,
+        overflow: Overflow.hidden,
+      } as CSSProperties,
+      iconButton,
+      iconButtonActive: {
+        ...iconButton,
+        backgroundColor: Colors.statusGreen,
+        opacity: 1,
+      } as CSSProperties,
+      arrowButton: {
+        background: CssValue.none,
+        border: border(Border.thin, Colors.borderPrimary),
+        borderRadius: CssValue.circle,
+        width: IconSize.lg,
+        height: IconSize.lg,
+        padding: Gap.none,
+        cursor: Cursor.pointer,
+        ...flexCenter,
+        color: Colors.textSecondary,
+        lineHeight: LineHeight.none,
+        transition: transition(CssProp.all, NAV_TRANSITION_MS),
+      } as CSSProperties,
+      wrapper: { width: CssValue.full } as CSSProperties,
+      instrumentSection: { marginBottom: Gap.md } as CSSProperties,
+      modeSection: { marginBottom: Gap.lg } as CSSProperties,
+      modeSectionCompact: { marginBottom: Gap.none } as CSSProperties,
+      sectionHeader: {
+        fontSize: Font.lg,
+        fontWeight: Weight.bold,
+        color: Colors.textPrimary,
+        marginBottom: Gap.sm,
+      } as CSSProperties,
+      sectionHint: {
+        fontSize: Font.sm,
+        color: Colors.textSecondary,
+        marginBottom: Gap.md,
+        lineHeight: LineHeight.snug,
+      } as CSSProperties,
+    };
+  }, []);
+}
 
 type ToggleState = { label: string; desc: string; on: boolean };
 
@@ -30,6 +100,8 @@ export default function FilterDemo() {
     () => instruments.map(key => ({ key })),
     [instruments],
   );
+
+  const s = useDemoStyles();
 
   /* v8 ignore start -- instruments always has entries; instrument/null guards are defensive */
   const [instrument, setInstrument] = useState<InstrumentKey | null>(() => instruments[0] ?? null);
@@ -80,10 +152,10 @@ export default function FilterDemo() {
   }, [instruments.length]);
 
   const selectorClassNames = useMemo(() => ({
-    row: s.iconRow,
-    button: s.iconButton,
-    buttonActive: s.iconButtonActive,
-    arrowButton: s.arrowButton,
+    row: css.iconRow,
+    button: css.iconButton,
+    buttonActive: css.iconButtonActive,
+    arrowButton: css.arrowButton,
   }), []);
 
   const [maxToggles, setMaxToggles] = useState(4);
@@ -110,8 +182,8 @@ export default function FilterDemo() {
   }, [h, instrument, toggles.length]);
 
   return (
-    <div className={s.wrapper}>
-      <FadeIn delay={0} className={s.instrumentSection}>
+    <div style={s.wrapper}>
+      <FadeIn delay={0} style={s.instrumentSection}>
         <div ref={rowRef}>
           <InstrumentSelector
             instruments={selectorItems}
@@ -126,7 +198,7 @@ export default function FilterDemo() {
       {instrument && maxToggles > 0 && (
         <FadeIn delay={TRANSITION_MS}>
           {showHeader && (
-            <div className={s.sectionHeader}>
+            <div style={s.sectionHeader}>
               {t('filter.instrumentHeader', { instrument: INSTRUMENT_LABELS[instrument] })}
             </div>
           )}

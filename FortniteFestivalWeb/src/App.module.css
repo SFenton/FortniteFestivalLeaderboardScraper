@@ -1,8 +1,7 @@
 .shell {
   display: flex;
   flex-direction: column;
-  height: 100dvh;
-  overflow: hidden;
+  min-height: 100dvh;
 }
 
 .contentRow {
@@ -69,9 +68,8 @@
 
 .content {
   flex: 1;
-  overflow-y: auto;
-  overscroll-behavior: contain;
   position: relative;
+  min-height: 0;
 }
 
 .contentPinned {

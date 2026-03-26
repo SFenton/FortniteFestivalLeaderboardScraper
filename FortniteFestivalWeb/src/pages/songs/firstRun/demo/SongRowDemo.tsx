@@ -1,12 +1,15 @@
+import { type CSSProperties } from 'react';
 import SongInfo from '../../../../components/songs/metadata/SongInfo';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
-import { Layout } from '@festival/theme';
+import { Layout, Gap, Display, CssValue, flexColumn } from '@festival/theme';
 import { useDemoSongs } from '../../../../hooks/data/useDemoSongs';
 import { DemoSongRow } from './DemoSongRow';
-import css from './SongRowDemo.module.css';
+import { mobileTopRow } from '../../../../styles/songRowStyles';
 
 const ROW_HEIGHT_DESKTOP = Layout.demoRowHeight;
 const ROW_HEIGHT_MOBILE = Layout.demoRowMobileHeight;
+
+const containerStyle: CSSProperties = { width: CssValue.full, ...flexColumn, gap: Gap.sm };
 
 export default function SongRowDemo() {
   const isMobile = useIsMobile();
@@ -17,11 +20,11 @@ export default function SongRowDemo() {
   });
 
   return (
-    <div className={css.list}>
+    <div style={containerStyle}>
       {rows.map((song, i) => (
         <DemoSongRow key={i} index={i} initialDone={initialDone} fadingIdx={fadingIdx} mobile={isMobile}>
           {isMobile ? (
-            <div className={css.mobileTopRow}>
+            <div style={mobileTopRow}>
               <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} />
             </div>
           ) : (

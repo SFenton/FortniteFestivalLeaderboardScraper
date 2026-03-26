@@ -1,16 +1,4 @@
-.row {
-  composes: frostedCard from '../../../styles/shared.module.css';
-  display: flex;
-  align-items: center;
-  gap: var(--gap-xl);
-  padding: var(--gap-lg) var(--gap-xl);
-  border-radius: var(--radius-md);
-  text-decoration: none;
-  color: inherit;
-  cursor: pointer;
-  position: relative;
-  overflow: hidden;
-}
+/* Minimal CSS for pseudo-elements and container queries that can't be inline styles. */
 
 .row::after {
   content: '';
@@ -29,83 +17,11 @@
   background: linear-gradient(to left, rgba(244, 67, 54, 0.30) 0%, transparent 50%);
 }
 
-.content {
-  flex: 1;
-  min-width: 0;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  grid-template-rows: auto auto;
-  gap: var(--gap-md) var(--gap-xl);
-  position: relative;
-  z-index: 1;
-}
-
-.name {
-  font-size: var(--font-lg);
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: var(--rival-name-width, 120px);
-  grid-column: 1;
-  grid-row: 1;
-  padding: 0 2px;
-}
-
-.shared {
-  font-size: var(--font-lg);
-  font-weight: 600;
-  color: var(--color-text-primary);
-  white-space: nowrap;
-  grid-column: 2;
-  grid-row: 1;
-  align-self: baseline;
-  padding: 0 2px;
-}
-
-.pillRow {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--gap-sm);
-  grid-column: 1 / -1;
-  grid-row: 2;
-}
-
-.pill {
-  display: inline-block;
-  padding: var(--gap-xs) var(--gap-sm);
-  border-radius: var(--radius-xs);
-  font-size: var(--font-md);
-  font-weight: var(--weight-semibold);
-  border: 2px solid;
-  white-space: nowrap;
-}
-
-.pillAhead {
-  composes: pill;
-  background-color: rgba(76, 175, 80, 0.15);
-  color: var(--color-status-green);
-  border-color: rgba(76, 175, 80, 0.3);
-}
-
-.pillBehind {
-  composes: pill;
-  background-color: rgba(244, 67, 54, 0.15);
-  color: var(--color-status-red);
-  border-color: rgba(244, 67, 54, 0.3);
-}
-
-/* All cards go single-row when container is wide enough */
 @container (min-width: 620px) {
   .content {
     grid-template-columns: 1fr auto auto;
     grid-template-rows: auto;
     align-items: center;
-  }
-
-  .name {
-    grid-column: 1;
-    grid-row: 1;
   }
 
   .shared {
@@ -121,16 +37,10 @@
   }
 }
 
-/* All cards stack to single column when container is narrow */
 @container (max-width: 380px) {
   .content {
     grid-template-columns: 1fr;
     grid-template-rows: auto auto auto;
-  }
-
-  .name {
-    grid-column: 1;
-    grid-row: 1;
   }
 
   .shared {

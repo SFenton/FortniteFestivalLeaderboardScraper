@@ -1,27 +1,33 @@
+/* eslint-disable react/forbid-dom-props -- useStyles pattern */
+import { useMemo, type CSSProperties } from 'react';
 import { IoFlash } from 'react-icons/io5';
 import type { FirstRunSlideDef } from '../../../../firstRun/types';
-import css from './SuggestionsOverview.module.css';
+import {
+  Colors, Font, Weight, Gap, Radius, MaxWidth, CssValue,
+  Display, Align,
+  flexRow, padding,
+} from '@festival/theme';
 
 function SuggestionsPreview() {
-  const card = (label: string, tagClass: string, iconColor: string, tag: string) => (
-    <div className={css.card}>
+  const s = useStyles();
+
+  const card = (label: string, tagStyle: CSSProperties, iconColor: string, tag: string) => (
+    <div style={s.card}>
       <IoFlash size={18} color={iconColor} />
-      <div className={css.cardBody}>
-        <div className={css.cardLabel}>{label}</div>
+      <div style={s.cardBody}>
+        <div style={s.cardLabel}>{label}</div>
       </div>
-      <span className={`${css.tag} ${tagClass}`}>
+      <span style={{ ...s.tag, ...tagStyle }}>
         {tag}
       </span>
     </div>
   );
 
   return (
-    <div className={css.wrapper}>
-      {/* v8 ignore start -- CSS module values always defined at runtime */}
-      {card('Close to Full Combo', css.tagGold ?? '', 'var(--color-gold)', 'FC Gap')}
-      {card('Top 5% Possible', css.tagBlue ?? '', 'var(--color-accent-blue)', 'Climb')}
-      {card('Unplayed on Bass', css.tagPurple ?? '', 'var(--color-accent-purple)', 'New')}
-      {/* v8 ignore stop */}
+    <div style={s.wrapper}>
+      {card('Close to Full Combo', s.tagGold, Colors.gold, 'FC Gap')}
+      {card('Top 5% Possible', s.tagBlue, Colors.accentBlue, 'Climb')}
+      {card('Unplayed on Bass', s.tagPurple, Colors.accentPurple, 'New')}
     </div>
   );
 }
@@ -34,3 +40,45 @@ export const suggestionsOverviewSlide: FirstRunSlideDef = {
   render: () => <SuggestionsPreview />,
   contentStaggerCount: 1,
 };
+
+function useStyles() {
+  return useMemo(() => ({
+    wrapper: {
+      width: CssValue.full,
+      maxWidth: MaxWidth.search,
+    } as CSSProperties,
+    card: {
+      ...flexRow,
+      gap: Gap.md,
+      padding: padding(Gap.md, Gap.lg),
+      background: Colors.surfaceElevated,
+      borderRadius: Radius.xs,
+      marginBottom: Gap.sm,
+    } as CSSProperties,
+    cardBody: {
+      flex: 1,
+      minWidth: 0,
+    } as CSSProperties,
+    cardLabel: {
+      fontSize: Font.md,
+      fontWeight: Weight.semibold,
+      color: Colors.textPrimary,
+    } as CSSProperties,
+    tag: {
+      fontSize: Font.xs,
+      fontWeight: Weight.bold,
+      padding: padding(Gap.xs, Gap.sm),
+      borderRadius: Radius.xs,
+      color: Colors.textPrimary,
+    } as CSSProperties,
+    tagGold: {
+      background: Colors.gold,
+    } as CSSProperties,
+    tagBlue: {
+      background: Colors.accentBlue,
+    } as CSSProperties,
+    tagPurple: {
+      background: Colors.accentPurple,
+    } as CSSProperties,
+  }), []);
+}

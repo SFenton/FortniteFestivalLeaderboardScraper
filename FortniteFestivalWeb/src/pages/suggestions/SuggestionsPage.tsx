@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigationType } from 'react-router-dom';
 import { IoFunnel } from 'react-icons/io5';
@@ -19,10 +19,17 @@ import { defaultSuggestionsFilterDraft, isSuggestionsFilterActive } from './moda
 import { shouldShowCategory, filterCategoryForInstruments } from '@festival/core/instrumentFilters';
 import type { SuggestionCategory } from '@festival/core/suggestions/types';
 import { useSettings } from '../../contexts/SettingsContext';
-import { Size, Gap, FADE_DURATION, SPINNER_FADE_MS, SCROLL_PREFETCH_PX } from '@festival/theme';
+import {
+  Size, Gap, Layout, MaxWidth, Colors, Border, Spinner, SpinnerSize,
+  Display, Align, Justify, Position, CssValue, Overflow,
+  fixedFill, flexCenter, flexColumn, padding,
+  FADE_DURATION, SPINNER_FADE_MS, SCROLL_PREFETCH_PX,
+} from '@festival/theme';
 import { LoadPhase } from '@festival/core';
 import ArcSpinner from '../../components/common/ArcSpinner';
-import s from './SuggestionsPage.module.css';
+import Page, { usePageScrollRef } from '../Page';
+import EmptyState from '../../components/common/EmptyState';
+import PageHeader from '../../components/common/PageHeader';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useScrollFade } from '../../hooks/ui/useScrollFade';
@@ -78,9 +85,9 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
 
   const albumArtMap = useMemo(() => buildAlbumArtMap(songs), [songs]);
 
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollRef = usePageScrollRef();
   const listRef = useRef<HTMLDivElement>(null);
-  const saveScroll = useScrollRestore(scrollRef, 'suggestions', navType);
+  useScrollRestore('suggestions', navType);
 
   // Use server-provided season, fall back to highest season in player scores
   const effectiveSeason = useMemo(
@@ -225,13 +232,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
   // Per-card scroll fade
   const updateCardFade = useScrollFade(scrollRef, listRef, [phase, visibleCategories]);
 
-  const { rushOnScroll } = useStaggerRush(scrollRef);
-  
-  const handleScroll = useCallback(() => {
-    saveScroll();
-    updateCardFade();
-    rushOnScroll();
-  }, [saveScroll, updateCardFade, rushOnScroll]);
+  useStaggerRush(scrollRef);
   
 
   // Track how many category cards have already been revealed so that newly
@@ -251,19 +252,17 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
 
   
   if (!playerData && !playerLoading && categories.length === 0) {
-    return <div className={s.center}>{t('common.couldNotLoadPlayer')}</div>;
+    return <div style={suggestionsStyles.center}>{t('common.couldNotLoadPlayer')}</div>;
   }
 
   if (categories.length === 0 && !hasMore) {
     return (
-      <div className={s.page}>
-        <div className={s.container}>
-          <div className={s.emptyState}>
-            <div className={s.emptyTitle}>{t('suggestions.noSuggestions')}</div>
-            <div className={s.emptySubtitle}>
-              {t('suggestions.serviceDown')}
-            </div>
-          </div>
+      <div style={suggestionsStyles.page}>
+        <div style={suggestionsStyles.container}>
+          <EmptyState
+            title={t('suggestions.noSuggestions')}
+            subtitle={t('suggestions.serviceDown')}
+          />
         </div>
         <SuggestionsFilterModal
           visible={filterModal.visible}
@@ -286,55 +285,70 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
     : skipAnim ? {} : { opacity: 0 };
 
   return (
-    <div className={s.page}>
-      {/* Spinner overlay -- visible during loading & spinnerOut */}
-      {phase !== LoadPhase.ContentIn && (
-        <div
-          className={s.spinnerOverlay} style={{
-            ...(phase === LoadPhase.SpinnerOut
-              ? { animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards` }
-              : {}),
-          }}
-        >
-          <ArcSpinner />
-        </div>
-      )}
-      {!isMobileChrome && (
-      <div className={s.header}>
-        <div className={s.container}>
-          <div className={s.headerRow} style={headerStagger}>
-            <ActionPill
-              icon={<IoFunnel size={Size.iconFab} />}
-              label={t('common.filter')}
-              onClick={openFilter}
-              active={filtersActive}
-            />
+    <Page
+      scrollRef={scrollRef}
+      scrollDeps={[phase, visibleCategories]}
+      before={<>
+        {/* Spinner overlay -- visible during loading & spinnerOut */}
+        {phase !== LoadPhase.ContentIn && (
+          <div
+            style={{ ...suggestionsStyles.spinnerOverlay,
+              ...(phase === LoadPhase.SpinnerOut
+                ? { animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards` }
+                : {}),
+            }}
+          >
+            <ArcSpinner />
           </div>
-        </div>
-      </div>
-      )}
-      <div id="suggestions-scroll" ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
-      <div className={s.container} style={{ paddingTop: isMobile ? Gap.sm : Gap.md }}>
+        )}
+        {!isMobileChrome && (
+          <PageHeader
+            actions={
+              <div style={headerStagger}>
+                <ActionPill
+                  icon={<IoFunnel size={Size.iconFab} />}
+                  label={t('common.filter')}
+                  onClick={openFilter}
+                  active={filtersActive}
+                />
+              </div>
+            }
+          />
+        )}
+      </>}
+      after={<>
+        <SuggestionsFilterModal
+          visible={filterModal.visible}
+          draft={filterModal.draft}
+          savedDraft={filterSettings}
+          instrumentVisibility={instrumentVisibility}
+          onChange={filterModal.setDraft}
+          onCancel={filterModal.close}
+          onReset={resetFilter}
+          onApply={applyFilter}
+        />
+        {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
+      </>}
+    >
+      <div style={{ ...suggestionsStyles.container, paddingTop: isMobile ? Gap.sm : Gap.md }}>
         {visibleCategories.length === 0 && (categories.length > 0 || !effectiveHasMore) ? (
-          <div className={s.emptyState}>
-            <div className={s.emptyTitle}>{t('suggestions.noSuggestions')}</div>
-            <div className={s.emptySubtitle}>
-              {filtersActive
-                ? t('suggestions.noSuggestionsFiltered')
-                : t('suggestions.playSongsFirst')}
-            </div>
-          </div>
+          <EmptyState
+            title={t('suggestions.noSuggestions')}
+            subtitle={filtersActive
+              ? t('suggestions.noSuggestionsFiltered')
+              : t('suggestions.playSongsFirst')}
+          />
         ) : (
           <InfiniteScroll
             dataLength={visibleCategories.length}
             next={filteredLoadMore}
             hasMore={effectiveHasMore}
-            loader={phase === LoadPhase.ContentIn ? <div className={s.loader}><div className={s.loaderSpinner} /></div> : <></>}
+            loader={phase === LoadPhase.ContentIn ? <div style={suggestionsStyles.loader}><div style={suggestionsStyles.loaderSpinner} /></div> : <></>}
             scrollThreshold={`${SCROLL_PREFETCH_PX}px`}
             scrollableTarget="suggestions-scroll"
             style={{ overflow: 'visible' }}
           >
-            <div ref={listRef} className={s.listInner}>
+            <div ref={listRef}>
             {visibleCategories.map((cat, idx) => {
               const delay = computeDelay(idx);
               // Always render the same FadeIn → CategoryCard tree structure so
@@ -353,22 +367,45 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
           </InfiniteScroll>
         )}
       </div>
-      {isMobileChrome && <div className={s.fabSpacer} />}
-      </div>
-
-      <SuggestionsFilterModal
-        visible={filterModal.visible}
-        draft={filterModal.draft}
-        savedDraft={filterSettings}
-        instrumentVisibility={instrumentVisibility}
-        onChange={filterModal.setDraft}
-        onCancel={filterModal.close}
-        onReset={resetFilter}
-        onApply={applyFilter}
-      />
-      {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
-    </div>
+      {isMobileChrome && <div style={suggestionsStyles.fabSpacer} />}
+    </Page>
   );
 }
 /* v8 ignore stop */
+
+const suggestionsStyles = {
+  center: {
+    ...flexCenter,
+    minHeight: CssValue.viewportFull,
+  } as CSSProperties,
+  page: {} as CSSProperties,
+  container: {
+    maxWidth: MaxWidth.card,
+    margin: CssValue.marginCenter,
+    padding: padding(Layout.paddingTop, Layout.paddingHorizontal),
+  } as CSSProperties,
+  spinnerOverlay: {
+    ...fixedFill,
+    zIndex: 2,
+    ...flexCenter,
+  } as CSSProperties,
+  loader: {
+    ...flexCenter,
+    padding: padding(Gap.section, Gap.none),
+  } as CSSProperties,
+  loaderSpinner: {
+    width: Spinner[SpinnerSize.MD].size,
+    height: Spinner[SpinnerSize.MD].size,
+    borderStyle: 'solid' as const,
+    borderWidth: Spinner[SpinnerSize.MD].border,
+    borderColor: Spinner.trackColor,
+    borderTopColor: Colors.accentPurple,
+    borderRadius: CssValue.circle,
+    animation: `spin ${Spinner.duration} linear infinite`,
+  } as CSSProperties,
+  fabSpacer: {
+    height: Layout.fabPaddingBottom,
+    flexShrink: 0,
+  } as CSSProperties,
+};
 

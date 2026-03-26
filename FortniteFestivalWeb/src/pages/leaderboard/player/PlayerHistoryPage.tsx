@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useNavigationType } from 'react-router-dom';
 import { IoSwapVerticalSharp } from 'react-icons/io5';
@@ -17,10 +17,11 @@ import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
 import { LeaderboardEntry } from '../global/components/LeaderboardEntry';
 import PlayerScoreSortModal from './modals/PlayerScoreSortModal';
 import type { PlayerScoreSortMode, PlayerScoreSortDraft } from './modals/PlayerScoreSortModal';
-import { Gap, Size, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON } from '@festival/theme';
+import { Gap, Size, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, Colors, Radius, Layout, MaxWidth, Font, Border, Overflow, Position, Display, Align, CssValue, CssProp, flexRow, flexColumn, flexCenter, frostedCard, padding, border, transition, SPINNER_FADE_MS } from '@festival/theme';
 import ArcSpinner from '../../../components/common/ArcSpinner';
 import { ActionPill } from '../../../components/common/ActionPill';
-import s from './PlayerHistoryPage.module.css';
+import Page, { usePageScrollRef } from '../../Page';
+import { PageMessage } from '../../PageMessage';
 import { staggerDelay, estimateVisibleCount } from '@festival/ui-utils';
 import { useScrollMask } from '../../../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../../../hooks/ui/useStaggerRush';
@@ -28,6 +29,7 @@ import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import { useScoreFilter } from '../../../hooks/data/useScoreFilter';
 import { useSortedScoreHistory } from '../../../hooks/data/useSortedScoreHistory';
 import { PlayerScoreSortMode as CoreSortMode } from '@festival/core';
+import { LoadPhase } from '@festival/core';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
 import { useHeaderCollapse } from '../../../hooks/ui/useHeaderCollapse';
 import { useScrollRestore } from '../../../hooks/ui/useScrollRestore';
@@ -67,11 +69,11 @@ export default function PlayerHistoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { filterHistory } = useScoreFilter();
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const saveScroll = useScrollRestore(scrollRef, `history:${songId}:${instKey}`, navType);
-  const [headerCollapsed, updateHeaderCollapse] = useHeaderCollapse(scrollRef, { disabled: hasFab, forcedValue: hasFab });
+  const scrollRef = usePageScrollRef();
+  useScrollRestore(`history:${songId}:${instKey}`, navType);
+  const [headerCollapsed, updateHeaderCollapse] = useHeaderCollapse({ disabled: hasFab, forcedValue: hasFab });
   const { phase: loadPhase } = useLoadPhase(!loading && !error);
-  const updateScrollMask = useScrollMask(scrollRef, [loadPhase, history.length]);
+  useScrollMask(scrollRef, [loadPhase, history.length]);
 
   // Sort state
   const DEFAULT_SORT: PlayerScoreSortDraft = { sortMode: 'score', sortAscending: false };
@@ -104,15 +106,7 @@ export default function PlayerHistoryPage() {
   }, [fabSearch]);
   /* v8 ignore stop */
 
-  const { rushOnScroll, resetRush } = useStaggerRush(scrollRef);
-  /* v8 ignore start — scroll handler */
-  const handleScroll = useCallback(() => {
-    saveScroll();
-    updateScrollMask();
-    rushOnScroll();
-    updateHeaderCollapse();
-  }, [saveScroll, updateScrollMask, rushOnScroll, updateHeaderCollapse]);
-  /* v8 ignore stop */
+  const { resetRush } = useStaggerRush(scrollRef);
 
   /* v8 ignore start — async data fetch with cancellation */
   useEffect(() => {
@@ -180,11 +174,14 @@ export default function PlayerHistoryPage() {
   /* v8 ignore stop */
 
   if (!songId || !instrument) {
-    return <div className={s.center}>{t('history.notFound')}</div>;
+    return <PageMessage>{t('history.notFound')}</PageMessage>;
   }
 
   return (
-    <div className={s.page}>
+    <Page
+      scrollRef={scrollRef}
+      scrollDeps={[loadPhase, history.length]}
+      before={
         <SongInfoHeader
           song={song}
           songId={songId!}
@@ -202,28 +199,39 @@ export default function PlayerHistoryPage() {
           ) : undefined}
           /* v8 ignore stop */
         />
+      }
+      after={<>
+        <PlayerScoreSortModal
+          visible={sortModal.visible}
+          draft={sortModal.draft}
+          savedDraft={{ sortMode, sortAscending }}
+          onChange={sortModal.setDraft}
+          onCancel={sortModal.close}
+          onReset={sortModal.reset}
+          onApply={applySort}
+        />
+        {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
+      </>}
+    >
 
-      <div ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
-        <div className={s.container}>
-
-        {error && <div className={s.centerError}>{error}</div>}
+        {error && <PageMessage error>{error}</PageMessage>}
 
         {!error && !player && !loading && (
-          <div className={s.center}>{t('history.selectPlayer')}</div>
+          <PageMessage>{t('history.selectPlayer')}</PageMessage>
         )}
 
         {!error && player && (
           <>
-            {loadPhase !== 'contentIn' && (
+            {loadPhase !== LoadPhase.ContentIn && (
               <div
-                className={`${s.spinnerContainer}${loadPhase === 'spinnerOut' ? ` ${s.spinnerOut}` : ''}`}
+                style={{ ...histStyles.spinnerContainer, ...(loadPhase === LoadPhase.SpinnerOut ? histStyles.spinnerFadeOut : {}) }}
               >
                 <ArcSpinner />
               </div>
             )}
             {/* v8 ignore start — virtual list rendering */}
-            {loadPhase === 'contentIn' && (
-            <div key={staggerKey} className={`${s.list}${hasFab ? ` ${s.listFab}` : ''}`} style={{ height: virtualizer.getTotalSize() }}>
+            {loadPhase === LoadPhase.ContentIn && (
+            <div key={staggerKey} style={{ ...histStyles.list, ...(hasFab ? { paddingBottom: Layout.fabPaddingBottom } : {}), height: virtualizer.getTotalSize() }}>
               {virtualizer.getVirtualItems().map((virtualRow) => {
                 const i = virtualRow.index;
                 const h = sortedHistory[i]!;
@@ -234,18 +242,21 @@ export default function PlayerHistoryPage() {
                 const dateStr = new Date(h.scoreAchievedAt ?? h.changedAt)
                   .toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                 const isHighScore = i === highScoreIndex;
-                const rowClass = `${isHighScore ? s.rowHighlight : s.row}${isMobile ? ` ${s.rowMobile}` : ''}`;
+                const rowStyle = {
+                  ...histStyles.row,
+                  ...(isHighScore ? histStyles.rowHighlight : {}),
+                  ...(isMobile ? histStyles.rowMobile : {}),
+                };
                 return (
                 <div
                   key={`${h.changedAt}-${h.newScore}`}
                   ref={virtualizer.measureElement}
                   data-index={virtualRow.index}
-                  className={s.virtualRow}
+                  style={histStyles.virtualRow}
                   style={{ transform: `translateY(${virtualRow.start}px)` }}
                 >
                 <div
-                  className={rowClass}
-                  style={staggerStyle}
+                  style={{ ...rowStyle, ...staggerStyle }}
                   onAnimationEnd={(ev) => {
                     /* v8 ignore start — animation cleanup */
                     ev.currentTarget.style.opacity = '';
@@ -271,25 +282,59 @@ export default function PlayerHistoryPage() {
                 );
               })}
               {sortedHistory.length === 0 && (
-                <div className={s.emptyRow}>{t('history.noHistoryForInstrument')}</div>
+                <div style={histStyles.emptyRow}>{t('history.noHistoryForInstrument')}</div>
               )}
             </div>
             )}            {/* v8 ignore stop */}          </>
         )}
-      </div>
-      </div>
-
-      <PlayerScoreSortModal
-        visible={sortModal.visible}
-        draft={sortModal.draft}
-        savedDraft={{ sortMode, sortAscending }}
-        onChange={sortModal.setDraft}
-        onCancel={sortModal.close}
-        onReset={sortModal.reset}
-        onApply={applySort}
-      />
-      {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
-    </div>
+    </Page>
   );
 }
+
+const histStyles = {
+  spinnerContainer: {
+    ...flexCenter,
+    minHeight: 'calc(100vh - 350px)',
+  } as CSSProperties,
+  spinnerFadeOut: {
+    animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards`,
+  } as CSSProperties,
+  list: {
+    ...flexColumn,
+    gap: Gap.sm,
+    overflow: Overflow.hidden,
+    position: Position.relative,
+  } as CSSProperties,
+  virtualRow: {
+    position: Position.absolute,
+    top: 0,
+    left: 0,
+    width: CssValue.full,
+    paddingBottom: Gap.sm,
+  } as CSSProperties,
+  row: {
+    ...frostedCard,
+    ...flexRow,
+    gap: Gap.xl,
+    padding: padding(0, Gap.xl),
+    height: Layout.entryRowHeight,
+    borderRadius: Radius.md,
+    color: CssValue.inherit,
+    fontSize: Font.md,
+    overflow: Overflow.hidden,
+  } as CSSProperties,
+  rowMobile: {
+    gap: Gap.md,
+    padding: padding(0, Gap.md),
+  } as CSSProperties,
+  rowHighlight: {
+    backgroundColor: Colors.purpleHighlight,
+    border: border(Border.thin, Colors.purpleHighlightBorder),
+  } as CSSProperties,
+  emptyRow: {
+    padding: Gap.xl,
+    textAlign: 'center' as const,
+    color: Colors.textMuted,
+  } as CSSProperties,
+};
 

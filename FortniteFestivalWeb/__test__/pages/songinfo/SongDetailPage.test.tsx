@@ -270,7 +270,7 @@ describe('SongDetailPage', () => {
     await waitFor(() => {
       expect(container.textContent).toContain('Test Song');
     });
-    const scrollArea = container.querySelector('[class*="scrollArea"]');
+    const scrollArea = container.querySelector('[data-testid="scroll-area"]');
     if (scrollArea) {
       fireEvent.scroll(scrollArea);
     }
@@ -375,7 +375,7 @@ describe('SongDetailPage', () => {
     await waitFor(() => {
       expect(container.textContent).toContain('Test Song');
     });
-    const scrollArea = container.querySelector('[class*="scrollArea"]');
+    const scrollArea = container.querySelector('[data-testid="scroll-area"]');
     if (scrollArea) {
       Object.defineProperty(scrollArea, 'scrollTop', { value: 100, writable: true, configurable: true });
       fireEvent.scroll(scrollArea);
@@ -400,7 +400,7 @@ describe('SongDetailPage — extra coverage', () => {
   it('renders album art background image', async () => {
     renderSongDetail('/songs/song-1', 'test-player-1');
     await waitFor(() => {
-      const bgEl = document.querySelector('[class*="bg"]');
+      const bgEl = document.querySelector('div[style*="background-image"]');
       expect(bgEl).toBeTruthy();
     });
   });
@@ -408,7 +408,9 @@ describe('SongDetailPage — extra coverage', () => {
   it('renders background dim overlay', async () => {
     renderSongDetail('/songs/song-1', 'test-player-1');
     await waitFor(() => {
-      const dimEl = document.querySelector('[class*="dim"]');
+      // Dim overlay: a fixed-position div with overlay background
+      const divs = document.querySelectorAll('div[style*="position: fixed"]');
+      const dimEl = Array.from(divs).find(d => (d as HTMLElement).style.backgroundColor);
       expect(dimEl).toBeTruthy();
     });
   });
@@ -442,7 +444,7 @@ describe('SongDetailPage — extra coverage', () => {
   it('renders score history chart when player has history', async () => {
     renderSongDetail('/songs/song-1', 'test-player-1');
     await waitFor(() => {
-      const page = document.querySelector('[class*="page"]');
+      const page = document.querySelector('[data-testid="page-root"]');
       expect(page).toBeTruthy();
     });
   });
@@ -470,7 +472,7 @@ describe('SongDetailPage — extra coverage', () => {
   it('shows spinner while data is loading', async () => {
     mockApi.getAllLeaderboards.mockReturnValue(new Promise(() => {}));
     const { container } = renderSongDetail('/songs/song-1', 'test-player-1');
-    expect(container.querySelector('[class*="spinner"]') || container.querySelector('[class*="page"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="arc-spinner"]') || container.querySelector('[data-testid="page-root"]')).toBeTruthy();
   });
 
   /* ── Leaderboard entries rendering ── */

@@ -18,9 +18,9 @@ describe('FadeIn', () => {
     const { container } = render(<FadeIn delay={200}>Animated</FadeIn>);
     const div = container.firstElementChild as HTMLElement;
     expect(div.textContent).toBe('Animated');
-    // Should have a CSS custom property for animation
+    // Should have animation style set directly
     const style = div.getAttribute('style') ?? '';
-    expect(style).toContain('--fade-animation');
+    expect(style).toContain('fadeInUp');
   });
 
   it('passes style prop through', () => {
@@ -44,8 +44,8 @@ describe('FadeIn', () => {
 
   it('hidden with custom className', () => {
     const { container } = render(<FadeIn delay={100} hidden className="custom">X</FadeIn>);
-    const el = container.firstElementChild!;
-    expect(el.className).toContain('hidden');
+    const el = container.firstElementChild! as HTMLElement;
+    expect(el.style.opacity).toBe('0');
     expect(el.className).toContain('custom');
   });
 });

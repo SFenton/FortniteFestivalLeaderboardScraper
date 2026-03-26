@@ -3,14 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import PinnedSidebar from '../../../../src/components/shell/desktop/PinnedSidebar';
 import { SettingsProvider } from '../../../../src/contexts/SettingsContext';
-
-vi.mock('../../../../src/components/shell/desktop/PinnedSidebar.module.css', () => ({
-  default: {
-    sidebar: 'sidebar', nav: 'nav',
-    link: 'link', linkActive: 'linkActive', linkIcon: 'linkIcon',
-    deselectBtn: 'deselectBtn', selectPlayerBtn: 'selectPlayerBtn',
-  },
-}));
+import { Colors } from '@festival/theme';
 
 function renderPinned(overrides: Partial<Parameters<typeof PinnedSidebar>[0]> = {}) {
   const defaults = {
@@ -92,7 +85,7 @@ describe('PinnedSidebar — route-specific active styling', () => {
       </MemoryRouter>,
     );
     const link = screen.getByText('Songs');
-    expect(link.closest('a')?.className).toContain('linkActive');
+    expect(link.closest('a')?.style.backgroundColor).toBeTruthy();
   });
 
   it('shows active styling on suggestions route', () => {
@@ -104,7 +97,7 @@ describe('PinnedSidebar — route-specific active styling', () => {
       </MemoryRouter>,
     );
     const link = screen.getByText('Suggestions');
-    expect(link.closest('a')?.className).toContain('linkActive');
+    expect(link.closest('a')?.style.backgroundColor).toBeTruthy();
   });
 
   it('shows active styling on statistics route', () => {
@@ -116,7 +109,7 @@ describe('PinnedSidebar — route-specific active styling', () => {
       </MemoryRouter>,
     );
     const link = screen.getByText('Statistics');
-    expect(link.closest('a')?.className).toContain('linkActive');
+    expect(link.closest('a')?.style.backgroundColor).toBeTruthy();
   });
 
   it('shows active styling on settings route', () => {
@@ -128,7 +121,7 @@ describe('PinnedSidebar — route-specific active styling', () => {
       </MemoryRouter>,
     );
     const link = screen.getByText('Settings');
-    expect(link.closest('a')?.className).toContain('linkActive');
+    expect(link.closest('a')?.style.backgroundColor).toBeTruthy();
   });
 
   it('shows player name as link', () => {

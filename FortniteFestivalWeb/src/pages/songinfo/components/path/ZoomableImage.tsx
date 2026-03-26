@@ -4,8 +4,7 @@
  * Extracted from PathsModal for independent testability.
  */
 import { forwardRef, memo, useRef, useState, useEffect, useCallback } from 'react';
-import { TRANSITION_MS } from '@festival/theme';
-import css from './PathsModal.module.css';
+import { Radius, TRANSITION_MS } from '@festival/theme';
 
 const FADE_MS = TRANSITION_MS;
 
@@ -99,7 +98,11 @@ export const ZoomableImage = memo(forwardRef<HTMLImageElement, { src: string; al
           src={src}
           alt={alt}
           draggable={false}
-          className={css.pathImg} style={{
+          style={{
+            maxWidth: '100%',
+            height: 'auto',
+            borderRadius: Radius.md,
+            userSelect: 'none',
             opacity: visible ? 1 : 0,
             transform: visible ? transform : `translateY(16px) ${transform}`,
             transformOrigin: 'center top',

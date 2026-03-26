@@ -165,7 +165,7 @@ describe('PlayerPage', () => {
     mockApi.getPlayer.mockReturnValue(new Promise(() => {})); // never resolves
     const { container } = renderPlayerPage('/player/test-player-1');
 
-    expect(container.querySelector('[class*="arcSpinner"]') || container.querySelector('[class*="spinner"]') || container.querySelector('[class*="center"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="arc-spinner"]')).toBeTruthy();
   });
 
   it('shows error state on API failure', async () => {
@@ -273,7 +273,7 @@ describe('PlayerPage', () => {
     let resolvePlayer: (v: unknown) => void;
     mockApi.getPlayer.mockReturnValue(new Promise(r => { resolvePlayer = r; }));
     const { container } = renderPlayerPage('/player/test-player-1');
-    expect(container.querySelector('[class*="spinner"]') || container.querySelector('[class*="center"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="arc-spinner"]')).toBeTruthy();
     await act(async () => {
       resolvePlayer!(MOCK_PLAYER);
     });

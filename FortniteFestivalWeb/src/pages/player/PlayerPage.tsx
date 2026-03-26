@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useNavigationType } from 'react-router-dom';
 import { useFestival } from '../../contexts/FestivalContext';
@@ -8,7 +8,8 @@ import { useSyncStatus } from '../../hooks/data/useSyncStatus';
 import { api } from '../../api/client';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
-import s from './PlayerPage.module.css';
+import { LoadPhase } from '@festival/core';
+import { Colors, Font, Layout, flexCenter, Display, Align, Justify, CssValue, SPINNER_FADE_MS } from '@festival/theme';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../../api/queryKeys';
 import PlayerContent from '../leaderboard/player/components/PlayerContent';
@@ -97,24 +98,45 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
     else _renderedPlayerAccount = accountId!;
   }
 
-  if (error) return <div className={s.page}><div className={s.centerError}>{error}</div></div>;
-  if (!loading && !data) return <div className={s.page}><div className={s.center}>{t('player.playerNotFound')}</div></div>;
+  const styles = useStyles();
+
+  if (error) return <div style={styles.centerError}>{error}</div>;
+  if (!loading && !data) return <div style={styles.center}>{t('player.playerNotFound')}</div>;
 
   return (
-    <div className={s.page}>
-      {loadPhase !== 'contentIn' && (
+    <>
+      {loadPhase !== LoadPhase.ContentIn && (
         <div
-          className={s.center}
-          style={loadPhase === 'spinnerOut' ? { animation: 'fadeOut 500ms ease-out forwards' } : undefined}
+          style={loadPhase === LoadPhase.SpinnerOut ? styles.centerFadeOut : styles.center}
         >
           <ArcSpinner />
         </div>
       )}
-      {loadPhase === 'contentIn' && data && (
+      {loadPhase === LoadPhase.ContentIn && data && (
         <PlayerContent key={accountId} data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} isTrackedPlayer={isTrackedPlayer} skipAnim={skipAnim} />
       )}
       {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
-    </div>
+    </>
   );
 }
 
+function useStyles() {
+  return useMemo(() => ({
+    center: {
+      ...flexCenter,
+      flex: 1,
+    } as CSSProperties,
+    centerFadeOut: {
+      ...flexCenter,
+      flex: 1,
+      animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards`,
+    } as CSSProperties,
+    centerError: {
+      ...flexCenter,
+      minHeight: CssValue.viewportFull,
+      color: Colors.statusRed,
+      backgroundColor: Colors.bgApp,
+      fontSize: Font.lg,
+    } as CSSProperties,
+  }), []);
+}

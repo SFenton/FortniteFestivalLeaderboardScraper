@@ -13,6 +13,7 @@ export const Colors = {
   surfaceSubtle: '#162133',
   surfacePressed: '#101826',
   surfaceMuted: '#223047',
+  surfaceWhiteSubtle: 'rgba(255, 255, 255, 0.1)',
 
   // Frosted glass
   glassCard: 'rgba(11,18,32,0.35)',
@@ -21,6 +22,7 @@ export const Colors = {
 
   // Overlays
   overlayModal: 'rgba(0,0,0,0.55)',
+  overlayModal60: 'rgba(0,0,0,0.6)',
   overlayScrim: 'rgba(0,0,0,0.35)',
   overlayDark: 'rgba(0,0,0,0.7)',
 
@@ -64,6 +66,12 @@ export const Colors = {
   statusRed: '#C62828',
   statusRedStroke: '#8B0000',
 
+  // Rival pill backgrounds
+  rivalGreenBg: 'rgba(76, 175, 80, 0.15)',
+  rivalGreenBorder: 'rgba(76, 175, 80, 0.3)',
+  rivalRedBg: 'rgba(244, 67, 54, 0.15)',
+  rivalRedBorder: 'rgba(244, 67, 54, 0.3)',
+
   // Distribution Chart
   chartTop1: '#27ae60',
   chartTop5: '#2ecc71',
@@ -90,6 +98,7 @@ export const Colors = {
   dangerBg: 'rgba(198,40,40,0.4)',
   successBg: 'rgba(40,167,69,0.4)',
   chipSelectedBg: 'rgba(45,130,230,0.4)',
+  chipSelected: 'rgba(45,130,230,0.4)',
   chipSelectedBgSubtle: 'rgba(45,130,230,0.18)',
   purpleButtonBg: 'rgba(124,58,237,0.4)',
 
@@ -98,8 +107,16 @@ export const Colors = {
   whiteOverlaySubtle: 'rgba(255,255,255,0.08)',
   whiteOverlay: 'rgba(255,255,255,0.18)',
   purplePlaceholder: 'rgba(122,43,149,0.3)',
+  purpleBorderGlass: 'rgba(168, 120, 255, 0.3)',
+  purpleHighlight: 'rgba(75, 15, 99, 0.75)',
+  purpleHighlightBorder: 'rgba(124, 58, 237, 0.5)',
   cardOverlay: 'rgba(34,48,71,0.6)',
   purpleTabActive: '#7A2B95',
+
+  // Gradients
+  scrimGradient: 'linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.4) 60%, transparent 100%)',
+  /** Mask-image gradient that fades content to transparent at the bottom edge. */
+  maskFadeBottom: 'linear-gradient(to bottom, transparent, black 100%)',
 
   // Profile
   profileInactive: '#D0D5DD',

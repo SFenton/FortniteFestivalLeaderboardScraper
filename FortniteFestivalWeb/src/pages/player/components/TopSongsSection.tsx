@@ -3,11 +3,12 @@
  * Returns Item[] for ONE instrument (top 5 + optional bottom 5).
  */
 import { type ServerInstrumentKey as InstrumentKey, type ServerSong as Song, type PlayerScore, serverInstrumentLabel as instrumentLabel } from '@festival/core/api/serverTypes';
-import { Layout } from '@festival/theme';
+import { Layout, Gap, Display, flexColumn } from '@festival/theme';
+import type { CSSProperties } from 'react';
+import { useMemo } from 'react';
 import PlayerSectionHeading from '../sections/PlayerSectionHeading';
 import PlayerSongRow from './PlayerSongRow';
 import type { PlayerItem, NavigateToSongDetail } from '../helpers/playerPageTypes';
-import css from './TopSongsSection.module.css';
 
 export function buildTopSongsItems(
   t: (key: string, opts?: Record<string, unknown>) => string,
@@ -73,7 +74,7 @@ export function buildTopSongsItems(
     span: true,
     heightEstimate: topScores.length * Layout.songRowHeight,
     node: (
-      <div className={(isLast && noBottom) ? css.songListLast : css.songList}>
+      <div style={(isLast && noBottom) ? topSongsStyles.songListLast : topSongsStyles.songList}>
         {topScores.map((sc) => renderSongRow(sc))}
       </div>
     ),
@@ -101,7 +102,7 @@ export function buildTopSongsItems(
       span: true,
       heightEstimate: bottomScores.length * Layout.songRowHeight,
       node: (
-        <div className={isLast ? css.songListLast : css.songList}>
+        <div style={isLast ? topSongsStyles.songListLast : topSongsStyles.songList}>
           {bottomScores.map((sc) => renderSongRow(sc))}
         </div>
       ),
@@ -110,3 +111,17 @@ export function buildTopSongsItems(
 
   return items;
 }
+
+/** Static styles for top-songs list containers. Exported for reuse by TopSongsDemo. */
+export const topSongsStyles = {
+  songList: {
+    ...flexColumn,
+    gap: Gap.sm,
+    marginBottom: Gap.section,
+  } as CSSProperties,
+  songListLast: {
+    ...flexColumn,
+    gap: Gap.sm,
+    marginBottom: Gap.none,
+  } as CSSProperties,
+};

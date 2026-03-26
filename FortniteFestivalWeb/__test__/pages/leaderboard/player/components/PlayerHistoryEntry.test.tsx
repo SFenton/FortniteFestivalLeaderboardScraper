@@ -77,8 +77,8 @@ describe('PlayerHistoryEntry', () => {
         isHighScore
       />,
     );
-    // Check that the name column has bold class
-    expect(container.innerHTML).toContain('textBold');
+    const dateEl = screen.getByText('2025-01-15');
+    expect(dateEl.style.fontWeight).toBe('700');
   });
 
   it('applies scoreWidth to score column', () => {
@@ -89,8 +89,7 @@ describe('PlayerHistoryEntry', () => {
         scoreWidth="8ch"
       />,
     );
-    const scoreSpan = container.querySelector('[style*="width"]');
-    expect(scoreSpan?.getAttribute('style')).toContain('8ch');
+    expect(container.querySelector('[style*="8ch"]')).toBeTruthy();
   });
 
   it('renders with FC badge when isFullCombo', () => {

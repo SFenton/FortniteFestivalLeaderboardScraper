@@ -46,9 +46,8 @@ describe('SuggestionsPreview (rendered via slide)', () => {
   });
 
   it('renders 3 cards', () => {
-    const { container } = render(suggestionsOverviewSlide.render());
-    // Each card has a cardLabel div
-    const labels = container.querySelectorAll('[class*="card"]');
-    expect(labels.length).toBeGreaterThanOrEqual(3);
+    render(suggestionsOverviewSlide.render());
+    // Each card has a label text + tag text — verify all 3 sets are present
+    expect(screen.getAllByText(/FC Gap|Climb|New/).length).toBe(3);
   });
 });

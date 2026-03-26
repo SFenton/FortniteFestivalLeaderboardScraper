@@ -4,22 +4,24 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams, useNavigationType } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
-import { useScrollMask } from '../../hooks/ui/useScrollMask';
 import { useScrollRestore } from '../../hooks/ui/useScrollRestore';
-import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
-import { useLoadPhase } from '../../hooks/data/useLoadPhase';
+import { usePageTransition } from '../../hooks/ui/usePageTransition';
+import { useStagger } from '../../hooks/ui/useStagger';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
 import { InstrumentHeaderSize } from '@festival/core';
+import { LoadPhase } from '@festival/core';
 import { serverInstrumentLabel, type RivalsListResponse, type RivalSummary, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import RivalRow from './components/RivalRow';
 import { Routes } from '../../routes';
 import { deriveComboFromSettings } from './helpers/comboUtils';
 import s from './RivalsPage.module.css';
-
-let _allRivalsHasRendered = false;
+import { SPINNER_FADE_MS, Layout } from '@festival/theme';
+import Page, { usePageScrollRef } from '../Page';
+import EmptyState from '../../components/common/EmptyState';
+import PageHeader from '../../components/common/PageHeader';
 
 // Module-level data cache so back-navigation has instant data
 let _cachedAllRivalsKey: string | null = null;
@@ -42,8 +44,8 @@ export default function AllRivalsPage() {
   const isMobile = useIsMobile();
   const { player } = useTrackedPlayer();
   const accountId = player?.accountId;
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const saveScroll = useScrollRestore(scrollRef, `rivals-all:${accountId}:${category}`, navType);
+  const scrollRef = usePageScrollRef();
+  useScrollRestore(`rivals-all:${accountId}:${category}`, navType);
 
   const activeInstruments = visibleInstruments(settings);
   const combo = useMemo(() => deriveComboFromSettings(settings), [settings]);
@@ -58,8 +60,6 @@ export default function AllRivalsPage() {
 
   const cacheKey = `${accountId}:${category}`;
   const hasCachedData = cacheKey === _cachedAllRivalsKey;
-  const skipAnimRef = useRef(_allRivalsHasRendered && navType === 'POP' && hasCachedData);
-  _allRivalsHasRendered = true;
   const [instrumentData, setInstrumentData] = useState<Map<ServerInstrumentKey, RivalsListResponse>>(hasCachedData ? _cachedInstrumentData : new Map());
   const [singleData, setSingleData] = useState<RivalsListResponse | null>(hasCachedData ? _cachedSingleData : null);
   const [loading, setLoading] = useState(!hasCachedData);
@@ -188,28 +188,12 @@ export default function AllRivalsPage() {
 
   // ─── UI hooks ────────────────────────────────────────────────
 
-  const { phase, shouldStagger } = useLoadPhase(!loading, { skipAnimation: skipAnimRef.current });
-  const updateScrollMask = useScrollMask(scrollRef, [phase]);
-  const { rushOnScroll } = useStaggerRush(scrollRef);
-
-  const handleScroll = useCallback(() => {
-    saveScroll();
-    updateScrollMask();
-    rushOnScroll();
-  }, [saveScroll, updateScrollMask, rushOnScroll]);
-
-  const clearAnim = useCallback((e: React.AnimationEvent<HTMLElement>) => {
-    const el = e.currentTarget;
-    el.style.opacity = '';
-    el.style.animation = '';
-  }, []);
+  const { phase, shouldStagger } = usePageTransition(`rivals-all:${cacheKey}`, !loading, hasCachedData);
+  const { forDelay: stagger, next: nextStagger, clearAnim } = useStagger(shouldStagger);
 
   if (!accountId) {
     return <div className={s.center}>{t('rivals.noPlayer')}</div>;
   }
-
-  const stagger = (delayMs: number): React.CSSProperties | undefined =>
-    shouldStagger ? { opacity: 0, animation: `fadeInUp 400ms ease-out ${delayMs}ms forwards` } : undefined;
 
   /** Compute CSS variable for min name width based on longest name in a rival list. */
   const nameWidthVar = (list: RivalSummary[]): React.CSSProperties => {
@@ -232,38 +216,37 @@ export default function AllRivalsPage() {
       ? t('rivals.instrumentRivalsShort', { instrument: serverInstrumentLabel(instrument!) })
       : t('rivals.instrumentRivalsShort', { instrument: t('rivals.combo') });
 
-  const staggerInterval = 125;
-  let staggerIdx = 0;
-  const nextStagger = (): React.CSSProperties | undefined =>
-    shouldStagger ? stagger((++staggerIdx) * staggerInterval) : undefined;
-
   return (
-    <div className={s.page}>
-      <div className={s.stickyHeader}>
-        <div className={s.headerContent}>
-          <div className={s.headerTitle} style={{ display: 'flex', alignItems: 'center', gap: 'var(--gap-sm)' }}>
-            {isInstrument && instrument && (
-              <InstrumentHeader instrument={instrument} size={InstrumentHeaderSize.SM} iconOnly />
-            )}
-            {titleText}
+    <Page
+      scrollRef={scrollRef}
+      scrollDeps={[phase]}
+      containerClassName={s.container}
+      before={<>
+        <PageHeader
+          title={
+            <h1 className={s.headerTitle} style={{ display: 'flex', alignItems: 'center', gap: 'var(--gap-sm)', margin: 0 }}>
+              {isInstrument && instrument && (
+                <InstrumentHeader instrument={instrument} size={InstrumentHeaderSize.SM} iconOnly />
+              )}
+              {titleText}
+            </h1>
+          }
+          sticky
+        />
+        {phase !== LoadPhase.ContentIn && (
+          <div
+            className={s.spinnerOverlay}
+            style={phase === LoadPhase.SpinnerOut ? { animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards` } : undefined}
+          >
+            <ArcSpinner />
           </div>
-        </div>
-      </div>
-      {phase !== 'contentIn' && (
-        <div
-          className={s.spinnerOverlay}
-          style={phase === 'spinnerOut' ? { animation: 'fadeOut 500ms ease-out forwards' } : undefined}
-        >
-          <ArcSpinner />
-        </div>
-      )}
-      {phase === 'contentIn' && (
-          <div ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
-            <div className={s.container} style={isMobile ? { paddingBottom: 96 } : undefined}>
+        )}
+      </>}
+    >
+      {phase === LoadPhase.ContentIn && (
+            <div style={isMobile ? { paddingBottom: Layout.fabPaddingBottom } : undefined}>
               {!hasRivals && (
-                <div className={s.emptyState} style={stagger(200)} onAnimationEnd={clearAnim}>
-                  <div className={s.emptyTitle}>{t('rivals.noRivals')}</div>
-                </div>
+                <EmptyState title={t('rivals.noRivals')} style={stagger(200)} onAnimationEnd={clearAnim} />
               )}
 
               {hasRivals && (
@@ -283,9 +266,8 @@ export default function AllRivalsPage() {
                 </div>
               )}
             </div>
-          </div>
       )}
-    </div>
+    </Page>
   );
 }
 /* v8 ignore stop */

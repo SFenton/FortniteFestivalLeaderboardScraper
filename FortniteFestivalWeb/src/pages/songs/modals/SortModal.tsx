@@ -1,5 +1,4 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useMemo, useCallback, useState } from 'react';
 import Modal from '../../../components/modals/Modal';
 import { ModalSection } from '../../../components/modals/components/ModalSection';
 import { RadioRow } from '../../../components/common/RadioRow';
@@ -12,6 +11,8 @@ import type { SongSortMode } from '../../../utils/songSettings';
 import { INSTRUMENT_SORT_MODES, METADATA_SORT_DISPLAY } from '../../../utils/songSettings';
 import { Colors, Font, Gap } from '@festival/theme';
 import { IoArrowUp, IoArrowDown } from 'react-icons/io5';
+import { useModalDraft } from '../../../hooks/ui/useModalDraft';
+import { useTranslation } from 'react-i18next';
 
 export type SortDraft = {
   sortMode: SongSortMode;
@@ -44,28 +45,16 @@ type SortModalProps = {
 };
 
 export default function SortModal({ visible, draft, savedDraft, instrumentFilter, hasPlayer, hideItemShop, metadataVisibility: mv, onChange, onCancel, onReset, onApply }: SortModalProps) {
+  const { t } = useTranslation();
   const setMode = (sortMode: SongSortMode) => onChange({ ...draft, sortMode });
 
-  const hasChanges = useMemo(() => {
-    if (!savedDraft) return true;
-    return draft.sortMode !== savedDraft.sortMode
-      || draft.sortAscending !== savedDraft.sortAscending
-      || JSON.stringify(draft.metadataOrder) !== JSON.stringify(savedDraft.metadataOrder)
-      || JSON.stringify(draft.instrumentOrder) !== JSON.stringify(savedDraft.instrumentOrder);
-  }, [draft, savedDraft]);
-
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const handleClose = useCallback(() => {
-    if (hasChanges) {
-      setConfirmOpen(true);
-    } else {
-      onCancel();
-    }
-  }, [hasChanges, onCancel]);
-  const confirmDiscard = useCallback(() => {
-    setConfirmOpen(false);
-    onCancel();
-  }, [onCancel]);
+  const { hasChanges, confirmOpen, setConfirmOpen, handleClose, confirmDiscard } = useModalDraft(
+    draft, savedDraft, onCancel,
+    (a, b) => a.sortMode === b.sortMode
+      && a.sortAscending === b.sortAscending
+      && JSON.stringify(a.metadataOrder) === JSON.stringify(b.metadataOrder)
+      && JSON.stringify(a.instrumentOrder) === JSON.stringify(b.instrumentOrder),
+  );
 
   const visibleInstrumentSortModes = mv
     ? INSTRUMENT_SORT_MODES.filter(({ mode }) => {
@@ -188,8 +177,8 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
 
       {confirmOpen && (
         <ConfirmAlert
-          title="Cancel Song Sort Changes"
-          message="Are you sure you want to discard your song sort changes?"
+          title={t('sort.cancelTitle')}
+          message={t('sort.cancelMessage')}
           onNo={() => setConfirmOpen(false)}
           onYes={confirmDiscard}
         />

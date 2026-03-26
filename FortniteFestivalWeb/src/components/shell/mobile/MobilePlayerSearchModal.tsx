@@ -1,14 +1,21 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoPerson } from 'react-icons/io5';
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
 import { api } from '../../../api/client';
 import type { AccountSearchResult } from '@festival/core/api/serverTypes';
 import SearchBar, { type SearchBarRef } from '../../common/SearchBar';
-import ArcSpinner from '../../common/ArcSpinner';
+import ArcSpinner, { SpinnerSize } from '../../common/ArcSpinner';
 import { useFadeSpinner } from '../../../hooks/ui/useFadeSpinner';
 import ModalShell from '../../modals/components/ModalShell';
+import {
+  Gap, Radius, Font, Weight, Colors, Layout, Display, Align, Justify,
+  Overflow, CssValue, TextAlign, LineHeight, Cursor, WhiteSpace, PointerEvents, IconSize,
+  flexColumn, flexCenter,
+  btnDanger, padding, Border, BorderStyle,
+  MODAL_STAGGER_MS,
+} from '@festival/theme';
 import css from './MobilePlayerSearchModal.module.css';
 
 const MODAL_TRANSITION_MS = 250;
@@ -27,6 +34,7 @@ export default function MobilePlayerSearchModal({
   visible, onClose, onSelect, player, onDeselect, isMobile: _isMobile, title,
 }: Props) {
   const { t } = useTranslation();
+  const st = useModalSearchStyles();
   const effectiveTitle = title ?? t('common.selectPlayerProfile');
   const [contentReady, setContentReady] = useState(false);
   const [dismissing, setDismissing] = useState(false);
@@ -94,13 +102,13 @@ export default function MobilePlayerSearchModal({
       onOpenComplete={handleOpenComplete}
       onCloseComplete={handleCloseComplete}
     >
-      <div className={css.body}>
+      <div style={st.body}>
         {player && (
-          <div className={css.playerCard}>
-            <span className={css.profileCircleLg} style={stagger(dismissing ? 450 : 0)}><IoPerson size={32} /></span>
-            <span className={css.playerName} style={stagger(dismissing ? 300 : 150)}>{player.displayName}</span>
-            <span className={css.deselectHint} style={stagger(dismissing ? 150 : 300)}>{t('common.deselectHint')}</span>
-            <button className={css.deselectBtn} style={{ ...stagger(dismissing ? 0 : 450), ...(dismissing ? { pointerEvents: 'none' as const } : {}) }} onClick={handleDeselect}>{t('common.deselectPlayer')}</button>
+          <div style={st.playerCard}>
+            <span style={{ ...st.profileCircleLg, ...stagger(dismissing ? MODAL_STAGGER_MS * 3 : 0) }}><IoPerson size={IconSize.profile} /></span>
+            <span style={{ ...st.playerName, ...stagger(dismissing ? MODAL_STAGGER_MS * 2 : MODAL_STAGGER_MS) }}>{player.displayName}</span>
+            <span style={{ ...st.deselectHint, ...stagger(dismissing ? MODAL_STAGGER_MS : MODAL_STAGGER_MS * 2) }}>{t('common.deselectHint')}</span>
+            <button style={{ ...st.deselectBtn, ...stagger(dismissing ? 0 : MODAL_STAGGER_MS * 3), ...(dismissing ? { pointerEvents: PointerEvents.none } : {}) }} onClick={handleDeselect}>{t('common.deselectPlayer')}</button>
           </div>
         )}
         {!player && (
@@ -115,12 +123,12 @@ export default function MobilePlayerSearchModal({
               className={css.searchPill}
               style={stagger(0)}
             />
-            <div className={css.results} style={stagger(150)}>
-              {spinner.visible && <div className={css.spinnerWrap} style={{ opacity: spinner.opacity, transition: 'opacity 250ms ease' }} onTransitionEnd={spinner.onTransitionEnd}><ArcSpinner size="md" /></div>}
-              {!spinner.visible && !loading && !debouncing && query.length < 2 && results.length === 0 && (<div className={css.hintCenter}>{t('common.enterUsername')}</div>)}
-              {!spinner.visible && !loading && !debouncing && query.length >= 2 && results.length === 0 && (<div className={css.hintCenter}>{t('common.noMatchingUsername')}</div>)}
+            <div style={{ ...st.results, ...stagger(150) }}>
+              {spinner.visible && <div style={{ ...st.spinnerWrap, opacity: spinner.opacity, transition: 'opacity 250ms ease' }} onTransitionEnd={spinner.onTransitionEnd}><ArcSpinner size={SpinnerSize.MD} /></div>}
+              {!spinner.visible && !loading && !debouncing && query.length < 2 && results.length === 0 && (<div style={st.hintCenter}>{t('common.enterUsername')}</div>)}
+              {!spinner.visible && !loading && !debouncing && query.length >= 2 && results.length === 0 && (<div style={st.hintCenter}>{t('common.noMatchingUsername')}</div>)}
               {!spinner.visible && !loading && !debouncing && results.length > 0 && results.map((r, i) => (
-                <button key={`${resultSeq}-${r.accountId}`} className={css.resultBtn} style={{ opacity: 0, animation: `fadeInUp 300ms ease-out ${i * 50}ms forwards` }} onClick={() => handleSelect(r)}>{r.displayName}</button>
+                <button key={`${resultSeq}-${r.accountId}`} style={{ ...st.resultBtn, opacity: 0, animation: `fadeInUp 300ms ease-out ${i * 50}ms forwards` }} onClick={() => handleSelect(r)}>{r.displayName}</button>
               ))}
             </div>
           </>
@@ -130,3 +138,79 @@ export default function MobilePlayerSearchModal({
   );
 }
 
+function useModalSearchStyles() {
+  return useMemo(() => ({
+    body: {
+      flex: 1,
+      ...flexColumn,
+      padding: padding(Gap.sm, Gap.section, Gap.section),
+      gap: Gap.md,
+      overflow: Overflow.hidden,
+    } as CSSProperties,
+    playerCard: {
+      ...flexColumn,
+      alignItems: Align.center,
+      gap: Gap.xl,
+      padding: padding(Layout.pillButtonHeight, Gap.section),
+      flex: 1,
+      justifyContent: Justify.center,
+    } as CSSProperties,
+    profileCircleLg: {
+      display: Display.flex,
+      alignItems: Align.center,
+      justifyContent: Justify.center,
+      width: Layout.profileCircleSize,
+      height: Layout.profileCircleSize,
+      borderRadius: Radius.full,
+      backgroundColor: Colors.surfaceSubtle,
+      border: `1px solid ${Colors.borderSubtle}`,
+      flexShrink: 0,
+    } as CSSProperties,
+    playerName: {
+      fontSize: Font.xl,
+      fontWeight: Weight.bold,
+      color: Colors.textPrimary,
+    } as CSSProperties,
+    deselectHint: {
+      fontSize: Font.sm,
+      color: Colors.textTertiary,
+      textAlign: TextAlign.center,
+      lineHeight: LineHeight.relaxed,
+    } as CSSProperties,
+    deselectBtn: {
+      ...btnDanger,
+      fontSize: Font.sm,
+      padding: padding(Gap.sm, Gap.xl),
+      whiteSpace: WhiteSpace.nowrap,
+    } as CSSProperties,
+    results: {
+      flex: 1,
+      overflowY: Overflow.auto,
+      ...flexColumn,
+      gap: Gap.xs,
+    } as CSSProperties,
+    spinnerWrap: {
+      ...flexCenter,
+      flex: 1,
+    } as CSSProperties,
+    hintCenter: {
+      ...flexCenter,
+      flex: 1,
+      color: Colors.textTertiary,
+      fontSize: Font.lg,
+      textAlign: TextAlign.center,
+    } as CSSProperties,
+    resultBtn: {
+      display: Display.block,
+      width: CssValue.full,
+      padding: padding(Gap.xl, Gap.section),
+      background: CssValue.none,
+      border: CssValue.none,
+      borderRadius: Radius.xs,
+      color: Colors.textSecondary,
+      fontSize: Font.md,
+      cursor: Cursor.pointer,
+      textAlign: TextAlign.left,
+    } as CSSProperties,
+  }), []);
+}

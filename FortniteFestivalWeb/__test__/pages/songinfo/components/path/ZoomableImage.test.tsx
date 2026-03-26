@@ -2,14 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/react';
 import { ZoomableImage } from '../../../../../src/pages/songinfo/components/path/ZoomableImage';
 
-// Mock the CSS module
-vi.mock('../../../../../src/pages/songinfo/components/path/PathsModal.module.css', () => ({
-  default: { pathImg: 'pathImg' },
-}));
+// PathsModal.module.css no longer imported by ZoomableImage (styles are inline)
 
 // Mock @festival/theme
 vi.mock('@festival/theme', () => ({
   TRANSITION_MS: 300,
+  Radius: { md: 8 },
 }));
 
 function createTouchList(...points: Array<{ clientX: number; clientY: number }>): React.TouchList {

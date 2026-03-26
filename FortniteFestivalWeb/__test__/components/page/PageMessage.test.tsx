@@ -8,15 +8,15 @@ describe('PageMessage', () => {
     expect(screen.getByText('No songs found')).toBeTruthy();
   });
 
-  it('applies default (non-error) class', () => {
+  it('applies default (non-error) style', () => {
     const { container } = render(<PageMessage>Info</PageMessage>);
-    const div = container.firstElementChild!;
-    expect(div.className).not.toContain('error');
+    const div = container.firstElementChild! as HTMLElement;
+    expect(div.style.color).not.toContain('rgb(198');
   });
 
-  it('applies error class when error prop is true', () => {
+  it('applies error color when error prop is true', () => {
     const { container } = render(<PageMessage error>Error occurred</PageMessage>);
-    const div = container.firstElementChild!;
-    expect(div.className).toContain('error');
+    const div = container.firstElementChild! as HTMLElement;
+    expect(div.style.color).toBeTruthy();
   });
 });

@@ -23,17 +23,16 @@ describe('ScorePill', () => {
     expect(container.textContent).toBe('1,234,567');
   });
 
-  it('applies base CSS class by default', () => {
+  it('applies base font weight by default', () => {
     const { container } = render(<ScorePill score={100} />);
     const span = container.querySelector('span')!;
-    expect(span.className).toContain('base');
-    expect(span.className).not.toContain('bold');
+    expect(span.style.fontWeight).toBe('600');
   });
 
-  it('applies bold CSS class when bold prop is true', () => {
+  it('applies bold font weight when bold prop is true', () => {
     const { container } = render(<ScorePill score={100} bold />);
     const span = container.querySelector('span')!;
-    expect(span.className).toContain('bold');
+    expect(span.style.fontWeight).toBe('700');
   });
 
   it('applies custom width via style', () => {
@@ -54,17 +53,15 @@ describe('ScorePill', () => {
     expect(span.style.width).toBe('');
   });
 
-  it('appends custom className to base class', () => {
+  it('appends custom className', () => {
     const { container } = render(<ScorePill score={100} className="custom" />);
     const span = container.querySelector('span')!;
-    expect(span.className).toContain('base');
     expect(span.className).toContain('custom');
   });
 
-  it('appends custom className to bold class', () => {
+  it('appends custom className with bold', () => {
     const { container } = render(<ScorePill score={100} bold className="custom" />);
     const span = container.querySelector('span')!;
-    expect(span.className).toContain('bold');
     expect(span.className).toContain('custom');
   });
 
@@ -77,7 +74,7 @@ describe('ScorePill', () => {
   it('combines width and bold props', () => {
     const { container } = render(<ScorePill score={245139} width="78px" bold />);
     const span = container.querySelector('span')!;
-    expect(span.className).toContain('bold');
+    expect(span.style.fontWeight).toBe('700');
     expect(span.style.width).toBe('78px');
     expect(span.textContent).toBe('245,139');
   });

@@ -8,7 +8,7 @@ import { useCallback } from 'react';
 import { Size } from '@festival/theme';
 import { SERVER_INSTRUMENT_LABELS, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { InstrumentIcon } from '../display/InstrumentIcons';
-import filterCss from '../../pages/songs/modals/FilterModal.module.css';
+import { filterStyles } from '../../pages/songs/modals/filterStyles';
 
 export interface InstrumentSelectorItem {
   key: ServerInstrumentKey;
@@ -43,8 +43,8 @@ export function InstrumentSelector({
 }: InstrumentSelectorProps) {
   const hasSelection = selected != null;
 
-  const rowClass = classNames?.row ?? filterCss.instrumentRow;
-  const btnClass = classNames?.button ?? filterCss.instrumentBtn;
+  const rowClass = classNames?.row;
+  const btnClass = classNames?.button;
   const btnActiveClass = classNames?.buttonActive ?? btnClass;
   const arrowClass = classNames?.arrowButton ?? '';
 
@@ -59,13 +59,13 @@ export function InstrumentSelector({
 
   return (
     <>
-      <div className={rowClass}>
+      <div className={rowClass} style={rowClass ? undefined : filterStyles.instrumentRow}>
         {compact ? (
           <>
             <button onClick={() => cycle(-1)} className={arrowClass} aria-label={compactLabels?.previous}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
-            <button className={btnActiveClass}>
+            <button className={btnActiveClass} style={btnActiveClass ? undefined : filterStyles.instrumentBtn}>
               {selected && <InstrumentIcon instrument={selected} size={Size.iconInstrument} />}
             </button>
             <button onClick={() => cycle(1)} className={arrowClass} aria-label={compactLabels?.next}>
@@ -79,11 +79,12 @@ export function InstrumentSelector({
               <button
                 key={inst.key}
                 className={isSelected ? btnActiveClass : btnClass}
+                style={(isSelected ? btnActiveClass : btnClass) ? undefined : filterStyles.instrumentBtn}
                 onClick={() => onSelect(isSelected && !required ? null : inst.key)}
                 title={inst.label ?? SERVER_INSTRUMENT_LABELS[inst.key]}
               >
-                <div className={isSelected ? filterCss.instrumentCircleActive : filterCss.instrumentCircle} />
-                <div className={filterCss.instrumentIconWrap}>
+                <div style={isSelected ? filterStyles.instrumentCircleActive : filterStyles.instrumentCircle} />
+                <div style={filterStyles.instrumentIconWrap}>
                   <InstrumentIcon instrument={inst.key} size={Size.iconInstrument} />
                 </div>
               </button>
@@ -93,8 +94,8 @@ export function InstrumentSelector({
       </div>
 
       {children && (
-        <div className={filterCss.instrumentFiltersWrap} style={{ gridTemplateRows: hasSelection ? '1fr' : '0fr' }}>
-          <div className={filterCss.instrumentFiltersInner}>
+        <div style={{ ...filterStyles.instrumentFiltersWrap, gridTemplateRows: hasSelection ? '1fr' : '0fr' }}>
+          <div style={filterStyles.instrumentFiltersInner}>
             {children}
           </div>
         </div>

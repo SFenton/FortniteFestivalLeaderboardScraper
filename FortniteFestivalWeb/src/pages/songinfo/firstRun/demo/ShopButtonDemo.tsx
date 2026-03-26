@@ -1,5 +1,8 @@
+/* eslint-disable react/forbid-dom-props -- useStyles pattern */
+import { useMemo, type CSSProperties } from 'react';
+import { useTranslation } from 'react-i18next';
 import { IoBagHandle } from 'react-icons/io5';
-import { Gap } from '@festival/theme';
+import { Gap, Colors, Font, Weight, Radius, Display, Align, Justify, Layout, IconSize, CssValue, padding } from '@festival/theme';
 import { useSettings } from '../../../../contexts/SettingsContext';
 import css from './ShopButtonDemo.module.css';
 
@@ -10,13 +13,15 @@ import css from './ShopButtonDemo.module.css';
  */
 /* v8 ignore start -- demo component uses SettingsContext */
 export default function ShopButtonDemo({ mobile }: { mobile?: boolean }) {
+  const { t } = useTranslation();
   const { settings } = useSettings();
   const pulse = !settings.disableShopHighlighting && !settings.hideItemShop;
+  const s = useStyles();
 
   if (mobile) {
     return (
-      <div className={css.wrap}>
-        <div className={pulse ? `${css.shopCircle} ${css.pulse}` : css.shopCircle}>
+      <div style={s.wrap}>
+        <div className={pulse ? `${css.shopCircle} ${css.pulse}` : css.shopCircle} style={s.shopCircle}>
           <IoBagHandle size={72} />
         </div>
       </div>
@@ -24,12 +29,43 @@ export default function ShopButtonDemo({ mobile }: { mobile?: boolean }) {
   }
 
   return (
-    <div className={css.wrap}>
-      <div className={pulse ? `${css.shopButton} ${css.shopPulse}` : css.shopButton}>
-        <IoBagHandle size={28} style={{ marginRight: Gap.lg }} />
-        Item Shop
+    <div style={s.wrap}>
+      <div className={pulse ? `${css.shopButton} ${css.shopPulse}` : css.shopButton} style={s.shopButton}>
+        <IoBagHandle size={IconSize.md} style={s.iconMargin} />
+        {t('shop.itemShop')}
       </div>
     </div>
   );
 }
 /* v8 ignore stop */
+
+function useStyles() {
+  return useMemo(() => ({
+    wrap: { display: Display.flex, justifyContent: Justify.center, padding: Gap.sm } as CSSProperties,
+    shopButton: {
+      display: Display.inlineFlex,
+      alignItems: Align.center,
+      justifyContent: Justify.center,
+      padding: padding(0, Layout.pillButtonHeight, 0, Layout.shopButtonPaddingLeft),
+      borderRadius: Radius.full,
+      backgroundColor: Colors.accentBlue,
+      color: Colors.textPrimary,
+      fontSize: Font.display,
+      fontWeight: Weight.semibold,
+      flexShrink: 0,
+      height: Layout.shopDesktopHeight,
+    } as CSSProperties,
+    shopCircle: {
+      width: Layout.shopCircleSize,
+      height: Layout.shopCircleSize,
+      borderRadius: Radius.full,
+      backgroundColor: Colors.accentBlue,
+      display: Display.flex,
+      alignItems: Align.center,
+      justifyContent: Justify.center,
+      color: Colors.textPrimary,
+      flexShrink: 0,
+    } as CSSProperties,
+    iconMargin: { marginRight: Gap.lg } as CSSProperties,
+  }), []);
+}

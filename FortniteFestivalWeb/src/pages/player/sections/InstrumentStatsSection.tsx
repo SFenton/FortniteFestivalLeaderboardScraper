@@ -6,11 +6,11 @@ import { ACCURACY_SCALE } from '@festival/core';
 import { InstrumentHeaderSize } from '@festival/core';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import type { PlayerScore } from '@festival/core/api/serverTypes';
-import { Colors, Gap } from '@festival/theme';
+import { Colors, Gap, Overflow } from '@festival/theme';
 import { computeInstrumentStats, formatClamped, formatClamped2, accuracyColor } from '../helpers/playerStats';
 import StatBox from '../../../components/player/StatBox';
 import { cleanFilters, buildStarFilter, buildPercentileFilter } from '../helpers/playerFilterHelpers';
-import sHeading from './PlayerSectionHeading.module.css';
+import { instCardHeaderStyle } from './PlayerSectionHeading';
 import type { PlayerItem, NavigateToSongs, NavigateToSongDetail } from '../helpers/playerPageTypes';
 import InstrumentHeader from '../../../components/display/InstrumentHeader';
 import { PlayerPercentileHeader, PlayerPercentileRow } from '../../../components/player/PlayerPercentileTable';
@@ -68,7 +68,7 @@ export function buildInstrumentStatsItems(
     span: true,
     heightEstimate: 64,
     node: (
-      <div className={sHeading.instCardHeader}>
+      <div style={instCardHeaderStyle}>
         <InstrumentHeader instrument={inst} size={InstrumentHeaderSize.MD} />
       </div>
     ),
@@ -131,7 +131,7 @@ export function buildInstrumentStatsItems(
       key: `${inst}-pct-table`,
       span: true,
       heightEstimate: 40 + stats.percentileBuckets.length * 44,
-      style: { ...cardStyle, overflow: 'hidden' as const, marginBottom: Gap.md },
+      style: { ...cardStyle, overflow: Overflow.hidden, marginBottom: Gap.md },
       node: (
         <div>
           <PlayerPercentileHeader percentileLabel={t('player.percentileHeader')} songsLabel={t('player.songsHeader')} />

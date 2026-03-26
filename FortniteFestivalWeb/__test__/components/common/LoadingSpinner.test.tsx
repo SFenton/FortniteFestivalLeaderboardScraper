@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
-import ArcSpinner from '../../../src/components/common/ArcSpinner';
+import ArcSpinner, { SpinnerSize } from '../../../src/components/common/ArcSpinner';
 
 describe('ArcSpinner', () => {
   it('renders a div element', () => {
@@ -11,18 +11,16 @@ describe('ArcSpinner', () => {
   it('defaults to lg size', () => {
     const { container } = render(<ArcSpinner />);
     const el = container.firstElementChild as HTMLElement;
-    expect(el.className).toBeTruthy();
+    expect(el.style.width).toBe('48px');
   });
 
   it('accepts size prop', () => {
-    const { container: sm } = render(<ArcSpinner size="sm" />);
-    const { container: md } = render(<ArcSpinner size="md" />);
-    const { container: lg } = render(<ArcSpinner size="lg" />);
-    const smClass = (sm.firstElementChild as HTMLElement).className;
-    const mdClass = (md.firstElementChild as HTMLElement).className;
-    const lgClass = (lg.firstElementChild as HTMLElement).className;
-    expect(smClass).not.toBe(mdClass);
-    expect(mdClass).not.toBe(lgClass);
+    const { container: sm } = render(<ArcSpinner size={SpinnerSize.SM} />);
+    const { container: md } = render(<ArcSpinner size={SpinnerSize.MD} />);
+    const { container: lg } = render(<ArcSpinner size={SpinnerSize.LG} />);
+    expect((sm.firstElementChild as HTMLElement).style.width).toBe('24px');
+    expect((md.firstElementChild as HTMLElement).style.width).toBe('36px');
+    expect((lg.firstElementChild as HTMLElement).style.width).toBe('48px');
   });
 
   it('accepts extra className', () => {

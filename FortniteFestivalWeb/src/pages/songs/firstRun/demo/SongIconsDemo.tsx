@@ -12,8 +12,7 @@ import { useSettings, visibleInstruments } from '../../../../contexts/SettingsCo
 import { Layout } from '@festival/theme';
 import { useDemoSongs } from '../../../../hooks/data/useDemoSongs';
 import { DemoSongRow } from './DemoSongRow';
-import css from './SongRowDemo.module.css';
-import baseCss from '../../../../styles/songRow.module.css';
+import { instrumentStatusRow, mobileTopRow as mobileTopRowStyle } from '../../../../styles/songRowStyles';
 
 type DemoScore = { hasScore: boolean; isFC: boolean };
 
@@ -38,7 +37,7 @@ function buildScores(title: string, keys: InstrumentKey[]): Record<string, DemoS
 
 function ChipRow({ scores, instruments }: { scores: Record<string, DemoScore>; instruments: InstrumentKey[] }) {
   return (
-    <div className={baseCss.instrumentStatusRow}>
+    <div style={instrumentStatusRow}>
       {instruments.map(key => {
         /* v8 ignore start -- scores[key] always exists; fallback is defensive */
         const sc = scores[key] ?? { hasScore: false, isFC: false };
@@ -72,7 +71,7 @@ export default function SongIconsDemo() {
   }, [rows, instruments]);
 
   return (
-    <div className={css.list}>
+    <div>
       {rows.map((song, i) => {
         /* v8 ignore start -- scoresMap is built from the same rows; fallback is defensive */
         const scores = scoresMap.get(song.title) ?? buildScores(song.title, instruments);
@@ -81,7 +80,7 @@ export default function SongIconsDemo() {
           <DemoSongRow key={i} index={i} initialDone={initialDone} fadingIdx={fadingIdx} mobile={isMobile}>
             {isMobile ? (
               <>
-                <div className={css.mobileTopRow}>
+                <div style={mobileTopRowStyle}>
                   <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} />
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'center' }}>

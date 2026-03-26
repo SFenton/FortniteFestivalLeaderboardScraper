@@ -27,18 +27,16 @@ export function ShopProvider({ children }: { children: ReactNode }) {
 
   const { shopSongIds, connected }: ShopState = useShopWebSocket(initialShopIds);
 
-  // Build shopUrl lookup from Songs data
-  const shopUrlMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const s of songs) {
-      if (s.shopUrl) map.set(s.songId, s.shopUrl);
-    }
+  // Index songs by ID for O(1) lookup
+  const songById = useMemo(() => {
+    const map = new Map<string, Song>();
+    for (const s of songs) map.set(s.songId, s);
     return map;
   }, [songs]);
 
   const getShopUrl = useMemo(() => {
-    return (songId: string) => shopUrlMap.get(songId);
-  }, [shopUrlMap]);
+    return (songId: string) => songById.get(songId)?.shopUrl;
+  }, [songById]);
 
   const shopSongs = useMemo(() => {
     if (!shopSongIds) return [];

@@ -3,9 +3,9 @@
  * FABMenu — animated popup actions menu that appears above the FAB button.
  * Renders grouped action items with dividers between groups.
  */
-import { Fragment, memo } from 'react';
+import { Fragment, memo, useMemo, type CSSProperties } from 'react';
+import { Colors, Font, Gap, Radius, Layout, Shadow, ZIndex, Display, Align, Position, Cursor, TextAlign, WhiteSpace, PointerEvents, IconSize, CssValue, TransformOrigin, flexRow, flexCenter, padding, scale, EASE_OVERSHOOT, FAB_OPEN_MS, TRANSITION_MS } from '@festival/theme';
 import type { ActionItem } from './FloatingActionButton';
-import css from './FABMenu.module.css';
 
 interface FABMenuProps {
   groups: ActionItem[][];
@@ -14,23 +14,17 @@ interface FABMenuProps {
 }
 
 const FABMenu = memo(function FABMenu({ groups, visible, onAction }: FABMenuProps) {
+  const s = useFABMenuStyles(visible);
   return (
     <div
-      className={css.menu}
-      style={{
-        transform: visible ? 'scale(1)' : 'scale(0)',
-        opacity: visible ? 1 : 0,
-        transition: visible
-          ? 'transform 450ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 300ms ease'
-          : 'transform 300ms ease, opacity 300ms ease',
-      }}
+      style={s.menu}
     >
       {groups.map((group, gi) => (
         <Fragment key={gi}>
-          {gi > 0 && <div className={css.divider} />}
+          {gi > 0 && <div style={s.divider} />}
           {group.map((action) => (
-            <button key={action.label} className={css.item} onClick={() => onAction(action)}>
-              <span className={css.itemIcon}>{action.icon}</span>
+            <button key={action.label} style={s.item} onClick={() => onAction(action)}>
+              <span style={s.itemIcon}>{action.icon}</span>
               {action.label}
             </button>
           ))}
@@ -41,3 +35,50 @@ const FABMenu = memo(function FABMenu({ groups, visible, onAction }: FABMenuProp
 });
 
 export default FABMenu;
+
+function useFABMenuStyles(visible: boolean) {
+  return useMemo(() => ({
+    menu: {
+      position: Position.absolute,
+      bottom: Layout.fabMenuBottom,
+      right: Gap.none,
+      zIndex: ZIndex.confirmOverlay,
+      pointerEvents: PointerEvents.auto,
+      backgroundColor: Colors.backgroundCard,
+      borderRadius: Radius.sm,
+      padding: padding(Gap.sm, 0),
+      minWidth: Layout.fabMenuMinWidth,
+      whiteSpace: WhiteSpace.nowrap,
+      boxShadow: Shadow.tooltip,
+      transformOrigin: TransformOrigin.bottomRight,
+      transform: visible ? scale(1) : scale(0),
+      opacity: visible ? 1 : 0,
+      transition: visible
+        ? `transform ${FAB_OPEN_MS}ms ${EASE_OVERSHOOT}, opacity ${TRANSITION_MS}ms ease`
+        : `transform ${TRANSITION_MS}ms ease, opacity ${TRANSITION_MS}ms ease`,
+    } as CSSProperties,
+    item: {
+      ...flexRow,
+      gap: Gap.xl,
+      width: CssValue.full,
+      padding: padding(Gap.xl, Gap.section),
+      background: CssValue.none,
+      border: CssValue.none,
+      color: Colors.textSecondary,
+      fontSize: Font.md,
+      cursor: Cursor.pointer,
+      textAlign: TextAlign.left,
+    } as CSSProperties,
+    itemIcon: {
+      ...flexCenter,
+      width: IconSize.default,
+      flexShrink: 0,
+      color: Colors.textTertiary,
+    } as CSSProperties,
+    divider: {
+      height: 1,
+      backgroundColor: Colors.glassBorder,
+      margin: padding(Gap.sm, 0),
+    } as CSSProperties,
+  }), [visible]);
+}

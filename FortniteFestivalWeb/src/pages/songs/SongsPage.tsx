@@ -23,10 +23,11 @@ import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
 import { songSlides } from './firstRun';
 import { type PlayerScore, type ServerInstrumentKey as InstrumentKey, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
 import { LoadPhase } from '@festival/core';
-import { Gap } from '@festival/theme';
+import { Gap, Colors, Font, Layout, MaxWidth, Position, ZIndex, Display, Align, Justify, BoxSizing, CssValue, Overflow, flexCenter, flexColumn, padding } from '@festival/theme';
 import { LoadGate } from '../../components/page/LoadGate';
 import SyncBanner from '../../components/page/SyncBanner';
-import s from './SongsPage.module.css';
+import EmptyState from '../../components/common/EmptyState';
+import PageHeader from '../../components/common/PageHeader';
 import { SongRow } from './components/SongRow';
 import { SongsToolbar } from './components/SongsToolbar';
 import { visibleInstruments } from '../../contexts/SettingsContext';
@@ -68,7 +69,7 @@ export default function SongsPage() {
   const isBackNav = navType === 'POP';
 
   // Unified scroll position save/restore
-  const saveScroll = useScrollRestore(scrollRef, 'songs', navType);
+  useScrollRestore('songs', navType);
 
   const [search, setSearchLocal] = useState(searchQuery.query);
   const setSearch = useCallback((q: string) => {
@@ -348,16 +349,9 @@ export default function SongsPage() {
   }, [loadPhase]);
   /* v8 ignore stop */
 
-  // Container-level scroll fade (works because frostedCard avoids backdrop-filter)
-  const updateScrollMask = useScrollMask(scrollRef, [loadPhase, filtered]);
-
-  // Save scroll position continuously + update fade
-  const { rushOnScroll, resetRush } = useStaggerRush(scrollRef);
-  const handleScroll = useCallback(() => {
-    saveScroll();
-    updateScrollMask();
-    rushOnScroll();
-  }, [saveScroll, updateScrollMask, rushOnScroll]);
+  // Container-level scroll fade + stagger rush auto-listen to window scroll
+  useScrollMask(scrollRef, [loadPhase, filtered]);
+  const { resetRush } = useStaggerRush(scrollRef);
 
   // â”€â”€ Virtual list â”€â”€
   const ROW_HEIGHT = isMobile ? 122 : 68; // row + 2px gap
@@ -370,36 +364,38 @@ export default function SongsPage() {
     gap: 2,
   });
 
+  const songsStyles = useSongsStyles();
+
   if (error) {
-    return <div className={s.center}>{error}</div>;
+    return <div style={songsStyles.center}>{error}</div>;
   }
 
   return (
-    <div className={s.page}>
-      <LoadGate phase={loadPhase} overlay spinnerClassName={s.spinnerOverlay}>
+    <div>
+      <LoadGate phase={loadPhase} overlay>
       {!isMobileChrome && (
-      <div className={s.header}>
-        <div className={s.container}>
-          <div style={{ visibility: (toolbarShownRef.current || loadPhase === LoadPhase.ContentIn) ? 'visible' : 'hidden' } as CSSProperties}>
-          <SongsToolbar
-            search={search}
-            onSearchChange={setSearch}
-            instrument={settings.instrument}
-            sortActive={sortActive}
-            filtersActive={filtersActive}
-            hasSongs={songs.length > 0 && !isLoading}
-            hasPlayer={hasPlayer}
-            filteredCount={filtered.length}
-            totalCount={songs.length}
-            onOpenSort={openSort}
-            onOpenFilter={openFilter}
-          />
-          </div>
-        </div>
-      </div>
+        <PageHeader
+          title={
+            <div style={{ visibility: (toolbarShownRef.current || loadPhase === LoadPhase.ContentIn) ? 'visible' : 'hidden' } as CSSProperties}>
+              <SongsToolbar
+                search={search}
+                onSearchChange={setSearch}
+                instrument={settings.instrument}
+                sortActive={sortActive}
+                filtersActive={filtersActive}
+                hasSongs={songs.length > 0 && !isLoading}
+                hasPlayer={hasPlayer}
+                filteredCount={filtered.length}
+                totalCount={songs.length}
+                onOpenSort={openSort}
+                onOpenFilter={openFilter}
+              />
+            </div>
+          }
+        />
       )}
-      <div ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
-        <div className={s.container} style={{ paddingTop: isMobile ? Gap.sm : Gap.md }}>
+      <div ref={scrollRef}>
+        <div style={{ ...songsStyles.container, paddingTop: isMobile ? Gap.sm : Gap.md }}>
         {isSyncing && playerData && (
           <SyncBanner
             displayName={playerData.displayName}
@@ -409,18 +405,14 @@ export default function SongsPage() {
           />
         )}
         {loadPhase === LoadPhase.ContentIn && filtered.length === 0 ? (
-          <div className={s.emptyState}>
-            <div className={s.emptyTitle}>{t('songs.noResults')}</div>
-            <div className={s.emptySubtitle}>
-              {filtersActive
-                ? t('songs.noResultsSubtitle')
-                : t('common.serviceDown')}
-            </div>
-          </div>
+          <EmptyState
+            title={t('songs.noResults')}
+            subtitle={filtersActive ? t('songs.noResultsSubtitle') : t('common.serviceDown')}
+          />
         ) : (
           <div
             ref={listParentRef}
-            className={s.list} style={{
+            style={{ ...songsStyles.list,
               height: virtualizer.getTotalSize(),
               position: 'relative',
             }}
@@ -465,7 +457,7 @@ export default function SongsPage() {
         </div>
       </div>
 
-      {isMobileChrome && <div className={s.fabSpacer} />}
+      {isMobileChrome && <div style={songsStyles.fabSpacer} />}
       </LoadGate>
 
       <SortModal
@@ -506,6 +498,32 @@ export default function SongsPage() {
       {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
     </div>
   );
+}
+
+function useSongsStyles() {
+  return useMemo(() => ({
+    container: {
+      width: CssValue.full,
+      maxWidth: MaxWidth.card,
+      margin: CssValue.marginCenter,
+      padding: padding(Layout.paddingTop, Layout.paddingHorizontal),
+      boxSizing: BoxSizing.borderBox,
+    } as CSSProperties,
+    list: {
+      paddingTop: Gap.lg,
+    } as CSSProperties,
+    center: {
+      ...flexCenter,
+      minHeight: CssValue.viewportFull,
+      color: Colors.textSecondary,
+      backgroundColor: Colors.bgApp,
+      fontSize: Font.lg,
+    } as CSSProperties,
+    fabSpacer: {
+      height: Layout.fabBottom,
+      flexShrink: 0,
+    } as CSSProperties,
+  }), []);
 }
 
 /** Render a single metadata element for the given key. Mirrors mobile renderMetadataElement. */

@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * A single row's column content (rank/label, name, season, score, accuracy, stars).
  * Used by LeaderboardPage, InstrumentCard, and PlayerHistoryPage.
@@ -5,13 +6,12 @@
  * Provide `rank` for leaderboard rows (#1, #2, …) or `label` for freeform first
  * columns (e.g. date strings in score history). Exactly one should be given.
  */
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
+import { Align, Colors, Display, Font, FontVariant, Gap, Justify, Layout, TextAlign, Weight, flexRow, truncate } from '@festival/theme';
 import SeasonPill from '../../../../components/songs/metadata/SeasonPill';
 import ScorePill from '../../../../components/songs/metadata/ScorePill';
 import AccuracyDisplay from '../../../../components/songs/metadata/AccuracyDisplay';
 import MiniStars from '../../../../components/songs/metadata/MiniStars';
-import shared from '../../../../styles/shared.module.css';
-import s from './LeaderboardEntry.module.css';
 
 export interface LeaderboardEntryProps {
   /** Numeric rank displayed as "#1", "#2", etc. */
@@ -51,25 +51,25 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
   showStars,
   scoreWidth,
 }: LeaderboardEntryProps) {
-  const bold = isPlayer ? ` ${shared.textBold}` : '';
+  const s = useStyles(isPlayer);
 
   return (
     <>
       {rank != null
-        ? <span className={`${s.colRank}${bold}`}>#{rank.toLocaleString()}</span>
+        ? <span style={s.colRank}>#{rank.toLocaleString()}</span>
         : null}
-      <span className={`${s.colName}${bold}`}>{label ?? displayName}</span>
-      <span className={s.seasonScoreGroup}>
+      <span style={s.colName}>{label ?? displayName}</span>
+      <span style={s.seasonScoreGroup}>
         {showSeason && season != null && <SeasonPill season={season} />}
         <ScorePill score={score} width={scoreWidth} />
       </span>
       {showAccuracy && (
-        <span className={s.colAcc}>
+        <span style={s.colAcc}>
           <AccuracyDisplay accuracy={accuracy ?? null} isFullCombo={isFullCombo} />
         </span>
       )}
       {showStars && (
-        <span className={s.colStars}>
+        <span style={s.colStars}>
           {stars != null && stars > 0
             ? <MiniStars starsCount={stars} isFullCombo={!!isFullCombo} />
             : '\u2014'}
@@ -78,3 +78,41 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
     </>
   );
 });
+
+function useStyles(isPlayer?: boolean) {
+  return useMemo(() => ({
+    colRank: {
+      width: Layout.rankColumnWidth,
+      flexShrink: 0,
+      color: Colors.textPrimary,
+      fontSize: Font.md,
+      ...(isPlayer ? { fontWeight: Weight.bold } : undefined),
+    },
+    colName: {
+      ...truncate,
+      flex: 1,
+      minWidth: 0,
+      ...(isPlayer ? { fontWeight: Weight.bold } : undefined),
+    },
+    seasonScoreGroup: {
+      ...flexRow,
+      gap: Gap.md,
+      flexShrink: 0,
+    },
+    colAcc: {
+      width: Layout.accColumnWidth,
+      flexShrink: 0,
+      textAlign: TextAlign.center,
+      fontWeight: Weight.semibold,
+      fontSize: Font.lg,
+      color: Colors.accentBlueBright,
+      fontVariantNumeric: FontVariant.tabularNums,
+    },
+    colStars: {
+      flexShrink: 0,
+      display: Display.inlineFlex,
+      alignItems: Align.center,
+      justifyContent: Justify.end,
+    },
+  }), [isPlayer]);
+}

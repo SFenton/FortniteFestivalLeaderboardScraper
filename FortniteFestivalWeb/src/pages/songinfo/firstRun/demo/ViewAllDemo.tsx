@@ -1,6 +1,7 @@
-import { useMemo } from 'react';
+/* eslint-disable react/forbid-dom-props -- useStyles pattern */
+import { useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { STAGGER_INTERVAL } from '@festival/theme';
+import { STAGGER_INTERVAL, frostedCard, Radius, Font, Gap, Weight, Display, Align, Justify, CssValue, PointerEvents, Layout, Colors, Position, Overflow, flexColumn, padding } from '@festival/theme';
 import { useFestival } from '../../../../contexts/FestivalContext';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { LeaderboardEntry } from '../../../leaderboard/global/components/LeaderboardEntry';
@@ -44,18 +45,20 @@ export default function ViewAllDemo() {
     return Math.max(1, Math.min(4, Math.floor(available / ROW_HEIGHT)));
   }, [h]);
 
+  const s = useStyles();
+
   return (
-    <div className={css.wrapper}>
-      <div className={css.list}>
-        {scores.slice(0, maxCards).map((s, i) => (
+    <div style={s.wrapper}>
+      <div style={s.list}>
+        {scores.slice(0, maxCards).map((sc, i) => (
           <FadeIn key={i} delay={i * STAGGER_INTERVAL}>
-            <div className={css.card} style={i === 0 ? { opacity: 1, maskImage: 'linear-gradient(to bottom, transparent, black 100%)' } : undefined}>
+            <div style={i === 0 ? s.cardFaded : s.card}>
               <LeaderboardEntry
-                label={s.label}
+                label={sc.label}
                 displayName=""
-                score={s.score}
-                accuracy={s.accuracy}
-                isFullCombo={s.isFC}
+                score={sc.score}
+                accuracy={sc.accuracy}
+                isFullCombo={sc.isFC}
                 showAccuracy
                 scoreWidth="7ch"
               />
@@ -63,8 +66,8 @@ export default function ViewAllDemo() {
           </FadeIn>
         ))}
         <FadeIn delay={maxCards * STAGGER_INTERVAL}>
-          <div className={css.pulseWrap}>
-            <div className={css.viewAllBtn}>
+          <div className={css.pulseWrap} style={s.pulseWrap}>
+            <div style={s.viewAllBtn}>
               {t('chart.viewAllScores')}
             </div>
           </div>
@@ -72,4 +75,46 @@ export default function ViewAllDemo() {
       </div>
     </div>
   );
+}
+
+function useStyles() {
+  return useMemo(() => {
+    const card: CSSProperties = {
+      ...frostedCard,
+      display: Display.flex,
+      alignItems: Align.center,
+      gap: Gap.xl,
+      padding: padding(0, Gap.xl),
+      height: Layout.entryRowHeight,
+      borderRadius: Radius.md,
+      fontSize: Font.md,
+    };
+    return {
+      wrapper: { width: CssValue.full, pointerEvents: PointerEvents.none } as CSSProperties,
+      list: { ...flexColumn, gap: Gap.sm } as CSSProperties,
+      card,
+      cardFaded: {
+        ...card,
+        opacity: 1,
+        maskImage: 'linear-gradient(to bottom, transparent, black 100%)',
+        WebkitMaskImage: 'linear-gradient(to bottom, transparent, black 100%)',
+      } as CSSProperties,
+      pulseWrap: {
+        position: Position.relative,
+        overflow: Overflow.hidden,
+        borderRadius: Radius.md,
+      } as CSSProperties,
+      viewAllBtn: {
+        ...frostedCard,
+        display: Display.flex,
+        alignItems: Align.center,
+        justifyContent: Justify.center,
+        height: Layout.entryRowHeight,
+        borderRadius: Radius.md,
+        color: Colors.textPrimary,
+        fontSize: Font.md,
+        fontWeight: Weight.semibold,
+      } as CSSProperties,
+    };
+  }, []);
 }

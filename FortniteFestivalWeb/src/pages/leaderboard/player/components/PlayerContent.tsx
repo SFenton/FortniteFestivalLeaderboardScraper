@@ -14,6 +14,7 @@ import SyncBanner from '../../../../components/page/SyncBanner';
 import { useSettings, isInstrumentVisible } from '../../../../contexts/SettingsContext';
 import { loadSongSettings, saveSongSettings } from '../../../../utils/songSettings';
 import Page from '../../../Page';
+import PageHeader from '../../../../components/common/PageHeader';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { useScrollRestore } from '../../../../hooks/ui/useScrollRestore';
 import { useMediaQuery } from '../../../../hooks/ui/useMediaQuery';
@@ -57,7 +58,7 @@ export default function PlayerContent({
   const navigate = useNavigate();
   const navType = useNavigationType();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const saveScroll = useScrollRestore(scrollRef, `statistics:${data.accountId}`, navType);
+  useScrollRestore(`statistics:${data.accountId}`, navType);
   const { player: trackedPlayer, setPlayer } = useTrackedPlayer();
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
   const { filterPlayerScores } = useScoreFilter();
@@ -213,13 +214,12 @@ export default function PlayerContent({
     <Page
       scrollRef={scrollRef}
       scrollDeps={fadeDeps}
-      onScroll={saveScroll}
       scrollClassName={s.scrollArea}
       containerClassName={s.container}
       before={
-        <div className={s.playerNameBar}>
-          <h1 className={s.playerName}>{data.displayName}</h1>
-          {canShowSelectBtn && (
+        <PageHeader
+          title={data.displayName}
+          actions={canShowSelectBtn ? (
             <SelectProfilePill
               visible={selectBtnVisible}
               onClick={() => {
@@ -232,8 +232,8 @@ export default function PlayerContent({
                 }
               }}
             />
-          )}
-        </div>
+          ) : undefined}
+        />
       }
       after={pendingSwitch ? (
         <ConfirmAlert

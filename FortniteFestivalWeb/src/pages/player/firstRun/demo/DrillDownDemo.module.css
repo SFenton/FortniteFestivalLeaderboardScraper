@@ -1,10 +1,4 @@
-.pulseWrap {
-  position: relative;
-  overflow: hidden;
-  border-radius: var(--radius-md);
-  pointer-events: none;
-}
-
+/* Minimal CSS for pseudo-element + keyframes that can't be inline styles. */
 .pulseWrap::after {
   content: '';
   position: absolute;

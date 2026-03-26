@@ -1,13 +1,14 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+/* eslint-disable react/forbid-dom-props -- useStyles pattern */
+import { useState, useMemo, useEffect, useRef, useCallback, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { ImagePhase } from '@festival/core';
-import { Colors, Font, TRANSITION_MS, MIN_SPINNER_MS, STAGGER_INTERVAL } from '@festival/theme';
-import { Layout, Gap } from '@festival/theme';
+import { Colors, Font, TRANSITION_MS, MIN_SPINNER_MS, STAGGER_INTERVAL, Opacity } from '@festival/theme';
+import { Layout, Gap, Radius, Weight, Display, Align, Justify, Cursor, CssValue, Position, Overflow, TextAlign, Border, Shadow, ObjectFit, frostedCard, flexColumn, transition, CssProp, BorderStyle, padding, border } from '@festival/theme';
 import { useFestival } from '../../../../contexts/FestivalContext';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { InstrumentSelector, type InstrumentSelectorItem } from '../../../../components/common/InstrumentSelector';
-import ArcSpinner from '../../../../components/common/ArcSpinner';
+import ArcSpinner, { SpinnerSize } from '../../../../components/common/ArcSpinner';
 import FadeIn from '../../../../components/page/FadeIn';
 import pathCss from '../../../songinfo/components/path/PathsModal.module.css';
 import css from './PathPreviewDemo.module.css';
@@ -127,6 +128,8 @@ export default function PathPreviewDemo() {
     arrowButton: css.arrowButton,
   }), []);
 
+  const s = usePathStyles(spinnerVisible, imageVisible);
+
   // Track wrapper width for compact mode + difficulty visibility
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [wrapperWidth, setWrapperWidth] = useState(0);
@@ -155,7 +158,7 @@ export default function PathPreviewDemo() {
   const showInstruments = !h || h >= INSTRUMENT_ROW_HEIGHT + GAP + 80;
 
   return (
-    <div ref={wrapperRef} className={css.wrapper} style={h ? { height: h } : undefined}>
+    <div ref={wrapperRef} style={h ? { ...s.wrapper, height: h } : s.wrapper}>
       {/* v8 ignore start -- showInstruments/showDifficulty depend on wrapperWidth (ResizeObserver); phase booleans depend on async image loading state machine */}
       {showInstruments && (
         <FadeIn delay={0}>
@@ -176,7 +179,7 @@ export default function PathPreviewDemo() {
             {DIFFICULTIES.map((diff) => (
               <button
                 key={diff}
-                className={diff === selectedDiff ? css.diffBtnActive : css.diffBtn}
+                style={diff === selectedDiff ? s.diffBtnActive : s.diffBtn}
                 onClick={() => setSelectedDiff(diff)}
               >
                 {t(`difficulty.${diff}`, diff.charAt(0).toUpperCase() + diff.slice(1))}
@@ -190,17 +193,14 @@ export default function PathPreviewDemo() {
         <div className={css.imageArea}>
           {/* Spinner — matches production .spinnerWrap + fade */}
           {spinnerMounted && (
-            <div className={pathCss.spinnerWrap} style={{
-              opacity: spinnerVisible ? 1 : 0,
-              transition: `opacity ${FADE_MS}ms ease`,
-            }}>
-              <ArcSpinner size="md" />
+            <div className={pathCss.spinnerWrap} style={s.spinnerFade}>
+              <ArcSpinner size={SpinnerSize.MD} />
             </div>
           )}
           {/* Error — matches production */}
           {error && phase === ImagePhase.Idle && (
             <div className={pathCss.spinnerWrap}>
-              <p style={{ color: Colors.textMuted, fontSize: Font.md }}>{t('paths.notAvailable')}</p>
+              <p style={s.errorText}>{t('paths.notAvailable')}</p>
             </div>
           )}
           {/* Image — fades in/out matching production timing */}
@@ -208,8 +208,7 @@ export default function PathPreviewDemo() {
             <img
               src={displaySrc}
               alt={`${selectedInst} ${selectedDiff} path`}
-              className={css.pathImg}
-              style={{ opacity: imageVisible ? 1 : 0, transition: `opacity ${FADE_MS}ms ease` }}
+              style={s.pathImgFade}
             />
           )}
         </div>
@@ -217,4 +216,56 @@ export default function PathPreviewDemo() {
       {/* v8 ignore stop */}
     </div>
   );
+}
+
+function usePathStyles(spinnerVisible: boolean, imageVisible: boolean) {
+  return useMemo(() => {
+    const diffBtnBase: CSSProperties = {
+      padding: padding(Gap.xl, Gap.md),
+      borderRadius: Radius.md,
+      fontSize: Font.md,
+      fontWeight: Weight.semibold,
+      cursor: Cursor.pointer,
+      textAlign: TextAlign.center,
+      transition: transition(CssProp.backgroundColor, FADE_MS),
+    };
+    return {
+      wrapper: { width: CssValue.full, ...flexColumn, gap: Gap.md } as CSSProperties,
+      diffBtn: {
+        ...frostedCard,
+        ...diffBtnBase,
+        color: Colors.textSecondary,
+      } as CSSProperties,
+      diffBtnActive: {
+        ...diffBtnBase,
+        backgroundColor: Colors.purpleHighlight,
+        backgroundImage: CssValue.none,
+        border: border(Border.thin, Colors.purpleHighlightBorder),
+        boxShadow: Shadow.frostedActive,
+        color: Colors.textPrimary,
+      } as CSSProperties,
+      pathImg: {
+        width: CssValue.full,
+        display: Display.block,
+        objectFit: ObjectFit.cover,
+        objectPosition: 'top left',
+      } as CSSProperties,
+      spinnerFade: {
+        opacity: spinnerVisible ? 1 : Opacity.none,
+        transition: transition(CssProp.opacity, FADE_MS),
+      } as CSSProperties,
+      errorText: {
+        color: Colors.textMuted,
+        fontSize: Font.md,
+      } as CSSProperties,
+      pathImgFade: {
+        width: CssValue.full,
+        display: Display.block,
+        objectFit: ObjectFit.cover,
+        objectPosition: 'top left',
+        opacity: imageVisible ? 1 : Opacity.none,
+        transition: transition(CssProp.opacity, FADE_MS),
+      } as CSSProperties,
+    };
+  }, [spinnerVisible, imageVisible]);
 }

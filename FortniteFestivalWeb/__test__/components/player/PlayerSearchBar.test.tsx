@@ -101,6 +101,7 @@ describe('PlayerSearchBar', () => {
     // Press ArrowDown to activate first result
     fireEvent.keyDown(input, { key: 'ArrowDown' });
     const buttons = container.querySelectorAll('button');
-    expect(buttons[0]!.className).toContain('Active');
+    // Active result has a background-color style applied
+    expect((buttons[0] as HTMLElement).style.backgroundColor).toBeTruthy();
   });
 });

@@ -241,7 +241,7 @@ describe('SongsPage', () => {
     const { container } = renderSongsPage();
     await act(async () => { await vi.advanceTimersByTimeAsync(100); });
     await act(async () => { await vi.advanceTimersByTimeAsync(600); });
-    expect(container.querySelector('[class*="fabSpacer"]')).toBeTruthy();
+    expect(container.querySelector('[style*="height: 80"]') || container.querySelector('[style*="height:80"]')).toBeTruthy();
   });
 
   it('re-synchs settings from localStorage on external event', async () => {
@@ -545,7 +545,7 @@ describe('SongsPage — filter callback coverage (explicit desktop)', () => {
     });
     const { container } = renderSongsPage('/songs', 'test-player-1');
     await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
-    expect(container.textContent).toContain('Reconstructing');
+    expect(container.textContent).toContain('Building history');
   });
 });
 

@@ -1,8 +1,8 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
+/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * Suggestion category and song row components extracted from SuggestionsPage.
  */
-import { memo } from 'react';
+import { memo, useMemo, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { InstrumentKeys, type InstrumentKey } from '@festival/core/instruments';
 import type { LeaderboardData } from '@festival/core/models';
@@ -12,7 +12,11 @@ import SongInfo from '../../../components/songs/metadata/SongInfo';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 import SeasonPill from '../../../components/songs/metadata/SeasonPill';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
-import s from './CategoryCard.module.css';
+import {
+  Colors, Font, Weight, Gap, Radius, Layout, Border, InstrumentSize, FontVariant,
+  Display, Align, Justify, TextAlign, ObjectFit, Overflow, CssValue, CssProp,
+  flexRow, flexColumn, flexCenter, frostedCard, truncate, border, padding, transition,
+} from '@festival/theme';
 
 const BASE = import.meta.env.BASE_URL;
 
@@ -68,19 +72,20 @@ export const CategoryCard = memo(function CategoryCard({
   albumArtMap: Map<string, string>;
   scoresIndex: Record<string, LeaderboardData>;
 }) {
+  const st = useCategoryStyles();
   const catInstrument = getCatInstrument(category.key);
   return (
-    <div className={s.card}>
-      <div className={s.cardHeader}>
-        <div className={s.cardHeaderRow}>
+    <div style={st.card}>
+      <div style={st.cardHeader}>
+        <div style={st.cardHeaderRow}>
           <div>
-            <span className={s.cardTitle}>{category.title}</span>
-            <span className={s.cardDesc}>{category.description}</span>
+            <span style={st.cardTitle}>{category.title}</span>
+            <span style={st.cardDesc}>{category.description}</span>
           </div>
-          {catInstrument && <InstrumentIcon instrument={catInstrument} size={36} />}
+          {catInstrument && <InstrumentIcon instrument={catInstrument} size={InstrumentSize.sm} />}
         </div>
       </div>
-      <div className={s.songList}>
+      <div style={st.songList}>
         {category.songs.map((song) => (
           <SongRow
             key={`${song.songId}-${song.instrumentKey ?? 'any'}`}
@@ -107,6 +112,7 @@ export function SongRow({ song, categoryKey, albumArt, leaderboardData,
 }) {
   const layout = getRowLayout(categoryKey);
   const isMobile = useIsMobile();
+  const st = useRowStyles();
   const starCount = song.stars ?? 0;
   const isGold = starCount >= 6;
   const displayStars = isGold ? 5 : starCount;
@@ -119,15 +125,15 @@ export function SongRow({ song, categoryKey, albumArt, leaderboardData,
   const starSrc = isGold ? `${BASE}star_gold.png` : `${BASE}star_white.png`;
 
   return (
-    <Link to={songUrl} className={s.row} style={showStarPngs ? { flexDirection: 'column', alignItems: 'stretch' } : undefined}>
-      <div className={showStarPngs ? s.rowMainLine : undefined} style={!showStarPngs ? { display: 'contents' } : undefined}>
+    <Link to={songUrl} style={{ ...st.row, ...(showStarPngs ? { ...flexColumn, alignItems: Align.stretch } : undefined) }}>
+      <div style={showStarPngs ? st.rowMainLine : { display: Display.contents }}>
         <SongInfo albumArt={albumArt} title={song.title} artist={song.artist} year={song.year} />
         <RightContent song={ song} layout={layout} leaderboardData={leaderboardData} starCount={showStars && !showStarPngs ? displayStars : 0} starSrc={starSrc} />
       </div>
       {showStarPngs && (
-        <div className={s.starPngRow}>
+        <div style={st.starPngRow}>
           {Array.from({ length: displayStars }, (_, i) => (
-            <img key={i} src={starSrc} alt="★" className={s.starPngImg} />
+            <img key={i} src={starSrc} alt="★" style={st.starPngImg} />
           ))}
         </div>
       )}
@@ -158,7 +164,7 @@ function RightContent({ song, layout, leaderboardData, starCount = 0, starSrc,
     const r = Math.round(220 * (1 - t) + 46 * t);
     const g = Math.round(40 * (1 - t) + 204 * t);
     const b = Math.round(40 * (1 - t) + 113 * t);
-    return <span className={s.unfcPct} style={{ color: `rgb(${r},${g},${b})` }}>{display}</span>;
+    return <span style={{ ...categoryCardStyles.unfcPct, color: `rgb(${r},${g},${b})` }}>{display}</span>;
   }
 
   if (layout === 'season') {
@@ -180,7 +186,7 @@ function RightContent({ song, layout, leaderboardData, starCount = 0, starSrc,
   if (layout === 'percentile') {
     const display = song.percentileDisplay;
     return (
-      <div className={s.badges}>
+      <div style={categoryCardStyles.badges}>
         {display && (
           <PercentilePill
             display={display}
@@ -193,11 +199,11 @@ function RightContent({ song, layout, leaderboardData, starCount = 0, starSrc,
 
   if (layout === 'singleInstrument') {
     return song.instrumentKey ? (
-      <div className={s.badges}>
+      <div style={categoryCardStyles.badges}>
         {starCount > 0 && starSrc && (
-          <span className={s.starPngInlineRow}>
+          <span style={categoryCardStyles.starPngInlineRow}>
             {Array.from({ length: starCount }, (_, i) => (
-              <img key={i} src={starSrc} alt="★" className={s.starPngImg} />
+              <img key={i} src={starSrc} alt="★" style={categoryCardStyles.starPngImg} />
             ))}
           </span>
         )}
@@ -208,14 +214,14 @@ function RightContent({ song, layout, leaderboardData, starCount = 0, starSrc,
 
   // instrumentChips
   return (
-    <div className={s.instrumentChipsRow}>
+    <div style={categoryCardStyles.instrumentChipsRow}>
       {InstrumentKeys.map((ins) => {
         const tr = leaderboardData ? (leaderboardData as Record<string, unknown>)[ins] as { numStars?: number; isFullCombo?: boolean } | undefined : undefined;
         const hasScore = !!tr && (tr.numStars ?? 0) > 0;
         const isFC = !!tr?.isFullCombo;
         const { fill, stroke } = getInstrumentStatusVisual(hasScore, isFC);
         return (
-          <div key={ins} className={s.instrumentChip} style={{ backgroundColor: fill, borderColor: stroke }}>
+          <div key={ins} style={{ ...categoryCardStyles.instrumentChip, backgroundColor: fill, borderColor: stroke }}>
             <InstrumentIcon instrument={ins} size={20} />
           </div>
         );
@@ -223,3 +229,105 @@ function RightContent({ song, layout, leaderboardData, starCount = 0, starSrc,
     </div>
   );
 }
+
+/* ── Styles ── */
+
+function useCategoryStyles() {
+  return useMemo(() => ({
+    card: {
+      ...frostedCard,
+      borderRadius: Radius.md,
+      marginBottom: Gap.section,
+      overflow: Overflow.hidden,
+    } as CSSProperties,
+    cardHeader: {
+      padding: padding(Gap.xl, Gap.section),
+      borderBottom: border(Border.thin, Colors.borderSubtle),
+    } as CSSProperties,
+    cardHeaderRow: {
+      ...flexRow,
+      justifyContent: Justify.between,
+      gap: Gap.xl,
+    } as CSSProperties,
+    cardTitle: {
+      display: Display.block,
+      fontSize: Font.lg,
+      fontWeight: Weight.bold,
+      color: Colors.textPrimary,
+      marginBottom: Gap.xs,
+    } as CSSProperties,
+    cardDesc: {
+      display: Display.block,
+      fontSize: Font.sm,
+      color: Colors.textTertiary,
+    } as CSSProperties,
+    songList: flexColumn as CSSProperties,
+  }), []);
+}
+
+function useRowStyles() {
+  return useMemo(() => ({
+    row: {
+      ...flexRow,
+      gap: Gap.xl,
+      padding: padding(Gap.lg, Gap.section),
+      borderBottom: border(Border.thin, Colors.borderSubtle),
+      textDecoration: CssValue.none,
+      color: CssValue.inherit,
+      transition: transition(CssProp.backgroundColor, 120),
+    } as CSSProperties,
+    rowMainLine: {
+      ...flexRow,
+      gap: Gap.xl,
+    } as CSSProperties,
+    starPngRow: {
+      display: Display.flex,
+      justifyContent: Justify.center,
+      gap: 3,
+      paddingTop: Gap.sm,
+    } as CSSProperties,
+    starPngImg: {
+      width: Layout.starPngSize,
+      height: Layout.starPngSize,
+      objectFit: ObjectFit.contain,
+    } as CSSProperties,
+  }), []);
+}
+
+const categoryCardStyles = {
+  badges: {
+    ...flexRow,
+    gap: Gap.md,
+    flexShrink: 0,
+  } as CSSProperties,
+  instrumentChipsRow: {
+    ...flexRow,
+    gap: 6,
+    flexShrink: 0,
+  } as CSSProperties,
+  instrumentChip: {
+    width: Layout.instrumentChipSize,
+    height: Layout.instrumentChipSize,
+    borderRadius: CssValue.circle,
+    border: border(Gap.xs, 'currentColor'),
+    ...flexCenter,
+  } as CSSProperties,
+  unfcPct: {
+    fontSize: Font.lg,
+    fontWeight: Weight.semibold,
+    minWidth: Layout.unfcMinWidth,
+    textAlign: TextAlign.center,
+    flexShrink: 0,
+    fontVariantNumeric: FontVariant.tabularNums,
+  } as CSSProperties,
+  starPngImg: {
+    width: Layout.starPngSize,
+    height: Layout.starPngSize,
+    objectFit: ObjectFit.contain,
+  } as CSSProperties,
+  starPngInlineRow: {
+    display: Display.inlineFlex,
+    gap: 3,
+    alignItems: Align.center,
+  } as CSSProperties,
+};

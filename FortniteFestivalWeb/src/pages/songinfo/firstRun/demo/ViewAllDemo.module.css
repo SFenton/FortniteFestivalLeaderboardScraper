@@ -1,31 +1,4 @@
-.wrapper {
-  width: 100%;
-  pointer-events: none;
-}
-
-.list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--gap-sm);
-}
-
-.card {
-  composes: frostedCard from '../../../../styles/shared.module.css';
-  display: flex;
-  align-items: center;
-  gap: var(--gap-xl);
-  padding: 0 var(--gap-xl);
-  height: var(--size-xl);
-  border-radius: var(--radius-md);
-  font-size: var(--font-md);
-}
-
-.pulseWrap {
-  position: relative;
-  overflow: hidden;
-  border-radius: var(--radius-md);
-}
-
+/* Minimal CSS — only ::after pseudo-element + @keyframes (cannot be inlined) */
 .pulseWrap::after {
   content: '';
   position: absolute;
@@ -40,16 +13,4 @@
 @keyframes pulse {
   0%, 100% { opacity: 0; }
   50% { opacity: 0.7; }
-}
-
-.viewAllBtn {
-  composes: frostedCard from '../../../../styles/shared.module.css';
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: var(--size-xl);
-  border-radius: var(--radius-md);
-  color: var(--color-text-primary);
-  font-size: var(--font-md);
-  font-weight: var(--weight-semibold);
 }

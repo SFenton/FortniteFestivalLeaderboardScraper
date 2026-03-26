@@ -1,12 +1,11 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles required for Recharts custom elements */
-import { useRef, useMemo } from 'react';
+import { useRef, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
-import { Colors, Layout, Size } from '@festival/theme';
+import { Colors, Layout, Size, frostedCard, Radius, Font, Gap, Weight, Display, Align, Justify, CssValue, PointerEvents, Overflow, BoxSizing, flexColumn, padding, transition, CssProp, QUICK_FADE_MS } from '@festival/theme';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { useChartDimensions } from '../../../../hooks/chart/useChartDimensions';
 import FadeIn from '../../../../components/page/FadeIn';
-import css from './ChartDemo.module.css';
 
 type ChartPoint = { dateLabel: string; score: number; accuracy: number; isFullCombo: boolean };
 
@@ -55,31 +54,35 @@ export default function ChartDemo() {
   const hasFc = visibleData.some(p => p.accuracy >= 100 && p.isFullCombo);
   const hasNonFc = visibleData.some(p => !(p.accuracy >= 100 && p.isFullCombo));
 
+  const s = useChartDemoStyles();
+  const AXIS_TICK = { fill: Colors.textPrimary, fontSize: Layout.chartTickFontSize };
+  const X_AXIS_TICK = { ...AXIS_TICK, dy: Layout.chartTickOffset };
+
   return (
-    <div className={css.wrapper} style={h ? { height: h } : undefined}>
+    <div style={h ? { ...s.wrapper, height: h } : s.wrapper}>
       <FadeIn delay={0} style={{ flex: 1, minHeight: 0 }}>
-        <div className={css.chartCard} ref={chartContainerRef} style={{ pointerEvents: 'none', height: '100%' }}>
+        <div style={s.chartCardNoEvents} ref={chartContainerRef}>
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={visibleData} margin={Layout.chartMargin} barCategoryGap="10%">
               <CartesianGrid strokeDasharray="3 3" stroke={Colors.borderSubtle} horizontal={false} vertical={false} />
               <XAxis
                 dataKey="dateLabel"
-                tick={{ fill: Colors.textPrimary, fontSize: 14, dy: 16 }}
+                tick={X_AXIS_TICK}
                 stroke={Colors.borderSubtle}
-                angle={-35}
+                angle={Layout.chartXAxisAngle}
                 textAnchor="end"
                 interval="preserveStartEnd"
-                height={60}
+                height={Layout.chartXAxisHeight}
               />
               <YAxis
                 yAxisId="score"
-                tick={{ fill: Colors.textPrimary, fontSize: 14 }}
+                tick={AXIS_TICK}
                 stroke={Colors.borderSubtle}
                 tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
                 label={({ viewBox }: { viewBox: { x: number; y: number; height: number } }) => {
                   const cy = viewBox.y + viewBox.height / 2;
                   return (
-                    <text x={viewBox.x - Layout.axisLabelOffset} y={cy} fill={Colors.textPrimary} fontSize={14} textAnchor="middle" dominantBaseline="central" transform={`rotate(-90, ${viewBox.x - Layout.axisLabelOffset}, ${cy})`}>
+                    <text x={viewBox.x - Layout.axisLabelOffset} y={cy} fill={Colors.textPrimary} fontSize={Layout.chartTickFontSize} textAnchor="middle" dominantBaseline="central" transform={`rotate(-90, ${viewBox.x - Layout.axisLabelOffset}, ${cy})`}>
                       {t('chart.score')}
                     </text>
                   );
@@ -90,14 +93,14 @@ export default function ChartDemo() {
                 orientation="right"
                 domain={[0, 100]}
                 padding={{ top: 4 }}
-                tick={{ fill: Colors.textPrimary, fontSize: 14 }}
+                tick={AXIS_TICK}
                 stroke={Colors.borderSubtle}
                 tickFormatter={(v: number) => `${v}%`}
                 label={({ viewBox }: { viewBox: { x: number; y: number; width: number; height: number } }) => {
                   const cy = viewBox.y + viewBox.height / 2;
                   const lx = viewBox.x + viewBox.width + Layout.axisLabelOffset;
                   return (
-                    <text x={lx} y={cy} fill={Colors.textPrimary} fontSize={14} textAnchor="middle" dominantBaseline="central" transform={`rotate(90, ${lx}, ${cy})`}>
+                    <text x={lx} y={cy} fill={Colors.textPrimary} fontSize={Layout.chartTickFontSize} textAnchor="middle" dominantBaseline="central" transform={`rotate(90, ${lx}, ${cy})`}>
                       {t('chart.accuracy')}
                     </text>
                   );
@@ -105,20 +108,20 @@ export default function ChartDemo() {
               />
               <Tooltip content={() => null} cursor={{ fill: 'transparent', stroke: 'transparent' }} />
               <Legend content={() => (
-                <div className={css.legend}>
+                <div style={s.legend}>
                   {hasNonFc && (
-                    <span className={css.legendItem}>
-                      <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 2, background: 'linear-gradient(to right, rgb(220,40,40), rgb(46,204,113))' }} />
+                    <span style={s.legendItem}>
+                      <span style={s.legendSwatchGradient} />
                       {t('chart.accuracy')}
                     </span>
                   )}
                   {hasFc && (
-                    <span className={css.legendItem}>
-                      <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: 2, backgroundColor: Colors.gold }} />
+                    <span style={s.legendItem}>
+                      <span style={s.legendSwatchGold} />
                       {t('chart.accuracyFC')}
                     </span>
                   )}
-                  <span className={css.legendItem}>
+                  <span style={s.legendItem}>
                     <svg width={24} height={12} style={{ verticalAlign: 'middle' }}>
                       <line x1={0} y1={6} x2={18} y2={6} stroke={Colors.accentBlueBright} strokeWidth={2} />
                       <circle cx={18} cy={6} r={3} fill={Colors.accentBlueBright} />
@@ -135,4 +138,55 @@ export default function ChartDemo() {
       </FadeIn>
     </div>
   );
+}
+
+/** Shared styles exported for BarSelectDemo cross-consumer usage. */
+export function useChartDemoStyles() {
+  return useMemo(() => {
+    const chartCard: CSSProperties = {
+      ...frostedCard,
+      borderRadius: Radius.lg,
+      padding: padding(Gap.sm, Gap.md, Gap.md),
+      ...flexColumn,
+    };
+    return {
+      wrapper: { width: CssValue.full, ...flexColumn, pointerEvents: PointerEvents.none } as CSSProperties,
+      chartCard,
+      chartCardNoEvents: { ...chartCard, pointerEvents: PointerEvents.none, height: CssValue.full } as CSSProperties,
+      legend: { display: Display.flex, justifyContent: Justify.center, gap: Gap.xl, paddingTop: Gap.xs } as CSSProperties,
+      legendItem: { display: Display.inlineFlex, alignItems: Align.center, gap: Gap.xs, fontSize: Font.xs, color: Colors.textMuted } as CSSProperties,
+      detailCardBorderless: {
+        display: Display.flex,
+        alignItems: Align.center,
+        gap: Gap.xl,
+        padding: padding(0, Gap.md),
+        height: Layout.entryRowHeight,
+        fontSize: Font.md,
+        color: CssValue.inherit,
+        width: CssValue.full,
+        boxSizing: BoxSizing.borderBox,
+        transition: transition(CssProp.opacity, QUICK_FADE_MS),
+      } as CSSProperties,
+      legendSwatchBase: {
+        display: Display.inlineBlock,
+        width: Layout.legendSwatchSize,
+        height: Layout.legendSwatchSize,
+        borderRadius: Gap.xs,
+      } as CSSProperties,
+      legendSwatchGradient: {
+        display: Display.inlineBlock,
+        width: Layout.legendSwatchSize,
+        height: Layout.legendSwatchSize,
+        borderRadius: Gap.xs,
+        background: 'linear-gradient(to right, rgb(220,40,40), rgb(46,204,113))',
+      } as CSSProperties,
+      legendSwatchGold: {
+        display: Display.inlineBlock,
+        width: Layout.legendSwatchSize,
+        height: Layout.legendSwatchSize,
+        borderRadius: Gap.xs,
+        backgroundColor: Colors.gold,
+      } as CSSProperties,
+    };
+  }, []);
 }

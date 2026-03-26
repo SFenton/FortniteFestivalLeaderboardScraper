@@ -1,6 +1,7 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { memo, type CSSProperties } from 'react';
-import css from './ScorePill.module.css';
+import { memo, useMemo, type CSSProperties } from 'react';
+import {
+  Colors, Font, Weight, Display, TextAlign, FontVariant,
+} from '@festival/theme';
 
 interface ScorePillProps {
   score: number;
@@ -12,11 +13,23 @@ interface ScorePillProps {
 }
 
 const ScorePill = memo(function ScorePill({ score, width, bold, className }: ScorePillProps) {
-  const cls = bold
-    ? (className ? `${css.bold} ${className}` : css.bold)
-    : (className ? `${css.base} ${className}` : css.base);
-  const style: CSSProperties | undefined = width ? { width } : undefined;
-  return <span className={cls} style={style}>{score.toLocaleString()}</span>;
+  const s = useStyles(bold, width);
+  return <span className={className} style={s.pill}>{score.toLocaleString()}</span>;
 });
 
 export default ScorePill;
+
+function useStyles(bold?: boolean, width?: string) {
+  return useMemo(() => ({
+    pill: {
+      textAlign: TextAlign.right,
+      fontSize: Font.lg,
+      fontWeight: bold ? Weight.bold : Weight.semibold,
+      color: Colors.textPrimary,
+      fontVariantNumeric: FontVariant.tabularNums,
+      flexShrink: 0,
+      display: Display.inlineBlock,
+      width,
+    } as CSSProperties,
+  }), [bold, width]);
+}

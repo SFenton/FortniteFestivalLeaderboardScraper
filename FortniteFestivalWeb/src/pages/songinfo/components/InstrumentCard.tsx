@@ -1,14 +1,13 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { memo, type CSSProperties } from 'react';
+import { memo, useMemo, type CSSProperties } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { InstrumentHeaderSize } from '@festival/core';
 import InstrumentHeader from '../../../components/display/InstrumentHeader';
 import { LeaderboardEntry } from '../../leaderboard/global/components/LeaderboardEntry';
 import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore } from '@festival/core/api/serverTypes';
-import { QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON } from '@festival/theme';
+import { QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, Colors, Font, Weight, Gap, Radius, Layout, Display, Align, Justify, Overflow, Cursor, Opacity, CssValue, FAST_FADE_MS, TRANSITION_MS, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, frostedCard, flexColumn, flexRow, transition, padding, border, Border } from '@festival/theme';
+import { CssProp } from '@festival/theme';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
-import s from './InstrumentCard.module.css';
 
 interface InstrumentCardProps {
   songId: string;
@@ -50,8 +49,8 @@ export default memo(function InstrumentCard({
   ));
 
   const anim = (delayMs: number): CSSProperties => skipAnimation ? {} : ({
-    opacity: 0,
-    animation: `fadeInUp 300ms ease-out ${delayMs}ms forwards`,
+    opacity: Opacity.none,
+    animation: `fadeInUp ${TRANSITION_MS}ms ease-out ${delayMs}ms forwards`,
   });
   /* v8 ignore start — animation cleanup */
   const clearAnim = (ev: React.AnimationEvent<HTMLElement>) => {
@@ -60,38 +59,38 @@ export default memo(function InstrumentCard({
   };
   /* v8 ignore stop */
 
+  const st = useInstrumentCardStyles(isMobile);
+
   return (
-    <div className={s.cardWrapper}>
-      <div className={s.cardLabel} style={anim(baseDelay)} onAnimationEnd={clearAnim}>
+    <div style={st.cardWrapper}>
+      <div style={{ ...st.cardLabel, ...anim(baseDelay) }} onAnimationEnd={clearAnim}>
         <InstrumentHeader instrument={instrument} size={InstrumentHeaderSize.MD} />
       </div>
       <div
-        className={s.card}
-        style={{ cursor: 'pointer' }}
+        style={st.card}
         /* v8 ignore start — navigation */
         onClick={() => {
           navigate(`/songs/${songId}/${instrument}`, { state: { backTo: `/songs/${songId}` } });
         }}
         /* v8 ignore stop */
       >
-        <div className={s.cardBody}>
-        {prefetchedError && <span className={s.cardError}>{prefetchedError}</span>}
+        <div style={st.cardBody}>
+        {prefetchedError && <span style={st.cardError}>{prefetchedError}</span>}
         {!prefetchedError && prefetchedEntries.length === 0 && (
-          <span className={s.cardMuted}>{t('songDetail.noEntries')}</span>
+          <span style={st.cardMuted}>{t('songDetail.noEntries')}</span>
         )}
         {!prefetchedError &&
           prefetchedEntries.map((e, i) => {
-            const rowStagger = anim(baseDelay + 80 + i * 60);
+            const rowStagger = anim(baseDelay + STAGGER_ENTRY_OFFSET + i * STAGGER_ROW_MS);
             const isPlayer = playerInTop && e.accountId === playerAccountId;
-            const rowClass = `${isPlayer ? s.playerEntryRow : s.entryRow} ${isMobile ? s.entryRowMobile : ''}`;
+            const rowStyle = { ...(isPlayer ? st.playerEntryRow : st.entryRow), ...(isMobile ? st.entryRowMobile : {}) };
             return (
             <Link
               key={e.accountId}
               id={isPlayer ? `player-score-${instrument}` : undefined}
               to={`/player/${e.accountId}`}
               state={{ backTo: `/songs/${songId}` }}
-              className={rowClass}
-              style={rowStagger}
+              style={{ ...rowStyle, ...rowStagger }}
               onClick={(ev) => ev.stopPropagation()}
               onAnimationEnd={clearAnim} /* v8 ignore -- animation cleanup */
             >
@@ -112,14 +111,14 @@ export default memo(function InstrumentCard({
           })}
         {/* v8 ignore start — player score IIFE; conditionally rendered animation block */}
         {playerName && playerScore && !playerInTop && (() => {
-          const playerDelay = baseDelay + 80 + prefetchedEntries.length * 60;
+          const playerDelay = baseDelay + STAGGER_ENTRY_OFFSET + prefetchedEntries.length * STAGGER_ROW_MS;
           const playerStagger = anim(playerDelay);
+          const playerRowStyle = { ...st.playerEntryRow, ...(isMobile ? st.entryRowMobile : {}) };
           return (
           <Link
             id={`player-score-${instrument}`}
             to={`/songs/${songId}/${instrument}?page=${Math.floor((playerScore.rank - 1) / 25) + 1}&navToPlayer=true`}
-            className={`${s.playerEntryRow} ${isMobile ? s.entryRowMobile : ''}`}
-            style={playerStagger}
+            style={{ ...playerRowStyle, ...playerStagger }}
             onClick={(ev) => ev.stopPropagation()}
             onAnimationEnd={clearAnim} /* v8 ignore -- animation cleanup */
           >
@@ -141,14 +140,14 @@ export default memo(function InstrumentCard({
         {/* v8 ignore stop */}
         {/* v8 ignore start — view all IIFE; conditionally rendered animation block */}
         {!prefetchedError && prefetchedEntries.length > 0 && (() => {
-          const viewAllDelay = baseDelay + 80 + (prefetchedEntries.length + (playerScore && !playerInTop ? 1 : 0)) * 60;
+          const viewAllDelay = baseDelay + STAGGER_ENTRY_OFFSET + (prefetchedEntries.length + (playerScore && !playerInTop ? 1 : 0)) * STAGGER_ROW_MS;
           const viewAllStagger = anim(viewAllDelay);
           return (
             <div
-              className={s.viewAllButton} style={viewAllStagger}
+              style={{ ...st.viewAllButton, ...viewAllStagger }}
               onAnimationEnd={clearAnim}
             >
-              View full leaderboard
+              {t('leaderboard.viewFull')}
             </div>
           );
         })()}
@@ -158,3 +157,71 @@ export default memo(function InstrumentCard({
     </div>
   );
 });
+
+function useInstrumentCardStyles(_isMobile: boolean) {
+  return useMemo(() => {
+    const entryBase: CSSProperties = {
+      ...frostedCard,
+      display: Display.flex,
+      alignItems: Align.center,
+      gap: Gap.xl,
+      padding: padding(0, Gap.xl),
+      height: Layout.entryRowHeight,
+      borderRadius: Radius.md,
+      textDecoration: CssValue.none,
+      color: CssValue.inherit,
+      transition: transition(CssProp.backgroundColor, FAST_FADE_MS),
+      fontSize: Font.md,
+    };
+    return {
+      cardWrapper: { ...flexColumn } as CSSProperties,
+      cardLabel: {
+        ...flexRow,
+        gap: Gap.md,
+        paddingBottom: Gap.xs,
+      } as CSSProperties,
+      card: {
+        ...flexColumn,
+        height: '100%',
+        cursor: Cursor.pointer,
+      } as CSSProperties,
+      cardBody: {
+        ...flexColumn,
+        gap: Gap.sm,
+        flex: 1,
+        overflow: Overflow.hidden,
+      } as CSSProperties,
+      cardMuted: {
+        fontSize: Font.sm,
+        color: Colors.textMuted,
+      } as CSSProperties,
+      cardError: {
+        fontSize: Font.sm,
+        color: Colors.statusRed,
+      } as CSSProperties,
+      entryRow: { ...entryBase } as CSSProperties,
+      entryRowMobile: {
+        gap: Gap.md,
+        padding: padding(0, Gap.md),
+      } as CSSProperties,
+      playerEntryRow: {
+        ...entryBase,
+        backgroundColor: Colors.purpleHighlight,
+        border: border(Border.thin, Colors.purpleHighlightBorder),
+      } as CSSProperties,
+      viewAllButton: {
+        ...frostedCard,
+        display: Display.flex,
+        alignItems: Align.center,
+        justifyContent: Justify.center,
+        height: Layout.entryRowHeight,
+        borderRadius: Radius.md,
+        color: Colors.textPrimary,
+        fontSize: Font.md,
+        fontWeight: Weight.semibold,
+        cursor: Cursor.pointer,
+        transition: transition(CssProp.backgroundColor, FAST_FADE_MS),
+      } as CSSProperties,
+    };
+  }, []);
+}

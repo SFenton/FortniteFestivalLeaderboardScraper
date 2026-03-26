@@ -1,21 +1,41 @@
-import { memo } from 'react';
-import css from './SectionHeader.module.css';
+/* eslint-disable react/forbid-dom-props -- useStyles pattern */
+import { memo, useMemo } from 'react';
+import { Colors, Font, Gap, Weight, LineHeight } from '@festival/theme';
 
 interface SectionHeaderProps {
   title: string;
   description?: string;
-  /** When true, removes bottom margin from the description. */
   flush?: boolean;
 }
 
-/** Reusable section title + optional description used across settings, player stats, etc. */
 const SectionHeader = memo(function SectionHeader({ title, description, flush }: SectionHeaderProps) {
+  const s = useStyles();
   return (
     <>
-      <div className={css.title}>{title}</div>
-      {description && <div className={flush ? css.descriptionFlush : css.description}>{description}</div>}
+      <div style={s.title}>{title}</div>
+      {description && <div style={flush ? s.descriptionFlush : s.description}>{description}</div>}
     </>
   );
 });
 
 export default SectionHeader;
+
+function useStyles() {
+  return useMemo(() => {
+    const description = {
+      fontSize: Font.md,
+      color: Colors.textSecondary,
+      lineHeight: LineHeight.relaxed,
+      marginBottom: Gap.md,
+    };
+    return {
+      title: {
+        fontSize: Font.xl,
+        fontWeight: Weight.bold,
+        color: Colors.textPrimary,
+      },
+      description,
+      descriptionFlush: { ...description, marginBottom: Gap.none },
+    };
+  }, []);
+}

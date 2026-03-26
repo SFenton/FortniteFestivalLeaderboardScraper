@@ -15,7 +15,8 @@ describe('LeaderboardEntry', () => {
 
   it('applies bold styling for tracked player', () => {
     const { container } = render(<LeaderboardEntry rank={1} displayName="Me" score={100000} isPlayer />);
-    expect(container.querySelector('[class*="Bold"]') || container.querySelector('[class*="bold"]')).toBeTruthy();
+    const nameEl = screen.getByText('Me');
+    expect(nameEl.style.fontWeight).toBe('700');
   });
 
   it('shows season when showSeason is true', () => {
@@ -58,7 +59,8 @@ describe('LeaderboardEntry', () => {
     const { container } = render(
       <LeaderboardEntry rank={1} displayName="P1" score={100000} accuracy={undefined as any} isPlayer={false} showSeason={false} showAccuracy />,
     );
-    expect(container.querySelector('[class*="colAcc"]')).toBeTruthy();
+    const accCol = [...container.querySelectorAll('span')].find(el => (el as HTMLElement).style.textAlign === 'center');
+    expect(accCol).toBeTruthy();
   });
 
   it('renders label instead of rank when label is provided', () => {
@@ -68,7 +70,7 @@ describe('LeaderboardEntry', () => {
 
   it('renders label and hides rank column when only label is given', () => {
     const { container } = render(<LeaderboardEntry label="Jan 15" displayName="P1" score={50000} />);
-    expect(container.querySelector('[class*="colRank"]')).toBeFalsy();
+    expect(screen.queryByText(/#\d/)).toBeFalsy();
     expect(screen.getByText('Jan 15')).toBeTruthy();
   });
 
@@ -76,14 +78,14 @@ describe('LeaderboardEntry', () => {
     const { container } = render(
       <LeaderboardEntry rank={1} displayName="P1" score={100000} showStars stars={0} />,
     );
-    expect(container.querySelector('[class*="colStars"]')!.textContent).toBe('\u2014');
+    expect(screen.getByText('\u2014')).toBeTruthy();
   });
 
   it('shows dash for stars=null with showStars', () => {
     const { container } = render(
       <LeaderboardEntry rank={1} displayName="P1" score={100000} showStars stars={null} />,
     );
-    expect(container.querySelector('[class*="colStars"]')!.textContent).toBe('\u2014');
+    expect(screen.getByText('\u2014')).toBeTruthy();
   });
 
   it('renders stars with isFullCombo false', () => {

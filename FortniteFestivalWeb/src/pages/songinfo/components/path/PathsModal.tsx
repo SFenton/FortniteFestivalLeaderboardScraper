@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
 import { IoClose, IoChevronDown } from 'react-icons/io5';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { useScrollMask } from '../../../../hooks/ui/useScrollMask';
@@ -8,7 +8,11 @@ import { useSettings, visibleInstruments } from '../../../../contexts/SettingsCo
 import { INSTRUMENT_LABELS, DEFAULT_INSTRUMENT, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { InstrumentIcon } from '../../../../components/display/InstrumentIcons';
 import ArcSpinner from '../../../../components/common/ArcSpinner';
-import { Colors, Radius, Font, Gap } from '@festival/theme';
+import {
+  Colors, Radius, Font, Gap, Weight, Shadow,
+  Display, Position, Overflow, TextAlign, Cursor, CssValue, CssProp,
+  frostedCard, border, padding, transition, transitions,
+} from '@festival/theme';
 import css from './PathsModal.module.css';
 import { ZoomableImage } from './ZoomableImage';
 
@@ -16,6 +20,74 @@ const TRANSITION_MS = 300;
 const DIFFICULTIES = ['easy', 'medium', 'hard', 'expert'] as const;
 type Difficulty = typeof DIFFICULTIES[number];
 const DIFFICULTY_LABELS: Record<Difficulty, string> = { easy: 'Easy', medium: 'Medium', hard: 'Hard', expert: 'Expert' };
+
+const ACCORDION_EASE = 'cubic-bezier(0.4, 0, 0.2, 1)';
+const DIFF_TRANSITION = transitions(
+  transition(CssProp.backgroundColor, 200),
+  transition('border-color', 200),
+  transition(CssProp.color, 200),
+);
+
+function usePathsModalStyles() {
+  return useMemo(() => {
+    const selectorPad = padding(Gap.lg, Gap.md + 4);
+    const diffBtnBase: CSSProperties = {
+      borderRadius: Radius.md,
+      fontSize: Font.md,
+      fontWeight: Weight.semibold,
+      cursor: Cursor.pointer,
+      textAlign: TextAlign.center,
+      transition: DIFF_TRANSITION,
+    };
+    return {
+      controls: { flexShrink: 0, padding: padding(Gap.xl, Gap.section) } as CSSProperties,
+      instrumentRow: { display: Display.flex, gap: Gap.md, flexWrap: 'wrap', justifyContent: 'center' } as CSSProperties,
+      instrumentBtn: {
+        width: 64, height: 64, display: Display.flex, alignItems: 'center', justifyContent: 'center',
+        borderRadius: '50%', border: CssValue.none, backgroundColor: 'transparent', cursor: Cursor.pointer,
+        position: Position.relative, overflow: Overflow.hidden,
+      } as CSSProperties,
+      instrumentCircle: {
+        position: Position.absolute, inset: 0, borderRadius: '50%',
+        backgroundColor: '#2ECC71', transform: 'scale(0)',
+        transition: transition(CssProp.transform, 250),
+      } as CSSProperties,
+      instrumentCircleActive: {
+        position: Position.absolute, inset: 0, borderRadius: '50%',
+        backgroundColor: '#2ECC71', transform: 'scale(1)',
+        transition: transition(CssProp.transform, 250),
+      } as CSSProperties,
+      mobileRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: Gap.md, overflow: Overflow.hidden } as CSSProperties,
+      mobileSelector: {
+        ...frostedCard, display: Display.flex, alignItems: 'center', gap: Gap.md,
+        padding: selectorPad, borderRadius: Radius.md, color: Colors.textPrimary,
+        fontSize: Font.md, fontWeight: Weight.semibold, cursor: Cursor.pointer,
+      } as CSSProperties,
+      mobileSelectorLabel: { flex: 1, textAlign: TextAlign.left } as CSSProperties,
+      chevron: { flexShrink: 0, color: Colors.textMuted, transition: transition(CssProp.transform, 250) } as CSSProperties,
+      accordion: { overflow: Overflow.hidden, transition: `max-height 300ms ${ACCORDION_EASE}` } as CSSProperties,
+      diffGridMobile: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: Gap.sm, overflow: Overflow.hidden } as CSSProperties,
+      diffBtnSmall: { ...frostedCard, ...diffBtnBase, padding: selectorPad, color: Colors.textSecondary } as CSSProperties,
+      diffBtnSmallActive: {
+        ...diffBtnBase, padding: selectorPad,
+        backgroundColor: Colors.purpleHighlight, backgroundImage: CssValue.none,
+        border: border(1, Colors.purpleHighlightBorder), boxShadow: Shadow.frostedActive,
+        color: Colors.textPrimary,
+      } as CSSProperties,
+      diffGridDesktop: {
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))',
+        gap: Gap.md, marginTop: Gap.section, overflow: Overflow.hidden,
+      } as CSSProperties,
+      diffBtn: { ...frostedCard, ...diffBtnBase, padding: padding(Gap.xl, Gap.md), color: Colors.textSecondary } as CSSProperties,
+      diffBtnActive: {
+        ...diffBtnBase, padding: padding(Gap.xl, Gap.md),
+        backgroundColor: Colors.purpleHighlight, backgroundImage: CssValue.none,
+        border: border(1, Colors.purpleHighlightBorder), boxShadow: Shadow.frostedActive,
+        color: Colors.textPrimary,
+      } as CSSProperties,
+    };
+  }, []);
+}
 
 type PathsModalProps = {
   visible: boolean;
@@ -37,6 +109,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
   const [instOpen, setInstOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
   const accordionTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const st = usePathsModalStyles();
 
   const toggleInst = useCallback(() => {
     clearTimeout(accordionTimer.current);
@@ -158,30 +231,30 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
           <button className={css.closeBtn} onClick={onClose} aria-label="Close"><IoClose size={18} /></button>
         </div>
         {isMobile ? (
-          <div className={css.controls}>
-            <div className={css.mobileRow}>
-              <button className={css.mobileSelector} onClick={toggleInst}>
+          <div style={st.controls}>
+            <div style={st.mobileRow}>
+              <button style={st.mobileSelector} onClick={toggleInst}>
                 <InstrumentIcon instrument={selected} size={28} />
-                <span className={css.mobileSelectorLabel}>{INSTRUMENT_LABELS[selected]}</span>
-                <IoChevronDown size={16} className={css.chevron} style={{ transform: instOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
+                <span style={st.mobileSelectorLabel}>{INSTRUMENT_LABELS[selected]}</span>
+                <IoChevronDown size={16} style={{ ...st.chevron, transform: instOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
               </button>
-              <button className={css.mobileSelector} onClick={toggleDiff}>
-                <span className={css.mobileSelectorLabel}>{DIFFICULTY_LABELS[difficulty]}</span>
-                <IoChevronDown size={16} className={css.chevron} style={{ transform: diffOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
+              <button style={st.mobileSelector} onClick={toggleDiff}>
+                <span style={st.mobileSelectorLabel}>{DIFFICULTY_LABELS[difficulty]}</span>
+                <IoChevronDown size={16} style={{ ...st.chevron, transform: diffOpen ? 'rotate(180deg)' : 'rotate(0)' }} />
               </button>
             </div>
-            <div className={css.accordion} style={{ maxHeight: instOpen ? 160 : 0 }}>
-              <div className={css.instrumentRow} style={{ paddingTop: Gap.md }}>
+            <div style={{ ...st.accordion, maxHeight: instOpen ? 160 : 0 }}>
+              <div style={{ ...st.instrumentRow, paddingTop: Gap.md }}>
                 {instruments.map(key => {
                   const active = selected === key;
                   return (
                     <button
                       key={key}
-                      className={css.instrumentBtn}
+                      style={st.instrumentBtn}
                       onClick={() => { setSelected(key); setInstOpen(false); }}
                       title={INSTRUMENT_LABELS[key]}
                     >
-                      <div className={`${css.instrumentCircle}${active ? ` ${css.instrumentCircleActive}` : ''}`} />
+                      <div style={active ? st.instrumentCircleActive : st.instrumentCircle} />
                       <div style={{ position: 'relative' as const, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         <InstrumentIcon instrument={key} size={48} />
                       </div>
@@ -190,12 +263,12 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
                 })}
               </div>
             </div>
-            <div className={css.accordion} style={{ maxHeight: diffOpen ? 120 : 0 }}>
-              <div className={css.diffGridMobile} style={{ paddingTop: Gap.md }}>
+            <div style={{ ...st.accordion, maxHeight: diffOpen ? 120 : 0 }}>
+              <div style={{ ...st.diffGridMobile, paddingTop: Gap.md }}>
                 {DIFFICULTIES.map(d => (
                   <button
                     key={d}
-                    className={difficulty === d ? css.diffBtnSmallActive : css.diffBtnSmall}
+                    style={difficulty === d ? st.diffBtnSmallActive : st.diffBtnSmall}
                     /* v8 ignore start — mobile accordion click */
                     onClick={() => { setDifficulty(d); setDiffOpen(false); }}
                     /* v8 ignore stop */
@@ -207,18 +280,18 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
             </div>
           </div>
         ) : (
-          <div className={css.controls}>
-            <div className={css.instrumentRow}>
+          <div style={st.controls}>
+            <div style={st.instrumentRow}>
               {instruments.map(key => {
                 const active = selected === key;
                 return (
                   <button
                     key={key}
-                    className={css.instrumentBtn}
+                    style={st.instrumentBtn}
                     onClick={() => setSelected(key)}
                     title={INSTRUMENT_LABELS[key]}
                   >
-                    <div className={`${css.instrumentCircle}${active ? ` ${css.instrumentCircleActive}` : ''}`} />
+                    <div style={active ? st.instrumentCircleActive : st.instrumentCircle} />
                     <div style={{ position: 'relative' as const, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <InstrumentIcon instrument={key} size={48} />
                     </div>
@@ -226,11 +299,11 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
                 );
               })}
             </div>
-            <div className={css.diffGridDesktop}>
+            <div style={st.diffGridDesktop}>
               {DIFFICULTIES.map(d => (
                 <button
                   key={d}
-                  className={difficulty === d ? css.diffBtnActive : css.diffBtn}
+                  style={difficulty === d ? st.diffBtnActive : st.diffBtn}
                   onClick={() => setDifficulty(d)}
                 >
                   {DIFFICULTY_LABELS[d]}
@@ -334,8 +407,14 @@ function PathImage({ songId, instrument, difficulty }: { songId: string; instrum
   const updateScrollMask = useScrollMask(scrollRef, [displaySrc, phase]);
   const handleScroll = useCallback(() => { updateScrollMask(); }, [updateScrollMask]);
 
+  const imageAreaStyle: React.CSSProperties = {
+    flex: 1, overflow: 'auto', position: 'relative',
+    display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+    padding: Gap.section,
+  };
+
   return (
-    <div ref={scrollRef} onScroll={handleScroll} className={css.imageArea}>
+    <div ref={scrollRef} onScroll={handleScroll} style={imageAreaStyle}>
       {spinnerMounted && (
         <div className={css.spinnerWrap} style={{
           opacity: spinnerVisible ? 1 : 0,

@@ -1,13 +1,13 @@
+/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * A single row in the player score history list.
  * Extracted for testability and reuse.
  */
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
+import { Colors, Font, FontVariant, Gap, Layout, TextAlign, Weight, flexRow, truncate } from '@festival/theme';
 import SeasonPill from '../../../../components/songs/metadata/SeasonPill';
 import ScorePill from '../../../../components/songs/metadata/ScorePill';
 import AccuracyDisplay from '../../../../components/songs/metadata/AccuracyDisplay';
-import shared from '../../../../styles/shared.module.css';
-import s from './PlayerHistoryEntry.module.css';
 
 export interface PlayerHistoryEntryProps {
   /** Date string to display (pre-formatted). */
@@ -41,21 +41,47 @@ export const PlayerHistoryEntry = memo(function PlayerHistoryEntry({
   showAccuracy,
   scoreWidth,
 }: PlayerHistoryEntryProps) {
+  const s = useStyles(isHighScore);
 
   return (
     <>
-      <span className={`${s.colName}${isHighScore ? ` ${shared.textBold}` : ''}`}>{date}</span>
-      <span className={s.seasonScoreGroup}>
+      <span style={s.colName}>{date}</span>
+      <span style={s.seasonScoreGroup}>
         {showSeason && season != null && (
           <SeasonPill season={season} />
         )}
         <ScorePill score={score} width={scoreWidth} />
       </span>
       {showAccuracy && (
-        <span className={s.colAcc}>
+        <span style={s.colAcc}>
           <AccuracyDisplay accuracy={accuracy ?? null} isFullCombo={isFullCombo} />
         </span>
       )}
     </>
   );
 });
+
+function useStyles(isHighScore?: boolean) {
+  return useMemo(() => ({
+    colName: {
+      ...truncate,
+      flex: 1,
+      minWidth: 0,
+      ...(isHighScore ? { fontWeight: Weight.bold } : undefined),
+    },
+    seasonScoreGroup: {
+      ...flexRow,
+      gap: Gap.md,
+      flexShrink: 0,
+    },
+    colAcc: {
+      width: Layout.accColumnWidth,
+      flexShrink: 0,
+      textAlign: TextAlign.center,
+      fontWeight: Weight.semibold,
+      fontSize: Font.lg,
+      color: Colors.accentBlueBright,
+      fontVariantNumeric: FontVariant.tabularNums,
+    },
+  }), [isHighScore]);
+}

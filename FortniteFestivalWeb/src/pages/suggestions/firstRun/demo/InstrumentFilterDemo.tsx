@@ -11,7 +11,8 @@ import { useSettings, visibleInstruments } from '../../../../contexts/SettingsCo
 import { SUGGESTION_TYPES } from '@festival/core/suggestions/suggestionFilterConfig';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { Gap, Layout, TRANSITION_MS } from '@festival/theme';
-import s from '../../../songs/firstRun/demo/FilterDemo.module.css';
+import { useDemoStyles } from '../../../songs/firstRun/demo/FilterDemo';
+import css from '../../../songs/firstRun/demo/FilterDemo.module.css';
 
 type ToggleState = { label: string; desc: string; on: boolean };
 
@@ -22,6 +23,7 @@ function typeToggles(): ToggleState[] {
 export default function InstrumentFilterDemo() {
   const { t } = useTranslation();
   const { settings } = useSettings();
+  const s = useDemoStyles();
   const instruments = useMemo(() => visibleInstruments(settings), [settings]);
   const selectorItems = useMemo<InstrumentSelectorItem[]>(
     () => instruments.map(key => ({ key })),
@@ -80,10 +82,10 @@ export default function InstrumentFilterDemo() {
   }, [instruments.length]);
 
   const selectorClassNames = useMemo(() => ({
-    row: s.iconRow,
-    button: s.iconButton,
-    buttonActive: s.iconButtonActive,
-    arrowButton: s.arrowButton,
+    row: css.iconRow,
+    button: css.iconButton,
+    buttonActive: css.iconButtonActive,
+    arrowButton: css.arrowButton,
   }), []);
 
   const h = useSlideHeight();
@@ -110,8 +112,8 @@ export default function InstrumentFilterDemo() {
   }, [h, instrument, toggles.length]);
 
   return (
-    <div className={s.wrapper}>
-      <FadeIn delay={0} className={s.instrumentSection}>
+    <div style={s.wrapper}>
+      <FadeIn delay={0} style={s.instrumentSection}>
         <div ref={rowRef}>
           <InstrumentSelector
             instruments={selectorItems}
@@ -126,7 +128,7 @@ export default function InstrumentFilterDemo() {
       {instrument && maxToggles > 0 && (
         <FadeIn delay={TRANSITION_MS}>
           {showHeader && (
-            <div className={s.sectionHeader}>
+            <div style={s.sectionHeader}>
               {t('firstRun.suggestions.demo.perInstrumentHeader')}
             </div>
           )}

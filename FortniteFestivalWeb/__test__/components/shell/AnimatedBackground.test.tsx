@@ -14,6 +14,24 @@ function makeSong(id: string, albumArt?: string): Song {
   } as Song;
 }
 
+/** Find layer divs (have backgroundSize: cover from abStyles.layer). */
+function findLayers(el: HTMLElement): HTMLElement[] {
+  const wrapper = el.firstElementChild;
+  if (!wrapper) return [];
+  return Array.from(wrapper.children).filter(
+    (c) => (c as HTMLElement).style.backgroundSize === 'cover',
+  ) as HTMLElement[];
+}
+
+/** Find the dim overlay (has backgroundColor, no backgroundSize). */
+function findDim(el: HTMLElement): HTMLElement | null {
+  const wrapper = el.firstElementChild;
+  if (!wrapper) return null;
+  return (Array.from(wrapper.children).find(
+    (c) => !!(c as HTMLElement).style.backgroundColor && !(c as HTMLElement).style.backgroundSize,
+  ) as HTMLElement) ?? null;
+}
+
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   // Stub Web Animations API
@@ -43,36 +61,36 @@ describe('AnimatedBackground', () => {
   it('renders a single layer when only one image is available', () => {
     const songs = [makeSong('s1')];
     const { container } = render(<AnimatedBackground songs={songs} />);
-    const layers = container.querySelectorAll('[class*="layer"]');
+    const layers = findLayers(container);
     expect(layers.length).toBe(1);
   });
 
   it('renders two layers when multiple images are available', () => {
     const songs = [makeSong('s1'), makeSong('s2'), makeSong('s3')];
     const { container } = render(<AnimatedBackground songs={songs} />);
-    const layers = container.querySelectorAll('[class*="layer"]');
+    const layers = findLayers(container);
     expect(layers.length).toBe(2);
   });
 
   it('renders dim overlay with specified opacity', () => {
     const songs = [makeSong('s1')];
     const { container } = render(<AnimatedBackground songs={songs} dimOpacity={0.5} />);
-    const dim = container.querySelector('[class*="dim"]');
+    const dim = findDim(container);
     expect(dim).toBeTruthy();
-    expect((dim as HTMLElement).style.opacity).toBe('0.5');
+    expect(dim!.style.opacity).toBe('0.5');
   });
 
   it('uses default 0.7 dim opacity', () => {
     const songs = [makeSong('s1')];
     const { container } = render(<AnimatedBackground songs={songs} />);
-    const dim = container.querySelector('[class*="dim"]');
+    const dim = findDim(container);
     expect((dim as HTMLElement).style.opacity).toBe('0.7');
   });
 
   it('sets background image on layer A', () => {
     const songs = [makeSong('s1', 'https://example.com/art.jpg')];
     const { container } = render(<AnimatedBackground songs={songs} />);
-    const layer = container.querySelector('[class*="layer"]') as HTMLElement;
+    const layer = findLayers(container)[0]!;
     expect(layer.style.backgroundImage).toContain('https://example.com/art.jpg');
   });
 
@@ -86,9 +104,9 @@ describe('AnimatedBackground', () => {
     const songs = [makeSong('s1'), makeSong('s2'), makeSong('s3')];
     const { container } = render(<AnimatedBackground songs={songs} />);
 
-    const layers = container.querySelectorAll('[class*="layer"]');
-    const layerA = layers[0] as HTMLElement;
-    const layerB = layers[1] as HTMLElement;
+    const layers = findLayers(container);
+    const layerA = layers[0]!;
+    const layerB = layers[1]!;
 
     // Initially A is visible, B is hidden
     expect(layerA.style.opacity).toBe('1');
@@ -151,7 +169,7 @@ describe('AnimatedBackground', () => {
     ];
     const { container } = render(<AnimatedBackground songs={songs} />);
     // Should render — only images with albumArt are used
-    const layers = container.querySelectorAll('[class*="layer"]');
+    const layers = findLayers(container);
     expect(layers.length).toBe(2);
   });
 
@@ -166,7 +184,7 @@ describe('AnimatedBackground', () => {
     act(() => { vi.advanceTimersByTime(1100); });
 
     // Should still be rendering
-    const layers = container.querySelectorAll('[class*="layer"]');
+    const layers = findLayers(container);
     expect(layers.length).toBe(2);
   });
 
@@ -182,7 +200,7 @@ describe('AnimatedBackground', () => {
     const songs2 = [makeSong('s3'), makeSong('s4'), makeSong('s5')];
     const { rerender, container } = render(<AnimatedBackground songs={songs1} />);
     rerender(<AnimatedBackground songs={songs2} />);
-    const layers = container.querySelectorAll('[class*="layer"]');
+    const layers = findLayers(container);
     expect(layers.length).toBe(2);
   });
 });

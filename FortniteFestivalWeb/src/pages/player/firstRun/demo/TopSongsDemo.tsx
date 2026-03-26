@@ -3,12 +3,13 @@
  * First-run demo: Top songs list using production PlayerSongRow components.
  * Pulls real songs from the catalog via useDemoSongs and assigns static percentiles.
  */
-import { Layout, STAGGER_INTERVAL } from '@festival/theme';
+import { useMemo, type CSSProperties } from 'react';
+import { Layout, Opacity, CssValue, PointerEvents, CssProp, STAGGER_INTERVAL, transition } from '@festival/theme';
 import PlayerSongRow from '../../components/PlayerSongRow';
 import { useDemoSongs, FADE_MS } from '../../../../hooks/data/useDemoSongs';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
-import css from '../../components/TopSongsSection.module.css';
+import { topSongsStyles } from '../../components/TopSongsSection';
 
 /* v8 ignore start -- NOOP is passed as prop but never invoked in test (pointerEvents: none) */
 const NOOP = (e: React.MouseEvent) => e.preventDefault();
@@ -33,16 +34,13 @@ export default function TopSongsDemo() {
   });
 
   const visible = rows.slice(0, maxRows);
+  const s = useStyles(visible.length, fadingIdx, initialDone);
 
   return (
-    <div style={{ width: '100%', pointerEvents: 'none' }}>
-      <div className={css.songList}>
-        {visible.map((song, i) => {
-          const fadeStyle = initialDone
-            ? { opacity: fadingIdx.has(i) ? 0 : 1, transition: `opacity ${FADE_MS}ms ease` }
-            : { opacity: 0, animation: `fadeInUp ${FADE_MS}ms ease-out ${(i + 1) * STAGGER_INTERVAL}ms forwards` };
-          return (
-            <div key={i} style={fadeStyle}>
+    <div style={s.wrapper}>
+      <div style={topSongsStyles.songList}>
+        {visible.map((song, i) => (
+            <div key={i} style={s.rows[i]}>
               <PlayerSongRow
                 songId={`demo-${i}`}
                 href="#"
@@ -54,9 +52,24 @@ export default function TopSongsDemo() {
                 onClick={NOOP}
               />
             </div>
-          );
-        })}
+        ))}
       </div>
     </div>
   );
+}
+
+function useStyles(count: number, fadingIdx: Set<number>, initialDone: boolean) {
+  return useMemo(() => {
+    const rows: CSSProperties[] = [];
+    for (let i = 0; i < count; i++) {
+      rows.push(initialDone
+        ? { opacity: fadingIdx.has(i) ? Opacity.none : 1, transition: transition(CssProp.opacity, FADE_MS) }
+        : { opacity: Opacity.none, animation: `fadeInUp ${FADE_MS}ms ease-out ${(i + 1) * STAGGER_INTERVAL}ms forwards` },
+      );
+    }
+    return {
+      wrapper: { width: CssValue.full, pointerEvents: PointerEvents.none } as CSSProperties,
+      rows,
+    };
+  }, [count, fadingIdx, initialDone]);
 }

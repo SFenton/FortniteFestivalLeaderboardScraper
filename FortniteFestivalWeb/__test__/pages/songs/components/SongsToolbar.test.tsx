@@ -39,7 +39,7 @@ describe('SongsToolbar', () => {
   it('hides filter pill when hasPlayer is false', () => {
     render(<SongsToolbar {...defaults} hasPlayer={false} />);
     const filterBtn = screen.getByLabelText(/filter/i);
-    expect(filterBtn.parentElement!.className).toContain('Hidden');
+    expect(filterBtn.parentElement!.style.opacity).toBe('0');
   });
 
   it('shows filtered count when filtersActive and counts differ', () => {
@@ -55,7 +55,8 @@ describe('SongsToolbar', () => {
   it('passes sortActive to sort pill', () => {
     render(<SongsToolbar {...defaults} sortActive />);
     const sortBtn = screen.getByLabelText(/sort/i);
-    expect(sortBtn.className).toContain('Active');
+    // Active pill has backgroundImage: 'none' (frosted noise removed)
+    expect(sortBtn.style.backgroundImage).toBe('none');
   });
 });
 
@@ -123,7 +124,8 @@ describe('SongsToolbar — instrument transition effects', () => {
   it('fades in instrument icon when instrument changes from null', () => {
     const { container, rerender } = render(<SongsToolbar {...baseProps} instrument={null} />);
     rerender(<SongsToolbar {...baseProps} instrument={'Solo_Guitar' as ServerInstrumentKey} />);
-    expect(container.querySelector('[class*="instSlot"]')).toBeTruthy();
+    // Instrument icon slot renders — verify by finding the instrument SVG/icon
+    expect(container.querySelector('svg')).toBeTruthy();
   });
 
   it('fades out instrument icon when instrument is removed', () => {
@@ -179,6 +181,7 @@ describe('SongsToolbar — instrument transition effects', () => {
   it('shows active filter styling', () => {
     render(<SongsToolbar {...baseProps} hasPlayer filtersActive />);
     const filterBtn = screen.getByLabelText(/filter/i);
-    expect(filterBtn.className).toContain('Active');
+    // Active pill has backgroundImage: 'none' (frosted noise removed)
+    expect(filterBtn.style.backgroundImage).toBe('none');
   });
 });

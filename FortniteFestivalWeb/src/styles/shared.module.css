@@ -16,11 +16,6 @@
     0 4px 20px rgba(0,0,0,0.4);
 }
 
-.frostedCardLight {
-  background-color: var(--color-surface-frosted);
-  border: 1px solid var(--color-glass-border);
-}
-
 /* ── Purple glass (opaque, no grain) ── */
 
 .purpleGlass {
@@ -102,9 +97,7 @@
 
 .scrollContainer {
   flex: 1;
-  overflow-y: auto;
-  overscroll-behavior-y: contain;
-  -webkit-overflow-scrolling: touch;
+  min-height: 0;
 }
 
 .pageContent {

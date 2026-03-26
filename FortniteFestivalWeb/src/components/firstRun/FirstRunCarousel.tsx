@@ -1,12 +1,68 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, useLayoutEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useState, useRef, useCallback, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoClose, IoChevronBack, IoChevronForward } from 'react-icons/io5';
-import { TRANSITION_MS, FAST_FADE_MS, SWIPE_THRESHOLD, STAGGER_INTERVAL, Size } from '@festival/theme';
+import { TRANSITION_MS, FAST_FADE_MS, SWIPE_THRESHOLD, STAGGER_INTERVAL, Size, Colors, Gap, Radius, Font, Weight, Layout, MetadataSize, modalOverlay, modalCard, flexColumn, flexCenter, padding, transition, transitions } from '@festival/theme';
 import type { FirstRunSlideDef } from '../../firstRun/types';
 import { SlideHeightContext } from '../../firstRun/SlideHeightContext';
 import FadeIn from '../page/FadeIn';
-import css from './FirstRunCarousel.module.css';
+import { useIsMobile } from '../../hooks/ui/useIsMobile';
+
+/* ── Inline styles (replaces FirstRunCarousel.module.css) ── */
+const S = {
+  overlay: { ...modalOverlay, zIndex: 1300, padding: Gap.section } as CSSProperties,
+  card: {
+    ...modalCard, borderRadius: Radius.lg, width: '100%',
+    maxWidth: Layout.carouselMaxWidth, height: Layout.carouselHeight,
+    maxHeight: Layout.carouselMaxHeight, minHeight: Layout.carouselMinHeight,
+    display: 'flex', flexDirection: 'column' as const,
+    overflow: 'hidden', position: 'relative' as const,
+  } as CSSProperties,
+  cardMobile: { height: Layout.carouselHeightMobile, maxHeight: Layout.carouselMaxHeightMobile } as CSSProperties,
+  closeRow: { display: 'flex', justifyContent: 'flex-end', padding: padding(Gap.xl, Gap.xl, 0), flexShrink: 0 } as CSSProperties,
+  closeBtn: {
+    width: Layout.buttonCloseSize, height: Layout.buttonCloseSize,
+    borderRadius: '50%', background: Colors.surfaceElevated,
+    border: `1px solid ${Colors.borderPrimary}`, color: Colors.textSecondary,
+    ...flexCenter, cursor: 'pointer', flexShrink: 0, lineHeight: 0, padding: 0,
+  } as CSSProperties,
+  slideArea: { flex: 2, ...flexColumn, alignItems: 'center', justifyContent: 'center', padding: padding(Gap.md, Gap.section, 0), minHeight: 0 } as CSSProperties,
+  slideContent: { width: '100%', ...flexColumn, alignItems: 'center' } as CSSProperties,
+  fadeOut: { opacity: 0, transition: transition('opacity', FAST_FADE_MS, 'ease-in') } as CSSProperties,
+  textArea: { flex: 1, ...flexColumn, alignItems: 'center', justifyContent: 'center', gap: Gap.lg, padding: padding(0, Gap.section, Gap.md), textAlign: 'center' as const, minHeight: 0 } as CSSProperties,
+  slideTitle: { fontSize: Font.xl, fontWeight: Weight.bold, margin: 0, color: Colors.textPrimary } as CSSProperties,
+  slideDescription: { fontSize: Font.md, color: Colors.textSecondary, lineHeight: 1.5, margin: 0 } as CSSProperties,
+  paginationRow: { ...flexCenter, gap: Gap.lg, padding: padding(Gap.xl, Gap.section), flexShrink: 0 } as CSSProperties,
+  arrowBtn: {
+    width: Layout.buttonNavSize, height: Layout.buttonNavSize,
+    borderRadius: '50%', background: Colors.surfaceElevated,
+    border: `1px solid ${Colors.borderPrimary}`, color: Colors.textSecondary,
+    ...flexCenter, cursor: 'pointer', flexShrink: 0,
+    transition: transition('opacity', FAST_FADE_MS), lineHeight: 0, padding: 0,
+  } as CSSProperties,
+  arrowBtnDisabled: {
+    width: Layout.buttonNavSize, height: Layout.buttonNavSize,
+    borderRadius: '50%', background: Colors.surfaceElevated,
+    border: `1px solid ${Colors.borderPrimary}`, color: Colors.textSecondary,
+    ...flexCenter, cursor: 'default', flexShrink: 0,
+    transition: transition('opacity', FAST_FADE_MS), lineHeight: 0, padding: 0,
+    opacity: 0.3, pointerEvents: 'none' as const,
+  } as CSSProperties,
+  dotsWrap: { display: 'flex', alignItems: 'center', gap: Gap.sm } as CSSProperties,
+  dot: {
+    width: MetadataSize.dotSize, height: MetadataSize.dotSize,
+    borderRadius: '50%', backgroundColor: Colors.surfaceMuted,
+    transition: transitions(transition('background-color', FAST_FADE_MS), transition('transform', FAST_FADE_MS)),
+    border: 'none', padding: 0, cursor: 'pointer',
+  } as CSSProperties,
+  dotActive: {
+    width: MetadataSize.dotSize, height: MetadataSize.dotSize,
+    borderRadius: '50%', backgroundColor: Colors.accentBlue,
+    transition: transitions(transition('background-color', FAST_FADE_MS), transition('transform', FAST_FADE_MS)),
+    border: 'none', padding: 0, cursor: 'pointer',
+    transform: `scale(${MetadataSize.dotActiveScale})`,
+  } as CSSProperties,
+};
 
 type FirstRunCarouselProps = {
   slides: FirstRunSlideDef[];
@@ -17,6 +73,7 @@ type FirstRunCarouselProps = {
 
 export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: FirstRunCarouselProps) {
   const { t } = useTranslation();
+  const isMobile = useIsMobile();
   const [animIn, setAnimIn] = useState(false);
   const [animOut, setAnimOut] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -138,6 +195,7 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
   const titleDelay = staggerCount * STAGGER_INTERVAL;
   const descDelay = (staggerCount + 1) * STAGGER_INTERVAL;
 
+  const cardBase = isMobile ? { ...S.card, ...S.cardMobile } : S.card;
   /* v8 ignore start -- animation style branches depend on requestAnimationFrame timing */
   const overlayOpacity = animOut ? 0 : (animIn ? 1 : 0);
   const cardStyle = animOut
@@ -149,41 +207,39 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
 
   return (
     <div
-      className={css.overlay}
-      style={{ opacity: overlayOpacity, transition: `opacity ${TRANSITION_MS}ms ease`, pointerEvents: animOut ? 'none' : undefined }}
+      style={{ ...S.overlay, opacity: overlayOpacity, transition: `opacity ${TRANSITION_MS}ms ease`, pointerEvents: animOut ? 'none' : undefined }}
       onClick={handleDismiss}
     >
       <div
-        className={css.card}
-        style={cardStyle}
+        style={{ ...cardBase, ...cardStyle }}
         onClick={e => e.stopPropagation()}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
         {/* Close button â€” own flex row so content never overlaps */}
-        <div className={css.closeRow}>
-          <button className={css.closeBtn} onClick={handleDismiss} aria-label={t('common.close')}>
+        <div style={S.closeRow}>
+          <button style={S.closeBtn} onClick={handleDismiss} aria-label={t('common.close')}>
             <IoClose size={Size.iconFab} />
           </button>
         </div>
 
         {/* Slide content â€” ResizeObserver measures height, context provides it to children */}
-        <div ref={slideAreaRef} className={css.slideArea}>
+        <div ref={slideAreaRef} style={S.slideArea}>
           <SlideHeightContext.Provider value={slideHeight}>
-            <div key={slideKey} className={`${css.slideContent}${fading ? ` ${css.slideFadeOut}` : ''}`}>
+            <div key={slideKey} style={fading ? { ...S.slideContent, ...S.fadeOut } : S.slideContent}>
               {entranceDone && slide.render()}
             </div>
           </SlideHeightContext.Provider>
         </div>
 
         {/* Title + description */}
-        <div className={`${css.textArea}${fading ? ` ${css.slideFadeOut}` : ''}`}>
+        <div style={fading ? { ...S.textArea, ...S.fadeOut } : S.textArea}>
           {entranceDone && (
             <>
               <FadeIn
                 as="h2"
                 key={`title-${slideKey}`}
-                className={css.slideTitle}
+                style={S.slideTitle}
                 delay={titleDelay}
               >
                 {t(slide.title)}
@@ -191,7 +247,7 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
               <FadeIn
                 as="p"
                 key={`desc-${slideKey}`}
-                className={css.slideDescription}
+                style={S.slideDescription}
                 delay={descDelay}
               >
                 {t(slide.description)}
@@ -201,9 +257,9 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
         </div>
 
         {/* Pagination */}
-        <div className={css.paginationRow}>
+        <div style={S.paginationRow}>
           <button
-            className={isFirst ? css.arrowBtnDisabled : css.arrowBtn}
+            style={isFirst ? S.arrowBtnDisabled : S.arrowBtn}
             onClick={goBack}
             disabled={isFirst}
             aria-label={t('aria.backOneEntry')}
@@ -211,11 +267,11 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
             <IoChevronBack size={Size.iconFab} />
           </button>
 
-          <div className={css.dotsWrap}>
+          <div style={S.dotsWrap}>
             {slides.map((_, i) => (
               <button
                 key={i}
-                className={i === currentIndex ? css.dotActive : css.dot}
+                style={i === currentIndex ? S.dotActive : S.dot}
                 onClick={() => { if (i !== currentIndex) navigateTo(i); }}
                 aria-label={`Slide ${i + 1}`}
               />
@@ -223,7 +279,7 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
           </div>
 
           <button
-            className={isLast ? css.arrowBtnDisabled : css.arrowBtn}
+            style={isLast ? S.arrowBtnDisabled : S.arrowBtn}
             onClick={goForward}
             disabled={isLast}
             aria-label={t('aria.forwardOneEntry')}

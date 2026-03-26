@@ -1,11 +1,11 @@
+/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 /**
  * Shared song info block: album art thumbnail + title + artist · year.
  * Used across song rows, player song rows, and suggestion cards.
  */
-import { memo } from 'react';
-import { Size } from '@festival/theme';
+import { memo, useMemo } from 'react';
+import { Colors, Font, Gap, Size, Weight, truncate, flexColumn } from '@festival/theme';
 import AlbumArt from './AlbumArt';
-import css from './SongInfo.module.css';
 
 export interface SongInfoProps {
   albumArt?: string;
@@ -15,15 +15,37 @@ export interface SongInfoProps {
 }
 
 const SongInfo = memo(function SongInfo({ albumArt, title, artist, year }: SongInfoProps) {
+  const s = useStyles();
   return (
     <>
       <AlbumArt src={albumArt} size={Size.thumb} />
-      <div className={css.text}>
-        <span className={css.title}>{title}</span>
-        <span className={css.artist}>{artist}{year ? ` \u00b7 ${year}` : ''}</span>
+      <div style={s.text}>
+        <span style={s.title}>{title}</span>
+        <span style={s.artist}>{artist}{year ? ` \u00b7 ${year}` : ''}</span>
       </div>
     </>
   );
 });
 
 export default SongInfo;
+
+function useStyles() {
+  return useMemo(() => ({
+    text: {
+      ...flexColumn,
+      gap: Gap.xs,
+      minWidth: 0,
+      flex: 1,
+    },
+    title: {
+      ...truncate,
+      fontSize: Font.md,
+      fontWeight: Weight.semibold,
+    },
+    artist: {
+      ...truncate,
+      fontSize: Font.sm,
+      color: Colors.textSubtle,
+    },
+  }), []);
+}

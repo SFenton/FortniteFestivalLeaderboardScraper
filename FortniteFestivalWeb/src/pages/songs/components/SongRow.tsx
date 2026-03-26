@@ -7,6 +7,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { IoBagHandle, IoChevronForward } from 'react-icons/io5';
 import { formatPercentileBucket } from '@festival/core';
 import type { ServerSong as Song, PlayerScore, SongDifficulty, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { Colors, Gap, Radius, Font, Weight, Size, frostedCard, flexRow, flexColumn, flexCenter, truncate, WhiteSpace, Overflow, TextAlign, Cursor, CssValue, Align, Justify, Display, Position, Layout, BorderStyle, padding } from '@festival/theme';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../../../components/display/InstrumentIcons';
 import AccuracyDisplay from '../../../components/songs/metadata/AccuracyDisplay';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
@@ -16,7 +17,7 @@ import MiniStars from '../../../components/songs/metadata/MiniStars';
 import DifficultyBars from '../../../components/songs/metadata/DifficultyBars';
 import ScorePill from '../../../components/songs/metadata/ScorePill';
 import type { SongSortMode } from '../../../utils/songSettings';
-import s from './SongRow.module.css';
+import css from './SongRow.module.css';
 
 const INSTRUMENT_DIFFICULTY_KEY: Record<string, keyof SongDifficulty> = {
   Solo_Guitar: 'guitar',
@@ -77,9 +78,10 @@ type MetadataEntry = { key: string; el: React.ReactNode };
 
 /* v8 ignore start — internal presentation component */
 function MetadataBottomRow({ entries }: { entries: MetadataEntry[] }) {
+  const s = useStyles();
   if (entries.length === 0) return null;
   return (
-    <div className={s.metadataWrap}>
+    <div style={s.metadataWrap}>
       {entries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}
     </div>
   );
@@ -147,6 +149,7 @@ export const SongRow = memo(function SongRow({ song,
   /** When set, the row links to this external URL in a new tab instead of routing internally. */
   externalHref?: string;
 }) {
+  const s = useStyles();
   const instrumentChips = useMemo(() => {
     if (!showInstrumentIcons || instrumentFilter != null) return null;
     return enabledInstruments.map(key => {
@@ -197,8 +200,8 @@ export const SongRow = memo(function SongRow({ song,
   }, [score, displayOrder, songIntensityRaw, instrumentChips]);
 
   /* v8 ignore start -- computed rendering variables with ternaries */
-  const rowClass = isMobile ? s.rowMobile : s.row;
-  const rowClassName = shopHighlight ? `${rowClass} ${s.shopHighlight}` : rowClass;
+  const rowStyle = isMobile ? s.rowMobile : s.row;
+  const rowClassName = shopHighlight ? css.shopHighlight : undefined;
 
   const songInfo = <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} />;
 
@@ -209,16 +212,16 @@ export const SongRow = memo(function SongRow({ song,
     : undefined;
 
   const externalIndicator = externalHref ? (
-    <div className={s.externalIndicator}>
+    <div style={s.externalIndicator}>
       <IoBagHandle size={16} />
       <IoChevronForward size={14} />
     </div>
   ) : null;
 
   const chipRow = instrumentChips && instrumentChips.length > 0 ? (
-    <div className={s.instrumentStatusRow}>
+    <div style={s.instrumentStatusRow}>
       {instrumentChips.map(c => (
-        <div key={c.key} className={s.instrumentStatusChip} style={{ backgroundColor: c.fill, borderColor: c.stroke }}>
+        <div key={c.key} style={{ ...s.instrumentStatusChip, backgroundColor: c.fill, borderColor: c.stroke }}>
           <InstrumentIcon instrument={c.key} size={24} />
         </div>
       ))}
@@ -232,21 +235,22 @@ export const SongRow = memo(function SongRow({ song,
     const scoreEntry = primaryKey ? entries.find(e => e.key === primaryKey) : null;
     const bottomEntries = primaryKey ? entries.filter(e => e.key !== primaryKey) : entries;
     /* v8 ignore stop */
+    const mergedStyle = animStyle ? { ...rowStyle, ...animStyle } : rowStyle;
     return (
       externalHref ? (
-        <a ref={linkRef as React.Ref<HTMLAnchorElement>} {...linkProps} className={rowClassName} style={animStyle} onAnimationEnd={handleAnimEnd}>
-          <div className={s.mobileTopRow}>
+        <a ref={linkRef as React.Ref<HTMLAnchorElement>} {...linkProps} className={rowClassName} style={mergedStyle} onAnimationEnd={handleAnimEnd}>
+          <div style={s.mobileTopRow}>
             {songInfo}
-            {scoreEntry && <div className={s.detailStrip}>{scoreEntry.el}</div>}
+            {scoreEntry && <div style={s.detailStrip}>{scoreEntry.el}</div>}
           </div>
           {bottomEntries.length > 0 && <MetadataBottomRow entries={bottomEntries} />}
           {externalIndicator}
         </a>
       ) : (
-      <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={animStyle} onAnimationEnd={handleAnimEnd}>
-        <div className={s.mobileTopRow}>
+      <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={mergedStyle} onAnimationEnd={handleAnimEnd}>
+        <div style={s.mobileTopRow}>
           {songInfo}
-          {scoreEntry && <div className={s.detailStrip}>{scoreEntry.el}</div>}
+          {scoreEntry && <div style={s.detailStrip}>{scoreEntry.el}</div>}
         </div>
         {bottomEntries.length > 0 && <MetadataBottomRow entries={bottomEntries} />}
       </Link>
@@ -255,16 +259,17 @@ export const SongRow = memo(function SongRow({ song,
   }
 
   if (isMobile && chipRow) {
+    const mergedChipStyle = animStyle ? { ...rowStyle, ...animStyle } : rowStyle;
     return (
       externalHref ? (
         /* v8 ignore start -- external href mobile render */
-        <a ref={linkRef as React.Ref<HTMLAnchorElement>} {...linkProps} className={rowClassName} style={animStyle} onAnimationEnd={handleAnimEnd}>
-          <div className={s.mobileTopRow}>
+        <a ref={linkRef as React.Ref<HTMLAnchorElement>} {...linkProps} className={rowClassName} style={mergedChipStyle} onAnimationEnd={handleAnimEnd}>
+          <div style={s.mobileTopRow}>
             {songInfo}
           </div>
-          <div className={s.instrumentStatusRow} style={{ justifyContent: 'center' }}>
+          <div style={{ ...s.instrumentStatusRow, justifyContent: Justify.center }}>
             {instrumentChips!.map(c => (
-              <div key={c.key} className={s.instrumentStatusChip} style={{ backgroundColor: c.fill, borderColor: c.stroke }}>
+              <div key={c.key} style={{ ...s.instrumentStatusChip, backgroundColor: c.fill, borderColor: c.stroke }}>
                 <InstrumentIcon instrument={c.key} size={24} />
               </div>
             ))}
@@ -272,13 +277,13 @@ export const SongRow = memo(function SongRow({ song,
           {externalIndicator}
         </a>
       ) : (
-      <Link ref={linkRef} to={`/songs/${song.songId}`} state={{ backTo: location.pathname }} className={rowClassName} style={animStyle} onAnimationEnd={handleAnimEnd}>
-        <div className={s.mobileTopRow}>
+      <Link ref={linkRef} to={`/songs/${song.songId}`} state={{ backTo: location.pathname }} className={rowClassName} style={mergedChipStyle} onAnimationEnd={handleAnimEnd}>
+        <div style={s.mobileTopRow}>
           {songInfo}
         </div>
-        <div className={s.instrumentStatusRow} style={{ justifyContent: 'center' }}>
+        <div style={{ ...s.instrumentStatusRow, justifyContent: Justify.center }}>
           {instrumentChips!.map(c => (
-            <div key={c.key} className={s.instrumentStatusChip} style={{ backgroundColor: c.fill, borderColor: c.stroke }}>
+            <div key={c.key} style={{ ...s.instrumentStatusChip, backgroundColor: c.fill, borderColor: c.stroke }}>
               <InstrumentIcon instrument={c.key} size={24} />
             </div>
           ))}
@@ -288,14 +293,15 @@ export const SongRow = memo(function SongRow({ song,
     );
   }
 
+  const desktopStyle = animStyle ? { ...rowStyle, ...animStyle } : rowStyle;
   return (
     externalHref ? (
       /* v8 ignore start -- external href desktop render */
-      <a ref={linkRef as React.Ref<HTMLAnchorElement>} {...linkProps} className={rowClassName} style={animStyle} onAnimationEnd={handleAnimEnd}>
+      <a ref={linkRef as React.Ref<HTMLAnchorElement>} {...linkProps} className={rowClassName} style={desktopStyle} onAnimationEnd={handleAnimEnd}>
         {songInfo}
         {chipRow}
         {entries.length > 0 && (
-          <div className={s.scoreMeta}>
+          <div style={s.scoreMeta}>
             {entries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}
           </div>
         )}
@@ -303,11 +309,11 @@ export const SongRow = memo(function SongRow({ song,
       </a>
       /* v8 ignore stop */
     ) : (
-    <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={animStyle} onAnimationEnd={handleAnimEnd}>
+    <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={desktopStyle} onAnimationEnd={handleAnimEnd}>
       {songInfo}
       {chipRow}
       {entries.length > 0 && (
-        <div className={s.scoreMeta}>
+        <div style={s.scoreMeta}>
           {entries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}
         </div>
       )}
@@ -315,3 +321,20 @@ export const SongRow = memo(function SongRow({ song,
     )
   );
 });
+
+function useStyles() {
+  return useMemo(() => ({
+    row: { ...frostedCard, ...flexRow, gap: Gap.xl, padding: padding(0, Gap.xl), height: Layout.playerSongRowHeight, borderRadius: Radius.md, textDecoration: CssValue.none, color: CssValue.inherit } as CSSProperties,
+    rowMobile: { ...frostedCard, ...flexColumn, gap: Gap.md, padding: padding(Gap.lg, Gap.xl), borderRadius: Radius.md, textDecoration: CssValue.none, color: CssValue.inherit } as CSSProperties,
+    mobileTopRow: { ...flexRow, gap: Gap.xl } as CSSProperties,
+    detailStrip: { ...flexRow, gap: Gap.xl, flexShrink: 0, marginLeft: CssValue.auto } as CSSProperties,
+    metadataWrap: { display: Display.flex, flexWrap: 'wrap', alignItems: Align.center, justifyContent: Justify.end, gap: Gap.lg } as CSSProperties,
+    instrumentStatusRow: { display: Display.flex, gap: Gap.sm, alignItems: Align.center, flexShrink: 0 } as CSSProperties,
+    instrumentStatusChip: { width: Size.instrumentBtn, height: Size.instrumentBtn, borderRadius: CssValue.circle, borderWidth: Gap.xs, borderStyle: BorderStyle.solid, ...flexCenter } as CSSProperties,
+    rowText: { ...flexColumn, gap: Gap.xs, minWidth: 0, flex: 1 } as CSSProperties,
+    rowTitle: { fontSize: Font.md, fontWeight: Weight.semibold, ...truncate } as CSSProperties,
+    rowArtist: { fontSize: Font.sm, color: Colors.textSubtle, ...truncate } as CSSProperties,
+    scoreMeta: { ...flexRow, gap: Gap.xl, flexShrink: 0 } as CSSProperties,
+    externalIndicator: { ...flexRow, gap: Gap.xs, flexShrink: 0, marginLeft: CssValue.auto, color: Colors.textSubtle } as CSSProperties,
+  }), []);
+}

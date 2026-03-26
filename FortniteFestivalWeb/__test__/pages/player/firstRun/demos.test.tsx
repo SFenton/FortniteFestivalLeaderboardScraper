@@ -233,7 +233,10 @@ describe('TopSongsDemo', () => {
       pool: DEMO_SONGS,
     };
     const { container } = wrap(<TopSongsDemo />);
-    const firstRow = container.querySelector('[class*="songList"]')!.firstChild as HTMLElement;
+    // The songList div is the first div inside the wrapper div (which has pointerEvents: none)
+    const wrapper = container.querySelector('div[style*="pointer-events"]')!;
+    const songListDiv = wrapper.firstElementChild!;
+    const firstRow = songListDiv.firstChild as HTMLElement;
     expect(firstRow.style.opacity).toBe('0');
     expect(firstRow.style.animation).toContain('fadeInUp');
   });
@@ -246,7 +249,9 @@ describe('TopSongsDemo', () => {
       pool: DEMO_SONGS,
     };
     const { container } = wrap(<TopSongsDemo />);
-    const firstRow = container.querySelector('[class*="songList"]')!.firstChild as HTMLElement;
+    const wrapper = container.querySelector('div[style*="pointer-events"]')!;
+    const songListDiv = wrapper.firstElementChild!;
+    const firstRow = songListDiv.firstChild as HTMLElement;
     expect(firstRow.style.opacity).toBe('0');
   });
 

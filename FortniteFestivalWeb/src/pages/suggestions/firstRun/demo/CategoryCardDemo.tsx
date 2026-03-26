@@ -2,13 +2,12 @@
  * First-run demo: A single CategoryCard that rotates between category types
  * every 5 seconds with a fade-out/in transition. Uses real songs from the catalog.
  */
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, type CSSProperties } from 'react';
 import type { SuggestionCategory, SuggestionSongItem } from '@festival/core/suggestions/types';
 import { CategoryCard } from '../../components/CategoryCard';
 import { useFestival } from '../../../../contexts/FestivalContext';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
-import { FADE_DURATION, DEMO_SWAP_INTERVAL_MS } from '@festival/theme';
-import css from './CategoryCardDemo.module.css';
+import { FADE_DURATION, DEMO_SWAP_INTERVAL_MS, CssValue, PointerEvents, Gap, Opacity, transition, translateY, CssProp, transitions } from '@festival/theme';
 
 // Card header (padding + content + border) + card bottom margin
 const CARD_OVERHEAD = 96;
@@ -117,12 +116,32 @@ export default function CategoryCardDemo() {
   }, [apiSongs, maxSongs, templateIdx]);
 
   const emptyScores = useMemo(() => ({}), []);
+  const s = useStyles(visible);
 
   return (
     /* v8 ignore start -- visible state depends on rAF callback */
-    <div className={`${css.wrapper} ${visible ? css.visible : css.hidden}`}>
+    <div style={s.wrapper}>
     {/* v8 ignore stop */}
       <CategoryCard category={category} albumArtMap={albumArtMap} scoresIndex={emptyScores} />
     </div>
   );
+}
+
+function useStyles(visible: boolean) {
+  return useMemo(() => {
+    const trans = transitions(
+      transition(CssProp.opacity, FADE_DURATION),
+      transition(CssProp.transform, FADE_DURATION),
+    );
+    return {
+      wrapper: {
+        width: CssValue.full,
+        pointerEvents: PointerEvents.none,
+        marginBottom: -Gap.section,
+        transition: trans,
+        opacity: visible ? 1 : Opacity.none,
+        transform: visible ? translateY(0) : translateY(8),
+      } as CSSProperties,
+    };
+  }, [visible]);
 }

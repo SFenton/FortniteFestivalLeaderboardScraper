@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useSearchParams, useNavigationType, useLocation } from 'react-router-dom';
 import { useFestival } from '../../contexts/FestivalContext';
@@ -11,18 +11,21 @@ import {
   type PlayerScore,
   type ServerScoreHistoryEntry as ScoreHistoryEntry,
 } from '@festival/core/api/serverTypes';
-import { Gap } from '@festival/theme';
+import { Gap, Colors, Font, Layout, MaxWidth, Position, ZIndex, Display, Overflow, Align, Justify, CssValue, flexCenter, flexColumn, padding, GridTemplate, SPINNER_FADE_MS } from '@festival/theme';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import BackgroundImage from '../../components/page/BackgroundImage';
-import s from './SongDetailPage.module.css';
+import Page, { usePageScrollRef } from '../Page';
 import ScoreHistoryChart from './components/chart/ScoreHistoryChart';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../../hooks/ui/useStaggerRush';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useFabSearch } from '../../contexts/FabSearchContext';
+import { useStagger } from '../../hooks/ui/useStagger';
+import PageHeader from '../../components/common/PageHeader';
 import { useScoreFilter } from '../../hooks/data/useScoreFilter';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
+import { LoadPhase } from '@festival/core';
 import PathsModal from './components/path/PathsModal';
 import SongDetailHeader from './components/SongDetailHeader';
 import InstrumentCard from './components/InstrumentCard';
@@ -101,7 +104,7 @@ export default function SongDetailPage() {
   /* v8 ignore stop */
 
   const song = songs.find((s) => s.songId === songId);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollRef = usePageScrollRef();
 
   /* v8 ignore start — async data fetch effects with cancellation */
   // Fetch player scores
@@ -226,33 +229,34 @@ export default function SongDetailPage() {
     return `${maxLen}ch`;
   }, [activeInstruments, instrumentData, filteredPlayerScores, filteredScoreHistory]);
 
-  // Transition: spinner fade-out â†’ staggered content fade-in
+  // Transition: spinner fade-out → staggered content fade-in
   // phase: 'loading' | 'spinnerOut' | 'contentIn'
   const allCached = !!cached && (!player || hasCachedPlayer);
   // Skip animations only when returning to a cached page (not on fresh PUSH).
-  // Frozen at mount time â€” the cache getting written mid-lifecycle should not flip this.
+  // Frozen at mount time — the cache getting written mid-lifecycle should not flip this.
   const skipAnimRef = useRef(allCached && navType !== 'PUSH');
   const skipAnim = skipAnimRef.current;
   const { phase } = useLoadPhase(allReady, { skipAnimation: allCached });
+  const { forDelay: stagger, clearAnim } = useStagger(!skipAnim);
   const hasFab = useIsMobile();
   const [headerCollapsed, setHeaderCollapsed] = useState(hasFab || (skipAnim && (cached?.scrollTop ?? 0) > 40));
-  const updateScrollMask = useScrollMask(scrollRef, [phase, activeInstruments.length]);
+  useScrollMask(scrollRef, [phase, activeInstruments.length]);
   const userScrolledRef = useRef(false);
-  const { rushOnScroll } = useStaggerRush(scrollRef);
-  /* v8 ignore start — scroll handler with cache update */
-  const handleScroll = useCallback(() => {
-    updateScrollMask();
-    rushOnScroll();
-    userScrolledRef.current = true;
-    if (songId) {
-      const entry = songDetailCache.get(songId);
-      if (entry && scrollRef.current) entry.scrollTop = scrollRef.current.scrollTop;
-    }
-    if (hasFab) return;
-    const el = scrollRef.current;
-    if (el) setHeaderCollapsed(el.scrollTop > 40);
-  }, [updateScrollMask, rushOnScroll, hasFab, songId]);
-  /* v8 ignore stop */
+  useStaggerRush(scrollRef);
+
+  // Window scroll listener for header collapse + cache update
+  useEffect(() => {
+    const onScroll = () => {
+      userScrolledRef.current = true;
+      if (songId) {
+        const entry = songDetailCache.get(songId);
+        if (entry) entry.scrollTop = window.scrollY;
+      }
+      if (!hasFab) setHeaderCollapsed(window.scrollY > 40);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, [hasFab, songId]);
 
   const hasScrolled = useRef(false);
 
@@ -292,7 +296,7 @@ export default function SongDetailPage() {
   /* v8 ignore start — DOM scroll positioning */
   const autoScroll = !!(location.state as Record<string, unknown> | null)?.autoScroll;
   useEffect(() => {
-    if (phase !== 'contentIn' || !defaultInstrument || hasScrolled.current || !autoScroll) return;
+    if (phase !== LoadPhase.ContentIn || !defaultInstrument || hasScrolled.current || !autoScroll) return;
     hasScrolled.current = true;
     // Wait for stagger animations to complete before measuring position
     const id = setTimeout(() => {
@@ -325,51 +329,53 @@ export default function SongDetailPage() {
   }, [phase, defaultInstrument]);
   /* v8 ignore stop */
 
-  /* v8 ignore start — animation cleanup */
-  const clearAnim = useCallback((e: React.AnimationEvent<HTMLElement>) => {
-    const el = e.currentTarget;
-    el.style.opacity = '';
-    el.style.animation = '';
-  }, []);
-  /* v8 ignore stop */
+  const styles = useSongDetailStyles(hasFab);
 
   if (!songId) {
-    return <div className={s.center}>{t('songDetail.songNotFound')}</div>;
+    return <div style={styles.center}>{t('songDetail.songNotFound')}</div>;
   }
 
-  const stagger = (delayMs: number): React.CSSProperties => skipAnim ? {} : ({
-    opacity: 0,
-    animation: `fadeInUp 400ms ease-out ${delayMs}ms forwards`,
-  });
-
   return (
-    <div className={s.page}>
-      <BackgroundImage src={song?.albumArt} />
-      {phase !== 'contentIn' && (
-        <div
-          className={s.spinnerOverlay}
-          style={phase === 'spinnerOut'
-              ? { animation: 'fadeOut 500ms ease-out forwards' }
-              : undefined}
-        >
-          <ArcSpinner />
-        </div>
-      )}
-      {/* v8 ignore start — stagger animation rendering */}
-      {phase === 'contentIn' && (
-        <div className={s.stickyHeader} style={{
-          padding: hasFab || headerCollapsed
-            ? 'var(--gap-md) var(--layout-padding-h) var(--gap-section)'
-            : 'var(--layout-padding-top) var(--layout-padding-h) var(--gap-section)',
-        }}>
-          <div style={stagger(150)} onAnimationEnd={clearAnim}>
-            <SongDetailHeader song={song} songId={songId} collapsed={!!(hasFab || headerCollapsed)} noTransition={hasFab} onOpenPaths={() => setPathsOpen(true)} />
+    <Page
+      scrollRef={scrollRef}
+      scrollDeps={[phase, activeInstruments.length]}
+      variant="withBgClip"
+      before={<>
+        <BackgroundImage src={song?.albumArt} />
+        {phase !== LoadPhase.ContentIn && (
+          <div
+            style={phase === LoadPhase.SpinnerOut
+                ? { ...styles.spinnerOverlay, ...styles.spinnerFadeOut }
+                : styles.spinnerOverlay}
+          >
+            <ArcSpinner />
           </div>
-        </div>
+        )}
+        {/* v8 ignore start — stagger animation rendering */}
+        {phase === LoadPhase.ContentIn && (
+          <PageHeader
+            title={
+              <div style={stagger(150)} onAnimationEnd={clearAnim}>
+                <SongDetailHeader song={song} songId={songId} collapsed={!!(hasFab || headerCollapsed)} noTransition={hasFab} onOpenPaths={() => setPathsOpen(true)} />
+              </div>
+            }
+            style={{
+              padding: hasFab || headerCollapsed
+                ? 'var(--gap-md) var(--layout-padding-h) var(--gap-section)'
+                : 'var(--layout-padding-top) var(--layout-padding-h) var(--gap-section)',
+            }}
+          />
       )}
-      <div ref={scrollRef} onScroll={handleScroll} className={s.scrollArea}>
-      {phase === 'contentIn' && (
-        <div className={s.container} style={hasFab ? { paddingBottom: 96 } : undefined}>
+      </>}
+      after={<>
+        {/* v8 ignore start -- songId always truthy from route params */}
+        {songId && <PathsModal visible={pathsOpen} songId={songId} onClose={() => setPathsOpen(false)} />}
+        {/* v8 ignore stop */}
+        {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
+      </>}
+    >
+      {phase === LoadPhase.ContentIn && (
+        <div style={styles.container}>
           {player && scoreHistoryReady && filteredScoreHistory.length > 0 && (
             <div style={{ ...stagger(300), marginBottom: Gap.section }} onAnimationEnd={clearAnim}>
               <ScoreHistoryChart
@@ -384,7 +390,7 @@ export default function SongDetailPage() {
               />
             </div>
           )}
-          <div className={s.instrumentGrid}>
+          <div style={styles.instrumentGrid}>
             {activeInstruments.map((inst, idx) => {
               const rowIndex = Math.floor(idx / 2);
               const baseDelay = 450 + rowIndex * 150;
@@ -409,13 +415,40 @@ export default function SongDetailPage() {
           </div>
         </div>
       )}
-      </div>
       {/* v8 ignore stop */}
-      {/* v8 ignore start -- songId always truthy from route params */}
-      {songId && <PathsModal visible={pathsOpen} songId={songId} onClose={() => setPathsOpen(false)} />}
-      {/* v8 ignore stop */}
-      {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
-    </div>
+    </Page>
   );
 }
 
+function useSongDetailStyles(hasFab: boolean) {
+  return useMemo(() => ({
+    container: {
+      maxWidth: MaxWidth.card,
+      margin: CssValue.marginCenter,
+      padding: padding(Gap.none, Layout.paddingHorizontal, Layout.paddingTop),
+      ...(hasFab ? { paddingBottom: Layout.fabPaddingBottom } : {}),
+    } as CSSProperties,
+    instrumentGrid: {
+      display: Display.grid,
+      gridTemplateColumns: GridTemplate.autoFillInstrument,
+      gap: `${Gap.section}px ${Gap.md}px`,
+      overflow: Overflow.hidden,
+    } as CSSProperties,
+    center: {
+      ...flexCenter,
+      minHeight: CssValue.viewportFull,
+      color: Colors.textSecondary,
+      backgroundColor: Colors.bgApp,
+      fontSize: Font.lg,
+    } as CSSProperties,
+    spinnerOverlay: {
+      position: Position.fixed,
+      inset: 0,
+      zIndex: ZIndex.overlay,
+      ...flexCenter,
+    } as CSSProperties,
+    spinnerFadeOut: {
+      animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards`,
+    } as CSSProperties,
+  }), [hasFab]);
+}

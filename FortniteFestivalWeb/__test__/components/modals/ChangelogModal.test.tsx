@@ -68,15 +68,21 @@ describe('ChangelogModal', () => {
   it('stops propagation on card click', () => {
     const onDismiss = vi.fn();
     const { container } = render(<ChangelogModal onDismiss={onDismiss} />);
-    const card = container.querySelector('[class*="card"]');
-    if (card) fireEvent.click(card);
+    // Card is the first child inside the overlay
+    const overlay = container.firstElementChild as HTMLElement;
+    const card = overlay.firstElementChild as HTMLElement;
+    fireEvent.click(card);
     // onDismiss should NOT be called from the card click itself
   });
 
   it('handles scroll event on content', () => {
     const { container } = render(<ChangelogModal onDismiss={vi.fn()} />);
-    const content = container.querySelector('[class*="content"]');
-    if (content) fireEvent.scroll(content);
+    // Content area contains the changelog list items
+    const overlay = container.firstElementChild as HTMLElement;
+    const card = overlay.firstElementChild as HTMLElement;
+    // Content is between header and footer — the second child of card
+    const content = card.children[1] as HTMLElement;
+    fireEvent.scroll(content);
     // No error — handleScroll exercised
   });
 });

@@ -123,9 +123,9 @@ describe('InstrumentCard', () => {
   it('highlights player entry when player is in top entries', () => {
     const entries = [makeEntry(1, { accountId: 'player-1' })];
     renderCard({ prefetchedEntries: entries, playerAccountId: 'player-1', playerName: 'MyPlayer' });
-    // Player row should have bold styling via CSS class
+    // Player row should have bold styling via inline style
     const rank = screen.getByText('#1');
-    expect(rank.className).toContain('textBold');
+    expect(rank.style.fontWeight).toBe('700');
   });
 
   it('renders separate player score row when player not in top', () => {

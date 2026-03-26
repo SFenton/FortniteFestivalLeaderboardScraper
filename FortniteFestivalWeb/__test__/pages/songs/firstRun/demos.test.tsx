@@ -150,23 +150,28 @@ describe('SongRowDemo', () => {
 
   it('renders artist names from demo data', () => {
     const { container } = wrap(<SongRowDemo />);
-    // Artist is combined with year: "Artist A · 2024"
-    const artists = container.querySelectorAll('[class*="artist"]');
-    expect(artists.length).toBe(3);
+    // Artist text is combined with year: "Artist A \u00b7 2024" — check via text content
+    expect(container.textContent).toContain('Artist A');
+    expect(container.textContent).toContain('Artist B');
+    expect(container.textContent).toContain('Artist C');
   });
 
   it('renders mobile layout when isMobile is true', () => {
     mockIsMobile = true;
     const { container } = wrap(<SongRowDemo />);
-    // Mobile mode wraps content in mobileTopRow divs
-    const mobileRows = container.querySelectorAll('[class*="mobileTopRow"]');
+    // Mobile mode wraps content in mobileTopRow divs (inline styles after CSS migration)
+    const mobileRows = [...container.querySelectorAll('div[style]')].filter(
+      el => el.style.gap === '12px' && el.style.alignItems === 'center' && !el.style.borderRadius
+    );
     expect(mobileRows.length).toBe(3);
   });
 
   it('renders desktop layout when isMobile is false', () => {
     mockIsMobile = false;
     const { container } = wrap(<SongRowDemo />);
-    const mobileRows = container.querySelectorAll('[class*="mobileTopRow"]');
+    const mobileRows = [...container.querySelectorAll('div[style]')].filter(
+      el => el.style.gap === '12px' && el.style.alignItems === 'center' && !el.style.borderRadius
+    );
     expect(mobileRows.length).toBe(0);
   });
 });
@@ -300,22 +305,28 @@ describe('SongIconsDemo', () => {
 
   it('renders instrument chips', () => {
     const { container } = wrap(<SongIconsDemo />);
-    // InstrumentChip renders elements with instrument status classes
-    const chips = container.querySelectorAll('[class*="instrumentStatusRow"]');
+    // InstrumentChip rows use instrumentStatusRow style (gap: 4px)
+    const chips = [...container.querySelectorAll('div[style]')].filter(
+      el => el.style.gap === '4px' && el.style.alignItems === 'center'
+    );
     expect(chips.length).toBeGreaterThanOrEqual(1);
   });
 
   it('renders mobile layout when isMobileChrome is true', () => {
     mockIsMobileChrome = true;
     const { container } = wrap(<SongIconsDemo />);
-    const mobileRows = container.querySelectorAll('[class*="mobileTopRow"]');
+    const mobileRows = [...container.querySelectorAll('div[style]')].filter(
+      el => el.style.gap === '12px' && el.style.alignItems === 'center' && !el.style.borderRadius
+    );
     expect(mobileRows.length).toBe(3);
   });
 
   it('renders desktop layout when isMobileChrome is false', () => {
     mockIsMobileChrome = false;
     const { container } = wrap(<SongIconsDemo />);
-    const mobileRows = container.querySelectorAll('[class*="mobileTopRow"]');
+    const mobileRows = [...container.querySelectorAll('div[style]')].filter(
+      el => el.style.gap === '12px' && el.style.alignItems === 'center' && !el.style.borderRadius
+    );
     expect(mobileRows.length).toBe(0);
   });
 });
@@ -445,14 +456,19 @@ describe('MetadataDemo', () => {
   it('renders mobile layout when isMobile', () => {
     mockIsMobile = true;
     const { container } = wrap(<MetadataDemo />);
-    const mobileRows = container.querySelectorAll('[class*="mobileTopRow"]');
+    const mobileRows = [...container.querySelectorAll('div[style]')].filter(
+      el => el.style.gap === '12px' && el.style.alignItems === 'center' && !el.style.borderRadius && !el.style.flexShrink
+    );
     expect(mobileRows.length).toBe(3);
   });
 
   it('renders metadata strips in desktop mode', () => {
     mockIsMobile = false;
     const { container } = wrap(<MetadataDemo />);
-    const metaStrips = container.querySelectorAll('[class*="scoreMeta"]');
+    // scoreMeta style: gap 12px + flex-shrink: 0
+    const metaStrips = [...container.querySelectorAll('div[style]')].filter(
+      el => el.style.gap === '12px' && el.style.flexShrink === '0'
+    );
     expect(metaStrips.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -471,8 +487,10 @@ describe('MetadataDemo', () => {
   it('renders mobile metadata strips', () => {
     mockIsMobile = true;
     const { container } = wrap(<MetadataDemo />);
-    // Mobile mode shows metadataWrap elements
-    const metaWraps = container.querySelectorAll('[class*="metadataWrap"]');
+    // Mobile mode shows metadataWrap elements (flex-wrap: wrap)
+    const metaWraps = [...container.querySelectorAll('div[style]')].filter(
+      el => el.style.flexWrap === 'wrap'
+    );
     expect(metaWraps.length).toBeGreaterThanOrEqual(1);
   });
 });

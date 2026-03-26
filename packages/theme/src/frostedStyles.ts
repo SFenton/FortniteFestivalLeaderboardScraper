@@ -1,4 +1,5 @@
 import { Colors } from './colors';
+import { Radius, Weight } from './spacing';
 
 /**
  * Tiny SVG noise texture encoded as a data-URI.
@@ -39,3 +40,56 @@ export const frostedCardLight = {
   backgroundColor: Colors.surfaceFrosted,
   border: `1px solid ${Colors.glassBorder}`,
 } as const;
+
+/** Modal overlay — fixed fullscreen dark scrim with centered content. */
+export const modalOverlay = {
+  position: 'fixed' as const,
+  inset: 0,
+  backgroundColor: Colors.overlayModal60,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+};
+
+/** Modal card — frosted glass dialog body with blur and shadow. */
+export const modalCard = {
+  backgroundColor: Colors.surfaceFrosted,
+  backdropFilter: 'blur(18px)',
+  WebkitBackdropFilter: 'blur(18px)',
+  color: Colors.textPrimary,
+  boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
+};
+
+/** Base button style — shared by btnPrimary and btnDanger. */
+const btnBase = {
+  borderRadius: Radius.xs,
+  color: Colors.textPrimary,
+  cursor: 'pointer' as const,
+  fontWeight: Weight.semibold,
+  textAlign: 'center' as const,
+};
+
+/** Primary action button — blue chip background. */
+export const btnPrimary = {
+  ...btnBase,
+  background: Colors.chipSelected,
+  border: `1px solid ${Colors.accentBlue}`,
+};
+
+/** Danger action button — red background. */
+export const btnDanger = {
+  ...btnBase,
+  backgroundColor: Colors.statusRed,
+  border: `1px solid ${Colors.statusRed}`,
+};
+
+/** Purple glass surface (opaque, no grain) — used for branded pills. */
+export const purpleGlass = {
+  backgroundColor: Colors.accentPurple,
+  border: `1px solid ${Colors.purpleBorderGlass}`,
+  boxShadow: [
+    'inset 0 1px 0 rgba(255,255,255,0.06)',
+    'inset 0 0 30px rgba(255,255,255,0.02)',
+    '0 4px 20px rgba(0,0,0,0.4)',
+  ].join(', '),
+};

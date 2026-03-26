@@ -2,15 +2,30 @@
  * Toolbar with search, instrument indicator, sort and filter buttons.
  * Extracted from SongsPage.
  */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoSwapVerticalSharp, IoFunnel } from 'react-icons/io5';
-import { Size, FAST_FADE_MS } from '@festival/theme';
+import { Colors, Font, Gap, Radius, Size, FAST_FADE_MS, frostedCard, flexRow, flexCenter, Display, Align, Justify, Cursor, BoxSizing, Overflow, CssValue, transition, transitions } from '@festival/theme';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
 import SearchBar from '../../../components/common/SearchBar';
 import { ActionPill } from '../../../components/common/ActionPill';
-import s from './SongsToolbar.module.css';
+
+const FAST = FAST_FADE_MS;
+
+const styles = {
+  toolbar: { ...flexRow, flexWrap: 'wrap', gap: 0, marginBottom: Gap.md } as CSSProperties,
+  searchWrap: { ...frostedCard, flex: 1, minWidth: 200, height: Size.iconXl, ...flexRow, gap: Gap.sm, padding: `0 ${Gap.xl}px`, boxSizing: BoxSizing.borderBox, borderRadius: Radius.full, cursor: Cursor.text, marginRight: Gap.xl } as CSSProperties,
+  searchInput: { flex: 1, background: CssValue.none, border: CssValue.none, outline: CssValue.none, color: Colors.textPrimary, fontSize: Font.md } as CSSProperties,
+  sortGroup: { display: Display.flex } as CSSProperties,
+  instSlot: { width: Size.iconXl, marginRight: Gap.xl, opacity: 1, overflow: Overflow.hidden, flexShrink: 0, transition: transitions(transition('opacity', FAST), transition('width', FAST), transition('margin-right', FAST)), ...flexCenter } as CSSProperties,
+  instSlotHidden: { width: 0, marginRight: 0, opacity: 0, overflow: Overflow.hidden, flexShrink: 0, transition: transitions(transition('opacity', FAST), `width ${FAST}ms ease ${FAST}ms`, `margin-right ${FAST}ms ease ${FAST}ms`), display: Display.flex, alignItems: Align.center, justifyContent: Justify.center } as CSSProperties,
+  sortSlot: { opacity: 1, maxWidth: Size.iconXl * 3, transition: transitions(transition('opacity', FAST), transition('max-width', FAST)) } as CSSProperties,
+  sortSlotHidden: { opacity: 0, maxWidth: 0, transition: transitions(transition('opacity', FAST), `max-width ${FAST}ms ease ${FAST}ms`) } as CSSProperties,
+  filterSlot: { opacity: 1, maxWidth: Size.iconXl * 3, marginLeft: Gap.sm, transition: transitions(transition('opacity', FAST), transition('max-width', FAST), transition('margin-left', FAST)) } as CSSProperties,
+  filterSlotHidden: { opacity: 0, maxWidth: 0, marginLeft: 0, transition: transitions(transition('opacity', FAST), `max-width ${FAST}ms ease ${FAST}ms`, `margin-left ${FAST}ms ease ${FAST}ms`) } as CSSProperties,
+  count: { fontSize: Font.sm, color: Colors.textTertiary, marginBottom: Gap.md } as CSSProperties,
+} as const;
 
 /** Total duration for fade-out + width-collapse before unmount (opacity + delayed width + buffer). */
 const INST_LEAVE_MS = FAST_FADE_MS * 2 + FAST_FADE_MS / 10;
@@ -107,24 +122,23 @@ export function SongsToolbar({
 
   return (
     <>
-      <div className={s.toolbar}>
+      <div style={styles.toolbar}>
         <SearchBar
           value={search}
           onChange={onSearchChange}
           placeholder={t('songs.searchPlaceholder')}
-          className={s.searchWrap}
-          inputClassName={s.searchInput}
+          style={styles.searchWrap}
         />
         {showIconSlot && (
-          <div className={iconVisible ? s.instSlot : s.instSlotHidden}>
+          <div style={iconVisible ? styles.instSlot : styles.instSlotHidden}>
             {displayedInst && <InstrumentIcon instrument={displayedInst} size={Size.iconInstrument} />}
           </div>
         )}
-        <div className={s.sortGroup}>
-          <div className={sortVisible ? s.sortSlot : s.sortSlotHidden}>
+        <div style={styles.sortGroup}>
+          <div style={sortVisible ? styles.sortSlot : styles.sortSlotHidden}>
             <ActionPill icon={<IoSwapVerticalSharp size={Size.iconAction} />} label={t('common.sort')} onClick={onOpenSort} active={sortActive} />
           </div>
-          <div className={filterVisible ? s.filterSlot : s.filterSlotHidden}>
+          <div style={filterVisible ? styles.filterSlot : styles.filterSlotHidden}>
             <ActionPill
               icon={<IoFunnel size={Size.iconAction} />}
               label={t('common.filter')}
@@ -135,7 +149,7 @@ export function SongsToolbar({
         </div>
       </div>
       {filtersActive && filteredCount !== totalCount && (
-        <div className={s.count}>{t('songs.count', { filtered: filteredCount, total: totalCount })}</div>
+        <div style={styles.count}>{t('songs.count', { filtered: filteredCount, total: totalCount })}</div>
       )}
     </>
   );

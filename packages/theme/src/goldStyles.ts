@@ -1,27 +1,34 @@
 import { Colors } from './colors';
-import { Gap, Radius } from './spacing';
+import { Gap, Radius, Border, Weight } from './spacing';
+import { Display, FontStyle, CssValue, BoxSizing, TextAlign } from './cssEnums';
+import { border, padding } from './cssHelpers';
+
+/** Skew angle for gold FC/top-tier badges. */
+export const GOLD_SKEW = 'skewX(-8deg)';
 
 /** Gold fill — 1px border, filled background. Use as a style mixin. */
 export const goldFill = {
   color: Colors.gold,
   backgroundColor: Colors.goldBg,
-  border: `1px solid ${Colors.goldStroke}`,
+  border: border(Border.thin, Colors.goldStroke),
 } as const;
 
 /** Gold outline — 2px border, transparent background. Use as a style mixin. */
 export const goldOutline = {
   color: Colors.gold,
-  backgroundColor: 'transparent',
-  padding: `${Gap.xs}px ${Gap.sm}px`,
+  backgroundColor: CssValue.transparent,
+  padding: padding(Gap.xs, Gap.sm),
   borderRadius: Radius.xs,
-  border: `2px solid ${Colors.goldStroke}`,
-  fontWeight: 700,
-  display: 'inline-block',
+  border: border(Border.thick, Colors.goldStroke),
+  fontWeight: Weight.bold,
+  display: Display.inlineBlock,
+  textAlign: TextAlign.center,
+  boxSizing: BoxSizing.borderBox,
 } as const;
 
 /** Gold outline with italic skew (for FC / accuracy badges). */
 export const goldOutlineSkew = {
   ...goldOutline,
-  fontStyle: 'italic' as const,
-  transform: 'skewX(-8deg)',
+  fontStyle: FontStyle.italic,
+  transform: GOLD_SKEW,
 } as const;

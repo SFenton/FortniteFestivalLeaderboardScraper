@@ -25,12 +25,9 @@ import { useTrackedPlayer } from '../src/hooks/data/useTrackedPlayer';
 import { APP_VERSION, CORE_VERSION, THEME_VERSION } from '../src/hooks/data/useVersions';
 import * as useVisualViewportExports from '../src/hooks/ui/useVisualViewport';
 
-// Theme (src/theme/*.ts)
-import { Colors } from '../src/theme/colors';
-import { Radius, Font, LineHeight, Gap, Opacity, Size, MaxWidth, Layout } from '../src/theme/spacing';
-import { goldFill, goldOutline, goldOutlineSkew } from '../src/theme/goldStyles';
-import { frostedCard, frostedCardLight } from '../src/theme/frostedStyles';
-import * as themeIndex from '../src/theme/index';
+// Theme (@festival/theme)
+import { Colors, Radius, Font, LineHeight, Gap, Opacity, Size, MaxWidth, Layout } from '@festival/theme';
+import { goldFill, goldOutline, goldOutlineSkew, frostedCard, frostedCardLight } from '@festival/theme';
 
 // i18n
 import i18n from '../src/i18n/index';
@@ -93,10 +90,6 @@ describe('theme exports', () => {
   it('frostedStyles exports CSS objects', () => {
     expect(frostedCard).toBeDefined();
     expect(frostedCardLight).toBeDefined();
-  });
-
-  it('theme index re-exports', () => {
-    expect(themeIndex).toBeDefined();
   });
 });
 

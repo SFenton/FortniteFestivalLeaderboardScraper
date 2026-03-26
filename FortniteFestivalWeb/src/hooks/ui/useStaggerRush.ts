@@ -1,14 +1,15 @@
 import { FADE_DURATION } from '@festival/theme';
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 /**
  * On first user-initiated scroll, collapse all pending stagger animation delays
  * to 0ms so remaining items fade in simultaneously.
  *
- * Works by querying elements with inline `fadeInUp` animation styles.
+ * Listens to window scroll events (browser-native scroll model).
  * Elements already animating or finished are unaffected.
  *
- * Call the returned function from the scroll handler.
+ * @param containerRef  Ref to the container whose children have stagger animations.
+ *                      Used to scope the querySelectorAll for pending animations.
  */
 export function useStaggerRush(containerRef: React.RefObject<HTMLElement | null>) {
   const rushedRef = useRef(false);
@@ -30,6 +31,12 @@ export function useStaggerRush(containerRef: React.RefObject<HTMLElement | null>
     // Only mark as rushed if we actually found and rushed elements
     if (rushed) rushedRef.current = true;
   }, [containerRef]);
+
+  // Automatically listen to window scroll
+  useEffect(() => {
+    window.addEventListener('scroll', rushOnScroll, { passive: true });
+    return () => window.removeEventListener('scroll', rushOnScroll);
+  }, [rushOnScroll]);
 
   const resetRush = useCallback(() => { rushedRef.current = false; }, []);
 

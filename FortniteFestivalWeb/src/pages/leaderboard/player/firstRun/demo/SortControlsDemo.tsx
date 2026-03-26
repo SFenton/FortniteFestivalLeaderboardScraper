@@ -1,3 +1,4 @@
+/* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RadioRow } from '../../../../../components/common/RadioRow';
@@ -5,13 +6,14 @@ import { DirectionSelector } from '../../../../../components/common/DirectionSel
 import FadeIn from '../../../../../components/page/FadeIn';
 import { useSlideHeight } from '../../../../../firstRun/SlideHeightContext';
 import { Layout, TRANSITION_MS } from '@festival/theme';
-import s from '../../../../songs/firstRun/demo/FilterDemo.module.css';
+import { useDemoStyles } from '../../../../songs/firstRun/demo/FilterDemo';
 
 const MODES = ['date', 'score', 'accuracy', 'season'] as const;
 type SortMode = typeof MODES[number];
 
 export default function SortControlsDemo() {
   const { t } = useTranslation();
+  const s = useDemoStyles();
   const h = useSlideHeight();
   const [activeMode, setActiveMode] = useState<SortMode>('score');
   const [ascending, setAscending] = useState(false);
@@ -35,10 +37,10 @@ export default function SortControlsDemo() {
   }, [h]);
 
   return (
-    <div className={s.wrapper}>
-      <FadeIn delay={0} className={showDirection ? s.modeSection : s.modeSectionCompact}>
-        <div className={s.sectionHeader}>{t('sort.mode')}</div>
-        {showHint && <div className={s.sectionHint}>{t('sort.modeHint')}</div>}
+    <div style={s.wrapper}>
+      <FadeIn delay={0} style={showDirection ? s.modeSection : s.modeSectionCompact}>
+        <div style={s.sectionHeader}>{t('sort.mode')}</div>
+        {showHint && <div style={s.sectionHint}>{t('sort.modeHint')}</div>}
         {MODES.slice(0, maxModes).map((mode) => (
           <RadioRow key={mode} label={t(`sort.${mode}`)} selected={mode === activeMode} onSelect={() => setActiveMode(mode)} />
         ))}

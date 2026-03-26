@@ -40,7 +40,10 @@ describe('ScoreListDemo', () => {
 
   it('highlights the top score row', () => {
     const { container } = wrap(<ScoreListDemo />);
-    const highlightRows = container.querySelectorAll('[class*="rowHighlight"]');
+    // Row highlight is now inline style with purpleHighlight background color
+    const highlightRows = Array.from(container.querySelectorAll('div')).filter(
+      (el) => (el as HTMLElement).style.backgroundColor?.includes('rgba(75'),
+    );
     expect(highlightRows.length).toBe(1);
   });
 

@@ -123,9 +123,11 @@ describe('ViewAllDemo', () => {
 
   it('applies fade mask to first entry', () => {
     const { container } = wrap(<ViewAllDemo />);
-    const cards = container.querySelectorAll('[class*="card"]');
-    const firstCard = cards[0] as HTMLElement | undefined;
-    expect(firstCard?.style.maskImage).toContain('linear-gradient');
+    // First entry row with maskImage applied via inline style
+    const withMask = Array.from(container.querySelectorAll('div')).find(
+      (el) => (el as HTMLElement).style.maskImage?.includes('linear-gradient'),
+    ) as HTMLElement | undefined;
+    expect(withMask?.style.maskImage).toContain('linear-gradient');
   });
 });
 

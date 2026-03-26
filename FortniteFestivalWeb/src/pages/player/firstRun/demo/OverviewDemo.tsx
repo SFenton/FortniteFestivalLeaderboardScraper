@@ -5,7 +5,7 @@
  */
 import { type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Radius, frostedCard, Gap } from '@festival/theme';
+import { Radius, frostedCard, Gap, Overflow, PointerEvents, CssValue, GridTemplate } from '@festival/theme';
 import { buildOverallSummaryItems, type OverallStats } from '../../sections/OverallSummarySection';
 import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS } from '@festival/core/api/serverTypes';
 import FadeIn from '../../../../components/page/FadeIn';
@@ -47,8 +47,8 @@ export default function OverviewDemo() {
   const visible = items.slice(0, maxItems);
 
   const gridStyle = isMobile
-    ? { width: '100%', overflow: 'visible' as const, pointerEvents: 'none' as const, gridTemplateColumns: '1fr' }
-    : { width: '100%', overflow: 'visible' as const, pointerEvents: 'none' as const };
+    ? { width: CssValue.full, overflow: Overflow.visible, pointerEvents: PointerEvents.none, gridTemplateColumns: GridTemplate.single }
+    : { width: CssValue.full, overflow: Overflow.visible, pointerEvents: PointerEvents.none };
 
   return (
     <div className={s.gridList} style={gridStyle}>

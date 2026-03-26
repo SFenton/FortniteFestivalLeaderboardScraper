@@ -101,7 +101,8 @@ async function advanceAndFlush(ms: number) {
 
 /** After a search completes, fire transitionend on the spinner so showSpinner turns off. */
 function dismissSpinner(container: HTMLElement) {
-  const spinnerWrap = container.querySelector('[class*="spinnerWrap"]');
+  const spinner = container.querySelector('[data-testid="arc-spinner"]');
+  const spinnerWrap = spinner?.parentElement;
   if (spinnerWrap) fireEvent.transitionEnd(spinnerWrap);
 }
 

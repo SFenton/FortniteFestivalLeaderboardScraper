@@ -50,9 +50,10 @@ describe('DirectionSelector', () => {
     expect(buttons).toHaveLength(2);
   });
 
-  it('applies active class to ascending when ascending=true', () => {
+  it('renders circle overlays in each button', () => {
     const { container } = render(<DirectionSelector ascending={true} onChange={vi.fn()} />);
-    const circles = container.querySelectorAll('[class*="iconCircle"]');
+    // Each button contains a circle overlay div
+    const circles = container.querySelectorAll('button > div');
     expect(circles.length).toBeGreaterThanOrEqual(2);
   });
 });

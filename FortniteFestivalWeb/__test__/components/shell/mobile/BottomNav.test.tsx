@@ -37,23 +37,23 @@ describe('BottomNav', () => {
     expect(onTabClick).toHaveBeenCalled();
   });
 
-  it('applies active class to current tab', () => {
+  it('applies active style to current tab', () => {
     render(
       <MemoryRouter>
         <BottomNav player={null} activeTab={TabKey.Settings} onTabClick={vi.fn()} />
       </MemoryRouter>,
     );
     const settingsBtn = screen.getByText('Settings').closest('button')!;
-    expect(settingsBtn.className).toContain('tabActive');
+    expect(settingsBtn.style.fontWeight).toBe('700');
   });
 
-  it('applies inactive class to non-active tab', () => {
+  it('applies inactive style to non-active tab', () => {
     render(
       <MemoryRouter>
         <BottomNav player={null} activeTab={TabKey.Songs} onTabClick={vi.fn()} />
       </MemoryRouter>,
     );
     const settingsBtn = screen.getByText('Settings').closest('button')!;
-    expect(settingsBtn.className).not.toContain('tabActive');
+    expect(settingsBtn.style.fontWeight).not.toBe('700');
   });
 });

@@ -8,32 +8,28 @@ export interface ScrollMaskOptions {
 const DEFAULT_SIZE = 40;
 
 /**
- * Applies a CSS `mask-image` on a scrollable container so content fades to
- * transparent at whichever edges have more content to scroll.
+ * Applies a CSS `mask-image` on a container based on the browser's scroll
+ * position relative to the container's bounds.
  *
- * Only works when children do NOT use `backdrop-filter` — if they do, the
- * compositing layer created by the mask prevents the blur from reaching
- * content behind the container.  Use with `frostedCard` styles instead.
- *
- * One DOM write per scroll event on the container itself.
+ * Uses window scroll events (no per-element scroll container required).
+ * Fades content at whichever edges have more content above/below the viewport.
  */
 export function useScrollMask(
-  scrollRef: RefObject<HTMLElement | null>,
+  containerRef: RefObject<HTMLElement | null>,
   deps: readonly unknown[] = [],
   options: ScrollMaskOptions = {},
 ): () => void {
   const size = options.size ?? DEFAULT_SIZE;
   const rafId = useRef(0);
-  // Track scroll state to avoid redundant DOM writes: 0=both, 1=top, 2=bottom, 3=middle
   const lastState = useRef(-1);
 
   const update = useCallback(() => {
-    const el = scrollRef.current;
+    const el = containerRef.current;
     if (!el) return;
 
-    const { scrollTop, scrollHeight, clientHeight } = el;
-    const atTop = scrollTop <= 0;
-    const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
+    const rect = el.getBoundingClientRect();
+    const atTop = rect.top >= 0;
+    const atBottom = rect.bottom <= window.innerHeight + 1;
 
     const state = (atTop && atBottom) ? 0 : atTop ? 1 : atBottom ? 2 : 3;
     if (state === lastState.current) return;
@@ -52,21 +48,25 @@ export function useScrollMask(
 
     el.style.maskImage = mask;
     el.style.webkitMaskImage = mask;
-  }, [size, scrollRef]);
+  }, [size, containerRef]);
 
   /** rAF-throttled wrapper — at most one update per animation frame. */
   const throttledUpdate = useCallback(() => {
-    /* v8 ignore start */
     if (rafId.current) return;
     rafId.current = requestAnimationFrame(() => {
       rafId.current = 0;
       update();
-    /* v8 ignore stop */
     });
   }, [update]);
 
   // Cancel pending rAF on unmount
   useEffect(() => () => { cancelAnimationFrame(rafId.current); }, []);
+
+  // Listen to window scroll
+  useEffect(() => {
+    window.addEventListener('scroll', throttledUpdate, { passive: true });
+    return () => window.removeEventListener('scroll', throttledUpdate);
+  }, [throttledUpdate]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { update(); }, [update, ...deps]);

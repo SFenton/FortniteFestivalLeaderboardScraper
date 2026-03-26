@@ -6,7 +6,7 @@
  */
 import type { ReactNode } from 'react';
 import { FADE_DURATION, STAGGER_INTERVAL } from '@festival/theme';
-import css from './SongRowDemo.module.css';
+import { songRow, songRowMobile } from '../../../../styles/songRowStyles';
 
 const FADE_MS = FADE_DURATION;
 
@@ -23,12 +23,12 @@ export interface DemoSongRowProps {
 }
 
 export function DemoSongRow({ index, initialDone, fadingIdx, mobile, children }: DemoSongRowProps) {
+  const baseStyle = mobile ? songRowMobile : songRow;
   return (
     <div
-      className={mobile ? css.rowMobile : css.row}
       style={initialDone
-        ? { opacity: fadingIdx.has(index) ? 0 : 1, transition: `opacity ${FADE_MS}ms ease` }
-        : { opacity: 0, animation: `fadeInUp ${FADE_MS}ms ease-out ${index * STAGGER_INTERVAL}ms forwards` }
+        ? { ...baseStyle, opacity: fadingIdx.has(index) ? 0 : 1, transition: `opacity ${FADE_MS}ms ease` }
+        : { ...baseStyle, opacity: 0, animation: `fadeInUp ${FADE_MS}ms ease-out ${index * STAGGER_INTERVAL}ms forwards` }
       }
     >
       {children}

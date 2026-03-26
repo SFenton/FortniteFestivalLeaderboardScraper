@@ -8,12 +8,14 @@ import { BulkActions } from '../../../components/modals/components/BulkActions';
 import ConfirmAlert from '../../../components/modals/ConfirmAlert';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { useModalDraft } from '../../../hooks/ui/useModalDraft';
 import { INSTRUMENT_KEYS, INSTRUMENT_LABELS } from '@festival/core/api/serverTypes';
 import type { SongFilters } from '../../../utils/songSettings';
 import { useSettings, isInstrumentVisible } from '../../../contexts/SettingsContext';
 import DifficultyBars from '../../../components/songs/metadata/DifficultyBars';
 import { Size } from '@festival/theme';
-import filterCss from './FilterModal.module.css';
+import { filterStyles } from './filterStyles';
+import { useTranslation } from 'react-i18next';
 
 export type FilterDraft = SongFilters & {
   instrumentFilter: InstrumentKey | null;
@@ -33,6 +35,7 @@ type FilterModalProps = {
 const PERCENTILE_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100] as const;
 
 export default function FilterModal({ visible, draft, savedDraft, availableSeasons, onChange, onCancel, onReset, onApply }: FilterModalProps) {
+  const { t } = useTranslation();
   const { settings: appSettings } = useSettings();
   const visibleKeys = INSTRUMENT_KEYS.filter(k => isInstrumentVisible(appSettings, k));
 
@@ -60,23 +63,7 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
 
   const hasInstrument = draft.instrumentFilter != null;
 
-  const hasChanges = useMemo(() => {
-    if (!savedDraft) return true;
-    return JSON.stringify(draft) !== JSON.stringify(savedDraft);
-  }, [draft, savedDraft]);
-
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const handleClose = useCallback(() => {
-    if (hasChanges) {
-      setConfirmOpen(true);
-    } else {
-      onCancel();
-    }
-  }, [hasChanges, onCancel]);
-  const confirmDiscard = useCallback(() => {
-    setConfirmOpen(false);
-    onCancel();
-  }, [onCancel]);
+  const { hasChanges, confirmOpen, setConfirmOpen, handleClose, confirmDiscard } = useModalDraft(draft, savedDraft, onCancel);
 
   return (
     <>
@@ -145,18 +132,18 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
 
       {/* Instrument selector */}
       <ModalSection title="Selected Instrument Filters" hint="Select an instrument to only show its metadata on each song row. When none is selected, all instruments are shown.">
-        <div className={filterCss.instrumentRow}>
+        <div style={filterStyles.instrumentRow}>
           {visibleKeys.map(key => {
             const selected = draft.instrumentFilter === key;
             return (
               <button
                 key={key}
-                className={filterCss.instrumentBtn}
+                style={filterStyles.instrumentBtn}
                 onClick={() => onChange({ ...draft, instrumentFilter: selected ? null : key })}
                 title={INSTRUMENT_LABELS[key]}
               >
-                <div className={selected ? filterCss.instrumentCircleActive : filterCss.instrumentCircle} />
-                <div className={filterCss.instrumentIconWrap}>
+                <div style={selected ? filterStyles.instrumentCircleActive : filterStyles.instrumentCircle} />
+                <div style={filterStyles.instrumentIconWrap}>
                   <InstrumentIcon instrument={key} size={Size.iconInstrument} />
                 </div>
               </button>
@@ -166,8 +153,8 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
       </ModalSection>
 
       {/* Instrument-specific filters (animated in/out) */}
-      <div className={filterCss.instrumentFiltersWrap} style={{ gridTemplateRows: hasInstrument ? '1fr' : '0fr' }}>
-        <div className={filterCss.instrumentFiltersInner}>
+      <div style={{ ...filterStyles.instrumentFiltersWrap, gridTemplateRows: hasInstrument ? '1fr' : '0fr' }}>
+        <div style={filterStyles.instrumentFiltersInner}>
           <ModalSection>
             <Accordion title="Season" hint="Filter by the season in which the score was achieved.">
               <SeasonToggles
@@ -210,8 +197,8 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
 
       {confirmOpen && (
         <ConfirmAlert
-          title="Cancel Song Filter Changes"
-          message="Are you sure you want to discard your song filter changes?"
+          title={t('filter.cancelTitle')}
+          message={t('filter.cancelMessage')}
           onNo={() => setConfirmOpen(false)}
           onYes={confirmDiscard}
         />
