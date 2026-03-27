@@ -25,6 +25,7 @@ import { LoadPhase } from '@festival/core';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import Page from '../Page';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
+import { clearScrollCache } from '../../hooks/ui/useScrollRestore';
 import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
@@ -161,6 +162,9 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
     staleCountRef.current = 0;
     prevRawRef.current = categories.length;
     prevVisibleRef.current = 0;
+    revealedCountRef.current = 0;
+    scrollContainerRef.current?.scrollTo(0, 0);
+    clearScrollCache('suggestions');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterSettings]);
 

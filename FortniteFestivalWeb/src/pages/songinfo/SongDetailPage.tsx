@@ -402,7 +402,8 @@ function useSongDetailStyles(hasFab: boolean) {
     container: {
       maxWidth: MaxWidth.card,
       margin: CssValue.marginCenter,
-      padding: padding(Gap.none, Layout.paddingHorizontal, Layout.paddingTop),
+      paddingTop: Gap.none,
+      paddingBottom: Layout.paddingTop,
       ...(hasFab ? { paddingBottom: Layout.fabPaddingBottom } : {}),
     } as CSSProperties,
     instrumentGrid: {

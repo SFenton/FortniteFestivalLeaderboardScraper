@@ -9,6 +9,7 @@ import { useTrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
 import { useFabSearch } from '../../../contexts/FabSearchContext';
 import { useModalState } from '../../../hooks/ui/useModalState';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
+import { clearScrollCache } from '../../../hooks/ui/useScrollRestore';
 import { api } from '../../../api/client';
 import {
   type ServerInstrumentKey as InstrumentKey,
@@ -78,9 +79,15 @@ export default function PlayerHistoryPage() {
     setSortMode(sortModal.draft.sortMode);
     setSortAscending(sortModal.draft.sortAscending);
     sortModal.close();
-    staggerDoneRef.current = false;
-    resetRush();
-    setStaggerKey(k => k + 1);
+    scrollContainerRef.current?.scrollTo(0, 0);
+    clearScrollCache(`history:${songId}:${instKey}`);
+    // Defer stagger reset to the next frame so the programmatic scroll event
+    // fires (and is ignored by rush) before new content mounts.
+    requestAnimationFrame(() => {
+      staggerDoneRef.current = false;
+      resetRush();
+      setStaggerKey(k => k + 1);
+    });
   };
   /* v8 ignore stop */
 
