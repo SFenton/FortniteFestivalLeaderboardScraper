@@ -12,7 +12,7 @@ import {
 import { LoadPhase } from '@festival/core';
 import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
 import { LeaderboardEntry } from './components/LeaderboardEntry';
-import { Gap, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, QUERY_SHOW_STARS, Colors, Radius, Layout, MaxWidth, Font, Border, Overflow, Position, Display, Align, Justify, BoxSizing, CssValue, CssProp, TextAlign, flexRow, flexColumn, flexCenter, frostedCard, padding, border, transition, NAV_TRANSITION_MS } from '@festival/theme';
+import { Gap, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, QUERY_SHOW_STARS, Colors, Radius, Layout, MaxWidth, Font, Border, Overflow, Position, Display, Align, Justify, BoxSizing, CssValue, CssProp, TextAlign, ZIndex, flexRow, flexColumn, flexCenter, frostedCard, padding, border, transition, NAV_TRANSITION_MS } from '@festival/theme';
 import ArcSpinner from '../../../components/common/ArcSpinner';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import { PaginationButton } from '../../../components/common/PaginationButton';
@@ -21,7 +21,6 @@ import { staggerDelay } from '@festival/ui-utils';
 import { useIsMobile, useIsMobileChrome } from '../../../hooks/ui/useIsMobile';
 import { useScoreFilter } from '../../../hooks/data/useScoreFilter';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
-import { IS_PWA } from '@festival/ui-utils';
 import Page from '../../Page';
 
 const PAGE_SIZE = 25;
@@ -284,6 +283,7 @@ export default function LeaderboardPage() {
       staggerRushRef={staggerRushRef}
       headerCollapse={{ disabled: isNarrow, onCollapse: handleHeaderCollapse }}
       containerStyle={lbStyles.container}
+      fabSpacer="fixed"
       before={
         <SongInfoHeader
           song={song}
@@ -293,15 +293,14 @@ export default function LeaderboardPage() {
           animate={!isNarrow}
         />
       }
-      after={<>
+      after={<div style={lbStyles.stickyFooter}>
         {/* v8 ignore start — pagination UI tested by LeaderboardPage integration tests */}
         {hasLoadedOnce.current && !error && totalPages > 1 && (() => {
           const paginationStyle = isMobile
             ? lbStyles.paginationMobile
             : lbStyles.pagination;
-          const fabPad = hasFab ? { paddingBottom: Layout.fabPaddingBottom } : {};
           return (
-        <div style={{ ...paginationStyle, ...fabPad }}>
+        <div style={paginationStyle}>
           <PaginationButton disabled={page === 0} onClick={() => void fetchPage(0)}>
             {t('leaderboard.first')}
           </PaginationButton>
@@ -326,7 +325,7 @@ export default function LeaderboardPage() {
       {playerScore && playerData && songId && isScoreValid(songId, instKey, playerScore.score) && (() => {
         return (
         <div
-          style={{ ...(hasFab ? lbStyles.playerFooterFab : lbStyles.playerFooter), ...(hasFab && IS_PWA ? { bottom: 84 + Gap.section - Gap.md } : undefined) }}
+          style={lbStyles.playerFooter}
           onClick={() => navigate('/statistics')} role="button" tabIndex={0}
         >
           <div className={hasFab ? 'fab-player-footer' : ''} style={{ ...lbStyles.playerFooterRow, cursor: 'pointer' }}>
@@ -349,7 +348,7 @@ export default function LeaderboardPage() {
         );
       })()}
       {/* v8 ignore stop */}
-      </>}
+      </div>}
     >
         {error && <PageMessage error>{error}</PageMessage>}
 
@@ -513,24 +512,11 @@ const lbStyles = {
   } as CSSProperties,
   playerFooter: {
     flexShrink: 0,
-    zIndex: 20,
     padding: padding(Gap.md, Layout.paddingHorizontal),
     maxWidth: MaxWidth.card,
     margin: CssValue.marginCenter,
     boxSizing: BoxSizing.borderBox,
     width: CssValue.full,
-  } as CSSProperties,
-  playerFooterFab: {
-    position: Position.fixed,
-    bottom: 84,
-    left: 0,
-    right: 0,
-    maxWidth: MaxWidth.card,
-    margin: CssValue.marginCenter,
-    padding: padding(0, Layout.paddingHorizontal),
-    boxSizing: BoxSizing.borderBox,
-    zIndex: 150,
-    pointerEvents: 'auto' as const,
   } as CSSProperties,
   playerFooterRow: {
     ...frostedCard,
@@ -542,5 +528,11 @@ const lbStyles = {
     backgroundColor: Colors.purpleHighlight,
     border: border(Border.thin, Colors.purpleHighlightBorder),
     fontSize: Font.md,
+  } as CSSProperties,
+  stickyFooter: {
+    position: Position.sticky,
+    bottom: 0,
+    flexShrink: 0,
+    zIndex: ZIndex.overlay,
   } as CSSProperties,
 };

@@ -11,10 +11,9 @@ import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
-import ArcSpinner from '../../components/common/ArcSpinner';
 import { IoChevronForward } from 'react-icons/io5';
 import type { RivalSongComparison } from '@festival/core/api/serverTypes';
-import { STAGGER_INTERVAL, Gap, Layout } from '@festival/theme';
+import { STAGGER_INTERVAL, Gap, Layout, flexColumn } from '@festival/theme';
 import { LoadPhase } from '@festival/core';
 import { categorizeRivalSongs } from './helpers/rivalCategories';
 import { deriveComboFromSettings, getEnabledInstruments } from './helpers/comboUtils';
@@ -115,20 +114,12 @@ export default function RivalDetailPage() {
     <Page
       scrollRestoreKey={`rivalDetail:${cacheKey}`}
       scrollDeps={[phase]}
+      loadPhase={phase}
       containerStyle={styles.container}
-      before={<>
-        <PageHeader title={`${playerName} vs. ${displayName}`} />
-        {phase !== LoadPhase.ContentIn && (
-          <div
-            style={phase === LoadPhase.SpinnerOut ? { ...styles.spinnerOverlay, ...styles.spinnerFadeOut } : styles.spinnerOverlay}
-          >
-            <ArcSpinner />
-          </div>
-        )}
-      </>}
+      before={<PageHeader title={`${playerName} vs. ${displayName}`} />}
     >
       {phase === LoadPhase.ContentIn && (
-            <div style={isMobile ? { paddingBottom: Layout.fabPaddingBottom } : undefined}>
+            <div style={{ ...flexColumn, gap: Gap.section, ...(isMobile ? { paddingBottom: Layout.fabPaddingBottom } : undefined) }}>
               {categories.length === 0 && (
                 <EmptyState title={t('rivals.detail.noSongs')} style={stagger(200)} onAnimationEnd={clearAnim} />
               )}

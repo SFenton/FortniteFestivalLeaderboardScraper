@@ -10,7 +10,6 @@ import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
-import ArcSpinner from '../../components/common/ArcSpinner';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
 import { IoChevronForward } from 'react-icons/io5';
 import { InstrumentHeaderSize } from '@festival/core';
@@ -245,17 +244,9 @@ export default function RivalsPage() {
     <Page
       scrollRestoreKey={`rivals:${accountId}`}
       scrollDeps={[phase]}
+      loadPhase={phase}
       containerStyle={styles.container}
-      before={<>
-        <PageHeader title={t('rivals.title')} />
-        {phase !== LoadPhase.ContentIn && (
-          <div
-            style={phase === LoadPhase.SpinnerOut ? { ...styles.spinnerOverlay, ...styles.spinnerFadeOut } : styles.spinnerOverlay}
-          >
-            <ArcSpinner />
-          </div>
-        )}
-      </>}
+      before={<PageHeader title={t('rivals.title')} />}
     >
       {phase === LoadPhase.ContentIn && (
             <div style={{ ...flexColumn, gap: Gap.section, ...(isMobile ? { paddingBottom: Layout.fabPaddingBottom } : undefined) }}>

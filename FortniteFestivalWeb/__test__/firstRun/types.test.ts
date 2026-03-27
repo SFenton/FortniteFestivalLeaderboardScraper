@@ -128,4 +128,40 @@ describe('isSlideUnseen', () => {
     // version 1 is not > version 2, and hash matches — not unseen
     expect(isSlideUnseen(slide, seen)).toBe(false);
   });
+
+  it('uses contentKey for hash when provided', () => {
+    const slide = makeSlide({ id: 's1', version: 1, description: 'descriptionMobile', contentKey: 'shared-key' });
+    const seen: FirstRunStorage = {
+      s1: { version: 1, hash: contentHash('shared-key'), seenAt: '2024-01-01' },
+    };
+    expect(isSlideUnseen(slide, seen)).toBe(false);
+  });
+
+  it('returns false for platform variant with same contentKey but different description', () => {
+    const mobileSlide = makeSlide({ id: 's1', version: 1, description: 'descriptionMobile', contentKey: 'shared-key' });
+    const desktopSlide = makeSlide({ id: 's1', version: 1, description: 'descriptionDesktop', contentKey: 'shared-key' });
+    // Seen record saved from the mobile variant
+    const seen: FirstRunStorage = {
+      s1: { version: 1, hash: contentHash('shared-key'), seenAt: '2024-01-01' },
+    };
+    // Desktop variant should also be treated as seen
+    expect(isSlideUnseen(mobileSlide, seen)).toBe(false);
+    expect(isSlideUnseen(desktopSlide, seen)).toBe(false);
+  });
+
+  it('returns true when contentKey changes (content updated)', () => {
+    const slide = makeSlide({ id: 's1', version: 1, contentKey: 'new-key' });
+    const seen: FirstRunStorage = {
+      s1: { version: 1, hash: contentHash('old-key'), seenAt: '2024-01-01' },
+    };
+    expect(isSlideUnseen(slide, seen)).toBe(true);
+  });
+
+  it('falls back to title+description when contentKey is not set', () => {
+    const slide = makeSlide({ id: 's1', version: 1 });
+    const seen: FirstRunStorage = {
+      s1: { version: 1, hash: contentHash(slide.title + slide.description), seenAt: '2024-01-01' },
+    };
+    expect(isSlideUnseen(slide, seen)).toBe(false);
+  });
 });

@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode, type CSSProperties } from 'react';
 import { LoadPhase } from '@festival/core';
-import { ZIndex, Layout, SPINNER_FADE_MS, flexCenter, fixedFill } from '@festival/theme';
+import { ZIndex, Layout, PointerEvents, SPINNER_FADE_MS, flexCenter, fixedFill } from '@festival/theme';
 import ArcSpinner from '../common/ArcSpinner';
 
 export interface LoadGateProps {
@@ -27,16 +27,16 @@ export function LoadGate({
 }: LoadGateProps) {
   const isContentIn = phase === CONTENT_IN;
   const isSpinnerOut = phase === SPINNER_OUT;
-  const s = useStyles(!!overlay, isSpinnerOut, fadeDuration);
+  const s = useStyles(!!overlay, isContentIn, isSpinnerOut, fadeDuration);
 
-  const spinner = !isContentIn ? (
+  const spinner = (
     <div
       className={spinnerClassName}
       style={spinnerClassName ? s.fadeOut : (overlay ? s.spinnerOverlay : s.spinnerContainer)}
     >
       <ArcSpinner />
     </div>
-  ) : null;
+  );
 
   if (overlay) {
     return (
@@ -55,8 +55,11 @@ export function LoadGate({
   );
 }
 
-function useStyles(overlay: boolean, isSpinnerOut: boolean, fadeDuration: number) {
+function useStyles(overlay: boolean, isContentIn: boolean, isSpinnerOut: boolean, fadeDuration: number) {
   return useMemo(() => {
+    const hidden = isContentIn
+      ? { opacity: 0, pointerEvents: PointerEvents.none } as const
+      : {};
     const fadeAnim = isSpinnerOut
       ? { animation: `fadeOut ${fadeDuration}ms ease-out forwards` }
       : {};
@@ -66,16 +69,20 @@ function useStyles(overlay: boolean, isSpinnerOut: boolean, fadeDuration: number
         zIndex: ZIndex.dropdown,
         ...flexCenter,
         ...fadeAnim,
+        ...hidden,
       } as CSSProperties,
       /** Viewport minus shell chrome (header + bottom nav + padding) keeps spinner visually centered. */
       spinnerContainer: {
         ...flexCenter,
         minHeight: `calc(100vh - ${Layout.shellChromeHeight}px)`,
         ...fadeAnim,
+        ...hidden,
       } as CSSProperties,
-      fadeOut: isSpinnerOut
-        ? { animation: `fadeOut ${fadeDuration}ms ease-out forwards` } as CSSProperties
-        : undefined,
+      fadeOut: isContentIn
+        ? { opacity: 0, pointerEvents: PointerEvents.none } as CSSProperties
+        : isSpinnerOut
+          ? { animation: `fadeOut ${fadeDuration}ms ease-out forwards` } as CSSProperties
+          : undefined,
     };
-  }, [overlay, isSpinnerOut, fadeDuration]);
+  }, [overlay, isContentIn, isSpinnerOut, fadeDuration]);
 }

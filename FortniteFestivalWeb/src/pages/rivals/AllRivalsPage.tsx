@@ -8,7 +8,6 @@ import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useStagger } from '../../hooks/ui/useStagger';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
-import ArcSpinner from '../../components/common/ArcSpinner';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
 import { InstrumentHeaderSize } from '@festival/core';
 import { LoadPhase } from '@festival/core';
@@ -16,7 +15,7 @@ import { serverInstrumentLabel, type RivalsListResponse, type RivalSummary, type
 import RivalRow from './components/RivalRow';
 import { Routes } from '../../routes';
 import { deriveComboFromSettings } from './helpers/comboUtils';
-import { SPINNER_FADE_MS, Layout } from '@festival/theme';
+import { Layout, Font, Weight, Colors, Gap } from '@festival/theme';
 import Page from '../Page';
 import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
@@ -215,11 +214,12 @@ export default function AllRivalsPage() {
     <Page
       scrollRestoreKey={`rivals-all:${accountId}:${category}`}
       scrollDeps={[phase]}
+      loadPhase={phase}
       containerClassName={undefined}
-      before={<>
+      before={
         <PageHeader
           title={
-            <h1 style={{ display: 'flex', alignItems: 'center', gap: 'var(--gap-sm)', margin: 0 }}>
+            <h1 style={{ display: 'flex', alignItems: 'center', gap: Gap.sm, margin: 0, fontSize: Font.title, fontWeight: Weight.bold, color: Colors.textPrimary }}>
               {isInstrument && instrument && (
                 <InstrumentHeader instrument={instrument} size={InstrumentHeaderSize.SM} iconOnly />
               )}
@@ -228,14 +228,7 @@ export default function AllRivalsPage() {
           }
           sticky
         />
-        {phase !== LoadPhase.ContentIn && (
-          <div
-            style={phase === LoadPhase.SpinnerOut ? { animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards` } : undefined}
-          >
-            <ArcSpinner />
-          </div>
-        )}
-      </>}
+      }
     >
       {phase === LoadPhase.ContentIn && (
             <div style={isMobile ? { paddingBottom: Layout.fabPaddingBottom } : undefined}>

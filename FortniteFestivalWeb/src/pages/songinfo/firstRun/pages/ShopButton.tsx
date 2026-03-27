@@ -6,6 +6,7 @@ export const shopButtonMobileSlide: FirstRunSlideDef = {
   version: 1,
   title: 'firstRun.songInfo.shop.title',
   description: 'firstRun.songInfo.shop.descriptionMobile',
+  contentKey: 'songinfo-shop-button',
   render: () => <ShopButtonDemo mobile />,
   contentStaggerCount: 3,
 };
@@ -15,6 +16,7 @@ export const shopButtonDesktopSlide: FirstRunSlideDef = {
   version: 1,
   title: 'firstRun.songInfo.shop.title',
   description: 'firstRun.songInfo.shop.descriptionDesktop',
+  contentKey: 'songinfo-shop-button',
   render: () => <ShopButtonDemo />,
   contentStaggerCount: 3,
 };

@@ -19,6 +19,12 @@ export type FirstRunSlideDef = {
   title: string;
   /** i18n key for the slide description */
   description: string;
+  /**
+   * Override the string hashed to detect content changes.
+   * When set, used instead of `title + description` so that platform-variant
+   * slides (same id, different descriptions) share a single seen-record hash.
+   */
+  contentKey?: string;
   /** Predicate — slide only shown when this returns true. Omit for "always show". */
   gate?: (ctx: FirstRunGateContext) => boolean;
   /** Render the live component preview for this slide */
@@ -73,7 +79,7 @@ export function isSlideUnseen(slide: FirstRunSlideDef, seen: FirstRunStorage): b
   const record = seen[slide.id];
   if (!record) return true;
   if (slide.version > record.version) return true;
-  const hash = contentHash(slide.title + slide.description);
+  const hash = contentHash(slide.contentKey ?? (slide.title + slide.description));
   if (hash !== record.hash) return true;
   return false;
 }

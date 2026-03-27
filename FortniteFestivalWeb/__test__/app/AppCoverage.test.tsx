@@ -86,7 +86,7 @@ beforeEach(() => {
 function seedSongFRE() {
   const seen: Record<string, { version: number; hash: string; seenAt: string }> = {};
   for (const slide of songSlides(false)) {
-    seen[slide.id] = { version: slide.version, hash: contentHash(slide.title + slide.description), seenAt: new Date().toISOString() };
+    seen[slide.id] = { version: slide.version, hash: contentHash(slide.contentKey ?? (slide.title + slide.description)), seenAt: new Date().toISOString() };
   }
   localStorage.setItem('fst:firstRun', JSON.stringify(seen));
 }

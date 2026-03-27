@@ -102,7 +102,7 @@ function useStyles() {
       gap: Gap.lg,
       height: Layout.entryRowHeight,
       padding: padding(0, Gap.xl),
-      color: Colors.textSecondary,
+      color: Colors.textPrimary,
       textDecoration: CssValue.none,
       fontSize: Font.lg,
       fontWeight: Weight.semibold,

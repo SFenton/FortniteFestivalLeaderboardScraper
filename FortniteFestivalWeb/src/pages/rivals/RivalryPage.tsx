@@ -11,7 +11,6 @@ import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
-import ArcSpinner from '../../components/common/ArcSpinner';
 import type { RivalSongComparison } from '@festival/core/api/serverTypes';
 import { STAGGER_INTERVAL, Gap, Position, ZIndex, Display, Align, Justify, Colors, Font, Layout, flexColumn, flexCenter, padding } from '@festival/theme';
 import { LoadPhase } from '@festival/core';
@@ -137,17 +136,9 @@ export default function RivalryPage() {
     <Page
       scrollRestoreKey={`rivalry:${cacheKey}:${mode}`}
       scrollDeps={[phase]}
+      loadPhase={phase}
       containerStyle={styles.container}
-      before={<>
-        <PageHeader title={title} />
-        {phase !== LoadPhase.ContentIn && (
-          <div
-            style={phase === LoadPhase.SpinnerOut ? { ...styles.spinnerOverlay, ...styles.spinnerFadeOut } : styles.spinnerOverlay}
-          >
-            <ArcSpinner />
-          </div>
-        )}
-      </>}
+      before={<PageHeader title={title} />}
     >
       {phase === LoadPhase.ContentIn && (
             <div style={isMobile ? { paddingBottom: Layout.fabPaddingBottom } : undefined}>

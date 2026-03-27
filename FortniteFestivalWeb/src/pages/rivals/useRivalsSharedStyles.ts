@@ -2,9 +2,9 @@
 import { useMemo, type CSSProperties } from 'react';
 import {
   Gap, Colors, Font, Weight, Radius, Layout, Position, ZIndex,
-  Display, Align, Justify, Cursor, CssValue, WhiteSpace,
+  Display, Align, Justify, Cursor, CssValue, WhiteSpace, InstrumentSize,
   flexColumn, flexCenter, flexRow, padding, transition,
-  CssProp, NAV_TRANSITION_MS, SPINNER_FADE_MS,
+  CssProp, NAV_TRANSITION_MS,
 } from '@festival/theme';
 
 /**
@@ -21,15 +21,6 @@ export function useRivalsSharedStyles() {
       ...flexColumn,
       gap: Gap.section,
     } as CSSProperties,
-    spinnerOverlay: {
-      position: Position.absolute,
-      inset: 0,
-      ...flexCenter,
-      zIndex: ZIndex.spinner,
-    } as CSSProperties,
-    spinnerFadeOut: {
-      animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards`,
-    } as CSSProperties,
     section: {
       ...flexColumn,
     } as CSSProperties,
@@ -41,6 +32,7 @@ export function useRivalsSharedStyles() {
     sectionHeaderClickable: {
       ...flexRow,
       gap: Gap.md,
+      minHeight: InstrumentSize.sm,
       paddingBottom: Gap.md,
       cursor: Cursor.pointer,
       borderRadius: Radius.sm,

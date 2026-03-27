@@ -166,6 +166,7 @@ function useRivalSongRowStyles() {
         borderRadius: Radius.md,
         textDecoration: 'none',
         color: 'inherit',
+        cursor: Cursor.pointer,
         position: Position.relative,
         overflow: Overflow.hidden,
         containerType: 'inline-size',

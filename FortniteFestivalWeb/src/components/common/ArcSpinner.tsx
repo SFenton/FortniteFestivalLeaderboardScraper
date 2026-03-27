@@ -17,6 +17,9 @@ const ArcSpinner = memo(function ArcSpinner({ size = SpinnerSize.LG, className, 
 
 export default ArcSpinner;
 
+/** Duration of one spin cycle in ms, parsed once from the theme token. */
+const SPIN_DURATION_MS = parseFloat(Spinner.duration) * 1000;
+
 function useStyles(size: SpinnerSize) {
   return useMemo(() => {
     const config = Spinner[size];
@@ -28,6 +31,10 @@ function useStyles(size: SpinnerSize) {
         borderTopColor: Colors.accentPurple,
         borderRadius: '50%',
         animation: `spin ${Spinner.duration} linear infinite`,
+        /* Sync all spinner instances to the same rotation angle via wall-clock time.
+           A negative delay fast-forwards the animation so a newly mounted spinner
+           picks up at the same phase as any already-visible one. */
+        animationDelay: `${-(performance.now() % SPIN_DURATION_MS)}ms`,
       } as CSSProperties,
     };
   }, [size]);

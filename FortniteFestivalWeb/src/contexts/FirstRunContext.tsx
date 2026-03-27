@@ -84,7 +84,7 @@ export function FirstRunProvider({ children }: { children: ReactNode }) {
     for (const slide of slides) {
       seen[slide.id] = {
         version: slide.version,
-        hash: contentHash(slide.title + slide.description),
+        hash: contentHash(slide.contentKey ?? (slide.title + slide.description)),
         seenAt: now,
       };
     }

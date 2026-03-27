@@ -6,6 +6,7 @@ export const pathsMobileSlide: FirstRunSlideDef = {
   version: 2,
   title: 'firstRun.songInfo.paths.title',
   description: 'firstRun.songInfo.paths.descriptionMobile',
+  contentKey: 'songinfo-paths',
   render: () => <PathPreviewDemo />,
   contentStaggerCount: 3,
 };
@@ -15,6 +16,7 @@ export const pathsDesktopSlide: FirstRunSlideDef = {
   version: 2,
   title: 'firstRun.songInfo.paths.title',
   description: 'firstRun.songInfo.paths.descriptionDesktop',
+  contentKey: 'songinfo-paths',
   render: () => <PathPreviewDemo />,
   contentStaggerCount: 3,
 };

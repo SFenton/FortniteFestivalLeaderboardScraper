@@ -63,6 +63,7 @@ function useStyles() {
     row: {
       ...flexBetween,
       gap: Gap.xl,
+      minHeight: Layout.entryRowHeight,
     } as CSSProperties,
     titleArea: {
       flex: 1,

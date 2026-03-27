@@ -100,6 +100,20 @@ describe('FirstRunContext', () => {
     expect(stored['x']!.hash).toBe(contentHash(slide.title + slide.description));
   });
 
+  it('markSeen uses contentKey for hash when provided', () => {
+    const slide = makeSlide('y', { contentKey: 'my-content-key' });
+    const { result } = renderHook(() => useFirstRunContext(), { wrapper });
+
+    act(() => {
+      result.current.register('p', 'P', [slide]);
+      result.current.markSeen([slide]);
+    });
+
+    const stored = loadSeenSlides();
+    expect(stored['y']).toBeDefined();
+    expect(stored['y']!.hash).toBe(contentHash('my-content-key'));
+  });
+
   it('resetPage clears seen state for that page only', () => {
     const slideA = makeSlide('a');
     const slideB = makeSlide('b');

@@ -42,6 +42,7 @@ export const pageCss = {
   bgImage: { ...fixedFill, backgroundSize: 'cover', backgroundPosition: 'center', opacity: Opacity.backgroundImage, pointerEvents: PointerEvents.none } as CSSProperties,
   bgDim: { ...fixedFill, backgroundColor: Colors.overlayDark, pointerEvents: PointerEvents.none } as CSSProperties,
   spinnerOverlay: { ...fixedFill, zIndex: ZIndex.dropdown, ...flexCenter } as CSSProperties,
+  spinnerHidden: { ...fixedFill, zIndex: ZIndex.dropdown, ...flexCenter, opacity: 0, pointerEvents: PointerEvents.none } as CSSProperties,
   spinnerContainer: { ...flexCenter, minHeight: `calc(100vh - ${Layout.shellChromeHeight}px)` } as CSSProperties,
   arcSpinner: { width: Size.iconXl, height: Size.iconXl, borderStyle: BorderStyle.solid, borderWidth: Border.spinnerLg, borderColor: Spinner.trackColor, borderTopColor: Colors.accentPurple, borderRadius: CssValue.circle, animation: `spin ${Spinner.duration} linear infinite` } as CSSProperties,
   fabSpacer: { height: Layout.fabPaddingBottom, flexShrink: 0 } as CSSProperties,
@@ -226,10 +227,12 @@ export default function Page({
     <PageScrollContext.Provider value={pageScrollValue}>
     {before && portalTarget && createPortal(before, portalTarget)}
     <div data-testid="page-root" ref={scrollRef} className={className} style={pgStyle}>
-      {loadPhase != null && loadPhase !== LoadPhase.ContentIn && (
-        <div style={loadPhase === LoadPhase.SpinnerOut
-          ? { ...pageCss.spinnerOverlay, animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards` }
-          : pageCss.spinnerOverlay}
+      {loadPhase != null && (
+        <div style={loadPhase === LoadPhase.ContentIn
+          ? pageCss.spinnerHidden
+          : loadPhase === LoadPhase.SpinnerOut
+            ? { ...pageCss.spinnerOverlay, animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards` }
+            : pageCss.spinnerOverlay}
         >
           <ArcSpinner />
         </div>
