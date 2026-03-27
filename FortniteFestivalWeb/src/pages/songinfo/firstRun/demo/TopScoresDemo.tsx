@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { InstrumentHeaderSize } from '@festival/core';
 import { STAGGER_INTERVAL, frostedCard, Radius, Font, Gap, Weight, Display, Align, Justify, CssValue, PointerEvents, Layout, Colors, Position, Overflow, flexColumn, padding } from '@festival/theme';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
+import { useLeaderboardColumns } from '../../../../hooks/ui/useLeaderboardColumns';
 import InstrumentHeader from '../../../../components/display/InstrumentHeader';
 import { LeaderboardEntry } from '../../../leaderboard/global/components/LeaderboardEntry';
 import FadeIn from '../../../../components/page/FadeIn';
@@ -26,6 +27,7 @@ const ENTRIES: DemoEntry[] = [
 export default function TopScoresDemo() {
   const { t } = useTranslation();
   const h = useSlideHeight();
+  const { showAccuracy, showStars } = useLeaderboardColumns();
 
   const maxEntries = useMemo(() => {
     if (!h) return 4;
@@ -53,8 +55,8 @@ export default function TopScoresDemo() {
                 accuracy={entry.accuracy}
                 isFullCombo={entry.isFC}
                 stars={entry.stars}
-                showAccuracy
-                showStars
+                showAccuracy={showAccuracy}
+                showStars={showStars}
                 scoreWidth="7ch"
               />
             </div>

@@ -195,7 +195,7 @@ export default function PathPreviewDemo() {
         <div className={fx.imageAreaMask}>
           {/* Spinner — matches production .spinnerWrap + fade */}
           {spinnerMounted && (
-            <div className={anim.spinnerWrap} style={s.spinnerFade}>
+            <div className={anim.spinnerWrap} style={s.spinnerWrap}>
               <ArcSpinner size={SpinnerSize.MD} />
             </div>
           )}
@@ -255,6 +255,11 @@ function usePathStyles(spinnerVisible: boolean, imageVisible: boolean) {
       spinnerFade: {
         opacity: spinnerVisible ? 1 : Opacity.none,
         transition: transition(CssProp.opacity, FADE_MS),
+      } as CSSProperties,
+      spinnerWrap: {
+        opacity: spinnerVisible ? 1 : Opacity.none,
+        transition: transition(CssProp.opacity, FADE_MS),
+        animation: CssValue.none,
       } as CSSProperties,
       errorText: {
         color: Colors.textMuted,
