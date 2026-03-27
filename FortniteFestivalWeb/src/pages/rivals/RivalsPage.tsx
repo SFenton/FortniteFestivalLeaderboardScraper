@@ -258,7 +258,7 @@ export default function RivalsPage() {
       </>}
     >
       {phase === LoadPhase.ContentIn && (
-            <div style={isMobile ? { paddingBottom: Layout.fabPaddingBottom } : undefined}>
+            <div style={{ ...flexColumn, gap: Gap.section, ...(isMobile ? { paddingBottom: Layout.fabPaddingBottom } : undefined) }}>
               {!hasAnyRivals && (
                 <EmptyState title={t('rivals.noRivals')} style={stagger(200)} onAnimationEnd={clearAnim} />
               )}
