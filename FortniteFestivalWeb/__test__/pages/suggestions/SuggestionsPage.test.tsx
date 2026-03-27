@@ -614,7 +614,7 @@ describe('SuggestionsPage — coverage: category rendering + filter logic', () =
       expect(container.innerHTML.length).toBeGreaterThan(100);
     }, { timeout: 5000 });
 
-    const scrollArea = container.querySelector('[id="suggestions-scroll"]');
+    const scrollArea = container.querySelector('[data-testid="scroll-area"]');
     if (scrollArea) {
       fireEvent.scroll(scrollArea);
     }
