@@ -113,6 +113,13 @@ export interface PageProps {
   before?: ReactNode;
   /** Content rendered after the scroll area (e.g. modals, footers). */
   after?: ReactNode;
+  /**
+   * Background content (e.g. BackgroundImage) rendered directly in the page's
+   * DOM position — NOT portaled into the header overlay. Use this instead of
+   * putting BackgroundImage inside `before` to avoid z-index stacking issues
+   * on wide-desktop where the header overlay creates an elevated stacking context.
+   */
+  background?: ReactNode;
   /** Ref that receives the stagger-rush reset function. Call `ref.current()` to allow re-stagger. */
   staggerRushRef?: React.MutableRefObject<(() => void) | undefined>;
   /**
@@ -167,6 +174,7 @@ export default function Page({
   containerStyle,
   before,
   after,
+  background,
   staggerRushRef,
   headerCollapse,
   firstRun: firstRunConfig,
@@ -225,6 +233,7 @@ export default function Page({
 
   return (
     <PageScrollContext.Provider value={pageScrollValue}>
+    {background}
     {before && portalTarget && createPortal(before, portalTarget)}
     <div data-testid="page-root" ref={scrollRef} className={className} style={pgStyle}>
       {loadPhase != null && (

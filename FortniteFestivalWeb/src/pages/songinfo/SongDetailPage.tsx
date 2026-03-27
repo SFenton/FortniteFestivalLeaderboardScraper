@@ -327,8 +327,8 @@ export default function SongDetailPage() {
       headerCollapse={{ disabled: hasFab, onCollapse: setHeaderCollapsed }}
       firstRun={{ key: 'songinfo', label: t('nav.songInfo', 'Song Info'), slides: songInfoSlidesMemo, gateContext: firstRunGateCtx }}
       loadPhase={phase}
+      background={<PageBackground src={song?.albumArt} />}
       before={<>
-        <PageBackground src={song?.albumArt} />
         {/* v8 ignore start — stagger animation rendering */}
         {phase === LoadPhase.ContentIn && (
           <div style={stagger(150)} onAnimationEnd={clearAnim}>

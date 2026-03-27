@@ -22,7 +22,7 @@ import type { PlayerScoreSortMode, PlayerScoreSortDraft } from './modals/PlayerS
 import { Gap, Size, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, Colors, Radius, Layout, MaxWidth, Font, Border, Overflow, Position, Display, Align, CssValue, CssProp, flexRow, flexColumn, flexCenter, frostedCard, padding, border, transition, SPINNER_FADE_MS } from '@festival/theme';
 import ArcSpinner from '../../../components/common/ArcSpinner';
 import { ActionPill } from '../../../components/common/ActionPill';
-import Page from '../../Page';
+import Page, { PageBackground } from '../../Page';
 import { PageMessage } from '../../PageMessage';
 import { staggerDelay, estimateVisibleCount } from '@festival/ui-utils';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
@@ -183,6 +183,7 @@ export default function PlayerHistoryPage() {
       staggerRushRef={staggerRushRef}
       headerCollapse={{ disabled: hasFab, onCollapse: setHeaderCollapsed }}
       firstRun={{ key: 'playerhistory', label: t('history.title'), slides: historySlidesMemo, gateContext: firstRunGateCtx }}
+      background={<PageBackground src={song?.albumArt} />}
       before={
         <SongInfoHeader
           song={song}
@@ -190,6 +191,7 @@ export default function PlayerHistoryPage() {
           collapsed={!!(hasFab || headerCollapsed)}
           instrument={instKey}
           animate={!hasFab}
+          hideBackground
           /* v8 ignore start — platform-conditional sort button */
           actions={!hasFab && !IS_IOS && !IS_ANDROID && !IS_PWA ? (
             <ActionPill

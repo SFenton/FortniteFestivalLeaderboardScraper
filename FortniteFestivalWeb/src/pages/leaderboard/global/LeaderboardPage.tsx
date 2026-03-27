@@ -21,7 +21,7 @@ import { staggerDelay } from '@festival/ui-utils';
 import { useIsMobile, useIsMobileChrome } from '../../../hooks/ui/useIsMobile';
 import { useScoreFilter } from '../../../hooks/data/useScoreFilter';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
-import Page from '../../Page';
+import Page, { PageBackground } from '../../Page';
 
 const PAGE_SIZE = 25;
 
@@ -284,6 +284,7 @@ export default function LeaderboardPage() {
       headerCollapse={{ disabled: isNarrow, onCollapse: handleHeaderCollapse }}
       containerStyle={lbStyles.container}
       fabSpacer="fixed"
+      background={<PageBackground src={song?.albumArt} />}
       before={
         <SongInfoHeader
           song={song}
@@ -291,6 +292,7 @@ export default function LeaderboardPage() {
           collapsed={!!(isNarrow || headerCollapsed)}
           instrument={instKey}
           animate={!isNarrow}
+          hideBackground
         />
       }
       after={<div style={lbStyles.stickyFooter}>
