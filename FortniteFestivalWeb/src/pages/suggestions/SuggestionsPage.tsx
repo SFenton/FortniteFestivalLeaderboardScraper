@@ -337,7 +337,6 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
             </div>
           </InfiniteScroll>
         )}
-      {isMobileChrome && <div style={suggestionsStyles.fabSpacer} />}
     </Page>
   );
 }
@@ -372,10 +371,6 @@ const suggestionsStyles = {
     borderTopColor: Colors.accentPurple,
     borderRadius: CssValue.circle,
     animation: `spin ${Spinner.duration} linear infinite`,
-  } as CSSProperties,
-  fabSpacer: {
-    height: Layout.fabPaddingBottom,
-    flexShrink: 0,
   } as CSSProperties,
 };
 

@@ -368,6 +368,7 @@ export default function SongsPage() {
       staggerRushRef={staggerRushRef}
       firstRun={{ key: 'songs', label: t('nav.songs'), slides: songsSlidesMemo, gateContext: firstRunGateCtx }}
       containerStyle={{ paddingTop: isMobile ? Gap.sm : Gap.md }}
+      fabSpacer="fixed"
       before={<>
         <LoadGate phase={loadPhase} overlay>
         {!isMobileChrome && (
@@ -489,7 +490,6 @@ export default function SongsPage() {
             })}
           </div>
         )}
-        {isMobileChrome && <div style={songsStyles.fabSpacer} />}
     </Page>
   );
 }
@@ -512,10 +512,6 @@ function useSongsStyles() {
       color: Colors.textSecondary,
       backgroundColor: Colors.backgroundApp,
       fontSize: Font.lg,
-    } as CSSProperties,
-    fabSpacer: {
-      height: Layout.fabBottom,
-      flexShrink: 0,
     } as CSSProperties,
   }), []);
 }

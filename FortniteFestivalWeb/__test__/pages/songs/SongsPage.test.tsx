@@ -241,7 +241,10 @@ describe('SongsPage', () => {
     const { container } = renderSongsPage();
     await act(async () => { await vi.advanceTimersByTimeAsync(100); });
     await act(async () => { await vi.advanceTimersByTimeAsync(600); });
-    expect(container.querySelector('[style*="height: 80"]') || container.querySelector('[style*="height:80"]')).toBeTruthy();
+    // SongsPage uses fabSpacer="fixed" which applies marginBottom on the scroll container
+    const scrollContainer = container.querySelector('[data-testid="test-scroll-container"]');
+    expect(scrollContainer).toBeTruthy();
+    expect((scrollContainer as HTMLElement).style.marginBottom).toBe('96px');
   });
 
   it('re-synchs settings from localStorage on external event', async () => {

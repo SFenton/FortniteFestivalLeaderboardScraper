@@ -176,7 +176,6 @@ export default function ShopPage() {
               ))}
             </div>
           )}
-        {isMobileChrome && <div style={shopStyles.fabSpacer} />}
     </Page>
   );
 }
@@ -195,10 +194,6 @@ function useShopPageStyles() {
       ...flexColumn,
       gap: Gap.xs,
       paddingBottom: Gap.xl,
-    } as CSSProperties,
-    fabSpacer: {
-      height: Layout.fabBottom,
-      flexShrink: 0,
     } as CSSProperties,
   }), []);
 }

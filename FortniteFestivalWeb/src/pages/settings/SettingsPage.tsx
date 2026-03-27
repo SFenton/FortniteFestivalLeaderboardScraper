@@ -447,7 +447,6 @@ export default function SettingsPage() {
           </FadeInDiv>
 
         </div>
-      {isMobileChrome && <div style={st.fabSpacer} />}
     </Page>
   );
 }
@@ -538,10 +537,6 @@ function useSettingsStyles(isMobile: boolean, filterOpen: boolean) {
       ...btnPrimary,
       padding: padding(Gap.sm, Gap.section),
       fontSize: Font.md,
-      flexShrink: 0,
-    } as CSSProperties,
-    fabSpacer: {
-      height: Layout.fabBottom,
       flexShrink: 0,
     } as CSSProperties,
   }), [isMobile, filterOpen]);

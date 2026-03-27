@@ -17,6 +17,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode, 
 import { createPortal } from 'react-dom';
 import { useNavigationType } from 'react-router-dom';
 import { Colors, ZIndex, MaxWidth, Layout, Position, Size, Spinner, Border, flexColumn, flexCenter, fixedFill, CssValue, Opacity, BorderStyle, PointerEvents, padding, SPINNER_FADE_MS } from '@festival/theme';
+import { useIsMobileChrome } from '../hooks/ui/useIsMobile';
 import { useScrollMask, type ScrollMaskOptions } from '../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../hooks/ui/useStaggerRush';
 import { useScrollRestore } from '../hooks/ui/useScrollRestore';
@@ -43,6 +44,7 @@ export const pageCss = {
   spinnerOverlay: { ...fixedFill, zIndex: ZIndex.dropdown, ...flexCenter } as CSSProperties,
   spinnerContainer: { ...flexCenter, minHeight: `calc(100vh - ${Layout.shellChromeHeight}px)` } as CSSProperties,
   arcSpinner: { width: Size.iconXl, height: Size.iconXl, borderStyle: BorderStyle.solid, borderWidth: Border.spinnerLg, borderColor: Spinner.trackColor, borderTopColor: Colors.accentPurple, borderRadius: CssValue.circle, animation: `spin ${Spinner.duration} linear infinite` } as CSSProperties,
+  fabSpacer: { height: Layout.fabPaddingBottom, flexShrink: 0 } as CSSProperties,
 };
 
 /* ── Scroll area variant ── */
@@ -138,6 +140,14 @@ export interface PageProps {
    * during Loading/SpinnerOut phases, and applies a fade-out animation during SpinnerOut.
    */
   loadPhase?: LoadPhase;
+  /**
+   * Controls how the FAB bottom spacer behaves on mobile chrome.
+   * - `'end'` (default): spacer sits at the end of scrollable content — content can
+   *   scroll under the FAB before reaching the spacer.
+   * - `'fixed'`: shrinks the scroll viewport itself so content never scrolls behind
+   *   the FAB/search bar.
+   */
+  fabSpacer?: 'end' | 'fixed';
   children: ReactNode;
 }
 
@@ -160,6 +170,7 @@ export default function Page({
   headerCollapse,
   firstRun: firstRunConfig,
   loadPhase,
+  fabSpacer = 'end',
   children,
 }: PageProps) {
   const internalRef = useRef<HTMLDivElement>(null);
@@ -194,6 +205,17 @@ export default function Page({
     return () => el.removeEventListener('scroll', onScroll);
   }); // intentionally no deps — re-subscribe on every render to capture latest headerCollapse
 
+  const isMobileChrome = useIsMobileChrome();
+
+  // 'fixed' mode: shrink the shell scroll container so content never scrolls behind the FAB
+  useEffect(() => {
+    if (!isMobileChrome || fabSpacer !== 'fixed') return;
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    el.style.marginBottom = `${Layout.fabPaddingBottom}px`;
+    return () => { el.style.marginBottom = ''; };
+  }, [isMobileChrome, fabSpacer, scrollContainerRef]);
+
   const pgStyle = pageStyle(variant);
   const saStyle = scrollAreaStyle(scrollVariant);
   const cStyle = containerBaseStyle(containerVariant);
@@ -216,6 +238,7 @@ export default function Page({
         <div className={containerClassName} style={{ ...cStyle, ...containerStyle }}>
           {children}
         </div>
+        {isMobileChrome && fabSpacer === 'end' && <div style={pageCss.fabSpacer} />}
       </div>
       {after}
       {firstRunConfig && <PageFirstRun config={firstRunConfig} />}
