@@ -33,7 +33,7 @@ import ArcSpinner from '../components/common/ArcSpinner';
 export const pageCss = {
   page: { ...flexColumn, flex: 1, color: Colors.textPrimary } as CSSProperties,
   pageWithBg: { ...flexColumn, flex: 1, color: Colors.textPrimary, backgroundColor: Colors.backgroundApp, position: Position.relative } as CSSProperties,
-  pageWithBgClip: { ...flexColumn, flex: 1, color: Colors.textPrimary, backgroundColor: Colors.backgroundApp, position: Position.relative } as CSSProperties,
+  pageWithBgClip: { ...flexColumn, flex: 1, color: Colors.textPrimary, position: Position.relative } as CSSProperties,
   scrollArea: { flex: 1 } as CSSProperties,
   scrollAreaRelative: { flex: 1, position: Position.relative } as CSSProperties,
   scrollAreaRelativeZ: { flex: 1, position: Position.relative, zIndex: ZIndex.base } as CSSProperties,

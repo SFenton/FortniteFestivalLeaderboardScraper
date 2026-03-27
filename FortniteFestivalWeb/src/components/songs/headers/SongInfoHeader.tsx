@@ -43,6 +43,8 @@ export interface SongInfoHeaderProps {
   shopUrl?: string;
   /** When true, the shop button pulses to draw attention. */
   shopPulse?: boolean;
+  /** Skip rendering BackgroundImage (caller renders it separately). */
+  hideBackground?: boolean;
   /** Extra inline styles on the outer PageHeader wrapper. */
   style?: CSSProperties;
 }
@@ -57,6 +59,7 @@ export default function SongInfoHeader({
   onOpenPaths,
   shopUrl,
   shopPulse,
+  hideBackground,
   style: extraStyle,
 }: SongInfoHeaderProps) {
   const { t } = useTranslation();
@@ -66,7 +69,7 @@ export default function SongInfoHeader({
 
   return (
     <>
-      <BackgroundImage src={song?.albumArt} />
+      {!hideBackground && <BackgroundImage src={song?.albumArt} />}
       <PageHeader
         style={{
           paddingTop: collapsed ? Gap.md : Layout.paddingTop,

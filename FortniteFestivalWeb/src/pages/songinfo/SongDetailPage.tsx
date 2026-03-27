@@ -13,7 +13,7 @@ import {
 } from '@festival/core/api/serverTypes';
 import { Gap, Colors, Font, Layout, MaxWidth, Position, ZIndex, Display, Overflow, Align, Justify, CssValue, flexCenter, flexColumn, padding, GridTemplate, SPINNER_FADE_MS } from '@festival/theme';
 import ArcSpinner from '../../components/common/ArcSpinner';
-import Page from '../Page';
+import Page, { PageBackground } from '../Page';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import SongInfoHeader from '../../components/songs/headers/SongInfoHeader';
 import ScoreHistoryChart from './components/chart/ScoreHistoryChart';
@@ -328,6 +328,7 @@ export default function SongDetailPage() {
       firstRun={{ key: 'songinfo', label: t('nav.songInfo', 'Song Info'), slides: songInfoSlidesMemo, gateContext: firstRunGateCtx }}
       loadPhase={phase}
       before={<>
+        <PageBackground src={song?.albumArt} />
         {/* v8 ignore start — stagger animation rendering */}
         {phase === LoadPhase.ContentIn && (
           <div style={stagger(150)} onAnimationEnd={clearAnim}>
@@ -339,6 +340,7 @@ export default function SongDetailPage() {
               onOpenPaths={() => setPathsOpen(true)}
               shopUrl={showShop ? shopUrl : undefined}
               shopPulse={showShop && song ? isShopHighlighted(song.songId) : false}
+              hideBackground
             />
           </div>
       )}
