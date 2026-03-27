@@ -1,7 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { memo, useMemo } from 'react';
 import { accuracyColor, ACCURACY_SCALE } from '@festival/core';
-import { goldOutlineSkew, MetadataSize } from '@festival/theme';
+import { goldOutlineSkew } from '@festival/theme';
 import { formatAccuracyText } from '../../../utils/formatters';
 
 export interface AccuracyDisplayProps {
@@ -38,7 +38,6 @@ function useStyles() {
   return useMemo(() => ({
     fcBadge: {
       ...goldOutlineSkew,
-      minWidth: MetadataSize.percentilePillMinWidth,
     },
   }), []);
 }
