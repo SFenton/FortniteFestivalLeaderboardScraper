@@ -326,7 +326,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
             hasMore={effectiveHasMore}
             loader={phase === LoadPhase.ContentIn ? <div style={suggestionsStyles.loader}><div style={suggestionsStyles.loaderSpinner} /></div> : <></>}
             scrollThreshold={`${SCROLL_PREFETCH_PX}px`}
-            scrollableTarget="suggestions-scroll"
+            scrollableTarget={scrollContainerRef.current ?? undefined}
             style={{ overflow: 'visible' }}
           >
             <div ref={listRef}>
