@@ -17,7 +17,6 @@ import Page from '../../../Page';
 import PageHeader from '../../../../components/common/PageHeader';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import { useMediaQuery } from '../../../../hooks/ui/useMediaQuery';
-import { useSettings, isInstrumentVisible } from '../../../../contexts/SettingsContext';
 import { IS_IOS, IS_ANDROID, IS_PWA } from '@festival/ui-utils';
 import { useTrackedPlayer } from '../../../../hooks/data/useTrackedPlayer';
 import { useScoreFilter } from '../../../../hooks/data/useScoreFilter';
