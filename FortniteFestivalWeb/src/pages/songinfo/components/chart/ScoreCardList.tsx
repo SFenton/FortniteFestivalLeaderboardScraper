@@ -14,7 +14,7 @@ type ListPhase = 'idle' | 'in' | 'out';
 
 const scoreListCardBase: React.CSSProperties = {
   ...frostedCard, display: 'flex', alignItems: 'center', gap: Gap.xl,
-  padding: padding(0, Gap.xl), height: Size.xl, borderRadius: Radius.md,
+  padding: padding(0, Gap.xl), height: Size.iconXl, borderRadius: Radius.md,
   fontSize: Font.md, color: 'inherit', transition: transition('border-color', 150),
 };
 const scoreListCardBestStyle: React.CSSProperties = {
