@@ -96,9 +96,9 @@ describe('FirstRunCarousel', () => {
 
   it('dismisses on overlay click', () => {
     const onDismiss = vi.fn();
-    const { container } = render(<FirstRunCarousel slides={makeSlides(1)} onDismiss={onDismiss} />);
-    // The overlay is the outermost div
-    const overlay = container.firstElementChild!;
+    render(<FirstRunCarousel slides={makeSlides(1)} onDismiss={onDismiss} />);
+    // Portal renders into document.body — find the overlay there
+    const overlay = document.body.lastElementChild!;
     fireEvent.click(overlay);
     expect(onDismiss).toHaveBeenCalled();
   });

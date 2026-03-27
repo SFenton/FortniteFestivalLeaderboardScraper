@@ -1,5 +1,6 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useLayoutEffect, useState, useRef, useCallback, useMemo, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { IoClose, IoChevronBack, IoChevronForward } from 'react-icons/io5';
 import { TRANSITION_MS, FAST_FADE_MS, SWIPE_THRESHOLD, STAGGER_INTERVAL, Size, Colors, Gap, Radius, Font, Weight, Layout, MetadataSize, modalOverlay, modalCard, flexColumn, flexCenter, padding, transition, transitions } from '@festival/theme';
@@ -150,7 +151,7 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
       : { opacity: animIn ? 1 : 0, transform: animIn ? 'scale(1) translateY(0)' : 'scale(0.95) translateY(10px)', transition: `opacity ${TRANSITION_MS}ms ease, transform ${TRANSITION_MS}ms ease` };
   /* v8 ignore stop */
 
-  return (
+  return createPortal(
     <div
       style={{ ...S.overlay, opacity: overlayOpacity, transition: `opacity ${TRANSITION_MS}ms ease`, pointerEvents: animOut ? 'none' : undefined }}
       onClick={handleDismiss}
@@ -233,7 +234,8 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
