@@ -10,7 +10,7 @@ import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import {
   Colors, Font, Weight, Gap, Radius, Border, Layout, ZIndex,
   Display, Align, Justify, Position, Cursor, BoxSizing, CssValue, CssProp,
-  flexColumn, flexRow, flexCenter, purpleGlass, transition, transitions, padding, border, margin,
+  flexColumn, flexRow, flexCenter, purpleGlass, btnDanger, transition, transitions, padding, border, margin,
   Overflow, FAST_FADE_MS, LINK_TRANSITION_MS, PointerEvents,
 } from '@festival/theme';
 
@@ -72,19 +72,19 @@ export default function PinnedSidebar({ player, onDeselect, onSelectPlayer }: Pi
         {/* v8 ignore stop */}
         <div style={s.spacer} />
         {player ? (
-          <Link to="/statistics" style={s.link}>
-            <span style={s.linkIcon}><IoPerson size={20} /></span>
-            {player.displayName}
-          </Link>
+          <div style={s.playerRow}>
+            <Link to="/statistics" style={s.playerLink}>
+              <span style={s.linkIcon}><IoPerson size={20} /></span>
+              {player.displayName}
+            </Link>
+            <button style={s.deselectBtn} onClick={onDeselect}>
+              {t('common.deselect')}
+            </button>
+          </div>
         ) : (
           <button style={s.selectPlayerBtn} onClick={onSelectPlayer}>
             <span style={s.linkIcon}><IoPerson size={20} /></span>
             {t('common.selectPlayerProfile')}
-          </button>
-        )}
-        {player && (
-          <button style={s.deselectBtn} onClick={onDeselect}>
-            {t('common.deselect')}
           </button>
         )}
         <NavLink to="/settings" style={({ isActive }) => linkClass(isActive)}>
@@ -153,22 +153,25 @@ function useStyles() {
         width: 20,
         justifyContent: Justify.center,
       } as CSSProperties,
+      playerRow: {
+        display: Display.flex,
+        alignItems: Align.center,
+      } as CSSProperties,
+      playerLink: {
+        ...link,
+        flex: 1,
+      } as CSSProperties,
       selectPlayerBtn: {
         ...link,
         background: CssValue.none,
         cursor: Cursor.pointer,
       } as CSSProperties,
       deselectBtn: {
-        ...flexCenter,
-        margin: margin(Gap.xs, Gap.md),
-        padding: padding(Gap.md, Gap.xl),
-        borderRadius: Radius.full,
-        border: border(Border.thin, Colors.statusRed),
-        backgroundColor: Colors.dangerBg,
-        color: Colors.textPrimary,
+        ...btnDanger,
+        padding: padding(Gap.sm, Gap.xl),
         fontSize: Font.sm,
-        fontWeight: Weight.semibold,
-        cursor: Cursor.pointer,
+        whiteSpace: 'nowrap',
+        marginLeft: 'auto',
       } as CSSProperties,
     };
   }, []);
