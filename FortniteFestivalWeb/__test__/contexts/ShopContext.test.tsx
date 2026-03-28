@@ -29,6 +29,11 @@ vi.mock('../../src/contexts/FestivalContext', () => ({
   useFestival: () => ({ state: { songs: mockSongs } }),
 }));
 
+// Mock FeatureFlagsContext (shop flag ON by default)
+vi.mock('../../src/contexts/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ shop: true, rivals: true, compete: true, leaderboards: true }),
+}));
+
 import { ShopProvider, useShop } from '../../src/contexts/ShopContext';
 import { useShopState } from '../../src/hooks/data/useShopState';
 import { SettingsProvider } from '../../src/contexts/SettingsContext';

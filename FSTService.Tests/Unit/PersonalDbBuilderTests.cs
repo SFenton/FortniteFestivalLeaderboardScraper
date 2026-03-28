@@ -942,7 +942,7 @@ public class PersonalDbBuilderTests : IDisposable
     {
         var builder = CreateBuilder();
 
-        // No population data in MetaDatabase — fallback to local count
+        // No population data in MetaDatabase — total should be 0
         var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
         // Insert multiple entries so there's a meaningful "total" count
         guitarDb.UpsertEntries("song1", [
@@ -959,7 +959,7 @@ public class PersonalDbBuilderTests : IDisposable
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT GuitarTotal FROM Scores WHERE SongId = 'song1'";
         var total = (long)cmd.ExecuteScalar()!;
-        Assert.Equal(3, total); // 3 entries in local DB
+        Assert.Equal(0, total); // no population data → 0
     }
 
     [Fact]
@@ -1045,7 +1045,7 @@ public class PersonalDbBuilderTests : IDisposable
 
         Assert.NotNull(result);
         Assert.Equal(1, result.TotalItems);
-        Assert.Equal(2L, result.Items[0]["GuitarTotal"]);
+        Assert.Equal(0L, result.Items[0]["GuitarTotal"]); // no population data → 0
     }
 
     [Fact]

@@ -10,6 +10,12 @@ public sealed class PathDataStore
 {
     private readonly string _connectionString;
 
+    // ── In-memory cache for max scores (rarely changes) ──
+    private Dictionary<string, SongMaxScores>? _maxScoresCache;
+    private DateTime _maxScoresCacheTime;
+    private readonly object _maxScoresCacheLock = new();
+    private static readonly TimeSpan MaxScoresCacheTtl = TimeSpan.FromMinutes(5);
+
     public PathDataStore(string songDbPath)
     {
         _connectionString = new SqliteConnectionStringBuilder
@@ -50,10 +56,17 @@ public sealed class PathDataStore
 
     /// <summary>
     /// Returns a dictionary of SongId → MaxScores for all songs.
+    /// Results are cached in-memory for 5 minutes.
     /// Returns empty if the table or columns don't exist yet.
     /// </summary>
     public Dictionary<string, SongMaxScores> GetAllMaxScores()
     {
+        lock (_maxScoresCacheLock)
+        {
+            if (_maxScoresCache is not null && DateTime.UtcNow - _maxScoresCacheTime < MaxScoresCacheTtl)
+                return _maxScoresCache;
+        }
+
         var result = new Dictionary<string, SongMaxScores>(StringComparer.OrdinalIgnoreCase);
         try
         {
@@ -95,6 +108,12 @@ public sealed class PathDataStore
         {
             // Table or column doesn't exist yet — return empty
         }
+
+        lock (_maxScoresCacheLock)
+        {
+            _maxScoresCache = result;
+            _maxScoresCacheTime = DateTime.UtcNow;
+        }
         return result;
     }
 
@@ -103,6 +122,7 @@ public sealed class PathDataStore
     /// </summary>
     public void UpdateMaxScores(string songId, SongMaxScores scores, string datFileHash, string? songLastModified = null)
     {
+        lock (_maxScoresCacheLock) { _maxScoresCache = null; }
         using var conn = new SqliteConnection(_connectionString);
         conn.Open();
         using var cmd = conn.CreateCommand();
@@ -139,6 +159,7 @@ public sealed class PathDataStore
     /// </summary>
     public void ClearMaxScores(string songId)
     {
+        lock (_maxScoresCacheLock) { _maxScoresCache = null; }
         using var conn = new SqliteConnection(_connectionString);
         conn.Open();
         using var cmd = conn.CreateCommand();

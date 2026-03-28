@@ -79,9 +79,15 @@ describe('InstrumentCard', () => {
     expect(screen.getByText('Failed to load')).toBeTruthy();
   });
 
-  it('shows no entries message when entries are empty', () => {
+  it('shows no entries message with instrument name when entries are empty', () => {
     renderCard({ prefetchedEntries: [] });
-    expect(screen.getByText(/no entries/i)).toBeTruthy();
+    expect(screen.getByText('No Lead entries')).toBeTruthy();
+  });
+
+  it('empty card is not clickable', () => {
+    renderCard({ prefetchedEntries: [] });
+    const card = screen.getByText('No Lead entries').parentElement!;
+    expect(card.style.cursor).not.toBe('pointer');
   });
 
   it('renders leaderboard entries with rank, name, score', () => {

@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+
+vi.mock('../../../../src/contexts/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ shop: true, rivals: true, compete: true, leaderboards: true }),
+}));
+
 import Sidebar from '../../../../src/components/shell/desktop/Sidebar';
 import { SettingsProvider } from '../../../../src/contexts/SettingsContext';
 

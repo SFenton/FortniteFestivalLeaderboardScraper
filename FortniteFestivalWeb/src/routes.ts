@@ -13,6 +13,10 @@ export const Routes = {
     `/rivals/${rivalId}/rivalry?mode=${encodeURIComponent(mode)}`,
   statistics: '/statistics',
   suggestions: '/suggestions',
+  compete: '/compete',
+  leaderboards: '/leaderboards',
+  fullRankings: (instrument: string, rankBy?: string) =>
+    `/leaderboards/all?instrument=${encodeURIComponent(instrument)}${rankBy ? `&rankBy=${encodeURIComponent(rankBy)}` : ''}`,
   shop: '/shop',
   settings: '/settings',
 } as const;
@@ -27,4 +31,5 @@ export const RoutePatterns = {
   allRivals: /^\/rivals\/all/,
   rivalDetail: /^\/rivals\/[^/]+$/,
   rivalry: /^\/rivals\/[^/]+\/rivalry/,
+  leaderboards: /^\/leaderboards/,
 } as const;

@@ -1,5 +1,6 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useParams, Link, useSearchParams, useLocation, useNavigate } from 'react-router-dom';
 import { useFestival } from '../../../contexts/FestivalContext';
@@ -12,12 +13,13 @@ import {
 import { LoadPhase } from '@festival/core';
 import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
 import { LeaderboardEntry } from './components/LeaderboardEntry';
-import { Gap, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, QUERY_SHOW_STARS, Colors, Radius, Layout, MaxWidth, Font, Border, Overflow, Position, Display, Align, Justify, BoxSizing, CssValue, CssProp, TextAlign, ZIndex, flexRow, flexColumn, flexCenter, frostedCard, padding, border, transition, NAV_TRANSITION_MS } from '@festival/theme';
+import { Gap, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, QUERY_SHOW_STARS, Colors, Radius, Layout, MaxWidth, Font, Border, Overflow, Position, Display, Align, Justify, BoxSizing, CssValue, CssProp, TextAlign, ZIndex, PointerEvents, flexRow, flexColumn, flexCenter, frostedCard, padding, border, transition, NAV_TRANSITION_MS, FADE_DURATION } from '@festival/theme';
+import { clearStaggerStyle } from '../../../hooks/ui/useStaggerStyle';
 import ArcSpinner from '../../../components/common/ArcSpinner';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import { PaginationButton } from '../../../components/common/PaginationButton';
 import { PageMessage } from '../../PageMessage';
-import { staggerDelay } from '@festival/ui-utils';
+import { staggerDelay, IS_PWA } from '@festival/ui-utils';
 import { useIsMobile, useIsMobileChrome } from '../../../hooks/ui/useIsMobile';
 import { useScoreFilter } from '../../../hooks/data/useScoreFilter';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
@@ -110,14 +112,38 @@ export default function LeaderboardPage() {
   }, []);
 
   const totalPages = Math.max(1, Math.ceil(localEntries / PAGE_SIZE));
+  const hasPagination = totalPages > 1;
+  const hasPlayerFooter = !!(playerScore && playerData && songId && isScoreValid(songId, instKey, playerScore.score));
+
+  // Desktop (non-FAB): expand scroll container margin to clear fixed footer
+  const showDesktopFixedFooter = !hasFab && (hasPagination || hasPlayerFooter);
+  useEffect(() => {
+    if (!showDesktopFixedFooter) return;
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const footerHeight = (hasPagination ? Layout.paginationHeight + Gap.xl : 0) + (hasPlayerFooter ? Layout.entryRowHeight + Gap.xl : 0);
+    el.style.marginBottom = `${footerHeight}px`;
+    return () => { el.style.marginBottom = ''; };
+  }, [showDesktopFixedFooter, hasPagination, hasPlayerFooter, scrollContainerRef]);
+
+  // When FAB + pagination are both visible, expand the scroll container margin
+  // beyond the default fabSpacer to ensure content doesn't scroll under the fixed pagination.
+  const showMobilePagination = hasFab && hasPagination;
+  useEffect(() => {
+    if (!showMobilePagination) return;
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    el.style.marginBottom = `${Layout.fabPaddingBottom + Layout.paginationHeight}px`;
+    return () => { el.style.marginBottom = ''; };
+  }, [showMobilePagination, scrollContainerRef]);
 
   const fetchPage = useCallback(
     async (pageNum: number, mode: 'first' | 'paginate' = 'paginate') => {
       if (!songId || !instrument) return;
       setAnimMode(mode);
       if (mode === 'paginate') {
-        resetRush();
         scrollContainerRef.current?.scrollTo(0, 0);
+        resetRush();
         headerPinned.current = true;
         userScrolledRef.current = false;
       }
@@ -185,8 +211,6 @@ export default function LeaderboardPage() {
   const hasShownContentRef = useRef(loadPhase === LoadPhase.ContentIn);
   useEffect(() => {
     if (loading || error) {
-      // Don't hide already-visible content for pagination
-      if (hasShownContentRef.current) return;
       setLoadPhase(LoadPhase.Loading);
       // Pin header state and scroll to top so new content staggers from top
       headerPinned.current = true;
@@ -201,6 +225,7 @@ export default function LeaderboardPage() {
     setLoadPhase(LoadPhase.SpinnerOut);
     let retireId: ReturnType<typeof setTimeout>;
     const id = setTimeout(() => {
+      resetRush();
       setLoadPhase(LoadPhase.ContentIn);
       hasShownContentRef.current = true;
       // On initial load, let header be expanded and unpin immediately.
@@ -276,7 +301,14 @@ export default function LeaderboardPage() {
   const lastRowDelay = maxVisibleRows * STAGGER_INTERVAL;
   lastRowDelayRef.current = lastRowDelay;
 
+  const headerStagger: CSSProperties | undefined = isNarrow || animMode === 'cached' || animMode === 'paginate'
+    ? undefined
+    : loadPhase === LoadPhase.ContentIn
+      ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out forwards` }
+      : { opacity: 0 };
+
   return (
+    <>
     <Page
       scrollRef={scrollRef}
       scrollDeps={[loadPhase, entries.length]}
@@ -286,71 +318,17 @@ export default function LeaderboardPage() {
       fabSpacer="fixed"
       background={<PageBackground src={song?.albumArt} />}
       before={
-        <SongInfoHeader
-          song={song}
-          songId={songId!}
-          collapsed={!!(isNarrow || headerCollapsed)}
-          instrument={instKey}
-          animate={!isNarrow}
-          hideBackground
-        />
+        <div style={headerStagger} onAnimationEnd={clearStaggerStyle}>
+          <SongInfoHeader
+            song={song}
+            songId={songId!}
+            collapsed={!!(isNarrow || headerCollapsed)}
+            instrument={instKey}
+            animate={!isNarrow}
+            hideBackground
+          />
+        </div>
       }
-      after={<div style={lbStyles.stickyFooter}>
-        {/* v8 ignore start — pagination UI tested by LeaderboardPage integration tests */}
-        {hasLoadedOnce.current && !error && totalPages > 1 && (() => {
-          const paginationStyle = isMobile
-            ? lbStyles.paginationMobile
-            : lbStyles.pagination;
-          return (
-        <div style={paginationStyle}>
-          <PaginationButton disabled={page === 0} onClick={() => void fetchPage(0)}>
-            {t('leaderboard.first')}
-          </PaginationButton>
-          <PaginationButton disabled={page === 0} onClick={() => void fetchPage(page - 1)}>
-            {t('leaderboard.prev')}
-          </PaginationButton>
-          <span style={lbStyles.pageInfo}>
-            <span style={lbStyles.pageInfoBadge}>{page + 1} / {totalPages}</span>
-          </span>
-          <PaginationButton disabled={page >= totalPages - 1} onClick={() => void fetchPage(page + 1)}>
-            {t('leaderboard.next')}
-          </PaginationButton>
-          <PaginationButton disabled={page >= totalPages - 1} onClick={() => void fetchPage(totalPages - 1)}>
-            {t('leaderboard.last')}
-          </PaginationButton>
-        </div>
-          );
-        })()}
-        {/* v8 ignore stop */}
-
-      {/* v8 ignore start — player footer navigation */}
-      {playerScore && playerData && songId && isScoreValid(songId, instKey, playerScore.score) && (() => {
-        return (
-        <div
-          style={lbStyles.playerFooter}
-          onClick={() => navigate('/statistics')} role="button" tabIndex={0}
-        >
-          <div className={hasFab ? 'fab-player-footer' : ''} style={{ ...lbStyles.playerFooterRow, cursor: 'pointer' }}>
-            <LeaderboardEntry
-              rank={playerScore.rank}
-              displayName={playerData.displayName}
-              score={playerScore.score}
-              season={playerScore.season}
-              accuracy={playerScore.accuracy}
-              isFullCombo={!!playerScore.isFullCombo}
-              stars={playerScore.stars}
-              isPlayer
-              showSeason={showSeason}
-              showAccuracy={showAccuracy}
-              showStars={showStars}
-              scoreWidth={scoreWidth}
-            />
-          </div>
-        </div>
-        );
-      })()}
-      {/* v8 ignore stop */}
-      </div>}
     >
         {error && <PageMessage error>{error}</PageMessage>}
 
@@ -373,7 +351,7 @@ export default function LeaderboardPage() {
               {entries.map((e, i) => {
                 const isPlayer = playerData?.accountId === e.accountId;
                 // Rows stagger on first load and pagination, skip on cache
-                const delay = animMode === 'cached' ? null : staggerDelay(i, STAGGER_INTERVAL, maxVisibleRows);
+                const delay = animMode === 'cached' ? null : (staggerDelay(i, STAGGER_INTERVAL, maxVisibleRows) ?? 0);
                 const staggerStyle: React.CSSProperties | undefined = delay != null
                   ? { opacity: 0, animation: `fadeInUp 300ms ease-out ${delay}ms forwards` }
                   : undefined;
@@ -419,6 +397,64 @@ export default function LeaderboardPage() {
           </>
         )}
     </Page>
+
+    {/* v8 ignore start — fixed pagination + player portaled to body */}
+    {createPortal(
+      <>
+        {hasLoadedOnce.current && !error && hasPagination && (() => {
+          const paginationStyle = isMobile
+            ? lbStyles.paginationMobile
+            : lbStyles.pagination;
+          return (
+        <div style={hasFab ? lbStyles.mobilePagination : lbStyles.desktopPagination}>
+          <div className={hasFab ? 'fab-player-footer' : ''} style={paginationStyle}>
+            <PaginationButton disabled={page === 0} onClick={() => void fetchPage(0)}>
+              {t('leaderboard.first')}
+            </PaginationButton>
+            <PaginationButton disabled={page === 0} onClick={() => void fetchPage(page - 1)}>
+              {t('leaderboard.prev')}
+            </PaginationButton>
+            <span style={lbStyles.pageInfo}>
+              <span style={lbStyles.pageInfoBadge}>{(page + 1).toLocaleString()} / {totalPages.toLocaleString()}</span>
+            </span>
+            <PaginationButton disabled={page >= totalPages - 1} onClick={() => void fetchPage(page + 1)}>
+              {t('leaderboard.next')}
+            </PaginationButton>
+            <PaginationButton disabled={page >= totalPages - 1} onClick={() => void fetchPage(totalPages - 1)}>
+              {t('leaderboard.last')}
+            </PaginationButton>
+          </div>
+        </div>
+          );
+        })()}
+        {hasPlayerFooter && (
+        <div style={hasFab ? lbStyles.playerFooterFab : lbStyles.desktopPlayerFooter}>
+          <div
+            onClick={() => navigate('/statistics')} role="button" tabIndex={0}
+          >
+            <div className={hasFab ? 'fab-player-footer' : ''} style={{ ...lbStyles.playerFooterRow, cursor: 'pointer' }}>
+              <LeaderboardEntry
+                rank={playerScore!.rank}
+                displayName={playerData!.displayName}
+                score={playerScore!.score}
+                season={playerScore!.season}
+                accuracy={playerScore!.accuracy}
+                isFullCombo={!!playerScore!.isFullCombo}
+                stars={playerScore!.stars}
+                isPlayer
+                showSeason={showSeason}
+                showAccuracy={showAccuracy}
+                showStars={showStars}
+                scoreWidth={scoreWidth}
+              />
+            </div>
+          </div>
+        </div>
+        )}
+      </>,
+      document.body)}
+    {/* v8 ignore stop */}
+    </>
   );
 }
 
@@ -498,6 +534,32 @@ const lbStyles = {
     position: Position.relative,
     zIndex: 1,
   } as CSSProperties,
+  paginationFab: {
+    ...flexRow,
+    justifyContent: Justify.center,
+    gap: Gap.md,
+    flexShrink: 0,
+    padding: padding(Gap.md, Layout.paddingHorizontal, Layout.fabPaddingBottom),
+    maxWidth: MaxWidth.card,
+    margin: CssValue.marginCenter,
+    width: CssValue.full,
+    boxSizing: BoxSizing.borderBox,
+    position: Position.relative,
+    zIndex: 1,
+  } as CSSProperties,
+  paginationMobileFab: {
+    ...flexRow,
+    justifyContent: Justify.between,
+    gap: Gap.none,
+    flexShrink: 0,
+    padding: padding(Gap.md, Layout.paddingHorizontal, Layout.fabPaddingBottom),
+    maxWidth: MaxWidth.card,
+    margin: CssValue.marginCenter,
+    width: CssValue.full,
+    boxSizing: BoxSizing.borderBox,
+    position: Position.relative,
+    zIndex: 1,
+  } as CSSProperties,
   pageInfo: {
     textAlign: TextAlign.center,
   } as CSSProperties,
@@ -512,13 +574,54 @@ const lbStyles = {
     borderRadius: Radius.sm,
     backgroundColor: Colors.backgroundCard,
   } as CSSProperties,
-  playerFooter: {
-    flexShrink: 0,
-    padding: padding(Gap.md, Layout.paddingHorizontal),
+  /* ── Fixed footer styles (portaled to body) ── */
+  playerFooterFab: {
+    position: Position.fixed,
+    bottom: Layout.fabBottom + (Layout.fabSize - Layout.entryRowHeight) / 2,
+    left: Gap.none,
+    right: Gap.none,
     maxWidth: MaxWidth.card,
     margin: CssValue.marginCenter,
+    padding: padding(0, Layout.paddingHorizontal),
     boxSizing: BoxSizing.borderBox,
-    width: CssValue.full,
+    zIndex: ZIndex.popover,
+    pointerEvents: PointerEvents.auto,
+  } as CSSProperties,
+  mobilePagination: {
+    position: Position.fixed,
+    bottom: Layout.fabBottom + (Layout.fabSize - Layout.entryRowHeight) / 2 + Layout.entryRowHeight + Gap.sm,
+    left: Gap.none,
+    right: Gap.none,
+    maxWidth: MaxWidth.card,
+    margin: CssValue.marginCenter,
+    padding: padding(0, Layout.paddingHorizontal),
+    boxSizing: BoxSizing.borderBox,
+    zIndex: ZIndex.popover,
+    pointerEvents: PointerEvents.auto,
+  } as CSSProperties,
+  desktopPagination: {
+    position: Position.fixed,
+    bottom: Layout.entryRowHeight + Gap.xl,
+    left: Gap.none,
+    right: Gap.none,
+    maxWidth: MaxWidth.card,
+    margin: CssValue.marginCenter,
+    padding: padding(0, Layout.paddingHorizontal),
+    boxSizing: BoxSizing.borderBox,
+    zIndex: ZIndex.popover,
+    pointerEvents: PointerEvents.auto,
+  } as CSSProperties,
+  desktopPlayerFooter: {
+    position: Position.fixed,
+    bottom: Gap.none,
+    left: Gap.none,
+    right: Gap.none,
+    maxWidth: MaxWidth.card,
+    margin: CssValue.marginCenter,
+    padding: padding(0, Layout.paddingHorizontal),
+    boxSizing: BoxSizing.borderBox,
+    zIndex: ZIndex.popover,
+    pointerEvents: PointerEvents.auto,
   } as CSSProperties,
   playerFooterRow: {
     ...frostedCard,
@@ -530,11 +633,5 @@ const lbStyles = {
     backgroundColor: Colors.purpleHighlight,
     border: border(Border.thin, Colors.purpleHighlightBorder),
     fontSize: Font.md,
-  } as CSSProperties,
-  stickyFooter: {
-    position: Position.sticky,
-    bottom: 0,
-    flexShrink: 0,
-    zIndex: ZIndex.overlay,
   } as CSSProperties,
 };

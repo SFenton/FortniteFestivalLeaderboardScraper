@@ -3,6 +3,11 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom';
 import { SettingsProvider } from '../../../src/contexts/SettingsContext';
 import { FirstRunProvider } from '../../../src/contexts/FirstRunContext';
+
+vi.mock('../../../src/contexts/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ shop: true, rivals: true, compete: true, leaderboards: true }),
+}));
+
 import SettingsPage from '../../../src/pages/settings/SettingsPage';
 import { stubResizeObserver, stubScrollTo, stubElementDimensions } from '../../helpers/browserStubs';
 

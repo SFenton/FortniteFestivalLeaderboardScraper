@@ -31,7 +31,7 @@ export default function ChangelogModal({ onDismiss }: { onDismiss: () => void })
     return () => document.removeEventListener('keydown', handleKey);
   }, [onDismiss]);
 
-  const updateMask = useScrollMask(scrollRef, [animIn]);
+  const updateMask = useScrollMask(scrollRef, [animIn], { selfScroll: true });
   const handleScroll = useCallback(() => updateMask(), [updateMask]);
 
   return (

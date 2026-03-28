@@ -19,7 +19,8 @@ import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
 import { LeaderboardEntry } from '../global/components/LeaderboardEntry';
 import PlayerScoreSortModal from './modals/PlayerScoreSortModal';
 import type { PlayerScoreSortMode, PlayerScoreSortDraft } from './modals/PlayerScoreSortModal';
-import { Gap, Size, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, Colors, Radius, Layout, MaxWidth, Font, Border, Overflow, Position, Display, Align, CssValue, CssProp, flexRow, flexColumn, flexCenter, frostedCard, padding, border, transition, SPINNER_FADE_MS } from '@festival/theme';
+import { Gap, Size, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, Colors, Radius, Layout, MaxWidth, Font, Border, Overflow, Position, Display, Align, CssValue, CssProp, flexRow, flexColumn, flexCenter, frostedCard, padding, border, transition, SPINNER_FADE_MS, FADE_DURATION } from '@festival/theme';
+import { clearStaggerStyle } from '../../../hooks/ui/useStaggerStyle';
 import ArcSpinner from '../../../components/common/ArcSpinner';
 import { ActionPill } from '../../../components/common/ActionPill';
 import Page, { PageBackground } from '../../Page';
@@ -34,6 +35,7 @@ import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
 import { useLoadPhase } from '../../../hooks/data/useLoadPhase';
 import { IS_IOS, IS_ANDROID, IS_PWA } from '@festival/ui-utils';
 import { playerHistorySlides } from './firstRun';
+import { hasVisitedPage, markPageVisited } from '../../../hooks/ui/usePageTransition';
 
 export default function PlayerHistoryPage() {
   const { t } = useTranslation();
@@ -62,7 +64,16 @@ export default function PlayerHistoryPage() {
   const [error, setError] = useState<string | null>(null);
   const { filterHistory } = useScoreFilter();
   const [headerCollapsed, setHeaderCollapsed] = useState(hasFab);
-  const { phase: loadPhase } = useLoadPhase(!loading && !error);
+  const historyKey = `history:${songId}:${instKey}`;
+  const skipHistoryAnim = hasVisitedPage(historyKey);
+  markPageVisited(historyKey);
+  const { phase: loadPhase } = useLoadPhase(!loading && !error, { skipAnimation: skipHistoryAnim });
+
+  const headerStagger: CSSProperties | undefined = hasFab || skipHistoryAnim
+    ? undefined
+    : loadPhase === LoadPhase.ContentIn
+      ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out forwards` }
+      : { opacity: 0 };
 
   // Sort state
   const DEFAULT_SORT: PlayerScoreSortDraft = { sortMode: 'score', sortAscending: false };
@@ -159,7 +170,7 @@ export default function PlayerHistoryPage() {
   /* v8 ignore start — responsive row height + virtualizer config */
   const ROW_HEIGHT = isMobile ? 44 : 52;
   const ROW_GAP = Gap.sm;
-  const staggerDoneRef = useRef(false);
+  const staggerDoneRef = useRef(skipHistoryAnim);
   const listParentRef = useRef<HTMLDivElement>(null);
   const maxStagger = useMemo(() => estimateVisibleCount(ROW_HEIGHT), [ROW_HEIGHT]);
   const scrollContainerRef = useScrollContainer();
@@ -185,24 +196,26 @@ export default function PlayerHistoryPage() {
       firstRun={{ key: 'playerhistory', label: t('history.title'), slides: historySlidesMemo, gateContext: firstRunGateCtx }}
       background={<PageBackground src={song?.albumArt} />}
       before={
-        <SongInfoHeader
-          song={song}
-          songId={songId!}
-          collapsed={!!(hasFab || headerCollapsed)}
-          instrument={instKey}
-          animate={!hasFab}
-          hideBackground
-          /* v8 ignore start — platform-conditional sort button */
-          actions={!hasFab && !IS_IOS && !IS_ANDROID && !IS_PWA ? (
-            <ActionPill
-              icon={<IoSwapVerticalSharp size={Size.iconAction} />}
-              label={t('common.sort')}
-              onClick={openSort}
-              active={sortMode !== 'score' || sortAscending}
-            />
-          ) : undefined}
-          /* v8 ignore stop */
-        />
+        <div style={headerStagger} onAnimationEnd={clearStaggerStyle}>
+          <SongInfoHeader
+            song={song}
+            songId={songId!}
+            collapsed={!!(hasFab || headerCollapsed)}
+            instrument={instKey}
+            animate={!hasFab}
+            hideBackground
+            /* v8 ignore start — platform-conditional sort button */
+            actions={!hasFab && !IS_IOS && !IS_ANDROID && !IS_PWA ? (
+              <ActionPill
+                icon={<IoSwapVerticalSharp size={Size.iconAction} />}
+                label={t('common.sort')}
+                onClick={openSort}
+                active={sortMode !== 'score' || sortAscending}
+              />
+            ) : undefined}
+            /* v8 ignore stop */
+          />
+        </div>
       }
       after={<>
         <PlayerScoreSortModal

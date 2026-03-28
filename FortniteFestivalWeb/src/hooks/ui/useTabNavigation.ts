@@ -10,6 +10,7 @@ export type { TabKey };
 export const TAB_ROOTS: Record<TabKey, string> = {
   [TabKey.Songs]: '/songs',
   [TabKey.Suggestions]: '/suggestions',
+  [TabKey.Compete]: '/compete',
   [TabKey.Statistics]: '/statistics',
   [TabKey.Settings]: '/settings',
 };
@@ -20,6 +21,7 @@ const STORAGE_KEY = 'fst:tabRoutes';
 export function inferTab(pathname: string): TabKey | null {
   if (pathname === '/songs' || pathname.startsWith('/songs/')) return TabKey.Songs;
   if (pathname === '/suggestions') return TabKey.Suggestions;
+  if (pathname === '/compete' || pathname.startsWith('/leaderboards')) return TabKey.Compete;
   if (pathname === '/statistics') return TabKey.Statistics;
   if (pathname === '/settings') return TabKey.Settings;
   return null; // /player/:id — ambiguous, owned by the currently active tab

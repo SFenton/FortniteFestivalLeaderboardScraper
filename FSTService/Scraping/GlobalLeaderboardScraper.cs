@@ -77,6 +77,144 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     }
 
     /// <summary>
+    /// Fetch a player's entry plus up to ±<paramref name="neighborRadius"/> rank neighbors
+    /// on a single song/instrument. Uses V2 POST (1 call) to get the target's rank,
+    /// then V1 GET with <c>rank=</c> (1 call) to fetch the page containing that rank.
+    /// Returns the target entry (Source=backfill) and neighbor entries (Source=neighbor).
+    /// </summary>
+    /// <returns>
+    /// A tuple of (target entry or null, list of neighbor entries). If the target has
+    /// no score on this song/instrument, returns (null, empty list).
+    /// </returns>
+    public async Task<(LeaderboardEntry? Target, List<LeaderboardEntry> Neighbors)> LookupAccountWithNeighborsAsync(
+        string songId,
+        string instrument,
+        string targetAccountId,
+        string accessToken,
+        string callerAccountId,
+        int neighborRadius = 50,
+        AdaptiveConcurrencyLimiter? limiter = null,
+        CancellationToken ct = default)
+    {
+        // Step 1: V2 lookup to get the target's rank + score
+        var target = await LookupAccountAsync(songId, instrument, targetAccountId, accessToken, callerAccountId, limiter, ct);
+        if (target is null || target.Rank <= 0)
+            return (target, []);
+
+        target.Source = "backfill";
+        target.ApiRank = target.Rank;
+
+        // Step 2: V1 GET to fetch the page containing the target's rank
+        List<LeaderboardEntry> neighbors;
+        try
+        {
+            neighbors = await FetchNeighborhoodPageAsync(
+                songId, instrument, target.Rank, targetAccountId, accessToken, callerAccountId,
+                neighborRadius, limiter, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogDebug(ex, "Neighborhood V1 fetch failed for {Account}/{Song}/{Instrument} rank {Rank}. Returning target only.",
+                targetAccountId, songId, instrument, target.Rank);
+            return (target, []);
+        }
+
+        return (target, neighbors);
+    }
+
+    /// <summary>
+    /// Fetch a single V1 leaderboard page containing the given rank and extract
+    /// up to ±<paramref name="neighborRadius"/> entries around that rank.
+    /// Sets Source=neighbor and ApiRank on each returned entry.
+    /// </summary>
+    internal async Task<List<LeaderboardEntry>> FetchNeighborhoodPageAsync(
+        string songId,
+        string instrument,
+        int targetRank,
+        string targetAccountId,
+        string accessToken,
+        string callerAccountId,
+        int neighborRadius,
+        AdaptiveConcurrencyLimiter? limiter,
+        CancellationToken ct)
+    {
+        var url = $"{EventsBase}/api/v1/leaderboards/FNFestival/alltime_{songId}_{instrument}" +
+                  $"/alltime/{callerAccountId}?page=0&rank={targetRank}&appId=Fortnite&showLiveSessions=false";
+
+        var label = $"{songId}/{instrument}/neighborhood(rank={targetRank})";
+
+        HttpRequestMessage CreateRequest()
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            return req;
+        }
+
+        using var res = await _executor.SendAsync(CreateRequest, limiter, label, _maxLookupRetries, ct);
+
+        if (!res.IsSuccessStatusCode)
+        {
+            _log.LogDebug("Neighborhood fetch returned {Status} for {Label}", res.StatusCode, label);
+            return [];
+        }
+
+        await using var stream = await res.Content.ReadAsStreamAsync(ct);
+        var parsed = await ParsePageAsync(stream, ct);
+        if (parsed is null || parsed.Entries.Count == 0)
+            return [];
+
+        // Find the target's index on the page to determine the ± window
+        int targetIdx = -1;
+        for (int i = 0; i < parsed.Entries.Count; i++)
+        {
+            if (parsed.Entries[i].AccountId.Equals(targetAccountId, StringComparison.OrdinalIgnoreCase))
+            {
+                targetIdx = i;
+                break;
+            }
+        }
+
+        // If target not found on page (shouldn't happen), use rank-based position
+        if (targetIdx < 0)
+        {
+            // Estimate index from rank offset within the page
+            int pageFirstRank = parsed.Entries[0].Rank;
+            targetIdx = Math.Clamp(targetRank - pageFirstRank, 0, parsed.Entries.Count - 1);
+        }
+
+        // Collect up to neighborRadius above and below
+        int startIdx = Math.Max(0, targetIdx - neighborRadius);
+        int endIdx = Math.Min(parsed.Entries.Count - 1, targetIdx + neighborRadius);
+
+        var neighbors = new List<LeaderboardEntry>();
+        long totalEntries = (long)parsed.TotalPages * 100;
+
+        for (int i = startIdx; i <= endIdx; i++)
+        {
+            var entry = parsed.Entries[i];
+            // Skip the target account itself — it's returned separately
+            if (entry.AccountId.Equals(targetAccountId, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            entry.Source = "neighbor";
+            entry.ApiRank = entry.Rank;
+            // V1 returns percentile = -1 beyond capped range; compute from rank/totalEntries
+            if (entry.Percentile < 0 && entry.Rank > 0 && totalEntries > 0)
+                entry.Percentile = (double)entry.Rank / totalEntries;
+
+            neighbors.Add(entry);
+        }
+
+        _log.LogDebug(
+            "Neighborhood for {Account}/{Song}/{Instrument}: rank {Rank}, page had {PageEntries} entries, " +
+            "captured {NeighborCount} neighbors (idx {Start}-{End} around target idx {TargetIdx})",
+            targetAccountId, songId, instrument, targetRank, parsed.Entries.Count,
+            neighbors.Count, startIdx, endIdx, targetIdx);
+
+        return neighbors;
+    }
+
+    /// <summary>
     /// Fetch alltime entries for multiple accounts on one song/instrument in a single
     /// batched V2 POST. The <c>teams</c> body includes the caller plus all targets.
     /// Pages through the response (25 entries per page) until all targets are collected
@@ -1405,6 +1543,8 @@ public sealed class LeaderboardEntry
     public string? EndTime { get; set; }
     /// <summary>Real rank from Epic API (backfill/lookup). Survives RecomputeAllRanks. 0 = not set.</summary>
     public int ApiRank { get; set; }
+    /// <summary>Origin of this entry: "scrape" (global scrape), "backfill" (user backfill target), "neighbor" (backfill neighborhood).</summary>
+    public string Source { get; set; } = "scrape";
 }
 
 /// <summary>

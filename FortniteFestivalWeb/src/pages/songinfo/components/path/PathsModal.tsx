@@ -1,18 +1,19 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import React, { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import { IoClose, IoChevronDown } from 'react-icons/io5';
 import { useTranslation } from 'react-i18next';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
-import { useScrollMask } from '../../../../hooks/ui/useScrollMask';
 import { useVisualViewportHeight, useVisualViewportOffsetTop } from '../../../../hooks/ui/useVisualViewport';
 import { useSettings, visibleInstruments } from '../../../../contexts/SettingsContext';
 import { INSTRUMENT_LABELS, DEFAULT_INSTRUMENT, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { InstrumentIcon } from '../../../../components/display/InstrumentIcons';
+import { InstrumentSelector, type InstrumentSelectorItem } from '../../../../components/common/InstrumentSelector';
 import ArcSpinner from '../../../../components/common/ArcSpinner';
 import {
   Colors, Radius, Font, Gap, Weight, Shadow,
   Display, Position, Overflow, TextAlign, Cursor, CssValue, CssProp,
-  frostedCard, border, padding, transition, transitions,
+  frostedCard, border, padding, transition, transitions, btnPrimary,
 } from '@festival/theme';
 import { modalStyles } from '../../../../components/modals/modalStyles';
 import anim from '../../../../styles/animations.module.css';
@@ -42,22 +43,6 @@ function usePathsModalStyles() {
     };
     return {
       controls: { flexShrink: 0, padding: padding(Gap.xl, Gap.section) } as CSSProperties,
-      instrumentRow: { display: Display.flex, gap: Gap.md, flexWrap: 'wrap', justifyContent: 'center' } as CSSProperties,
-      instrumentBtn: {
-        width: 64, height: 64, display: Display.flex, alignItems: 'center', justifyContent: 'center',
-        borderRadius: '50%', border: CssValue.none, backgroundColor: 'transparent', cursor: Cursor.pointer,
-        position: Position.relative, overflow: Overflow.hidden,
-      } as CSSProperties,
-      instrumentCircle: {
-        position: Position.absolute, inset: 0, borderRadius: '50%',
-        backgroundColor: '#2ECC71', transform: 'scale(0)',
-        transition: transition(CssProp.transform, 250),
-      } as CSSProperties,
-      instrumentCircleActive: {
-        position: Position.absolute, inset: 0, borderRadius: '50%',
-        backgroundColor: '#2ECC71', transform: 'scale(1)',
-        transition: transition(CssProp.transform, 250),
-      } as CSSProperties,
       mobileRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: Gap.md, overflow: Overflow.hidden } as CSSProperties,
       mobileSelector: {
         ...frostedCard, display: Display.flex, alignItems: 'center', gap: Gap.md,
@@ -67,6 +52,8 @@ function usePathsModalStyles() {
       mobileSelectorLabel: { flex: 1, textAlign: TextAlign.left } as CSSProperties,
       chevron: { flexShrink: 0, color: Colors.textMuted, transition: transition(CssProp.transform, 250) } as CSSProperties,
       accordion: { overflow: Overflow.hidden, transition: `max-height 300ms ${ACCORDION_EASE}` } as CSSProperties,
+      accordionInner: { paddingTop: Gap.md, display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center' } as CSSProperties,
+      closeBtn: { ...btnPrimary, padding: padding(Gap.sm, Gap.md), fontSize: Font.sm, justifySelf: 'end' } as CSSProperties,
       diffGridMobile: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: Gap.sm, overflow: Overflow.hidden } as CSSProperties,
       diffBtnSmall: { ...frostedCard, ...diffBtnBase, padding: selectorPad, color: Colors.textSecondary } as CSSProperties,
       diffBtnSmallActive: {
@@ -106,6 +93,10 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
   const panelRef = useRef<HTMLDivElement>(null);
   const { settings } = useSettings();
   const instruments = visibleInstruments(settings);
+  const selectorItems = useMemo<InstrumentSelectorItem[]>(
+    () => instruments.map(key => ({ key, label: INSTRUMENT_LABELS[key] })),
+    [instruments],
+  );
   const [selected, setSelected] = useState<InstrumentKey>(DEFAULT_INSTRUMENT);
   const [difficulty, setDifficulty] = useState<Difficulty>('expert');
   const [instOpen, setInstOpen] = useState(false);
@@ -217,7 +208,7 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
     opacity: animIn ? 1 : 0,
   };
 
-  return (
+  return createPortal(
     <>
       <div style={overlayStyle} onClick={onClose} />
       <div
@@ -246,23 +237,15 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
               </button>
             </div>
             <div style={{ ...st.accordion, maxHeight: instOpen ? 160 : 0 }}>
-              <div style={{ ...st.instrumentRow, paddingTop: Gap.md }}>
-                {instruments.map(key => {
-                  const active = selected === key;
-                  return (
-                    <button
-                      key={key}
-                      style={st.instrumentBtn}
-                      onClick={() => { setSelected(key); setInstOpen(false); }}
-                      title={INSTRUMENT_LABELS[key]}
-                    >
-                      <div style={active ? st.instrumentCircleActive : st.instrumentCircle} />
-                      <div style={{ position: 'relative' as const, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <InstrumentIcon instrument={key} size={48} />
-                      </div>
-                    </button>
-                  );
-                })}
+              <div style={st.accordionInner}>
+                <div />
+                <InstrumentSelector
+                  instruments={selectorItems}
+                  selected={selected}
+                  onSelect={(key) => { if (key) setSelected(key); }}
+                  required
+                />
+                <button style={st.closeBtn} onClick={() => setInstOpen(false)}>{t('common.close')}</button>
               </div>
             </div>
             <div style={{ ...st.accordion, maxHeight: diffOpen ? 120 : 0 }}>
@@ -283,24 +266,12 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
           </div>
         ) : (
           <div style={st.controls}>
-            <div style={st.instrumentRow}>
-              {instruments.map(key => {
-                const active = selected === key;
-                return (
-                  <button
-                    key={key}
-                    style={st.instrumentBtn}
-                    onClick={() => setSelected(key)}
-                    title={INSTRUMENT_LABELS[key]}
-                  >
-                    <div style={active ? st.instrumentCircleActive : st.instrumentCircle} />
-                    <div style={{ position: 'relative' as const, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <InstrumentIcon instrument={key} size={48} />
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+            <InstrumentSelector
+              instruments={selectorItems}
+              selected={selected}
+              onSelect={(key) => { if (key) setSelected(key); }}
+              required
+            />
             <div style={st.diffGridDesktop}>
               {DIFFICULTIES.map(d => (
                 <button
@@ -316,7 +287,8 @@ export default function PathsModal({ visible, songId, onClose }: PathsModalProps
         )}
         <PathImage songId={songId} instrument={selected} difficulty={difficulty} />
       </div>
-    </>
+    </>,
+    document.body,
   );
 }
 
@@ -407,8 +379,25 @@ function PathImage({ songId, instrument, difficulty }: { songId: string; instrum
   const imageMounted = displaySrc && (phase === 'imageReady' || phase === 'fadeInImage' || phase === 'idle' || phase === 'fadeOutImage');
   const imageVisible = phase === 'fadeInImage' || phase === 'idle';
   const scrollRef = useRef<HTMLDivElement>(null);
-  const updateScrollMask = useScrollMask(scrollRef, [displaySrc, phase]);
-  const handleScroll = useCallback(() => { updateScrollMask(); }, [updateScrollMask]);
+  const updateSelfMask = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const { scrollTop, scrollHeight, clientHeight } = el;
+    const canScroll = scrollHeight > clientHeight + 1;
+    if (!canScroll) { el.style.maskImage = ''; el.style.webkitMaskImage = ''; return; }
+    const atTop = scrollTop <= 0;
+    const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
+    const s = 40;
+    const mask = atTop
+      ? `linear-gradient(to bottom, black calc(100% - ${s}px), transparent 100%)`
+      : atBottom
+        ? `linear-gradient(to bottom, transparent 0px, black ${s}px)`
+        : `linear-gradient(to bottom, transparent 0px, black ${s}px, black calc(100% - ${s}px), transparent 100%)`;
+    el.style.maskImage = mask;
+    el.style.webkitMaskImage = mask;
+  }, []);
+  useEffect(() => { updateSelfMask(); }, [updateSelfMask, displaySrc, phase]);
+  const handleScroll = useCallback(() => { updateSelfMask(); }, [updateSelfMask]);
 
   const imageAreaStyle: React.CSSProperties = {
     flex: 1, overflow: 'auto', position: 'relative',

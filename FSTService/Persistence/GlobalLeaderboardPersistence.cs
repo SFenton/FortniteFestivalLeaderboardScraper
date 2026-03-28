@@ -418,17 +418,19 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>
-    /// Compute (rank, totalEntries) for every song a player has across all instruments.
-    /// Uses DB-computed rank (position by score) rather than stored Rank column.
+    /// Compute rank for every song a player has across all instruments.
+    /// Uses a window function for efficient rank computation.
+    /// TotalEntries is no longer returned here — callers should use
+    /// <see cref="MetaDatabase.GetAllLeaderboardPopulation"/> instead.
     /// </summary>
-    public Dictionary<(string SongId, string Instrument), (int Rank, int Total)> GetPlayerRankings(string accountId, string? songId = null, HashSet<string>? instruments = null)
+    public Dictionary<(string SongId, string Instrument), int> GetPlayerRankings(string accountId, string? songId = null, HashSet<string>? instruments = null)
     {
-        var result = new Dictionary<(string, string), (int, int)>();
+        var result = new Dictionary<(string, string), int>();
         foreach (var (instrument, db) in _instrumentDbs)
         {
             if (instruments is not null && !instruments.Contains(instrument)) continue;
-            foreach (var (sid, (rank, total)) in db.GetPlayerRankings(accountId, songId))
-                result[(sid, instrument)] = (rank, total);
+            foreach (var (sid, rank) in db.GetPlayerRankings(accountId, songId))
+                result[(sid, instrument)] = rank;
         }
         return result;
     }

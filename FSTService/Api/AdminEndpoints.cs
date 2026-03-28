@@ -403,66 +403,7 @@ public static partial class ApiEndpoints
         .RequireAuthorization()
         .RequireRateLimiting("protected");
 
-        // ─── Leaderboard population (posted by PercentileService) ────
 
-        app.MapPost("/api/leaderboard-population", async (
-            LeaderboardPopulationRequest[] items,
-            MetaDatabase metaDb,
-            ScrapeProgressTracker progress,
-            PersonalDbBuilder personalDbBuilder,
-            NotificationService notifications,
-            ILoggerFactory loggerFactory) =>
-        {
-            var logger = loggerFactory.CreateLogger("FSTService.Api.ApiEndpoints");
-            if (items.Length == 0)
-                return Results.BadRequest(new { error = "Empty array." });
-
-            var tuples = items
-                .Where(i => !string.IsNullOrWhiteSpace(i.SongId) &&
-                            !string.IsNullOrWhiteSpace(i.Instrument) &&
-                            i.TotalEntries > 0)
-                .Select(i => (i.SongId, i.Instrument, i.TotalEntries))
-                .ToList();
-
-            metaDb.UpsertLeaderboardPopulation(tuples);
-
-            // If a scrape is in progress the pipeline will rebuild personal DBs
-            // during its post-processing phase. When idle, trigger it now so
-            // registered users get fresh population data without waiting.
-            int personalDbsRebuilt = 0;
-            bool refreshTriggered = false;
-
-            if (progress.Phase == ScrapeProgressTracker.ScrapePhase.Idle)
-            {
-                var registeredIds = metaDb.GetRegisteredAccountIds();
-                if (registeredIds.Count > 0)
-                {
-                    refreshTriggered = true;
-                    try
-                    {
-                        personalDbsRebuilt = personalDbBuilder.RebuildForAccounts(registeredIds, metaDb);
-                        logger.LogInformation(
-                            "Leaderboard population POST triggered rebuild of {Count} personal DB(s).",
-                            personalDbsRebuilt);
-
-                        foreach (var accountId in registeredIds)
-                        {
-                            try { await notifications.NotifyPersonalDbReadyAsync(accountId); }
-                            catch { /* best effort */ }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogWarning(ex, "Personal DB rebuild after population POST failed.");
-                    }
-                }
-            }
-
-            return Results.Ok(new { upserted = tuples.Count, refreshTriggered, personalDbsRebuilt });
-        })
-        .WithTags("Leaderboard")
-        .RequireAuthorization()
-        .RequireRateLimiting("protected");
 
         app.MapGet("/api/leaderboard-population", (MetaDatabase metaDb) =>
         {

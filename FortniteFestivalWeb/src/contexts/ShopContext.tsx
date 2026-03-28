@@ -2,6 +2,7 @@ import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import type { ServerSong as Song } from '@festival/core/api/serverTypes';
 import { useFestival } from './FestivalContext';
 import { useShopWebSocket, type ShopState } from '../hooks/data/useShopWebSocket';
+import { useFeatureFlags } from './FeatureFlagsContext';
 
 type ShopContextValue = {
   /** Set of songIds currently in the item shop (null until data loaded). */
@@ -18,12 +19,14 @@ const ShopContext = createContext<ShopContextValue | null>(null);
 
 export function ShopProvider({ children }: { children: ReactNode }) {
   const { state: { songs } } = useFestival();
+  const flags = useFeatureFlags();
 
   // Build initial shop IDs from songs that have a shopUrl
   const initialShopIds = useMemo(() => {
+    if (!flags.shop) return null;
     const ids = songs.filter(s => s.shopUrl).map(s => s.songId);
     return ids.length > 0 ? new Set(ids) as ReadonlySet<string> : null;
-  }, [songs]);
+  }, [songs, flags.shop]);
 
   const { shopSongIds, connected }: ShopState = useShopWebSocket(initialShopIds);
 

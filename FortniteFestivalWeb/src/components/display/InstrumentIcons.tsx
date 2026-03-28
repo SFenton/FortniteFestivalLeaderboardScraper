@@ -38,6 +38,7 @@ export const InstrumentIcon = memo(function InstrumentIcon({ instrument, size = 
       width={size}
       height={size}
       style={iconStyle}
+      loading="lazy"
     />
   );
 });

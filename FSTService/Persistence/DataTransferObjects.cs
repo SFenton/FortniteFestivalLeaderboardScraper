@@ -16,6 +16,10 @@ public sealed class LeaderboardEntryDto
     public double Percentile { get; init; }
     /// <summary>ISO 8601 timestamp when the session ended (from Epic API). Null for legacy data.</summary>
     public string? EndTime { get; init; }
+    /// <summary>Real rank from Epic API (backfill/lookup). 0 = not set.</summary>
+    public int ApiRank { get; init; }
+    /// <summary>Origin: "scrape", "backfill", or "neighbor".</summary>
+    public string Source { get; init; } = "scrape";
 }
 
 /// <summary>
@@ -33,6 +37,8 @@ public sealed class PlayerScoreDto
     public double Percentile { get; init; }
     /// <summary>All-time rank from Epic API (0 = not yet enriched).</summary>
     public int Rank { get; init; }
+    /// <summary>Real rank from Epic API (backfill/lookup). 0 = not set.</summary>
+    public int ApiRank { get; init; }
     /// <summary>ISO 8601 timestamp when the session ended (from Epic API). Null for legacy data.</summary>
     public string? EndTime { get; init; }
 }

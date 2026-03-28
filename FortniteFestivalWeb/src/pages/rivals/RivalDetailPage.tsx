@@ -121,7 +121,7 @@ export default function RivalDetailPage() {
       {phase === LoadPhase.ContentIn && (
             <div style={{ ...flexColumn, gap: Gap.section, ...(isMobile ? { paddingBottom: Layout.fabPaddingBottom } : undefined) }}>
               {categories.length === 0 && (
-                <EmptyState title={t('rivals.detail.noSongs')} style={stagger(200)} onAnimationEnd={clearAnim} />
+                <EmptyState fullPage title={t('rivals.detail.noSongs')} style={stagger(200)} onAnimationEnd={clearAnim} />
               )}
               {categories.map((cat, catIdx) => {
                 const preview = cat.songs.slice(0, PREVIEW_COUNT);

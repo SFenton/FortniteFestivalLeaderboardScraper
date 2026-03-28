@@ -217,4 +217,26 @@ describe('songSettings', () => {
       expect(isFilterActive(f)).toBe(false);
     });
   });
+
+  describe('isFilterActive — with instrument parameter', () => {
+    it('returns false for instrument-dependent filters when instrument is null', () => {
+      const f = { ...defaultSongFilters(), starsFilter: { 6: false }, seasonFilter: { 1: false } };
+      expect(isFilterActive(f, null)).toBe(false);
+    });
+
+    it('returns true for per-instrument toggles even when instrument is null', () => {
+      const f = { ...defaultSongFilters(), missingScores: { Solo_Guitar: true } };
+      expect(isFilterActive(f, null)).toBe(true);
+    });
+
+    it('returns true for instrument-dependent filters when instrument is provided', () => {
+      const f = { ...defaultSongFilters(), starsFilter: { 6: false } };
+      expect(isFilterActive(f, 'Solo_Guitar')).toBe(true);
+    });
+
+    it('returns true when no instrument arg and instrument-dependent filters active (backward compat)', () => {
+      const f = { ...defaultSongFilters(), difficultyFilter: { 3: false } };
+      expect(isFilterActive(f)).toBe(true);
+    });
+  });
 });

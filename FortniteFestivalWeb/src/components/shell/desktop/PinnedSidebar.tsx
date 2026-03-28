@@ -2,9 +2,10 @@
 import { useMemo, type CSSProperties } from 'react';
 import { NavLink, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { IoPerson, IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings, IoBagHandle, IoPeople } from 'react-icons/io5';
+import { IoPerson, IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings, IoBagHandle, IoPeople, IoTrophy } from 'react-icons/io5';
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
 import { useSettings } from '../../../contexts/SettingsContext';
+import { useFeatureFlags } from '../../../contexts/FeatureFlagsContext';
 import {
   Colors, Font, Weight, Gap, Radius, Border, Layout, ZIndex,
   Display, Align, Justify, Position, Cursor, BoxSizing, CssValue, CssProp,
@@ -21,6 +22,7 @@ interface PinnedSidebarProps {
 export default function PinnedSidebar({ player, onDeselect, onSelectPlayer }: PinnedSidebarProps) {
   const { t } = useTranslation();
   const { settings } = useSettings();
+  const flags = useFeatureFlags();
   const s = useStyles();
 
   const linkClass = (isActive: boolean) => isActive ? s.linkActive : s.link;
@@ -45,15 +47,21 @@ export default function PinnedSidebar({ player, onDeselect, onSelectPlayer }: Pi
           </NavLink>
         )}
         {/* v8 ignore start -- player-gated link */}
-        {player && (
+        {player && flags.rivals && (
           <NavLink to="/rivals" style={({ isActive }) => linkClass(isActive)}>
             <span style={s.linkIcon}><IoPeople size={20} /></span>
             {t('nav.rivals', 'Rivals')}
           </NavLink>
         )}
         {/* v8 ignore stop */}
+        {flags.leaderboards && (
+        <NavLink to="/leaderboards" style={({ isActive }) => linkClass(isActive)}>
+          <span style={s.linkIcon}><IoTrophy size={20} /></span>
+          {t('nav.leaderboards')}
+        </NavLink>
+        )}
         {/* v8 ignore start -- shop-visibility link */}
-        {!settings.hideItemShop && (
+        {flags.shop && !settings.hideItemShop && (
           <NavLink to="/shop" style={({ isActive }) => linkClass(isActive)}>
             <span style={s.linkIcon}><IoBagHandle size={20} /></span>
             {t('nav.shop', 'Shop')}

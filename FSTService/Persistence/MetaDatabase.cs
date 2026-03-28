@@ -24,6 +24,12 @@ public sealed class MetaDatabase : IDisposable
     private readonly ILogger<MetaDatabase> _log;
     private bool _initialized;
 
+    // ── In-memory cache for leaderboard population (rarely changes) ──
+    private Dictionary<(string SongId, string Instrument), long>? _populationCache;
+    private DateTime _populationCacheTime;
+    private readonly object _populationCacheLock = new();
+    private static readonly TimeSpan PopulationCacheTtl = TimeSpan.FromMinutes(5);
+
     public MetaDatabase(string dbPath, ILogger<MetaDatabase> log)
     {
         _log = log;
@@ -1991,6 +1997,15 @@ public sealed class MetaDatabase : IDisposable
     // ─── LeaderboardPopulation ──────────────────────────────────
 
     /// <summary>
+    /// Invalidate the in-memory population cache, forcing the next call to
+    /// <see cref="GetAllLeaderboardPopulation"/> to re-read from disk.
+    /// </summary>
+    internal void InvalidatePopulationCache()
+    {
+        lock (_populationCacheLock) { _populationCache = null; }
+    }
+
+    /// <summary>
     /// Raise the leaderboard population floor for a song/instrument.
     /// A user's rank is a guaranteed minimum — if they're ranked N, there are at least N entries.
     /// Only updates when the new value is higher than the existing value (one-way ratchet).
@@ -1998,6 +2013,7 @@ public sealed class MetaDatabase : IDisposable
     public void RaiseLeaderboardPopulationFloor(string songId, string instrument, long floor)
     {
         if (floor <= 0) return;
+        InvalidatePopulationCache();
 
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -2053,6 +2069,7 @@ public sealed class MetaDatabase : IDisposable
         }
 
         tx.Commit();
+        InvalidatePopulationCache();
         _log.LogDebug("Upserted {Count} LeaderboardPopulation entries.", items.Count);
     }
 
@@ -2071,10 +2088,16 @@ public sealed class MetaDatabase : IDisposable
     }
 
     /// <summary>
-    /// Get all leaderboard population data.
+    /// Get all leaderboard population data. Results are cached in-memory for 5 minutes.
     /// </summary>
     public Dictionary<(string SongId, string Instrument), long> GetAllLeaderboardPopulation()
     {
+        lock (_populationCacheLock)
+        {
+            if (_populationCache is not null && DateTime.UtcNow - _populationCacheTime < PopulationCacheTtl)
+                return _populationCache;
+        }
+
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT SongId, Instrument, TotalEntries FROM LeaderboardPopulation;";
@@ -2086,6 +2109,12 @@ public sealed class MetaDatabase : IDisposable
             var instrument = reader.GetString(1);
             var total = reader.GetInt64(2);
             dict[(songId, instrument)] = total;
+        }
+
+        lock (_populationCacheLock)
+        {
+            _populationCache = dict;
+            _populationCacheTime = DateTime.UtcNow;
         }
         return dict;
     }

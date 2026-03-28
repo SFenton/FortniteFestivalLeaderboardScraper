@@ -9,6 +9,7 @@ public static partial class ApiEndpoints
     public static void MapApiEndpoints(this WebApplication app)
     {
         app.MapHealthEndpoints();
+        app.MapFeatureEndpoints();
         app.MapAccountEndpoints();
         app.MapSongEndpoints();
         app.MapLeaderboardEndpoints();
@@ -27,12 +28,4 @@ public sealed class RegisterRequest
 {
     public string DeviceId { get; set; } = "";
     public string Username { get; set; } = "";
-}
-
-/// <summary>Request body item for POST /api/leaderboard-population.</summary>
-public sealed class LeaderboardPopulationRequest
-{
-    public string SongId { get; set; } = "";
-    public string Instrument { get; set; } = "";
-    public long TotalEntries { get; set; }
 }

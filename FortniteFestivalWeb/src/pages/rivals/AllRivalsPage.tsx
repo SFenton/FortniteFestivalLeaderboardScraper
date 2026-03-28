@@ -233,7 +233,7 @@ export default function AllRivalsPage() {
       {phase === LoadPhase.ContentIn && (
             <div style={isMobile ? { paddingBottom: Layout.fabPaddingBottom } : undefined}>
               {!hasRivals && (
-                <EmptyState title={t('rivals.noRivals')} style={stagger(200)} onAnimationEnd={clearAnim} />
+                <EmptyState fullPage title={t('rivals.noRivals')} style={stagger(200)} onAnimationEnd={clearAnim} />
               )}
 
               {hasRivals && (

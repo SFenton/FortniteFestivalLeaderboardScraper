@@ -11,7 +11,7 @@ import {
   type PlayerScore,
   type ServerScoreHistoryEntry as ScoreHistoryEntry,
 } from '@festival/core/api/serverTypes';
-import { Gap, Colors, Font, Layout, MaxWidth, Position, ZIndex, Display, Overflow, Align, Justify, CssValue, flexCenter, flexColumn, padding, GridTemplate, SPINNER_FADE_MS } from '@festival/theme';
+import { Gap, Colors, Font, Layout, MaxWidth, Position, ZIndex, Display, Overflow, Align, Justify, CssValue, flexCenter, flexColumn, padding, GridTemplate, SPINNER_FADE_MS, FADE_DURATION } from '@festival/theme';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import Page, { PageBackground } from '../Page';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
@@ -194,12 +194,13 @@ export default function SongDetailPage() {
   // Apply invalid score filtering
   const filteredScoreHistory = useMemo(() => {
     if (!songId) return scoreHistory;
-    // ScoreHistory has per-instrument entries; filter each against its own instrument
-    return scoreHistory.filter(h => {
-      const instMap = songs.find(s => s.songId === songId)?.maxScores;
-      if (!instMap) return true;
-      return filterScoreHistory(songId, h.instrument, [h]).length > 0;
-    });
+    // Hoist the lookup — songId is constant across all entries, no need to
+    // linear-scan the songs array for every history entry.
+    const instMap = songs.find(s => s.songId === songId)?.maxScores;
+    if (!instMap) return scoreHistory;
+    return scoreHistory.filter(h =>
+      filterScoreHistory(songId, h.instrument, [h]).length > 0,
+    );
   }, [songId, scoreHistory, filterScoreHistory, songs]);
 
   const filteredPlayerScores = useMemo(
@@ -227,13 +228,21 @@ export default function SongDetailPage() {
   // Transition: spinner fade-out → staggered content fade-in
   // phase: 'loading' | 'spinnerOut' | 'contentIn'
   const allCached = !!cached && (!player || hasCachedPlayer);
-  // Skip animations only when returning to a cached page (not on fresh PUSH).
+  // Skip animations when all data is already cached (return visit, layout remount, etc.).
   // Frozen at mount time — the cache getting written mid-lifecycle should not flip this.
-  const skipAnimRef = useRef(allCached && navType !== 'PUSH');
+  const skipAnimRef = useRef(allCached);
   const skipAnim = skipAnimRef.current;
   const { phase } = useLoadPhase(allReady, { skipAnimation: allCached });
   const { forDelay: stagger, clearAnim } = useStagger(!skipAnim);
   const hasFab = useIsMobile();
+
+  // Header stagger: always mount the header, control visibility via CSS (matches LeaderboardPage).
+  // Mobile / cached → undefined (visible immediately). Loading → opacity:0. ContentIn → fadeInUp.
+  const headerStagger: CSSProperties | undefined = hasFab || skipAnim
+    ? undefined
+    : phase === LoadPhase.ContentIn
+      ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out forwards` }
+      : { opacity: 0 };
   const [headerCollapsed, setHeaderCollapsed] = useState(hasFab || (skipAnim && (cached?.scrollTop ?? 0) > 40));
   const userScrolledRef = useRef(false);
   const scrollContainerRef = useScrollContainer();
@@ -314,7 +323,7 @@ export default function SongDetailPage() {
   }, [phase, defaultInstrument]);
   /* v8 ignore stop */
 
-  const styles = useSongDetailStyles(hasFab);
+  const styles = useSongDetailStyles();
 
   if (!songId) {
     return <div style={styles.center}>{t('songDetail.songNotFound')}</div>;
@@ -326,35 +335,40 @@ export default function SongDetailPage() {
       variant="withBgClip"
       headerCollapse={{ disabled: hasFab, onCollapse: setHeaderCollapsed }}
       firstRun={{ key: 'songinfo', label: t('nav.songInfo', 'Song Info'), slides: songInfoSlidesMemo, gateContext: firstRunGateCtx }}
-      loadPhase={phase}
       background={<PageBackground src={song?.albumArt} />}
-      before={<>
-        {/* v8 ignore start — stagger animation rendering */}
-        {phase === LoadPhase.ContentIn && (
-          <div style={stagger(150)} onAnimationEnd={clearAnim}>
-            <SongInfoHeader
-              song={song}
-              songId={songId!}
-              collapsed={!!(hasFab || headerCollapsed)}
-              animate={!hasFab}
-              onOpenPaths={() => setPathsOpen(true)}
-              shopUrl={showShop ? shopUrl : undefined}
-              shopPulse={showShop && song ? isShopHighlighted(song.songId) : false}
-              hideBackground
-            />
-          </div>
-      )}
-      </>}
+      before={
+        <div style={headerStagger} onAnimationEnd={clearAnim}>
+          <SongInfoHeader
+            song={song}
+            songId={songId!}
+            collapsed={!!(hasFab || headerCollapsed)}
+            animate={!hasFab}
+            onOpenPaths={() => setPathsOpen(true)}
+            shopUrl={showShop ? shopUrl : undefined}
+            shopPulse={showShop && song ? isShopHighlighted(song.songId) : false}
+            hideBackground
+          />
+        </div>
+      }
       after={<>
         {/* v8 ignore start -- songId always truthy from route params */}
         {songId && <PathsModal visible={pathsOpen} songId={songId} onClose={() => setPathsOpen(false)} />}
         {/* v8 ignore stop */}
       </>}
     >
+      {phase !== LoadPhase.ContentIn && (
+        <div
+          style={{ ...styles.spinnerOverlay,
+            ...(phase === LoadPhase.SpinnerOut ? styles.spinnerFadeOut : {}),
+          }}
+        >
+          <ArcSpinner />
+        </div>
+      )}
       {phase === LoadPhase.ContentIn && (
         <div style={styles.container}>
           {player && scoreHistoryReady && filteredScoreHistory.length > 0 && (
-            <div style={{ ...stagger(300), marginBottom: Gap.section }} onAnimationEnd={clearAnim}>
+            <div style={{ ...stagger(150), marginBottom: Gap.section }} onAnimationEnd={clearAnim}>
               <ScoreHistoryChart
                 songId={songId}
                 accountId={player.accountId}
@@ -370,7 +384,7 @@ export default function SongDetailPage() {
           <div style={styles.instrumentGrid}>
             {activeInstruments.map((inst, idx) => {
               const rowIndex = Math.floor(idx / 2);
-              const baseDelay = 450 + rowIndex * 150;
+              const baseDelay = 300 + rowIndex * 150;
               return (
                   <div key={inst} id={`instrument-card-${inst}`}>
                     <InstrumentCard
@@ -397,14 +411,13 @@ export default function SongDetailPage() {
   );
 }
 
-function useSongDetailStyles(hasFab: boolean) {
+function useSongDetailStyles() {
   return useMemo(() => ({
     container: {
       maxWidth: MaxWidth.card,
       margin: CssValue.marginCenter,
       paddingTop: Gap.none,
       paddingBottom: Layout.paddingTop,
-      ...(hasFab ? { paddingBottom: Layout.fabPaddingBottom } : {}),
     } as CSSProperties,
     instrumentGrid: {
       display: Display.grid,
@@ -428,5 +441,5 @@ function useSongDetailStyles(hasFab: boolean) {
     spinnerFadeOut: {
       animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards`,
     } as CSSProperties,
-  }), [hasFab]);
+  }), []);
 }

@@ -1,0 +1,174 @@
+/* eslint-disable react/forbid-dom-props -- useStyles pattern */
+import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useQueries } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
+import { IoOptions } from 'react-icons/io5';
+import { api } from '../../api/client';
+import { queryKeys } from '../../api/queryKeys';
+import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
+import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
+import Page from '../Page';
+import PageHeader from '../../components/common/PageHeader';
+import { ActionPill } from '../../components/common/ActionPill';
+import Modal from '../../components/modals/Modal';
+import { ModalSection } from '../../components/modals/components/ModalSection';
+import { RadioRow } from '../../components/common/RadioRow';
+import RankingCard from './components/RankingCard';
+import type { RankingMetric, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { LoadPhase } from '@festival/core';
+import { RANKING_METRICS } from './helpers/rankingHelpers';
+import { useModalState } from '../../hooks/ui/useModalState';
+import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
+import { useFabSearch } from '../../contexts/FabSearchContext';
+
+import {
+  Display, Overflow, Gap,
+  GridTemplate, Size, STAGGER_INTERVAL, FADE_DURATION,
+} from '@festival/theme';
+
+export default function LeaderboardsOverviewPage() {
+  const { t } = useTranslation();
+  const { settings } = useSettings();
+  const { player } = useTrackedPlayer();
+  const isMobile = useIsMobileChrome();
+  const fabSearch = useFabSearch();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const metric = (searchParams.get('rankBy') ?? 'totalscore') as RankingMetric;
+
+  const metricModal = useModalState<RankingMetric>(() => 'totalscore');
+
+  const openMetricModal = useCallback(() => {
+    metricModal.open(metric);
+  }, [metricModal, metric]);
+
+  const applyMetric = useCallback(() => {
+    scrollRef.current?.scrollTo(0, 0);
+    setShouldStagger(true);
+    setSearchParams({ rankBy: metricModal.draft }, { replace: true });
+    metricModal.close();
+  }, [metricModal, setSearchParams]);
+
+  useEffect(() => {
+    fabSearch.registerLeaderboardActions({ openMetric: openMetricModal });
+    return () => fabSearch.registerLeaderboardActions({ openMetric: () => {} });
+  }, [fabSearch, openMetricModal]);
+
+  const instruments = useMemo(() => visibleInstruments(settings), [settings]);
+
+  // Fetch top-10 per visible instrument
+  const rankingQueries = useQueries({
+    queries: instruments.map((inst) => ({
+      queryKey: queryKeys.rankings(inst, metric, 1, 10),
+      queryFn: () => api.getRankings(inst, metric, 1, 10),
+    })),
+  });
+
+  // Fetch player ranking per visible instrument (only when player is tracked)
+  const playerQueries = useQueries({
+    queries: player
+      ? instruments.map((inst) => ({
+          queryKey: queryKeys.playerRanking(inst, player.accountId),
+          queryFn: () => api.getPlayerRanking(inst, player.accountId),
+        }))
+      : [],
+  });
+
+  const isLoading = rankingQueries.some(q => q.isLoading);
+  const hasCachedData = rankingQueries.every(q => q.data != null);
+  const loadPhase = isLoading ? LoadPhase.Loading : LoadPhase.ContentIn;
+
+  const [shouldStagger, setShouldStagger] = useState(!hasCachedData);
+  const maxEntriesPerCard = useMemo(
+    () => Math.max(0, ...rankingQueries.map(q => q.data?.entries?.length ?? 0)),
+    [rankingQueries],
+  );
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (loadPhase !== LoadPhase.ContentIn || !shouldStagger) return;
+    const totalAnimTime = (maxEntriesPerCard + 1) * STAGGER_INTERVAL + FADE_DURATION;
+    const id = setTimeout(() => setShouldStagger(false), totalAnimTime);
+    return () => clearTimeout(id);
+  }, [loadPhase, shouldStagger, maxEntriesPerCard]);
+
+  const s = useLeaderboardsStyles();
+
+  return (
+    <Page
+      scrollRef={scrollRef}
+      scrollRestoreKey="leaderboards"
+      loadPhase={loadPhase}
+      before={
+        <PageHeader
+          title={t('rankings.title')}
+          actions={
+            !isMobile ? (
+              <ActionPill
+                icon={<IoOptions size={Size.iconAction} />}
+                label={t(`rankings.metric.${metric}`)}
+                onClick={openMetricModal}
+                active={metric !== 'totalscore'}
+              />
+            ) : undefined
+          }
+        />
+      }
+      after={
+        <Modal
+          visible={metricModal.visible}
+          title={t('rankings.rankBy')}
+          onClose={metricModal.close}
+          onApply={applyMetric}
+          onReset={metricModal.reset}
+          resetLabel={t('rankings.rankByReset')}
+          resetHint={t('rankings.rankByResetHint')}
+        >
+          <ModalSection title={t('rankings.rankBy')} hint={t('rankings.rankByHint')}>
+            {RANKING_METRICS.map((m) => (
+              <RadioRow
+                key={m}
+                label={t(`rankings.metric.${m}`)}
+                hint={t(`rankings.metric.${m}Desc`)}
+                selected={metricModal.draft === m}
+                onSelect={() => metricModal.setDraft(m)}
+              />
+            ))}
+          </ModalSection>
+        </Modal>
+      }
+    >
+      {loadPhase === LoadPhase.ContentIn && (
+        <div style={s.grid}>
+          {instruments.map((inst, idx) => {
+            const q = rankingQueries[idx];
+            const pq = player ? playerQueries[idx] : undefined;
+            return (
+              <RankingCard
+                key={inst}
+                instrument={inst as InstrumentKey}
+                metric={metric}
+                entries={q?.data?.entries ?? []}
+                playerRanking={pq?.data ?? null}
+                playerAccountId={player?.accountId}
+                error={q?.error ? String(q.error) : null}
+                shouldStagger={shouldStagger}
+              />
+            );
+          })}
+        </div>
+      )}
+    </Page>
+  );
+}
+
+function useLeaderboardsStyles() {
+  return useMemo(() => ({
+    grid: {
+      display: Display.grid,
+      gridTemplateColumns: GridTemplate.autoFillInstrument,
+      gap: `${Gap.section}px ${Gap.md}px`,
+      overflow: Overflow.hidden,
+    } as CSSProperties,
+  }), []);
+}

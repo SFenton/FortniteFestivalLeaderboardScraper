@@ -198,17 +198,18 @@ public class ScoreBackfiller
             return false; // Not a "new" entry
         }
 
-        // No entry, or existing entry lacks rank/percentile — query the V1 API
-        // (V1 with teamAccountIds returns real rank AND real percentile)
+        // No entry, or existing entry lacks rank/percentile — query the V2 API + V1 neighborhood
         LeaderboardEntry? entry;
+        List<LeaderboardEntry> neighbors;
         try
         {
-            entry = await _scraper.LookupAccountAsync(
-                songId, instrument, accountId, accessToken, callerAccountId, limiter, ct);
+            (entry, neighbors) = await _scraper.LookupAccountWithNeighborsAsync(
+                songId, instrument, accountId, accessToken, callerAccountId,
+                neighborRadius: 50, limiter, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _log.LogDebug(ex, "V1 lookup failed for {Account}/{Song}/{Instrument}. Skipping.",
+            _log.LogDebug(ex, "V2+V1 lookup failed for {Account}/{Song}/{Instrument}. Skipping.",
                 accountId, songId, instrument);
             // Don't mark as checked so it retries next run
             return false;
@@ -216,8 +217,8 @@ public class ScoreBackfiller
 
         if (entry is not null)
         {
-            _log.LogDebug("V2 lookup result for {Account}/{Song}/{Instrument}: Rank={Rank}, Percentile={Percentile}, Score={Score}",
-                accountId, songId, instrument, entry.Rank, entry.Percentile, entry.Score);
+            _log.LogDebug("V2 lookup result for {Account}/{Song}/{Instrument}: Rank={Rank}, Percentile={Percentile}, Score={Score}, Neighbors={NeighborCount}",
+                accountId, songId, instrument, entry.Rank, entry.Percentile, entry.Score, neighbors.Count);
         }
 
         if (entry is null)
@@ -227,16 +228,26 @@ public class ScoreBackfiller
             return false;
         }
 
-        // UPSERT the entry (will also update Rank for existing entries
-        // thanks to the Rank-enrichment clause in UpsertEntries)
-        // ApiRank preserves the real Epic API rank (survives RecomputeAllRanks)
+        // UPSERT the target entry (Source=backfill, ApiRank set by LookupAccountWithNeighborsAsync)
         entry.ApiRank = entry.Rank;
+        entry.Source = "backfill";
         instrumentDb.UpsertEntries(songId, [entry]);
+
+        // Persist neighbor entries (Source=neighbor, ApiRank set by FetchNeighborhoodPageAsync)
+        if (neighbors.Count > 0)
+            instrumentDb.UpsertEntries(songId, neighbors);
 
         // Rank is a guaranteed population floor — if the user is ranked N,
         // there are at least N entries on this leaderboard.
-        if (entry.Rank > 0)
-            _metaDb.RaiseLeaderboardPopulationFloor(songId, instrument, entry.Rank);
+        // Also raise floor from the highest-ranked neighbor.
+        int maxRank = entry.Rank;
+        if (neighbors.Count > 0)
+        {
+            int maxNeighborRank = neighbors.Max(n => n.Rank);
+            if (maxNeighborRank > maxRank) maxRank = maxNeighborRank;
+        }
+        if (maxRank > 0)
+            _metaDb.RaiseLeaderboardPopulationFloor(songId, instrument, maxRank);
 
         if (existing is null)
         {

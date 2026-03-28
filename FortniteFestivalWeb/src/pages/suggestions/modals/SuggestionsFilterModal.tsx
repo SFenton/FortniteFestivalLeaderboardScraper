@@ -5,6 +5,7 @@ import { ModalSection } from '../../../components/modals/components/ModalSection
 import { ToggleRow } from '../../../components/common/ToggleRow';
 import { Accordion } from '../../../components/common/Accordion';
 import ConfirmAlert from '../../../components/modals/ConfirmAlert';
+import { InstrumentSelector, type InstrumentSelectorItem } from '../../../components/common/InstrumentSelector';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
 import type { InstrumentKey } from '@festival/core/instruments';
 import { InstrumentKeys } from '@festival/core/instruments';
@@ -100,6 +101,15 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
   const visibleInstruments = INSTRUMENTS.filter(i => instrumentVisibility[i.showKey as keyof InstrumentVisibility]);
   const effectiveSelectedInstrument = selectedInstrument && visibleInstruments.some(i => i.key === selectedInstrument) ? selectedInstrument : null;
 
+  const selectorItems = useMemo<InstrumentSelectorItem<InstrumentKey>[]>(
+    () => visibleInstruments.map(i => ({ key: i.key, label: i.label })),
+    [visibleInstruments],
+  );
+
+  const handleInstrumentSelect = useCallback((key: InstrumentKey | null) => {
+    setSelectedInstrument(key);
+  }, []);
+
   const toggle = (key: string) => onChange({ ...draft, [key]: !draft[key] });
 
   const { hasChanges, confirmOpen, setConfirmOpen, handleClose, confirmDiscard } = useModalDraft(draft, savedDraft, onCancel);
@@ -176,43 +186,27 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
 
       {/* Instrument-specific type toggles */}
       <ModalSection title={t('suggestionsFilter.instrumentSpecific')} hint={t('suggestionsFilter.instrumentSpecificHint')}>
-        <div style={filterStyles.instrumentRow}>
-          {visibleInstruments.map(inst => {
-            const isSelected = effectiveSelectedInstrument === inst.key;
-            return (
-              <button
-                key={inst.key}
-                style={filterStyles.instrumentBtn}
-                onClick={() => setSelectedInstrument(cur => cur === inst.key ? null : inst.key)}
-                title={inst.label}
-              >
-                <div style={isSelected ? filterStyles.instrumentCircleActive : filterStyles.instrumentCircle} />
-                <div style={filterStyles.instrumentIconWrap}>
-                  <InstrumentIcon instrument={inst.key} size={Size.iconInstrument} />
-                </div>
-              </button>
-            );
-          })}
-        </div>
-
-        <div style={{ ...filterStyles.instrumentFiltersWrap, gridTemplateRows: effectiveSelectedInstrument ? '1fr' : '0fr' }}>
-          <div style={filterStyles.instrumentFiltersInner}>
-            {effectiveSelectedInstrument && (
-              SUGGESTION_TYPES.map(st => {
-                const key = perInstrumentKeyFor(effectiveSelectedInstrument, st.id);
-                return (
-                  <ToggleRow
-                    key={st.id}
-                    label={st.label}
-                    description={st.description}
-                    checked={!!draft[key]}
-                    onToggle={() => togglePerInstrument(effectiveSelectedInstrument, st.id)}
-                  />
-                );
-              })
-            )}
-          </div>
-        </div>
+        <InstrumentSelector<InstrumentKey>
+          instruments={selectorItems}
+          selected={effectiveSelectedInstrument}
+          onSelect={handleInstrumentSelect}
+          deferSelection
+        >
+          {effectiveSelectedInstrument && (
+            SUGGESTION_TYPES.map(st => {
+              const key = perInstrumentKeyFor(effectiveSelectedInstrument, st.id);
+              return (
+                <ToggleRow
+                  key={st.id}
+                  label={st.label}
+                  description={st.description}
+                  checked={!!draft[key]}
+                  onToggle={() => togglePerInstrument(effectiveSelectedInstrument, st.id)}
+                />
+              );
+            })
+          )}
+        </InstrumentSelector>
       </ModalSection>
     </Modal>
   );

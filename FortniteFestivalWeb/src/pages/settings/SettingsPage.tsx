@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSettings } from '../../contexts/SettingsContext';
+import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { ToggleRow } from '../../components/common/ToggleRow';
 import SectionHeader from '../../components/common/SectionHeader';
@@ -11,7 +12,7 @@ import ConfirmAlert from '../../components/modals/ConfirmAlert';
 import { modalStyles as modalCss } from '../../components/modals/modalStyles';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
-import { Colors, Font, Gap, Weight, Radius, Layout, Display, Align, Justify, Overflow, CssValue, LineHeight, TextAlign, frostedCard, btnDanger, btnPrimary, flexColumn, flexRow, flexBetween, padding, transition, CssProp, FAST_FADE_MS } from '@festival/theme';
+import { Colors, Font, Gap, Weight, Radius, Layout, Display, Align, Justify, Overflow, CssValue, LineHeight, TextAlign, frostedCard, btnDanger, btnPrimary, flexColumn, flexRow, flexBetween, padding, transition, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION } from '@festival/theme';
 import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
 import { useFirstRunReplay } from '../../hooks/ui/useFirstRun';
 import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
@@ -20,7 +21,8 @@ import { suggestionsSlides } from '../suggestions/firstRun';
 import { songSlides } from '../songs/firstRun';
 import { songInfoSlides } from '../songinfo/firstRun';
 import { playerHistorySlides } from '../leaderboard/player/firstRun';
-import { useStagger } from '../../hooks/ui/useStagger';
+import { leaderboardsSlides } from '../leaderboards/firstRun';
+import { competeSlides } from '../compete/firstRun';
 import { api } from '../../api/client';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
@@ -162,6 +164,7 @@ function LeewaySlider({ value, onChange }: { value: number; onChange: (v: number
 export default function SettingsPage() {
   const { t } = useTranslation();
   const { settings, updateSettings, resetSettings } = useSettings();
+  const flags = useFeatureFlags();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -176,16 +179,19 @@ export default function SettingsPage() {
   useRegisterFirstRun('playerhistory', t('history.title'), playerHistorySlidesMemo);
   useRegisterFirstRun('statistics', t('nav.statistics'), statisticsSlides);
   useRegisterFirstRun('suggestions', t('nav.suggestions'), suggestionsSlides);
+  useRegisterFirstRun('leaderboards', t('nav.leaderboards'), leaderboardsSlides);
+  useRegisterFirstRun('compete', t('nav.compete'), competeSlides);
   const songsReplay = useFirstRunReplay('songs');
   const songInfoReplay = useFirstRunReplay('songinfo');
   const statsReplay = useFirstRunReplay('statistics');
   const suggestionsReplay = useFirstRunReplay('suggestions');
   const playerHistoryReplay = useFirstRunReplay('playerhistory');
+  const leaderboardsReplay = useFirstRunReplay('leaderboards');
+  const competeReplay = useFirstRunReplay('compete');
   const [serviceVersion, setServiceVersion] = useState<string | null>(null);
   // Skip stagger on revisit
   const skipAnimRef = useRef(_hasRendered);
   _hasRendered = true;
-  const { forIndex: staggerForIndex } = useStagger(!skipAnimRef.current);
 
   const st = useSettingsStyles(isMobile, settings.filterInvalidScores);
 
@@ -227,13 +233,16 @@ export default function SettingsPage() {
   /* v8 ignore stop */
 
   let staggerIndex = 0;
-  const stagger = (idx: number) => staggerForIndex(idx);
+  const stagger = (idx: number): number | undefined => skipAnimRef.current ? undefined : idx * STAGGER_INTERVAL;
+  const headerStagger: CSSProperties = !skipAnimRef.current
+    ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out forwards` }
+    : {};
 
   return (
     <Page
       scrollRestoreKey="settings"
       containerStyle={st.container}
-      before={<PageHeader title={t('settings.title')} />}
+      before={!isMobileChrome ? <PageHeader title={t('settings.title')} style={headerStagger} /> : undefined}
       after={<>
         {showResetConfirm && (
           /* v8 ignore start — confirm dialog callbacks */
@@ -313,6 +322,7 @@ export default function SettingsPage() {
           </FadeInDiv>
 
           {/* ── Item Shop ── */}
+          {flags.shop && (
           <FadeInDiv delay={stagger(staggerIndex++)}>
           <SectionHeader title={t('settings.itemShop', 'Item Shop')} description={t('settings.itemShopHint', 'Control how Item Shop availability is displayed.')} />
           <Card>
@@ -336,6 +346,7 @@ export default function SettingsPage() {
             />
           </Card>
           </FadeInDiv>
+          )}
 
           {/* ── Instruments ── */}
           <FadeInDiv delay={stagger(staggerIndex++)}>
@@ -425,6 +436,18 @@ export default function SettingsPage() {
             <button style={modalCss.toggleRow} onClick={playerHistoryReplay.open}>
               <div style={modalCss.toggleContent}>
                 <div style={modalCss.toggleLabel}>{t('history.title')}</div>
+              </div>
+              <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+            </button>
+            <button style={modalCss.toggleRow} onClick={leaderboardsReplay.open}>
+              <div style={modalCss.toggleContent}>
+                <div style={modalCss.toggleLabel}>{t('nav.leaderboards')}</div>
+              </div>
+              <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+            </button>
+            <button style={modalCss.toggleRow} onClick={competeReplay.open}>
+              <div style={modalCss.toggleContent}>
+                <div style={modalCss.toggleLabel}>{t('nav.compete')}</div>
               </div>
               <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>

@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+
+vi.mock('../../../../src/contexts/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ shop: true, rivals: true, compete: true, leaderboards: true }),
+}));
+
 import PinnedSidebar from '../../../../src/components/shell/desktop/PinnedSidebar';
 import { SettingsProvider } from '../../../../src/contexts/SettingsContext';
 import { Colors } from '@festival/theme';

@@ -30,13 +30,10 @@ public static partial class ApiEndpoints
             var enriched = scores.Select(s =>
             {
                 var key = (s.SongId, s.Instrument);
-                var (computedRank, dbTotal) = rankings.GetValueOrDefault(key, (0, 0));
+                var computedRank = rankings.GetValueOrDefault(key, 0);
                 // Always use DB-computed rank for consistency with leaderboard ordering
                 var rank = computedRank > 0 ? computedRank : s.Rank;
-                // Use the larger of PercentileService population and DB row count
-                var totalEntries = Math.Max(
-                    population.TryGetValue(key, out var pop) && pop > 0 ? (int)pop : 0,
-                    dbTotal);
+                var totalEntries = population.TryGetValue(key, out var pop) && pop > 0 ? (int)pop : 0;
                 return new
                 {
                     s.SongId,

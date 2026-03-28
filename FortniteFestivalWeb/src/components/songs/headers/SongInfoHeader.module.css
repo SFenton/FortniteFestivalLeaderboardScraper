@@ -1,0 +1,45 @@
+/*
+ * Scroll-linked collapse animations driven by --collapse (0 → 1) CSS custom property.
+ * Values derived from @festival/theme tokens — see comments for source constants.
+ *
+ * Using calc() with a continuous ratio instead of CSS transitions eliminates
+ * the desync between scroll position and header size that a fixed-duration
+ * transition causes.
+ */
+
+/*
+ * Album art: visually 120px → 80px (AlbumArtSize.expanded → .collapsed).
+ *
+ * Uses transform: scale() instead of width/height so the browser composites
+ * the shrink on the GPU without re-rastering the image or triggering layout
+ * reflow every scroll frame.  Negative margins keep the layout box in sync
+ * with the visual size (120 − 40·collapse = 80 at full collapse).
+ *
+ * Border-radius is compensated for the scale factor so the visual radius
+ * still transitions 16 → 12: raw = (16 + 2·collapse), visual = raw · scale.
+ */
+.art {
+  width: 120px;
+  height: 120px;
+  transform: scale(calc(1 - var(--collapse, 0) * 0.3333));
+  transform-origin: top left;
+  margin-right:  calc(var(--collapse, 0) * -40px);
+  margin-bottom: calc(var(--collapse, 0) * -40px);
+  border-radius: calc(16px + var(--collapse, 0) * 2px);
+  will-change: transform;
+}
+
+/* Wrapper paddingTop: Layout.paddingTop=16 → Gap.md=8 */
+.wrapperPadding {
+  padding-top: calc(16px - var(--collapse, 0) * 8px);
+}
+
+/* Artist font-size: Font.lg=16 → Font.md=14 */
+.artistFont {
+  font-size: calc(16px - var(--collapse, 0) * 2px);
+}
+
+/* Title marginBottom: Gap.sm=4 → Gap.xs=2 */
+.titleMargin {
+  margin-bottom: calc(4px - var(--collapse, 0) * 2px);
+}

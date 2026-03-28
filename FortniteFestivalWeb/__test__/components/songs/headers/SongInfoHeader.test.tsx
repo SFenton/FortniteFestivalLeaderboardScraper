@@ -161,8 +161,12 @@ describe('SongInfoHeader', () => {
         <SongInfoHeader song={baseSong as any} songId="s1" collapsed={true} animate />
       </TestProviders>,
     );
-    const img = findArtImg(container);
-    expect(img?.style.transition).toBeTruthy();
+    // animate mode uses CSS module classes for scroll-linked interpolation
+    // instead of inline transitions — art img no longer has inline width/transition
+    const imgs = Array.from(container.querySelectorAll('img[src="https://example.com/art.jpg"]'));
+    const artImg = imgs.find((i) => !i.style.display);
+    expect(artImg).toBeTruthy();
+    expect(artImg!.style.width).toBeFalsy(); // driven by CSS module, not inline
   });
 
   it('collapsed instrument scale', () => {

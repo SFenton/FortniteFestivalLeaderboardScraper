@@ -8,7 +8,7 @@ import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useStagger } from '../../hooks/ui/useStagger';
 import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
-import { useIsMobile } from '../../hooks/ui/useIsMobile';
+
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
 import { IoChevronForward } from 'react-icons/io5';
@@ -41,7 +41,6 @@ export default function RivalsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { settings } = useSettings();
-  const isMobile = useIsMobile();
   const { player } = useTrackedPlayer();
   const accountId = player?.accountId;
 
@@ -249,9 +248,9 @@ export default function RivalsPage() {
       before={<PageHeader title={t('rivals.title')} />}
     >
       {phase === LoadPhase.ContentIn && (
-            <div style={{ ...flexColumn, gap: Gap.section, ...(isMobile ? { paddingBottom: Layout.fabPaddingBottom } : undefined) }}>
+            <div style={{ ...flexColumn, gap: Gap.section }}>
               {!hasAnyRivals && (
-                <EmptyState title={t('rivals.noRivals')} style={stagger(200)} onAnimationEnd={clearAnim} />
+                <EmptyState fullPage title={t('rivals.noRivals')} style={stagger(200)} onAnimationEnd={clearAnim} />
               )}
 
               {/* Common rivals (appears in ALL selected instruments, 2+ required) */}

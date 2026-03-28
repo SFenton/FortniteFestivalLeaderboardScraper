@@ -11,8 +11,7 @@ import { IoFlash, IoBagHandle } from 'react-icons/io5';
 import {
   Colors, Font, Gap, Radius, Layout, Weight, ObjectFit, Size, AlbumArtSize,
   IconSize, InstrumentSize, Display, Align, Justify, CssValue, Cursor, Position, Isolation,
-  CssProp, TRANSITION_MS, EASE_SMOOTH,
-  flexRow, flexCenter, padding, purpleGlass, transition as transitionFn,
+  flexRow, flexCenter, padding, purpleGlass,
 } from '@festival/theme';
 import type { CSSProperties } from 'react';
 import { type ServerSong as Song, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
@@ -21,6 +20,7 @@ import BackgroundImage from '../../page/BackgroundImage';
 import PageHeader from '../../common/PageHeader';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import anim from '../../../styles/animations.module.css';
+import cls from './SongInfoHeader.module.css';
 
 
 
@@ -71,10 +71,10 @@ export default function SongInfoHeader({
     <>
       {!hideBackground && <BackgroundImage src={song?.albumArt} />}
       <PageHeader
+        className={animate ? cls.wrapperPadding : undefined}
         style={{
-          paddingTop: collapsed ? Gap.md : Layout.paddingTop,
+          ...(!animate ? { paddingTop: collapsed ? Gap.md : Layout.paddingTop } : undefined),
           paddingBottom: Gap.section,
-          transition: animate ? 'padding 300ms cubic-bezier(0.4, 0, 0.2, 1)' : undefined,
           position: 'relative',
           zIndex: 'var(--z-dropdown)',
           flexShrink: 0,
@@ -83,13 +83,13 @@ export default function SongInfoHeader({
         title={
           <div style={s.headerLeft}>
             {song?.albumArt ? (
-              <img src={song.albumArt} alt="" style={s.headerArt} />
+              <img src={song.albumArt} alt="" className={s.artClassName} style={s.headerArt} />
             ) : (
-              <div style={s.artPlaceholder} />
+              <div className={s.artClassName} style={s.artPlaceholder} />
             )}
             <div style={s.textWrap}>
-              <h1 style={s.songTitle}>{song?.title ?? songId}</h1>
-              <p style={s.songArtist}>
+              <h1 className={s.titleClassName} style={s.songTitle}>{song?.title ?? songId}</h1>
+              <p className={s.artistClassName} style={s.songArtist}>
                 {song?.artist ?? t('common.unknownArtist')}
                 {song?.year ? ` \u00b7 ${song.year}` : ''}
               </p>
@@ -132,8 +132,10 @@ export default function SongInfoHeader({
 
 function useStyles(collapsed: boolean, animate?: boolean) {
   return useMemo(() => {
-    const trans = animate ? transitionFn(CssProp.all, TRANSITION_MS, EASE_SMOOTH) : undefined;
-    const artSize = collapsed ? AlbumArtSize.collapsed : AlbumArtSize.expanded;
+    // When animate is true, size/radius/font/margin are driven by --collapse CSS var
+    // via CSS module classes — no inline transitions needed.
+    const artSize = animate ? undefined : (collapsed ? AlbumArtSize.collapsed : AlbumArtSize.expanded);
+    const artRadius = animate ? undefined : (collapsed ? Radius.md : Radius.lg);
     const buttonBase: CSSProperties = {
       display: Display.inlineFlex,
       alignItems: Align.center,
@@ -157,11 +159,14 @@ function useStyles(collapsed: boolean, animate?: boolean) {
     };
     return {
       headerLeft: { ...flexRow, gap: Gap.section, minWidth: 0 } as CSSProperties,
-      headerArt: { width: artSize, height: artSize, borderRadius: collapsed ? Radius.md : Radius.lg, objectFit: ObjectFit.cover, flexShrink: 0, transition: trans } as CSSProperties,
-      artPlaceholder: { width: artSize, height: artSize, borderRadius: collapsed ? Radius.md : Radius.lg, backgroundColor: Colors.accentPurpleDark, flexShrink: 0, transition: trans } as CSSProperties,
+      headerArt: { width: artSize, height: artSize, borderRadius: artRadius, objectFit: ObjectFit.cover, flexShrink: 0 } as CSSProperties,
+      artPlaceholder: { width: artSize, height: artSize, borderRadius: artRadius, backgroundColor: Colors.accentPurpleDark, flexShrink: 0 } as CSSProperties,
+      artClassName: animate ? cls.art : undefined,
       textWrap: { flex: 1, minWidth: 0 } as CSSProperties,
-      songTitle: { fontSize: Font.title, fontWeight: Weight.bold, margin: 0, marginBottom: collapsed ? Gap.xs : Gap.sm, transition: trans } as CSSProperties,
-      songArtist: { fontSize: collapsed ? Font.md : Font.lg, color: Colors.textSubtle, margin: 0, transition: trans } as CSSProperties,
+      songTitle: { fontSize: Font.title, fontWeight: Weight.bold, margin: 0, marginBottom: animate ? undefined : (collapsed ? Gap.xs : Gap.sm) } as CSSProperties,
+      titleClassName: animate ? cls.titleMargin : undefined,
+      songArtist: { fontSize: animate ? undefined : (collapsed ? Font.md : Font.lg), color: Colors.textSubtle, margin: 0 } as CSSProperties,
+      artistClassName: animate ? cls.artistFont : undefined,
       instIconWrap: { ...flexCenter, width: Size.iconXl, height: Size.iconXl } as CSSProperties,
       viewPathsButton: { ...purpleGlass, ...buttonBase } as CSSProperties,
       shopButton,

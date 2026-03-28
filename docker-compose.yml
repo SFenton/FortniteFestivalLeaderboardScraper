@@ -20,6 +20,10 @@ services:
       - WebApp__Password=${WEBAPP_PASSWORD:-changeme}
       # ── Path generation (MIDI decryption key for CHOpt max score calculation) ──
       - Scraper__MidiEncryptionKey=${MIDI_ENCRYPTION_KEY:-}
+      # ── Feature flags (default: all OFF in production) ──
+      - Features__Shop=${FEATURE_SHOP:-false}
+      - Features__Rivals=${FEATURE_RIVALS:-false}
+      - Features__Leaderboards=${FEATURE_LEADERBOARDS:-false}
       # Override scraper settings via environment variables if needed:
       # - Scraper__ScrapeInterval=04:00:00
       # - Scraper__SongSyncInterval=00:15:00

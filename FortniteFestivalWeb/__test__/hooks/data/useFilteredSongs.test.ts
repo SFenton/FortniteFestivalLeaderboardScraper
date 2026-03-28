@@ -95,7 +95,7 @@ describe('useFilteredSongs', () => {
     const filters = { ...emptyFilters, seasonFilter: { 1: true, 2: false } };
     const { result } = renderHook(() => useFilteredSongs({
       songs, search: '', sortMode: 'title' as any, sortAscending: true,
-      filters: filters as any, instrument: null,
+      filters: filters as any, instrument: 'guitar' as InstrumentKey,
       scoreMap, allScoreMap,
     }));
     expect(result.current.map(s => s.songId)).toEqual(['s1', 's3']);
@@ -107,7 +107,7 @@ describe('useFilteredSongs', () => {
     const filters = { ...emptyFilters, starsFilter: { 5: true, 3: false } };
     const { result } = renderHook(() => useFilteredSongs({
       songs, search: '', sortMode: 'title' as any, sortAscending: true,
-      filters: filters as any, instrument: null,
+      filters: filters as any, instrument: 'guitar' as InstrumentKey,
       scoreMap, allScoreMap,
     }));
     expect(result.current).toHaveLength(2);
@@ -145,7 +145,7 @@ describe('useFilteredSongs', () => {
     const filters = { ...emptyFilters, percentileFilter: { 1: true, 50: false, 90: false } };
     const { result } = renderHook(() => useFilteredSongs({
       songs, search: '', sortMode: 'title' as any, sortAscending: true,
-      filters: filters as any, instrument: null,
+      filters: filters as any, instrument: 'guitar' as InstrumentKey,
       scoreMap, allScoreMap,
     }));
     expect(result.current.map(s => s.songId)).toEqual(['s1']);
@@ -162,7 +162,7 @@ describe('useFilteredSongs', () => {
     const filters = { ...emptyFilters, difficultyFilter: { 3: true, 5: false } };
     const { result } = renderHook(() => useFilteredSongs({
       songs: songsWithDiff as any, search: '', sortMode: 'title' as any, sortAscending: true,
-      filters: filters as any, instrument: null,
+      filters: filters as any, instrument: 'guitar' as InstrumentKey,
       scoreMap, allScoreMap,
     }));
     expect(result.current).toHaveLength(2);
@@ -234,7 +234,7 @@ describe('useFilteredSongs', () => {
     const filters = { ...emptyFilters, percentileFilter: { 0: false } };
     const { result } = renderHook(() => useFilteredSongs({
       songs, search: '', sortMode: 'title' as any, sortAscending: true,
-      filters: filters as any, instrument: null,
+      filters: filters as any, instrument: 'guitar' as InstrumentKey,
       scoreMap, allScoreMap,
     }));
     // s1 has rank 0 → bracket 0 → filtered out; s2 and s3 have no score → bracket 0 → filtered out
@@ -284,7 +284,7 @@ describe('useFilteredSongs', () => {
     const filters = { ...emptyFilters, seasonFilter: { 1: false, 2: true } };
     const { result } = renderHook(() => useFilteredSongs({
       songs, search: '', sortMode: 'title' as any, sortAscending: true,
-      filters: filters as any, instrument: null,
+      filters: filters as any, instrument: 'guitar' as InstrumentKey,
       scoreMap, allScoreMap,
     }));
     // Season 1 is filtered out, only s2 (season 2) should remain
@@ -322,7 +322,7 @@ describe('useFilteredSongs', () => {
     const filters = { ...emptyFilters, percentileFilter: { 5: false } };
     const { result } = renderHook(() => useFilteredSongs({
       songs, search: '', sortMode: 'title' as any, sortAscending: true,
-      filters: filters as any, instrument: null,
+      filters: filters as any, instrument: 'guitar' as InstrumentKey,
       scoreMap, allScoreMap,
     }));
     // s1 has null pct, bracket 0 not filtered → passes
@@ -538,7 +538,7 @@ describe('useFilteredSongs — additional filter branches', () => {
     const allScoreMap = new Map([['s1', new Map([['guitar' as InstrumentKey, score('s1')]])]]);
     const { result } = renderHook(() => useFilteredSongs({
       songs, search: '', sortMode: 'title' as any, sortAscending: true,
-      filters: { ...emptyFilters, percentileFilter: { 0: false } } as any, instrument: null,
+      filters: { ...emptyFilters, percentileFilter: { 0: false } } as any, instrument: 'guitar' as InstrumentKey,
       scoreMap, allScoreMap,
     }));
     expect(result.current.length).toBeLessThanOrEqual(3);
@@ -575,5 +575,65 @@ describe('useFilteredSongs — additional filter branches', () => {
       scoreMap: new Map(), allScoreMap: new Map(),
     }));
     expect(result.current.length).toBe(3);
+  });
+});
+
+describe('useFilteredSongs — instrument-specific filters ignored when no instrument selected', () => {
+  it('ignores starsFilter when instrument is null', () => {
+    const scoreMap = new Map([['s1', score('s1', { stars: 5 })], ['s2', score('s2', { stars: 3 })], ['s3', score('s3', { stars: 5 })]]);
+    const allScoreMap = new Map(Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([['guitar' as InstrumentKey, s]])]));
+    const filters = { ...emptyFilters, starsFilter: { 5: true, 3: false } };
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: filters as any, instrument: null,
+      scoreMap, allScoreMap,
+    }));
+    // All songs returned because starsFilter is ignored without an instrument
+    expect(result.current).toHaveLength(3);
+  });
+
+  it('ignores seasonFilter when instrument is null', () => {
+    const scoreMap = new Map([['s1', score('s1', { season: 1 })], ['s2', score('s2', { season: 2 })], ['s3', score('s3', { season: 1 })]]);
+    const allScoreMap = new Map(Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([['guitar' as InstrumentKey, s]])]));
+    const filters = { ...emptyFilters, seasonFilter: { 1: true, 2: false } };
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: filters as any, instrument: null,
+      scoreMap, allScoreMap,
+    }));
+    expect(result.current).toHaveLength(3);
+  });
+
+  it('ignores percentileFilter when instrument is null', () => {
+    const scoreMap = new Map([
+      ['s1', score('s1', { rank: 1, totalEntries: 100 })],
+      ['s2', score('s2', { rank: 50, totalEntries: 100 })],
+      ['s3', score('s3', { rank: 90, totalEntries: 100 })],
+    ]);
+    const allScoreMap = new Map(Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([['guitar' as InstrumentKey, s]])]));
+    const filters = { ...emptyFilters, percentileFilter: { 1: true, 50: false, 90: false } };
+    const { result } = renderHook(() => useFilteredSongs({
+      songs, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: filters as any, instrument: null,
+      scoreMap, allScoreMap,
+    }));
+    expect(result.current).toHaveLength(3);
+  });
+
+  it('ignores difficultyFilter when instrument is null', () => {
+    const songsWithDiff = [
+      { ...songs[0], difficulty: 3 },
+      { ...songs[1], difficulty: 5 },
+      { ...songs[2], difficulty: 3 },
+    ];
+    const scoreMap = new Map([['s1', score('s1')], ['s2', score('s2')], ['s3', score('s3')]]);
+    const allScoreMap = new Map(Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([['guitar' as InstrumentKey, s]])]));
+    const filters = { ...emptyFilters, difficultyFilter: { 3: true, 5: false } };
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: songsWithDiff as any, search: '', sortMode: 'title' as any, sortAscending: true,
+      filters: filters as any, instrument: null,
+      scoreMap, allScoreMap,
+    }));
+    expect(result.current).toHaveLength(3);
   });
 });

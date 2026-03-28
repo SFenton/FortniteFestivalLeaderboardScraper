@@ -71,15 +71,23 @@ export const defaultSongFilters = (): SongFilters => ({
   difficultyFilter: {},
 });
 
-export const isFilterActive = (f: SongFilters): boolean =>
-  Object.values(f.missingScores).some(v => v === true) ||
-  Object.values(f.missingFCs).some(v => v === true) ||
-  Object.values(f.hasScores).some(v => v === true) ||
-  Object.values(f.hasFCs).some(v => v === true) ||
-  Object.values(f.seasonFilter).some(v => v === false) ||
-  Object.values(f.percentileFilter).some(v => v === false) ||
-  Object.values(f.starsFilter).some(v => v === false) ||
-  Object.values(f.difficultyFilter).some(v => v === false);
+export const isFilterActive = (f: SongFilters, instrument?: InstrumentKey | null): boolean => {
+  const hasPerInstrument =
+    Object.values(f.missingScores).some(v => v === true) ||
+    Object.values(f.missingFCs).some(v => v === true) ||
+    Object.values(f.hasScores).some(v => v === true) ||
+    Object.values(f.hasFCs).some(v => v === true);
+  if (hasPerInstrument) return true;
+  // When instrument is explicitly null, ignore instrument-dependent filters
+  // (season/percentile/stars/difficulty) since they won't be applied.
+  if (instrument === null) return false;
+  return (
+    Object.values(f.seasonFilter).some(v => v === false) ||
+    Object.values(f.percentileFilter).some(v => v === false) ||
+    Object.values(f.starsFilter).some(v => v === false) ||
+    Object.values(f.difficultyFilter).some(v => v === false)
+  );
+};
 
 /* ── Persistence ── */
 

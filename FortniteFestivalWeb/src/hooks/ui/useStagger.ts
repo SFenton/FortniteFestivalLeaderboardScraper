@@ -21,6 +21,7 @@ export function useStagger(shouldStagger: boolean, interval: number = STAGGER_IN
     if (!shouldStagger) return undefined;
     return {
       opacity: 0,
+      willChange: 'transform, opacity',
       animation: `fadeInUp ${FADE_DURATION}ms ease-out ${delayMs}ms forwards`,
     };
   }, [shouldStagger]);
@@ -30,6 +31,7 @@ export function useStagger(shouldStagger: boolean, interval: number = STAGGER_IN
     if (!shouldStagger) return undefined;
     return {
       opacity: 0,
+      willChange: 'transform, opacity',
       animation: `fadeInUp ${FADE_DURATION}ms ease-out ${offset + index * interval}ms forwards`,
     };
   }, [shouldStagger, interval]);
@@ -40,6 +42,7 @@ export function useStagger(shouldStagger: boolean, interval: number = STAGGER_IN
     const idx = idxRef.current++;
     return {
       opacity: 0,
+      willChange: 'transform, opacity',
       animation: `fadeInUp ${FADE_DURATION}ms ease-out ${offset + idx * interval}ms forwards`,
     };
   }, [shouldStagger, interval]);
@@ -49,6 +52,7 @@ export function useStagger(shouldStagger: boolean, interval: number = STAGGER_IN
     const el = e.currentTarget;
     el.style.opacity = '';
     el.style.animation = '';
+    el.style.willChange = '';
   }, []);
 
   return { forDelay, forIndex, next, clearAnim };

@@ -59,7 +59,7 @@
     "scoreHistory": "Score History",
     "noScores": "No scores recorded yet.",
     "songNotFound": "Song not found",
-    "noEntries": "No entries"
+    "noEntries": "No {{instrument}} entries"
   },
   "leaderboard": {
     "title": "Leaderboard",
@@ -209,7 +209,9 @@
     "statistics": "Statistics",
     "settings": "Settings",
     "rivals": "Rivals",
-    "shop": "Item Shop"
+    "shop": "Item Shop",
+    "compete": "Compete",
+    "leaderboards": "Leaderboards"
   },
   "shop": {
     "viewGrid": "Grid",
@@ -478,6 +480,34 @@
         "descriptionMobile": "Tap the sort button in the action menu to reorder by date, score, accuracy, or season — ascending or descending.",
         "descriptionDesktop": "Tap the sort button in the header to reorder by date, score, accuracy, or season — ascending or descending."
       }
+    },
+    "leaderboards": {
+      "overview": {
+        "title": "Global Rankings",
+        "description": "See how players rank across all songs on each instrument. Rankings are computed after every scrape pass."
+      },
+      "metrics": {
+        "title": "Ranking Metrics",
+        "description": "Sort by Adjusted Skill, Weighted Rating, FC Rate, Total Score, or Max Score %. Use the chips at the top to switch."
+      },
+      "yourRank": {
+        "title": "Your Rank",
+        "description": "Your position appears in purple. Tap 'View all rankings' to see the full leaderboard for any instrument."
+      }
+    },
+    "compete": {
+      "hub": {
+        "title": "Compete Hub",
+        "description": "Your competitive snapshot — see your leaderboard rankings and closest rivals at a glance."
+      },
+      "leaderboards": {
+        "title": "Leaderboards",
+        "description": "The top-ranked players across all instruments. Tap to explore the full global rankings."
+      },
+      "rivals": {
+        "title": "Rivals",
+        "description": "See who's just ahead and behind you. Tap to view all your rivals and head-to-head matchups."
+      }
     }
   },
   "rivals": {
@@ -524,5 +554,53 @@
       "noSongs": "No song data for this rival.",
       "viewAll": "View all {{count}} songs"
     }
+  },
+  "rankings": {
+    "title": "Leaderboards",
+    "combined": "Combined Rankings",
+    "viewAllRankings": "View all rankings",
+    "page": "Page {{current}} of {{total}}",
+    "noRankings": "No rankings available yet.",
+    "noRankingsHint": "Rankings are computed after each scrape pass.",
+    "totalRanked": "{{formattedCount}} ranked players",
+    "rankBy": "Rank By",
+    "rankByHint": "Choose how players are ranked.",
+    "rankByReset": "Reset to Default",
+    "rankByResetHint": "Revert to Total Score ranking.",
+    "rankByCancelTitle": "Discard changes?",
+    "rankByCancelMessage": "You have unsaved changes to the ranking metric. Discard them?",
+    "changeRanking": "Change Leaderboard Ranking",
+    "metric": {
+      "adjusted": "Adjusted Skill",
+      "adjustedDesc": "Average percentile across all songs, adjusted for credibility.",
+      "weighted": "Weighted",
+      "weightedDesc": "Percentile weighted by number of leaderboard entries per song, adjusted for credibility.",
+      "fcrate": "FC Rate",
+      "fcrateDesc": "Percentage of played songs with a full combo, adjusted for credibility.",
+      "totalscore": "Total Score",
+      "totalscoreDesc": "Sum of all scores across every played song.",
+      "maxscore": "Max Score %",
+      "maxscoreDesc": "Percentage of the maximum possible score achieved, adjusted for credibility."
+    },
+    "column": {
+      "rank": "#",
+      "player": "Player",
+      "rating": "Rating",
+      "songsPlayed": "Songs",
+      "coverage": "Coverage",
+      "fcCount": "FCs",
+      "accuracy": "Accuracy"
+    }
+  },
+  "compete": {
+    "title": "Compete",
+    "leaderboards": "Leaderboards",
+    "rivals": "Rivals",
+    "seeAll": "See All",
+    "noRivals": "Track a player to see your closest rivals",
+    "viewFullLeaderboards": "View full leaderboards",
+    "viewAllRivals": "View all rivals",
+    "closestAbove": "Just ahead of you",
+    "closestBelow": "Just behind you"
   }
 }

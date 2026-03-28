@@ -50,14 +50,16 @@ export function useFilteredSongs({
       : [...filterInstruments];
 
     // Pre-compute which filter checks are active
+    // Season/percentile/stars/difficulty filters are instrument-specific — skip them when no instrument is selected
+    // so stale filter values from a previously selected instrument don't hide songs.
     const seasonKeys = Object.keys(f.seasonFilter);
-    const checkSeason = hasPlayerData && seasonKeys.length > 0 && seasonKeys.some(k => f.seasonFilter[Number(k)] === false);
+    const checkSeason = inst != null && hasPlayerData && seasonKeys.length > 0 && seasonKeys.some(k => f.seasonFilter[Number(k)] === false);
     const pctKeys = Object.keys(f.percentileFilter);
-    const checkPct = hasPlayerData && pctKeys.length > 0 && pctKeys.some(k => f.percentileFilter[Number(k)] === false);
+    const checkPct = inst != null && hasPlayerData && pctKeys.length > 0 && pctKeys.some(k => f.percentileFilter[Number(k)] === false);
     const starKeys = Object.keys(f.starsFilter);
-    const checkStars = hasPlayerData && starKeys.length > 0 && starKeys.some(k => f.starsFilter[Number(k)] === false);
+    const checkStars = inst != null && hasPlayerData && starKeys.length > 0 && starKeys.some(k => f.starsFilter[Number(k)] === false);
     const diffKeys = Object.keys(f.difficultyFilter);
-    const checkDiff = hasPlayerData && diffKeys.length > 0 && diffKeys.some(k => f.difficultyFilter[Number(k)] === false);
+    const checkDiff = inst != null && hasPlayerData && diffKeys.length > 0 && diffKeys.some(k => f.difficultyFilter[Number(k)] === false);
 
     const list = songs.filter(s => {
       if (q && !s.title.toLowerCase().includes(q) && !s.artist.toLowerCase().includes(q)) return false;

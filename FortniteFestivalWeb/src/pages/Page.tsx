@@ -125,11 +125,15 @@ export interface PageProps {
   /**
    * When provided, Page listens to scroll position and calls `onCollapse`
    * when scrollTop crosses the threshold (default 40px).
+   * Also sets a `--collapse` CSS custom property (0 → 1) on the header portal
+   * so animated properties can track scroll position continuously via `calc()`.
    * Set `disabled: true` on mobile to skip the listener entirely.
    */
   headerCollapse?: {
     disabled?: boolean;
     threshold?: number;
+    /** Scroll distance (px) over which --collapse transitions from 0 to 1.  Default 80. */
+    distance?: number;
     onCollapse: (collapsed: boolean) => void;
   };
   /**
@@ -196,23 +200,46 @@ export default function Page({
   const navType = useNavigationType();
   useScrollRestore(scrollRestoreKey ?? '', scrollRestoreKey ? navType : '');
 
-  // Header collapse: listen to scrollContainer scrollTop and call onCollapse
+  // Header collapse: continuous --collapse ratio (0→1) on portal target + boolean callback
   const lastCollapsedRef = useRef<boolean | null>(null);
+  const lastRatioRef = useRef(-1);
   useEffect(() => {
     if (!headerCollapse || headerCollapse.disabled) return;
     const el = scrollContainerRef.current;
+    const portal = portalTarget;
     if (!el) return;
     const threshold = headerCollapse.threshold ?? 40;
+    const distance = headerCollapse.distance ?? 80;
     const onScroll = () => {
+      // Continuous ratio for scroll-linked CSS interpolation
+      const ratio = Math.min(1, Math.max(0, el.scrollTop / distance));
+      if (ratio !== lastRatioRef.current) {
+        lastRatioRef.current = ratio;
+        portal?.style.setProperty('--collapse', String(ratio));
+      }
+      // Boolean callback for discrete consumers (FAB, etc.)
       const collapsed = el.scrollTop > threshold;
       if (collapsed !== lastCollapsedRef.current) {
         lastCollapsedRef.current = collapsed;
         headerCollapse.onCollapse(collapsed);
       }
     };
+    // Set initial ratio from current scroll position
+    onScroll();
     el.addEventListener('scroll', onScroll, { passive: true });
-    return () => el.removeEventListener('scroll', onScroll);
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      // Don't remove --collapse here — this cleanup runs on every re-render
+      // (no-deps effect) and removing it causes a one-frame flash to expanded
+      // when onCollapse triggers a React state update.
+    };
   }); // intentionally no deps — re-subscribe on every render to capture latest headerCollapse
+
+  // Clean up --collapse only on unmount (page navigation away)
+  useEffect(() => {
+    const portal = portalTarget;
+    return () => { portal?.style.removeProperty('--collapse'); };
+  }, [portalTarget]);
 
   const isMobileChrome = useIsMobileChrome();
 

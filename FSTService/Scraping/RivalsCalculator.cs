@@ -87,11 +87,12 @@ public sealed class RivalsCalculator
 
             foreach (var entry in userScores)
             {
-                if (entry.Rank <= 0) continue; // skip unranked
+                var effectiveRank = entry.ApiRank > 0 ? entry.ApiRank : entry.Rank;
+                if (effectiveRank <= 0) continue; // skip unranked
                 if (!songCounts.TryGetValue(entry.SongId, out var entryCount) || entryCount <= 1)
                     continue;
 
-                var neighbors = db.GetNeighborhood(entry.SongId, entry.Rank, NeighborhoodRadius, userId);
+                var neighbors = db.GetNeighborhood(entry.SongId, effectiveRank, NeighborhoodRadius, userId);
                 var logWeight = Math.Log2(entryCount);
 
                 foreach (var (neighborId, neighborRank, neighborScore) in neighbors)
@@ -102,7 +103,7 @@ public sealed class RivalsCalculator
                         candidates[neighborId] = candidate;
                     }
 
-                    var rankDelta = neighborRank - entry.Rank; // positive = behind user, negative = ahead
+                    var rankDelta = neighborRank - effectiveRank; // positive = behind user, negative = ahead
                     var absDelta = Math.Abs(rankDelta);
 
                     candidate.Appearances++;
@@ -115,7 +116,7 @@ public sealed class RivalsCalculator
                     {
                         SongId = entry.SongId,
                         Instrument = instrument,
-                        UserRank = entry.Rank,
+                        UserRank = effectiveRank,
                         RivalRank = neighborRank,
                         RankDelta = rankDelta,
                         UserScore = entry.Score,

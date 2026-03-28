@@ -233,6 +233,10 @@ export const Layout = {
   errorFallbackMinHeight: '60vh',
   /** Width for rank column in leaderboard/history rows. */
   rankColumnWidth: 48,
+  /** Approximate pixel width of one tabular-numeral character at Font.md (14px). */
+  rankCharWidth: 8.5,
+  /** Right padding (px) added to dynamic rank column widths. */
+  rankColumnPadding: 12,
   /** Width for accuracy column in leaderboard/history rows. */
   accColumnWidth: 64,
   /** Horizontal padding for pill-shaped action buttons. */
@@ -261,6 +265,8 @@ export const Layout = {
   scoreColumnMinWidth: 56,
   /** Height for instrument card entry rows. */
   entryRowHeight: 48,
+  /** Extra scroll padding when mobile pagination bar is fixed above the FAB spacer. */
+  paginationHeight: 50,
   /** Height for player song rows. */
   playerSongRowHeight: 64,
   /** PWA bottom offset adjustment. */

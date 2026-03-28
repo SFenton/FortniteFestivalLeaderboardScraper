@@ -30,6 +30,7 @@ export function useStaggerStyle(
     if (skip || delayMs == null) return undefined;
     return {
       opacity: 0,
+      willChange: 'transform, opacity',
       animation: `${animation} ${duration}ms ease-out ${delayMs}ms forwards`,
     };
   }, [skip, delayMs, duration, animation]);
@@ -38,6 +39,7 @@ export function useStaggerStyle(
     const el = e.currentTarget as HTMLElement;
     el.style.opacity = '';
     el.style.animation = '';
+    el.style.willChange = '';
   }, []);
 
   return useMemo(() => ({ style, onAnimationEnd }), [style, onAnimationEnd]);
@@ -65,12 +67,13 @@ export function buildStaggerStyle(
 ): CSSProperties | undefined {
   if (delayMs == null) return undefined;
   const { duration = FADE_DURATION, animation = 'fadeInUp' } = opts;
-  return { opacity: 0, animation: `${animation} ${duration}ms ease-out ${delayMs}ms forwards` };
+  return { opacity: 0, willChange: 'transform, opacity', animation: `${animation} ${duration}ms ease-out ${delayMs}ms forwards` };
 }
 
-/** Animation-end handler that clears inline opacity/animation styles. */
+/** Animation-end handler that clears inline opacity/animation/willChange styles. */
 export function clearStaggerStyle(e: React.AnimationEvent): void {
   const el = e.currentTarget as HTMLElement;
   el.style.opacity = '';
   el.style.animation = '';
+  el.style.willChange = '';
 }

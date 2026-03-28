@@ -446,7 +446,14 @@ public sealed class ScraperWorker : BackgroundService
         foreach (var (_, results) in allResults)
             foreach (var r in results)
                 if (r.ReportedTotalPages > 0)
-                    populationItems.Add((r.SongId, r.Instrument, (long)r.ReportedTotalPages * 100));
+                {
+                    // When we scraped all pages (≤100), use exact entry count.
+                    // Otherwise estimate from page count × 100 entries/page.
+                    long totalEntries = r.ReportedTotalPages <= 100
+                        ? r.Entries.Count
+                        : (long)r.ReportedTotalPages * 100;
+                    populationItems.Add((r.SongId, r.Instrument, totalEntries));
+                }
         if (populationItems.Count > 0)
         {
             _persistence.Meta.UpsertLeaderboardPopulation(populationItems);

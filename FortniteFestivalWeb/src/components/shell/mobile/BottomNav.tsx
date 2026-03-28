@@ -1,11 +1,12 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings } from 'react-icons/io5';
+import { IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings, IoTrophy } from 'react-icons/io5';
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
 import { IS_PWA } from '@festival/ui-utils';
 import fx from '../../../styles/effects.module.css';
 import { TabKey } from '@festival/core';
+import { useFeatureFlags } from '../../../contexts/FeatureFlagsContext';
 import {
   Colors, Font, Weight, Gap, ZIndex, Layout,
   Display, Align, Justify, Position, Cursor, CssValue, CssProp,
@@ -21,9 +22,17 @@ export default function BottomNav({ player, activeTab, onTabClick }: {
 }) {
   const { t } = useTranslation();
   const s = useStyles();
-  const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
+  const flags = useFeatureFlags();
+  const showTrophyTab = player ? flags.compete : flags.leaderboards;
+  const tabs: { key: TabKey; label: string; icon: React.ReactNode; path?: string }[] = [
     { key: TabKey.Songs, label: t('nav.songs'), icon: <IoMusicalNotes size={20} /> },
     ...(player ? [{ key: TabKey.Suggestions, label: t('nav.suggestions'), icon: <IoSparkles size={20} /> }] : []),
+    ...(showTrophyTab ? [{
+      key: TabKey.Compete,
+      label: player && flags.compete ? t('nav.compete') : t('nav.leaderboards'),
+      icon: <IoTrophy size={20} />,
+      path: player && flags.compete ? '/compete' : '/leaderboards',
+    }] : []),
     ...(player ? [{ key: TabKey.Statistics, label: t('nav.statistics'), icon: <IoStatsChart size={20} /> }] : []),
     { key: TabKey.Settings, label: t('nav.settings'), icon: <IoSettings size={20} /> },
   ];

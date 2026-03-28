@@ -36,6 +36,10 @@ services:
       - Scraper__SongConcurrency=${SONG_CONCURRENCY:-1}
       # ── Path generation (MIDI decryption key for CHOpt max score calculation) ──
       - Scraper__MidiEncryptionKey=${MIDI_ENCRYPTION_KEY:-}
+      # ── Feature flags (default: all OFF in production) ──
+      - Features__Shop=${FEATURE_SHOP:-false}
+      - Features__Rivals=${FEATURE_RIVALS:-false}
+      - Features__Leaderboards=${FEATURE_LEADERBOARDS:-false}
       # Set to true to disable background scraping (API-only mode)
       # - Scraper__ApiOnly=true
       # Override scraper settings via environment variables if needed:
@@ -49,20 +53,4 @@ services:
       retries: 3
       start_period: 30s
 
-  percentileservice:
-    image: ghcr.io/sfenton/percentileservice:latest
-    container_name: percentileservice
-    restart: unless-stopped
-    volumes:
-      - ./percentile-data:/app/data
-    environment:
-      - DOTNET_ENVIRONMENT=Production
-      - Percentile__FstBaseUrl=http://fstservice:8080
-      - Percentile__FstApiKey=${API_KEY:?Set API_KEY in .env}
-      - Percentile__AccountId=${PERCENTILE_ACCOUNT_ID:-195e93ef108143b2975ee46662d4d0e1}
-      # Override schedule if needed:
-      # - Percentile__ScrapeTimeOfDay=03:30
-      # - Percentile__ScrapeTimeZone=America/Los_Angeles
-      # - Percentile__DegreeOfParallelism=8
-    depends_on:
-      - fstservice
+

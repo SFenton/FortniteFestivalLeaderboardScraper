@@ -56,6 +56,53 @@ public class ScraperOptionsAndModelsTests
         Assert.Equal("Test Song", opts.TestSongQuery);
     }
 
+    // ─── FeatureOptions defaults ──────────────────────
+
+    [Fact]
+    public void FeatureOptions_DefaultValues()
+    {
+        var opts = new FeatureOptions();
+
+        Assert.False(opts.Shop);
+        Assert.False(opts.Rivals);
+        Assert.False(opts.Leaderboards);
+        Assert.False(opts.Compete);
+    }
+
+    [Fact]
+    public void FeatureOptions_Section_Constant()
+    {
+        Assert.Equal("Features", FeatureOptions.Section);
+    }
+
+    [Fact]
+    public void FeatureOptions_Compete_IsDerived_BothOn()
+    {
+        var opts = new FeatureOptions { Rivals = true, Leaderboards = true };
+        Assert.True(opts.Compete);
+    }
+
+    [Fact]
+    public void FeatureOptions_Compete_IsDerived_RivalsOff()
+    {
+        var opts = new FeatureOptions { Rivals = false, Leaderboards = true };
+        Assert.False(opts.Compete);
+    }
+
+    [Fact]
+    public void FeatureOptions_Compete_IsDerived_LeaderboardsOff()
+    {
+        var opts = new FeatureOptions { Rivals = true, Leaderboards = false };
+        Assert.False(opts.Compete);
+    }
+
+    [Fact]
+    public void FeatureOptions_Compete_IsDerived_BothOff()
+    {
+        var opts = new FeatureOptions { Rivals = false, Leaderboards = false };
+        Assert.False(opts.Compete);
+    }
+
     // ─── StoredCredentials ──────────────────────────────
 
     [Fact]

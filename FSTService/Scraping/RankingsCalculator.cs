@@ -6,11 +6,29 @@ namespace FSTService.Scraping;
 /// <summary>
 /// Orchestrates per-instrument and cross-instrument ranking computation.
 /// Runs post-scrape after rank recomputation and before rivals.
+///
+/// Ranking metrics:
+///   - Adjusted Skill:  AVG(rank/entries) per song, with Bayesian credibility adjustment.
+///   - Weighted:  Log₂-weighted AVG(rank/entries) — songs with more leaderboard entries
+///                count more — with Bayesian credibility adjustment.
+///   - FC Rate:   Percentage of played songs with a full combo, with Bayesian credibility adjustment.
+///   - Total Score: Sum of all scores across played songs (no credibility adjustment).
+///   - Max Score %: Average of (score / CHOpt max score) per song, with Bayesian credibility adjustment.
+///
+/// Adjusted Skill, Weighted, FC Rate, and Max Score % apply Bayesian credibility:
+///   adjusted = (songs × raw + m × C) / (songs + m)
+/// where m = 50 (CredibilityThreshold) and C = 0.5 (PopulationMedian).
+/// This pulls accounts with few songs toward the median, preventing
+/// 1-song players from dominating the rankings.
 /// </summary>
 public sealed class RankingsCalculator
 {
     private const int HistoryTopN = 10_000;
+
+    /// <summary>Number of songs at which the Bayesian adjustment reaches 50% weight.</summary>
     private const int CredibilityThreshold = 50;
+
+    /// <summary>The assumed population median percentile (0.5 = 50th percentile).</summary>
     private const double PopulationMedian = 0.5;
 
     private readonly GlobalLeaderboardPersistence _persistence;
@@ -285,6 +303,7 @@ public sealed class RankingsCalculator
             var sorted = accountRatings
                 .Select(kvp => (AccountId: kvp.Key, ComboRating: kvp.Value.WeightedSum / kvp.Value.TotalSongs, SongsPlayed: kvp.Value.TotalSongs))
                 .OrderBy(x => x.ComboRating)
+                .ThenByDescending(x => x.SongsPlayed)
                 .ThenBy(x => x.AccountId, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
@@ -304,7 +323,9 @@ public sealed class RankingsCalculator
     }
 
     /// <summary>
-    /// Count how many songs are charted for a given instrument (difficulty &gt; 0).
+    /// Count how many songs are charted for a given instrument.
+    /// Valid difficulty values are 0–6. Values outside this range (e.g. 99 = sentinel/N/A)
+    /// indicate the song has no chart for that instrument and are excluded.
     /// </summary>
     internal static int CountChartedSongs(FestivalService festivalService, string instrument)
     {
@@ -320,9 +341,9 @@ public sealed class RankingsCalculator
                 "Solo_Drums" => song.track.@in.ds,
                 "Solo_PeripheralGuitar" => song.track.@in.pg,
                 "Solo_PeripheralBass" => song.track.@in.pb,
-                _ => 0,
+                _ => -1,
             };
-            if (diff > 0) count++;
+            if (diff >= 0 && diff <= 6) count++;
         }
         return count;
     }

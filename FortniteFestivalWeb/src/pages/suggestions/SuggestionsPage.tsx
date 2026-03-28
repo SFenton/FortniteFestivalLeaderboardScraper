@@ -27,6 +27,7 @@ import Page from '../Page';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { clearScrollCache } from '../../hooks/ui/useScrollRestore';
 import EmptyState from '../../components/common/EmptyState';
+import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import PageHeader from '../../components/common/PageHeader';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useFabSearch } from '../../contexts/FabSearchContext';
@@ -252,6 +253,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
       <div style={suggestionsStyles.page}>
         <div style={suggestionsStyles.container}>
           <EmptyState
+            fullPage
             title={t('suggestions.noSuggestions')}
             subtitle={t('suggestions.serviceDown')}
           />
@@ -286,6 +288,8 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
       before={<>
         {!isMobileChrome && (
           <PageHeader
+            title={t('nav.suggestions')}
+            style={headerStagger}
             actions={
               <div style={headerStagger}>
                 <ActionPill
@@ -314,10 +318,13 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
     >
         {visibleCategories.length === 0 && (categories.length > 0 || !effectiveHasMore) ? (
           <EmptyState
+            fullPage
             title={t('suggestions.noSuggestions')}
             subtitle={filtersActive
               ? t('suggestions.noSuggestionsFiltered')
               : t('suggestions.playSongsFirst')}
+            style={buildStaggerStyle(skipAnim ? null : 200)}
+            onAnimationEnd={clearStaggerStyle}
           />
         ) : (
           <InfiniteScroll

@@ -298,6 +298,111 @@ export type RivalsListResponse = {
   below: RivalSummary[];
 };
 
+// ─── Rankings types ────────────────────────────────────────────
+
+/** Ranking metric used for sorting. */
+export type RankingMetric = 'adjusted' | 'weighted' | 'fcrate' | 'totalscore' | 'maxscore';
+
+/** Per-instrument ranking entry as returned by /api/rankings/{instrument}. */
+export type AccountRankingEntry = {
+  accountId: string;
+  displayName?: string;
+  songsPlayed: number;
+  totalChartedSongs: number;
+  coverage: number;
+  rawSkillRating: number;
+  adjustedSkillRating: number;
+  adjustedSkillRank: number;
+  weightedRating: number;
+  weightedRank: number;
+  fcRate: number;
+  fcRateRank: number;
+  totalScore: number;
+  totalScoreRank: number;
+  maxScorePercent: number;
+  maxScorePercentRank: number;
+  avgAccuracy: number;
+  fullComboCount: number;
+  avgStars: number;
+  bestRank: number;
+  avgRank: number;
+  computedAt: string;
+};
+
+/** Paginated per-instrument rankings response. */
+export type RankingsPageResponse = {
+  instrument: string;
+  rankBy: string;
+  page: number;
+  pageSize: number;
+  totalAccounts: number;
+  entries: AccountRankingEntry[];
+};
+
+/** Single account per-instrument ranking (includes totalRankedAccounts). */
+export type AccountRankingDto = AccountRankingEntry & {
+  instrument: string;
+  totalRankedAccounts: number;
+};
+
+/** Instrument skill/rank pair used in composite rankings. */
+export type InstrumentSkillRank = {
+  skill: number | null;
+  rank: number | null;
+};
+
+/** Composite ranking instruments breakdown. */
+export type CompositeInstruments = {
+  guitar: InstrumentSkillRank | null;
+  bass: InstrumentSkillRank | null;
+  drums: InstrumentSkillRank | null;
+  vocals: InstrumentSkillRank | null;
+  proGuitar: InstrumentSkillRank | null;
+  proBass: InstrumentSkillRank | null;
+};
+
+/** Composite ranking entry as returned by /api/rankings/composite. */
+export type CompositeRankingEntry = {
+  accountId: string;
+  displayName?: string;
+  instrumentsPlayed: number;
+  totalSongsPlayed: number;
+  compositeRating: number;
+  compositeRank: number;
+  instruments: CompositeInstruments;
+  computedAt: string;
+};
+
+/** Paginated composite rankings response. */
+export type CompositePageResponse = {
+  page: number;
+  pageSize: number;
+  totalAccounts: number;
+  entries: CompositeRankingEntry[];
+};
+
+/** Single account composite ranking (includes totalRankedAccounts if needed). */
+export type CompositeRankingDto = CompositeRankingEntry;
+
+/** Combo leaderboard entry as returned by /api/rankings/combo. */
+export type ComboRankingEntry = {
+  rank: number;
+  accountId: string;
+  displayName?: string;
+  comboRating: number;
+  songsPlayed: number;
+  computedAt: string;
+};
+
+/** Paginated combo rankings response. */
+export type ComboPageResponse = {
+  comboKey: string;
+  page: number;
+  pageSize: number;
+  totalAccounts: number;
+  entries: ComboRankingEntry[];
+};
+
 export type RivalSongComparison = {
   songId: string;
   title: string | null;

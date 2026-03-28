@@ -14,10 +14,6 @@ vi.mock('../../../../../src/styles/animations.module.css', () => ({
 const mockIsMobile = vi.fn(() => false);
 vi.mock('../../../../../src/hooks/ui/useIsMobile', () => ({ useIsMobile: () => mockIsMobile() }));
 
-vi.mock('../../../../../src/hooks/ui/useScrollMask', () => ({
-  useScrollMask: () => vi.fn(),
-}));
-
 vi.mock('../../../../../src/hooks/ui/useVisualViewport', () => ({
   useVisualViewportHeight: () => 800,
   useVisualViewportOffsetTop: () => 0,
@@ -111,7 +107,7 @@ describe('PathsModal', () => {
 
     it('unmounts after close animation completes', () => {
       const onClose = vi.fn();
-      const { rerender, container } = render(
+      const { rerender } = render(
         <PathsModal visible={true} songId="song-1" onClose={onClose} />,
       );
 
@@ -122,11 +118,11 @@ describe('PathsModal', () => {
       rerender(<PathsModal visible={false} songId="song-1" onClose={onClose} />);
 
       // Fire transitionend to complete unmount (handleTransitionEnd sets mounted=false)
-      const dialog = container.querySelector('[role="dialog"]');
+      const dialog = document.body.querySelector('[role="dialog"]');
       expect(dialog).not.toBeNull();
       fireEvent.transitionEnd(dialog!);
 
-      expect(container.querySelector('[role="dialog"]')).toBeNull();
+      expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     });
   });
 
@@ -141,12 +137,13 @@ describe('PathsModal', () => {
 
     it('calls onClose when overlay is clicked', () => {
       const onClose = vi.fn();
-      const { container } = render(
+      render(
         <PathsModal visible={true} songId="song-1" onClose={onClose} />,
       );
 
-      // The overlay is the first fixed div (before the dialog panel)
-      const overlay = container.firstElementChild!;
+      // The overlay is the sibling before the dialog panel in the portal
+      const dialog = document.body.querySelector('[role="dialog"]')!;
+      const overlay = dialog.previousElementSibling!;
       fireEvent.click(overlay);
       expect(onClose).toHaveBeenCalledOnce();
     });

@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { ImagePhase } from '@festival/core';
 import { Colors, Font, TRANSITION_MS, MIN_SPINNER_MS, STAGGER_INTERVAL, Opacity } from '@festival/theme';
-import { Layout, Gap, Radius, Weight, Display, Align, Justify, Cursor, CssValue, Position, Overflow, TextAlign, Border, Shadow, ObjectFit, frostedCard, flexColumn, transition, CssProp, BorderStyle, padding, border } from '@festival/theme';
+import { Gap, Radius, Weight, Display, Align, Justify, Cursor, CssValue, Position, Overflow, TextAlign, Border, Shadow, ObjectFit, frostedCard, flexColumn, transition, CssProp, BorderStyle, padding, border } from '@festival/theme';
 import { useFestival } from '../../../../contexts/FestivalContext';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { InstrumentSelector, type InstrumentSelectorItem } from '../../../../components/common/InstrumentSelector';
@@ -148,10 +148,6 @@ export default function PathPreviewDemo() {
   /* v8 ignore stop */
 
   /* v8 ignore start -- wrapperWidth requires real ResizeObserver measurements */
-  // Compact instrument selector when icons don't fit
-  const needed = INSTRUMENTS.length * Layout.demoInstrumentBtn + (INSTRUMENTS.length - 1) * Gap.lg;
-  const compact = wrapperWidth > 0 && wrapperWidth < needed;
-
   const isNarrow = wrapperWidth > 0 && wrapperWidth <= NARROW_BREAKPOINT;
   /* v8 ignore stop */
 
@@ -169,7 +165,6 @@ export default function PathPreviewDemo() {
             selected={selectedInst}
             onSelect={(key) => { /* v8 ignore next -- guard for null key from InstrumentSelector */ if (key) setSelectedInst(key); }}
             required
-            compact={compact}
             styles={selectorStyleOverrides}
           />
         </FadeIn>

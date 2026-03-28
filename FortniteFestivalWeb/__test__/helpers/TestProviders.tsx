@@ -8,6 +8,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SettingsProvider } from '../../src/contexts/SettingsContext';
 import { FestivalProvider } from '../../src/contexts/FestivalContext';
 import { ShopProvider } from '../../src/contexts/ShopContext';
+import { FeatureFlagsProvider } from '../../src/contexts/FeatureFlagsContext';
 import { FabSearchProvider } from '../../src/contexts/FabSearchContext';
 import { SearchQueryProvider } from '../../src/contexts/SearchQueryContext';
 import { PlayerDataProvider } from '../../src/contexts/PlayerDataContext';
@@ -55,6 +56,7 @@ export function TestProviders({ children, route = '/', accountId }: { children: 
   const qc = createTestQueryClient();
   return (
     <QueryClientProvider client={qc}>
+    <FeatureFlagsProvider>
     <SettingsProvider>
       <FestivalProvider>
         <ShopProvider>
@@ -76,6 +78,7 @@ export function TestProviders({ children, route = '/', accountId }: { children: 
         </ShopProvider>
       </FestivalProvider>
     </SettingsProvider>
+    </FeatureFlagsProvider>
     </QueryClientProvider>
   );
 }

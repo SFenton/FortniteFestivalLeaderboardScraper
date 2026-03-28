@@ -379,8 +379,8 @@ public class PersonalDbBuilder
         var scoresByInstrument = new Dictionary<string, Dictionary<string, PlayerScoreDto>>(
             StringComparer.OrdinalIgnoreCase);
 
-        // Also gather per-song rankings (local rank + total count in our DB)
-        var rankingsByInstrument = new Dictionary<string, Dictionary<string, (int Rank, int Total)>>(
+        // Also gather per-song rankings (local rank in our DB)
+        var rankingsByInstrument = new Dictionary<string, Dictionary<string, int>>(
             StringComparer.OrdinalIgnoreCase);
 
         foreach (var instrumentKey in _persistence.GetInstrumentKeys())
@@ -485,25 +485,19 @@ public class PersonalDbBuilder
 
                 var diff = GetDifficultyForInstrument(song, instrumentKey);
 
-                // Rank from V2 API enrichment (stored in instrument DB), or from local count
-                int rank = score.Rank;
+                // Rank from Epic API: prefer ApiRank (real rank from backfill), fall back to stored Rank, then computed rank
+                int rank = score.ApiRank > 0 ? score.ApiRank : score.Rank;
                 if (rank <= 0 && rankingsByInstrument.TryGetValue(instrumentKey, out var rankings)
-                    && rankings.TryGetValue(songId, out var rk))
+                    && rankings.TryGetValue(songId, out var computedRank))
                 {
-                    rank = rk.Rank;
+                    rank = computedRank;
                 }
 
-                // Total entries: prefer real population from PercentileService,
-                // fall back to local DB entry count
+                // Total entries: use real population from Epic page counts
                 long total = 0;
                 if (population.TryGetValue((songId, instrumentKey), out var realPop) && realPop > 0)
                 {
                     total = realPop;
-                }
-                else if (rankingsByInstrument.TryGetValue(instrumentKey, out var fallbackRankings)
-                    && fallbackRankings.TryGetValue(songId, out var fallbackRk))
-                {
-                    total = fallbackRk.Total;
                 }
 
                 // Reverse-calculate total from rank/percentile for CalcTotal
@@ -772,7 +766,7 @@ public class PersonalDbBuilder
         // Gather scores per instrument (includes Rank and Percentile from DB)
         var scoresByInstrument = new Dictionary<string, Dictionary<string, PlayerScoreDto>>(
             StringComparer.OrdinalIgnoreCase);
-        var rankingsByInstrument = new Dictionary<string, Dictionary<string, (int Rank, int Total)>>(
+        var rankingsByInstrument = new Dictionary<string, Dictionary<string, int>>(
             StringComparer.OrdinalIgnoreCase);
         foreach (var instrumentKey in _persistence.GetInstrumentKeys())
         {
@@ -812,25 +806,19 @@ public class PersonalDbBuilder
                     // Rank from API enrichment (stored in instrument DB). 0 = not yet enriched.
                     int rank = score.Rank;
                     if (rank <= 0 && rankingsByInstrument.TryGetValue(instrumentKey, out var rankings)
-                        && rankings.TryGetValue(songId, out var rk))
+                        && rankings.TryGetValue(songId, out var computedRank))
                     {
-                        rank = rk.Rank;
+                        rank = computedRank;
                     }
 
                     // Percentile from V1 API with teamAccountIds (real fraction in (0,1]).
                     double rawPct = score.Percentile > 0 ? score.Percentile : 0;
 
-                    // Total entries: prefer real population from PercentileService,
-                    // fall back to local DB entry count
+                    // Total entries: use real population from PercentileService
                     long total = 0;
                     if (population.TryGetValue((songId, instrumentKey), out var realPop) && realPop > 0)
                     {
                         total = realPop;
-                    }
-                    else if (rankingsByInstrument.TryGetValue(instrumentKey, out var fallbackRankings)
-                        && fallbackRankings.TryGetValue(songId, out var fallbackRk))
-                    {
-                        total = fallbackRk.Total;
                     }
 
                     // Reverse-calculate total entries from rank/percentile

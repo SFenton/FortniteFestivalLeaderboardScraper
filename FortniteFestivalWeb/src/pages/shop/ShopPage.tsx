@@ -3,24 +3,30 @@ import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigationType, useLocation } from 'react-router-dom';
 import { IoGrid, IoList } from 'react-icons/io5';
+import { LoadPhase } from '@festival/core';
 import { useShopState } from '../../hooks/data/useShopState';
 import { useFabSearch } from '../../contexts/FabSearchContext';
+import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useMediaQuery } from '../../hooks/ui/useMediaQuery';
+import { useViewTransition } from '../../hooks/ui/useViewTransition';
 import { ActionPill } from '../../components/common/ActionPill';
-import { Size, QUERY_NARROW_GRID, Colors, Font, Weight, Gap, MaxWidth, Layout, Display, CssValue, flexColumn, padding } from '@festival/theme';
+import { Size, QUERY_NARROW_GRID, Colors, Font, Gap, flexColumn } from '@festival/theme';
 import { staggerDelay as calcStagger, estimateVisibleCount } from '@festival/ui-utils';
+import { useStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { SongRow } from '../songs/components/SongRow';
 import { visibleInstruments } from '../../contexts/SettingsContext';
 import { DEFAULT_INSTRUMENT, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { loadSongSettings } from '../../utils/songSettings';
+import { clearScrollCache } from '../../hooks/ui/useScrollRestore';
 import ShopCard from './components/ShopCard';
 import fx from '../../styles/effects.module.css';
 import type { CSSProperties } from 'react';
 import Page from '../Page';
 import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
+import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransition';
 
 /* v8 ignore start -- page component with multiple context/hook dependencies */
 const STORAGE_KEY = 'fst:shopView';
@@ -46,19 +52,32 @@ export default function ShopPage() {
   const effectiveView = isNarrow ? 'list' : viewMode;
   const [staggerGen, setStaggerGen] = useState(0);
   const shopStyles = useShopPageStyles();
+  const scrollContainerRef = useScrollContainer();
+  const transition = useViewTransition();
+  const isViewToggleRef = useRef(false);
 
   const toggleView = useCallback(() => {
-    programmaticScrollRef.current = true;
-    scrollRef.current?.scrollTo({ top: 0 });
+    isViewToggleRef.current = true;
     setViewMode(prev => {
       const next = prev === 'grid' ? 'list' : 'grid';
       localStorage.setItem(STORAGE_KEY, next);
       return next;
     });
     setStaggerGen(g => g + 1);
-    setStaggerDone(false);
     resetRush();
-  }, [resetRush]);
+    transition.trigger();
+  }, [resetRush, transition]);
+
+  // Scroll to top after spinner fades and new view is about to render
+  /* v8 ignore start — scroll reset after view toggle */
+  useEffect(() => {
+    if (transition.phase === LoadPhase.ContentIn && isViewToggleRef.current) {
+      isViewToggleRef.current = false;
+      scrollContainerRef.current?.scrollTo(0, 0);
+      clearScrollCache('shop');
+    }
+  }, [transition.phase, scrollContainerRef]);
+  /* v8 ignore stop */
 
   // Register toggle action for FAB and sync view mode
   const fabSearch = useFabSearch();
@@ -81,12 +100,12 @@ export default function ShopPage() {
   }, [shopSongs]);
 
   // Stagger: animate items on the first render that has data.
-  // Skip only on true back-navigation (POP with location.state from internal links),
-  // not on initial page load which is also POP under HashRouter.
+  // Skip when the page has been rendered before this session (layout remount, back-nav, etc.).
   const location = useLocation();
   const isRealBackNav = navType === 'POP' && !!location.state;
-  const staggerDecidedRef = useRef(false);
-  const shouldStaggerRef = useRef(false);
+  const skipShopAnim = hasVisitedPage('shop') || isRealBackNav;
+  markPageVisited('shop');
+  const shouldStaggerInitRef = useRef(false);
   // Grid: estimate visible items as cols × visible rows (cards are square).
   // Computed every render (cheap) so it stays correct after resize.
   const w = typeof window !== 'undefined' ? window.innerWidth : 1200;
@@ -105,30 +124,24 @@ export default function ShopPage() {
   const gridInterval = Math.max(20, Math.floor(MAX_GRID_CASCADE_MS / Math.max(maxVisibleGrid, 1)));
   const rowInterval = Math.max(40, Math.floor(MAX_ROW_CASCADE_MS / Math.max(maxVisibleRows, 1)));
 
-  if (sorted.length > 0 && !staggerDecidedRef.current) {
-    staggerDecidedRef.current = true;
-    shouldStaggerRef.current = !isRealBackNav;
+  if (sorted.length > 0 && !shouldStaggerInitRef.current && !skipShopAnim) {
+    shouldStaggerInitRef.current = true;
   }
-  // Track stagger generation — bumped on view toggle to re-trigger animation
-  const [staggerDone, setStaggerDone] = useState(false);
-  const shouldStagger = (shouldStaggerRef.current || staggerGen > 0) && !staggerDone;
+  // Initial load uses shouldStaggerInitRef; view toggles use transition.shouldStagger
+  const shouldStagger = shouldStaggerInitRef.current || transition.shouldStagger;
+  const emptyStagger = useStaggerStyle(200, { skip: !shouldStagger });
 
-  /* v8 ignore start — turn off stagger after animations complete */
-  useEffect(() => {
-    if (staggerGen === 0) return; // initial stagger has no timer; toggles do
-    const cascadeMs = effectiveView === 'grid' ? MAX_GRID_CASCADE_MS : MAX_ROW_CASCADE_MS;
-    const id = setTimeout(() => setStaggerDone(true), cascadeMs + 400);
-    return () => clearTimeout(id);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- staggerGen is the trigger
-  }, [staggerGen]);
-  /* v8 ignore stop */
+  // Combine phases: transition.phase drives spinner during view toggle;
+  // on initial load the phase is already ContentIn (no spinner needed).
+  const loadPhase = transition.phase;
 
   return (
     <Page
       scrollRestoreKey="shop"
       staggerRushRef={staggerRushRef}
-      scrollDeps={[shopSongs]}
+      scrollDeps={[loadPhase, shopSongs]}
       containerStyle={shopStyles.contentArea}
+      loadPhase={loadPhase}
       before={
         <PageHeader
           title={t('nav.shop')}
@@ -145,11 +158,12 @@ export default function ShopPage() {
         />
       }
     >
-          {sorted.length === 0 ? (
+          {loadPhase === LoadPhase.ContentIn && (sorted.length === 0 ? (
             <EmptyState
+              fullPage
               title={t('shop.empty', 'No songs in the Item Shop')}
-              subtitle={t('shop.emptyHint', 'Check back later — the shop updates regularly.')}
-            />
+              subtitle={t('shop.emptyHint', 'Check back later — the shop updates regularly.')}              style={emptyStagger.style}
+              onAnimationEnd={emptyStagger.onAnimationEnd}            />
           ) : effectiveView === 'grid' ? (
             <div className={fx.shopGrid} key={`grid-${staggerGen}`}>
               {sorted.map((song, i) => (
@@ -175,7 +189,7 @@ export default function ShopPage() {
                 />
               ))}
             </div>
-          )}
+          ))}
     </Page>
   );
 }

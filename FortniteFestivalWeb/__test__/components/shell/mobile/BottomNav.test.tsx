@@ -2,6 +2,11 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { TabKey } from '@festival/core';
+
+vi.mock('../../../../src/contexts/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ shop: true, rivals: true, compete: true, leaderboards: true }),
+}));
+
 import BottomNav from '../../../../src/components/shell/mobile/BottomNav';
 
 describe('BottomNav', () => {

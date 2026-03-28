@@ -68,6 +68,21 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.NotEqual("unknown", version);
     }
 
+    // ─── Features ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task ApiFeatures_ReturnsFeatureFlags()
+    {
+        var response = await _client.GetAsync("/api/features");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        // Default config has all features OFF (no Features section in test config)
+        Assert.False(json.GetProperty("shop").GetBoolean());
+        Assert.False(json.GetProperty("rivals").GetBoolean());
+        Assert.False(json.GetProperty("compete").GetBoolean());
+        Assert.False(json.GetProperty("leaderboards").GetBoolean());
+    }
+
     // ─── Progress ───────────────────────────────────────────────
 
     [Fact]
@@ -501,140 +516,15 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     // ─── Leaderboard population ─────────────────────────────────
 
     [Fact]
-    public async Task PostLeaderboardPopulation_RequiresAuth()
+    public async Task PostLeaderboardPopulation_EndpointRemoved()
     {
         var content = JsonContent.Create(new[]
         {
             new { songId = "song1", instrument = "Solo_Guitar", totalEntries = 50000L },
         });
-        var response = await _client.PostAsync("/api/leaderboard-population", content);
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task PostLeaderboardPopulation_EmptyArray_ReturnsBadRequest()
-    {
-        var content = JsonContent.Create(Array.Empty<object>());
         var response = await _authedClient.PostAsync("/api/leaderboard-population", content);
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task PostLeaderboardPopulation_UpsertsAndGetReturnsData()
-    {
-        var items = new[]
-        {
-            new { songId = "testSong1", instrument = "Solo_Guitar", totalEntries = 123456L },
-            new { songId = "testSong2", instrument = "Solo_Drums", totalEntries = 78901L },
-        };
-        var postResp = await _authedClient.PostAsync("/api/leaderboard-population", JsonContent.Create(items));
-        Assert.Equal(HttpStatusCode.OK, postResp.StatusCode);
-
-        var postJson = await postResp.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal(2, postJson.GetProperty("upserted").GetInt32());
-
-        // Verify GET returns the data
-        var getResp = await _authedClient.GetAsync("/api/leaderboard-population");
-        Assert.Equal(HttpStatusCode.OK, getResp.StatusCode);
-
-        var getJson = await getResp.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.True(getJson.GetArrayLength() >= 2);
-    }
-
-    [Fact]
-    public async Task PostLeaderboardPopulation_UpdatesExistingEntries()
-    {
-        var items1 = new[] { new { songId = "updateSong", instrument = "Solo_Bass", totalEntries = 1000L } };
-        await _authedClient.PostAsync("/api/leaderboard-population", JsonContent.Create(items1));
-
-        var items2 = new[] { new { songId = "updateSong", instrument = "Solo_Bass", totalEntries = 2000L } };
-        var resp = await _authedClient.PostAsync("/api/leaderboard-population", JsonContent.Create(items2));
-        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
-
-        var json = await resp.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal(1, json.GetProperty("upserted").GetInt32());
-    }
-
-    [Fact]
-    public async Task PostLeaderboardPopulation_ResponseIncludesRefreshFields()
-    {
-        var items = new[]
-        {
-            new { songId = "popFields", instrument = "Solo_Guitar", totalEntries = 42000L },
-        };
-        var resp = await _authedClient.PostAsync("/api/leaderboard-population", JsonContent.Create(items));
-        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
-
-        var json = await resp.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal(1, json.GetProperty("upserted").GetInt32());
-        // New fields are always present regardless of whether a refresh occurred
-        Assert.True(json.TryGetProperty("refreshTriggered", out var rt));
-        Assert.Equal(JsonValueKind.True, rt.ValueKind == JsonValueKind.True ? JsonValueKind.True : JsonValueKind.False);
-        Assert.True(json.TryGetProperty("personalDbsRebuilt", out var pd));
-        Assert.Equal(JsonValueKind.Number, pd.ValueKind);
-    }
-
-    [Fact]
-    public async Task PostLeaderboardPopulation_WhenIdle_WithRegisteredUsers_TriggersRefresh()
-    {
-        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
-        var accountId = "pop-refresh-test-account";
-        var deviceId = "pop-refresh-test-device";
-
-        // Register a user so the refresh path fires
-        metaDb.RegisterUser(deviceId, accountId);
-
-        try
-        {
-            var items = new[]
-            {
-                new { songId = "popRefresh", instrument = "Solo_Guitar", totalEntries = 99000L },
-            };
-            var resp = await _authedClient.PostAsync("/api/leaderboard-population", JsonContent.Create(items));
-            Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
-
-            var json = await resp.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.True(json.GetProperty("refreshTriggered").GetBoolean());
-            Assert.True(json.GetProperty("personalDbsRebuilt").GetInt32() >= 1);
-        }
-        finally
-        {
-            metaDb.UnregisterAccount(accountId);
-        }
-    }
-
-    [Fact]
-    public async Task PostLeaderboardPopulation_WhenScraping_DoesNotTriggerRefresh()
-    {
-        var progress = _factory.Services.GetRequiredService<ScrapeProgressTracker>();
-        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
-        var accountId = "pop-noscrape-test-account";
-        var deviceId = "pop-noscrape-test-device";
-
-        metaDb.RegisterUser(deviceId, accountId);
-
-        // Simulate a scrape in progress
-        progress.BeginPass(1, 1, 0);
-
-        try
-        {
-            var items = new[]
-            {
-                new { songId = "popScraping", instrument = "Solo_Drums", totalEntries = 55000L },
-            };
-            var resp = await _authedClient.PostAsync("/api/leaderboard-population", JsonContent.Create(items));
-            Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
-
-            var json = await resp.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.Equal(1, json.GetProperty("upserted").GetInt32());
-            Assert.False(json.GetProperty("refreshTriggered").GetBoolean());
-            Assert.Equal(0, json.GetProperty("personalDbsRebuilt").GetInt32());
-        }
-        finally
-        {
-            progress.EndPass();
-            metaDb.UnregisterAccount(accountId);
-        }
+        // POST endpoint was removed — PercentileService deprecated
+        Assert.True(response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed);
     }
 
     [Fact]
@@ -2138,15 +2028,18 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     {
         var body = new[] { new { songId = "s1", instrument = "Solo_Guitar", totalEntries = 1000 } };
         var response = await _client.PostAsJsonAsync("/api/leaderboard-population", body);
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        // POST endpoint was removed — PercentileService deprecated
+        Assert.True(response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed
+            or HttpStatusCode.Unauthorized);
     }
 
     [Fact]
-    public async Task Admin_LeaderboardPopulation_Post_WithAuth_Succeeds()
+    public async Task Admin_LeaderboardPopulation_Post_WithAuth_Returns()
     {
         var body = new[] { new { songId = "testSong1", instrument = "Solo_Guitar", totalEntries = 50000 } };
         var response = await _authedClient.PostAsJsonAsync("/api/leaderboard-population", body);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        // POST endpoint was removed — PercentileService deprecated
+        Assert.True(response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed);
     }
 
     [Fact]
@@ -2323,9 +2216,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             new { songId = "testSong1", instrument = "Solo_Bass", totalEntries = 200000 },
         };
         var response = await _authedClient.PostAsJsonAsync("/api/leaderboard-population", body);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.True(json.TryGetProperty("upserted", out _));
+        // POST endpoint was removed — PercentileService deprecated
+        Assert.True(response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed);
     }
 
     [Fact]

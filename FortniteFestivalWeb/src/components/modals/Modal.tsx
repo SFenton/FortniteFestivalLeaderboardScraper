@@ -1,7 +1,6 @@
 import { useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
-import { ModalSection } from './components/ModalSection';
 import ModalShell from './components/ModalShell';
 import { modalStyles } from './modalStyles';
 
@@ -26,7 +25,7 @@ type ModalProps = {
 export default function Modal({ visible, title, onClose, onApply, onReset, resetLabel, resetHint, applyLabel, applyDisabled, children, afterPanel }: ModalProps) {
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const updateScrollMask = useScrollMask(scrollRef, [visible, children]);
+  const updateScrollMask = useScrollMask(scrollRef, [visible, children], { selfScroll: true });
   const handleContentScroll = useCallback(() => { updateScrollMask(); }, [updateScrollMask]);
 
   return (
@@ -35,9 +34,10 @@ export default function Modal({ visible, title, onClose, onApply, onReset, reset
       <div ref={scrollRef} onScroll={handleContentScroll} style={modalStyles.contentScroll}>
         {children}
         {onReset && (
-          <ModalSection title={resetLabel ?? t('common.reset')} hint={resetHint}>
+          <>
             <button style={modalStyles.resetBtn} onClick={onReset}>{resetLabel ?? t('common.reset')}</button>
-          </ModalSection>
+            {resetHint && <p style={modalStyles.resetHint}>{resetHint}</p>}
+          </>
         )}
       </div>
 

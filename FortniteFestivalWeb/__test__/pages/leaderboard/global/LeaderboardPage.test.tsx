@@ -160,27 +160,27 @@ describe('LeaderboardPage', () => {
   });
 
   it('renders pagination when total pages > 1', async () => {
-    const { container } = renderLeaderboard();
+    renderLeaderboard();
     await waitFor(() => {
-      expect(container.textContent).toContain('Player One');
+      expect(screen.getByText('Player One')).toBeDefined();
     });
-    // totalEntries = 50, LEADERBOARD_PAGE_SIZE = 25, so 2 pages
+    // totalEntries = 50, LEADERBOARD_PAGE_SIZE = 25, so 2 pages (portaled to body)
     await waitFor(() => {
-      expect(container.textContent).toContain('1 / 2');
+      expect(document.body.textContent).toContain('1 / 2');
     });
   });
 
   it('fetches next page on Next click', async () => {
-    const { container } = renderLeaderboard();
+    renderLeaderboard();
     await waitFor(() => {
-      expect(container.textContent).toContain('Player One');
+      expect(screen.getByText('Player One')).toBeDefined();
     });
     await waitFor(() => {
-      expect(container.textContent).toContain('1 / 2');
+      expect(document.body.textContent).toContain('1 / 2');
     });
 
-    // Button text includes arrow character: "Next ›"
-    const nextBtn = Array.from(container.querySelectorAll('button')).find(
+    // Button text includes arrow character: "Next ›" (portaled to body)
+    const nextBtn = Array.from(document.querySelectorAll('button')).find(
       b => b.textContent?.includes('Next'),
     );
     expect(nextBtn).toBeTruthy();
@@ -297,15 +297,15 @@ describe('LeaderboardPage', () => {
   });
 
   it('renders first/prev/next/last pagination buttons', async () => {
-    const { container } = renderLeaderboard();
+    renderLeaderboard();
     await waitFor(() => {
-      expect(container.textContent).toContain('Player One');
+      expect(screen.getByText('Player One')).toBeDefined();
     });
     await waitFor(() => {
-      expect(container.textContent).toContain('1 / 2');
+      expect(document.body.textContent).toContain('1 / 2');
     });
-    // Verify all pagination buttons exist
-    const buttons = Array.from(container.querySelectorAll('button'));
+    // Verify all pagination buttons exist (portaled to body)
+    const buttons = Array.from(document.querySelectorAll('button'));
     const buttonTexts = buttons.map(b => b.textContent);
     expect(buttonTexts.some(t => t?.includes('First'))).toBe(true);
     expect(buttonTexts.some(t => t?.includes('Prev'))).toBe(true);
@@ -314,14 +314,14 @@ describe('LeaderboardPage', () => {
   });
 
   it('navigates to last page on Last click', async () => {
-    const { container } = renderLeaderboard();
+    renderLeaderboard();
     await waitFor(() => {
-      expect(container.textContent).toContain('Player One');
+      expect(screen.getByText('Player One')).toBeDefined();
     });
     await waitFor(() => {
-      expect(container.textContent).toContain('1 / 2');
+      expect(document.body.textContent).toContain('1 / 2');
     });
-    const lastBtn = Array.from(container.querySelectorAll('button')).find(
+    const lastBtn = Array.from(document.querySelectorAll('button')).find(
       b => b.textContent?.includes('Last'),
     );
     expect(lastBtn).toBeTruthy();
@@ -343,8 +343,8 @@ describe('LeaderboardPage', () => {
     await waitFor(() => {
       expect(container.textContent).toContain('Player One');
     });
-    // No pagination buttons when only 1 page
-    expect(container.textContent).not.toContain('1 / 2');
+    // No pagination buttons when only 1 page (portaled to body)
+    expect(document.body.textContent).not.toContain('1 / 2');
   });
 });
 

@@ -80,6 +80,7 @@ export enum AnimMode {
 export enum TabKey {
   Songs = 'songs',
   Suggestions = 'suggestions',
+  Compete = 'compete',
   Statistics = 'statistics',
   Settings = 'settings',
 }

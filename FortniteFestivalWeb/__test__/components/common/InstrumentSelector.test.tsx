@@ -4,6 +4,7 @@ import React from 'react';
 import { InstrumentSelector } from '../../../src/components/common/InstrumentSelector';
 import type { InstrumentSelectorItem } from '../../../src/components/common/InstrumentSelector';
 import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import type { InstrumentKey } from '@festival/core/instruments';
 
 
 const instruments: InstrumentSelectorItem[] = [
@@ -198,5 +199,50 @@ describe('InstrumentSelector', () => {
     // Click previous arrow from first → wraps to last
     fireEvent.click(buttons[0]!);
     expect(onSelect).toHaveBeenCalledWith('Solo_Drums');
+  });
+
+  it('renders full mode by default when compact is omitted', () => {
+    const { container } = render(
+      React.createElement(InstrumentSelector, {
+        instruments,
+        selected: 'Solo_Guitar',
+        onSelect: () => {},
+      }),
+    );
+    // Before ResizeObserver fires, should render all instrument buttons (full mode)
+    const buttons = container.querySelectorAll('button');
+    expect(buttons).toHaveLength(3);
+  });
+
+  it('forces full mode when compact is explicitly false', () => {
+    const { container } = render(
+      React.createElement(InstrumentSelector, {
+        instruments,
+        selected: 'Solo_Guitar',
+        onSelect: () => {},
+        compact: false,
+      }),
+    );
+    const buttons = container.querySelectorAll('button');
+    expect(buttons).toHaveLength(3);
+  });
+
+  it('accepts InstrumentKey (client-side) type', () => {
+    const clientInstruments: InstrumentSelectorItem<InstrumentKey>[] = [
+      { key: 'guitar', label: 'Lead' },
+      { key: 'bass', label: 'Bass' },
+    ];
+    const onSelect = vi.fn();
+    const { container } = render(
+      React.createElement(InstrumentSelector, {
+        instruments: clientInstruments as InstrumentSelectorItem[],
+        selected: null,
+        onSelect,
+      }),
+    );
+    const buttons = container.querySelectorAll('button');
+    expect(buttons).toHaveLength(2);
+    fireEvent.click(buttons[0]!);
+    expect(onSelect).toHaveBeenCalledWith('guitar');
   });
 });

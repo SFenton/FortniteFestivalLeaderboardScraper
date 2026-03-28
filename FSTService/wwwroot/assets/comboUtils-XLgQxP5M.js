@@ -1,0 +1,1 @@
+const r=[["showLead","Solo_Guitar"],["showBass","Solo_Bass"],["showDrums","Solo_Drums"],["showVocals","Solo_Vocals"],["showProLead","Solo_PeripheralGuitar"],["showProBass","Solo_PeripheralBass"]];function e(s){return r.filter(([o])=>s[o]).map(([,o])=>o)}function t(s){const o=e(s);return o.length<2?null:o.join("+")}export{t as d,e as g};

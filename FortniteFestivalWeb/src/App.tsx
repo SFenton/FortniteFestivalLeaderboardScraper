@@ -1,5 +1,5 @@
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
-import { IoPerson, IoPersonAdd, IoSearch, IoSwapVerticalSharp, IoFunnel, IoFlash, IoBagHandle, IoGrid, IoList } from 'react-icons/io5';
+import { IoPerson, IoPersonAdd, IoSearch, IoSwapVerticalSharp, IoFunnel, IoFlash, IoBagHandle, IoGrid, IoList, IoOptions } from 'react-icons/io5';
 import { useEffect, useState, useMemo, useRef, useCallback, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
@@ -23,6 +23,9 @@ const RivalsPage = lazy(() => import('./pages/rivals/RivalsPage'));
 const RivalDetailPage = lazy(() => import('./pages/rivals/RivalDetailPage'));
 const RivalCategoryPage = lazy(() => import('./pages/rivals/RivalryPage'));
 const AllRivalsPage = lazy(() => import('./pages/rivals/AllRivalsPage'));
+const LeaderboardsOverviewPage = lazy(() => import('./pages/leaderboards/LeaderboardsOverviewPage'));
+const FullRankingsPage = lazy(() => import('./pages/leaderboards/FullRankingsPage'));
+const CompetePage = lazy(() => import('./pages/compete/CompetePage'));
 /* v8 ignore stop */
 import { Size, Layout, QUERY_NARROW_GRID } from '@festival/theme';
 import { appStyles } from './appStyles';
@@ -52,11 +55,14 @@ import { queryClient } from './api/queryClient';
 import { Routes as AppRoutes, RoutePatterns } from './routes';
 import { FirstRunProvider, useFirstRunContext } from './contexts/FirstRunContext';
 import { useShopState } from './hooks/data/useShopState';
-import { ScrollContainerProvider, useShellRefs, useScrollContainer, useHeaderPortalHeight } from './contexts/ScrollContainerContext';
+import { ScrollContainerProvider, useShellRefs, useScrollContainer, HEADER_PORTAL_HEIGHT_VAR } from './contexts/ScrollContainerContext';
+import { FeatureFlagsProvider } from './contexts/FeatureFlagsContext';
+import FeatureGate from './components/routing/FeatureGate';
 
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
+    <FeatureFlagsProvider>
     <SettingsProvider>
       <FestivalProvider>
         <ShopProvider>
@@ -74,6 +80,7 @@ export default function App() {
         </ShopProvider>
       </FestivalProvider>
     </SettingsProvider>
+    </FeatureFlagsProvider>
     <ReactQueryDevtools initialIsOpen={false} />
     </QueryClientProvider>
   );
@@ -83,10 +90,10 @@ import { useTabNavigation } from './hooks/ui/useTabNavigation';
 
 const CHANGELOG_STORAGE_KEY = 'fst:changelog';
 
-const ANIMATED_BG_ROUTES = new Set(['/', AppRoutes.songs, AppRoutes.suggestions, AppRoutes.statistics, AppRoutes.settings, AppRoutes.shop]);
+const ANIMATED_BG_ROUTES = new Set(['/', AppRoutes.songs, AppRoutes.suggestions, AppRoutes.statistics, AppRoutes.settings, AppRoutes.shop, AppRoutes.compete, AppRoutes.leaderboards]);
 /* v8 ignore start — route detection helper */
 function isAnimatedBgRoute(pathname: string) {
-  return ANIMATED_BG_ROUTES.has(pathname) || RoutePatterns.player.test(pathname) || pathname.startsWith('/rivals');
+  return ANIMATED_BG_ROUTES.has(pathname) || RoutePatterns.player.test(pathname) || pathname.startsWith('/rivals') || pathname.startsWith('/leaderboards');
 }
 /* v8 ignore stop */
 
@@ -104,11 +111,11 @@ function WideDesktopLayout({
   onDeselect: () => void;
   onSelectPlayer: () => void;
 }) {
-  const headerHeight = useHeaderPortalHeight();
   return (
     <div style={appStyles.bodySection}>
-      {/* Scroll container starts below the header overlay — content can never reach it */}
-      <div ref={shellScrollRef} style={{ ...appStyles.scrollContainerFull, top: headerHeight }}>
+      {/* Scroll container starts below the header overlay — content can never reach it.
+         top is driven by a CSS custom property updated outside React to avoid re-render cascades. */}
+      <div ref={shellScrollRef} style={{ ...appStyles.scrollContainerFull, top: `var(${HEADER_PORTAL_HEIGHT_VAR}, 0px)` }}>
         <div style={appStyles.scrollContentRow}>
           <div style={appStyles.sidebarGutter} />
           <div style={appStyles.centerColumn}>
@@ -122,22 +129,22 @@ function WideDesktopLayout({
                 <Route path="/songs/:songId/:instrument/history" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerHistoryPage /></ErrorBoundary>} />
                 <Route path="/player/:accountId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage /></ErrorBoundary>} />
                 {player ? (
-                  <Route path="/rivals" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalsPage /></ErrorBoundary>} />
+                  <Route path="/rivals" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><RivalsPage /></ErrorBoundary></FeatureGate>} />
                 ) : (
                   <Route path="/rivals" element={<Navigate to={AppRoutes.songs} replace />} />
                 )}
                 {player ? (
-                  <Route path="/rivals/all" element={<ErrorBoundary fallback={<RouteErrorFallback />}><AllRivalsPage /></ErrorBoundary>} />
+                  <Route path="/rivals/all" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><AllRivalsPage /></ErrorBoundary></FeatureGate>} />
                 ) : (
                   <Route path="/rivals/all" element={<Navigate to={AppRoutes.songs} replace />} />
                 )}
                 {player ? (
-                  <Route path="/rivals/:rivalId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalDetailPage /></ErrorBoundary>} />
+                  <Route path="/rivals/:rivalId" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><RivalDetailPage /></ErrorBoundary></FeatureGate>} />
                 ) : (
                   <Route path="/rivals/:rivalId" element={<Navigate to={AppRoutes.songs} replace />} />
                 )}
                 {player ? (
-                  <Route path="/rivals/:rivalId/rivalry" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalCategoryPage /></ErrorBoundary>} />
+                  <Route path="/rivals/:rivalId/rivalry" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><RivalCategoryPage /></ErrorBoundary></FeatureGate>} />
                 ) : (
                   <Route path="/rivals/:rivalId/rivalry" element={<Navigate to={AppRoutes.songs} replace />} />
                 )}
@@ -151,7 +158,14 @@ function WideDesktopLayout({
                 ) : (
                   <Route path="/suggestions" element={<Navigate to={AppRoutes.songs} replace />} />
                 )}
-                <Route path="/shop" element={<ErrorBoundary fallback={<RouteErrorFallback />}><ShopPage /></ErrorBoundary>} />
+                <Route path="/shop" element={<FeatureGate flag="shop"><ErrorBoundary fallback={<RouteErrorFallback />}><ShopPage /></ErrorBoundary></FeatureGate>} />
+                <Route path="/leaderboards" element={<FeatureGate flag="leaderboards"><ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardsOverviewPage /></ErrorBoundary></FeatureGate>} />
+                <Route path="/leaderboards/all" element={<FeatureGate flag="leaderboards"><ErrorBoundary fallback={<RouteErrorFallback />}><FullRankingsPage /></ErrorBoundary></FeatureGate>} />
+                {player ? (
+                  <Route path="/compete" element={<FeatureGate flag="compete"><ErrorBoundary fallback={<RouteErrorFallback />}><CompetePage /></ErrorBoundary></FeatureGate>} />
+                ) : (
+                  <Route path="/compete" element={<Navigate to={AppRoutes.songs} replace />} />
+                )}
                 <Route path="/settings" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SettingsPage /></ErrorBoundary>} />
               </Routes>
               </Suspense>
@@ -296,6 +310,7 @@ function AppShell() {
     if (parts[0] === 'rivals' && parts.length >= 2) return '/rivals';
     if (parts[0] === 'player' && parts.length === 3) return `/player/${parts[1]}`;
     if (parts[0] === 'player' && parts.length === 2) return AppRoutes.songs;
+    if (parts[0] === 'leaderboards' && parts.length === 2) return AppRoutes.leaderboards;
     return null;
   }, [location.pathname]);
 
@@ -378,22 +393,22 @@ function AppShell() {
           <Route path="/songs/:songId/:instrument/history" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerHistoryPage /></ErrorBoundary>} />
           <Route path="/player/:accountId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage /></ErrorBoundary>} />
           {player ? (
-            <Route path="/rivals" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalsPage /></ErrorBoundary>} />
+            <Route path="/rivals" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><RivalsPage /></ErrorBoundary></FeatureGate>} />
           ) : (
             <Route path="/rivals" element={<Navigate to={AppRoutes.songs} replace />} />
           )}
           {player ? (
-            <Route path="/rivals/all" element={<ErrorBoundary fallback={<RouteErrorFallback />}><AllRivalsPage /></ErrorBoundary>} />
+            <Route path="/rivals/all" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><AllRivalsPage /></ErrorBoundary></FeatureGate>} />
           ) : (
             <Route path="/rivals/all" element={<Navigate to={AppRoutes.songs} replace />} />
           )}
           {player ? (
-            <Route path="/rivals/:rivalId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalDetailPage /></ErrorBoundary>} />
+            <Route path="/rivals/:rivalId" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><RivalDetailPage /></ErrorBoundary></FeatureGate>} />
           ) : (
             <Route path="/rivals/:rivalId" element={<Navigate to={AppRoutes.songs} replace />} />
           )}
           {player ? (
-            <Route path="/rivals/:rivalId/rivalry" element={<ErrorBoundary fallback={<RouteErrorFallback />}><RivalCategoryPage /></ErrorBoundary>} />
+            <Route path="/rivals/:rivalId/rivalry" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><RivalCategoryPage /></ErrorBoundary></FeatureGate>} />
           ) : (
             <Route path="/rivals/:rivalId/rivalry" element={<Navigate to={AppRoutes.songs} replace />} />
           )}
@@ -407,7 +422,14 @@ function AppShell() {
           ) : (
             <Route path="/suggestions" element={<Navigate to={AppRoutes.songs} replace />} />
           )}
-          <Route path="/shop" element={<ErrorBoundary fallback={<RouteErrorFallback />}><ShopPage /></ErrorBoundary>} />
+          <Route path="/shop" element={<FeatureGate flag="shop"><ErrorBoundary fallback={<RouteErrorFallback />}><ShopPage /></ErrorBoundary></FeatureGate>} />
+          <Route path="/leaderboards" element={<FeatureGate flag="leaderboards"><ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardsOverviewPage /></ErrorBoundary></FeatureGate>} />
+          <Route path="/leaderboards/all" element={<FeatureGate flag="leaderboards"><ErrorBoundary fallback={<RouteErrorFallback />}><FullRankingsPage /></ErrorBoundary></FeatureGate>} />
+          {player ? (
+            <Route path="/compete" element={<FeatureGate flag="compete"><ErrorBoundary fallback={<RouteErrorFallback />}><CompetePage /></ErrorBoundary></FeatureGate>} />
+          ) : (
+            <Route path="/compete" element={<Navigate to={AppRoutes.songs} replace />} />
+          )}
           <Route path="/settings" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SettingsPage /></ErrorBoundary>} />
         </Routes>
           </Suspense>
@@ -520,7 +542,22 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.shop && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && (
+      {isMobile && RoutePatterns.leaderboards.test(location.pathname) && (
+        <FloatingActionButton
+          mode="players"
+          actionGroups={[
+            [{ label: t('rankings.changeRanking'), icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() }],
+            [
+              { label: t('common.findPlayer'), icon: <IoSearch size={Size.iconFab} />, onPress: () => setFindPlayerOpen(true) },
+              player
+                ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
+                : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
+            ],
+          ]}
+          onPress={() => {}}
+        />
+      )}
+      {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.shop && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && (
         <FloatingActionButton
           mode="players"
           actionGroups={[

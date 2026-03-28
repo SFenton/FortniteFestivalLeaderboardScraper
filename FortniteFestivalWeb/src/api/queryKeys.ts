@@ -20,4 +20,14 @@ export const queryKeys = {
   rivalsList: (accountId: string, combo: string) => ['rivalsList', accountId, combo] as const,
   rivalDetail: (accountId: string, combo: string, rivalId: string) =>
     ['rivalDetail', accountId, combo, rivalId] as const,
+  rankings: (instrument: string, rankBy?: string, page?: number, pageSize?: number) =>
+    ['rankings', instrument, { rankBy, page, pageSize }] as const,
+  playerRanking: (instrument: string, accountId: string) =>
+    ['playerRanking', instrument, accountId] as const,
+  compositeRankings: (page?: number, pageSize?: number) =>
+    ['compositeRankings', { page, pageSize }] as const,
+  playerCompositeRanking: (accountId: string) =>
+    ['playerCompositeRanking', accountId] as const,
+  comboRankings: (instruments: string, page?: number, pageSize?: number) =>
+    ['comboRankings', instruments, { page, pageSize }] as const,
 };

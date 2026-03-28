@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigationType } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { staggerDelay, estimateVisibleCount } from '@festival/ui-utils';
+import { useStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { useFestival } from '../../contexts/FestivalContext';
 import { usePlayerData } from '../../contexts/PlayerDataContext';
 import { useSettings } from '../../contexts/SettingsContext';
@@ -41,8 +42,7 @@ import {
   SONG_SETTINGS_CHANGED_EVENT,
   isFilterActive,
 } from '../../utils/songSettings';
-
-let _songsHasRendered = false;
+import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransition';
 
 export default function SongsPage() {
   const { t } = useTranslation();
@@ -141,7 +141,7 @@ export default function SongsPage() {
     filterModal.setDraft({ ...defaultSongFilters(), instrumentFilter: null });
   };
 
-  const filtersActive = isFilterActive(settings.filters) || settings.instrument != null;
+  const filtersActive = isFilterActive(settings.filters, settings.instrument) || settings.instrument != null;
   const sortActive = settings.sortMode !== 'title' || !settings.sortAscending;
 
   // Register sort/filter actions for FAB â€” uses refs so latest closures are always captured
@@ -155,7 +155,9 @@ export default function SongsPage() {
   }, [fabSearch]);
   /* v8 ignore stop */
   const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress } = usePlayerData();
-  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!playerData, shopHighlightEnabled: !appSettings.hideItemShop && !appSettings.disableShopHighlighting }), [playerData, appSettings.hideItemShop, appSettings.disableShopHighlighting]);
+  const shopCtx = useShop();
+  const { isShopHighlighted, isShopVisible } = useShopState();
+  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!playerData, shopHighlightEnabled: isShopVisible && !appSettings.disableShopHighlighting }), [playerData, isShopVisible, appSettings.disableShopHighlighting]);
 
   // Build lookup: songId â†’ PlayerScore for the selected instrument
   /* v8 ignore start — scoreMap: instrument filter loop */
@@ -187,9 +189,6 @@ export default function SongsPage() {
     return map;
   }, [playerData]);
   /* v8 ignore stop */
-
-  const shopCtx = useShop();
-  const { isShopHighlighted } = useShopState();
 
   const filtered = useFilteredSongs({
     songs,
@@ -252,9 +251,9 @@ export default function SongsPage() {
   // â”€â”€ Spinner â†’ staggered-content transition â”€â”€
   const dataReady = !isLoading && !playerLoading;
   // Capture "first visit this session" before marking as rendered
-  const skipAnimRef = useRef((_songsHasRendered || isBackNav) && !forceRestagger);
+  const skipAnimRef = useRef((hasVisitedPage('songs') || isBackNav) && !forceRestagger);
   const skipAnim = skipAnimRef.current;
-  _songsHasRendered = true;
+  markPageVisited('songs');
   // Skip spinner + stagger only when data is actually available
   const [loadPhase, setLoadPhase] = useState<LoadPhase>(
     dataReady ? LoadPhase.ContentIn : LoadPhase.Loading,
@@ -355,6 +354,7 @@ export default function SongsPage() {
     scrollMargin: listParentRef.current?.offsetTop ?? 0,
   });
 
+  const emptyStagger = useStaggerStyle(200, { skip: !shouldStagger });
   const songsStyles = useSongsStyles();
 
   if (error) {
@@ -406,7 +406,7 @@ export default function SongsPage() {
           }}
           instrumentFilter={instrument}
           hasPlayer={!!playerData}
-          hideItemShop={appSettings.hideItemShop}
+          hideItemShop={!isShopVisible}
           metadataVisibility={{
             score: appSettings.metadataShowScore,
             percentage: appSettings.metadataShowPercentage,
@@ -442,8 +442,11 @@ export default function SongsPage() {
         )}
         {loadPhase === LoadPhase.ContentIn && filtered.length === 0 ? (
           <EmptyState
+            fullPage
             title={t('songs.noResults')}
             subtitle={filtersActive ? t('songs.noResultsSubtitle') : t('common.serviceDown')}
+            style={emptyStagger.style}
+            onAnimationEnd={emptyStagger.onAnimationEnd}
           />
         ) : (
           <div

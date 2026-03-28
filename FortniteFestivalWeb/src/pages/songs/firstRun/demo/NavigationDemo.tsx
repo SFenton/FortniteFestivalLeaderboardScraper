@@ -203,6 +203,7 @@ function CompactNav({ tabs }: { tabs: Tab[] }) {
               onClick={() => setActive(tab.key)}
               style={isActive ? sidebarCss.sidebarLinkActive : sidebarCss.sidebarLink}
             >
+              <span style={sidebarCss.sidebarLinkIcon}>{tab.icon}</span>
               {tab.label}
             </button>
           );

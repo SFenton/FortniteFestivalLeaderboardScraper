@@ -18,6 +18,17 @@ public interface ILeaderboardQuerier
         AdaptiveConcurrencyLimiter? limiter = null, CancellationToken ct = default);
 
     /// <summary>
+    /// Fetch a player's entry plus up to ±neighborRadius rank neighbors.
+    /// Uses V2 POST (1 call) to get rank, then V1 GET with rank= (1 call)
+    /// to fetch the page. Returns target (Source=backfill) and neighbors (Source=neighbor).
+    /// </summary>
+    Task<(LeaderboardEntry? Target, List<LeaderboardEntry> Neighbors)> LookupAccountWithNeighborsAsync(
+        string songId, string instrument, string targetAccountId,
+        string accessToken, string callerAccountId,
+        int neighborRadius = 50,
+        AdaptiveConcurrencyLimiter? limiter = null, CancellationToken ct = default);
+
+    /// <summary>
     /// Fetch alltime entries for multiple accounts on one song/instrument in a single
     /// batched V2 POST. Pages through the response (25 entries per page) until all
     /// requested accounts are returned or no more results.

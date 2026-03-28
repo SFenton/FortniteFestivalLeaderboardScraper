@@ -16,7 +16,7 @@ export const modalStyles = {
 
   /* ── Panel (shared base) ── */
   panelBase: { ...modalCard, position: Position.fixed, zIndex: panelZ, ...flexColumn } as CSSProperties,
-  panelMobile: { ...modalCard, position: Position.fixed, zIndex: panelZ, ...flexColumn, left: Gap.none, right: Gap.none, borderTopLeftRadius: Radius.lg, borderTopRightRadius: Radius.lg, transition: transformTransition } as CSSProperties,
+  panelMobile: { ...modalCard, position: Position.fixed, zIndex: panelZ, ...flexColumn, left: Gap.none, right: Gap.none, borderTopLeftRadius: Radius.lg, borderTopRightRadius: Radius.lg, overflow: Overflow.hidden, transition: transformTransition } as CSSProperties,
   panelDesktop: { ...modalCard, position: Position.fixed, zIndex: panelZ, ...flexColumn, top: CssValue.circle, left: CssValue.circle, width: '80vw', maxWidth: '90vw', height: '70vh', borderRadius: Radius.lg, transition: `${modalTransition}, ${transformTransition}` } as CSSProperties,
 
   /* ── Header ── */
@@ -25,11 +25,12 @@ export const modalStyles = {
   closeBtn: { width: Layout.modalCloseSize, height: Layout.modalCloseSize, borderRadius: CssValue.circle, background: Colors.surfaceElevated, border: border(Border.thin, Colors.borderPrimary), color: Colors.textSecondary, ...flexCenter, cursor: Cursor.pointer, flexShrink: 0 } as CSSProperties,
 
   /* ── Content scroll ── */
-  contentScroll: { flex: 1, overflowY: Overflow.auto, padding: padding(Gap.xl, Gap.section) } as CSSProperties,
+  contentScroll: { flex: 1, minHeight: 0, overflowY: Overflow.auto, padding: padding(Gap.xl, Gap.section) } as CSSProperties,
 
   /* ── Footer ── */
-  footerWrap: { display: Display.flex, alignItems: Align.center, padding: padding(Gap.xl, Gap.section), flexShrink: 0 } as CSSProperties,
-  resetBtn: { ...btnDanger, width: CssValue.full, fontSize: Font.md, padding: Gap.xl } as CSSProperties,
+  footerWrap: { display: Display.flex, flexDirection: 'column' as const, gap: Gap.md, padding: padding(Gap.xl, Gap.section), flexShrink: 0 } as CSSProperties,
+  resetBtn: { ...btnDanger, width: CssValue.full, fontSize: Font.md, padding: Gap.xl, marginTop: Gap.section } as CSSProperties,
+  resetHint: { fontSize: Font.sm, color: Colors.textMuted, textAlign: TextAlign.center, marginTop: Gap.sm, lineHeight: 1.4 } as CSSProperties,
   applyBtn: { ...btnPrimary, width: CssValue.full, fontSize: Font.lg, fontWeight: Weight.bold, padding: Gap.xl, transition: modalTransition } as CSSProperties,
   applyBtnDisabled: { opacity: Opacity.faded, cursor: Cursor.default } as CSSProperties,
 
@@ -43,6 +44,8 @@ export const modalStyles = {
   radioRowSelected: { display: Display.flex, alignItems: Align.center, gap: Gap.xl, width: CssValue.full, padding: Gap.xl, backgroundColor: CssValue.transparent, border: CssValue.none, borderRadius: Radius.xs, color: Colors.textPrimary, fontSize: Font.md, fontWeight: Weight.semibold, cursor: Cursor.pointer, marginBottom: Gap.xs, textAlign: TextAlign.left } as CSSProperties,
   radioDot: { width: Layout.radioDotSize, height: Layout.radioDotSize, borderRadius: CssValue.circle, border: border(Border.thick, Colors.borderPrimary), flexShrink: 0, boxSizing: BoxSizing.borderBox, position: Position.relative, top: Border.thin } as CSSProperties,
   radioDotSelected: { width: Layout.radioDotSize, height: Layout.radioDotSize, borderRadius: CssValue.circle, border: border(Border.thick, Colors.accentBlue), backgroundColor: Colors.accentBlue, boxShadow: `inset 0 0 0 ${Border.thick}px ${Colors.surfaceFrosted}`, flexShrink: 0, boxSizing: BoxSizing.borderBox, position: Position.relative, top: Border.thin } as CSSProperties,
+  radioLabelGroup: { display: Display.flex, flexDirection: 'column' as const, gap: Gap.xs, alignItems: Align.start } as CSSProperties,
+  radioRowHint: { fontSize: Font.sm, color: Colors.textTertiary, fontWeight: Weight.normal, lineHeight: 1.3 } as CSSProperties,
 
   /* ── ToggleRow ── */
   toggleRow: { display: Display.flex, alignItems: Align.center, gap: Gap.xl, width: CssValue.full, padding: padding(Gap.md, 0), backgroundColor: CssValue.transparent, border: CssValue.none, borderRadius: Gap.none, cursor: Cursor.pointer, textAlign: TextAlign.left, color: Colors.textPrimary, transition: modalTransition } as CSSProperties,

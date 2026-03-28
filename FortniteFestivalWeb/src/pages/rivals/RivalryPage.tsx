@@ -143,7 +143,7 @@ export default function RivalryPage() {
       {phase === LoadPhase.ContentIn && (
             <div style={isMobile ? { paddingBottom: Layout.fabPaddingBottom } : undefined}>
               {!category || category.songs.length === 0 ? (
-                <EmptyState title={t('rivals.detail.noSongs')} style={stagger(200)} onAnimationEnd={clearAnim} />
+                <EmptyState fullPage title={t('rivals.detail.noSongs')} style={stagger(200)} onAnimationEnd={clearAnim} />
               ) : (
                 <div style={{ ...styles.songList, paddingTop: Gap.md }}>
                   {category.songs.map((song) => (

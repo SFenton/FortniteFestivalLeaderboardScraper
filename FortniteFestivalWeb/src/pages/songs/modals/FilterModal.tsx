@@ -6,6 +6,7 @@ import { ToggleRow } from '../../../components/common/ToggleRow';
 import { Accordion } from '../../../components/common/Accordion';
 import { BulkActions } from '../../../components/modals/components/BulkActions';
 import ConfirmAlert from '../../../components/modals/ConfirmAlert';
+import { InstrumentSelector, type InstrumentSelectorItem } from '../../../components/common/InstrumentSelector';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { useModalDraft } from '../../../hooks/ui/useModalDraft';
@@ -13,8 +14,6 @@ import { INSTRUMENT_KEYS, INSTRUMENT_LABELS } from '@festival/core/api/serverTyp
 import type { SongFilters } from '../../../utils/songSettings';
 import { useSettings, isInstrumentVisible } from '../../../contexts/SettingsContext';
 import DifficultyBars from '../../../components/songs/metadata/DifficultyBars';
-import { Size } from '@festival/theme';
-import { filterStyles } from './filterStyles';
 import { useTranslation } from 'react-i18next';
 
 export type FilterDraft = SongFilters & {
@@ -61,7 +60,14 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
     onChange({ ...draft, [field]: updated });
   };
 
-  const hasInstrument = draft.instrumentFilter != null;
+  const selectorItems = useMemo<InstrumentSelectorItem[]>(
+    () => visibleKeys.map(key => ({ key, label: INSTRUMENT_LABELS[key] })),
+    [visibleKeys],
+  );
+
+  const handleInstrumentSelect = useCallback((key: InstrumentKey | null) => {
+    onChange({ ...draft, instrumentFilter: key });
+  }, [draft, onChange]);
 
   const { hasChanges, confirmOpen, setConfirmOpen, handleClose, confirmDiscard } = useModalDraft(draft, savedDraft, onCancel);
 
@@ -138,29 +144,12 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
 
       {/* Instrument selector */}
       <ModalSection title={t('filter.instrumentFilters')} hint={t('filter.instrumentFiltersHint')}>
-        <div style={filterStyles.instrumentRow}>
-          {visibleKeys.map(key => {
-            const selected = draft.instrumentFilter === key;
-            return (
-              <button
-                key={key}
-                style={filterStyles.instrumentBtn}
-                onClick={() => onChange({ ...draft, instrumentFilter: selected ? null : key })}
-                title={INSTRUMENT_LABELS[key]}
-              >
-                <div style={selected ? filterStyles.instrumentCircleActive : filterStyles.instrumentCircle} />
-                <div style={filterStyles.instrumentIconWrap}>
-                  <InstrumentIcon instrument={key} size={Size.iconInstrument} />
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </ModalSection>
-
-      {/* Instrument-specific filters (animated in/out) */}
-      <div style={{ ...filterStyles.instrumentFiltersWrap, gridTemplateRows: hasInstrument ? '1fr' : '0fr' }}>
-        <div style={filterStyles.instrumentFiltersInner}>
+        <InstrumentSelector
+          instruments={selectorItems}
+          selected={draft.instrumentFilter}
+          onSelect={handleInstrumentSelect}
+          deferSelection
+        >
           <ModalSection>
             <Accordion title={t('filter.seasonTitle')} hint={t('filter.seasonHint')}>
               <SeasonToggles
@@ -197,8 +186,8 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
               />
             </Accordion>
           </ModalSection>
-        </div>
-      </div>
+        </InstrumentSelector>
+      </ModalSection>
     </Modal>
   );
 }

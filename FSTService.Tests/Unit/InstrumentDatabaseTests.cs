@@ -424,9 +424,7 @@ public sealed class InstrumentDatabaseTests : IDisposable
         var rankings = Db.GetPlayerRankings("acct_mid");
         Assert.Single(rankings);
         Assert.True(rankings.ContainsKey("song_1"));
-        var (rank, total) = rankings["song_1"];
-        Assert.Equal(2, rank);  // one score above 75k
-        Assert.Equal(3, total);
+        Assert.Equal(2, rankings["song_1"]);  // one score above 75k
     }
 
     [Fact]
@@ -447,13 +445,11 @@ public sealed class InstrumentDatabaseTests : IDisposable
         var rankings = Db.GetPlayerRankings("acct_2");
         Assert.Equal(2, rankings.Count);
 
-        // Song A: acct_2 has 80k, 1 person above → rank 2 of 2
-        Assert.Equal(2, rankings["song_A"].Rank);
-        Assert.Equal(2, rankings["song_A"].Total);
+        // Song A: acct_2 has 80k, 1 person above → rank 2
+        Assert.Equal(2, rankings["song_A"]);
 
-        // Song B: acct_2 has 90k, 0 above → rank 1 of 3
-        Assert.Equal(1, rankings["song_B"].Rank);
-        Assert.Equal(3, rankings["song_B"].Total);
+        // Song B: acct_2 has 90k, 0 above → rank 1
+        Assert.Equal(1, rankings["song_B"]);
     }
 
     [Fact]
@@ -473,8 +469,7 @@ public sealed class InstrumentDatabaseTests : IDisposable
         var rankings = Db.GetPlayerRankings("acct_2", songId: "song_B");
         Assert.Single(rankings);
         Assert.True(rankings.ContainsKey("song_B"));
-        Assert.Equal(1, rankings["song_B"].Rank);
-        Assert.Equal(2, rankings["song_B"].Total);
+        Assert.Equal(1, rankings["song_B"]);
     }
 
     [Fact]

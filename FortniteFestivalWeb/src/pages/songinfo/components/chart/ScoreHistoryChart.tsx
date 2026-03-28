@@ -178,39 +178,18 @@ export default memo(function ScoreHistoryChart({
   }, []);
   /* v8 ignore stop */
 
-  // Measure container width to decide between full icon row vs compact arrows
-  /* v8 ignore start — ResizeObserver compact layout */
-  const iconRowRef = useRef<HTMLDivElement>(null);
-  const [compact, setCompact] = useState(false);
-  useEffect(() => {
-    const el = iconRowRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry) return;
-      const width = entry.contentRect.width;
-      const buttonSize = 64; // matches --size-3xl (icon button width)
-      const needed = availableInstruments.length * buttonSize + (availableInstruments.length - 1) * Gap.lg;
-      setCompact(width < needed);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [availableInstruments.length]);
-  /* v8 ignore stop */
-
   return (
     <div>
       {/* Chart area */}
       <div style={st.chartContainer} ref={chartContainerRef}>
         {/* Instrument icons */}
         {availableInstruments.length > 1 && (
-          <div ref={iconRowRef} style={st.iconRowWrap}>
+          <div style={st.iconRowWrap}>
             <InstrumentSelector
               instruments={selectorItems}
               selected={selected}
               onSelect={handleInstrumentSelect}
               required
-              compact={compact}
               compactLabels={compactLabels}
               styles={selectorStyleOverrides}
             />
@@ -523,7 +502,7 @@ function useChartStyles() {
   return useMemo(() => ({
     iconRowWrap: { width: '100%' } as React.CSSProperties,
     chartContainer: {
-      ...frostedCard, borderRadius: Radius.lg, padding: padding(Gap.sm, Gap.xl, Gap.xl),
+      ...frostedCard, borderRadius: Radius.lg, padding: padding(Gap.xl, Gap.xl, Gap.xl),
       display: 'flex', flexDirection: 'column' as const, alignItems: 'center',
     } as React.CSSProperties,
     placeholder: { color: Colors.textMuted, fontSize: Font.md, fontStyle: 'italic', textAlign: 'center' as const, padding: padding(Gap.section, 0), width: '100%' } as React.CSSProperties,

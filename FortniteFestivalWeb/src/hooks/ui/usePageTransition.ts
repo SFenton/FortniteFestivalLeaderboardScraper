@@ -1,5 +1,4 @@
 import { useRef } from 'react';
-import { useNavigationType } from 'react-router-dom';
 import { useLoadPhase, type LoadPhase } from '../data/useLoadPhase';
 
 /**
@@ -13,13 +12,12 @@ const visitedKeys = new Set<string>();
  *
  * Replaces the per-page pattern of:
  *   let _pageHasRendered = false;
- *   const skipAnimRef = useRef(_pageHasRendered && navType === 'POP' && hasCachedData);
+ *   const skipAnimRef = useRef(_pageHasRendered && hasCachedData);
  *   _pageHasRendered = true;
  *   const { phase, shouldStagger } = useLoadPhase(isReady, { skipAnimation: skipAnimRef.current });
  *
  * On first visit (key not in visited set): full stagger animation.
- * On return visit (POP + key already visited): skip animation.
- * On PUSH to same key: treat as first visit (re-stagger).
+ * On return visit (key already visited + cached data): skip animation.
  *
  * @param cacheKey   Unique key per page route (e.g. `rivals:${accountId}`, `settings`)
  * @param isReady    True when all async data has loaded
@@ -30,12 +28,11 @@ export function usePageTransition(
   isReady: boolean,
   hasCachedData = false,
 ): { phase: LoadPhase; shouldStagger: boolean } {
-  const navType = useNavigationType();
-
-  // Determine skip at mount time — only skip if we've visited this key before,
-  // navigation is POP (back), and cached data exists
+  // Determine skip at mount time — skip if we've visited this key before
+  // and cached data exists. This covers back-navigation, layout remounts
+  // (mobile↔desktop resize), and re-visits to the same page.
   const skipAnim = useRef(
-    visitedKeys.has(cacheKey) && navType === 'POP' && hasCachedData,
+    visitedKeys.has(cacheKey) && hasCachedData,
   ).current;
 
   // Mark as visited after the skip decision
@@ -51,4 +48,22 @@ export function usePageTransition(
 export function clearPageTransitionCache(key?: string): void {
   if (key) visitedKeys.delete(key);
   else visitedKeys.clear();
+}
+
+/**
+ * Check whether a page cache key has been visited this session.
+ * Use in pages with custom stagger logic that can't use `usePageTransition`
+ * but still need to skip animations on layout remounts.
+ */
+export function hasVisitedPage(key: string): boolean {
+  return visitedKeys.has(key);
+}
+
+/**
+ * Mark a page cache key as visited this session.
+ * Call after reading `hasVisitedPage` so the first render staggers
+ * but subsequent mounts (layout remount, back-nav) skip.
+ */
+export function markPageVisited(key: string): void {
+  visitedKeys.add(key);
 }

@@ -10,7 +10,7 @@ import FadeIn from '../../../../components/page/FadeIn';
 import { useSettings, visibleInstruments } from '../../../../contexts/SettingsContext';
 import { SUGGESTION_TYPES } from '@festival/core/suggestions/suggestionFilterConfig';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
-import { Gap, Layout, TRANSITION_MS } from '@festival/theme';
+import { Layout, TRANSITION_MS } from '@festival/theme';
 import { useDemoStyles } from '../../../songs/firstRun/demo/FilterDemo';
 
 
@@ -63,24 +63,6 @@ export default function InstrumentFilterDemo() {
     if (k) { setToggles(getToggles(k)); }
   }, [instrument, toggles, getToggles]);
 
-  const rowRef = useRef<HTMLDivElement>(null);
-  const [compact, setCompact] = useState(false);
-  useEffect(() => {
-    const el = rowRef.current;
-    /* v8 ignore start -- ref is always set after render */
-    if (!el) return;
-    /* v8 ignore stop */
-    /* v8 ignore start -- ResizeObserver callback depends on real DOM measurements */
-    const ro = new ResizeObserver(entries => {
-      const width = entries[0]?.contentRect.width ?? 0;
-      const needed = instruments.length * Layout.demoInstrumentBtn + (instruments.length - 1) * Gap.lg;
-      setCompact(width < needed);
-    });
-    /* v8 ignore stop */
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [instruments.length]);
-
   const selectorStyleOverrides = useMemo(() => ({
     row: s.iconRow,
     button: s.iconButton,
@@ -114,15 +96,12 @@ export default function InstrumentFilterDemo() {
   return (
     <div style={s.wrapper}>
       <FadeIn delay={0} style={s.instrumentSection}>
-        <div ref={rowRef}>
-          <InstrumentSelector
-            instruments={selectorItems}
-            selected={instrument}
-            onSelect={handleSelectInstrument}
-            compact={compact}
-            styles={selectorStyleOverrides}
-          />
-        </div>
+        <InstrumentSelector
+          instruments={selectorItems}
+          selected={instrument}
+          onSelect={handleSelectInstrument}
+          styles={selectorStyleOverrides}
+        />
       </FadeIn>
 
       {instrument && maxToggles > 0 && (

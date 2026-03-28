@@ -9,8 +9,9 @@ public static partial class ApiEndpoints
 {
     public static void MapSongEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/songs", (FestivalService service, PathDataStore pathStore, MetaDatabase metaDb, ItemShopService shopService) =>
+        app.MapGet("/api/songs", (HttpContext httpContext, FestivalService service, PathDataStore pathStore, MetaDatabase metaDb, ItemShopService shopService) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
             var maxScoresMap = pathStore.GetAllMaxScores();
             var currentSeason = metaDb.GetCurrentSeason();
             var inShop = shopService.InShopSongIds;

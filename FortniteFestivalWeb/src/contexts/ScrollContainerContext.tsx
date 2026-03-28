@@ -12,9 +12,8 @@ export function useScrollContainer(): RefObject<HTMLDivElement | null> {
 interface HeaderPortalValue {
   node: HTMLDivElement | null;
   setNode: (el: HTMLDivElement | null) => void;
-  height: number;
 }
-const HeaderPortalContext = createContext<HeaderPortalValue>({ node: null, setNode: () => {}, height: 0 });
+const HeaderPortalContext = createContext<HeaderPortalValue>({ node: null, setNode: () => {} });
 
 /** Returns the portal target DOM node (or null before mount). */
 export function useHeaderPortal(): HTMLDivElement | null {
@@ -26,31 +25,39 @@ export function useHeaderPortalRef(): (el: HTMLDivElement | null) => void {
   return useContext(HeaderPortalContext).setNode;
 }
 
-/** Returns the current measured height of the header portal content. */
-export function useHeaderPortalHeight(): number {
-  return useContext(HeaderPortalContext).height;
-}
+/**
+ * CSS custom property name set on `document.documentElement` that tracks the
+ * portal content height. Consumers should reference `var(--header-portal-h, 0px)`
+ * in CSS instead of reading React state — this avoids a React re-render cascade
+ * on every scroll frame during header collapse animations.
+ */
+export const HEADER_PORTAL_HEIGHT_VAR = '--header-portal-h';
 
 /* ── Combined provider ── */
 export function ScrollContainerProvider({ children }: { children: ReactNode }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [portalNode, setPortalNode] = useState<HTMLDivElement | null>(null);
-  const [portalHeight, setPortalHeight] = useState(0);
 
-  // Observe portal target height changes
+  // Observe portal target height and write directly to a CSS custom property
+  // on the document root. This bypasses React state so height changes during
+  // scroll-driven collapse animation don't trigger re-render cascades.
   useEffect(() => {
-    if (!portalNode) { setPortalHeight(0); return; }
+    const root = document.documentElement;
+    if (!portalNode) {
+      root.style.setProperty(HEADER_PORTAL_HEIGHT_VAR, '0px');
+      return;
+    }
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        setPortalHeight(entry.contentRect.height);
+        root.style.setProperty(HEADER_PORTAL_HEIGHT_VAR, `${entry.contentRect.height}px`);
       }
     });
     ro.observe(portalNode);
-    setPortalHeight(portalNode.offsetHeight);
+    root.style.setProperty(HEADER_PORTAL_HEIGHT_VAR, `${portalNode.offsetHeight}px`);
     return () => ro.disconnect();
   }, [portalNode]);
 
-  const portalValue: HeaderPortalValue = { node: portalNode, setNode: setPortalNode, height: portalHeight };
+  const portalValue: HeaderPortalValue = { node: portalNode, setNode: setPortalNode };
   return (
     <ScrollContainerContext.Provider value={scrollRef}>
       <HeaderPortalContext.Provider value={portalValue}>

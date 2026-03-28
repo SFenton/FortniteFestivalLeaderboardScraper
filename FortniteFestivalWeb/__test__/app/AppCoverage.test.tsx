@@ -25,6 +25,8 @@ const mockApi = vi.hoisted(() => {
     searchAccounts: fn().mockResolvedValue({ results: [] }),
     getPlayerStats: fn().mockResolvedValue({ accountId: 'p1', stats: [] }),
     trackPlayer: fn().mockResolvedValue({ accountId: 'p1', displayName: 'TrackedP', trackingStarted: false, backfillStatus: '' }),
+    getRankings: fn().mockResolvedValue({ totalAccounts: 0, entries: [] }),
+    getPlayerRanking: fn().mockResolvedValue(null),
   };
 });
 
@@ -74,6 +76,8 @@ function resetMocks() {
   mockApi.searchAccounts.mockResolvedValue({ results: [] });
   mockApi.getPlayerStats.mockResolvedValue({ accountId: 'p1', stats: [] });
   mockApi.trackPlayer.mockResolvedValue({ accountId: 'p1', displayName: 'TrackedP', trackingStarted: false, backfillStatus: '' });
+  mockApi.getRankings.mockResolvedValue({ totalAccounts: 0, entries: [] });
+  mockApi.getPlayerRanking.mockResolvedValue(null);
 }
 
 beforeEach(() => {
@@ -183,6 +187,39 @@ describe('App — coverage: backFallback for detail routes', () => {
 
     // With a tracked player, the statistics route should be accessible
     expect(container.innerHTML).toBeTruthy();
+  });
+
+  it('shows back button on /leaderboards/all', async () => {
+    localStorage.setItem('fst:changelog', JSON.stringify({ version: APP_VERSION, hash: changelogHash() }));
+    window.location.hash = '#/leaderboards/all?instrument=Solo_Guitar';
+
+    // Simulate mobile viewport so MobileHeader renders the BackLink
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      configurable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: query.includes('max-width'),
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    const { container } = render(<App />);
+
+    await waitFor(() => {
+      expect(container.innerHTML.length).toBeGreaterThan(100);
+    });
+
+    // The back link should point to /leaderboards
+    const backLink = container.querySelector('a[href="#/leaderboards"]');
+    expect(backLink).toBeTruthy();
+
+    window.location.hash = '';
   });
 });
 

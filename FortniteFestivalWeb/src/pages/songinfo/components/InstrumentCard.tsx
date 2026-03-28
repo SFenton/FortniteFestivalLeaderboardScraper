@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { InstrumentHeaderSize } from '@festival/core';
 import InstrumentHeader from '../../../components/display/InstrumentHeader';
 import { LeaderboardEntry } from '../../leaderboard/global/components/LeaderboardEntry';
-import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore } from '@festival/core/api/serverTypes';
+import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore, serverInstrumentLabel } from '@festival/core/api/serverTypes';
 import { QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, Colors, Font, Weight, Gap, Radius, Layout, Display, Align, Justify, Overflow, Cursor, Opacity, CssValue, FAST_FADE_MS, TRANSITION_MS, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, frostedCard, flexColumn, flexRow, transition, padding, border, Border } from '@festival/theme';
 import { CssProp } from '@festival/theme';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
@@ -47,6 +47,7 @@ export default memo(function InstrumentCard({
   const playerInTop = !!(playerAccountId && prefetchedEntries.some(
     (e) => e.accountId === playerAccountId,
   ));
+  const hasEntries = prefetchedEntries.length > 0 || (!!playerScore && !playerInTop);
 
   const anim = (delayMs: number): CSSProperties => skipAnimation ? {} : ({
     opacity: Opacity.none,
@@ -67,17 +68,15 @@ export default memo(function InstrumentCard({
         <InstrumentHeader instrument={instrument} size={InstrumentHeaderSize.MD} />
       </div>
       <div
-        style={st.card}
+        style={hasEntries ? st.card : st.cardNoClick}
         /* v8 ignore start — navigation */
-        onClick={() => {
-          navigate(`/songs/${songId}/${instrument}`, { state: { backTo: `/songs/${songId}` } });
-        }}
+        {...(hasEntries ? { onClick: () => navigate(`/songs/${songId}/${instrument}`, { state: { backTo: `/songs/${songId}` } }) } : {})}
         /* v8 ignore stop */
       >
         <div style={st.cardBody}>
         {prefetchedError && <span style={st.cardError}>{prefetchedError}</span>}
-        {!prefetchedError && prefetchedEntries.length === 0 && (
-          <span style={st.cardMuted}>{t('songDetail.noEntries')}</span>
+        {!prefetchedError && prefetchedEntries.length === 0 && !playerScore && (
+          <div style={{ ...st.emptyCard, ...anim(baseDelay + STAGGER_ENTRY_OFFSET) }} onAnimationEnd={clearAnim}>{t('songDetail.noEntries', { instrument: serverInstrumentLabel(instrument) })}</div>
         )}
         {!prefetchedError &&
           prefetchedEntries.map((e, i) => {
@@ -185,6 +184,10 @@ function useInstrumentCardStyles(_isMobile: boolean) {
         height: '100%',
         cursor: Cursor.pointer,
       } as CSSProperties,
+      cardNoClick: {
+        ...flexColumn,
+        height: '100%',
+      } as CSSProperties,
       cardBody: {
         ...flexColumn,
         gap: Gap.sm,
@@ -194,6 +197,17 @@ function useInstrumentCardStyles(_isMobile: boolean) {
       cardMuted: {
         fontSize: Font.sm,
         color: Colors.textMuted,
+      } as CSSProperties,
+      emptyCard: {
+        ...frostedCard,
+        display: Display.flex,
+        alignItems: Align.center,
+        justifyContent: Justify.center,
+        height: Layout.entryRowHeight,
+        borderRadius: Radius.md,
+        color: Colors.textMuted,
+        fontSize: Font.md,
+        fontWeight: Weight.semibold,
       } as CSSProperties,
       cardError: {
         fontSize: Font.sm,

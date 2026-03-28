@@ -12,6 +12,12 @@ import type {
   RivalsOverviewResponse,
   RivalsListResponse,
   RivalDetailResponse,
+  RankingsPageResponse,
+  AccountRankingDto,
+  CompositePageResponse,
+  CompositeRankingDto,
+  ComboPageResponse,
+  RankingMetric,
 } from '@festival/core/api/serverTypes';
 
 const BASE = '';
@@ -102,5 +108,32 @@ export const api = {
   getRivalDetail: (accountId: string, combo: string, rivalId: string, sort = 'closest') =>
     get<RivalDetailResponse>(
       `/api/player/${encodeURIComponent(accountId)}/rivals/${encodeURIComponent(combo)}/${encodeURIComponent(rivalId)}?limit=0&sort=${encodeURIComponent(sort)}`,
+    ),
+
+  // ─── Rankings ──────────────────────────────────────────────────
+
+  getRankings: (instrument: InstrumentKey, rankBy: RankingMetric = 'totalscore', page = 1, pageSize = 10) =>
+    get<RankingsPageResponse>(
+      `/api/rankings/${encodeURIComponent(instrument)}?rankBy=${encodeURIComponent(rankBy)}&page=${page}&pageSize=${pageSize}`,
+    ),
+
+  getPlayerRanking: (instrument: InstrumentKey, accountId: string) =>
+    get<AccountRankingDto>(
+      `/api/rankings/${encodeURIComponent(instrument)}/${encodeURIComponent(accountId)}`,
+    ),
+
+  getCompositeRankings: (page = 1, pageSize = 10) =>
+    get<CompositePageResponse>(
+      `/api/rankings/composite?page=${page}&pageSize=${pageSize}`,
+    ),
+
+  getPlayerCompositeRanking: (accountId: string) =>
+    get<CompositeRankingDto>(
+      `/api/rankings/composite/${encodeURIComponent(accountId)}`,
+    ),
+
+  getComboRankings: (instruments: string, page = 1, pageSize = 10) =>
+    get<ComboPageResponse>(
+      `/api/rankings/combo?instruments=${encodeURIComponent(instruments)}&page=${page}&pageSize=${pageSize}`,
     ),
 };

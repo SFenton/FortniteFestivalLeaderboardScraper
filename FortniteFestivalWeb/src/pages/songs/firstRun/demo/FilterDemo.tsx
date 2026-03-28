@@ -132,25 +132,6 @@ export default function FilterDemo() {
   }, [instrument, toggles, getToggles]);
   /* v8 ignore stop */
 
-  // Compact mode: measure container width to decide.
-  const rowRef = useRef<HTMLDivElement>(null);
-  const [compact, setCompact] = useState(false);
-  useEffect(() => {
-    const el = rowRef.current;
-    /* v8 ignore start -- ref is always set after render */
-    if (!el) return;
-    /* v8 ignore stop */
-    /* v8 ignore start -- ResizeObserver callback depends on real DOM measurements */
-    const ro = new ResizeObserver(entries => {
-      const width = entries[0]?.contentRect.width ?? 0;
-      const needed = instruments.length * Layout.demoInstrumentBtn + (instruments.length - 1) * Gap.lg;
-      setCompact(width < needed);
-    });
-    /* v8 ignore stop */
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [instruments.length]);
-
   const selectorStyleOverrides = useMemo(() => ({
     row: s.iconRow,
     button: s.iconButton,
@@ -184,15 +165,12 @@ export default function FilterDemo() {
   return (
     <div style={s.wrapper}>
       <FadeIn delay={0} style={s.instrumentSection}>
-        <div ref={rowRef}>
-          <InstrumentSelector
-            instruments={selectorItems}
-            selected={instrument}
-            onSelect={handleSelectInstrument}
-            compact={compact}
-            styles={selectorStyleOverrides}
-          />
-        </div>
+        <InstrumentSelector
+          instruments={selectorItems}
+          selected={instrument}
+          onSelect={handleSelectInstrument}
+          styles={selectorStyleOverrides}
+        />
       </FadeIn>
 
       {instrument && maxToggles > 0 && (
