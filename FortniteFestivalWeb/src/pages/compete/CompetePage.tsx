@@ -8,6 +8,7 @@ import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
+import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { comboIdFromInstruments } from '@festival/core/combos';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
@@ -31,6 +32,7 @@ export default function CompetePage() {
   const navigate = useNavigate();
   const { player } = useTrackedPlayer();
   const { settings } = useSettings();
+  const isMobile = useIsMobileChrome();
 
   const accountId = player?.accountId ?? '';
   const instruments = useMemo(() => visibleInstruments(settings), [settings]);
@@ -130,7 +132,7 @@ export default function CompetePage() {
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player }), [player]);
 
   return (
-    <Page scrollRestoreKey="compete" loadPhase={phase} before={<PageHeader title={t('compete.title')} />}
+    <Page scrollRestoreKey="compete" loadPhase={phase} before={isMobile ? undefined : <PageHeader title={t('compete.title')} />}
       firstRun={{ key: 'compete', label: t('nav.compete'), slides: competeSlides, gateContext: firstRunGateCtx }}
     >
       {phase === 'contentIn' && (

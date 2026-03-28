@@ -3,10 +3,11 @@ import { useMemo, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { IoChevronBack } from 'react-icons/io5';
 import { InstrumentIcon } from '../../display/InstrumentIcons';
+import HamburgerButton from '../HamburgerButton';
 import BackLink from './BackLink';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import {
-  Colors, Font, Weight, Gap, Layout, MaxWidth, ZIndex, InstrumentSize,
+  Colors, Font, Weight, Gap, Layout, MaxWidth, ZIndex, InstrumentSize, IconSize,
   Display, Align, Position, WhiteSpace, BoxSizing, CssValue, CssProp,
   flexRow, padding, transition, TRANSITION_MS,
 } from '@festival/theme';
@@ -20,6 +21,8 @@ export interface MobileHeaderProps {
   songInstrument: InstrumentKey | null;
   /** Whether we're on the /songs route. */
   isSongsRoute: boolean;
+  /** Callback to open the navigation sidebar (shown on root pages). */
+  onOpenSidebar?: () => void;
 }
 
 export default function MobileHeader({
@@ -29,6 +32,7 @@ export default function MobileHeader({
   locationKey,
   songInstrument,
   isSongsRoute,
+  onOpenSidebar,
 }: MobileHeaderProps) {
   const navigate = useNavigate();
   const s = useStyles();
@@ -49,7 +53,10 @@ export default function MobileHeader({
             <span>{navTitle}</span>
           </a>
         ) : (
-          <span style={s.title}>{navTitle}</span>
+          <>
+            {onOpenSidebar && <HamburgerButton onClick={onOpenSidebar} size={IconSize.nav} style={{ marginLeft: -6, marginTop: 3 }} />}
+            <span style={s.title}>{navTitle}</span>
+          </>
         )}
         {isSongsRoute && songInstrument && (
           <InstrumentIcon instrument={songInstrument} size={InstrumentSize.sm} style={{ marginLeft: CssValue.auto }} />
@@ -70,6 +77,7 @@ function useStyles() {
   return useMemo(() => ({
     header: {
       ...flexRow,
+      gap: Gap.sm,
       padding: padding(Layout.paddingTop + Gap.md, Layout.paddingHorizontal, Gap.md),
       maxWidth: MaxWidth.card,
       margin: CssValue.marginCenter,

@@ -11,6 +11,7 @@ import PageHeader from '../../components/common/PageHeader';
 
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
+import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { IoChevronForward } from 'react-icons/io5';
 import { InstrumentHeaderSize } from '@festival/core';
 import { LoadPhase } from '@festival/core';
@@ -43,6 +44,7 @@ export default function RivalsPage() {
   const navigate = useNavigate();
   const { settings } = useSettings();
   const { player } = useTrackedPlayer();
+  const isMobile = useIsMobileChrome();
   const accountId = player?.accountId;
 
   const activeInstruments = visibleInstruments(settings);
@@ -248,7 +250,7 @@ export default function RivalsPage() {
       scrollDeps={[phase]}
       loadPhase={phase}
       containerStyle={styles.container}
-      before={<PageHeader title={t('rivals.title')} />}
+      before={isMobile ? undefined : <PageHeader title={t('rivals.title')} />}
       firstRun={{ key: 'rivals', label: t('rivals.title'), slides: rivalsSlides, gateContext: firstRunGateCtx }}
     >
       {phase === LoadPhase.ContentIn && (

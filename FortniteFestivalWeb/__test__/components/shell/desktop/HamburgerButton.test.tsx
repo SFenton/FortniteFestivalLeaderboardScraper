@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import HamburgerButton from '../../../../src/components/shell/desktop/HamburgerButton';
+import HamburgerButton from '../../../../src/components/shell/HamburgerButton';
 
 describe('HamburgerButton', () => {
   it('renders a button with an icon', () => {

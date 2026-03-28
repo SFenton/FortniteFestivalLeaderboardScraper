@@ -146,6 +146,7 @@ export default function ShopPage() {
       loadPhase={loadPhase}
       firstRun={{ key: 'shop', label: t('nav.shop'), slides: shopSlides, gateContext: firstRunGateCtx }}
       before={
+        isMobileChrome ? undefined : (
         <PageHeader
           title={t('nav.shop')}
           actions={<>
@@ -159,6 +160,7 @@ export default function ShopPage() {
             )}
           </>}
         />
+        )
       }
     >
           {loadPhase === LoadPhase.ContentIn && (sorted.length === 0 ? (

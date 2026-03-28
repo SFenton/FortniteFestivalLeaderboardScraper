@@ -293,6 +293,10 @@ function AppShell() {
     [AppRoutes.suggestions]: t('nav.suggestions'),
     [AppRoutes.statistics]: t('nav.statistics'),
     [AppRoutes.settings]: t('nav.settings'),
+    [AppRoutes.compete]: t('compete.title'),
+    [AppRoutes.rivals]: t('rivals.title'),
+    [AppRoutes.leaderboards]: t('rankings.title'),
+    [AppRoutes.shop]: t('nav.shop'),
   };
   const navTitle = NAV_TITLES[location.pathname] ?? null;
 
@@ -357,6 +361,7 @@ function AppShell() {
             locationKey={location.pathname}
             songInstrument={songInstrument}
             isSongsRoute={location.pathname === AppRoutes.songs}
+            onOpenSidebar={() => setSidebarOpen(true)}
           />
         ) : (
           <DesktopNav

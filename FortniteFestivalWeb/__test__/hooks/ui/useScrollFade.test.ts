@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useScrollFade } from '../../../src/hooks/ui/useScrollFade';
 import { createScrollContainerWrapper } from '../../Helpers/scrollContainerWrapper';
+import { stubResizeObserver } from '../../Helpers/browserStubs';
 
 function makeListEl(childCount: number) {
   const list = document.createElement('div');
@@ -67,5 +68,33 @@ describe('useScrollFade', () => {
     const scrollRef = { current: document.createElement('div') };
     const listRef = { current: listEl };
     renderHook(() => useScrollFade(scrollRef as any, listRef as any, [], { distance: 20 }), { wrapper });
+  });
+
+  it('creates ResizeObserver on the scroll container', () => {
+    const observers = stubResizeObserver();
+    const { wrapper, mockEl } = createScrollContainerWrapper();
+    const listEl = makeListEl(2);
+    const scrollRef = { current: document.createElement('div') };
+    const listRef = { current: listEl };
+    renderHook(() => useScrollFade(scrollRef as any, listRef as any), { wrapper });
+    const observed = observers.flatMap(o => o.targets);
+    expect(observed).toContain(mockEl);
+  });
+
+  it('disconnects ResizeObserver on unmount', () => {
+    stubResizeObserver();
+    const disconnectSpy = vi.fn();
+    const OrigRO = globalThis.ResizeObserver;
+    vi.stubGlobal('ResizeObserver', class extends OrigRO {
+      disconnect() { disconnectSpy(); super.disconnect(); }
+    });
+    const { wrapper } = createScrollContainerWrapper();
+    const listEl = makeListEl(2);
+    const scrollRef = { current: document.createElement('div') };
+    const listRef = { current: listEl };
+    const { unmount } = renderHook(() => useScrollFade(scrollRef as any, listRef as any), { wrapper });
+    expect(disconnectSpy).not.toHaveBeenCalled();
+    unmount();
+    expect(disconnectSpy).toHaveBeenCalled();
   });
 });

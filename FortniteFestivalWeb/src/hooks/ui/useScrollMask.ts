@@ -93,6 +93,19 @@ export function useScrollMask(
     return () => target.removeEventListener('scroll', throttledUpdate);
   }, [selfScroll, throttledUpdate, containerRef, scrollContainerRef]);
 
+  // Re-evaluate mask when the scroll container or content container resizes.
+  // This catches layout changes that happen after the initial mount measurement
+  // (e.g. header portal rendering, fab spacer margin, window resize).
+  useEffect(() => {
+    const el = containerRef.current;
+    const scrollEl = selfScroll ? el : scrollContainerRef.current;
+    if (!scrollEl) return;
+    const ro = new ResizeObserver(throttledUpdate);
+    ro.observe(scrollEl);
+    if (el && el !== scrollEl) ro.observe(el);
+    return () => ro.disconnect();
+  }, [selfScroll, containerRef, scrollContainerRef, throttledUpdate]);
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { update(); }, [update, ...deps]);
 

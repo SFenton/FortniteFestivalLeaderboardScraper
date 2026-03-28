@@ -111,6 +111,7 @@ export default function LeaderboardsOverviewPage() {
       loadPhase={loadPhase}
       firstRun={{ key: 'leaderboards', label: t('nav.leaderboards'), slides: leaderboardsSlides, gateContext: firstRunGateCtx }}
       before={
+        isMobile ? undefined : (
         <PageHeader
           title={t('rankings.title')}
           actions={
@@ -124,6 +125,7 @@ export default function LeaderboardsOverviewPage() {
             ) : undefined
           }
         />
+        )
       }
       after={
         <Modal

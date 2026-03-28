@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import HamburgerButton from './HamburgerButton';
+import HamburgerButton from '../HamburgerButton';
 import PlayerSearchBar from '../../player/PlayerSearchBar';
 import HeaderProfileButton from './HeaderProfileButton';
 import { appStyles } from '../../../appStyles';

@@ -167,6 +167,16 @@ export function useScrollFade(
     return () => scrollEl.removeEventListener('scroll', throttledUpdate);
   }, [throttledUpdate, scrollContainerRef]);
 
+  // Re-evaluate masks when the scroll container resizes (e.g. header portal
+  // rendering, fab spacer margin, window resize).
+  useEffect(() => {
+    const scrollEl = scrollContainerRef.current;
+    if (!scrollEl) return;
+    const ro = new ResizeObserver(throttledUpdate);
+    ro.observe(scrollEl);
+    return () => ro.disconnect();
+  }, [scrollContainerRef, throttledUpdate]);
+
   useEffect(() => () => { cancelAnimationFrame(rafId.current); }, []);
 
   // Initial computation
