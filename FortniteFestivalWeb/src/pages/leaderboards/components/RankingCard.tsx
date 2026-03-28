@@ -51,12 +51,20 @@ export default memo(function RankingCard({
     return computeRankWidth(allRanks);
   }, [entries, playerRanking, playerInTop, metric]);
 
-  const totalStaggerItems = entries.length + 2 + staggerOffset;
+  const hasPlayerFooter = !!(playerRanking && !playerInTop);
+  const extraItems = hasPlayerFooter ? 3 : 2; // header + (player footer?) + button
+  const totalStaggerItems = entries.length + extraItems + staggerOffset;
   const headerDelay = shouldStagger ? staggerDelay(0 + staggerOffset, STAGGER_INTERVAL, totalStaggerItems) : undefined;
   const headerStaggerStyle: CSSProperties | undefined = headerDelay != null
     ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${headerDelay}ms forwards` }
     : undefined;
-  const buttonDelay = shouldStagger ? staggerDelay(entries.length + 1 + staggerOffset, STAGGER_INTERVAL, totalStaggerItems) : undefined;
+  const playerFooterIdx = entries.length + 1 + staggerOffset;
+  const playerFooterDelay = shouldStagger && hasPlayerFooter ? staggerDelay(playerFooterIdx, STAGGER_INTERVAL, totalStaggerItems) : undefined;
+  const playerFooterStaggerStyle: CSSProperties | undefined = playerFooterDelay != null
+    ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${playerFooterDelay}ms forwards` }
+    : undefined;
+  const buttonIdx = entries.length + (hasPlayerFooter ? 2 : 1) + staggerOffset;
+  const buttonDelay = shouldStagger ? staggerDelay(buttonIdx, STAGGER_INTERVAL, totalStaggerItems) : undefined;
   const buttonStaggerStyle: CSSProperties | undefined = buttonDelay != null
     ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${buttonDelay}ms forwards` }
     : undefined;
@@ -113,7 +121,12 @@ export default memo(function RankingCard({
           return (
             <Link
               to={`/player/${playerRanking.accountId}`}
-              style={st.playerEntryRow}
+              style={{ ...st.playerEntryRow, ...playerFooterStaggerStyle }}
+              onAnimationEnd={(ev) => {
+                const el = ev.currentTarget;
+                el.style.opacity = '';
+                el.style.animation = '';
+              }}
             >
               <RankingEntry
                 rank={rank}

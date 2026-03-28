@@ -348,4 +348,10 @@ export const Layout = {
   modalPanelZ: 1001,
   /** Max-width for the confirm alert dialog. */
   confirmMaxWidth: 340,
+  /** Max-width for the changelog modal. */
+  changelogMaxWidth: 520,
+  /** Max-height for the changelog modal. */
+  changelogMaxHeight: '80vh' as string,
+  /** Size of modal close button circle. */
+  closeBtnSize: 32,
 } as const;

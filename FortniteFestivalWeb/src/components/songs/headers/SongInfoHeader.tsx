@@ -18,6 +18,7 @@ import { type ServerSong as Song, type ServerInstrumentKey } from '@festival/cor
 import { InstrumentIcon } from '../../display/InstrumentIcons';
 import BackgroundImage from '../../page/BackgroundImage';
 import PageHeader from '../../common/PageHeader';
+import MarqueeText from '../../common/MarqueeText';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import anim from '../../../styles/animations.module.css';
 import cls from './SongInfoHeader.module.css';
@@ -88,11 +89,8 @@ export default function SongInfoHeader({
               <div className={s.artClassName} style={s.artPlaceholder} />
             )}
             <div style={s.textWrap}>
-              <h1 className={s.titleClassName} style={s.songTitle}>{song?.title ?? songId}</h1>
-              <p className={s.artistClassName} style={s.songArtist}>
-                {song?.artist ?? t('common.unknownArtist')}
-                {song?.year ? ` \u00b7 ${song.year}` : ''}
-              </p>
+              <MarqueeText as="h1" className={s.titleClassName} style={s.songTitle} text={song?.title ?? songId} />
+              <MarqueeText as="p" className={s.artistClassName} style={s.songArtist} text={`${song?.artist ?? t('common.unknownArtist')}${song?.year ? ` \u00b7 ${song.year}` : ''}`} />
             </div>
           </div>
         }

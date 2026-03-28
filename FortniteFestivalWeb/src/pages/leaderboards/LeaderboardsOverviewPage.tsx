@@ -20,6 +20,7 @@ import { LoadPhase } from '@festival/core';
 import { RANKING_METRICS } from './helpers/rankingHelpers';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
+import { useGridColumnCount } from '../../hooks/ui/useGridColumnCount';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 
 import {
@@ -27,6 +28,9 @@ import {
   GridTemplate, Size, STAGGER_INTERVAL, FADE_DURATION,
 } from '@festival/theme';
 import { leaderboardsSlides } from './firstRun';
+
+/** Set to 1 to stagger the right column one slot (125 ms) after the left. */
+const COLUMN_STAGGER_OFFSET = 1;
 
 export default function LeaderboardsOverviewPage() {
   const { t } = useTranslation();
@@ -85,13 +89,17 @@ export default function LeaderboardsOverviewPage() {
     [rankingQueries],
   );
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [cols, gridRef] = useGridColumnCount();
+  const itemsPerCard = maxEntriesPerCard + (player ? 3 : 2); // header + entries + (player footer?) + button
 
   useEffect(() => {
     if (loadPhase !== LoadPhase.ContentIn || !shouldStagger) return;
-    const totalAnimTime = (maxEntriesPerCard + 1) * STAGGER_INTERVAL + FADE_DURATION;
+    const totalRows = Math.ceil(instruments.length / cols);
+    const totalAnimTime =
+      (totalRows * itemsPerCard + (cols - 1) * COLUMN_STAGGER_OFFSET) * STAGGER_INTERVAL + FADE_DURATION;
     const id = setTimeout(() => setShouldStagger(false), totalAnimTime);
     return () => clearTimeout(id);
-  }, [loadPhase, shouldStagger, maxEntriesPerCard]);
+  }, [loadPhase, shouldStagger, maxEntriesPerCard, cols, instruments.length, itemsPerCard]);
 
   const s = useLeaderboardsStyles();
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player }), [player]);
@@ -142,10 +150,13 @@ export default function LeaderboardsOverviewPage() {
       }
     >
       {loadPhase === LoadPhase.ContentIn && (
-        <div style={s.grid}>
+        <div ref={gridRef} style={s.grid}>
           {instruments.map((inst, idx) => {
             const q = rankingQueries[idx];
             const pq = player ? playerQueries[idx] : undefined;
+            const gridRow = Math.floor(idx / cols);
+            const gridCol = idx % cols;
+            const offset = gridRow * itemsPerCard + gridCol * COLUMN_STAGGER_OFFSET;
             return (
               <RankingCard
                 key={inst}
@@ -156,6 +167,7 @@ export default function LeaderboardsOverviewPage() {
                 playerAccountId={player?.accountId}
                 error={q?.error ? String(q.error) : null}
                 shouldStagger={shouldStagger}
+                staggerOffset={offset}
               />
             );
           })}
