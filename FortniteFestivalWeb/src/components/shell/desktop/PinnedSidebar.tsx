@@ -150,6 +150,8 @@ function useStyles() {
       linkIcon: {
         ...flexRow,
         flexShrink: 0,
+        width: 20,
+        justifyContent: Justify.center,
       } as CSSProperties,
       selectPlayerBtn: {
         ...link,

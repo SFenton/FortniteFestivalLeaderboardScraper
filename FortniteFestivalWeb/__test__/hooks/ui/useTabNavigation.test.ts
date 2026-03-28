@@ -13,7 +13,10 @@ function wrapper(route = '/songs') {
 describe('inferTab', () => {
   it('returns songs for /songs', () => expect(inferTab('/songs')).toBe(TabKey.Songs));
   it('returns songs for /songs/detail', () => expect(inferTab('/songs/abc123')).toBe(TabKey.Songs));
+  it('returns songs for /shop', () => expect(inferTab('/shop')).toBe(TabKey.Songs));
   it('returns suggestions', () => expect(inferTab('/suggestions')).toBe(TabKey.Suggestions));
+  it('returns compete for /rivals', () => expect(inferTab('/rivals')).toBe(TabKey.Compete));
+  it('returns compete for /rivals/detail', () => expect(inferTab('/rivals/abc')).toBe(TabKey.Compete));
   it('returns statistics', () => expect(inferTab('/statistics')).toBe(TabKey.Statistics));
   it('returns settings', () => expect(inferTab('/settings')).toBe(TabKey.Settings));
   it('returns null for /player', () => expect(inferTab('/player/abc')).toBeNull());
@@ -165,5 +168,49 @@ describe('useTabNavigation', () => {
     // Simulate browser back (POP to /songs)
     act(() => { result.current.nav(-1); });
     expect(result.current.tab.activeTab).toBe(TabKey.Songs);
+  });
+
+  it('resets to tab root when saved route belongs to a different tab', () => {
+    // Simulate stale sessionStorage: Suggestions tab has /shop (a Songs route)
+    sessionStorage.setItem('fst:tabRoutes', JSON.stringify({ [TabKey.Suggestions]: '/shop' }));
+    const { result } = renderHook(() => useTabNavigation(), { wrapper: wrapper('/songs') });
+    act(() => { result.current.handleTabClick(TabKey.Suggestions); });
+    // Should navigate to /suggestions (tab root), not /shop
+    expect(result.current.tabRoutes[TabKey.Suggestions]).toBe('/suggestions');
+    expect(result.current.activeTab).toBe(TabKey.Suggestions);
+  });
+
+  it('uses rootOverride instead of TAB_ROOTS when provided', () => {
+    const { result } = renderHook(() => useTabNavigation(), { wrapper: wrapper('/songs') });
+    act(() => { result.current.handleTabClick(TabKey.Compete, '/leaderboards'); });
+    expect(result.current.activeTab).toBe(TabKey.Compete);
+    expect(result.current.tabRoutes[TabKey.Compete]).toBe('/leaderboards');
+  });
+
+  it('rootOverride is used for stale-route guard fallback', () => {
+    // Stale sessionStorage: Compete tab has /shop (a Songs route)
+    sessionStorage.setItem('fst:tabRoutes', JSON.stringify({ [TabKey.Compete]: '/shop' }));
+    const { result } = renderHook(() => useTabNavigation(), { wrapper: wrapper('/songs') });
+    act(() => { result.current.handleTabClick(TabKey.Compete, '/leaderboards'); });
+    // Should fall back to /leaderboards (the rootOverride), not /compete (TAB_ROOTS)
+    expect(result.current.tabRoutes[TabKey.Compete]).toBe('/leaderboards');
+    expect(result.current.activeTab).toBe(TabKey.Compete);
+  });
+
+  it('re-tap with rootOverride navigates to override root', () => {
+    const { result } = renderHook(() => useTabNavigation(), { wrapper: wrapper('/leaderboards') });
+    // First switch to Compete tab with override
+    act(() => { result.current.handleTabClick(TabKey.Compete, '/leaderboards'); });
+    // Now navigate deeper within the tab
+    function useTestHook() {
+      const tab = useTabNavigation();
+      const nav = useNavigate();
+      return { tab, nav };
+    }
+    const { result: result2 } = renderHook(() => useTestHook(), { wrapper: wrapper('/leaderboards') });
+    act(() => { result2.current.nav('/leaderboards/all?instrument=guitar'); });
+    // Re-tap with override should go to /leaderboards
+    act(() => { result2.current.tab.handleTabClick(TabKey.Compete, '/leaderboards'); });
+    expect(result2.current.tab.tabRoutes[TabKey.Compete]).toBe('/leaderboards');
   });
 });

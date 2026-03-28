@@ -42,10 +42,16 @@ a {
 
 button {
   all: unset;
+  -webkit-appearance: none;
+  appearance: none;
   box-sizing: border-box;
   cursor: pointer;
   color-scheme: normal;
   -webkit-tap-highlight-color: transparent;
+}
+
+button svg {
+  display: block;
 }
 
 * {

@@ -114,7 +114,7 @@ export default function Sidebar({ player, open, onClose, onDeselect, onSelectPla
           {player ? (
             <div style={s.sidebarPlayerRow}>
               <Link to="/statistics" onClick={onClose} style={s.playerLink}>
-                <span style={s.profileCircle}><IoPerson size={14} /></span>
+                <span style={s.sidebarLinkIcon}><IoPerson size={20} /></span>
                 {player.displayName}
               </Link>
               <button style={s.deselectBtn} onClick={onDeselect}>
@@ -123,7 +123,7 @@ export default function Sidebar({ player, open, onClose, onDeselect, onSelectPla
             </div>
           ) : (
             <button style={s.selectPlayerBtn} onClick={onSelectPlayer}>
-              <span style={s.profileCircleEmpty}><IoPerson size={14} /></span>
+              <span style={s.sidebarLinkIcon}><IoPerson size={20} /></span>
               {t('common.selectPlayerProfile')}
             </button>
           )}

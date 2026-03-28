@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import {
-  Colors, Font, Gap, Weight, Radius, Border, Display, Align, Position, BoxSizing, Cursor, CssValue, CssProp, Layout,
+  Colors, Font, Gap, Weight, Radius, Border, Display, Align, Justify, Position, BoxSizing, Cursor, CssValue, CssProp, Layout,
   flexColumn, flexRow, flexCenter, modalOverlay, btnDanger, purpleGlass,
   padding, border, transition, transitions, LINK_TRANSITION_MS,
 } from '@festival/theme';
@@ -51,11 +51,9 @@ export const sidebarStyles = {
     boxShadow: purpleGlass.boxShadow,
     color: Colors.textPrimary,
   } as CSSProperties,
-  sidebarLinkIcon: { ...flexRow, flexShrink: 0 } as CSSProperties,
+  sidebarLinkIcon: { ...flexRow, flexShrink: 0, width: 20, justifyContent: Justify.center } as CSSProperties,
   sidebarPlayerRow: { display: Display.flex, alignItems: Align.center } as CSSProperties,
   playerLink: { ...sidebarLink, flex: 1 } as CSSProperties,
-  profileCircle: { ...flexCenter, width: 28, height: 28, borderRadius: '50%', backgroundColor: Colors.surfaceSubtle, border: `1px solid ${Colors.borderSubtle}`, flexShrink: 0, marginRight: Gap.md } as CSSProperties,
-  profileCircleEmpty: { ...flexCenter, width: 28, height: 28, borderRadius: '50%', backgroundColor: '#D0D5DD', border: 'none', flexShrink: 0, marginRight: Gap.md, color: '#4A5568' } as CSSProperties,
   deselectBtn: { ...btnDanger, padding: `${Gap.sm}px ${Gap.xl}px`, fontSize: Font.sm, fontWeight: Weight.semibold, whiteSpace: 'nowrap', marginRight: Gap.section } as CSSProperties,
   selectPlayerBtn: { ...sidebarLink, background: CssValue.none, cursor: Cursor.pointer } as CSSProperties,
 } as const;

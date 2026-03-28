@@ -58,8 +58,6 @@ function useStyles(animate: boolean) {
       lineHeight: 1,
       marginLeft: Layout.backLinkNudge,
     } as const,
-    backIcon: {
-      marginTop: 1,
-    } as const,
+    backIcon: {} as const,
   }), [animate]);
 }

@@ -20,8 +20,10 @@ const STORAGE_KEY = 'fst:tabRoutes';
 /** Infer which tab owns a route. Detail pages under /songs belong to songs; /player belongs to the active tab. */
 export function inferTab(pathname: string): TabKey | null {
   if (pathname === '/songs' || pathname.startsWith('/songs/')) return TabKey.Songs;
+  if (pathname === '/shop') return TabKey.Songs;
   if (pathname === '/suggestions') return TabKey.Suggestions;
   if (pathname === '/compete' || pathname.startsWith('/leaderboards')) return TabKey.Compete;
+  if (pathname === '/rivals' || pathname.startsWith('/rivals/')) return TabKey.Compete;
   if (pathname === '/statistics') return TabKey.Statistics;
   if (pathname === '/settings') return TabKey.Settings;
   return null; // /player/:id — ambiguous, owned by the currently active tab
@@ -92,10 +94,10 @@ export function useTabNavigation() {
     setTabRoutes(prev => ({ ...prev, [activeTab]: location.pathname }));
   }, [location.pathname, navType, activeTab]);
 
-  const handleTabClick = useCallback((tab: TabKey) => {
+  const handleTabClick = useCallback((tab: TabKey, rootOverride?: string) => {
+    const root = rootOverride ?? TAB_ROOTS[tab];
     if (tab === activeTab) {
       // Re-tap: pop to tab root
-      const root = TAB_ROOTS[tab];
       if (location.pathname !== root) {
         navigate(root, { replace: true });
         setTabRoutes(prev => ({ ...prev, [tab]: root }));
@@ -109,8 +111,14 @@ export function useTabNavigation() {
     }));
     setActiveTab(tab);
     // Statistics always navigates to root
-    const target = tab === TabKey.Statistics ? TAB_ROOTS.statistics : tabRoutes[tab];
-    navigate(target, { replace: true });
+    const saved = tab === TabKey.Statistics ? TAB_ROOTS.statistics : tabRoutes[tab];
+    // If saved route is just the default root and caller provided an override, use the override
+    const target = (rootOverride && saved === TAB_ROOTS[tab]) ? root : saved;
+    // Guard: if the saved route belongs to a different tab (stale/corrupted), reset to tab root
+    const owner = inferTab(target);
+    const safeTarget = (owner !== null && owner !== tab) ? root : target;
+    navigate(safeTarget, { replace: true });
+    if (safeTarget !== target) setTabRoutes(prev => ({ ...prev, [tab]: safeTarget }));
   }, [activeTab, location.pathname, navigate, tabRoutes]);
 
   return useMemo(() => ({ activeTab, handleTabClick, tabRoutes }), [activeTab, handleTabClick, tabRoutes]);

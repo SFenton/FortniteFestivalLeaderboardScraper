@@ -6,6 +6,7 @@ import { InstrumentIcon } from '../../display/InstrumentIcons';
 import HamburgerButton from '../HamburgerButton';
 import BackLink from './BackLink';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { IS_IOS } from '@festival/ui-utils';
 import {
   Colors, Font, Weight, Gap, Layout, MaxWidth, ZIndex, InstrumentSize, IconSize,
   Display, Align, Position, WhiteSpace, BoxSizing, CssValue, CssProp,
@@ -54,7 +55,7 @@ export default function MobileHeader({
           </a>
         ) : (
           <>
-            {onOpenSidebar && <HamburgerButton onClick={onOpenSidebar} size={IconSize.nav} style={{ marginLeft: -6, marginTop: 3 }} />}
+            {onOpenSidebar && <HamburgerButton onClick={onOpenSidebar} size={IconSize.nav} style={{ marginLeft: -5, marginTop: IS_IOS ? 0 : 2 }} />}
             <span style={s.title}>{navTitle}</span>
           </>
         )}

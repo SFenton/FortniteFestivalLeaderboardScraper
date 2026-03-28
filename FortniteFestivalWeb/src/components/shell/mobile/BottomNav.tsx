@@ -18,7 +18,7 @@ export type { TabKey };
 export default function BottomNav({ player, activeTab, onTabClick }: {
   player: TrackedPlayer | null;
   activeTab: TabKey;
-  onTabClick: (tab: TabKey) => void;
+  onTabClick: (tab: TabKey, path?: string) => void;
 }) {
   const { t } = useTranslation();
   const s = useStyles();
@@ -44,7 +44,7 @@ export default function BottomNav({ player, activeTab, onTabClick }: {
       {tabs.map((tab) => (
         <button
           key={tab.key}
-          onClick={() => onTabClick(tab.key)}
+          onClick={() => onTabClick(tab.key, tab.path)}
           style={activeTab === tab.key ? s.tabActive : s.tab}
         >
           <span style={s.tabIcon}>{tab.icon}</span>
