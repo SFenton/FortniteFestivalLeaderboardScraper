@@ -237,7 +237,8 @@ export default function PlayerContent({
           message={t('player.switchConfirmMessage', {name: data.displayName})}
           /* v8 ignore start */
           onNo={() => setPendingSwitch(null)}
-          onYes={() => { setPendingSwitch(null); pendingSwitch(); }}
+          onYes={() => pendingSwitch()}
+          onExitComplete={() => setPendingSwitch(null)}
           /* v8 ignore stop */
         />
       ) : undefined}

@@ -93,7 +93,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
 
         _backfiller.BackfillAccountAsync(
             Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(0));
 
         var orchestrator = CreateBackfillOrchestrator();
@@ -101,7 +101,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
 
         await _backfiller.Received(2).BackfillAccountAsync(
             Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>());
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -161,7 +161,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         _historyReconstructor.ReconstructAccountAsync(
             Arg.Any<string>(), Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), Arg.Any<int>(),
             Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(10));
 
@@ -174,7 +174,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
 
         await _historyReconstructor.Received(1).ReconstructAccountAsync(
             "acct1", windows, "token", "callerAcct",
-            Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), Arg.Any<int>(),
             Arg.Any<CancellationToken>());
         _personalDbBuilder.Received(1).RebuildForAccounts(
             Arg.Any<IReadOnlySet<string>>(), Arg.Any<MetaDatabase>());
@@ -202,7 +202,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         await _historyReconstructor.DidNotReceive().ReconstructAccountAsync(
             Arg.Any<string>(), Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), Arg.Any<int>(),
             Arg.Any<CancellationToken>());
     }
 
@@ -250,7 +250,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         _historyReconstructor.ReconstructAccountAsync(
             Arg.Any<string>(), Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), Arg.Any<int>(),
             Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("recon error"));
 
@@ -341,7 +341,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlySet<string>>(),
             Arg.Any<HashSet<(string, string, string)>>(),
             Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(0));
 
         var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2 };
@@ -353,7 +353,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlySet<string>>(),
             Arg.Any<HashSet<(string, string, string)>>(),
             Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>());
 
         _personalDbBuilder.Received().RebuildForAccounts(
             Arg.Any<HashSet<string>>(), Arg.Any<MetaDatabase>());
@@ -385,7 +385,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlySet<string>>(),
             Arg.Any<HashSet<(string, string, string)>>(),
             Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(5));
 
         var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2 };
@@ -441,7 +441,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlySet<string>>(),
             Arg.Any<HashSet<(string, string, string)>>(),
             Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(0));
 
         var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2 };
@@ -476,7 +476,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlySet<string>>(),
             Arg.Any<HashSet<(string, string, string)>>(),
             Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("Refresh crashed"));
 
         var opts = new ScraperOptions { DataDirectory = _tempDir, DegreeOfParallelism = 2 };

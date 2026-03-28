@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import PlayerScoreSortModal, {
   type PlayerScoreSortDraft,
   type PlayerScoreSortMode,
 } from '../../../../../src/pages/leaderboard/player/modals/PlayerScoreSortModal';
 import { TestProviders } from '../../../../helpers/TestProviders';
+import { TRANSITION_MS } from '@festival/theme';
 
 /* ── Helpers ── */
 
@@ -212,6 +213,7 @@ describe('PlayerScoreSortModal', () => {
   });
 
   it('confirm dialog "No" dismisses the dialog', () => {
+    vi.useFakeTimers();
     const draft: PlayerScoreSortDraft = { sortMode: 'score', sortAscending: false };
     const props = defaultProps();
     props.draft = draft;
@@ -219,7 +221,9 @@ describe('PlayerScoreSortModal', () => {
     fireEvent.click(screen.getByLabelText('Close'));
     fireEvent.click(screen.getByText('No'));
     expect(props.onCancel).not.toHaveBeenCalled();
+    act(() => { vi.advanceTimersByTime(TRANSITION_MS); });
     expect(screen.queryByText('Discard Sort Changes')).toBeNull();
+    vi.useRealTimers();
   });
 
   it('confirm dialog "Yes" calls onCancel', () => {

@@ -34,7 +34,7 @@ public class ScraperWorkerTests : IDisposable
 
     private static int InvokeLoadCachedPageEstimate(ScraperOptions opts)
     {
-        var method = typeof(ScraperWorker).GetMethod(
+        var method = typeof(ScrapeOrchestrator).GetMethod(
             "LoadCachedPageEstimate",
             BindingFlags.NonPublic | BindingFlags.Static)!;
         return (int)method.Invoke(null, [opts])!;
@@ -42,7 +42,7 @@ public class ScraperWorkerTests : IDisposable
 
     private static void InvokeSaveCachedPageEstimate(ScraperOptions opts, int totalPages)
     {
-        var method = typeof(ScraperWorker).GetMethod(
+        var method = typeof(ScrapeOrchestrator).GetMethod(
             "SaveCachedPageEstimate",
             BindingFlags.NonPublic | BindingFlags.Static)!;
         method.Invoke(null, [opts, totalPages]);

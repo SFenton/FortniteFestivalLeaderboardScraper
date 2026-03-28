@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import SuggestionsFilterModal, {
   type SuggestionsFilterDraft,
   defaultSuggestionsFilterDraft,
@@ -10,6 +10,7 @@ import {
   globalKeyFor,
   perInstrumentKeyFor,
 } from '@festival/core/suggestions/suggestionFilterConfig';
+import { TRANSITION_MS } from '@festival/theme';
 import { TestProviders } from '../../../helpers/TestProviders';
 
 /* ── Helpers ── */
@@ -316,6 +317,7 @@ describe('SuggestionsFilterModal', () => {
   });
 
   it('confirm dialog "No" dismisses the dialog', () => {
+    vi.useFakeTimers();
     const draft = baseDraft();
     draft.suggestionsLeadFilter = false;
     const props = defaultProps();
@@ -324,7 +326,9 @@ describe('SuggestionsFilterModal', () => {
     fireEvent.click(screen.getByLabelText('Close'));
     fireEvent.click(screen.getByText('No'));
     expect(props.onCancel).not.toHaveBeenCalled();
+    act(() => { vi.advanceTimersByTime(TRANSITION_MS); });
     expect(screen.queryByText('Discard Suggestion Filter Changes')).toBeNull();
+    vi.useRealTimers();
   });
 
   it('confirm dialog "Yes" calls onCancel', () => {

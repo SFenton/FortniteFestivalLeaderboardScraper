@@ -42,6 +42,7 @@ public class PostScrapeRefresher
         IReadOnlyList<string> chartedSongIds,
         string accessToken,
         string callerAccountId,
+        AdaptiveConcurrencyLimiter limiter,
         int maxConcurrency = 10,
         int lookupBatchSize = 500,
         CancellationToken ct = default)
@@ -51,18 +52,14 @@ public class PostScrapeRefresher
         var instruments = GlobalLeaderboardScraper.AllInstruments;
         int totalLeaderboards = chartedSongIds.Count * instruments.Count;
 
-        int initialDop = Math.Max(1, maxConcurrency / 2);
-        int maxDop = maxConcurrency;
-        using var limiter = new AdaptiveConcurrencyLimiter(
-            initialDop, minDop: 2, maxDop: maxDop, _log);
         _progress.SetAdaptiveLimiter(limiter);
         _progress.BeginPhaseProgress(totalLeaderboards);
 
         _log.LogInformation(
             "Post-scrape refresh: {Songs} songs × {Instruments} instruments = {Total} leaderboards, "
-            + "{Users} registered users, batch size {BatchSize}, DOP={InitialDop}→{MaxDop}.",
+            + "{Users} registered users, batch size {BatchSize}, DOP={CurrentDop}.",
             chartedSongIds.Count, instruments.Count, totalLeaderboards,
-            registeredAccountIds.Count, lookupBatchSize, initialDop, maxDop);
+            registeredAccountIds.Count, lookupBatchSize, limiter.CurrentDop);
 
         int totalUpdated = 0;
 
@@ -232,6 +229,7 @@ public class PostScrapeRefresher
         string seasonPrefix,
         string accessToken,
         string callerAccountId,
+        AdaptiveConcurrencyLimiter limiter,
         int maxConcurrency = 10,
         int lookupBatchSize = 500,
         CancellationToken ct = default)
@@ -241,10 +239,6 @@ public class PostScrapeRefresher
         var instruments = GlobalLeaderboardScraper.AllInstruments;
         int totalLeaderboards = chartedSongIds.Count * instruments.Count;
 
-        int initialDop = Math.Max(1, maxConcurrency / 2);
-        int maxDop = maxConcurrency;
-        using var limiter = new AdaptiveConcurrencyLimiter(
-            initialDop, minDop: 2, maxDop: maxDop, _log);
         _progress.SetAdaptiveLimiter(limiter);
         _progress.BeginPhaseProgress(totalLeaderboards);
 

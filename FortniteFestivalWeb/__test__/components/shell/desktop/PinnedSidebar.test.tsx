@@ -6,6 +6,11 @@ vi.mock('../../../../src/contexts/FeatureFlagsContext', () => ({
   useFeatureFlags: () => ({ shop: true, rivals: true, compete: true, leaderboards: true, firstRun: true }),
 }));
 
+const mockScrollRef = { current: null as HTMLDivElement | null };
+vi.mock('../../../../src/contexts/ScrollContainerContext', () => ({
+  useScrollContainer: () => mockScrollRef,
+}));
+
 import PinnedSidebar from '../../../../src/components/shell/desktop/PinnedSidebar';
 import { SettingsProvider } from '../../../../src/contexts/SettingsContext';
 import { Colors } from '@festival/theme';
@@ -132,5 +137,17 @@ describe('PinnedSidebar — route-specific active styling', () => {
   it('shows player name as link', () => {
     renderPinned({ player: { accountId: 'p1', displayName: 'TestP' } });
     expect(screen.getByText('TestP').closest('a')).toBeTruthy();
+  });
+});
+
+describe('PinnedSidebar — wheel scroll forwarding', () => {
+  it('forwards wheel events to scroll container', () => {
+    const scrollBy = vi.fn();
+    mockScrollRef.current = { scrollBy } as unknown as HTMLDivElement;
+    const { container } = renderPinned();
+    const aside = container.querySelector('[data-testid="pinned-sidebar"]')!;
+    fireEvent.wheel(aside, { deltaY: 120, deltaX: 0 });
+    expect(scrollBy).toHaveBeenCalledWith({ top: 120, left: 0 });
+    mockScrollRef.current = null;
   });
 });

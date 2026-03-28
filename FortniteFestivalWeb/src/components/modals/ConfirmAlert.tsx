@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useMemo, useEffect, useLayoutEffect, useState, type CSSProperties } from 'react';
+import { useMemo, useEffect, useLayoutEffect, useState, useCallback, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Colors, Font, Weight, Gap, Radius, ZIndex, LineHeight, Layout, Opacity,
@@ -14,15 +14,19 @@ export default function ConfirmAlert({
   message,
   onNo,
   onYes,
+  onExitComplete,
 }: {
   title: string;
   message: string;
   onNo: () => void;
   onYes: () => void;
+  /** When provided, enables exit animation: dismiss fades out then calls onExitComplete to unmount. */
+  onExitComplete?: () => void;
 }) {
   const { t } = useTranslation();
   const [animIn, setAnimIn] = useState(false);
-  const s = useStyles(animIn);
+  const [animOut, setAnimOut] = useState(false);
+  const s = useStyles(animIn, animOut);
 
   /* v8 ignore start — animation setup */
   useLayoutEffect(() => {
@@ -31,21 +35,42 @@ export default function ConfirmAlert({
   }, []);
   /* v8 ignore stop */
 
+  /* v8 ignore start — exit animation handlers */
+  const handleNo = useCallback(() => {
+    if (animOut) return;
+    if (onExitComplete) {
+      setAnimOut(true);
+      setTimeout(() => onExitComplete(), TRANSITION_MS);
+    } else {
+      onNo();
+    }
+  }, [animOut, onNo, onExitComplete]);
+
+  const handleYes = useCallback(() => {
+    if (animOut) return;
+    onYes();
+    if (onExitComplete) {
+      setAnimOut(true);
+      setTimeout(() => onExitComplete(), TRANSITION_MS);
+    }
+  }, [animOut, onYes, onExitComplete]);
+  /* v8 ignore stop */
+
   useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onNo(); };
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') handleNo(); };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [onNo]);
+  }, [handleNo]);
 
   return (
     /* v8 ignore start — animation ternaries */
-    <div style={s.overlay} onClick={onNo}>
+    <div style={s.overlay} onClick={handleNo}>
       <div style={s.card} onClick={e => e.stopPropagation()}>
         <div style={s.title}>{title}</div>
         <div style={s.message}>{message}</div>
         <div style={s.buttons}>
-          <button style={s.btnNo} onClick={onNo}>{t('common.no')}</button>
-          <button style={s.btnYes} onClick={onYes}>{t('common.yes')}</button>
+          <button style={s.btnNo} onClick={handleNo}>{t('common.no')}</button>
+          <button style={s.btnYes} onClick={handleYes}>{t('common.yes')}</button>
         </div>
       </div>
     </div>
@@ -53,13 +78,14 @@ export default function ConfirmAlert({
   );
 }
 
-function useStyles(animIn: boolean) {
+function useStyles(animIn: boolean, animOut: boolean) {
   return useMemo(() => ({
     overlay: {
       ...modalOverlay,
       zIndex: ZIndex.confirmOverlay,
-      opacity: animIn ? 1 : Opacity.none,
+      opacity: animOut ? Opacity.none : animIn ? 1 : Opacity.none,
       transition: transition(CssProp.opacity, TRANSITION_MS),
+      pointerEvents: animOut ? 'none' as const : undefined,
     } as CSSProperties,
     card: {
       ...modalCard,
@@ -67,8 +93,8 @@ function useStyles(animIn: boolean) {
       padding: padding(Gap.section),
       maxWidth: Layout.confirmMaxWidth,
       width: '90%',
-      opacity: animIn ? 1 : Opacity.none,
-      transform: animIn ? scale(1) : scale(MODAL_SCALE_ENTER),
+      opacity: animOut ? Opacity.none : animIn ? 1 : Opacity.none,
+      transform: animOut ? scale(MODAL_SCALE_ENTER) : animIn ? scale(1) : scale(MODAL_SCALE_ENTER),
       transition: transitions(
         transition(CssProp.opacity, TRANSITION_MS),
         transition(CssProp.transform, TRANSITION_MS),
@@ -107,5 +133,5 @@ function useStyles(animIn: boolean) {
       padding: padding(Gap.xl),
       fontSize: Font.md,
     } as CSSProperties,
-  }), [animIn]);
+  }), [animIn, animOut]);
 }

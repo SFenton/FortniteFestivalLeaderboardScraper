@@ -1,4 +1,5 @@
 using System.Net;
+using FortniteFestival.Core.Scraping;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
@@ -17,6 +18,7 @@ public class PostScrapeRefresherTests : IDisposable
     private readonly string _dataDir;
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly ILogger<PostScrapeRefresher> _log = Substitute.For<ILogger<PostScrapeRefresher>>();
+    private readonly AdaptiveConcurrencyLimiter _limiter;
 
     public PostScrapeRefresherTests()
     {
@@ -28,10 +30,12 @@ public class PostScrapeRefresherTests : IDisposable
         var persLog = Substitute.For<ILogger<GlobalLeaderboardPersistence>>();
         _persistence = new GlobalLeaderboardPersistence(_dataDir, _metaDb.Db, loggerFactory, persLog);
         _persistence.Initialize();
+        _limiter = new AdaptiveConcurrencyLimiter(16, minDop: 2, maxDop: 64, Substitute.For<ILogger>());
     }
 
     public void Dispose()
     {
+        _limiter.Dispose();
         _persistence.Dispose();
         _metaDb.Dispose();
         try { Directory.Delete(_dataDir, true); } catch { }
@@ -58,7 +62,7 @@ public class PostScrapeRefresherTests : IDisposable
         var seen = new HashSet<(string, string, string)>();
 
         var result = await refresher.RefreshAllAsync(
-            empty, seen, ["songA"], "token", "caller");
+            empty, seen, ["songA"], "token", "caller", _limiter);
 
         Assert.Equal(0, result);
     }
@@ -82,7 +86,7 @@ public class PostScrapeRefresherTests : IDisposable
         };
 
         var result = await refresher.RefreshAllAsync(
-            registered, seen, ["songA"], "token", "caller");
+            registered, seen, ["songA"], "token", "caller", _limiter);
 
         Assert.Equal(0, result);
         Assert.Empty(handler.Requests);
@@ -110,7 +114,7 @@ public class PostScrapeRefresherTests : IDisposable
         """);
 
         var result = await refresher.RefreshAllAsync(
-            registered, seen, ["songA"], "token", "caller");
+            registered, seen, ["songA"], "token", "caller", _limiter);
 
         Assert.Equal(1, result);
 
@@ -153,7 +157,7 @@ public class PostScrapeRefresherTests : IDisposable
         """);
 
         var result = await refresher.RefreshAllAsync(
-            registered, seen, ["songA"], "token", "caller");
+            registered, seen, ["songA"], "token", "caller", _limiter);
 
         Assert.Equal(1, result);
 
@@ -177,7 +181,7 @@ public class PostScrapeRefresherTests : IDisposable
         handler.EnqueueError(HttpStatusCode.Forbidden);
 
         var result = await refresher.RefreshAllAsync(
-            registered, seen, ["songA"], "token", "caller");
+            registered, seen, ["songA"], "token", "caller", _limiter);
 
         Assert.Equal(0, result);
     }
@@ -197,7 +201,7 @@ public class PostScrapeRefresherTests : IDisposable
         handler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
 
         var result = await refresher.RefreshAllAsync(
-            registered, seen, ["songA"], "token", "caller");
+            registered, seen, ["songA"], "token", "caller", _limiter);
 
         Assert.Equal(0, result);
     }
@@ -225,7 +229,7 @@ public class PostScrapeRefresherTests : IDisposable
         handler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
 
         var result = await refresher.RefreshAllAsync(
-            registered, seen, ["songA"], "token", "caller");
+            registered, seen, ["songA"], "token", "caller", _limiter);
 
         Assert.Equal(0, result);
         // Original entry should still be there (not deleted)
@@ -262,7 +266,7 @@ public class PostScrapeRefresherTests : IDisposable
         """);
 
         var result = await refresher.RefreshAllAsync(
-            registered, seen, ["songA"], "token", "caller");
+            registered, seen, ["songA"], "token", "caller", _limiter);
 
         // Stale entries are always re-upserted regardless of score change
         Assert.Equal(1, result);
@@ -290,7 +294,7 @@ public class PostScrapeRefresherTests : IDisposable
             handler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
 
         var result = await refresher.RefreshAllAsync(
-            registered, seen, ["songA"], "token", "caller");
+            registered, seen, ["songA"], "token", "caller", _limiter);
 
         // Neither account has updated entries
         Assert.Equal(0, result);
@@ -316,6 +320,6 @@ public class PostScrapeRefresherTests : IDisposable
 
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
             refresher.RefreshAllAsync(
-                registered, seen, ["songA"], "token", "caller"));
+                registered, seen, ["songA"], "token", "caller", _limiter));
     }
 }

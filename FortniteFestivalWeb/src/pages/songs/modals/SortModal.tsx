@@ -84,7 +84,8 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
           title={t('sort.cancelTitle')}
           message={t('sort.cancelMessage')}
           onNo={() => setConfirmOpen(false)}
-          onYes={confirmDiscard}
+          onYes={onCancel}
+          onExitComplete={() => setConfirmOpen(false)}
         />
       ) : null}>
       {/* v8 ignore start -- sort mode Accordion with hideItemShop */}

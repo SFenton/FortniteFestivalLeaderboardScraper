@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
+import { TRANSITION_MS } from '@festival/theme';
 
 vi.mock('../../../src/hooks/data/useVersions', () => ({
   APP_VERSION: '1.2.3',
@@ -84,5 +85,53 @@ describe('ChangelogModal', () => {
     const content = card.children[1] as HTMLElement;
     fireEvent.scroll(content);
     // No error — handleScroll exercised
+  });
+
+  describe('exit animation', () => {
+    it('dismiss with onExitComplete calls onDismiss immediately and onExitComplete after delay', () => {
+      vi.useFakeTimers();
+      const onDismiss = vi.fn();
+      const onExitComplete = vi.fn();
+      render(<ChangelogModal onDismiss={onDismiss} onExitComplete={onExitComplete} />);
+      fireEvent.click(screen.getByText('Dismiss'));
+      expect(onDismiss).toHaveBeenCalled();
+      expect(onExitComplete).not.toHaveBeenCalled();
+      act(() => { vi.advanceTimersByTime(TRANSITION_MS); });
+      expect(onExitComplete).toHaveBeenCalled();
+      vi.useRealTimers();
+    });
+
+    it('Escape with onExitComplete calls onDismiss immediately and onExitComplete after delay', () => {
+      vi.useFakeTimers();
+      const onDismiss = vi.fn();
+      const onExitComplete = vi.fn();
+      render(<ChangelogModal onDismiss={onDismiss} onExitComplete={onExitComplete} />);
+      fireEvent.keyDown(document, { key: 'Escape' });
+      expect(onDismiss).toHaveBeenCalled();
+      expect(onExitComplete).not.toHaveBeenCalled();
+      act(() => { vi.advanceTimersByTime(TRANSITION_MS); });
+      expect(onExitComplete).toHaveBeenCalled();
+      vi.useRealTimers();
+    });
+
+    it('double-dismiss during exit animation is ignored', () => {
+      vi.useFakeTimers();
+      const onDismiss = vi.fn();
+      const onExitComplete = vi.fn();
+      render(<ChangelogModal onDismiss={onDismiss} onExitComplete={onExitComplete} />);
+      fireEvent.click(screen.getByText('Dismiss'));
+      fireEvent.click(screen.getByText('Dismiss'));
+      expect(onDismiss).toHaveBeenCalledTimes(1);
+      act(() => { vi.advanceTimersByTime(TRANSITION_MS); });
+      expect(onExitComplete).toHaveBeenCalledTimes(1);
+      vi.useRealTimers();
+    });
+
+    it('without onExitComplete, onDismiss is called directly (backward compat)', () => {
+      const onDismiss = vi.fn();
+      render(<ChangelogModal onDismiss={onDismiss} />);
+      fireEvent.click(screen.getByText('Dismiss'));
+      expect(onDismiss).toHaveBeenCalled();
+    });
   });
 });

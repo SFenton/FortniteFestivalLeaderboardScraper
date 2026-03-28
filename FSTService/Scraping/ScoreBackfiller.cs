@@ -46,6 +46,7 @@ public class ScoreBackfiller
         FestivalService festivalService,
         string accessToken,
         string callerAccountId,
+        AdaptiveConcurrencyLimiter limiter,
         int maxConcurrency = 10,
         CancellationToken ct = default)
     {
@@ -102,15 +103,7 @@ public class ScoreBackfiller
 
         try
         {
-            int initialDop = Math.Max(1, maxConcurrency / 2);
-            int maxDop = maxConcurrency;
-            using var limiter = new AdaptiveConcurrencyLimiter(
-                initialDop, minDop: 2, maxDop: maxDop, _log);
             _progress.SetAdaptiveLimiter(limiter);
-
-            _log.LogInformation(
-                "Backfill using adaptive concurrency: initial DOP={InitialDop}, max={MaxDop}.",
-                initialDop, maxDop);
 
             var tasks = workItems.Select(async item =>
             {

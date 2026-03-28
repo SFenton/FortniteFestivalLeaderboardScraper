@@ -6,6 +6,7 @@ import { IoPerson, IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings, IoBagHa
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
 import { useSettings } from '../../../contexts/SettingsContext';
 import { useFeatureFlags } from '../../../contexts/FeatureFlagsContext';
+import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import {
   Colors, Font, Weight, Gap, Radius, Border, Layout, ZIndex,
   Display, Align, Justify, Position, Cursor, BoxSizing, CssValue, CssProp,
@@ -23,12 +24,13 @@ export default function PinnedSidebar({ player, onDeselect, onSelectPlayer }: Pi
   const { t } = useTranslation();
   const { settings } = useSettings();
   const flags = useFeatureFlags();
+  const scrollRef = useScrollContainer();
   const s = useStyles();
 
   const linkClass = (isActive: boolean) => isActive ? s.linkActive : s.link;
 
   return (
-    <aside style={s.sidebar} data-testid="pinned-sidebar">
+    <aside style={s.sidebar} data-testid="pinned-sidebar" onWheel={(e) => { scrollRef.current?.scrollBy({ top: e.deltaY, left: e.deltaX }); }}>
       <nav style={s.nav}>
         <NavLink to="/songs" style={({ isActive }) => linkClass(isActive)}>
           <span style={s.linkIcon}><IoMusicalNotes size={20} /></span>

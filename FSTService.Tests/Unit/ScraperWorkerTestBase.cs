@@ -173,10 +173,14 @@ public abstract class ScraperWorkerTestBase : IDisposable
         dbInitializer.StartAsync(CancellationToken.None);
         dbInitializer.WaitForReadyAsync().GetAwaiter().GetResult();
 
+        var scrapeOrchestrator = new ScrapeOrchestrator(
+            _scraper, _persistence, _progress, options,
+            Substitute.For<ILogger<ScrapeOrchestrator>>());
+
         return new ScraperWorker(
             _tokenManager, _scraper, _persistence,
             _festivalService, dbInitializer,
-            postScrapeOrchestrator, backfillOrchestrator,
+            scrapeOrchestrator, postScrapeOrchestrator, backfillOrchestrator,
             pathGenerator, pathDataStore,
             _progress, options, _lifetime, _log);
     }

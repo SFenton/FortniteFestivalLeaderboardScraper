@@ -148,7 +148,8 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
           title={t('suggestionsFilter.cancelTitle')}
           message={t('suggestionsFilter.cancelMessage')}
           onNo={() => setConfirmOpen(false)}
-          onYes={confirmDiscard}
+          onYes={onCancel}
+          onExitComplete={() => setConfirmOpen(false)}
         />
       ) : null}>
       {/* Instruments */}

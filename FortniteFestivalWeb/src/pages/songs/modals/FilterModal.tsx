@@ -77,7 +77,8 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
           title={t('filter.cancelTitle')}
           message={t('filter.cancelMessage')}
           onNo={() => setConfirmOpen(false)}
-          onYes={confirmDiscard}
+          onYes={onCancel}
+          onExitComplete={() => setConfirmOpen(false)}
         />
       ) : null}>
       {/* Global filters */}

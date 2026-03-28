@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import SortModal, { type SortDraft, type MetadataVisibility } from '../../../../src/pages/songs/modals/SortModal';
 import { INSTRUMENT_KEYS, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { DEFAULT_METADATA_ORDER } from '../../../../src/utils/songSettings';
+import { TRANSITION_MS } from '@festival/theme';
 import { TestProviders } from '../../../helpers/TestProviders';
 
 /* ── Helpers ── */
@@ -348,6 +349,7 @@ describe('SortModal', () => {
   });
 
   it('confirm dialog "No" dismisses the dialog', () => {
+    vi.useFakeTimers();
     const draft = baseDraft();
     draft.sortMode = 'artist';
     const props = defaultProps();
@@ -356,7 +358,9 @@ describe('SortModal', () => {
     fireEvent.click(screen.getByLabelText('Close'));
     fireEvent.click(screen.getByText('No'));
     expect(props.onCancel).not.toHaveBeenCalled();
+    act(() => { vi.advanceTimersByTime(TRANSITION_MS); });
     expect(screen.queryByText('Discard Sort Changes')).toBeNull();
+    vi.useRealTimers();
   });
 
   it('confirm dialog "Yes" calls onCancel', () => {

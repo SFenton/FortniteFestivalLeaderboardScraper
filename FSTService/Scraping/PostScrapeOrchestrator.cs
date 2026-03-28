@@ -1,3 +1,4 @@
+using FortniteFestival.Core.Scraping;
 using FortniteFestival.Core.Services;
 using FSTService.Api;
 using FSTService.Auth;
@@ -65,7 +66,15 @@ public sealed class PostScrapeOrchestrator
         PruneExcessEntries(ctx);
         await ComputeRankingsAsync(service, ct);
         await RebuildPersonalDbsAsync(ctx, ct);
-        await RefreshRegisteredUsersAsync(ctx, ct);
+
+        // Create a shared adaptive concurrency limiter for all refresh phases.
+        var refreshConcurrency = Math.Max(1, _options.Value.SongConcurrency)
+            * GlobalLeaderboardScraper.AllInstruments.Count
+            * Math.Max(1, _options.Value.PageConcurrency);
+        int initialDop = Math.Max(1, refreshConcurrency / 2);
+        using var limiter = new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: refreshConcurrency, _log);
+
+        await RefreshRegisteredUsersAsync(ctx, limiter, ct);
         await ComputeRivalsAsync(ctx, ct);
         CleanupSessions();
     }
@@ -187,7 +196,7 @@ public sealed class PostScrapeOrchestrator
     /// <summary>
     /// Refresh stale/missing entries for registered users by re-querying the Epic API.
     /// </summary>
-    internal async Task RefreshRegisteredUsersAsync(ScrapePassContext ctx, CancellationToken ct)
+    internal async Task RefreshRegisteredUsersAsync(ScrapePassContext ctx, AdaptiveConcurrencyLimiter limiter, CancellationToken ct)
     {
         if (ctx.RegisteredIds.Count == 0)
             return;
@@ -203,14 +212,13 @@ public sealed class PostScrapeOrchestrator
             var refreshToken = await _tokenManager.GetAccessTokenAsync(ct);
             if (refreshToken is not null)
             {
-                // Match scrape-phase concurrency: songDop × instruments × pageDop
                 var refreshConcurrency = Math.Max(1, _options.Value.SongConcurrency)
                     * GlobalLeaderboardScraper.AllInstruments.Count
                     * Math.Max(1, _options.Value.PageConcurrency);
                 var refreshed = await _refresher.RefreshAllAsync(
                     ctx.RegisteredIds, seenSet, chartedSongIds,
                     refreshToken, _tokenManager.AccountId!,
-                    refreshConcurrency, _options.Value.LookupBatchSize, ct);
+                    limiter, refreshConcurrency, _options.Value.LookupBatchSize, ct);
                 if (refreshed > 0)
                     _log.LogInformation("Post-scrape refresh updated {Count} entries for registered users.", refreshed);
 
@@ -223,7 +231,7 @@ public sealed class PostScrapeOrchestrator
                     var newSessions = await _refresher.RefreshCurrentSeasonSessionsAsync(
                         ctx.RegisteredIds, chartedSongIds, seasonPrefix,
                         refreshToken, _tokenManager.AccountId!,
-                        refreshConcurrency, _options.Value.LookupBatchSize, ct);
+                        limiter, refreshConcurrency, _options.Value.LookupBatchSize, ct);
                     if (newSessions > 0)
                         _log.LogInformation("Current-season session refresh captured {Count} new history entries.", newSessions);
                 }

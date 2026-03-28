@@ -117,8 +117,13 @@ public static partial class ApiEndpoints
                         if (festivalService.Songs.Count == 0)
                             await festivalService.InitializeAsync();
 
+                        int initialDop = Math.Max(1, dop / 2);
+                        using var limiter = new FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter(
+                            initialDop, minDop: 2, maxDop: dop,
+                            loggerFactory.CreateLogger("PlayerBackfillLimiter"));
+
                         await backfiller.BackfillAccountAsync(
-                            accountId, festivalService, accessToken, callerAccountId, dop, CancellationToken.None);
+                            accountId, festivalService, accessToken, callerAccountId, limiter, dop, CancellationToken.None);
 
                         // Reconstruct score history
                         var reconStatus = metaDb.GetHistoryReconStatus(accountId);
@@ -129,8 +134,8 @@ public static partial class ApiEndpoints
                             if (seasonWindows.Count > 0)
                             {
                                 await historyReconstructor.ReconstructAccountAsync(
-                                    accountId, seasonWindows, accessToken, callerAccountId, dop,
-                                    ct: CancellationToken.None);
+                                    accountId, seasonWindows, accessToken, callerAccountId, limiter, dop,
+                                    CancellationToken.None);
                             }
                         }
 

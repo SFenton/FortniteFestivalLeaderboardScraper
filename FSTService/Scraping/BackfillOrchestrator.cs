@@ -1,3 +1,4 @@
+using FortniteFestival.Core.Scraping;
 using FortniteFestival.Core.Services;
 using FSTService.Api;
 using FSTService.Auth;
@@ -78,6 +79,10 @@ public sealed class BackfillOrchestrator
         }
 
         var callerAccountId = _tokenManager.AccountId!;
+        var dop = _options.Value.PageConcurrency;
+        int initialDop = Math.Max(1, dop / 2);
+        using var limiter = new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: dop, _log);
+        _progress.SetAdaptiveLimiter(limiter);
 
         foreach (var accountId in accountIds)
         {
@@ -86,7 +91,7 @@ public sealed class BackfillOrchestrator
             {
                 var found = await _backfiller.BackfillAccountAsync(
                     accountId, service, accessToken, callerAccountId,
-                    _options.Value.PageConcurrency, ct);
+                    limiter, _options.Value.PageConcurrency, ct);
 
                 if (found > 0)
                 {
@@ -188,7 +193,7 @@ public sealed class BackfillOrchestrator
             {
                 var entries = await _historyReconstructor.ReconstructAccountAsync(
                     accountId, seasonWindows, accessToken, callerAccountId,
-                    dop, sharedLimiter, ct);
+                    sharedLimiter, dop, ct);
 
                 if (entries > 0)
                 {

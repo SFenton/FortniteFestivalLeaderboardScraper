@@ -90,12 +90,14 @@ export function useFirstRun(pageKey: string, gateCtx: FirstRunGateContext): UseF
 type UseFirstRunReplayResult = {
   /** All slides for the page (bypasses gates + seen state). */
   slides: FirstRunSlideDef[];
-  /** Whether the replay carousel is open. */
+  /** Whether the replay carousel is open (includes exit animation period). */
   show: boolean;
   /** Open the replay carousel. */
   open: () => void;
-  /** Close the replay carousel (marks all as seen). */
+  /** Close the replay carousel (marks all as seen, begins exit animation). */
   dismiss: () => void;
+  /** Called by FirstRunCarousel after its exit animation completes. */
+  onExitComplete: () => void;
 };
 
 /**
@@ -119,13 +121,17 @@ export function useFirstRunReplay(pageKey: string): UseFirstRunReplayResult {
     if (slides.length > 0) {
       markSeen(slides);
     }
-    setShowReplay(false);
   }, [slides, markSeen]);
+
+  const onExitComplete = useCallback(() => {
+    setShowReplay(false);
+  }, []);
 
   return useMemo(() => ({
     slides,
     show: showReplay,
     open,
     dismiss,
-  }), [slides, showReplay, open, dismiss]);
+    onExitComplete,
+  }), [slides, showReplay, open, dismiss, onExitComplete]);
 }

@@ -203,6 +203,16 @@ describe('edge cases — limited maxBars', () => {
     const { container } = wrap(<ChartDemo />);
     expect(container.querySelector('.recharts-bar')).toBeTruthy();
   });
+
+  it('BarSelectDemo does not cycle when only 1 bar visible', async () => {
+    mockMaxBars = 1;
+    wrap(<BarSelectDemo />);
+    // Only the last data point (486,500) should be visible and selected
+    expect(screen.getByText('486,500')).toBeTruthy();
+    // Advance well past cycle interval — score should remain the same
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(screen.getByText('486,500')).toBeTruthy();
+  });
 });
 
 describe('edge cases — tiny slide height', () => {

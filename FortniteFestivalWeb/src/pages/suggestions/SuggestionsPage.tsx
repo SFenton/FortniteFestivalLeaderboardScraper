@@ -32,7 +32,7 @@ import PageHeader from '../../components/common/PageHeader';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import { useScrollFade } from '../../hooks/ui/useScrollFade';
-import { useLoadPhase } from '../../hooks/data/useLoadPhase';
+import { usePageTransition } from '../../hooks/ui/usePageTransition';
 import { useModalState } from '../../hooks/ui/useModalState';
 import FadeIn from '../../components/page/FadeIn';
 import { CategoryCard } from './components/CategoryCard';
@@ -48,8 +48,6 @@ import {
 } from './suggestionsHelpers';
 
 type SuggestionsPageProps = { accountId: string };
-
-let _suggestionsHasRendered = false;
 
 /* v8 ignore start — render orchestrator; business logic tested in suggestionsHelpers.ts (35 unit tests), component exercised by 42 integration tests */
 export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
@@ -215,11 +213,9 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
   }, [loadMore, filterExhausted]);
 
   const dataReady = !(isLoading || playerLoading) || categories.length > 0;
-  
-  const skipAnimRef = useRef(_suggestionsHasRendered);
-  const skipAnim = skipAnimRef.current;
-  _suggestionsHasRendered = true;
-  const { phase } = useLoadPhase(dataReady, { skipAnimation: skipAnim });
+  const hasCachedData = categories.length > 0;
+  const { phase, shouldStagger } = usePageTransition(`suggestions:${accountId}`, dataReady, hasCachedData);
+  const skipAnim = !shouldStagger;
 
   // Per-card scroll fade
   const updateCardFade = useScrollFade(scrollContainerRef, listRef, [phase, visibleCategories]);

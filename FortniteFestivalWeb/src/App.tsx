@@ -224,7 +224,6 @@ function AppShell() {
   /* v8 ignore start — modal dismiss callback */
   const dismissChangelog = useCallback(() => {
     localStorage.setItem(CHANGELOG_STORAGE_KEY, JSON.stringify({ version: APP_VERSION, hash: changelogHash() }));
-    setChangelogDismissed(true);
   }, []);
   /* v8 ignore stop */
   const navigate = useNavigate();
@@ -591,7 +590,7 @@ function AppShell() {
         isMobile={isNarrow}
         title={t('common.findPlayer')}
       />
-      {showChangelog && <ChangelogModal onDismiss={dismissChangelog} />}
+      {showChangelog && <ChangelogModal onDismiss={dismissChangelog} onExitComplete={() => setChangelogDismissed(true)} />}
       {/* v8 ignore stop */}
     </div>
     </PlayerDataProvider>

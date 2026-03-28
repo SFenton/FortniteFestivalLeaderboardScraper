@@ -52,7 +52,8 @@ export default function PlayerScoreSortModal({ visible, draft, savedDraft, onCha
             title={t('sort.cancelTitle')}
             message={t('sort.cancelMessage')}
             onNo={() => setConfirmOpen(false)}
-            onYes={confirmDiscard}
+            onYes={onCancel}
+            onExitComplete={() => setConfirmOpen(false)}
           />
         ) : null}
       >

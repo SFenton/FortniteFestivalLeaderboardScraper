@@ -14,32 +14,44 @@ import { APP_VERSION } from '../../hooks/data/useVersions';
 import { changelog, type ChangelogEntry } from '../../changelog';
 import { useScrollMask } from '../../hooks/ui/useScrollMask';
 
-export default function ChangelogModal({ onDismiss }: { onDismiss: () => void }) {
+export default function ChangelogModal({ onDismiss, onExitComplete }: { onDismiss: () => void; onExitComplete?: () => void }) {
   const { t } = useTranslation();
   const [animIn, setAnimIn] = useState(false);
+  const [animOut, setAnimOut] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const s = useStyles(animIn);
+  const s = useStyles(animIn, animOut);
 
   useLayoutEffect(() => {
     const id = requestAnimationFrame(() => setAnimIn(true));
     return () => cancelAnimationFrame(id);
   }, []);
 
+  /* v8 ignore start — exit animation handler */
+  const handleDismiss = useCallback(() => {
+    if (animOut) return;
+    onDismiss();
+    if (onExitComplete) {
+      setAnimOut(true);
+      setTimeout(() => onExitComplete(), TRANSITION_MS);
+    }
+  }, [animOut, onDismiss, onExitComplete]);
+  /* v8 ignore stop */
+
   useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onDismiss(); };
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') handleDismiss(); };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [onDismiss]);
+  }, [handleDismiss]);
 
   const updateMask = useScrollMask(scrollRef, [animIn], { selfScroll: true });
   const handleScroll = useCallback(() => updateMask(), [updateMask]);
 
   return (
-    <div style={s.overlay} onClick={onDismiss}>
+    <div style={s.overlay} onClick={handleDismiss}>
       <div style={s.card} onClick={e => e.stopPropagation()}>
         <div style={s.header}>
           <h2 style={s.title}>{t('changelog.title')} <span style={s.dot}>·</span> {APP_VERSION}</h2>
-          <button style={s.closeBtn} onClick={onDismiss} aria-label={t('common.close')}>
+          <button style={s.closeBtn} onClick={handleDismiss} aria-label={t('common.close')}>
             <IoClose size={18} />
           </button>
         </div>
@@ -62,7 +74,7 @@ export default function ChangelogModal({ onDismiss }: { onDismiss: () => void })
         </div>
 
         <div style={s.footer}>
-          <button style={s.dismissBtn} onClick={onDismiss}>
+          <button style={s.dismissBtn} onClick={handleDismiss}>
             {t('common.dismiss')}
           </button>
         </div>
@@ -71,14 +83,15 @@ export default function ChangelogModal({ onDismiss }: { onDismiss: () => void })
   );
 }
 
-function useStyles(animIn: boolean) {
+function useStyles(animIn: boolean, animOut: boolean) {
   return useMemo(() => ({
     overlay: {
       ...modalOverlay,
       zIndex: ZIndex.changelogOverlay,
       padding: padding(Gap.section),
-      opacity: animIn ? 1 : Opacity.none,
+      opacity: animOut ? Opacity.none : animIn ? 1 : Opacity.none,
       transition: transition(CssProp.opacity, TRANSITION_MS),
+      pointerEvents: animOut ? 'none' as const : undefined,
     } as CSSProperties,
     card: {
       ...modalCard,
@@ -88,8 +101,8 @@ function useStyles(animIn: boolean) {
       maxWidth: Layout.changelogMaxWidth,
       maxHeight: Layout.changelogMaxHeight,
       overflow: Overflow.hidden,
-      opacity: animIn ? 1 : Opacity.none,
-      transform: animIn ? scaleTranslateY(1, 0) : scaleTranslateY(MODAL_SCALE_ENTER, MODAL_SLIDE_OFFSET),
+      opacity: animOut ? Opacity.none : animIn ? 1 : Opacity.none,
+      transform: animOut ? scaleTranslateY(MODAL_SCALE_ENTER, MODAL_SLIDE_OFFSET) : animIn ? scaleTranslateY(1, 0) : scaleTranslateY(MODAL_SCALE_ENTER, MODAL_SLIDE_OFFSET),
       transition: transitions(
         transition(CssProp.opacity, TRANSITION_MS),
         transition(CssProp.transform, TRANSITION_MS),
@@ -157,5 +170,5 @@ function useStyles(animIn: boolean) {
       fontWeight: Weight.bold,
       padding: padding(Gap.xl),
     } as CSSProperties,
-  }), [animIn]);
+  }), [animIn, animOut]);
 }

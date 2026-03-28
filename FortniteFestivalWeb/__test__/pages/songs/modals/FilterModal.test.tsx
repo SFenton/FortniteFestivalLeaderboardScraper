@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import FilterModal, { type FilterDraft } from '../../../../src/pages/songs/modals/FilterModal';
 import { INSTRUMENT_KEYS } from '@festival/core/api/serverTypes';
 import { defaultSongFilters } from '../../../../src/utils/songSettings';
+import { TRANSITION_MS } from '@festival/theme';
 import { TestProviders } from '../../../helpers/TestProviders';
 
 /* ── Helpers ── */
@@ -520,6 +521,7 @@ describe('FilterModal', () => {
   });
 
   it('confirm dialog "No" dismisses the dialog but stays open', () => {
+    vi.useFakeTimers();
     const draft = baseDraft();
     draft.missingScores['Solo_Guitar'] = true;
     const props = defaultProps();
@@ -528,8 +530,10 @@ describe('FilterModal', () => {
     fireEvent.click(screen.getByLabelText('Close'));
     fireEvent.click(screen.getByText('No'));
     expect(props.onCancel).not.toHaveBeenCalled();
-    // Confirm dialog should be gone
+    // Confirm dialog should be gone after exit animation
+    act(() => { vi.advanceTimersByTime(TRANSITION_MS); });
     expect(screen.queryByText('Discard Filter Changes')).toBeNull();
+    vi.useRealTimers();
   });
 
   it('confirm dialog "Yes" calls onCancel', () => {

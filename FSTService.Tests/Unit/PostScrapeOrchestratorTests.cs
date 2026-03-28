@@ -1,3 +1,4 @@
+using FortniteFestival.Core.Scraping;
 using FortniteFestival.Core.Services;
 using FSTService.Api;
 using FSTService.Auth;
@@ -24,6 +25,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     private readonly NotificationService _notifications;
     private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<PostScrapeOrchestrator> _log;
+    private readonly AdaptiveConcurrencyLimiter _testLimiter;
 
     private readonly PostScrapeOrchestrator _sut;
 
@@ -91,10 +93,12 @@ public class PostScrapeOrchestratorTests : IDisposable
             _persistence, _firstSeenCalculator, _nameResolver,
             _personalDbBuilder, _refresher, rivalsOrchestrator, rankingsCalculator, _notifications,
             _tokenManager, _progress, Options.Create(new ScraperOptions()), _log);
+        _testLimiter = new AdaptiveConcurrencyLimiter(16, minDop: 2, maxDop: 64, Substitute.For<ILogger>());
     }
 
     public void Dispose()
     {
+        _testLimiter.Dispose();
         _persistence.Dispose();
         _metaDb.Dispose();
         try { Directory.Delete(_tempDir, true); } catch { }
@@ -177,10 +181,10 @@ public class PostScrapeOrchestratorTests : IDisposable
     {
         var ctx = CreateContext();
 
-        await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
+        await _sut.RefreshRegisteredUsersAsync(ctx, _testLimiter, CancellationToken.None);
 
         await _refresher.DidNotReceiveWithAnyArgs()
-            .RefreshAllAsync(default!, default!, default!, default!, default!, default, default);
+            .RefreshAllAsync(default!, default!, default!, default!, default!, default!, default, default);
     }
 
     [Fact]
@@ -196,6 +200,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             Arg.Any<List<string>>(),
             Arg.Any<string>(),
             Arg.Any<string>(),
+            Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(),
             Arg.Any<int>(),
             Arg.Any<int>(),
             Arg.Any<CancellationToken>())
@@ -203,7 +208,7 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         var ctx = CreateContext(registeredIds: new HashSet<string> { "user-1" });
 
-        await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
+        await _sut.RefreshRegisteredUsersAsync(ctx, _testLimiter, CancellationToken.None);
 
         await _refresher.Received(1).RefreshAllAsync(
             Arg.Any<HashSet<string>>(),
@@ -211,6 +216,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             Arg.Any<List<string>>(),
             Arg.Is("test-access-token"),
             Arg.Is("caller-001"),
+            Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(),
             Arg.Any<int>(),
             Arg.Any<int>(),
             Arg.Any<CancellationToken>());
@@ -224,10 +230,10 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         var ctx = CreateContext(registeredIds: new HashSet<string> { "user-1" });
 
-        await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
+        await _sut.RefreshRegisteredUsersAsync(ctx, _testLimiter, CancellationToken.None);
 
         await _refresher.DidNotReceiveWithAnyArgs()
-            .RefreshAllAsync(default!, default!, default!, default!, default!, default, default);
+            .RefreshAllAsync(default!, default!, default!, default!, default!, default!, default, default);
     }
 
     [Fact]
@@ -243,6 +249,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             Arg.Any<List<string>>(),
             Arg.Any<string>(),
             Arg.Any<string>(),
+            Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(),
             Arg.Any<int>(),
             Arg.Any<int>(),
             Arg.Any<CancellationToken>())
@@ -251,7 +258,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         var ctx = CreateContext(registeredIds: new HashSet<string> { "user-1" });
 
         // Should not throw
-        await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
+        await _sut.RefreshRegisteredUsersAsync(ctx, _testLimiter, CancellationToken.None);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -509,7 +516,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             .Returns("test-tok");
         _tokenManager.AccountId.Returns("caller-1");
 
-        await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
+        await _sut.RefreshRegisteredUsersAsync(ctx, _testLimiter, CancellationToken.None);
 
         // The progress phase should reflect RefreshingRegisteredUsers
         var progress = _progress.GetProgressResponse();

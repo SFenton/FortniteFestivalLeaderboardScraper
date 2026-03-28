@@ -304,8 +304,8 @@ public class HistoryReconstructor
         IReadOnlyList<SeasonWindowInfo> seasonWindows,
         string accessToken,
         string callerAccountId,
+        AdaptiveConcurrencyLimiter limiter,
         int maxConcurrency = 10,
-        AdaptiveConcurrencyLimiter? sharedLimiter = null,
         CancellationToken ct = default)
     {
         // Check if already completed
@@ -370,28 +370,7 @@ public class HistoryReconstructor
         int songsProcessed = alreadyProcessed.Count;
         int seasonsQueried = 0;
 
-        // Use the shared limiter if provided (multi-user parallelism), otherwise create a local one.
-        bool ownsLimiter = sharedLimiter is null;
-        AdaptiveConcurrencyLimiter limiter;
-        if (ownsLimiter)
-        {
-            int initialDop = Math.Max(1, maxConcurrency / 2);
-            int maxDop = maxConcurrency;
-            limiter = new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: maxDop, _log);
-            _progress.SetAdaptiveLimiter(limiter);
-
-            _log.LogInformation(
-                "Using local adaptive concurrency limiter: initial DOP={InitialDop}, min={MinDop}, max={MaxDop}.",
-                initialDop, 2, maxDop);
-        }
-        else
-        {
-            limiter = sharedLimiter;
-            _log.LogDebug("Using shared adaptive concurrency limiter (DOP={Dop}).", limiter.CurrentDop);
-        }
-
-        try
-        {
+        _progress.SetAdaptiveLimiter(limiter);
 
         // Process song/instrument pairs in parallel, throttled by adaptive limiter.
         // Each inner season query acquires/releases the limiter, so concurrency is
@@ -470,12 +449,6 @@ public class HistoryReconstructor
             accountId, totalHistoryEntries, seasonsQueried, songsProcessed);
 
         return totalHistoryEntries;
-        }
-        finally
-        {
-            if (ownsLimiter)
-                limiter.Dispose();
-        }
     }
 
     /// <summary>

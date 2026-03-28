@@ -2,7 +2,6 @@ using System.Diagnostics.CodeAnalysis;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
 using FortniteFestival.Core.Persistence;
-using FSTService.Api;
 using FSTService.Auth;
 using FSTService.Persistence;
 using FSTService.Scraping;
@@ -28,6 +27,7 @@ public sealed class ScraperWorker : BackgroundService
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly FestivalService _festivalService;
     private readonly DatabaseInitializer _dbInitializer;
+    private readonly ScrapeOrchestrator _scrapeOrchestrator;
     private readonly PostScrapeOrchestrator _postScrapeOrchestrator;
     private readonly BackfillOrchestrator _backfillOrchestrator;
     private readonly PathGenerator _pathGenerator;
@@ -46,6 +46,7 @@ public sealed class ScraperWorker : BackgroundService
         GlobalLeaderboardPersistence persistence,
         FestivalService festivalService,
         DatabaseInitializer dbInitializer,
+        ScrapeOrchestrator scrapeOrchestrator,
         PostScrapeOrchestrator postScrapeOrchestrator,
         BackfillOrchestrator backfillOrchestrator,
         PathGenerator pathGenerator,
@@ -60,6 +61,7 @@ public sealed class ScraperWorker : BackgroundService
         _persistence = persistence;
         _festivalService = festivalService;
         _dbInitializer = dbInitializer;
+        _scrapeOrchestrator = scrapeOrchestrator;
         _postScrapeOrchestrator = postScrapeOrchestrator;
         _backfillOrchestrator = backfillOrchestrator;
         _pathGenerator = pathGenerator;
@@ -308,23 +310,14 @@ public sealed class ScraperWorker : BackgroundService
     }
 
     private static IReadOnlyList<string> GetEnabledInstruments(ScraperOptions opts)
-    {
-        var instruments = new List<string>();
-        if (opts.QueryLead)    instruments.Add("Solo_Guitar");
-        if (opts.QueryBass)    instruments.Add("Solo_Bass");
-        if (opts.QueryVocals)  instruments.Add("Solo_Vocals");
-        if (opts.QueryDrums)   instruments.Add("Solo_Drums");
-        if (opts.QueryProLead) instruments.Add("Solo_PeripheralGuitar");
-        if (opts.QueryProBass) instruments.Add("Solo_PeripheralBass");
-        return instruments;
-    }
+        => ScrapeOrchestrator.GetEnabledInstruments(opts);
 
     // ─── Scrape pass (V1 alltime global) ────────────────────────
 
     /// <summary>
     /// Scrape all songs via V1 alltime global leaderboards.
-    /// Persistence is pipelined: each song's results are written to SQLite
-    /// as they arrive, overlapping disk I/O with ongoing network I/O.
+    /// Delegates core scraping to <see cref="ScrapeOrchestrator"/>, then
+    /// runs post-scrape enrichment and backfill via downstream orchestrators.
     /// </summary>
     private async Task RunScrapePassAsync(
         FestivalService service,
@@ -340,126 +333,15 @@ public sealed class ScraperWorker : BackgroundService
             return;
         }
 
-        var accountId = _tokenManager.AccountId!;
-
         // Re-sync the song catalog in case new songs appeared
         await service.SyncSongsAsync();
 
         // Fire-and-forget path generation (runs in parallel with the scrape)
         var pathGenTask = TryGeneratePathsAsync(service, force: false, ct);
 
-        // Start scrape log entry
-        var scrapeId = _persistence.Meta.StartScrapeRun();
-        _log.LogInformation("Scrape run #{ScrapeId} started.", scrapeId);
-
-        // Load registered account IDs for change detection
-        var registeredIds = _persistence.Meta.GetRegisteredAccountIds();
-        if (registeredIds.Count > 0)
-            _log.LogInformation("{Count} registered user(s) will be tracked for score changes.", registeredIds.Count);
-
-        // Build scrape requests: one per song, all enabled instruments.
-        // We no longer filter by catalog difficulty metadata because
-        // difficulty 0 is a valid value (not "uncharted"), and the API
-        // returns real leaderboard data for every instrument on every song.
-        var enabledInstruments = GetEnabledInstruments(opts);
-        var scrapeRequests = service.Songs
-            .Where(s => s.track?.su is not null)
-            .Select(song => new GlobalLeaderboardScraper.SongScrapeRequest
-            {
-                SongId = song.track.su,
-                Instruments = enabledInstruments,
-                Label = song.track.tt,
-            })
-            .ToList();
-
-        _log.LogInformation("Scraping {SongCount} songs across {InstrumentCount} instrument types (DOP={Dop})...",
-            scrapeRequests.Count, enabledInstruments.Count, opts.DegreeOfParallelism);
-
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-
-        // ── Initialize progress tracker ──
-        int totalLeaderboards = scrapeRequests.Sum(r => r.Instruments.Count);
-        int cachedPages = LoadCachedPageEstimate(opts);
-        _progress.BeginPass(totalLeaderboards, scrapeRequests.Count, cachedPages);
-
-        // Tell the progress tracker how many leaderboards each instrument has
-        var instrumentTotals = enabledInstruments
-            .ToDictionary(i => i, _ => scrapeRequests.Count);
-        _progress.SetInstrumentTotals(instrumentTotals);
-
-        // ── Pipelined: per-instrument channel writers ──
-        var aggregates = _persistence.StartWriters(opts.BoundedChannelCapacity, ct);
-        int totalRequests = 0;
-        long totalBytes = 0;
-
-        var allResults = await _globalScraper.ScrapeManySongsAsync(
-            scrapeRequests, accessToken, accountId, opts.DegreeOfParallelism,
-            onSongComplete: async (songId, results) =>
-            {
-                // Called concurrently from multiple song tasks.
-                // Enqueue each instrument result into its dedicated channel —
-                // no cross-instrument lock, back-pressure if the writer falls behind.
-                bool hasData = false;
-                foreach (var result in results)
-                {
-                    Interlocked.Add(ref totalRequests, result.Requests);
-                    Interlocked.Add(ref totalBytes, result.BytesReceived);
-
-                    if (result.Entries.Count == 0) continue;
-                    hasData = true;
-
-                    await _persistence.EnqueueResultAsync(result, registeredIds, ct);
-                }
-                if (hasData) aggregates.IncrementSongsWithData();
-            },
-            ct,
-            maxPages: opts.MaxPagesPerLeaderboard,
-            sequential: opts.SequentialScrape,
-            pageConcurrency: opts.PageConcurrency,
-            songConcurrency: opts.SongConcurrency);
-
-        // Wait for all per-instrument writers to drain
-        await _persistence.DrainWritersAsync();
-
-        sw.Stop();
-
-        // Save page estimate for next run (still in Scraping phase, so current has the data)
-        var currentOp = _progress.GetProgressResponse().Current;
-        SaveCachedPageEstimate(opts, currentOp?.Pages?.DiscoveredTotal ?? 0);
-
-        // Complete scrape log
-        _persistence.Meta.CompleteScrapeRun(scrapeId, aggregates.SongsWithData, aggregates.TotalEntries, totalRequests, totalBytes);
-
-        _log.LogInformation(
-            "Scrape run #{ScrapeId} complete. {Songs} songs with data, {Entries} entries, " +
-            "{Requests} HTTP requests, {Bytes} bytes, {Changes} score changes detected, elapsed={Elapsed:F1}s",
-            scrapeId, aggregates.SongsWithData, aggregates.TotalEntries, totalRequests, totalBytes,
-            aggregates.TotalChanges, sw.Elapsed.TotalSeconds);
-
-        // Report entry counts per instrument
-        var counts = _persistence.GetEntryCounts();
-        foreach (var (instrument, count) in counts)
-            _log.LogInformation("  {Instrument}: {Count:N0} entries", instrument, count);
-
-        // ── Update leaderboard population from Epic's reported totalPages ──
-        var populationItems = new List<(string SongId, string Instrument, long TotalEntries)>();
-        foreach (var (_, results) in allResults)
-            foreach (var r in results)
-                if (r.ReportedTotalPages > 0)
-                {
-                    // When we scraped all pages (≤100), use exact entry count.
-                    // Otherwise estimate from page count × 100 entries/page.
-                    long totalEntries = r.ReportedTotalPages <= 100
-                        ? r.Entries.Count
-                        : (long)r.ReportedTotalPages * 100;
-                    populationItems.Add((r.SongId, r.Instrument, totalEntries));
-                }
-        if (populationItems.Count > 0)
-        {
-            _persistence.Meta.UpsertLeaderboardPopulation(populationItems);
-            _log.LogInformation("Updated leaderboard population for {Count:N0} song/instrument pairs from Epic page counts.",
-                populationItems.Count);
-        }
+        // ── Core scrape: delegate to ScrapeOrchestrator ──
+        var result = await _scrapeOrchestrator.RunAsync(
+            accessToken, _tokenManager.AccountId!, service, ct);
 
         // Observe the path generation task that ran in parallel with the scrape
         try { await pathGenTask; }
@@ -467,17 +349,7 @@ public sealed class ScraperWorker : BackgroundService
         catch (Exception ex) { _log.LogError(ex, "Path generation task faulted during scrape pass."); }
 
         // ── Post-pass: enrichment, refresh, backfill, history recon, cleanup ──
-        var ctx = new ScrapePassContext
-        {
-            AccessToken = accessToken,
-            CallerAccountId = _tokenManager.AccountId!,
-            RegisteredIds = registeredIds,
-            Aggregates = aggregates,
-            ScrapeRequests = scrapeRequests,
-            DegreeOfParallelism = opts.DegreeOfParallelism,
-        };
-
-        await _postScrapeOrchestrator.RunAsync(ctx, service, ct);
+        await _postScrapeOrchestrator.RunAsync(result.Context, service, ct);
 
         await _backfillOrchestrator.RunBackfillAsync(service, ct);
         await _backfillOrchestrator.RunHistoryReconAsync(ct);
@@ -554,37 +426,6 @@ public sealed class ScraperWorker : BackgroundService
             _progress.EndPathGeneration();
             _log.LogWarning(ex, "Path generation failed. Scraping continues unaffected.");
         }
-    }
-
-    // ─── Cached page estimate ───────────────────────────────────
-
-    private static int LoadCachedPageEstimate(ScraperOptions opts)
-    {
-        try
-        {
-            var path = Path.Combine(Path.GetFullPath(opts.DataDirectory), "page-estimate.json");
-            if (!File.Exists(path)) return 0;
-            var json = File.ReadAllText(path);
-            var doc = System.Text.Json.JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("totalPages", out var tp))
-                return tp.GetInt32();
-        }
-        catch { }
-        return 0;
-    }
-
-    private static void SaveCachedPageEstimate(ScraperOptions opts, int totalPages)
-    {
-        try
-        {
-            var path = Path.Combine(Path.GetFullPath(opts.DataDirectory), "page-estimate.json");
-            File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(new
-            {
-                totalPages,
-                savedAt = DateTime.UtcNow.ToString("o"),
-            }));
-        }
-        catch { }
     }
 
     // ─── Song test ───────────────────────────────────────────────

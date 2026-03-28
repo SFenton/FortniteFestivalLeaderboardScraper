@@ -276,7 +276,7 @@ export default function Page({
       )}
       <div data-testid="scroll-area" className={scrollClassName} style={{ ...saStyle, ...scrollStyle }}>
         <div className={containerClassName} style={{ ...cStyle, ...containerStyle }}>
-          {children}
+          {loadPhase != null && loadPhase !== LoadPhase.ContentIn ? null : children}
         </div>
         {isMobileChrome && fabSpacer === 'end' && <div style={pageCss.fabSpacer} />}
       </div>

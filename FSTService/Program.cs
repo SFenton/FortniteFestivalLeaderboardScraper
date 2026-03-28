@@ -171,6 +171,7 @@ builder.Services.AddSingleton<FSTService.Api.NotificationService>();
 builder.Services.AddSingleton<RivalsCalculator>();
 builder.Services.AddSingleton<RivalsOrchestrator>();
 builder.Services.AddSingleton<RankingsCalculator>();
+builder.Services.AddSingleton<ScrapeOrchestrator>();
 builder.Services.AddSingleton<PostScrapeOrchestrator>();
 builder.Services.AddSingleton<BackfillOrchestrator>();
 

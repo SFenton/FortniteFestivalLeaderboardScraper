@@ -148,7 +148,7 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
 
         await _backfiller.DidNotReceive().BackfillAccountAsync(
             Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -166,7 +166,7 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
         // Should not have called backfiller
         await _backfiller.DidNotReceive().BackfillAccountAsync(
             Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -180,7 +180,7 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
 
         _backfiller.BackfillAccountAsync(
             Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(5));
 
         _personalDbBuilder.RebuildForAccounts(
@@ -192,7 +192,7 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
         await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
 
         await _backfiller.Received(1).BackfillAccountAsync(
-            "acct1", _festivalService, "token", "callerAcct", ct: Arg.Any<CancellationToken>());
+            "acct1", _festivalService, "token", "callerAcct", Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>());
         _personalDbBuilder.Received(1).RebuildForAccounts(
             Arg.Any<IReadOnlySet<string>>(), Arg.Any<MetaDatabase>());
     }
@@ -208,7 +208,7 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
 
         _backfiller.BackfillAccountAsync(
             Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(0));
 
         var orchestrator = CreateBackfillOrchestrator();
@@ -231,11 +231,11 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
 
         _backfiller.BackfillAccountAsync(
             "acct1", Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("failure"));
         _backfiller.BackfillAccountAsync(
             "acct2", Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(3));
 
         var orchestrator = CreateBackfillOrchestrator();
@@ -246,7 +246,7 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
         // Both accounts attempted
         await _backfiller.Received(2).BackfillAccountAsync(
             Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>());
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -260,7 +260,7 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
 
         _backfiller.BackfillAccountAsync(
             Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), ct: Arg.Any<CancellationToken>())
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(1));
 
         _personalDbBuilder.RebuildForAccounts(

@@ -214,7 +214,7 @@ describe('useFirstRunReplay', () => {
     expect(result.current.show).toBe(true);
   });
 
-  it('dismiss marks slides as seen and closes', () => {
+  it('dismiss marks slides as seen and closes after onExitComplete', () => {
     const slides = [makeSlide('a')];
     const { result } = renderHook(
       () => useRegisteredReplay('page1', slides),
@@ -226,6 +226,10 @@ describe('useFirstRunReplay', () => {
     });
     act(() => {
       result.current.dismiss();
+    });
+    expect(result.current.show).toBe(true);
+    act(() => {
+      result.current.onExitComplete();
     });
     expect(result.current.show).toBe(false);
   });
@@ -241,6 +245,10 @@ describe('useFirstRunReplay', () => {
     });
     act(() => {
       result.current.dismiss();
+    });
+    expect(result.current.show).toBe(true);
+    act(() => {
+      result.current.onExitComplete();
     });
     expect(result.current.show).toBe(false);
   });

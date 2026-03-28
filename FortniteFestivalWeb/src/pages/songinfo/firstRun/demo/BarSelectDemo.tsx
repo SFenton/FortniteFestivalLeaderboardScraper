@@ -66,6 +66,10 @@ export default function BarSelectDemo() {
   }, [visibleData.length]);
 
   useEffect(() => {
+    if (visibleData.length <= 1) {
+      setDetailVisible(true);
+      return;
+    }
     intervalRef.current = setInterval(() => {
       setDetailVisible(false);
       setTimeout(() => {
