@@ -182,4 +182,101 @@ public class AdaptiveConcurrencyLimiterTests : IDisposable
 
         Assert.Equal(24, _limiter.CurrentDop);
     }
+
+    [Fact]
+    public async Task DecreaseThenIncrease_WithAllTokensInFlight_DoesNotThrowSemaphoreFullException()
+    {
+        // Regression: when DOP decreased but tokens couldn't be drained (all in-flight),
+        // returning those tokens + a subsequent DOP increase would overflow the semaphore.
+        _limiter = new AdaptiveConcurrencyLimiter(32, 4, 64, _log);
+
+        // Acquire all 32 tokens
+        for (int i = 0; i < 32; i++)
+            await _limiter.WaitAsync(CancellationToken.None);
+
+        // Trigger decrease: 32 → 24 (drain 8, but 0 available → 8 become debt)
+        for (int i = 0; i < 474; i++)
+            _limiter.ReportSuccess();
+        for (int i = 0; i < 26; i++)
+            _limiter.ReportFailure();
+        Assert.Equal(24, _limiter.CurrentDop);
+
+        // Release all 32 tokens — 8 should be absorbed by debt, 24 returned to semaphore
+        for (int i = 0; i < 32; i++)
+            _limiter.Release(); // must not throw SemaphoreFullException
+
+        // Trigger increase: 24 → 40 — should not throw since semaphore count is 24, max is 64
+        for (int i = 0; i < 500; i++)
+            _limiter.ReportSuccess();
+        Assert.Equal(40, _limiter.CurrentDop);
+    }
+
+    [Fact]
+    public async Task DecreaseThenIncrease_DebtReclaimedBeforeSemaphoreRelease()
+    {
+        // Verify that when increasing DOP, outstanding debt is reclaimed first
+        // so we don't release more tokens than the semaphore can handle.
+        _limiter = new AdaptiveConcurrencyLimiter(32, 4, 64, _log);
+
+        // Acquire all tokens
+        for (int i = 0; i < 32; i++)
+            await _limiter.WaitAsync(CancellationToken.None);
+
+        // Decrease twice: 32 → 24 → 18 (can't drain any, all debt)
+        for (int i = 0; i < 474; i++)
+            _limiter.ReportSuccess();
+        for (int i = 0; i < 26; i++)
+            _limiter.ReportFailure();
+        Assert.Equal(24, _limiter.CurrentDop);
+
+        for (int i = 0; i < 474; i++)
+            _limiter.ReportSuccess();
+        for (int i = 0; i < 26; i++)
+            _limiter.ReportFailure();
+        Assert.Equal(18, _limiter.CurrentDop);
+
+        // Release all 32 — 14 absorbed by debt (8+6), 18 returned to semaphore
+        for (int i = 0; i < 32; i++)
+            _limiter.Release(); // must not throw
+
+        // Now increase: 18 → 34 — should succeed (semaphore at 18, max 64)
+        for (int i = 0; i < 500; i++)
+            _limiter.ReportSuccess();
+        Assert.Equal(34, _limiter.CurrentDop);
+    }
+
+    [Fact]
+    public async Task Increase_WithOutstandingDebt_ReclainsFromDebtFirst()
+    {
+        // When increasing DOP while debt is still outstanding (tasks haven't
+        // returned yet), the increase should reduce debt rather than releasing
+        // tokens into the semaphore.
+        _limiter = new AdaptiveConcurrencyLimiter(32, 4, 64, _log);
+
+        // Acquire all tokens
+        for (int i = 0; i < 32; i++)
+            await _limiter.WaitAsync(CancellationToken.None);
+
+        // Decrease: 32 → 24, 8 tokens become debt (none drainable)
+        for (int i = 0; i < 474; i++)
+            _limiter.ReportSuccess();
+        for (int i = 0; i < 26; i++)
+            _limiter.ReportFailure();
+        Assert.Equal(24, _limiter.CurrentDop);
+
+        // Don't release any tokens yet — increase immediately: 24 → 40
+        // 16 increase requested, but 8 are debt → reclaim 8 from debt,
+        // release only 8 to semaphore
+        for (int i = 0; i < 500; i++)
+            _limiter.ReportSuccess();
+        Assert.Equal(40, _limiter.CurrentDop);
+
+        // Now release all 32 in-flight tokens — should not throw
+        for (int i = 0; i < 32; i++)
+            _limiter.Release();
+
+        // Semaphore should be functional — can acquire and release
+        await _limiter.WaitAsync(CancellationToken.None);
+        _limiter.Release();
+    }
 }

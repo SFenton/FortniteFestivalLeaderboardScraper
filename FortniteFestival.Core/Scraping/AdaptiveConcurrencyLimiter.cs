@@ -32,6 +32,14 @@ namespace FortniteFestival.Core.Scraping
         private int _windowFailures;
         private readonly object _evaluationLock = new object();
 
+        /// <summary>
+        /// Tracks tokens that should have been drained during a DOP decrease
+        /// but couldn't be because they were held by in-flight tasks.
+        /// When a task calls <see cref="Release"/>, it absorbs one debt token
+        /// instead of returning it to the semaphore.
+        /// </summary>
+        private int _releaseDebt;
+
         // ── AIMD parameters ──
         private const int EvaluationWindow = 500;
         private const int AdditiveIncrease = 16;
@@ -62,9 +70,19 @@ namespace FortniteFestival.Core.Scraping
             return _semaphore.WaitAsync(ct);
         }
 
-        /// <summary>Release a concurrency slot (same as SemaphoreSlim.Release).</summary>
+        /// <summary>Release a concurrency slot. If there is outstanding release debt
+        /// from an incomplete DOP decrease, the token is absorbed instead of
+        /// being returned to the semaphore.</summary>
         public void Release()
         {
+            // CAS loop: if debt > 0, absorb this token to fulfil the debt
+            while (true)
+            {
+                int debt = Volatile.Read(ref _releaseDebt);
+                if (debt <= 0) break;
+                if (Interlocked.CompareExchange(ref _releaseDebt, debt - 1, debt) == debt)
+                    return; // token absorbed — do NOT release to semaphore
+            }
             _semaphore.Release();
         }
 
@@ -125,25 +143,38 @@ namespace FortniteFestival.Core.Scraping
 
             if (delta > 0)
             {
-                // Increase: release extra tokens into the semaphore
-                _semaphore.Release(delta);
+                // Increase: first reclaim tokens from outstanding debt,
+                // then release any remainder into the semaphore.
+                int toRelease = delta;
+                while (toRelease > 0)
+                {
+                    int debt = Volatile.Read(ref _releaseDebt);
+                    if (debt <= 0) break;
+                    int reclaim = Math.Min(toRelease, debt);
+                    if (Interlocked.CompareExchange(ref _releaseDebt, debt - reclaim, debt) == debt)
+                        toRelease -= reclaim;
+                }
+                if (toRelease > 0)
+                    _semaphore.Release(toRelease);
             }
             else
             {
                 // Decrease: drain tokens from the semaphore (non-blocking)
+                int toDrain = -delta;
                 int drained = 0;
-                for (int i = 0; i < -delta; i++)
+                for (int i = 0; i < toDrain; i++)
                 {
                     if (!_semaphore.Wait(0)) break;
                     drained++;
                 }
-                // If we couldn't drain all tokens immediately (they're in-flight),
-                // the effective DOP will converge as tasks complete and don't get
-                // their tokens returned.
-                if (drained < -delta)
+                // Tokens we couldn't drain are in-flight — record as debt so
+                // they get absorbed when the holding tasks call Release().
+                int undrained = toDrain - drained;
+                if (undrained > 0)
                 {
-                    _log.LogDebug("Adaptive DOP: drained {Drained}/{Target} tokens (rest in-flight)",
-                        drained, -delta);
+                    Interlocked.Add(ref _releaseDebt, undrained);
+                    _log.LogDebug("Adaptive DOP: drained {Drained}/{Target} tokens ({Undrained} deferred to release debt)",
+                        drained, toDrain, undrained);
                 }
             }
 
