@@ -308,31 +308,8 @@ public sealed class MetaDatabase : IDisposable
                 PRIMARY KEY (AccountId, SnapshotDate)
             );
 
-            CREATE TABLE IF NOT EXISTS ComboLeaderboard (
-                ComboId         TEXT    NOT NULL,
-                AccountId       TEXT    NOT NULL,
-                AdjustedRating  REAL    NOT NULL,
-                WeightedRating  REAL    NOT NULL,
-                FcRate          REAL    NOT NULL,
-                TotalScore      INTEGER NOT NULL,
-                MaxScorePercent REAL    NOT NULL,
-                SongsPlayed     INTEGER NOT NULL,
-                FullComboCount  INTEGER NOT NULL,
-                ComputedAt      TEXT    NOT NULL,
-                PRIMARY KEY (ComboId, AccountId)
-            );
-
-            CREATE INDEX IF NOT EXISTS IX_ComboLB_Adjusted  ON ComboLeaderboard (ComboId, AdjustedRating ASC);
-            CREATE INDEX IF NOT EXISTS IX_ComboLB_Weighted   ON ComboLeaderboard (ComboId, WeightedRating ASC);
-            CREATE INDEX IF NOT EXISTS IX_ComboLB_FcRate     ON ComboLeaderboard (ComboId, FcRate DESC);
-            CREATE INDEX IF NOT EXISTS IX_ComboLB_TotalScore ON ComboLeaderboard (ComboId, TotalScore DESC);
-            CREATE INDEX IF NOT EXISTS IX_ComboLB_MaxScore   ON ComboLeaderboard (ComboId, MaxScorePercent DESC);
-
-            CREATE TABLE IF NOT EXISTS ComboStats (
-                ComboId        TEXT PRIMARY KEY,
-                TotalAccounts  INTEGER NOT NULL,
-                ComputedAt     TEXT    NOT NULL
-            );
+            -- ComboLeaderboard + ComboStats are created/migrated by
+            -- MigrateFeatureVersion("Combo", ..., ResetComboTables) below.
 
             """;
         cmd.ExecuteNonQuery();
