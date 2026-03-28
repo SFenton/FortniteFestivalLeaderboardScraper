@@ -1,4 +1,5 @@
 export * from './instruments';
+export * from './combos';
 export * from './enums';
 export * from './keys';
 export * from './stars';

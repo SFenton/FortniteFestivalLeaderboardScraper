@@ -31,12 +31,12 @@ describe('getEnabledInstruments', () => {
 });
 
 describe('deriveComboFromSettings', () => {
-  it('returns combo string for 2+ instruments', () => {
+  it('returns combo ID for 2+ instruments', () => {
     const result = deriveComboFromSettings(settings({
       showLead: true, showBass: true, showDrums: false,
       showVocals: false, showProLead: false, showProBass: false,
     }));
-    expect(result).toBe('Solo_Guitar+Solo_Bass');
+    expect(result).toBe('03'); // Guitar(0) + Bass(1) = 0x03
   });
 
   it('returns null for single instrument', () => {
@@ -55,19 +55,17 @@ describe('deriveComboFromSettings', () => {
     expect(result).toBeNull();
   });
 
-  it('returns full combo when all enabled', () => {
+  it('returns full combo ID when all enabled', () => {
     const result = deriveComboFromSettings(settings());
-    expect(result).toBe(
-      'Solo_Guitar+Solo_Bass+Solo_Drums+Solo_Vocals+Solo_PeripheralGuitar+Solo_PeripheralBass',
-    );
+    expect(result).toBe('3f'); // All 6 bits set = 0x3f
   });
 
-  it('preserves canonical instrument order', () => {
+  it('preserves canonical instrument order via bitmask', () => {
     const result = deriveComboFromSettings(settings({
       showLead: false, showBass: true, showDrums: false,
       showVocals: true, showProLead: false, showProBass: true,
     }));
-    // Bass comes before Vocals which comes before ProBass
-    expect(result).toBe('Solo_Bass+Solo_Vocals+Solo_PeripheralBass');
+    // Bass(1) + Vocals(3) + ProBass(5) = 0x2a
+    expect(result).toBe('2a');
   });
 });

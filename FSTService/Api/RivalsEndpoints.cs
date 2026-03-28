@@ -75,8 +75,14 @@ public static partial class ApiEndpoints
             FestivalService festivalService,
             RivalsCalculator rivalsCalculator) =>
         {
-            // Parse combo into instruments
-            var instruments = combo.Split('+');
+            // Parse combo into instruments — accepts hex ID ("03") or legacy ("Solo_Guitar+Solo_Bass") or single ("Solo_Guitar")
+            string[] instruments;
+            if (combo.Contains('+'))
+                instruments = combo.Split('+');
+            else if (combo.Length <= 2 && int.TryParse(combo, System.Globalization.NumberStyles.HexNumber, null, out _))
+                instruments = ComboIds.ToInstruments(combo).ToArray();
+            else
+                instruments = [combo]; // single instrument name
             var allSamples = new List<RivalSongSampleRow>();
             foreach (var inst in instruments)
             {

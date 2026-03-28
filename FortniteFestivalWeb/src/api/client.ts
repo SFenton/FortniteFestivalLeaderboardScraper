@@ -17,6 +17,7 @@ import type {
   CompositePageResponse,
   CompositeRankingDto,
   ComboPageResponse,
+  ComboRankingEntry,
   RankingMetric,
 } from '@festival/core/api/serverTypes';
 
@@ -132,8 +133,13 @@ export const api = {
       `/api/rankings/composite/${encodeURIComponent(accountId)}`,
     ),
 
-  getComboRankings: (instruments: string, page = 1, pageSize = 10) =>
+  getComboRankings: (comboId: string, rankBy: RankingMetric = 'adjusted', page = 1, pageSize = 10) =>
     get<ComboPageResponse>(
-      `/api/rankings/combo?instruments=${encodeURIComponent(instruments)}&page=${page}&pageSize=${pageSize}`,
+      `/api/rankings/combo?combo=${encodeURIComponent(comboId)}&rankBy=${encodeURIComponent(rankBy)}&page=${page}&pageSize=${pageSize}`,
+    ),
+
+  getPlayerComboRanking: (accountId: string, comboId: string, rankBy: RankingMetric = 'adjusted') =>
+    get<{ comboId: string; rankBy: string; totalAccounts: number } & ComboRankingEntry>(
+      `/api/rankings/combo/${encodeURIComponent(accountId)}?combo=${encodeURIComponent(comboId)}&rankBy=${encodeURIComponent(rankBy)}`,
     ),
 };

@@ -343,7 +343,12 @@ public sealed class ComboLeaderboardEntry
     public int Rank { get; init; }
     public string AccountId { get; init; } = "";
     public string? DisplayName { get; init; }
-    public double ComboRating { get; init; }
+    public double AdjustedRating { get; init; }
+    public double WeightedRating { get; init; }
+    public double FcRate { get; init; }
+    public long TotalScore { get; init; }
+    public double MaxScorePercent { get; init; }
     public int SongsPlayed { get; init; }
+    public int FullComboCount { get; init; }
     public string ComputedAt { get; init; } = "";
 }

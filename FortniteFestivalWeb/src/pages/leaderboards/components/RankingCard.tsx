@@ -51,10 +51,14 @@ export default memo(function RankingCard({
     return computeRankWidth(allRanks);
   }, [entries, playerRanking, playerInTop, metric]);
 
-  const totalStaggerItems = entries.length + 1 + staggerOffset;
+  const totalStaggerItems = entries.length + 2 + staggerOffset;
   const headerDelay = shouldStagger ? staggerDelay(0 + staggerOffset, STAGGER_INTERVAL, totalStaggerItems) : undefined;
   const headerStaggerStyle: CSSProperties | undefined = headerDelay != null
     ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${headerDelay}ms forwards` }
+    : undefined;
+  const buttonDelay = shouldStagger ? staggerDelay(entries.length + 1 + staggerOffset, STAGGER_INTERVAL, totalStaggerItems) : undefined;
+  const buttonStaggerStyle: CSSProperties | undefined = buttonDelay != null
+    ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${buttonDelay}ms forwards` }
     : undefined;
 
   return (
@@ -124,8 +128,13 @@ export default memo(function RankingCard({
         })()}
         {!error && entries.length > 0 && (
           <div
-            style={st.viewAllButton}
+            style={{ ...st.viewAllButton, ...buttonStaggerStyle }}
             onClick={() => navigate(Routes.fullRankings(instrument, metric))}
+            onAnimationEnd={(ev) => {
+              const el = ev.currentTarget;
+              el.style.opacity = '';
+              el.style.animation = '';
+            }}
           >
             {t('rankings.viewAllRankings')}
           </div>

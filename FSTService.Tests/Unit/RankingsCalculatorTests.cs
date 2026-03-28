@@ -194,9 +194,9 @@ public sealed class RankingsCalculatorTests : IDisposable
 
         _sut.ComputeAllCombos(["Solo_Guitar", "Solo_Bass"]);
 
-        // Should have computed the Solo_Bass+Solo_Guitar combo (sorted)
-        var comboKey = "Solo_Bass+Solo_Guitar";
-        var (entries, total) = _metaFixture.Db.GetComboLeaderboard(comboKey);
+        // Should have computed the Guitar+Bass combo → combo ID "03"
+        var comboId = ComboIds.FromInstruments(["Solo_Guitar", "Solo_Bass"]);
+        var (entries, total) = _metaFixture.Db.GetComboLeaderboard(comboId);
         Assert.Equal(2, total);
         Assert.Equal(2, entries.Count);
         Assert.Equal(1, entries[0].Rank);
@@ -221,11 +221,11 @@ public sealed class RankingsCalculatorTests : IDisposable
 
         _sut.ComputeAllCombos(["Solo_Guitar", "Solo_Bass"]);
 
-        var comboKey = "Solo_Bass+Solo_Guitar";
-        var entry = _metaFixture.Db.GetComboRank(comboKey, "p2");
+        var comboId = ComboIds.FromInstruments(["Solo_Guitar", "Solo_Bass"]);
+        var entry = _metaFixture.Db.GetComboRank(comboId, "p2");
         Assert.Null(entry); // p2 doesn't have bass, shouldn't be in combo
 
-        var p1 = _metaFixture.Db.GetComboRank(comboKey, "p1");
+        var p1 = _metaFixture.Db.GetComboRank(comboId, "p1");
         Assert.NotNull(p1);
         Assert.Equal(1, p1.Rank);
     }
@@ -260,12 +260,11 @@ public sealed class RankingsCalculatorTests : IDisposable
 
         _sut.ComputeAllCombos(["Solo_Guitar", "Solo_Bass", "Solo_Drums"]);
 
-        // Should have 4 combos: 3 pairs + 1 triple
-        // Guitar+Bass, Guitar+Drums, Bass+Drums, Guitar+Bass+Drums
-        Assert.True(_metaFixture.Db.GetComboTotalAccounts("Solo_Bass+Solo_Guitar") > 0);
-        Assert.True(_metaFixture.Db.GetComboTotalAccounts("Solo_Drums+Solo_Guitar") > 0);
-        Assert.True(_metaFixture.Db.GetComboTotalAccounts("Solo_Bass+Solo_Drums") > 0);
-        Assert.True(_metaFixture.Db.GetComboTotalAccounts("Solo_Bass+Solo_Drums+Solo_Guitar") > 0);
+        // Should have 4 combos: 3 pairs + 1 triple (using combo IDs)
+        Assert.True(_metaFixture.Db.GetComboTotalAccounts(ComboIds.FromInstruments(["Solo_Guitar", "Solo_Bass"])) > 0);
+        Assert.True(_metaFixture.Db.GetComboTotalAccounts(ComboIds.FromInstruments(["Solo_Guitar", "Solo_Drums"])) > 0);
+        Assert.True(_metaFixture.Db.GetComboTotalAccounts(ComboIds.FromInstruments(["Solo_Bass", "Solo_Drums"])) > 0);
+        Assert.True(_metaFixture.Db.GetComboTotalAccounts(ComboIds.FromInstruments(["Solo_Guitar", "Solo_Bass", "Solo_Drums"])) > 0);
     }
 
     // ═══════════════════════════════════════════════════════════

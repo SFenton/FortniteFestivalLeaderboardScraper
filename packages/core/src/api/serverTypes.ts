@@ -389,14 +389,20 @@ export type ComboRankingEntry = {
   rank: number;
   accountId: string;
   displayName?: string;
-  comboRating: number;
+  adjustedRating: number;
+  weightedRating: number;
+  fcRate: number;
+  totalScore: number;
+  maxScorePercent: number;
   songsPlayed: number;
+  fullComboCount: number;
   computedAt: string;
 };
 
 /** Paginated combo rankings response. */
 export type ComboPageResponse = {
-  comboKey: string;
+  comboId: string;
+  rankBy: string;
   page: number;
   pageSize: number;
   totalAccounts: number;

@@ -103,10 +103,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
     filterModal.close();
   };
   const resetFilter = () => {
-    const defaults = defaultSuggestionsFilterDraft();
-    filterModal.setDraft(defaults);
-    setFilterSettings(defaults);
-    filterModal.close();
+    filterModal.reset();
   };
   
 

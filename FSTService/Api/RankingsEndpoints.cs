@@ -209,31 +209,40 @@ public static partial class ApiEndpoints
         // ─── Combo leaderboard (paginated) ─────────────────────
 
         app.MapGet("/api/rankings/combo", (
-            string instruments,
+            string? combo,
+            string? instruments,
+            string? rankBy,
             int? page,
             int? pageSize,
             MetaDatabase metaDb) =>
         {
-            var comboKey = NormalizeComboKey(instruments);
-            if (string.IsNullOrEmpty(comboKey))
-                return Results.BadRequest(new { error = "At least two instruments required, separated by '+'." });
+            var comboId = ComboIds.NormalizeComboParam(combo ?? instruments);
+            if (string.IsNullOrEmpty(comboId))
+                return Results.BadRequest(new { error = "At least two instruments required. Use 'combo' (hex ID) or 'instruments' (e.g. Solo_Guitar+Solo_Bass)." });
 
+            var metric = rankBy ?? "adjusted";
             var (entries, totalAccounts) = metaDb.GetComboLeaderboard(
-                comboKey, page ?? 1, Math.Clamp(pageSize ?? 50, 1, 200));
+                comboId, metric, page ?? 1, Math.Clamp(pageSize ?? 50, 1, 200));
 
             var enriched = entries.Select(e => new
             {
                 e.Rank,
                 e.AccountId,
                 displayName = metaDb.GetDisplayName(e.AccountId),
-                e.ComboRating,
+                e.AdjustedRating,
+                e.WeightedRating,
+                e.FcRate,
+                e.TotalScore,
+                e.MaxScorePercent,
                 e.SongsPlayed,
+                e.FullComboCount,
                 e.ComputedAt,
             }).ToList();
 
             return Results.Ok(new
             {
-                comboKey,
+                comboId,
+                rankBy = metric,
                 page = page ?? 1,
                 pageSize = Math.Clamp(pageSize ?? 50, 1, 200),
                 totalAccounts,
@@ -247,44 +256,41 @@ public static partial class ApiEndpoints
 
         app.MapGet("/api/rankings/combo/{accountId}", (
             string accountId,
-            string instruments,
+            string? combo,
+            string? instruments,
+            string? rankBy,
             MetaDatabase metaDb) =>
         {
-            var comboKey = NormalizeComboKey(instruments);
-            if (string.IsNullOrEmpty(comboKey))
-                return Results.BadRequest(new { error = "At least two instruments required, separated by '+'." });
+            var comboId = ComboIds.NormalizeComboParam(combo ?? instruments);
+            if (string.IsNullOrEmpty(comboId))
+                return Results.BadRequest(new { error = "At least two instruments required. Use 'combo' (hex ID) or 'instruments' (e.g. Solo_Guitar+Solo_Bass)." });
 
-            var entry = metaDb.GetComboRank(comboKey, accountId);
+            var metric = rankBy ?? "adjusted";
+            var entry = metaDb.GetComboRank(comboId, accountId, metric);
             if (entry is null)
                 return Results.NotFound(new { error = "Account not found in this combo ranking." });
 
-            var totalAccounts = metaDb.GetComboTotalAccounts(comboKey);
+            var totalAccounts = metaDb.GetComboTotalAccounts(comboId);
 
             return Results.Ok(new
             {
-                comboKey,
+                comboId,
+                rankBy = metric,
                 entry.Rank,
                 entry.AccountId,
                 displayName = metaDb.GetDisplayName(accountId),
-                entry.ComboRating,
+                entry.AdjustedRating,
+                entry.WeightedRating,
+                entry.FcRate,
+                entry.TotalScore,
+                entry.MaxScorePercent,
                 entry.SongsPlayed,
+                entry.FullComboCount,
                 totalAccounts,
                 entry.ComputedAt,
             });
         })
         .WithTags("Rankings")
         .RequireRateLimiting("public");
-    }
-
-    /// <summary>Normalize a combo key: split by +, sort, rejoin. Returns null if fewer than 2 instruments.</summary>
-    private static string? NormalizeComboKey(string? instruments)
-    {
-        if (string.IsNullOrWhiteSpace(instruments)) return null;
-        var parts = instruments.Split('+', StringSplitOptions.RemoveEmptyEntries)
-            .Select(p => p.Trim())
-            .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        return parts.Count >= 2 ? string.Join("+", parts) : null;
     }
 }

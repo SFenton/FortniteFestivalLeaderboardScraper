@@ -1,12 +1,14 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import { useEffect, useRef, useState, useMemo, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { PaginationButton } from '../common/PaginationButton';
+import ArcSpinner from '../common/ArcSpinner';
 import { staggerDelay } from '@festival/ui-utils';
-import { Gap, Layout, STAGGER_INTERVAL, FADE_DURATION } from '@festival/theme';
+import { Gap, Layout, STAGGER_INTERVAL, FADE_DURATION, SPINNER_FADE_MS } from '@festival/theme';
+import { LoadPhase } from '@festival/core';
 import { plbStyles as s } from './paginatedLeaderboardStyles';
 
 export interface PaginatedLeaderboardProps<T> {
@@ -42,26 +44,33 @@ export interface PaginatedLeaderboardProps<T> {
    */
   renderPlayerFooter?: (props: { className: string; style: CSSProperties }) => ReactNode;
 
-  /** Current animation mode. */
-  animMode: 'first' | 'paginate' | 'cached';
-  /** Number of visible rows (used to cap stagger delays). */
-  maxVisibleRows: number;
+  /** True when data is being fetched (entries may be stale or empty). */
+  loading: boolean;
+  /** Skip all animations on initial mount (return visit with cached data). */
+  cached?: boolean;
 
   /** True when viewport width is below mobile breakpoint. */
   isMobile: boolean;
   /** True when the FAB (mobile chrome / PWA) is present. */
   hasFab: boolean;
 
-  /** Only show pagination after data has loaded at least once. */
-  hasLoaded?: boolean;
   /** Hide pagination when there is an error. */
   error?: boolean;
   /** Message shown when entries is empty. */
   emptyMessage?: string;
+
+  /** Ref for the Page's stagger rush callback (resetRush on page change). */
+  staggerRushRef?: RefObject<(() => void) | undefined>;
 }
 
 /**
  * Shared paginated leaderboard shell.
+ *
+ * Owns the full animation lifecycle:
+ * - Spinner → SpinnerOut → ContentIn load-phase transitions
+ * - Stagger animation mode (first / paginate / cached)
+ * - maxVisibleRows measurement for stagger delay capping
+ * - Animation retirement after stagger window completes
  *
  * Renders rows in a frosted-card list with stagger animations,
  * portals fixed-position pagination + player footer to document.body,
@@ -80,52 +89,85 @@ export function PaginatedLeaderboard<T>({
   playerRowRef,
   hasPlayerFooter,
   renderPlayerFooter,
-  animMode,
-  maxVisibleRows,
+  loading,
+  cached: skipAllAnim = false,
   isMobile,
   hasFab,
-  hasLoaded = true,
   error = false,
   emptyMessage,
+  staggerRushRef,
 }: PaginatedLeaderboardProps<T>) {
   const { t } = useTranslation();
   const scrollContainerRef = useScrollContainer();
 
   const hasPagination = totalPages > 1;
+  const hasLoadedOnce = useRef(!loading);
+
+  // ── Animation lifecycle ──
+  const [animMode, setAnimMode] = useState<'first' | 'paginate' | 'cached'>(
+    skipAllAnim ? 'cached' : 'first',
+  );
+  const [loadPhase, setLoadPhase] = useState<LoadPhase>(
+    !loading ? LoadPhase.ContentIn : LoadPhase.Loading,
+  );
+  const loadPhaseRef = useRef(loadPhase);
+  loadPhaseRef.current = loadPhase;
+
+  // Compute maxVisibleRows from the scroll container's viewport height.
+  const ROW_SLOT = Layout.entryRowHeight + Gap.sm;
+  const scrollViewHeight = scrollContainerRef.current?.clientHeight
+    ?? Math.max(0, window.innerHeight - (isMobile ? 120 : 200));
+  const maxVisibleRows = useMemo(
+    () => Math.min(entries.length, Math.max(1, Math.ceil(scrollViewHeight / ROW_SLOT))),
+    [entries.length, scrollViewHeight, ROW_SLOT],
+  );
+
+  // Spinner → SpinnerOut → ContentIn transition + animation retirement.
+  useEffect(() => {
+    if (loading || error) {
+      setLoadPhase(LoadPhase.Loading);
+      return;
+    }
+    // Data arrived.
+    hasLoadedOnce.current = true;
+    // If already showing content (e.g. return visit), stay there.
+    if (loadPhaseRef.current === LoadPhase.ContentIn) return;
+
+    // Fade out spinner, then show content.
+    setLoadPhase(LoadPhase.SpinnerOut);
+    let retireId: ReturnType<typeof setTimeout>;
+    const id = setTimeout(() => {
+      staggerRushRef?.current?.();
+      setLoadPhase(LoadPhase.ContentIn);
+      // Retire stagger animations after they've had time to finish.
+      const staggerWindow = maxVisibleRows * STAGGER_INTERVAL + FADE_DURATION + 100;
+      retireId = setTimeout(() => setAnimMode('cached'), staggerWindow);
+    }, SPINNER_FADE_MS);
+    return () => { clearTimeout(id); clearTimeout(retireId); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- animation sequence
+  }, [loading, error]);
+
+  // Reset animMode to 'paginate' when `page` changes (after initial mount).
+  const prevPageRef = useRef(page);
+  useEffect(() => {
+    if (page !== prevPageRef.current) {
+      prevPageRef.current = page;
+      setAnimMode('paginate');
+    }
+  }, [page]);
 
   // ── Scroll margin management ──
-  // Sets marginBottom on the app shell scroll container so the last row
-  // never hides behind fixed-position pagination / player footer.
-  // Pages using PaginatedLeaderboard pass fabSpacer="none" to Page so
-  // that Page does not compete for the same marginBottom.
-  // Layout.fabPaddingBottom is the calibrated clearance for the FAB region
-  // (accounts for bottom nav overlap with the scroll container).
-  // The player footer sits at the same vertical level as the FAB, so
-  // fabPaddingBottom already covers it. Pagination stacks above both.
   useEffect(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
     let margin: number;
     if (hasFab) {
-      // Mobile: fabPaddingBottom (96px) shrinks the scroll container to clear
-      // the FAB/player-footer region. When pagination is also present we need
-      // additional margin so the gap between the last row and the pagination
-      // equals the gap between pagination and the player footer (Gap.sm).
-      //
-      // Derive extra margin from the pagination's fixed position:
-      //   paginationTop (from VP bottom) = mobilePagination.cssBottom + paginationHeight
-      //   scrollBottomOffset = fabPaddingBottom + bottomNavHeight
-      //   extra = paginationTop − scrollBottomOffset + Gap.sm
-      //
-      // bottomNavHeight isn't a Layout constant, but we can calculate it at
-      // runtime from the scroll container's natural height.
       margin = Layout.fabPaddingBottom;
       if (hasPagination) {
         const paginationCssBottom = Layout.fabBottom
           + (Layout.fabSize - Layout.entryRowHeight) / 2
           + Layout.entryRowHeight + Gap.sm;
         const paginationTop = paginationCssBottom + Layout.paginationHeight;
-        // Natural (no-margin) scroll container extends from rectTop to rectTop + (clientH + margin).
         const naturalHeight = el.clientHeight + (parseFloat(el.style.marginBottom) || 0);
         const headerHeight = el.getBoundingClientRect().top;
         const vpHeight = window.innerHeight;
@@ -142,45 +184,78 @@ export function PaginatedLeaderboard<T>({
     return () => { el.style.marginBottom = ''; };
   }, [hasFab, hasPagination, hasPlayerFooter, scrollContainerRef]);
 
+  const contentVisible = loadPhase === LoadPhase.ContentIn;
+
+  // Player footer staggers in once after the last visible row on first load.
+  // While waiting, it stays hidden (opacity: 0). Once contentVisible + stagger
+  // delay fires, it fades in. footerShownRef is only flipped in onAnimationEnd
+  // so that mid-animation re-renders don't kill the in-flight animation.
+  // Note: we intentionally DON'T check animMode here — the row-level retirement
+  // (animMode→cached) fires before the footer animation completes. footerShownRef
+  // is the sole guard against re-animation.
+  const footerShownRef = useRef(skipAllAnim);
+  const footerStaggerStyle: CSSProperties | undefined = footerShownRef.current
+    ? undefined
+    : contentVisible
+      ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${maxVisibleRows * STAGGER_INTERVAL}ms forwards` }
+      : { opacity: 0 };
+
   return (
     <>
-      {/* ── Row list ── */}
-      <div style={s.list}>
-        {entries.map((entry, i) => {
-          const isPlayer = isPlayerEntry(entry);
-          const rowStyle = isPlayer ? s.playerEntryRow : s.entryRow;
-          const delay = animMode === 'cached' ? null : (staggerDelay(i, STAGGER_INTERVAL, maxVisibleRows) ?? 0);
-          const staggerStyle: CSSProperties | undefined = delay != null
-            ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${delay}ms forwards` }
-            : undefined;
-          return (
-            <Link
-              key={entryKey(entry)}
-              ref={isPlayer && playerRowRef ? playerRowRef : undefined}
-              to={entryLinkTo(entry, isPlayer)}
-              state={linkState}
-              style={{ ...rowStyle, ...staggerStyle }}
-              onAnimationEnd={(ev) => {
-                /* v8 ignore start — animation cleanup */
-                const el = ev.currentTarget;
-                el.style.opacity = '';
-                el.style.animation = '';
-                /* v8 ignore stop */
-              }}
-            >
-              {renderRow(entry, i)}
-            </Link>
-          );
-        })}
-        {entries.length === 0 && emptyMessage && (
-          <div style={s.emptyRow}>{emptyMessage}</div>
-        )}
-      </div>
+      {/* ── Spinner ── */}
+      {!contentVisible && (
+        <div
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            minHeight: 'calc(100vh - 350px)',
+            ...(loadPhase === LoadPhase.SpinnerOut
+              ? { animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards` }
+              : {}),
+          }}
+        >
+          <ArcSpinner />
+        </div>
+      )}
+
+      {/* ── Row list (only mounted when content is visible) ── */}
+      {contentVisible && (
+        <div style={s.list}>
+          {entries.map((entry, i) => {
+            const isPlayer = isPlayerEntry(entry);
+            const rowStyle = isPlayer ? s.playerEntryRow : s.entryRow;
+            const delay = animMode === 'cached' ? null : (staggerDelay(i, STAGGER_INTERVAL, maxVisibleRows) ?? 0);
+            const staggerStyle: CSSProperties | undefined = delay != null
+              ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out ${delay}ms forwards` }
+              : undefined;
+            return (
+              <Link
+                key={entryKey(entry)}
+                ref={isPlayer && playerRowRef ? playerRowRef : undefined}
+                to={entryLinkTo(entry, isPlayer)}
+                state={linkState}
+                style={{ ...rowStyle, ...staggerStyle }}
+                onAnimationEnd={(ev) => {
+                  /* v8 ignore start — animation cleanup */
+                  const el = ev.currentTarget;
+                  el.style.opacity = '';
+                  el.style.animation = '';
+                  /* v8 ignore stop */
+                }}
+              >
+                {renderRow(entry, i)}
+              </Link>
+            );
+          })}
+          {entries.length === 0 && emptyMessage && (
+            <div style={s.emptyRow}>{emptyMessage}</div>
+          )}
+        </div>
+      )}
 
       {/* v8 ignore start — fixed pagination + player footer portaled to body */}
       {createPortal(
         <>
-          {hasLoaded && !error && hasPagination && (
+          {hasLoadedOnce.current && !error && hasPagination && (
             <div style={hasFab ? s.mobilePagination : s.desktopPagination}>
               <div
                 className={hasFab ? 'fab-player-footer' : ''}
@@ -207,7 +282,15 @@ export function PaginatedLeaderboard<T>({
             </div>
           )}
           {hasPlayerFooter && renderPlayerFooter && (
-            <div style={hasFab ? s.playerFooterFab : s.desktopPlayerFooter}>
+            <div
+              style={{ ...(hasFab ? s.playerFooterFab : s.desktopPlayerFooter), ...footerStaggerStyle }}
+              onAnimationEnd={(ev) => {
+                footerShownRef.current = true;
+                const el = ev.currentTarget;
+                el.style.opacity = '';
+                el.style.animation = '';
+              }}
+            >
               {renderPlayerFooter({
                 className: hasFab ? 'fab-player-footer' : '',
                 style: s.playerFooterRow,

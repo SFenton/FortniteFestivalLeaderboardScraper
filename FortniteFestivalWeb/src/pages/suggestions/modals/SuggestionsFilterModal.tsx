@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import Modal from '../../../components/modals/Modal';
 import { ModalSection } from '../../../components/modals/components/ModalSection';
 import { ToggleRow } from '../../../components/common/ToggleRow';
@@ -97,6 +97,7 @@ type SuggestionsFilterModalProps = {
 export default function SuggestionsFilterModal({ visible, draft, savedDraft, instrumentVisibility, onChange, onCancel, onReset, onApply }: SuggestionsFilterModalProps) {
   const { t } = useTranslation();
   const [selectedInstrument, setSelectedInstrument] = useState<InstrumentKey | null>(null);
+  useEffect(() => { if (visible) setSelectedInstrument(null); }, [visible]);
 
   const visibleInstruments = INSTRUMENTS.filter(i => instrumentVisibility[i.showKey as keyof InstrumentVisibility]);
   const effectiveSelectedInstrument = selectedInstrument && visibleInstruments.some(i => i.key === selectedInstrument) ? selectedInstrument : null;

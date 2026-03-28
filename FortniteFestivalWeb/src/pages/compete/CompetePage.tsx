@@ -8,6 +8,7 @@ import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
+import { comboIdFromInstruments } from '@festival/core/combos';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
 import { RankingEntry } from '../leaderboards/components/RankingEntry';
@@ -32,20 +33,83 @@ export default function CompetePage() {
   const { settings } = useSettings();
 
   const accountId = player?.accountId ?? '';
-  const previewInstrument = useMemo(() => visibleInstruments(settings)[0] ?? null, [settings]);
+  const instruments = useMemo(() => visibleInstruments(settings), [settings]);
+  const previewInstrument = instruments[0] ?? null;
+  const isMulti = instruments.length >= 2;
+  const comboId = useMemo(
+    () => isMulti ? comboIdFromInstruments(instruments) : null,
+    [instruments, isMulti],
+  );
 
-  // Composite rankings top 10
-  const { data: compositeData, isLoading: compositeLoading } = useQuery({
-    queryKey: queryKeys.compositeRankings(1, 10),
-    queryFn: () => api.getCompositeRankings(1, 10),
+  // Leaderboard top 10 — combo rankings (2+ instruments) or per-instrument (1)
+  const { data: leaderboardData, isLoading: leaderboardLoading } = useQuery({
+    queryKey: isMulti
+      ? queryKeys.comboRankings(comboId!, 'totalscore', 1, 10)
+      : queryKeys.rankings(previewInstrument ?? 'Solo_Guitar', 'totalscore', 1, 10),
+    queryFn: () => isMulti
+      ? api.getComboRankings(comboId!, 'totalscore', 1, 10)
+      : api.getRankings(previewInstrument!, 'totalscore', 1, 10),
+    enabled: !!previewInstrument,
   });
 
-  // Player's composite ranking
-  const { data: playerComposite } = useQuery({
-    queryKey: queryKeys.playerCompositeRanking(accountId),
-    queryFn: () => api.getPlayerCompositeRanking(accountId),
-    enabled: !!accountId,
+  // Player's own ranking for the same metric
+  const { data: playerRanking } = useQuery({
+    queryKey: isMulti
+      ? queryKeys.playerComboRanking(accountId, comboId!, 'totalscore')
+      : queryKeys.playerRanking(previewInstrument ?? 'Solo_Guitar', accountId),
+    queryFn: () => isMulti
+      ? api.getPlayerComboRanking(accountId, comboId!, 'totalscore')
+      : api.getPlayerRanking(previewInstrument!, accountId),
+    enabled: !!accountId && !!previewInstrument,
   });
+
+  // Normalize to common shape for rendering
+  const leaderboardEntries = useMemo(() => {
+    if (!leaderboardData) return [];
+    if ('entries' in leaderboardData && 'comboId' in leaderboardData) {
+      // ComboPageResponse
+      return leaderboardData.entries.map(e => ({
+        accountId: e.accountId,
+        displayName: e.displayName,
+        rank: e.rank,
+        ratingLabel: formatRating(e.totalScore, 'totalscore'),
+      }));
+    }
+    // RankingsPageResponse
+    if ('entries' in leaderboardData) {
+      return leaderboardData.entries.map(e => ({
+        accountId: e.accountId,
+        displayName: e.displayName,
+        rank: e.totalScoreRank,
+        ratingLabel: formatRating(e.totalScore, 'totalscore'),
+      }));
+    }
+    return [];
+  }, [leaderboardData]);
+
+  const playerEntry = useMemo(() => {
+    if (!playerRanking) return null;
+    if ('comboId' in playerRanking) {
+      // Combo player ranking
+      return {
+        accountId: playerRanking.accountId,
+        displayName: playerRanking.displayName,
+        rank: playerRanking.rank,
+        ratingLabel: formatRating(playerRanking.totalScore, 'totalscore'),
+      };
+    }
+    // Per-instrument player ranking
+    return {
+      accountId: playerRanking.accountId,
+      displayName: playerRanking.displayName,
+      rank: playerRanking.totalScoreRank,
+      ratingLabel: formatRating(playerRanking.totalScore, 'totalscore'),
+    };
+  }, [playerRanking]);
+
+  const playerInTop = !!(accountId && leaderboardEntries.some(e => e.accountId === accountId));
+
+  const leaderboardNavTarget = isMulti ? Routes.leaderboards : Routes.fullRankings(previewInstrument!, 'totalscore');
 
   // Rivals — closest 3 above + 3 below for first visible instrument
   const { data: rivalsData } = useQuery({
@@ -56,13 +120,10 @@ export default function CompetePage() {
 
   const above = rivalsData?.above.slice(0, 3) ?? [];
   const below = rivalsData?.below.slice(0, 3) ?? [];
-  const compositeEntries = compositeData?.entries ?? [];
-
-  const playerInTop = !!(accountId && compositeEntries.some(e => e.accountId === accountId));
 
   // Wait for leaderboards; also wait for rivals if a player is tracked
   const rivalsReady = !accountId || !previewInstrument || !!rivalsData;
-  const isReady = !compositeLoading && rivalsReady;
+  const isReady = !leaderboardLoading && rivalsReady;
   const { phase, shouldStagger } = usePageTransition('compete', isReady, isReady);
   const { next: stagger, clearAnim } = useStagger(shouldStagger);
   const s = useCompeteStyles();
@@ -80,10 +141,10 @@ export default function CompetePage() {
           className={fx.sectionHeaderClickable}
           style={{ ...s.sectionHeaderClickable, ...stagger() }}
           onAnimationEnd={clearAnim}
-          onClick={() => navigate(Routes.leaderboards)}
+          onClick={() => navigate(leaderboardNavTarget)}
           role="button"
           tabIndex={0}
-          onKeyDown={e => { if (e.key === 'Enter') navigate(Routes.leaderboards); }}
+          onKeyDown={e => { if (e.key === 'Enter') navigate(leaderboardNavTarget); }}
         >
           <div style={s.cardHeaderText}>
             <span style={s.cardTitle}>{t('compete.leaderboards')}</span>
@@ -92,28 +153,28 @@ export default function CompetePage() {
           <IoChevronForward size={20} style={s.chevron} />
         </div>
         <div style={s.list}>
-          {compositeEntries.map((e) => (
+          {leaderboardEntries.map((e) => (
             <Link key={e.accountId} to={`/player/${e.accountId}`} style={{ ...(e.accountId === accountId ? s.playerRow : s.row), ...stagger() }} onAnimationEnd={clearAnim}>
               <RankingEntry
-                rank={e.compositeRank}
+                rank={e.rank}
                 displayName={e.displayName ?? e.accountId.slice(0, 8)}
-                ratingLabel={formatRating(e.compositeRating, 'adjusted')}
+                ratingLabel={e.ratingLabel}
                 isPlayer={e.accountId === accountId}
               />
             </Link>
           ))}
-          {playerComposite && !playerInTop && (
-            <Link to={`/player/${playerComposite.accountId}`} style={{ ...s.playerRow, ...stagger() }} onAnimationEnd={clearAnim}>
+          {playerEntry && !playerInTop && (
+            <Link to={`/player/${playerEntry.accountId}`} style={{ ...s.playerRow, ...stagger() }} onAnimationEnd={clearAnim}>
               <RankingEntry
-                rank={playerComposite.compositeRank}
-                displayName={playerComposite.displayName ?? playerComposite.accountId.slice(0, 8)}
-                ratingLabel={formatRating(playerComposite.compositeRating, 'adjusted')}
+                rank={playerEntry.rank}
+                displayName={playerEntry.displayName ?? playerEntry.accountId.slice(0, 8)}
+                ratingLabel={playerEntry.ratingLabel}
                 isPlayer
               />
             </Link>
           )}
         </div>
-        <div style={{ ...s.viewAllButton, ...stagger() }} onAnimationEnd={clearAnim} onClick={() => navigate(Routes.leaderboards)}>
+        <div style={{ ...s.viewAllButton, ...stagger() }} onAnimationEnd={clearAnim} onClick={() => navigate(leaderboardNavTarget)}>
           {t('compete.viewFullLeaderboards')}
         </div>
       </div>

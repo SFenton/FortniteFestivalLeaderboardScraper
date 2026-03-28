@@ -13,9 +13,8 @@ import { LoadPhase } from '@festival/core';
 import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
 import { LeaderboardEntry } from './components/LeaderboardEntry';
 import { PaginatedLeaderboard } from '../../../components/leaderboard/PaginatedLeaderboard';
-import { Gap, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, QUERY_SHOW_STARS, Layout, MaxWidth, Position, CssValue, flexCenter, padding, FADE_DURATION } from '@festival/theme';
+import { QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, QUERY_SHOW_STARS, Layout, MaxWidth, Position, CssValue, padding, FADE_DURATION, STAGGER_INTERVAL } from '@festival/theme';
 import { clearStaggerStyle } from '../../../hooks/ui/useStaggerStyle';
-import ArcSpinner from '../../../components/common/ArcSpinner';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import { PageMessage } from '../../PageMessage';
 import { useIsMobile, useIsMobileChrome } from '../../../hooks/ui/useIsMobile';
@@ -103,7 +102,7 @@ export default function LeaderboardPage() {
     return () => scrollEl.removeEventListener('scroll', onScroll);
   }, [cacheKey, scrollContainerRef]);
 
-  // Header collapse callback — respects pinning (pinned pages keep their state until unpinned)
+  // Header collapse callback â€” respects pinning (pinned pages keep their state until unpinned)
   const handleHeaderCollapse = useCallback((collapsed: boolean) => {
     if (headerPinned.current) return;
     setHeaderCollapsed(collapsed);
@@ -147,7 +146,7 @@ export default function LeaderboardPage() {
   );
 
   // Restore scroll position when returning from cache
-  /* v8 ignore start — scroll restoration: scrollTop DOM API */
+  /* v8 ignore start â€” scroll restoration: scrollTop DOM API */
   useEffect(() => {
     if (!skipAllAnim || !cached) return;
     if (cached.scrollTop > 0) {
@@ -179,7 +178,7 @@ export default function LeaderboardPage() {
     });
   }, [loading, error, entries, totalEntries, localEntries, page, songId, cacheKey]);
 
-  // Spinner â†’ staggered-content transition
+  // Spinner Ã¢â€ â€™ staggered-content transition
   const hasLoadedOnce = useRef(hasCached);
   const loadPhaseRef = useRef(loadPhase);
   loadPhaseRef.current = loadPhase;
@@ -204,7 +203,7 @@ export default function LeaderboardPage() {
       setLoadPhase(LoadPhase.ContentIn);
       hasShownContentRef.current = true;
       // On initial load, let header be expanded and unpin immediately.
-      // On pagination, keep pinned â€” scroll handler will unpin once past threshold.
+      // On pagination, keep pinned Ã¢â‚¬â€ scroll handler will unpin once past threshold.
       /* v8 ignore start -- animation timing: initial load vs pagination */
       if (!hasLoadedOnce.current) {
         hasLoadedOnce.current = true;
@@ -212,17 +211,15 @@ export default function LeaderboardPage() {
         if (!isNarrow) setHeaderCollapsed(false);
       }
       /* v8 ignore stop */
-      // Retire stagger animations after they've had time to finish so that
-      // future re-renders (e.g. from scroll-driven headerCollapsed changes)
-      // don't re-apply opacity:0 + animation to rows/pagination/footer.
-      const staggerWindow = lastRowDelayRef.current + 400;
-      retireId = setTimeout(() => setAnimMode('cached'), staggerWindow);
+      // Retire header animation mode so future re-renders don't
+      // re-apply the fadeInUp to the header.
+      retireId = setTimeout(() => setAnimMode('cached'), FADE_DURATION + 100);
     }, 150);
     return () => { clearTimeout(id); clearTimeout(retireId); };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- animation sequence, intentionally omits isNarrow
   }, [loading, error]);
 
-  /* v8 ignore start — navToPlayer auto-scroll */
+  /* v8 ignore start â€” navToPlayer auto-scroll */
   useEffect(() => {
     if (loadPhase !== LoadPhase.ContentIn || !searchParams.get('navToPlayer')) return;
     const playerIndex = playerData ? entries.findIndex(e => e.accountId === playerData.accountId) : -1;
@@ -251,29 +248,11 @@ export default function LeaderboardPage() {
     return `${maxLen}ch`;
   }, [entries]);
 
-  const lastRowDelayRef = useRef(0);
-
   if (!songId || !instrument) {
     return <PageMessage>{t('leaderboard.notFound')}</PageMessage>;
   }
 
   const startRank = page * PAGE_SIZE;
-
-  // Row = 48px height + Gap.sm gap â‰ˆ 52px effective.
-  // scrollRef wraps the scroll viewport and is always mounted (even during spinner
-  // phase), so clientHeight is reliable on the first contentIn render â€” unlike
-  // listRef which lives inside the contentIn conditional and is null initially.
-  const ROW_SLOT = 48 + Gap.sm;
-  /* v8 ignore next 2 -- scrollRef.clientHeight: DOM measurement */
-  const scrollViewHeight = scrollRef.current?.clientHeight
-    ?? Math.max(0, window.innerHeight - (isNarrow ? 120 : 200));
-  const maxVisibleRows = Math.min(
-    entries.length,
-    Math.max(1, Math.ceil(scrollViewHeight / ROW_SLOT)),
-  );
-  const STAGGER_INTERVAL = 125;
-  const lastRowDelay = maxVisibleRows * STAGGER_INTERVAL;
-  lastRowDelayRef.current = lastRowDelay;
 
   const headerStagger: CSSProperties | undefined = isNarrow || animMode === 'cached' || animMode === 'paginate'
     ? undefined
@@ -307,19 +286,7 @@ export default function LeaderboardPage() {
 
         {!error && (
           <>
-            {loadPhase !== LoadPhase.ContentIn && (
-              <div
-                style={{ ...lbStyles.spinnerContainer,
-                  ...(loadPhase === LoadPhase.SpinnerOut
-                    ? { animation: 'fadeOut 150ms ease-out forwards' }
-                    : {}),
-                }}
-              >
-                <ArcSpinner />
-              </div>
-            )}
             {/* v8 ignore start — entry rendering via shared component */}
-            {loadPhase === LoadPhase.ContentIn && (
               <PaginatedLeaderboard<LeaderboardEntryType>
                 entries={entries}
                 page={page + 1}
@@ -367,15 +334,14 @@ export default function LeaderboardPage() {
                     </div>
                   </div>
                 )}
-                animMode={animMode}
-                maxVisibleRows={maxVisibleRows}
+                loading={loading}
+                cached={animMode === 'cached'}
                 isMobile={isMobile}
                 hasFab={hasFab}
-                hasLoaded={hasLoadedOnce.current}
                 error={!!error}
                 emptyMessage={t('leaderboard.noEntriesOnPage')}
+                staggerRushRef={staggerRushRef}
               />
-            )}
             {/* v8 ignore stop */}
           </>
         )}
@@ -383,7 +349,7 @@ export default function LeaderboardPage() {
   );
 }
 
-/* ── Static styles ── */
+/* â”€â”€ Static styles â”€â”€ */
 
 const lbStyles = {
   container: {
@@ -393,9 +359,5 @@ const lbStyles = {
     padding: padding(0, Layout.paddingHorizontal),
     position: Position.relative,
     zIndex: 1,
-  } as CSSProperties,
-  spinnerContainer: {
-    ...flexCenter,
-    minHeight: 'calc(100vh - 350px)',
   } as CSSProperties,
 };

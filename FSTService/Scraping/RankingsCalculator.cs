@@ -233,87 +233,117 @@ public sealed class RankingsCalculator
             return;
         }
 
-        // Load all per-instrument ranking summaries into memory
-        var perInstrument = new Dictionary<string, Dictionary<string, (double Rating, int SongsPlayed)>>(StringComparer.OrdinalIgnoreCase);
+        // Load all per-instrument ranking summaries (all 5 metrics) into memory
+        var perInstrument = new Dictionary<string, Dictionary<string, AccountMetrics>>(StringComparer.OrdinalIgnoreCase);
         foreach (var instrument in instruments)
         {
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
-            var dict = new Dictionary<string, (double, int)>(StringComparer.OrdinalIgnoreCase);
-            foreach (var (accountId, rating, songsPlayed, _) in db.GetAllRankingSummaries())
-                dict[accountId] = (rating, songsPlayed);
+            var dict = new Dictionary<string, AccountMetrics>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (accountId, adj, wgt, fc, ts, ms, songs, fcc) in db.GetAllRankingSummariesFull())
+                dict[accountId] = new AccountMetrics(adj, wgt, fc, ts, ms, songs, fcc);
             perInstrument[instrument] = dict;
         }
 
-        // Generate all combos of size >= 2
-        var instrumentList = instruments.OrderBy(i => i, StringComparer.OrdinalIgnoreCase).ToList();
-        int n = instrumentList.Count;
+        // Use ComboIds canonical order — iterate all bitmasks over the full 6-instrument set
+        int n = ComboIds.CanonicalOrder.Count;
         int combosComputed = 0;
         int totalRows = 0;
 
-        for (int mask = 3; mask < (1 << n); mask++) // Start at 3 (binary 11) to skip single-instrument
+        for (int mask = 3; mask < (1 << n); mask++)
         {
             if (BitCount(mask) < 2) continue;
 
-            // Build combo key and instrument list for this mask
+            // Build instrument list for this mask from canonical order
             var comboInstruments = new List<string>();
             for (int bit = 0; bit < n; bit++)
             {
                 if ((mask & (1 << bit)) != 0)
-                    comboInstruments.Add(instrumentList[bit]);
+                    comboInstruments.Add(ComboIds.CanonicalOrder[bit]);
             }
-            var comboKey = string.Join("+", comboInstruments);
 
-            // Intersect accounts across all instruments in this combo + compute weighted rating
-            Dictionary<string, (double WeightedSum, int TotalSongs)>? accountRatings = null;
+            // Skip if any instrument in this combo is not in the active set
+            if (!comboInstruments.All(i => perInstrument.ContainsKey(i))) continue;
+
+            var comboId = ComboIds.FromMask(mask);
+            int comboSize = comboInstruments.Count;
+
+            // Intersect accounts across all instruments in this combo + aggregate metrics
+            Dictionary<string, AggregatedMetrics>? accountMetrics = null;
 
             foreach (var instrument in comboInstruments)
             {
-                if (!perInstrument.TryGetValue(instrument, out var instData)) { accountRatings = null; break; }
+                var instData = perInstrument[instrument];
 
-                if (accountRatings is null)
+                if (accountMetrics is null)
                 {
-                    // Seed from first instrument
-                    accountRatings = new Dictionary<string, (double, int)>(instData.Count, StringComparer.OrdinalIgnoreCase);
-                    foreach (var (aid, (rating, songs)) in instData)
-                        accountRatings[aid] = (rating * songs, songs);
+                    accountMetrics = new Dictionary<string, AggregatedMetrics>(instData.Count, StringComparer.OrdinalIgnoreCase);
+                    foreach (var (aid, m) in instData)
+                        accountMetrics[aid] = new AggregatedMetrics(
+                            m.AdjustedRating * m.SongsPlayed, m.WeightedRating * m.SongsPlayed,
+                            m.FullComboCount, m.TotalScore, m.MaxScorePercent, m.SongsPlayed, 1);
                 }
                 else
                 {
-                    // Intersect: remove accounts not in this instrument, accumulate for those that are
                     var toRemove = new List<string>();
-                    foreach (var aid in accountRatings.Keys)
+                    foreach (var aid in accountMetrics.Keys)
                     {
                         if (!instData.ContainsKey(aid))
                             toRemove.Add(aid);
                     }
                     foreach (var aid in toRemove)
-                        accountRatings.Remove(aid);
+                        accountMetrics.Remove(aid);
 
-                    foreach (var (aid, (rating, songs)) in instData)
+                    foreach (var (aid, m) in instData)
                     {
-                        if (accountRatings.TryGetValue(aid, out var existing))
-                            accountRatings[aid] = (existing.WeightedSum + rating * songs, existing.TotalSongs + songs);
+                        if (accountMetrics.TryGetValue(aid, out var existing))
+                            accountMetrics[aid] = new AggregatedMetrics(
+                                existing.AdjWeightedSum + m.AdjustedRating * m.SongsPlayed,
+                                existing.WgtWeightedSum + m.WeightedRating * m.SongsPlayed,
+                                existing.TotalFcCount + m.FullComboCount,
+                                existing.TotalScore + m.TotalScore,
+                                existing.MaxScoreSum + m.MaxScorePercent,
+                                existing.TotalSongs + m.SongsPlayed,
+                                existing.InstrumentCount + 1);
                     }
                 }
             }
 
-            if (accountRatings is null || accountRatings.Count == 0) continue;
+            if (accountMetrics is null || accountMetrics.Count == 0) continue;
 
-            // Sort by combo rating ASC, then AccountId ASC for deterministic tiebreak
-            var sorted = accountRatings
-                .Select(kvp => (AccountId: kvp.Key, ComboRating: kvp.Value.WeightedSum / kvp.Value.TotalSongs, SongsPlayed: kvp.Value.TotalSongs))
-                .OrderBy(x => x.ComboRating)
-                .ThenByDescending(x => x.SongsPlayed)
-                .ThenBy(x => x.AccountId, StringComparer.OrdinalIgnoreCase)
+            // Build final entries with all 5 computed metrics
+            var entries = accountMetrics
+                .Select(kvp =>
+                {
+                    var a = kvp.Value;
+                    return (
+                        AccountId: kvp.Key,
+                        AdjustedRating: a.AdjWeightedSum / a.TotalSongs,
+                        WeightedRating: a.WgtWeightedSum / a.TotalSongs,
+                        FcRate: a.TotalSongs > 0 ? (double)a.TotalFcCount / a.TotalSongs : 0.0,
+                        TotalScore: a.TotalScore,
+                        MaxScorePercent: a.InstrumentCount > 0 ? a.MaxScoreSum / a.InstrumentCount : 0.0,
+                        SongsPlayed: a.TotalSongs,
+                        FullComboCount: a.TotalFcCount);
+                })
                 .ToList();
 
-            _metaDb.ReplaceComboLeaderboard(comboKey, sorted, sorted.Count);
+            _metaDb.ReplaceComboLeaderboard(comboId, entries, entries.Count);
             combosComputed++;
-            totalRows += sorted.Count;
+            totalRows += entries.Count;
         }
 
         _log.LogInformation("Computed {Combos} combo leaderboards with {TotalRows:N0} total ranked entries.", combosComputed, totalRows);
     }
+
+    /// <summary>Per-instrument metric values for a single account.</summary>
+    private readonly record struct AccountMetrics(
+        double AdjustedRating, double WeightedRating, double FcRate,
+        long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount);
+
+    /// <summary>Accumulated metrics across instruments for a single account within a combo.</summary>
+    private readonly record struct AggregatedMetrics(
+        double AdjWeightedSum, double WgtWeightedSum, int TotalFcCount,
+        long TotalScore, double MaxScoreSum, int TotalSongs, int InstrumentCount);
 
     private static int BitCount(int value)
     {

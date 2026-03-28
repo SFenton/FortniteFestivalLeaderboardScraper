@@ -1,5 +1,6 @@
 import type { AppSettings } from '../../../contexts/SettingsContext';
 import type { ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import { comboIdFromInstruments } from '@festival/core/combos';
 
 /** Maps AppSettings show-keys to server instrument keys. */
 const SETTING_TO_KEY: [keyof AppSettings, ServerInstrumentKey][] = [
@@ -17,12 +18,11 @@ export function getEnabledInstruments(settings: AppSettings): ServerInstrumentKe
 }
 
 /**
- * Derives the combo string from enabled instruments.
+ * Derives the combo ID (hex bitmask) from enabled instruments.
  * Returns null if 0 or 1 instruments are enabled (combo needs 2+).
- * Instruments are joined with '+' in the canonical order.
  */
 export function deriveComboFromSettings(settings: AppSettings): string | null {
   const instruments = getEnabledInstruments(settings);
   if (instruments.length < 2) return null;
-  return instruments.join('+');
+  return comboIdFromInstruments(instruments);
 }

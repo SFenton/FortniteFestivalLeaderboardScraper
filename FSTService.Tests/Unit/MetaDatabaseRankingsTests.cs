@@ -139,30 +139,31 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     [Fact]
     public void ReplaceComboLeaderboard_StoresAndRetrieves()
     {
-        var ranked = new List<(string AccountId, double ComboRating, int SongsPlayed)>
+        var entries = new List<(string AccountId, double AdjustedRating, double WeightedRating, double FcRate, long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)>
         {
-            ("p1", 0.05, 100),
-            ("p2", 0.10, 80),
+            ("p1", 0.05, 0.06, 0.8, 50000, 0.95, 100, 80),
+            ("p2", 0.10, 0.12, 0.6, 40000, 0.90, 80, 48),
         };
-        Db.ReplaceComboLeaderboard("Solo_Bass+Solo_Guitar", ranked, 2);
+        Db.ReplaceComboLeaderboard("03", entries, 2);
 
-        var (entries, total) = Db.GetComboLeaderboard("Solo_Bass+Solo_Guitar", 1, 50);
+        var (result, total) = Db.GetComboLeaderboard("03", "adjusted", 1, 50);
         Assert.Equal(2, total);
-        Assert.Equal(2, entries.Count);
-        Assert.Equal("p1", entries[0].AccountId);
-        Assert.Equal(1, entries[0].Rank);
-        Assert.Equal(0.05, entries[0].ComboRating, 4);
+        Assert.Equal(2, result.Count);
+        Assert.Equal("p1", result[0].AccountId);
+        Assert.Equal(1, result[0].Rank);
+        Assert.Equal(0.05, result[0].AdjustedRating, 4);
+        Assert.Equal(50000, result[0].TotalScore);
     }
 
     [Fact]
     public void ReplaceComboLeaderboard_ReplacesOld()
     {
-        Db.ReplaceComboLeaderboard("Solo_Bass+Solo_Guitar",
-            [("old", 0.5, 10)], 1);
-        Db.ReplaceComboLeaderboard("Solo_Bass+Solo_Guitar",
-            [("new", 0.1, 20)], 1);
+        Db.ReplaceComboLeaderboard("03",
+            [("old", 0.5, 0.5, 0.5, 1000, 0.5, 10, 5)], 1);
+        Db.ReplaceComboLeaderboard("03",
+            [("new", 0.1, 0.1, 0.8, 2000, 0.9, 20, 16)], 1);
 
-        var (entries, total) = Db.GetComboLeaderboard("Solo_Bass+Solo_Guitar");
+        var (entries, total) = Db.GetComboLeaderboard("03");
         Assert.Equal(1, total);
         Assert.Equal("new", entries[0].AccountId);
     }
@@ -170,10 +171,10 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     [Fact]
     public void GetComboRank_SingleAccount()
     {
-        Db.ReplaceComboLeaderboard("Solo_Bass+Solo_Guitar",
-            [("p1", 0.05, 100), ("p2", 0.10, 80)], 2);
+        Db.ReplaceComboLeaderboard("03",
+            [("p1", 0.05, 0.06, 0.8, 50000, 0.95, 100, 80), ("p2", 0.10, 0.12, 0.6, 40000, 0.90, 80, 48)], 2);
 
-        var entry = Db.GetComboRank("Solo_Bass+Solo_Guitar", "p2");
+        var entry = Db.GetComboRank("03", "p2");
         Assert.NotNull(entry);
         Assert.Equal(2, entry.Rank);
         Assert.Equal("p2", entry.AccountId);
@@ -182,16 +183,16 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     [Fact]
     public void GetComboRank_ReturnsNull_ForUnknown()
     {
-        Assert.Null(Db.GetComboRank("Solo_Bass+Solo_Guitar", "nobody"));
+        Assert.Null(Db.GetComboRank("03", "nobody"));
     }
 
     [Fact]
     public void GetComboTotalAccounts_ReturnsCount()
     {
-        Db.ReplaceComboLeaderboard("Solo_Bass+Solo_Guitar",
-            [("p1", 0.05, 100)], 500_000);
+        Db.ReplaceComboLeaderboard("03",
+            [("p1", 0.05, 0.06, 0.8, 50000, 0.95, 100, 80)], 500_000);
 
-        Assert.Equal(500_000, Db.GetComboTotalAccounts("Solo_Bass+Solo_Guitar"));
+        Assert.Equal(500_000, Db.GetComboTotalAccounts("03"));
     }
 
     [Fact]
@@ -203,13 +204,13 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
     [Fact]
     public void GetComboLeaderboard_Pagination()
     {
-        var ranked = Enumerable.Range(0, 10)
-            .Select(i => ($"p{i}", 0.01 * i, 100 - i))
+        var entries = Enumerable.Range(0, 10)
+            .Select(i => ($"p{i}", 0.01 * i, 0.01 * i, 0.5, (long)(1000 * (10 - i)), 0.5, 100 - i, 50 - i))
             .ToList();
-        Db.ReplaceComboLeaderboard("Solo_Bass+Solo_Guitar", ranked, 10);
+        Db.ReplaceComboLeaderboard("03", entries, 10);
 
-        var (page1, total) = Db.GetComboLeaderboard("Solo_Bass+Solo_Guitar", 1, 3);
-        var (page2, _) = Db.GetComboLeaderboard("Solo_Bass+Solo_Guitar", 2, 3);
+        var (page1, total) = Db.GetComboLeaderboard("03", "adjusted", 1, 3);
+        var (page2, _) = Db.GetComboLeaderboard("03", "adjusted", 2, 3);
 
         Assert.Equal(10, total);
         Assert.Equal(3, page1.Count);

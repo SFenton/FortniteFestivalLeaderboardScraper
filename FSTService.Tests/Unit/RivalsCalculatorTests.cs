@@ -253,7 +253,8 @@ public sealed class RivalsCalculatorTests : IDisposable
         Assert.True(result.CombosComputed > 0);
 
         // rival1 should be found (close), rival2 likely not (far or lower score)
-        var guitarRivals = result.Rivals.Where(r => r.InstrumentCombo == "Solo_Guitar").ToList();
+        var guitarComboId = ComboIds.FromInstruments(["Solo_Guitar"]);
+        var guitarRivals = result.Rivals.Where(r => r.InstrumentCombo == guitarComboId).ToList();
         Assert.Contains(guitarRivals, r => r.RivalAccountId == "rival1");
     }
 
@@ -322,8 +323,8 @@ public sealed class RivalsCalculatorTests : IDisposable
 
         // Should only have Guitar combos, not Bass
         var combos = result.Rivals.Select(r => r.InstrumentCombo).Distinct().ToList();
-        Assert.Contains("Solo_Guitar", combos);
-        Assert.DoesNotContain("Solo_Bass", combos);
+        Assert.Contains(ComboIds.FromInstruments(["Solo_Guitar"]), combos);
+        Assert.DoesNotContain(ComboIds.FromInstruments(["Solo_Bass"]), combos);
     }
 
     // ═══ Multi-instrument combo ═════════════════════════════════
@@ -353,9 +354,9 @@ public sealed class RivalsCalculatorTests : IDisposable
         var result = calc.ComputeRivals("user1");
 
         var combos = result.Rivals.Select(r => r.InstrumentCombo).Distinct().ToList();
-        Assert.Contains("Solo_Guitar", combos);
-        Assert.Contains("Solo_Bass", combos);
-        Assert.Contains("Solo_Bass+Solo_Guitar", combos); // combo key is sorted
+        Assert.Contains(ComboIds.FromInstruments(["Solo_Guitar"]), combos);
+        Assert.Contains(ComboIds.FromInstruments(["Solo_Bass"]), combos);
+        Assert.Contains(ComboIds.FromInstruments(["Solo_Guitar", "Solo_Bass"]), combos); // combo ID for Guitar+Bass
     }
 
     // ═══ ComputeSongGaps ═════════════════════════════════════════

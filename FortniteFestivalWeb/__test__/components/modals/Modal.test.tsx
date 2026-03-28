@@ -79,8 +79,9 @@ describe('Modal', () => {
     const onReset = vi.fn();
     renderModal({ onReset, resetLabel: 'Reset All' });
     await act(async () => {});
-    const resetBtns = screen.getAllByText('Reset All');
-    fireEvent.click(resetBtns[resetBtns.length - 1]!);
+    // resetLabel renders as title div; button uses common.reset = 'Reset'
+    const resetBtn = screen.getAllByRole('button', { name: 'Reset' });
+    fireEvent.click(resetBtn[resetBtn.length - 1]!);
     expect(onReset).toHaveBeenCalledTimes(1);
   });
 });

@@ -326,7 +326,7 @@ describe('SuggestionsPage — filter handlers (extracted)', () => {
     if (filterBtn) {
       fireEvent.click(filterBtn);
       await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-      const resetBtns = screen.queryAllByText('Reset Suggestion Filters');
+      const resetBtns = screen.queryAllByRole('button', { name: 'Reset' });
       if (resetBtns.length > 0) {
         fireEvent.click(resetBtns[0]!);
         await act(async () => { await vi.advanceTimersByTimeAsync(500); });

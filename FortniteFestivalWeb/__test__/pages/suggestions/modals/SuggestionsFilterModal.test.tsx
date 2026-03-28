@@ -232,6 +232,25 @@ describe('SuggestionsFilterModal', () => {
     expect(screen.queryByTitle('Pro Lead')).toBeNull();
   });
 
+  it('resets instrument selection when modal reopens', () => {
+    const props = defaultProps();
+    const { rerender } = renderModal(props);
+    // Select Lead — per-instrument toggles should appear
+    fireEvent.click(screen.getByTitle('Lead'));
+    const countWithInstrument = screen.getAllByText('Near FC').length;
+    expect(countWithInstrument).toBeGreaterThanOrEqual(2); // general + per-instrument
+
+    // Close modal then reopen
+    rerender(<TestProviders><SuggestionsFilterModal {...props} visible={false} /></TestProviders>);
+    rerender(<TestProviders><SuggestionsFilterModal {...props} visible={true} /></TestProviders>);
+
+    // Expand General accordion so its "Near FC" is visible
+    fireEvent.click(screen.getByText('General'));
+    // Only the general toggle should be visible — per-instrument section collapsed
+    const countAfterReopen = screen.getAllByText('Near FC').length;
+    expect(countAfterReopen).toBeLessThan(countWithInstrument);
+  });
+
   /* ── Apply / Reset / Cancel ── */
 
   it('calls onApply when Apply button is clicked', () => {
@@ -268,8 +287,9 @@ describe('SuggestionsFilterModal', () => {
   it('calls onReset when Reset button is clicked', () => {
     const props = defaultProps();
     renderModal(props);
-    const resetBtns = screen.getAllByText('Reset Suggestion Filters');
-    fireEvent.click(resetBtns[resetBtns.length - 1]!);
+    // i18n: resetLabel renders as title div; button uses common.reset = 'Reset'
+    const resetBtn = screen.getAllByRole('button', { name: 'Reset' });
+    fireEvent.click(resetBtn[resetBtn.length - 1]!);
     expect(props.onReset).toHaveBeenCalledTimes(1);
   });
 

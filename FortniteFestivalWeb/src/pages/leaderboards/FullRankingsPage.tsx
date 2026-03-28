@@ -17,17 +17,15 @@ import { ModalSection } from '../../components/modals/components/ModalSection';
 import { RadioRow } from '../../components/common/RadioRow';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
 import type { ServerInstrumentKey as InstrumentKey, RankingMetric } from '@festival/core/api/serverTypes';
-import { LoadPhase, InstrumentHeaderSize } from '@festival/core';
+import { InstrumentHeaderSize } from '@festival/core';
 import { serverInstrumentLabel } from '@festival/core/api/serverTypes';
 import { getRankForMetric, formatRating, getRatingForMetric, RANKING_METRICS, computeRankWidth } from './helpers/rankingHelpers';
 import { rankingsCache } from '../../api/pageCache';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
+import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useFabSearch } from '../../contexts/FabSearchContext';
-import {
-  Gap, Layout,
-  STAGGER_INTERVAL, FADE_DURATION, Size,
-} from '@festival/theme';
+import { Size } from '@festival/theme';
 
 const PAGE_SIZE = 25;
 
@@ -43,6 +41,7 @@ export default function FullRankingsPage() {
   const isMobileChrome = useIsMobileChrome();
   const hasFab = isMobileChrome;
   const fabSearch = useFabSearch();
+  const scrollContainerRef = useScrollContainer();
 
   const metricModal = useModalState<RankingMetric>(() => 'totalscore');
 
@@ -53,10 +52,8 @@ export default function FullRankingsPage() {
   const applyMetric = useCallback(() => {
     const m = metricModal.draft;
     metricModal.close();
-    scrollRef.current?.scrollTo(0, 0);
-    staggerRushRef.current?.();
+    scrollContainerRef.current?.scrollTo(0, 0);
     setPage(1);
-    setAnimMode('paginate');
     setSearchParams({ instrument, rankBy: m, page: '1' }, { replace: true });
   }, [metricModal, instrument, setSearchParams]);
 
@@ -91,10 +88,8 @@ export default function FullRankingsPage() {
 
   const goToPage = useCallback((p: number) => {
     if (p < 1 || (totalPages && p > totalPages)) return;
-    scrollRef.current?.scrollTo(0, 0);
-    staggerRushRef.current?.();
+    scrollContainerRef.current?.scrollTo(0, 0);
     setPage(p);
-    setAnimMode('paginate');
     setSearchParams({ instrument, rankBy: metric, page: String(p) }, { replace: true });
   }, [instrument, metric, totalPages, setSearchParams]);
 
@@ -108,29 +103,11 @@ export default function FullRankingsPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [page, totalPages, goToPage]);
 
-  const loadPhase = isFetching ? LoadPhase.Loading : LoadPhase.ContentIn;
   const isMobile = useIsMobile();
+  const loading = isFetching && !data;
 
-  const skipAllAnim = !!cached;
-  const [animMode, setAnimMode] = useState<'first' | 'paginate' | 'cached'>(skipAllAnim ? 'cached' : 'first');
   const scrollRef = useRef<HTMLDivElement>(null);
   const staggerRushRef = useRef<(() => void) | undefined>(undefined);
-
-  const ROW_SLOT = Layout.entryRowHeight + Gap.sm;
-  const scrollViewHeight = scrollRef.current?.clientHeight
-    ?? Math.max(0, window.innerHeight - (isMobile ? 120 : 200));
-  const maxVisibleRows = useMemo(
-    () => Math.min(entries.length, Math.max(1, Math.ceil(scrollViewHeight / ROW_SLOT))),
-    [entries.length, scrollViewHeight, ROW_SLOT],
-  );
-
-  // Retire stagger animations after they've had time to finish
-  useEffect(() => {
-    if (animMode === 'cached' || isFetching) return;
-    const staggerWindow = maxVisibleRows * STAGGER_INTERVAL + FADE_DURATION;
-    const id = setTimeout(() => setAnimMode('cached'), staggerWindow);
-    return () => clearTimeout(id);
-  }, [animMode, isFetching, maxVisibleRows]);
 
   const playerInPage = !!(player && entries.some(e => e.accountId === player.accountId));
   const hasPlayerFooter = !!playerRanking;
@@ -149,7 +126,6 @@ export default function FullRankingsPage() {
       scrollRef={scrollRef}
       staggerRushRef={staggerRushRef}
       scrollRestoreKey={`rankings:${cacheKey}:${page}`}
-      loadPhase={loadPhase}
       fabSpacer="none"
       before={
         <PageHeader
@@ -235,10 +211,11 @@ export default function FullRankingsPage() {
             />
           </Link>
         ) : undefined}
-        animMode={animMode}
-        maxVisibleRows={maxVisibleRows}
+        loading={loading}
+        cached={!!cached}
         isMobile={isMobile}
         hasFab={hasFab}
+        staggerRushRef={staggerRushRef}
       />
     </Page>
   );

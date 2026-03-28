@@ -149,20 +149,20 @@ public sealed class RivalsCalculator
         foreach (var instrument in validInstruments)
         {
             var data = perInstrument[instrument];
-            var combo = instrument; // single-instrument combo key
+            var combo = ComboIds.FromInstruments([instrument]); // single-instrument combo ID
             SelectRivals(userId, combo, data.Candidates.Values, MinSharedSongsPerInstrument,
                 RivalsPerDirection, now, rivalRows);
         }
 
         // Step 5: Combination rival computation
         var combos = GenerateCombos(validInstruments);
-        foreach (var combo in combos)
+        foreach (var instruments in combos)
         {
-            if (combo.Count < 2) continue; // singles already handled
+            if (instruments.Count < 2) continue; // singles already handled
 
-            var comboKey = string.Join("+", combo); // already sorted
-            var combinedCandidates = IntersectCandidates(combo, allCandidates);
-            SelectRivals(userId, comboKey, combinedCandidates.Values, MinSharedSongsPerInstrumentInCombo,
+            var comboId = ComboIds.FromInstruments(instruments);
+            var combinedCandidates = IntersectCandidates(instruments, allCandidates);
+            SelectRivals(userId, comboId, combinedCandidates.Values, MinSharedSongsPerInstrumentInCombo,
                 RivalsPerDirection, now, rivalRows);
         }
 

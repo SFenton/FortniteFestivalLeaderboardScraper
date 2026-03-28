@@ -1265,6 +1265,34 @@ public sealed class InstrumentDatabase : IDisposable
     }
 
     /// <summary>
+    /// Get all account rankings with full metric data (for combo computation).
+    /// Returns all 5 metric values plus SongsPlayed and FullComboCount per account.
+    /// </summary>
+    internal List<(string AccountId, double AdjustedSkillRating, double WeightedRating, double FcRate,
+        long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)> GetAllRankingSummariesFull()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT AccountId, AdjustedSkillRating, WeightedRating, FcRate, TotalScore, MaxScorePercent, SongsPlayed, FullComboCount FROM AccountRankings;";
+
+        var result = new List<(string, double, double, double, long, double, int, int)>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            result.Add((
+                reader.GetString(0),
+                reader.GetDouble(1),
+                reader.GetDouble(2),
+                reader.GetDouble(3),
+                reader.GetInt64(4),
+                reader.GetDouble(5),
+                reader.GetInt32(6),
+                reader.GetInt32(7)));
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Get rank history for an account over the last N days.
     /// </summary>
     public List<RankHistoryDto> GetRankHistory(string accountId, int days = 30)

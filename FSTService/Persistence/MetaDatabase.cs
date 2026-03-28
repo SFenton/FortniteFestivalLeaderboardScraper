@@ -20,6 +20,12 @@ public sealed class MetaDatabase : IDisposable
     /// </summary>
     internal const int RivalsVersion = 1;
 
+    /// <summary>
+    /// Bump this when combo leaderboard schema changes (tables are rebuilt each scrape).
+    /// v1 → v2: Added multi-metric columns, changed PK from (ComboKey,Rank) to (ComboId,AccountId).
+    /// </summary>
+    internal const int ComboVersion = 2;
+
     private readonly string _connectionString;
     private readonly ILogger<MetaDatabase> _log;
     private bool _initialized;
@@ -303,19 +309,27 @@ public sealed class MetaDatabase : IDisposable
             );
 
             CREATE TABLE IF NOT EXISTS ComboLeaderboard (
-                ComboKey    TEXT    NOT NULL,
-                Rank        INTEGER NOT NULL,
-                AccountId   TEXT    NOT NULL,
-                ComboRating REAL    NOT NULL,
-                SongsPlayed INTEGER NOT NULL,
-                ComputedAt  TEXT    NOT NULL,
-                PRIMARY KEY (ComboKey, Rank)
+                ComboId         TEXT    NOT NULL,
+                AccountId       TEXT    NOT NULL,
+                AdjustedRating  REAL    NOT NULL,
+                WeightedRating  REAL    NOT NULL,
+                FcRate          REAL    NOT NULL,
+                TotalScore      INTEGER NOT NULL,
+                MaxScorePercent REAL    NOT NULL,
+                SongsPlayed     INTEGER NOT NULL,
+                FullComboCount  INTEGER NOT NULL,
+                ComputedAt      TEXT    NOT NULL,
+                PRIMARY KEY (ComboId, AccountId)
             );
 
-            CREATE INDEX IF NOT EXISTS IX_ComboLB_Account ON ComboLeaderboard (ComboKey, AccountId);
+            CREATE INDEX IF NOT EXISTS IX_ComboLB_Adjusted  ON ComboLeaderboard (ComboId, AdjustedRating ASC);
+            CREATE INDEX IF NOT EXISTS IX_ComboLB_Weighted   ON ComboLeaderboard (ComboId, WeightedRating ASC);
+            CREATE INDEX IF NOT EXISTS IX_ComboLB_FcRate     ON ComboLeaderboard (ComboId, FcRate DESC);
+            CREATE INDEX IF NOT EXISTS IX_ComboLB_TotalScore ON ComboLeaderboard (ComboId, TotalScore DESC);
+            CREATE INDEX IF NOT EXISTS IX_ComboLB_MaxScore   ON ComboLeaderboard (ComboId, MaxScorePercent DESC);
 
             CREATE TABLE IF NOT EXISTS ComboStats (
-                ComboKey       TEXT PRIMARY KEY,
+                ComboId        TEXT PRIMARY KEY,
                 TotalAccounts  INTEGER NOT NULL,
                 ComputedAt     TEXT    NOT NULL
             );
@@ -366,6 +380,9 @@ public sealed class MetaDatabase : IDisposable
 
         // ── Migration: re-queue rivals computation when rivals version bumps ──
         MigrateFeatureVersion(conn, "Rivals", RivalsVersion, ResetRivalsStatus);
+
+        // ── Migration: rebuild combo tables when combo version bumps ──
+        MigrateFeatureVersion(conn, "Combo", ComboVersion, ResetComboTables);
 
         _initialized = true;
 
@@ -2283,6 +2300,43 @@ public sealed class MetaDatabase : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    /// <summary>Reset action for Combo: drop old tables and recreate with new schema.</summary>
+    private static void ResetComboTables(SqliteConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            DROP TABLE IF EXISTS ComboLeaderboard;
+            DROP TABLE IF EXISTS ComboStats;
+
+            CREATE TABLE IF NOT EXISTS ComboLeaderboard (
+                ComboId         TEXT    NOT NULL,
+                AccountId       TEXT    NOT NULL,
+                AdjustedRating  REAL    NOT NULL,
+                WeightedRating  REAL    NOT NULL,
+                FcRate          REAL    NOT NULL,
+                TotalScore      INTEGER NOT NULL,
+                MaxScorePercent REAL    NOT NULL,
+                SongsPlayed     INTEGER NOT NULL,
+                FullComboCount  INTEGER NOT NULL,
+                ComputedAt      TEXT    NOT NULL,
+                PRIMARY KEY (ComboId, AccountId)
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_ComboLB_Adjusted  ON ComboLeaderboard (ComboId, AdjustedRating ASC);
+            CREATE INDEX IF NOT EXISTS IX_ComboLB_Weighted   ON ComboLeaderboard (ComboId, WeightedRating ASC);
+            CREATE INDEX IF NOT EXISTS IX_ComboLB_FcRate     ON ComboLeaderboard (ComboId, FcRate DESC);
+            CREATE INDEX IF NOT EXISTS IX_ComboLB_TotalScore ON ComboLeaderboard (ComboId, TotalScore DESC);
+            CREATE INDEX IF NOT EXISTS IX_ComboLB_MaxScore   ON ComboLeaderboard (ComboId, MaxScorePercent DESC);
+
+            CREATE TABLE IF NOT EXISTS ComboStats (
+                ComboId        TEXT PRIMARY KEY,
+                TotalAccounts  INTEGER NOT NULL,
+                ComputedAt     TEXT    NOT NULL
+            );
+            """;
+        cmd.ExecuteNonQuery();
+    }
+
     /// <summary>
     /// Returns the stored version for a feature, or 0 if not yet recorded.
     /// </summary>
@@ -2906,8 +2960,11 @@ public sealed class MetaDatabase : IDisposable
         }
     }
 
-    /// <summary>Replace all combo leaderboard data for a specific combo key.</summary>
-    public void ReplaceComboLeaderboard(string comboKey, IReadOnlyList<(string AccountId, double ComboRating, int SongsPlayed)> ranked, int totalAccounts)
+    /// <summary>Replace all combo leaderboard data for a specific combo ID.</summary>
+    public void ReplaceComboLeaderboard(
+        string comboId,
+        IReadOnlyList<(string AccountId, double AdjustedRating, double WeightedRating, double FcRate, long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)> entries,
+        int totalAccounts)
     {
         var conn = GetPersistentConnection();
         lock (_writeLock)
@@ -2918,8 +2975,8 @@ public sealed class MetaDatabase : IDisposable
             using (var del = conn.CreateCommand())
             {
                 del.Transaction = tx;
-                del.CommandText = "DELETE FROM ComboLeaderboard WHERE ComboKey = @key;";
-                del.Parameters.AddWithValue("@key", comboKey);
+                del.CommandText = "DELETE FROM ComboLeaderboard WHERE ComboId = @id;";
+                del.Parameters.AddWithValue("@id", comboId);
                 del.ExecuteNonQuery();
             }
 
@@ -2927,25 +2984,32 @@ public sealed class MetaDatabase : IDisposable
             {
                 ins.Transaction = tx;
                 ins.CommandText = """
-                    INSERT INTO ComboLeaderboard (ComboKey, Rank, AccountId, ComboRating, SongsPlayed, ComputedAt)
-                    VALUES (@key, @rank, @aid, @rating, @songs, @now);
+                    INSERT INTO ComboLeaderboard (ComboId, AccountId, AdjustedRating, WeightedRating, FcRate, TotalScore, MaxScorePercent, SongsPlayed, FullComboCount, ComputedAt)
+                    VALUES (@id, @aid, @adj, @wgt, @fc, @ts, @ms, @songs, @fcc, @now);
                     """;
-                var pKey = ins.Parameters.Add("@key", SqliteType.Text);
-                var pRank = ins.Parameters.Add("@rank", SqliteType.Integer);
+                var pId = ins.Parameters.Add("@id", SqliteType.Text);
                 var pAid = ins.Parameters.Add("@aid", SqliteType.Text);
-                var pRating = ins.Parameters.Add("@rating", SqliteType.Real);
+                var pAdj = ins.Parameters.Add("@adj", SqliteType.Real);
+                var pWgt = ins.Parameters.Add("@wgt", SqliteType.Real);
+                var pFc = ins.Parameters.Add("@fc", SqliteType.Real);
+                var pTs = ins.Parameters.Add("@ts", SqliteType.Integer);
+                var pMs = ins.Parameters.Add("@ms", SqliteType.Real);
                 var pSongs = ins.Parameters.Add("@songs", SqliteType.Integer);
+                var pFcc = ins.Parameters.Add("@fcc", SqliteType.Integer);
                 var pNow = ins.Parameters.Add("@now", SqliteType.Text);
                 ins.Prepare();
 
-                for (int i = 0; i < ranked.Count; i++)
+                foreach (var e in entries)
                 {
-                    var (accountId, rating, songs) = ranked[i];
-                    pKey.Value = comboKey;
-                    pRank.Value = i + 1;
-                    pAid.Value = accountId;
-                    pRating.Value = rating;
-                    pSongs.Value = songs;
+                    pId.Value = comboId;
+                    pAid.Value = e.AccountId;
+                    pAdj.Value = e.AdjustedRating;
+                    pWgt.Value = e.WeightedRating;
+                    pFc.Value = e.FcRate;
+                    pTs.Value = e.TotalScore;
+                    pMs.Value = e.MaxScorePercent;
+                    pSongs.Value = e.SongsPlayed;
+                    pFcc.Value = e.FullComboCount;
                     pNow.Value = now;
                     ins.ExecuteNonQuery();
                 }
@@ -2956,11 +3020,11 @@ public sealed class MetaDatabase : IDisposable
             {
                 stats.Transaction = tx;
                 stats.CommandText = """
-                    INSERT INTO ComboStats (ComboKey, TotalAccounts, ComputedAt)
-                    VALUES (@key, @total, @now)
-                    ON CONFLICT(ComboKey) DO UPDATE SET TotalAccounts = excluded.TotalAccounts, ComputedAt = excluded.ComputedAt;
+                    INSERT INTO ComboStats (ComboId, TotalAccounts, ComputedAt)
+                    VALUES (@id, @total, @now)
+                    ON CONFLICT(ComboId) DO UPDATE SET TotalAccounts = excluded.TotalAccounts, ComputedAt = excluded.ComputedAt;
                     """;
-                stats.Parameters.AddWithValue("@key", comboKey);
+                stats.Parameters.AddWithValue("@id", comboId);
                 stats.Parameters.AddWithValue("@total", totalAccounts);
                 stats.Parameters.AddWithValue("@now", now);
                 stats.ExecuteNonQuery();
@@ -2970,29 +3034,32 @@ public sealed class MetaDatabase : IDisposable
         }
     }
 
-    /// <summary>Get a paginated combo leaderboard.</summary>
-    public (List<ComboLeaderboardEntry> Entries, int TotalAccounts) GetComboLeaderboard(string comboKey, int page = 1, int pageSize = 50)
+    /// <summary>Get a paginated combo leaderboard, ranked by the specified metric.</summary>
+    public (List<ComboLeaderboardEntry> Entries, int TotalAccounts) GetComboLeaderboard(string comboId, string rankBy = "adjusted", int page = 1, int pageSize = 50)
     {
         using var conn = OpenConnection();
 
         int totalAccounts = 0;
         using (var statsCmd = conn.CreateCommand())
         {
-            statsCmd.CommandText = "SELECT TotalAccounts FROM ComboStats WHERE ComboKey = @key;";
-            statsCmd.Parameters.AddWithValue("@key", comboKey);
+            statsCmd.CommandText = "SELECT TotalAccounts FROM ComboStats WHERE ComboId = @id;";
+            statsCmd.Parameters.AddWithValue("@id", comboId);
             var result = statsCmd.ExecuteScalar();
             if (result is long l) totalAccounts = (int)l;
         }
 
+        var (orderCol, direction) = RankByColumn(rankBy);
+
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT Rank, AccountId, ComboRating, SongsPlayed, ComputedAt
+        cmd.CommandText = $"""
+            SELECT ROW_NUMBER() OVER (ORDER BY {orderCol} {direction}, SongsPlayed DESC, AccountId ASC) AS Rank,
+                   AccountId, AdjustedRating, WeightedRating, FcRate, TotalScore, MaxScorePercent, SongsPlayed, FullComboCount, ComputedAt
             FROM ComboLeaderboard
-            WHERE ComboKey = @key
-            ORDER BY Rank ASC
+            WHERE ComboId = @id
+            ORDER BY {orderCol} {direction}, SongsPlayed DESC, AccountId ASC
             LIMIT @limit OFFSET @offset;
             """;
-        cmd.Parameters.AddWithValue("@key", comboKey);
+        cmd.Parameters.AddWithValue("@id", comboId);
         cmd.Parameters.AddWithValue("@limit", pageSize);
         cmd.Parameters.AddWithValue("@offset", (page - 1) * pageSize);
 
@@ -3000,52 +3067,75 @@ public sealed class MetaDatabase : IDisposable
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
         {
-            entries.Add(new ComboLeaderboardEntry
-            {
-                Rank = reader.GetInt32(0),
-                AccountId = reader.GetString(1),
-                ComboRating = reader.GetDouble(2),
-                SongsPlayed = reader.GetInt32(3),
-                ComputedAt = reader.GetString(4),
-            });
+            entries.Add(ReadComboEntry(reader));
         }
         return (entries, totalAccounts);
     }
 
-    /// <summary>Get a single account's rank within a specific combo.</summary>
-    public ComboLeaderboardEntry? GetComboRank(string comboKey, string accountId)
+    /// <summary>Get a single account's entry within a specific combo.</summary>
+    public ComboLeaderboardEntry? GetComboRank(string comboId, string accountId, string rankBy = "adjusted")
     {
         using var conn = OpenConnection();
+        var (orderCol, direction) = RankByColumn(rankBy);
+
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT Rank, AccountId, ComboRating, SongsPlayed, ComputedAt
-            FROM ComboLeaderboard
-            WHERE ComboKey = @key AND AccountId = @aid;
+        cmd.CommandText = $"""
+            SELECT Rank, AccountId, AdjustedRating, WeightedRating, FcRate, TotalScore, MaxScorePercent, SongsPlayed, FullComboCount, ComputedAt
+            FROM (
+                SELECT ROW_NUMBER() OVER (ORDER BY {orderCol} {direction}, SongsPlayed DESC, AccountId ASC) AS Rank,
+                       AccountId, AdjustedRating, WeightedRating, FcRate, TotalScore, MaxScorePercent, SongsPlayed, FullComboCount, ComputedAt
+                FROM ComboLeaderboard
+                WHERE ComboId = @id
+            )
+            WHERE AccountId = @aid;
             """;
-        cmd.Parameters.AddWithValue("@key", comboKey);
+        cmd.Parameters.AddWithValue("@id", comboId);
         cmd.Parameters.AddWithValue("@aid", accountId);
 
         using var reader = cmd.ExecuteReader();
         if (!reader.Read()) return null;
+        return ReadComboEntry(reader);
+    }
+
+    /// <summary>Get combo stats (total accounts) for a combo ID.</summary>
+    public int GetComboTotalAccounts(string comboId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT TotalAccounts FROM ComboStats WHERE ComboId = @id;";
+        cmd.Parameters.AddWithValue("@id", comboId);
+        var result = cmd.ExecuteScalar();
+        return result is long l ? (int)l : 0;
+    }
+
+    private static ComboLeaderboardEntry ReadComboEntry(SqliteDataReader reader)
+    {
         return new ComboLeaderboardEntry
         {
             Rank = reader.GetInt32(0),
             AccountId = reader.GetString(1),
-            ComboRating = reader.GetDouble(2),
-            SongsPlayed = reader.GetInt32(3),
-            ComputedAt = reader.GetString(4),
+            AdjustedRating = reader.GetDouble(2),
+            WeightedRating = reader.GetDouble(3),
+            FcRate = reader.GetDouble(4),
+            TotalScore = reader.GetInt64(5),
+            MaxScorePercent = reader.GetDouble(6),
+            SongsPlayed = reader.GetInt32(7),
+            FullComboCount = reader.GetInt32(8),
+            ComputedAt = reader.GetString(9),
         };
     }
 
-    /// <summary>Get combo stats (total accounts) for a combo key.</summary>
-    public int GetComboTotalAccounts(string comboKey)
+    /// <summary>Map a rankBy string to the SQL column name and sort direction.</summary>
+    private static (string Column, string Direction) RankByColumn(string rankBy)
     {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT TotalAccounts FROM ComboStats WHERE ComboKey = @key;";
-        cmd.Parameters.AddWithValue("@key", comboKey);
-        var result = cmd.ExecuteScalar();
-        return result is long l ? (int)l : 0;
+        return rankBy.ToLowerInvariant() switch
+        {
+            "weighted" => ("WeightedRating", "ASC"),
+            "fcrate" => ("FcRate", "DESC"),
+            "totalscore" => ("TotalScore", "DESC"),
+            "maxscore" => ("MaxScorePercent", "DESC"),
+            _ => ("AdjustedRating", "ASC"),
+        };
     }
 
     private static CompositeRankingDto ReadCompositeDto(SqliteDataReader reader)

@@ -411,7 +411,7 @@ describe('SongsPage — callback function coverage (extracted)', () => {
     const sortBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Sort'));
     if (!sortBtn) return;
     await act(async () => { fireEvent.click(sortBtn); await vi.advanceTimersByTimeAsync(400); });
-    const resetBtns = screen.queryAllByText('Reset Sort Settings');
+    const resetBtns = screen.queryAllByRole('button', { name: 'Reset' });
     if (resetBtns.length > 0) await act(async () => { fireEvent.click(resetBtns[resetBtns.length - 1]!); });
     expect(container.textContent).toBeTruthy();
   });
@@ -478,7 +478,7 @@ describe('SongsPage — filter callback coverage (explicit desktop)', () => {
     const filterBtn = screen.getByLabelText('Filter');
     await act(async () => { fireEvent.click(filterBtn); await vi.advanceTimersByTimeAsync(400); });
     // Click Reset to exercise resetFilter
-    const resetBtns = screen.getAllByText('Reset Filter Settings');
+    const resetBtns = screen.getAllByRole('button', { name: 'Reset' });
     await act(async () => { fireEvent.click(resetBtns[resetBtns.length - 1]!); });
     expect(container.textContent).toBeTruthy();
   });
@@ -503,7 +503,7 @@ describe('SongsPage — filter callback coverage (explicit desktop)', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
     const sortBtn = screen.getByLabelText('Sort');
     await act(async () => { fireEvent.click(sortBtn); await vi.advanceTimersByTimeAsync(400); });
-    const resetBtns = screen.queryAllByText('Reset Sort Settings');
+    const resetBtns = screen.queryAllByRole('button', { name: 'Reset' });
     if (resetBtns.length > 0) await act(async () => { fireEvent.click(resetBtns[resetBtns.length - 1]!); });
     expect(container.textContent).toBeTruthy();
   });

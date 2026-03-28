@@ -34,10 +34,11 @@ export default function Modal({ visible, title, onClose, onApply, onReset, reset
       <div ref={scrollRef} onScroll={handleContentScroll} style={modalStyles.contentScroll}>
         {children}
         {onReset && (
-          <>
-            <button style={modalStyles.resetBtn} onClick={onReset}>{resetLabel ?? t('common.reset')}</button>
-            {resetHint && <p style={modalStyles.resetHint}>{resetHint}</p>}
-          </>
+          <div style={modalStyles.resetWrap}>
+            {resetLabel && <div style={modalStyles.resetTitle}>{resetLabel}</div>}
+            {resetHint && <p style={modalStyles.resetDesc}>{resetHint}</p>}
+            <button style={modalStyles.resetBtn} onClick={onReset}>{t('common.reset')}</button>
+          </div>
         )}
       </div>
 

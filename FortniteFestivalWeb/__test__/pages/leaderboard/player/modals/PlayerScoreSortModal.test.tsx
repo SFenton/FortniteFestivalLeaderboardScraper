@@ -181,9 +181,9 @@ describe('PlayerScoreSortModal', () => {
   it('calls onReset when Reset button is clicked', () => {
     const props = defaultProps();
     renderModal(props);
-    // i18n: sort.resetLabel = 'Reset Sort Settings'
-    const resetBtns = screen.getAllByText('Reset Sort Settings');
-    fireEvent.click(resetBtns[resetBtns.length - 1]!);
+    // i18n: resetLabel renders as title div; button uses common.reset = 'Reset'
+    const resetBtn = screen.getAllByRole('button', { name: 'Reset' });
+    fireEvent.click(resetBtn[resetBtn.length - 1]!);
     expect(props.onReset).toHaveBeenCalledTimes(1);
   });
 

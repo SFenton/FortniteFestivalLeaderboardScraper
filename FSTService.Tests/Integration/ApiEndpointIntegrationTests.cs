@@ -1866,8 +1866,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     public async Task Rankings_Combo_ReturnsData_WhenSeeded()
     {
         var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
-        metaDb.ReplaceComboLeaderboard("Solo_Bass+Solo_Guitar",
-            [("combo_p1", 0.05, 100), ("combo_p2", 0.10, 80)], 2);
+        metaDb.ReplaceComboLeaderboard("03",
+            [("combo_p1", 0.05, 0.06, 0.8, 50000, 0.95, 100, 80), ("combo_p2", 0.10, 0.12, 0.6, 40000, 0.90, 80, 48)], 2);
 
         var response = await _client.GetAsync("/api/rankings/combo?instruments=Solo_Guitar%2BSolo_Bass");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -1879,8 +1879,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     public async Task Rankings_ComboSingle_ReturnsData()
     {
         var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
-        metaDb.ReplaceComboLeaderboard("Solo_Bass+Solo_Guitar",
-            [("combo_single_p1", 0.05, 100)], 1);
+        metaDb.ReplaceComboLeaderboard("03",
+            [("combo_single_p1", 0.05, 0.06, 0.8, 50000, 0.95, 100, 80)], 1);
 
         var response = await _client.GetAsync("/api/rankings/combo/combo_single_p1?instruments=Solo_Guitar%2BSolo_Bass");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);

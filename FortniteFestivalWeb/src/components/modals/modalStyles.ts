@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import {
-  Colors, Font, Gap, Weight, Radius, Layout, ZIndex, Border, Opacity,
+  Colors, Font, Gap, Weight, Radius, Layout, ZIndex, Border, Opacity, LineHeight,
   Display, Align, Justify, Position, TextAlign, Cursor, Overflow, BoxSizing, CssValue,
   flexColumn, flexCenter, modalOverlay, modalCard, btnPrimary, btnDanger,
   border, padding, transition, CssProp, TRANSITION_MS, QUICK_FADE_MS,
@@ -29,8 +29,10 @@ export const modalStyles = {
 
   /* ── Footer ── */
   footerWrap: { display: Display.flex, flexDirection: 'column' as const, gap: Gap.md, padding: padding(Gap.xl, Gap.section), flexShrink: 0 } as CSSProperties,
-  resetBtn: { ...btnDanger, width: CssValue.full, fontSize: Font.md, padding: Gap.xl, marginTop: Gap.section } as CSSProperties,
-  resetHint: { fontSize: Font.sm, color: Colors.textMuted, textAlign: TextAlign.center, marginTop: Gap.sm, lineHeight: 1.4 } as CSSProperties,
+  resetWrap: { marginTop: Gap.section } as CSSProperties,
+  resetTitle: { fontSize: Font.lg, fontWeight: Weight.bold, marginBottom: Gap.sm, color: Colors.textPrimary } as CSSProperties,
+  resetDesc: { fontSize: Font.sm, color: Colors.textSecondary, marginBottom: Gap.md, lineHeight: LineHeight.snug } as CSSProperties,
+  resetBtn: { ...btnDanger, width: CssValue.full, fontSize: Font.md, padding: Gap.xl } as CSSProperties,
   applyBtn: { ...btnPrimary, width: CssValue.full, fontSize: Font.lg, fontWeight: Weight.bold, padding: Gap.xl, transition: modalTransition } as CSSProperties,
   applyBtnDisabled: { opacity: Opacity.faded, cursor: Cursor.default } as CSSProperties,
 
