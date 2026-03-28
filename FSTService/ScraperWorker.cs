@@ -388,7 +388,7 @@ public sealed class ScraperWorker : BackgroundService
         _progress.SetInstrumentTotals(instrumentTotals);
 
         // ── Pipelined: per-instrument channel writers ──
-        var aggregates = _persistence.StartWriters(ct);
+        var aggregates = _persistence.StartWriters(opts.BoundedChannelCapacity, ct);
         int totalRequests = 0;
         long totalBytes = 0;
 

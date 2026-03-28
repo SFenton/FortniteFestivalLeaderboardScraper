@@ -1,0 +1,136 @@
+import type { CSSProperties } from 'react';
+import {
+  Colors, Font, Gap, Radius, Layout, MaxWidth, Border,
+  Display, Align, Justify, Overflow, CssValue, CssProp, TextAlign,
+  Position, BoxSizing, ZIndex, PointerEvents,
+  frostedCard, flexRow, flexColumn, padding, border, transition,
+  NAV_TRANSITION_MS,
+} from '@festival/theme';
+
+const entryBase: CSSProperties = {
+  ...frostedCard,
+  ...flexRow,
+  gap: Gap.xl,
+  padding: padding(0, Gap.xl),
+  height: Layout.entryRowHeight,
+  borderRadius: Radius.md,
+  textDecoration: CssValue.none,
+  color: CssValue.inherit,
+  transition: transition(CssProp.backgroundColor, NAV_TRANSITION_MS),
+  fontSize: Font.md,
+};
+
+const paginationBase: CSSProperties = {
+  ...flexRow,
+  flexShrink: 0,
+  padding: padding(Gap.md, Layout.paddingHorizontal),
+  maxWidth: MaxWidth.card,
+  margin: CssValue.marginCenter,
+  width: CssValue.full,
+  boxSizing: BoxSizing.borderBox,
+  position: Position.relative,
+  zIndex: 1,
+};
+
+const fixedFooterBase: CSSProperties = {
+  left: Gap.none,
+  right: Gap.none,
+  maxWidth: MaxWidth.card,
+  margin: CssValue.marginCenter,
+  padding: padding(0, Layout.paddingHorizontal),
+  boxSizing: BoxSizing.borderBox,
+  zIndex: ZIndex.fixedFooter,
+  pointerEvents: PointerEvents.auto,
+};
+
+/** Shared styles used by PaginatedLeaderboard and its consumers. */
+export const plbStyles = {
+  /* ── Row list ── */
+  list: {
+    ...flexColumn,
+    gap: Gap.sm,
+    overflow: Overflow.hidden,
+  } as CSSProperties,
+
+  entryRow: { ...entryBase } as CSSProperties,
+
+  playerEntryRow: {
+    ...entryBase,
+    backgroundColor: Colors.purpleHighlight,
+    border: border(Border.thin, Colors.purpleHighlightBorder),
+  } as CSSProperties,
+
+  emptyRow: {
+    padding: Gap.xl,
+    textAlign: TextAlign.center,
+    color: Colors.textMuted,
+  } as CSSProperties,
+
+  /* ── Pagination inner styles (content layout, not fixed position) ── */
+  pagination: {
+    ...paginationBase,
+    justifyContent: Justify.center,
+    gap: Gap.md,
+  } as CSSProperties,
+
+  paginationMobile: {
+    ...paginationBase,
+    justifyContent: Justify.between,
+    gap: Gap.none,
+  } as CSSProperties,
+
+  pageInfo: {
+    textAlign: TextAlign.center,
+  } as CSSProperties,
+
+  pageInfoBadge: {
+    ...frostedCard,
+    display: Display.inlineFlex,
+    alignItems: Align.center,
+    justifyContent: Justify.center,
+    fontSize: Font.sm,
+    color: Colors.textSecondary,
+    padding: padding(Gap.md, Gap.xl),
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.backgroundCard,
+  } as CSSProperties,
+
+  /* ── Fixed footer positioning (portaled to body) ── */
+  mobilePagination: {
+    position: Position.fixed,
+    bottom: Layout.fabBottom + (Layout.fabSize - Layout.entryRowHeight) / 2 + Layout.entryRowHeight + Gap.sm,
+    ...fixedFooterBase,
+  } as CSSProperties,
+
+  desktopPagination: {
+    position: Position.fixed,
+    bottom: Layout.entryRowHeight + Gap.xl,
+    ...fixedFooterBase,
+  } as CSSProperties,
+
+  playerFooterFab: {
+    position: Position.fixed,
+    bottom: Layout.fabBottom + (Layout.fabSize - Layout.entryRowHeight) / 2,
+    ...fixedFooterBase,
+  } as CSSProperties,
+
+  desktopPlayerFooter: {
+    position: Position.fixed,
+    bottom: Gap.none,
+    ...fixedFooterBase,
+  } as CSSProperties,
+
+  playerFooterRow: {
+    ...frostedCard,
+    ...flexRow,
+    gap: Gap.xl,
+    height: Layout.entryRowHeight,
+    padding: padding(0, Gap.xl),
+    borderRadius: Radius.md,
+    backgroundColor: Colors.purpleHighlight,
+    border: border(Border.thin, Colors.purpleHighlightBorder),
+    fontSize: Font.md,
+    textDecoration: CssValue.none,
+    color: CssValue.inherit,
+  } as CSSProperties,
+};

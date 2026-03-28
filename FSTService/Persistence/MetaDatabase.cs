@@ -933,14 +933,14 @@ public sealed class MetaDatabase : IDisposable
         const int batchSize = 500;
         for (int i = 0; i < ids.Count; i += batchSize)
         {
-            var batch = ids.Skip(i).Take(batchSize).ToList();
+            var batchCount = Math.Min(batchSize, ids.Count - i);
             using var cmd = conn.CreateCommand();
-            var paramNames = new List<string>(batch.Count);
-            for (int j = 0; j < batch.Count; j++)
+            var paramNames = new List<string>(batchCount);
+            for (int j = 0; j < batchCount; j++)
             {
                 var pName = $"@id{j}";
                 paramNames.Add(pName);
-                cmd.Parameters.AddWithValue(pName, batch[j]);
+                cmd.Parameters.AddWithValue(pName, ids[i + j]);
             }
             cmd.CommandText = $"SELECT AccountId, DisplayName FROM AccountNames WHERE DisplayName IS NOT NULL AND AccountId IN ({string.Join(",", paramNames)});";
 
@@ -1875,14 +1875,27 @@ public sealed class MetaDatabase : IDisposable
     private SqliteConnection? _persistentConn;
     private readonly object _connLock = new();
 
+    private volatile bool _pragmasInitialized;
+
     private SqliteConnection OpenConnection()
     {
         var conn = new SqliteConnection(_connectionString);
         conn.Open();
 
-        using var pragma = conn.CreateCommand();
-        pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;";
-        pragma.ExecuteNonQuery();
+        if (!_pragmasInitialized)
+        {
+            using var pragma = conn.CreateCommand();
+            pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;";
+            pragma.ExecuteNonQuery();
+            _pragmasInitialized = true;
+        }
+        else
+        {
+            // WAL and synchronous persist per-file; foreign_keys and busy_timeout are per-connection
+            using var pragma = conn.CreateCommand();
+            pragma.CommandText = "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;";
+            pragma.ExecuteNonQuery();
+        }
 
         return conn;
     }
@@ -2593,6 +2606,45 @@ public sealed class MetaDatabase : IDisposable
             });
         }
         return list;
+    }
+
+    /// <summary>Get all rival song samples for a user across all rivals. Groups by rival.</summary>
+    public Dictionary<string, List<RivalSongSampleRow>> GetAllRivalSongSamplesForUser(string userId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT UserId, RivalAccountId, Instrument, SongId,
+                   UserRank, RivalRank, RankDelta, UserScore, RivalScore
+            FROM RivalSongSamples WHERE UserId = @uid
+            ORDER BY RivalAccountId, ABS(RankDelta) ASC;
+            """;
+        cmd.Parameters.AddWithValue("@uid", userId);
+
+        var result = new Dictionary<string, List<RivalSongSampleRow>>(StringComparer.OrdinalIgnoreCase);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var row = new RivalSongSampleRow
+            {
+                UserId = reader.GetString(0),
+                RivalAccountId = reader.GetString(1),
+                Instrument = reader.GetString(2),
+                SongId = reader.GetString(3),
+                UserRank = reader.GetInt32(4),
+                RivalRank = reader.GetInt32(5),
+                RankDelta = reader.GetInt32(6),
+                UserScore = reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                RivalScore = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+            };
+            if (!result.TryGetValue(row.RivalAccountId, out var list))
+            {
+                list = new List<RivalSongSampleRow>();
+                result[row.RivalAccountId] = list;
+            }
+            list.Add(row);
+        }
+        return result;
     }
 
     /// <summary>Delete all rivals-related data for an account.</summary>

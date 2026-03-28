@@ -5,7 +5,7 @@ import { SettingsProvider } from '../../../src/contexts/SettingsContext';
 import { FirstRunProvider } from '../../../src/contexts/FirstRunContext';
 
 vi.mock('../../../src/contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => ({ shop: true, rivals: true, compete: true, leaderboards: true }),
+  useFeatureFlags: () => ({ shop: true, rivals: true, compete: true, leaderboards: true, firstRun: true }),
 }));
 
 import SettingsPage from '../../../src/pages/settings/SettingsPage';

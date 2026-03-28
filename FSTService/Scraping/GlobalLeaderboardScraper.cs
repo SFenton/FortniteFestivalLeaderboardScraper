@@ -1003,8 +1003,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 label ?? songId, songId, instrument, entriesPerPage, totalPages, (long)entriesPerPage * totalPages);
         }
 
-        var allEntries = new ConcurrentBag<(int Page, List<LeaderboardEntry> Entries)>();
-        allEntries.Add((0, page0.firstPage.Entries));
+        var allEntries = new ConcurrentDictionary<int, List<LeaderboardEntry>>();
+        allEntries[0] = page0.firstPage.Entries;
 
         int requestCount = 1;
         long totalBytes = page0.firstLen;
@@ -1039,7 +1039,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
                     if (parsed is not null)
                     {
-                        allEntries.Add((pageNum, parsed.Entries));
+                        allEntries[pageNum] = parsed.Entries;
                         Interlocked.Exchange(ref consecutive403s, 0); // reset on success
                     }
                     else if (status == FetchStatus.Forbidden)
@@ -1048,7 +1048,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         if (count >= ForbiddenThreshold &&
                             Interlocked.CompareExchange(ref boundaryLogged, 1, 0) == 0)
                         {
-                            var entryCount = allEntries.Sum(e => e.Entries.Count);
+                            var entryCount = allEntries.Values.Sum(e => e.Count);
                             _log.LogInformation(
                                 "Hit access boundary for {Label} ({Song}/{Instrument}) at page {Page}. " +
                                 "Epic reported {ReportedPages:N0} pages but served {Fetched} pages ({Entries:N0} entries).",
@@ -1078,8 +1078,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
         // Reassemble entries in page order
         var ordered = allEntries
-            .OrderBy(x => x.Page)
-            .SelectMany(x => x.Entries)
+            .OrderBy(x => x.Key)
+            .SelectMany(x => x.Value)
             .ToList();
 
         _progress.ReportLeaderboardComplete(instrument);
@@ -1305,8 +1305,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
         _progress.ReportPage0(totalPages);
 
-        var allEntries = new ConcurrentBag<(int Page, List<LeaderboardEntry> Entries)>();
-        allEntries.Add((0, page0.Page.Entries));
+        var allEntries = new ConcurrentDictionary<int, List<LeaderboardEntry>>();
+        allEntries[0] = page0.Page.Entries;
         int requestCount = 1;
         long totalBytes = page0.BodyLength;
         int consecutive403s = 0;
@@ -1337,7 +1337,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
                     if (parsed is not null)
                     {
-                        allEntries.Add((pageNum, parsed.Entries));
+                        allEntries[pageNum] = parsed.Entries;
                         Interlocked.Exchange(ref consecutive403s, 0);
                     }
                     else if (status == FetchStatus.Forbidden)
@@ -1346,7 +1346,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         if (count >= ForbiddenThreshold &&
                             Interlocked.CompareExchange(ref boundaryLogged, 1, 0) == 0)
                         {
-                            var entryCount = allEntries.Sum(e => e.Entries.Count);
+                            var entryCount = allEntries.Values.Sum(e => e.Count);
                             _log.LogInformation(
                                 "Hit access boundary for {Label} ({Song}/{Instrument}) at page {Page}. " +
                                 "Epic reported {ReportedPages:N0} pages but served {Fetched} pages ({Entries:N0} entries).",
@@ -1374,8 +1374,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         }
 
         var ordered = allEntries
-            .OrderBy(x => x.Page)
-            .SelectMany(x => x.Entries)
+            .OrderBy(x => x.Key)
+            .SelectMany(x => x.Value)
             .ToList();
 
         _progress.ReportLeaderboardComplete(instrument);

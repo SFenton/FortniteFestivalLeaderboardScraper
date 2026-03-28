@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 
 // Dynamic flag values that individual tests can override
 const flagValues = vi.hoisted(() => ({
-  shop: true, rivals: true, compete: true, leaderboards: true,
+  shop: true, rivals: true, compete: true, leaderboards: true, firstRun: true,
 }));
 
 // Track whether fetch should fail
@@ -16,6 +16,7 @@ beforeEach(() => {
   flagValues.rivals = true;
   flagValues.compete = true;
   flagValues.leaderboards = true;
+  flagValues.firstRun = true;
   fetchShouldFail.value = false;
 
   vi.stubGlobal('fetch', vi.fn(() => {
@@ -58,6 +59,7 @@ describe('FeatureFlagsContext', () => {
     expect(result.current.rivals).toBe(true);
     expect(result.current.compete).toBe(true);
     expect(result.current.leaderboards).toBe(true);
+    expect(result.current.firstRun).toBe(true);
     expect(fetch).toHaveBeenCalledWith('/api/features');
   });
 
@@ -93,6 +95,7 @@ describe('FeatureFlagsContext', () => {
     expect(result.current.rivals).toBe(true);
     expect(result.current.compete).toBe(true);
     expect(result.current.leaderboards).toBe(true);
+    expect(result.current.firstRun).toBe(true);
   });
 
   it('throws when used outside provider', () => {

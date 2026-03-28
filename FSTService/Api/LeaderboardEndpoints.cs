@@ -8,6 +8,7 @@ public static partial class ApiEndpoints
     public static void MapLeaderboardEndpoints(this WebApplication app)
     {
         app.MapGet("/api/leaderboard/{songId}/{instrument}", (
+            HttpContext httpContext,
             string songId,
             string instrument,
             int? top,
@@ -17,6 +18,7 @@ public static partial class ApiEndpoints
             MetaDatabase metaDb,
             PathDataStore pathStore) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
             int? maxScore = null;
             if (leeway.HasValue)
             {
@@ -65,6 +67,7 @@ public static partial class ApiEndpoints
         .RequireRateLimiting("public");
 
         app.MapGet("/api/leaderboard/{songId}/all", (
+            HttpContext httpContext,
             string songId,
             int? top,
             double? leeway,
@@ -72,6 +75,7 @@ public static partial class ApiEndpoints
             MetaDatabase metaDb,
             PathDataStore pathStore) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
             var instrumentKeys = persistence.GetInstrumentKeys();
             var population = metaDb.GetAllLeaderboardPopulation();
             var allAccountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

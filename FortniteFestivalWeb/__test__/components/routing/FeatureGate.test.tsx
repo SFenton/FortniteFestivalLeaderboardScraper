@@ -4,7 +4,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
 // Mock feature flags
 const mockFlags = vi.hoisted(() => ({
-  shop: true, rivals: true, compete: true, leaderboards: true,
+  shop: true, rivals: true, compete: true, leaderboards: true, firstRun: true,
 }));
 
 vi.mock('../../../src/contexts/FeatureFlagsContext', () => ({

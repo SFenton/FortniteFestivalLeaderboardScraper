@@ -67,6 +67,7 @@ public class ScraperOptionsAndModelsTests
         Assert.False(opts.Rivals);
         Assert.False(opts.Leaderboards);
         Assert.False(opts.Compete);
+        Assert.False(opts.FirstRun);
     }
 
     [Fact]

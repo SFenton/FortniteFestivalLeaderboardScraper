@@ -23,6 +23,7 @@ import {
   FAST_FADE_MS, NAV_TRANSITION_MS,
 } from '@festival/theme';
 import fx from '../../styles/effects.module.css';
+import { competeSlides } from './firstRun';
 
 export default function CompetePage() {
   const { t } = useTranslation();
@@ -65,9 +66,12 @@ export default function CompetePage() {
   const { phase, shouldStagger } = usePageTransition('compete', isReady, isReady);
   const { next: stagger, clearAnim } = useStagger(shouldStagger);
   const s = useCompeteStyles();
+  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player }), [player]);
 
   return (
-    <Page scrollRestoreKey="compete" loadPhase={phase} before={<PageHeader title={t('compete.title')} />}>
+    <Page scrollRestoreKey="compete" loadPhase={phase} before={<PageHeader title={t('compete.title')} />}
+      firstRun={{ key: 'compete', label: t('nav.compete'), slides: competeSlides, gateContext: firstRunGateCtx }}
+    >
       {phase === 'contentIn' && (
       <div style={s.content}>
       {/* Leaderboards section */}

@@ -508,6 +508,34 @@
         "title": "Rivals",
         "description": "See who's just ahead and behind you. Tap to view all your rivals and head-to-head matchups."
       }
+    },
+    "rivals": {
+      "overview": {
+        "title": "Your Rivals",
+        "description": "Rivals are players near your skill level on each instrument. See who's just above and below you."
+      },
+      "instruments": {
+        "title": "Per-Instrument Rivals",
+        "description": "Each instrument has its own rival list — plus a common rivals section for players who appear across multiple instruments."
+      },
+      "detail": {
+        "title": "Head-to-Head",
+        "description": "Tap a rival to see a song-by-song comparison, broken down by closest battles, almost passed, and more."
+      }
+    },
+    "shop": {
+      "overview": {
+        "title": "Item Shop",
+        "description": "Browse the songs currently available for purchase in the Fortnite Item Shop."
+      },
+      "views": {
+        "title": "Grid & List View",
+        "description": "Switch between a visual grid of album art and a compact list — tap the toggle in the header."
+      },
+      "highlighting": {
+        "title": "Shop Highlighting",
+        "description": "Songs from the Item Shop are highlighted with a pulsing glow on the Songs page so you can spot them at a glance."
+      }
     }
   },
   "rivals": {

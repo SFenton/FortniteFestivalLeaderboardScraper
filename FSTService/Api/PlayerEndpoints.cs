@@ -11,12 +11,14 @@ public static partial class ApiEndpoints
     public static void MapPlayerEndpoints(this WebApplication app)
     {
         app.MapGet("/api/player/{accountId}", (
+            HttpContext httpContext,
             string accountId,
             string? songId,
             string? instruments,
             GlobalLeaderboardPersistence persistence,
             MetaDatabase metaDb) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=30";
             // Optional instrument filter: ?instruments=Solo_Guitar,Solo_Bass
             HashSet<string>? instrumentFilter = null;
             if (!string.IsNullOrWhiteSpace(instruments))

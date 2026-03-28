@@ -3,7 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 vi.mock('../../../../src/contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => ({ shop: true, rivals: true, compete: true, leaderboards: true }),
+  useFeatureFlags: () => ({ shop: true, rivals: true, compete: true, leaderboards: true, firstRun: true }),
 }));
 
 import Sidebar from '../../../../src/components/shell/desktop/Sidebar';

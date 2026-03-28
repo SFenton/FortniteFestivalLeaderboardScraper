@@ -157,4 +157,11 @@ public sealed class ScraperOptions
     /// Doubles the refresh API calls but provides complete play-by-play history.
     /// </summary>
     public bool RefreshCurrentSeasonSessions { get; set; } = true;
+
+    /// <summary>
+    /// Capacity of each per-instrument bounded channel in the persistence pipeline.
+    /// Higher values allow more buffering between scraper and writer tasks; lower
+    /// values apply earlier back-pressure. Default 32.
+    /// </summary>
+    public int BoundedChannelCapacity { get; set; } = 32;
 }

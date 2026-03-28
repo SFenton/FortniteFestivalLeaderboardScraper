@@ -276,9 +276,9 @@ describe('LeaderboardPage', () => {
     await waitFor(() => {
       expect(container.textContent).toContain('Player One');
     });
-    // Player footer should render with TestPlayer's data
+    // Player footer should render with TestPlayer's data (portaled to body)
     await waitFor(() => {
-      expect(container.textContent).toContain('TestPlayer');
+      expect(document.body.textContent).toContain('TestPlayer');
     });
   });
 

@@ -383,8 +383,12 @@ public class PersonalDbBuilder
         var rankingsByInstrument = new Dictionary<string, Dictionary<string, int>>(
             StringComparer.OrdinalIgnoreCase);
 
-        foreach (var instrumentKey in _persistence.GetInstrumentKeys())
+        var instrumentKeys = _persistence.GetInstrumentKeys();
+        var scoreResults = new Dictionary<string, PlayerScoreDto>[instrumentKeys.Count];
+        var rankingResults = new Dictionary<string, int>[instrumentKeys.Count];
+        Parallel.For(0, instrumentKeys.Count, i =>
         {
+            var instrumentKey = instrumentKeys[i];
             var db = _persistence.GetOrCreateInstrumentDb(instrumentKey);
             var playerScores = db.GetPlayerScores(accountId);
 
@@ -392,8 +396,14 @@ public class PersonalDbBuilder
             foreach (var score in playerScores)
                 bySong[score.SongId] = score;
 
-            scoresByInstrument[instrumentKey] = bySong;
-            rankingsByInstrument[instrumentKey] = db.GetPlayerRankings(accountId);
+            scoreResults[i] = bySong;
+            rankingResults[i] = db.GetPlayerRankings(accountId);
+        });
+
+        for (int i = 0; i < instrumentKeys.Count; i++)
+        {
+            scoresByInstrument[instrumentKeys[i]] = scoreResults[i];
+            rankingsByInstrument[instrumentKeys[i]] = rankingResults[i];
         }
 
         // Load real leaderboard population from PercentileService
@@ -605,6 +615,9 @@ public class PersonalDbBuilder
         var rivals = _metaDb.GetUserRivals(accountId);
         if (rivals.Count == 0) return;
 
+        // Batch-resolve all rival display names in one query
+        var rivalNames = _metaDb.GetDisplayNames(rivals.Select(r => r.RivalAccountId));
+
         using var tx = conn.BeginTransaction();
 
         // Populate RivalCombos
@@ -647,7 +660,7 @@ public class PersonalDbBuilder
             foreach (var r in rivals)
             {
                 pRid.Value = r.RivalAccountId;
-                pName.Value = (object?)_metaDb.GetDisplayName(r.RivalAccountId) ?? DBNull.Value;
+                pName.Value = (object?)rivalNames.GetValueOrDefault(r.RivalAccountId) ?? DBNull.Value;
                 pCombo2.Value = r.InstrumentCombo;
                 pDir.Value = r.Direction;
                 pScore.Value = r.RivalScore;
@@ -661,6 +674,9 @@ public class PersonalDbBuilder
 
         // Populate RivalSongSamples for all distinct rivals
         var rivalIds = rivals.Select(r => r.RivalAccountId).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        // Batch-load all rival song samples in a single query
+        var allSamples = _metaDb.GetAllRivalSongSamplesForUser(accountId);
 
         using (var sampleCmd = conn.CreateCommand())
         {
@@ -681,7 +697,7 @@ public class PersonalDbBuilder
 
             foreach (var rivalId in rivalIds)
             {
-                var samples = _metaDb.GetRivalSongSamples(accountId, rivalId);
+                if (!allSamples.TryGetValue(rivalId, out var samples)) continue;
                 foreach (var s in samples)
                 {
                     sRid.Value = s.RivalAccountId;
@@ -768,15 +784,24 @@ public class PersonalDbBuilder
             StringComparer.OrdinalIgnoreCase);
         var rankingsByInstrument = new Dictionary<string, Dictionary<string, int>>(
             StringComparer.OrdinalIgnoreCase);
-        foreach (var instrumentKey in _persistence.GetInstrumentKeys())
+        var instrumentKeys2 = _persistence.GetInstrumentKeys();
+        var scoreResults2 = new Dictionary<string, PlayerScoreDto>[instrumentKeys2.Count];
+        var rankingResults2 = new Dictionary<string, int>[instrumentKeys2.Count];
+        Parallel.For(0, instrumentKeys2.Count, i =>
         {
+            var instrumentKey = instrumentKeys2[i];
             var db = _persistence.GetOrCreateInstrumentDb(instrumentKey);
             var playerScores = db.GetPlayerScores(accountId);
             var bySong = new Dictionary<string, PlayerScoreDto>(StringComparer.OrdinalIgnoreCase);
             foreach (var score in playerScores)
                 bySong[score.SongId] = score;
-            scoresByInstrument[instrumentKey] = bySong;
-            rankingsByInstrument[instrumentKey] = db.GetPlayerRankings(accountId);
+            scoreResults2[i] = bySong;
+            rankingResults2[i] = db.GetPlayerRankings(accountId);
+        });
+        for (int i = 0; i < instrumentKeys2.Count; i++)
+        {
+            scoresByInstrument[instrumentKeys2[i]] = scoreResults2[i];
+            rankingsByInstrument[instrumentKeys2[i]] = rankingResults2[i];
         }
 
         // Load real leaderboard population from PercentileService

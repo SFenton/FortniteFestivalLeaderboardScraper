@@ -158,8 +158,9 @@ export interface PageProps {
    *   scroll under the FAB before reaching the spacer.
    * - `'fixed'`: shrinks the scroll viewport itself so content never scrolls behind
    *   the FAB/search bar.
+   * - `'none'`: disables all FAB spacing — caller manages its own bottom clearance.
    */
-  fabSpacer?: 'end' | 'fixed';
+  fabSpacer?: 'end' | 'fixed' | 'none';
   children: ReactNode;
 }
 

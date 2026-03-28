@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using FSTService.Persistence;
@@ -524,7 +525,7 @@ public class HistoryReconstructor
 
         // Query all seasons in parallel, collecting ALL sessions from each.
         // Each season query acquires/releases the adaptive concurrency limiter.
-        var allSessions = new System.Collections.Concurrent.ConcurrentBag<(int Season, SessionHistoryEntry Session)>();
+        var allSessions = new ConcurrentDictionary<int, List<SessionHistoryEntry>>();
         int queriesMade = 0;
 
         var tasks = seasonsToQuery.Select(async item =>
@@ -541,10 +542,9 @@ public class HistoryReconstructor
 
                 if (sessions is not null)
                 {
-                    foreach (var session in sessions)
-                    {
-                        allSessions.Add((s, session));
-                    }
+                    allSessions.AddOrUpdate(s,
+                        _ => sessions.ToList(),
+                        (_, existing) => { existing.AddRange(sessions); return existing; });
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -566,7 +566,10 @@ public class HistoryReconstructor
             return (0, queriesMade);
 
         // Sort all sessions by endTime ascending (fall back to season number if endTime is null)
-        var sortedSessions = allSessions.ToList();
+        var sortedSessions = allSessions
+            .OrderBy(kv => kv.Key)
+            .SelectMany(kv => kv.Value.Select(s => (Season: kv.Key, Session: s)))
+            .ToList();
         sortedSessions.Sort((a, b) =>
         {
             if (a.Session.EndTime is not null && b.Session.EndTime is not null)

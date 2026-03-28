@@ -27,6 +27,7 @@ import Page from '../Page';
 import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
 import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransition';
+import { shopSlides } from './firstRun';
 
 /* v8 ignore start -- page component with multiple context/hook dependencies */
 const STORAGE_KEY = 'fst:shopView';
@@ -134,6 +135,7 @@ export default function ShopPage() {
   // Combine phases: transition.phase drives spinner during view toggle;
   // on initial load the phase is already ContentIn (no spinner needed).
   const loadPhase = transition.phase;
+  const firstRunGateCtx = useMemo(() => ({ hasPlayer: false, shopHighlightEnabled: true }), []);
 
   return (
     <Page
@@ -142,6 +144,7 @@ export default function ShopPage() {
       scrollDeps={[loadPhase, shopSongs]}
       containerStyle={shopStyles.contentArea}
       loadPhase={loadPhase}
+      firstRun={{ key: 'shop', label: t('nav.shop'), slides: shopSlides, gateContext: firstRunGateCtx }}
       before={
         <PageHeader
           title={t('nav.shop')}

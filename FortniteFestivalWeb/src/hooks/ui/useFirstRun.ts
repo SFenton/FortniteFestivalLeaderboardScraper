@@ -21,12 +21,13 @@ type UseFirstRunResult = {
  * @param gateCtx - Context object evaluated against each slide's gate predicate.
  */
 export function useFirstRun(pageKey: string, gateCtx: FirstRunGateContext): UseFirstRunResult {
-  const { getUnseenSlides, getAllSlides, markSeen, setActiveCarousel, activeCarouselKey, registeredPages } = useFirstRunContext();
+  const { enabled, getUnseenSlides, getAllSlides, markSeen, setActiveCarousel, activeCarouselKey, registeredPages } = useFirstRunContext();
   const [dismissed, setDismissed] = useState(false);
   const [closing, setClosing] = useState(false);
 
   const computedSlides = useMemo(
     () => {
+      if (!enabled) return [];
       if (dismissed) return [];
       if (gateCtx.ready === false) return [];
       if (gateCtx.alwaysShow) {
@@ -37,7 +38,7 @@ export function useFirstRun(pageKey: string, gateCtx: FirstRunGateContext): UseF
     },
     // registeredPages forces re-evaluation after registration effects fire
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pageKey, gateCtx, getUnseenSlides, getAllSlides, dismissed, registeredPages],
+    [pageKey, gateCtx, getUnseenSlides, getAllSlides, dismissed, enabled, registeredPages],
   );
 
   // Freeze slides during exit animation so the carousel doesn't unmount early
@@ -102,12 +103,12 @@ type UseFirstRunReplayResult = {
  * Bypasses gates and seen state — shows all slides.
  */
 export function useFirstRunReplay(pageKey: string): UseFirstRunReplayResult {
-  const { getAllSlides, resetPage, markSeen, registeredPages } = useFirstRunContext();
+  const { enabled, getAllSlides, resetPage, markSeen, registeredPages } = useFirstRunContext();
   const [showReplay, setShowReplay] = useState(false);
 
   // registeredPages forces re-evaluation after registration effects fire
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const slides = useMemo(() => getAllSlides(pageKey), [pageKey, getAllSlides, registeredPages]);
+  const slides = useMemo(() => enabled ? getAllSlides(pageKey) : [], [pageKey, getAllSlides, enabled, registeredPages]);
 
   const open = useCallback(() => {
     resetPage(pageKey);

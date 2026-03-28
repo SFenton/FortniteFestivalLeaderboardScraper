@@ -41,6 +41,13 @@ builder.Services.ConfigureHttpJsonOptions(opts =>
         System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
 });
 
+// ─── Response compression ───────────────────────────────────
+
+builder.Services.AddResponseCompression(opts =>
+{
+    opts.EnableForHttps = true;
+});
+
 // ─── Configuration ──────────────────────────────────────────
 
 builder.Services.Configure<ScraperOptions>(
@@ -304,6 +311,8 @@ var app = builder.Build();
 
 // Security: block path traversal attempts first
 app.UseMiddleware<PathTraversalGuardMiddleware>();
+
+app.UseResponseCompression();
 
 // Wire up cross-references between NotificationService and ItemShopService
 var shopService = app.Services.GetRequiredService<ItemShopService>();

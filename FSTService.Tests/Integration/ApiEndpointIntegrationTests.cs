@@ -81,6 +81,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.False(json.GetProperty("rivals").GetBoolean());
         Assert.False(json.GetProperty("compete").GetBoolean());
         Assert.False(json.GetProperty("leaderboards").GetBoolean());
+        Assert.False(json.GetProperty("firstRun").GetBoolean());
     }
 
     // ─── Progress ───────────────────────────────────────────────
@@ -1153,8 +1154,8 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         }
 
         var response = await _authedClient.GetAsync("/api/sync/devSync");
-        // Should succeed — Build creates the file on demand
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        // Should return 202 Accepted — background build queued
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
     }
 
     // ─── Account search ─────────────────────────────────────

@@ -40,6 +40,7 @@ services:
       - Features__Shop=${FEATURE_SHOP:-false}
       - Features__Rivals=${FEATURE_RIVALS:-false}
       - Features__Leaderboards=${FEATURE_LEADERBOARDS:-false}
+      - Features__FirstRun=${FEATURE_FIRST_RUN:-false}
       # Set to true to disable background scraping (API-only mode)
       # - Scraper__ApiOnly=true
       # Override scraper settings via environment variables if needed:

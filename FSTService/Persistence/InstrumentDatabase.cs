@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Data.Sqlite;
 using FSTService.Scraping;
 
@@ -22,6 +23,12 @@ public sealed class InstrumentDatabase : IDisposable
     private SqliteConnection? _persistentConn;
     private readonly object _connLock = new();
     private readonly object _writeLock = new();
+
+    /// <summary>Short-lived cache for GetPlayerRankings results (expensive CTE query).
+    /// Key: "accountId\0songId", Value: (result, expiry).</summary>
+    private readonly ConcurrentDictionary<string, (Dictionary<string, int> Result, DateTime Expiry)>
+        _rankingsCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan RankingsCacheTtl = TimeSpan.FromSeconds(15);
 
     public string Instrument => _instrument;
 
@@ -270,6 +277,7 @@ public sealed class InstrumentDatabase : IDisposable
         }
 
         tx.Commit();
+        _rankingsCache.Clear();
         return affected;
         } // lock
     }
@@ -615,6 +623,10 @@ public sealed class InstrumentDatabase : IDisposable
     /// </summary>
     public Dictionary<string, int> GetPlayerRankings(string accountId, string? songId = null)
     {
+        var cacheKey = $"{accountId}\0{songId ?? ""}";
+        if (_rankingsCache.TryGetValue(cacheKey, out var cached) && cached.Expiry > DateTime.UtcNow)
+            return cached.Result;
+
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         var songFilter = songId is not null ? "AND le.SongId = @songId" : "";
@@ -644,6 +656,8 @@ public sealed class InstrumentDatabase : IDisposable
         {
             result[reader.GetString(0)] = reader.GetInt32(1);
         }
+
+        _rankingsCache[cacheKey] = (result, DateTime.UtcNow + RankingsCacheTtl);
         return result;
     }
 
@@ -658,17 +672,27 @@ public sealed class InstrumentDatabase : IDisposable
     {
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
-        var where = "le.AccountId = @accountId";
+        var outerWhere = "le.AccountId = @accountId";
+        var innerWhere = "AccountId = @accountId";
         if (songId is not null)
-            where += " AND le.SongId = @songId";
+        {
+            outerWhere += " AND le.SongId = @songId";
+            innerWhere += " AND SongId = @songId";
+        }
         cmd.CommandText = $@"
+            WITH song_counts AS (
+                SELECT SongId, COUNT(*) AS TotalEntries
+                FROM LeaderboardEntries
+                WHERE SongId IN (SELECT SongId FROM LeaderboardEntries WHERE {innerWhere})
+                GROUP BY SongId
+            )
             SELECT
                 le.SongId,
                 COALESCE(le.Rank, 0) AS Rank,
-                (SELECT COUNT(*) FROM LeaderboardEntries x
-                 WHERE x.SongId = le.SongId) AS TotalEntries
+                sc.TotalEntries
             FROM LeaderboardEntries le
-            WHERE {where};";
+            JOIN song_counts sc ON sc.SongId = le.SongId
+            WHERE {outerWhere};";
         cmd.Parameters.AddWithValue("@accountId", accountId);
         if (songId is not null)
             cmd.Parameters.AddWithValue("@songId", songId);
@@ -1314,14 +1338,27 @@ public sealed class InstrumentDatabase : IDisposable
         };
     }
 
+    private volatile bool _pragmasInitialized;
+
     private SqliteConnection OpenConnection()
     {
         var conn = new SqliteConnection(_connectionString);
         conn.Open();
 
-        using var pragma = conn.CreateCommand();
-        pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;";
-        pragma.ExecuteNonQuery();
+        if (!_pragmasInitialized)
+        {
+            using var pragma = conn.CreateCommand();
+            pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;";
+            pragma.ExecuteNonQuery();
+            _pragmasInitialized = true;
+        }
+        else
+        {
+            // WAL and synchronous persist per-file; foreign_keys is per-connection
+            using var pragma = conn.CreateCommand();
+            pragma.CommandText = "PRAGMA foreign_keys=ON;";
+            pragma.ExecuteNonQuery();
+        }
 
         return conn;
     }

@@ -46,10 +46,15 @@ public static partial class ApiEndpoints
             var dbPath = personalDbBuilder.GetPersonalDbPath(accountId, deviceId);
             if (!File.Exists(dbPath))
             {
-                // Build on demand if not yet generated
-                var built = personalDbBuilder.Build(deviceId, accountId);
-                if (built is null)
-                    return Results.StatusCode(503); // Service Unavailable
+                // Queue background build instead of blocking the HTTP request
+                _ = Task.Run(() =>
+                {
+                    try { personalDbBuilder.Build(deviceId, accountId); }
+                    catch { /* logged inside Build() */ }
+                });
+                return Results.Json(
+                    new { status = "building", retryAfterSeconds = 30 },
+                    statusCode: StatusCodes.Status202Accepted);
             }
 
             // Update last sync timestamp

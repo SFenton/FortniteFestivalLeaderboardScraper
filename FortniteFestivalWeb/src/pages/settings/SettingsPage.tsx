@@ -23,6 +23,8 @@ import { songInfoSlides } from '../songinfo/firstRun';
 import { playerHistorySlides } from '../leaderboard/player/firstRun';
 import { leaderboardsSlides } from '../leaderboards/firstRun';
 import { competeSlides } from '../compete/firstRun';
+import { rivalsSlides } from '../rivals/firstRun';
+import { shopSlides } from '../shop/firstRun';
 import { api } from '../../api/client';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
@@ -181,6 +183,8 @@ export default function SettingsPage() {
   useRegisterFirstRun('suggestions', t('nav.suggestions'), suggestionsSlides);
   useRegisterFirstRun('leaderboards', t('nav.leaderboards'), leaderboardsSlides);
   useRegisterFirstRun('compete', t('nav.compete'), competeSlides);
+  useRegisterFirstRun('rivals', t('rivals.title'), rivalsSlides);
+  useRegisterFirstRun('shop', t('nav.shop'), shopSlides);
   const songsReplay = useFirstRunReplay('songs');
   const songInfoReplay = useFirstRunReplay('songinfo');
   const statsReplay = useFirstRunReplay('statistics');
@@ -188,6 +192,8 @@ export default function SettingsPage() {
   const playerHistoryReplay = useFirstRunReplay('playerhistory');
   const leaderboardsReplay = useFirstRunReplay('leaderboards');
   const competeReplay = useFirstRunReplay('compete');
+  const rivalsReplay = useFirstRunReplay('rivals');
+  const shopReplay = useFirstRunReplay('shop');
   const [serviceVersion, setServiceVersion] = useState<string | null>(null);
   // Skip stagger on revisit
   const skipAnimRef = useRef(_hasRendered);
@@ -259,6 +265,10 @@ export default function SettingsPage() {
         {statsReplay.show && <FirstRunCarousel slides={statsReplay.slides} onDismiss={statsReplay.dismiss} />}
         {suggestionsReplay.show && <FirstRunCarousel slides={suggestionsReplay.slides} onDismiss={suggestionsReplay.dismiss} />}
         {playerHistoryReplay.show && <FirstRunCarousel slides={playerHistoryReplay.slides} onDismiss={playerHistoryReplay.dismiss} />}
+        {leaderboardsReplay.show && <FirstRunCarousel slides={leaderboardsReplay.slides} onDismiss={leaderboardsReplay.dismiss} />}
+        {competeReplay.show && <FirstRunCarousel slides={competeReplay.slides} onDismiss={competeReplay.dismiss} />}
+        {rivalsReplay.show && <FirstRunCarousel slides={rivalsReplay.slides} onDismiss={rivalsReplay.dismiss} />}
+        {shopReplay.show && <FirstRunCarousel slides={shopReplay.slides} onDismiss={shopReplay.dismiss} />}
       </>}
     >
       <div style={st.cardColumn}>
@@ -406,6 +416,7 @@ export default function SettingsPage() {
           </FadeInDiv>
 
           {/* ── First Run Guides ── */}
+          {flags.firstRun && (
           <FadeInDiv delay={stagger(staggerIndex++)}>
           <SectionHeader title={t('firstRun.settings.showFirstRunTitle')} description={t('firstRun.settings.showFirstRunHint')} />
           <Card>
@@ -439,20 +450,41 @@ export default function SettingsPage() {
               </div>
               <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
+            {flags.leaderboards && (
             <button style={modalCss.toggleRow} onClick={leaderboardsReplay.open}>
               <div style={modalCss.toggleContent}>
                 <div style={modalCss.toggleLabel}>{t('nav.leaderboards')}</div>
               </div>
               <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
+            )}
+            {flags.compete && (
             <button style={modalCss.toggleRow} onClick={competeReplay.open}>
               <div style={modalCss.toggleContent}>
                 <div style={modalCss.toggleLabel}>{t('nav.compete')}</div>
               </div>
               <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
+            )}
+            {flags.rivals && (
+            <button style={modalCss.toggleRow} onClick={rivalsReplay.open}>
+              <div style={modalCss.toggleContent}>
+                <div style={modalCss.toggleLabel}>{t('rivals.title')}</div>
+              </div>
+              <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+            </button>
+            )}
+            {flags.shop && (
+            <button style={modalCss.toggleRow} onClick={shopReplay.open}>
+              <div style={modalCss.toggleContent}>
+                <div style={modalCss.toggleLabel}>{t('nav.shop')}</div>
+              </div>
+              <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
+            </button>
+            )}
           </Card>
           </FadeInDiv>
+          )}
 
           {/* ── Reset ── */}
           <FadeInDiv delay={stagger(staggerIndex)}>

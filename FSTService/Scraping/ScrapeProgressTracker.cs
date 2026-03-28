@@ -35,6 +35,15 @@ public sealed class ScrapeProgressTracker
     private volatile ScrapePhase _phase = ScrapePhase.Idle;
     public ScrapePhase Phase => _phase;
 
+    // ─── Response caching (sequence-number gating) ──────────
+
+    /// <summary>Monotonically increasing counter; bumped on every state mutation.</summary>
+    private int _changeSequence;
+
+    /// <summary>Cached response + the sequence at which it was built.</summary>
+    private sealed record CachedProgressResponse(ProgressResponse Response, int Sequence);
+    private volatile CachedProgressResponse? _cachedResponse;
+
     // ─── Completed operations history ───────────────────────
 
     private readonly List<OperationSnapshot> _completedOperations = new();
@@ -78,7 +87,7 @@ public sealed class ScrapeProgressTracker
     private AdaptiveConcurrencyLimiter? _adaptiveLimiter;
 
     /// <summary>Register the active limiter so the snapshot can report current DOP.</summary>
-    public void SetAdaptiveLimiter(AdaptiveConcurrencyLimiter? limiter) => _adaptiveLimiter = limiter;
+    public void SetAdaptiveLimiter(AdaptiveConcurrencyLimiter? limiter) { _adaptiveLimiter = limiter; Interlocked.Increment(ref _changeSequence); }
 
     // ─── Timing ─────────────────────────────────────────────
 
@@ -117,6 +126,7 @@ public sealed class ScrapeProgressTracker
         _passStopwatch.Restart();
         _phaseStopwatch.Restart();
         _phase = ScrapePhase.Scraping;
+        Interlocked.Increment(ref _changeSequence);
     }
 
     // ─── Scraping reporters ─────────────────────────────────
@@ -125,6 +135,7 @@ public sealed class ScrapeProgressTracker
     {
         Interlocked.Add(ref _estimatedTotalPages, totalPagesForLeaderboard);
         Interlocked.Increment(ref _leaderboardsWithKnownPages);
+        Interlocked.Increment(ref _changeSequence);
     }
 
     public void ReportPageFetched(int bodyLength)
@@ -132,18 +143,21 @@ public sealed class ScrapeProgressTracker
         Interlocked.Increment(ref _pagesFetched);
         Interlocked.Increment(ref _requestsMade);
         Interlocked.Add(ref _bytesReceived, bodyLength);
+        Interlocked.Increment(ref _changeSequence);
     }
 
     public void ReportRetry()
     {
         Interlocked.Increment(ref _retriesMade);
         Interlocked.Increment(ref _requestsMade);
+        Interlocked.Increment(ref _changeSequence);
     }
 
     public void ReportLeaderboardComplete(string instrument)
     {
         Interlocked.Increment(ref _completedLeaderboards);
         _completedByInstrument.AddOrUpdate(instrument, 1, (_, v) => v + 1);
+        Interlocked.Increment(ref _changeSequence);
     }
 
     public void SetInstrumentTotals(IReadOnlyDictionary<string, int> totals)
@@ -155,6 +169,7 @@ public sealed class ScrapeProgressTracker
     public void ReportSongComplete()
     {
         Interlocked.Increment(ref _completedSongs);
+        Interlocked.Increment(ref _changeSequence);
     }
 
     // ─── Generic phase reporters ─────────────────────────────
@@ -175,19 +190,19 @@ public sealed class ScrapeProgressTracker
     public void AddPhaseItems(int additional) => Interlocked.Add(ref _phaseTotal, additional);
 
     /// <summary>Report one work item completed.</summary>
-    public void ReportPhaseItemComplete() => Interlocked.Increment(ref _phaseCompleted);
+    public void ReportPhaseItemComplete() { Interlocked.Increment(ref _phaseCompleted); Interlocked.Increment(ref _changeSequence); }
 
     /// <summary>Report one account-level unit completed.</summary>
-    public void ReportPhaseAccountComplete() => Interlocked.Increment(ref _phaseAccountsCompleted);
+    public void ReportPhaseAccountComplete() { Interlocked.Increment(ref _phaseAccountsCompleted); Interlocked.Increment(ref _changeSequence); }
 
     /// <summary>Report one HTTP API request made.</summary>
-    public void ReportPhaseRequest() => Interlocked.Increment(ref _phaseRequests);
+    public void ReportPhaseRequest() { Interlocked.Increment(ref _phaseRequests); Interlocked.Increment(ref _changeSequence); }
 
     /// <summary>Report one retry attempt.</summary>
-    public void ReportPhaseRetry() => Interlocked.Increment(ref _phaseRetries);
+    public void ReportPhaseRetry() { Interlocked.Increment(ref _phaseRetries); Interlocked.Increment(ref _changeSequence); }
 
     /// <summary>Report entries created or updated.</summary>
-    public void ReportPhaseEntryUpdated(int count = 1) => Interlocked.Add(ref _phaseUpdated, count);
+    public void ReportPhaseEntryUpdated(int count = 1) { Interlocked.Add(ref _phaseUpdated, count); Interlocked.Increment(ref _changeSequence); }
 
     private void ResetGenericCounters()
     {
@@ -219,6 +234,7 @@ public sealed class ScrapeProgressTracker
             Interlocked.Add(ref _nameResResolved, resolvedInBatch);
         else
             Interlocked.Increment(ref _nameResFailed);
+        Interlocked.Increment(ref _changeSequence);
     }
 
     // ─── Phase transitions ──────────────────────────────────
@@ -237,6 +253,7 @@ public sealed class ScrapeProgressTracker
         _phaseStartedAtUtc = DateTime.UtcNow;
         _phaseStopwatch.Restart();
         _phase = phase;
+        Interlocked.Increment(ref _changeSequence);
     }
 
     /// <summary>Mark the pass as complete and stop the timer.</summary>
@@ -250,6 +267,7 @@ public sealed class ScrapeProgressTracker
         _passStopwatch.Stop();
         _phaseStopwatch.Stop();
         _phase = ScrapePhase.Idle;
+        Interlocked.Increment(ref _changeSequence);
     }
 
     // ─── Path generation (runs in parallel with scrape) ─────
@@ -292,16 +310,19 @@ public sealed class ScrapeProgressTracker
     {
         Interlocked.Increment(ref _pathGenCompleted);
         _pathGenCurrentSong = null;
+        Interlocked.Increment(ref _changeSequence);
     }
 
     public void PathGenSongSkipped()
     {
         Interlocked.Increment(ref _pathGenSkipped);
+        Interlocked.Increment(ref _changeSequence);
     }
 
     public void PathGenSongFailed()
     {
         Interlocked.Increment(ref _pathGenFailed);
+        Interlocked.Increment(ref _changeSequence);
     }
 
     public void EndPathGeneration()
@@ -322,6 +343,11 @@ public sealed class ScrapeProgressTracker
     /// </summary>
     public ProgressResponse GetProgressResponse()
     {
+        var currentSeq = Volatile.Read(ref _changeSequence);
+        var cached = _cachedResponse;
+        if (cached is not null && cached.Sequence == currentSeq)
+            return cached.Response;
+
         // Build the running operations list (main scrape phase + path gen if active)
         var running = new List<object>();
         var currentOp = BuildCurrentOperationSnapshot();
@@ -337,7 +363,7 @@ public sealed class ScrapeProgressTracker
         if (_lastPathGenSnapshot is not null)
             completed.Add(_lastPathGenSnapshot);
 
-        return new ProgressResponse
+        var response = new ProgressResponse
         {
             Current = currentOp,
             Running = running,
@@ -346,6 +372,9 @@ public sealed class ScrapeProgressTracker
             PassElapsedSeconds = Math.Round(_passStopwatch.Elapsed.TotalSeconds, 1),
             PathGeneration = pathGenSnapshot,
         };
+
+        _cachedResponse = new CachedProgressResponse(response, currentSeq);
+        return response;
     }
 
     /// <summary>Build a snapshot of the currently active operation, or null if idle.</summary>

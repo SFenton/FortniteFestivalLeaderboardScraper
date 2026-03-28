@@ -26,6 +26,7 @@ import {
   Display, Overflow, Gap,
   GridTemplate, Size, STAGGER_INTERVAL, FADE_DURATION,
 } from '@festival/theme';
+import { leaderboardsSlides } from './firstRun';
 
 export default function LeaderboardsOverviewPage() {
   const { t } = useTranslation();
@@ -93,12 +94,14 @@ export default function LeaderboardsOverviewPage() {
   }, [loadPhase, shouldStagger, maxEntriesPerCard]);
 
   const s = useLeaderboardsStyles();
+  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player }), [player]);
 
   return (
     <Page
       scrollRef={scrollRef}
       scrollRestoreKey="leaderboards"
       loadPhase={loadPhase}
+      firstRun={{ key: 'leaderboards', label: t('nav.leaderboards'), slides: leaderboardsSlides, gateContext: firstRunGateCtx }}
       before={
         <PageHeader
           title={t('rankings.title')}

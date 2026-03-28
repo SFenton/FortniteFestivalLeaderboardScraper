@@ -24,6 +24,7 @@ services:
       - Features__Shop=${FEATURE_SHOP:-false}
       - Features__Rivals=${FEATURE_RIVALS:-false}
       - Features__Leaderboards=${FEATURE_LEADERBOARDS:-false}
+      - Features__FirstRun=${FEATURE_FIRST_RUN:-false}
       # Override scraper settings via environment variables if needed:
       # - Scraper__ScrapeInterval=04:00:00
       # - Scraper__SongSyncInterval=00:15:00

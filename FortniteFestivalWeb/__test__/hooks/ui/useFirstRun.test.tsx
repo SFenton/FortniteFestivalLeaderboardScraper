@@ -1,6 +1,15 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import type { ReactNode } from 'react';
+
+const mockFlags = vi.hoisted(() => ({
+  shop: true, rivals: true, compete: true, leaderboards: true, firstRun: true,
+}));
+
+vi.mock('../../../src/contexts/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => mockFlags,
+}));
+
 import { FirstRunProvider, useFirstRunContext } from '../../../src/contexts/FirstRunContext';
 import { useFirstRun, useFirstRunReplay } from '../../../src/hooks/ui/useFirstRun';
 import { contentHash } from '../../../src/firstRun/types';
@@ -38,6 +47,7 @@ import React from 'react';
 describe('useFirstRun', () => {
   beforeEach(() => {
     localStorage.clear();
+    mockFlags.firstRun = true;
   });
 
   it('returns unseen slides for a registered page', () => {
@@ -147,11 +157,23 @@ describe('useFirstRun', () => {
     });
     expect(result.current.show).toBe(false);
   });
+
+  it('returns no slides when firstRun flag is disabled', () => {
+    mockFlags.firstRun = false;
+    const slides = [makeSlide('a'), makeSlide('b')];
+    const { result } = renderHook(
+      () => useRegisteredFirstRun('page1', slides, { hasPlayer: false }),
+      { wrapper },
+    );
+    expect(result.current.slides).toHaveLength(0);
+    expect(result.current.show).toBe(false);
+  });
 });
 
 describe('useFirstRunReplay', () => {
   beforeEach(() => {
     localStorage.clear();
+    mockFlags.firstRun = true;
   });
 
   function useRegisteredReplay(pageKey: string, slides: FirstRunSlideDef[]) {
@@ -221,5 +243,15 @@ describe('useFirstRunReplay', () => {
       result.current.dismiss();
     });
     expect(result.current.show).toBe(false);
+  });
+
+  it('returns no slides when firstRun flag is disabled', () => {
+    mockFlags.firstRun = false;
+    const slides = [makeSlide('a'), makeSlide('b')];
+    const { result } = renderHook(
+      () => useRegisteredReplay('page1', slides),
+      { wrapper },
+    );
+    expect(result.current.slides).toHaveLength(0);
   });
 });

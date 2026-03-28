@@ -72,7 +72,7 @@ public sealed class PersistencePipelineIntegrationTests : IDisposable
         var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "acct_tracked" };
 
         // Start pipeline
-        var agg = glp.StartWriters(cts.Token);
+        var agg = glp.StartWriters(ct: cts.Token);
 
         // Enqueue results for different instruments
         await glp.EnqueueResultAsync(
@@ -123,7 +123,7 @@ public sealed class PersistencePipelineIntegrationTests : IDisposable
         glp.PersistResult(MakeResult("song_1", "Solo_Guitar", ("acct_1", 80_000)));
 
         // Second pass via pipeline — score changed
-        var agg = glp.StartWriters(cts.Token);
+        var agg = glp.StartWriters(ct: cts.Token);
 
         await glp.EnqueueResultAsync(
             MakeResult("song_1", "Solo_Guitar", ("acct_1", 100_000)),

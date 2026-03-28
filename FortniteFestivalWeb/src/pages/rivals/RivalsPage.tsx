@@ -23,6 +23,7 @@ import { Routes } from '../../routes';
 import fx from '../../styles/effects.module.css';
 import { useRivalsSharedStyles } from './useRivalsSharedStyles';
 import Page from '../Page';
+import { rivalsSlides } from './firstRun';
 
 // Module-level data cache so back-navigation has instant data
 let _cachedInstrumentRivals: InstrumentRivals[] = [];
@@ -239,6 +240,8 @@ export default function RivalsPage() {
   /* v8 ignore stop */
 
   /* v8 ignore start -- JSX render tree */
+  const firstRunGateCtx = useMemo(() => ({ hasPlayer: true }), []);
+
   return (
     <Page
       scrollRestoreKey={`rivals:${accountId}`}
@@ -246,6 +249,7 @@ export default function RivalsPage() {
       loadPhase={phase}
       containerStyle={styles.container}
       before={<PageHeader title={t('rivals.title')} />}
+      firstRun={{ key: 'rivals', label: t('rivals.title'), slides: rivalsSlides, gateContext: firstRunGateCtx }}
     >
       {phase === LoadPhase.ContentIn && (
             <div style={{ ...flexColumn, gap: Gap.section }}>

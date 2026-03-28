@@ -9,6 +9,7 @@ public static partial class ApiEndpoints
         // ─── Per-instrument rankings (paginated) ───────────────
 
         app.MapGet("/api/rankings/{instrument}", (
+            HttpContext httpContext,
             string instrument,
             string? rankBy,
             int? page,
@@ -16,27 +17,20 @@ public static partial class ApiEndpoints
             GlobalLeaderboardPersistence persistence,
             MetaDatabase metaDb) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=60";
             var db = persistence.GetOrCreateInstrumentDb(instrument);
             var (entries, total) = db.GetAccountRankings(
                 rankBy ?? "adjusted",
                 page ?? 1,
                 Math.Clamp(pageSize ?? 50, 1, 200));
 
-            // Resolve display names
-            foreach (var entry in entries)
-            {
-                var name = metaDb.GetDisplayName(entry.AccountId);
-                if (name is not null)
-                {
-                    // DTOs are init-only, create new with display name
-                    // Actually AccountRankingDto has init setter, we need to project
-                }
-            }
+            // Bulk resolve display names (single DB call)
+            var names = metaDb.GetDisplayNames(entries.Select(e => e.AccountId));
 
             var enriched = entries.Select(e => new
             {
                 e.AccountId,
-                displayName = metaDb.GetDisplayName(e.AccountId),
+                displayName = names.GetValueOrDefault(e.AccountId),
                 e.SongsPlayed,
                 e.TotalChartedSongs,
                 e.Coverage,
@@ -136,18 +130,22 @@ public static partial class ApiEndpoints
         // ─── Composite rankings (paginated) ────────────────────
 
         app.MapGet("/api/rankings/composite", (
+            HttpContext httpContext,
             int? page,
             int? pageSize,
             MetaDatabase metaDb) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=60";
             var (entries, total) = metaDb.GetCompositeRankings(
                 page ?? 1,
                 Math.Clamp(pageSize ?? 50, 1, 200));
 
+            var names = metaDb.GetDisplayNames(entries.Select(e => e.AccountId));
+
             var enriched = entries.Select(e => new
             {
                 e.AccountId,
-                displayName = metaDb.GetDisplayName(e.AccountId),
+                displayName = names.GetValueOrDefault(e.AccountId),
                 e.InstrumentsPlayed,
                 e.TotalSongsPlayed,
                 e.CompositeRating,

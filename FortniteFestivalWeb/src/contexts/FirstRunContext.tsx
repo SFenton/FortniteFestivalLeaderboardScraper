@@ -16,6 +16,7 @@ import {
   isSlideUnseen,
   contentHash,
 } from '../firstRun/types';
+import { useFeatureFlags } from './FeatureFlagsContext';
 
 type PageRegistration = {
   label: string;
@@ -23,6 +24,8 @@ type PageRegistration = {
 };
 
 type FirstRunContextValue = {
+  /** Whether the first-run experience is globally enabled (Features.firstRun flag). */
+  enabled: boolean;
   /** Register a page's slides. Called by useRegisterFirstRun. */
   register: (pageKey: string, label: string, slides: FirstRunSlideDef[]) => void;
   /** Unregister a page (on unmount). */
@@ -48,6 +51,7 @@ type FirstRunContextValue = {
 const FirstRunContext = createContext<FirstRunContextValue | null>(null);
 
 export function FirstRunProvider({ children }: { children: ReactNode }) {
+  const { firstRun: enabled } = useFeatureFlags();
   const registryRef = useRef<Map<string, PageRegistration>>(new Map());
   // Bump to force re-renders when registry or seen state changes
   const [tick, setTick] = useState(0);
@@ -121,6 +125,7 @@ export function FirstRunProvider({ children }: { children: ReactNode }) {
   }, [tick]);
 
   const value = useMemo<FirstRunContextValue>(() => ({
+    enabled,
     register,
     unregister,
     getUnseenSlides,
@@ -131,7 +136,7 @@ export function FirstRunProvider({ children }: { children: ReactNode }) {
     registeredPages,
     activeCarouselKey,
     setActiveCarousel,
-  }), [register, unregister, getUnseenSlides, getAllSlides, markSeen, resetPage, resetAll, registeredPages, activeCarouselKey]);
+  }), [enabled, register, unregister, getUnseenSlides, getAllSlides, markSeen, resetPage, resetAll, registeredPages, activeCarouselKey]);
 
   return (
     <FirstRunContext.Provider value={value}>

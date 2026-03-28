@@ -243,7 +243,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         private int _totalChanges;
         private int _songsWithData;
         private readonly ConcurrentHashSet _changedAccountIds = new();
-        private readonly System.Collections.Concurrent.ConcurrentBag<(string AccountId, string SongId, string Instrument)>
+        private readonly ConcurrentDictionary<(string AccountId, string SongId, string Instrument), byte>
             _seenRegisteredEntries = new();
 
         public int TotalEntries => _totalEntries;
@@ -257,7 +257,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         /// identify stale entries that need re-querying.
         /// </summary>
         public IReadOnlyCollection<(string AccountId, string SongId, string Instrument)>
-            SeenRegisteredEntries => _seenRegisteredEntries;
+            SeenRegisteredEntries => _seenRegisteredEntries.Keys.ToArray();
 
         public void AddEntries(int count) => Interlocked.Add(ref _totalEntries, count);
         public void AddChanges(int count) => Interlocked.Add(ref _totalChanges, count);
@@ -267,7 +267,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         /// <summary>Record which registered user entries were seen in this pass.</summary>
         public void AddSeenRegisteredEntries(IEnumerable<(string, string, string)> entries)
         {
-            foreach (var e in entries) _seenRegisteredEntries.Add(e);
+            foreach (var e in entries) _seenRegisteredEntries.TryAdd(e, 0);
         }
 
         /// <summary>Thread-safe HashSet built on ConcurrentDictionary.</summary>
@@ -287,9 +287,10 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
     /// <summary>
     /// Start per-instrument writer tasks.  Call once before the scrape loop begins.
-    /// Each instrument gets a bounded channel (capacity 32) and a dedicated writer task.
+    /// Each instrument gets a bounded channel and a dedicated writer task.
     /// </summary>
-    public PipelineAggregates StartWriters(CancellationToken ct = default)
+    /// <param name="channelCapacity">Per-instrument channel capacity (default 32).</param>
+    public PipelineAggregates StartWriters(int channelCapacity = 32, CancellationToken ct = default)
     {
         _aggregates = new PipelineAggregates();
         _channels = new Dictionary<string, Channel<PersistWorkItem>>(StringComparer.OrdinalIgnoreCase);
@@ -297,7 +298,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
         foreach (var instrument in _instrumentDbs.Keys)
         {
-            var channel = Channel.CreateBounded<PersistWorkItem>(new BoundedChannelOptions(32)
+            var channel = Channel.CreateBounded<PersistWorkItem>(new BoundedChannelOptions(channelCapacity)
             {
                 SingleReader = true,
                 SingleWriter = false,
@@ -393,12 +394,19 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// </summary>
     public List<PlayerScoreDto> GetPlayerProfile(string accountId, string? songId = null, HashSet<string>? instruments = null)
     {
-        var allScores = new List<PlayerScoreDto>();
-        foreach (var (instrument, db) in _instrumentDbs)
+        var dbs = instruments is null
+            ? _instrumentDbs.Values.ToArray()
+            : _instrumentDbs.Where(kv => instruments.Contains(kv.Key)).Select(kv => kv.Value).ToArray();
+
+        var results = new List<PlayerScoreDto>[dbs.Length];
+        Parallel.For(0, dbs.Length, i =>
         {
-            if (instruments is not null && !instruments.Contains(instrument)) continue;
-            allScores.AddRange(db.GetPlayerScores(accountId, songId));
-        }
+            results[i] = dbs[i].GetPlayerScores(accountId, songId);
+        });
+
+        var allScores = new List<PlayerScoreDto>();
+        foreach (var r in results)
+            allScores.AddRange(r);
         return allScores;
     }
 
@@ -408,10 +416,20 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// </summary>
     public Dictionary<(string SongId, string Instrument), int> GetSongCountsForInstruments()
     {
-        var result = new Dictionary<(string, string), int>();
-        foreach (var (instrument, db) in _instrumentDbs)
+        var kvps = _instrumentDbs.ToArray();
+        var perInstrument = new Dictionary<string, int>[kvps.Length];
+        var instrumentKeys = new string[kvps.Length];
+        Parallel.For(0, kvps.Length, i =>
         {
-            foreach (var (songId, count) in db.GetAllSongCounts())
+            instrumentKeys[i] = kvps[i].Key;
+            perInstrument[i] = kvps[i].Value.GetAllSongCounts();
+        });
+
+        var result = new Dictionary<(string, string), int>();
+        for (int i = 0; i < kvps.Length; i++)
+        {
+            var instrument = instrumentKeys[i];
+            foreach (var (songId, count) in perInstrument[i])
                 result[(songId, instrument)] = count;
         }
         return result;
@@ -425,11 +443,23 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// </summary>
     public Dictionary<(string SongId, string Instrument), int> GetPlayerRankings(string accountId, string? songId = null, HashSet<string>? instruments = null)
     {
-        var result = new Dictionary<(string, string), int>();
-        foreach (var (instrument, db) in _instrumentDbs)
+        var kvps = instruments is null
+            ? _instrumentDbs.ToArray()
+            : _instrumentDbs.Where(kv => instruments.Contains(kv.Key)).ToArray();
+
+        var perInstrument = new Dictionary<string, int>[kvps.Length];
+        var instrumentKeys = new string[kvps.Length];
+        Parallel.For(0, kvps.Length, i =>
         {
-            if (instruments is not null && !instruments.Contains(instrument)) continue;
-            foreach (var (sid, rank) in db.GetPlayerRankings(accountId, songId))
+            instrumentKeys[i] = kvps[i].Key;
+            perInstrument[i] = kvps[i].Value.GetPlayerRankings(accountId, songId);
+        });
+
+        var result = new Dictionary<(string, string), int>();
+        for (int i = 0; i < kvps.Length; i++)
+        {
+            var instrument = instrumentKeys[i];
+            foreach (var (sid, rank) in perInstrument[i])
                 result[(sid, instrument)] = rank;
         }
         return result;
@@ -524,10 +554,13 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// </summary>
     public int? GetMinSeasonAcrossInstruments(string songId)
     {
+        var dbs = _instrumentDbs.Values.ToArray();
+        var results = new int?[dbs.Length];
+        Parallel.For(0, dbs.Length, i => results[i] = dbs[i].GetMinSeason(songId));
+
         int? globalMin = null;
-        foreach (var (_, db) in _instrumentDbs)
+        foreach (var min in results)
         {
-            var min = db.GetMinSeason(songId);
             if (min.HasValue && (!globalMin.HasValue || min.Value < globalMin.Value))
                 globalMin = min.Value;
         }
@@ -540,10 +573,13 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// </summary>
     public int? GetMaxSeasonAcrossInstruments()
     {
+        var dbs = _instrumentDbs.Values.ToArray();
+        var results = new int?[dbs.Length];
+        Parallel.For(0, dbs.Length, i => results[i] = dbs[i].GetMaxSeason());
+
         int? globalMax = null;
-        foreach (var (_, db) in _instrumentDbs)
+        foreach (var max in results)
         {
-            var max = db.GetMaxSeason();
             if (max.HasValue && (!globalMax.HasValue || max.Value > globalMax.Value))
                 globalMax = max.Value;
         }

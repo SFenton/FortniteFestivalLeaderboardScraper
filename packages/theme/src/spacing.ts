@@ -33,6 +33,7 @@ export const ZIndex = {
   overlay: 2,
   spinner: 5,
   dropdown: 10,
+  fixedFooter: 50,
   popover: 100,
   searchDropdown: 300,
   modalOverlay: 1000,

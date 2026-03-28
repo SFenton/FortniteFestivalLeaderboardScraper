@@ -17,6 +17,9 @@ public sealed class FeatureOptions
     /// <summary>Leaderboards overview and full rankings pages.</summary>
     public bool Leaderboards { get; set; }
 
+    /// <summary>First-run experience carousels on every page.</summary>
+    public bool FirstRun { get; set; }
+
     /// <summary>
     /// Compete page — derived from <see cref="Rivals"/> AND <see cref="Leaderboards"/>.
     /// CompetePage links to both rivals and rankings; if either is off, compete is off.
