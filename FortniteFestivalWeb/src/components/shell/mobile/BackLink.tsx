@@ -27,7 +27,7 @@ export default function BackLink({ fallback, animate = true }: { fallback: strin
   return (
     <div className="sa-top" style={s.wrapper}>
       <Link to={backTo} onClick={handleClick} style={s.backLink}>
-        <IoChevronBack size={IconSize.back} />
+        <IoChevronBack size={IconSize.back} style={s.backIcon} />
         {t('common.back')}
       </Link>
     </div>
@@ -55,7 +55,11 @@ function useStyles(animate: boolean) {
       textDecoration: 'none',
       fontSize: Font.title,
       fontWeight: Weight.bold,
+      lineHeight: 1,
       marginLeft: Layout.backLinkNudge,
+    } as const,
+    backIcon: {
+      marginTop: 1,
     } as const,
   }), [animate]);
 }
