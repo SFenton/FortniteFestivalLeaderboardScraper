@@ -951,7 +951,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int maxPages = 0)
     {
         // ── Page 0: discover totalPages ──
-        if (limiter is not null) await limiter.WaitAsync(ct);
+        bool page0Acquired = false;
+        if (limiter is not null) { await limiter.WaitAsync(ct); page0Acquired = true; }
         (ParsedPage? firstPage, int firstLen, FetchStatus firstStatus) page0;
         try
         {
@@ -959,7 +960,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         }
         finally
         {
-            limiter?.Release();
+            if (page0Acquired) limiter?.Release();
         }
 
         // Report page-0 to progress tracker (even if empty)
@@ -1028,9 +1029,15 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             async Task FetchAndCollectPageAsync(int pageNum)
             {
                 if (pageCts.IsCancellationRequested) return;
-                if (limiter is not null) await limiter.WaitAsync(pageCts.Token);
+                bool acquired = false;
                 try
                 {
+                    if (limiter is not null)
+                    {
+                        await limiter.WaitAsync(pageCts.Token);
+                        acquired = true;
+                    }
+
                     var (parsed, bodyLen, status) = await FetchPageAsync(
                         songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token);
                     Interlocked.Increment(ref requestCount);
@@ -1069,7 +1076,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 }
                 finally
                 {
-                    limiter?.Release();
+                    if (acquired) limiter?.Release();
                 }
             }
 
@@ -1326,9 +1333,15 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             async Task FetchPageWithLimiterAsync(int pageNum)
             {
                 if (pageCts.IsCancellationRequested) return;
-                if (limiter is not null) await limiter.WaitAsync(pageCts.Token);
+                bool acquired = false;
                 try
                 {
+                    if (limiter is not null)
+                    {
+                        await limiter.WaitAsync(pageCts.Token);
+                        acquired = true;
+                    }
+
                     var (parsed, bodyLen, status) = await FetchPageAsync(
                         songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token);
                     Interlocked.Increment(ref requestCount);
@@ -1366,7 +1379,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 }
                 finally
                 {
-                    limiter?.Release();
+                    if (acquired) limiter?.Release();
                 }
             }
 

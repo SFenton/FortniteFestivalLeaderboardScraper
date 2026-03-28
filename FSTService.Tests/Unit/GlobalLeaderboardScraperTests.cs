@@ -855,4 +855,36 @@ public class GlobalLeaderboardScraperTests
         Assert.Equal(1, r.TotalPages);            // capped
     }
 
+    // ─── Semaphore safety on cancellation ───────────────
+
+    [Fact]
+    public async Task ScrapeLeaderboardAsync_AccessBoundaryCancellation_DoesNotOverReleaseSemaphore()
+    {
+        // Regression test: before the fix, tasks cancelled while waiting on the limiter
+        // would Release() a semaphore slot they never acquired, eventually causing
+        // SemaphoreFullException and crashing the scraper.
+        var (scraper, handler) = CreateScraper();
+
+        // Page 0: reports 10 pages so pages 1-9 are fetched in parallel
+        handler.EnqueueJsonOk("""{"page":0,"totalPages":10,"entries":[{"teamId":"a1","rank":1,"percentile":1.0,"sessionHistory":[{"trackedStats":{"SCORE":100}}]}]}""");
+
+        // Pages 1-3: all 403 → triggers access boundary cancellation (ForbiddenThreshold = 3)
+        for (int i = 0; i < 3; i++)
+            handler.EnqueueError(HttpStatusCode.Forbidden, """{"errorCode":"forbidden"}""");
+
+        // Pages 4-9: enqueue enough responses so cancelled tasks that somehow proceed don't throw
+        for (int i = 0; i < 6; i++)
+            handler.EnqueueError(HttpStatusCode.Forbidden, """{"errorCode":"forbidden"}""");
+
+        // Use a limiter with a small max so any over-release would trigger SemaphoreFullException
+        using var limiter = new FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter(
+            initialDop: 2, minDop: 1, maxDop: 4, _log);
+
+        // Should complete without SemaphoreFullException
+        var result = await scraper.ScrapeLeaderboardAsync(
+            "song1", "Solo_Guitar", "token", "acct", limiter: limiter);
+
+        Assert.Single(result.Entries); // Only page 0 had valid data
+    }
+
 }
