@@ -62,7 +62,7 @@ export default function SongsPage() {
   const navType = useNavigationType();
   const location = useLocation();
   const forceRestagger = !!(location.state as Record<string, unknown> | null)?.restagger;
-  const isBackNav = navType === 'POP';
+  const isBackNav = navType === 'POP' && !!(location.state as Record<string, unknown> | null);
 
   const [search, setSearchLocal] = useState(searchQuery.query);
   const setSearch = useCallback((q: string) => {
