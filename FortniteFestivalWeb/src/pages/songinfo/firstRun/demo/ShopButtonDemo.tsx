@@ -2,7 +2,7 @@
 import { useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { IoBagHandle } from 'react-icons/io5';
-import { Gap, Colors, Font, Weight, Radius, Display, Align, Justify, Layout, IconSize, CssValue, padding } from '@festival/theme';
+import { Gap, Colors, Font, Weight, Radius, Display, Align, Justify, Layout, IconSize, CssValue, Position, Isolation, padding } from '@festival/theme';
 import { useSettings } from '../../../../contexts/SettingsContext';
 import anim from '../../../../styles/animations.module.css';
 
@@ -21,7 +21,7 @@ export default function ShopButtonDemo({ mobile }: { mobile?: boolean }) {
   if (mobile) {
     return (
       <div style={s.wrap}>
-        <div className={pulse ? anim.shopCircleBreathe : undefined} style={s.shopCircle}>
+        <div className={pulse ? anim.shopCircleBreathe : undefined} style={pulse ? s.shopCirclePulse : s.shopCircle}>
           <IoBagHandle size={72} />
         </div>
       </div>
@@ -30,7 +30,7 @@ export default function ShopButtonDemo({ mobile }: { mobile?: boolean }) {
 
   return (
     <div style={s.wrap}>
-      <div className={pulse ? anim.shopBreathe : undefined} style={s.shopButton}>
+      <div className={pulse ? anim.shopBreathe : undefined} style={pulse ? s.shopButtonPulse : s.shopButton}>
         <IoBagHandle size={IconSize.md} style={s.iconMargin} />
         {t('shop.itemShop')}
       </div>
@@ -65,6 +65,34 @@ function useStyles() {
       justifyContent: Justify.center,
       color: Colors.textPrimary,
       flexShrink: 0,
+    } as CSSProperties,
+    shopButtonPulse: {
+      display: Display.inlineFlex,
+      alignItems: Align.center,
+      justifyContent: Justify.center,
+      padding: padding(0, Layout.pillButtonHeight, 0, Layout.shopButtonPaddingLeft),
+      borderRadius: Radius.full,
+      color: Colors.textPrimary,
+      fontSize: Font.display,
+      fontWeight: Weight.semibold,
+      flexShrink: 0,
+      height: Layout.shopDesktopHeight,
+      position: Position.relative,
+      backgroundColor: Colors.transparent,
+      isolation: Isolation.isolate,
+    } as CSSProperties,
+    shopCirclePulse: {
+      width: Layout.shopCircleSize,
+      height: Layout.shopCircleSize,
+      borderRadius: Radius.full,
+      display: Display.flex,
+      alignItems: Align.center,
+      justifyContent: Justify.center,
+      color: Colors.textPrimary,
+      flexShrink: 0,
+      position: Position.relative,
+      backgroundColor: Colors.transparent,
+      isolation: Isolation.isolate,
     } as CSSProperties,
     iconMargin: { marginRight: Gap.lg } as CSSProperties,
   }), []);
