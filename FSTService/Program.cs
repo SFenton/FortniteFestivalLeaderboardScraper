@@ -46,6 +46,12 @@ builder.Services.ConfigureHttpJsonOptions(opts =>
 builder.Services.AddResponseCompression(opts =>
 {
     opts.EnableForHttps = true;
+    opts.Providers.Add<Microsoft.AspNetCore.ResponseCompression.BrotliCompressionProvider>();
+    opts.Providers.Add<Microsoft.AspNetCore.ResponseCompression.GzipCompressionProvider>();
+});
+builder.Services.Configure<Microsoft.AspNetCore.ResponseCompression.BrotliCompressionProviderOptions>(opts =>
+{
+    opts.Level = System.IO.Compression.CompressionLevel.Optimal;
 });
 
 // ─── Configuration ──────────────────────────────────────────
@@ -168,6 +174,7 @@ builder.Services.AddSingleton<ScoreBackfiller>();
 builder.Services.AddSingleton<PostScrapeRefresher>();
 builder.Services.AddSingleton<FirstSeenSeasonCalculator>();
 builder.Services.AddSingleton<FSTService.Api.NotificationService>();
+builder.Services.AddSingleton<FSTService.Api.SongsCacheService>();
 builder.Services.AddSingleton<RivalsCalculator>();
 builder.Services.AddSingleton<RivalsOrchestrator>();
 builder.Services.AddSingleton<RankingsCalculator>();
@@ -318,7 +325,9 @@ app.UseResponseCompression();
 // Wire up cross-references between NotificationService and ItemShopService
 var shopService = app.Services.GetRequiredService<ItemShopService>();
 var notificationService = app.Services.GetRequiredService<NotificationService>();
+var songsCacheService = app.Services.GetRequiredService<SongsCacheService>();
 shopService.SetNotificationService(notificationService);
+shopService.SetSongsCacheService(songsCacheService);
 notificationService.SetShopProvider(shopService);
 
 app.UseCors();

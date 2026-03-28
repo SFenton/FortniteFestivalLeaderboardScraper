@@ -182,6 +182,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _festivalService, dbInitializer,
             scrapeOrchestrator, postScrapeOrchestrator, backfillOrchestrator,
             pathGenerator, pathDataStore,
+            new Api.SongsCacheService(),
             _progress, options, _lifetime, _log);
     }
 

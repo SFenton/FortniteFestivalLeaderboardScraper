@@ -6,9 +6,21 @@ import {
   type ReactNode,
 } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ServerSong as Song } from '@festival/core/api/serverTypes';
+import type { ServerSong as Song, SongsResponse } from '@festival/core/api/serverTypes';
 import { api } from '../api/client';
 import { queryKeys } from '../api/queryKeys';
+
+const SONGS_CACHE_KEY = 'fst_songs_cache';
+
+function getCachedSongs(): SongsResponse | undefined {
+  try {
+    const raw = localStorage.getItem(SONGS_CACHE_KEY);
+    if (!raw) return undefined;
+    return (JSON.parse(raw) as { data: SongsResponse }).data;
+  } catch {
+    return undefined;
+  }
+}
 
 type FestivalState = {
   songs: Song[];
@@ -34,6 +46,8 @@ export function FestivalProvider({ children }: { children: ReactNode }) {
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.songs(),
     queryFn: () => api.getSongs(),
+    initialData: getCachedSongs,   // instant render from localStorage while ETag revalidation runs
+    staleTime: 5 * 60 * 1000,     // 5 min — revalidation is cheap (304 via ETag)
   });
 
   const refresh = useCallback(async () => {

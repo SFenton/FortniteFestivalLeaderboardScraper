@@ -32,6 +32,7 @@ public sealed partial class ItemShopService : IShopProvider
     private readonly MetaDatabase _metaDb;
     private readonly ILogger<ItemShopService> _log;
     private NotificationService? _notifications;
+    private FSTService.Api.SongsCacheService? _songsCache;
 
     private HashSet<string> _inShopSongIds = new();
     private string? _lastContentHash;
@@ -68,6 +69,7 @@ public sealed partial class ItemShopService : IShopProvider
     /// Called during startup to break the circular dependency.
     /// </summary>
     public void SetNotificationService(NotificationService notifications) => _notifications = notifications;
+    public void SetSongsCacheService(FSTService.Api.SongsCacheService songsCache) => _songsCache = songsCache;
 
     // ─── Initialization ─────────────────────────────────────────
 
@@ -185,6 +187,9 @@ public sealed partial class ItemShopService : IShopProvider
 
         // Persist to DB
         _metaDb.SaveItemShopTracks(matched, now);
+
+        // Invalidate songs cache so /api/songs picks up shop changes
+        _songsCache?.Invalidate();
 
         // Broadcast shop change to all connected WebSocket clients
         if (_notifications is not null && (added.Count > 0 || removed.Count > 0))

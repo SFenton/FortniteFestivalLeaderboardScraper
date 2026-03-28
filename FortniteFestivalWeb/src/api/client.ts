@@ -44,13 +44,58 @@ async function post<T>(path: string): Promise<T> {
 
 const UNKNOWN_USER = 'Unknown User';
 
+const ALBUM_ART_PREFIX = 'https://cdn2.unrealengine.com/';
+const SONGS_CACHE_KEY = 'fst_songs_cache';
+
+function expandAlbumArt(songs: SongsResponse['songs']): void {
+  for (const song of songs) {
+    if (song.albumArt && !song.albumArt.startsWith('http')) {
+      song.albumArt = ALBUM_ART_PREFIX + song.albumArt;
+    }
+  }
+}
+
+type SongsCache = { data: SongsResponse; etag: string | null };
+
+function loadSongsCache(): SongsCache | null {
+  try {
+    const raw = localStorage.getItem(SONGS_CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as SongsCache;
+  } catch {
+    return null;
+  }
+}
+
+function saveSongsCache(data: SongsResponse, etag: string | null): void {
+  try {
+    localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({ data, etag }));
+  } catch { /* quota exceeded — ignore */ }
+}
+
 function normalizeDisplayName<T extends { displayName: string }>(data: T): T {
   if (!data.displayName) return { ...data, displayName: UNKNOWN_USER };
   return data;
 }
 
 export const api = {
-  getSongs: () => get<SongsResponse>('/api/songs'),
+  getSongs: async (): Promise<SongsResponse> => {
+    const cached = loadSongsCache();
+    const headers: Record<string, string> = {};
+    if (cached?.etag) headers['If-None-Match'] = cached.etag;
+
+    const res = await fetch(`${BASE}/api/songs`, { headers });
+
+    // 304 Not Modified — server confirms our cached data is still current
+    if (res.status === 304 && cached) return cached.data;
+
+    if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
+
+    const data = await res.json() as SongsResponse;
+    expandAlbumArt(data.songs);
+    saveSongsCache(data, res.headers.get('etag'));
+    return data;
+  },
 
   getLeaderboard: (songId: string, instrument: InstrumentKey, top = 100, offset = 0, leeway?: number) =>
     get<LeaderboardResponse>(

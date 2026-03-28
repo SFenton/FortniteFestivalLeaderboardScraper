@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
 using FortniteFestival.Core.Persistence;
+using FSTService.Api;
 using FSTService.Auth;
 using FSTService.Persistence;
 using FSTService.Scraping;
@@ -32,6 +33,7 @@ public sealed class ScraperWorker : BackgroundService
     private readonly BackfillOrchestrator _backfillOrchestrator;
     private readonly PathGenerator _pathGenerator;
     private readonly PathDataStore _pathDataStore;
+    private readonly SongsCacheService _songsCache;
     private readonly ScrapeProgressTracker _progress;
     private readonly IOptions<ScraperOptions> _options;
     private readonly IHostApplicationLifetime _lifetime;
@@ -51,6 +53,7 @@ public sealed class ScraperWorker : BackgroundService
         BackfillOrchestrator backfillOrchestrator,
         PathGenerator pathGenerator,
         PathDataStore pathDataStore,
+        SongsCacheService songsCache,
         ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
         IHostApplicationLifetime lifetime,
@@ -66,6 +69,7 @@ public sealed class ScraperWorker : BackgroundService
         _backfillOrchestrator = backfillOrchestrator;
         _pathGenerator = pathGenerator;
         _pathDataStore = pathDataStore;
+        _songsCache = songsCache;
         _progress = progress;
         _options = options;
         _lifetime = lifetime;
@@ -354,6 +358,7 @@ public sealed class ScraperWorker : BackgroundService
         await _backfillOrchestrator.RunBackfillAsync(service, ct);
         await _backfillOrchestrator.RunHistoryReconAsync(ct);
 
+        _songsCache.Invalidate();
         _progress.EndPass();
     }
 
@@ -419,6 +424,7 @@ public sealed class ScraperWorker : BackgroundService
                 _pathDataStore.UpdateMaxScores(result.SongId, scores, result.DatFileHash, songLastMod);
             }
 
+            _songsCache.Invalidate();
             if (ownsProgress) _progress.EndPathGeneration();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

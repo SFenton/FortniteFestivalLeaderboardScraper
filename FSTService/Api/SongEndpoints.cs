@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FortniteFestival.Core.Services;
 using FSTService.Persistence;
 using FSTService.Scraping;
@@ -7,11 +8,36 @@ namespace FSTService.Api;
 
 public static partial class ApiEndpoints
 {
+    internal const string AlbumArtPrefix = "https://cdn2.unrealengine.com/";
+
+    private static string? TrimAlbumArt(string? url)
+        => url is not null && url.StartsWith(AlbumArtPrefix, StringComparison.Ordinal)
+            ? url[AlbumArtPrefix.Length..]
+            : url;
+
     public static void MapSongEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/songs", (HttpContext httpContext, FestivalService service, PathDataStore pathStore, MetaDatabase metaDb, ItemShopService shopService) =>
+        app.MapGet("/api/songs", (HttpContext httpContext, FestivalService service, PathDataStore pathStore, MetaDatabase metaDb, ItemShopService shopService, SongsCacheService songsCache) =>
         {
-            httpContext.Response.Headers.CacheControl = "public, max-age=300";
+            httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
+
+            // ── Check cache ──────────────────────────────────────
+            var cached = songsCache.Get();
+            if (cached is not null)
+            {
+                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
+                {
+                    httpContext.Response.Headers.ETag = cached.Value.ETag;
+                    return Results.StatusCode(304);
+                }
+
+                httpContext.Response.Headers.ETag = cached.Value.ETag;
+                httpContext.Response.ContentType = "application/json; charset=utf-8";
+                return Results.Bytes(cached.Value.Json, "application/json");
+            }
+
+            // ── Build response ───────────────────────────────────
             var maxScoresMap = pathStore.GetAllMaxScores();
             var currentSeason = metaDb.GetCurrentSeason();
             var inShop = shopService.InShopSongIds;
@@ -28,7 +54,7 @@ public static partial class ApiEndpoints
                         album      = s.track.ab,
                         year       = s.track.ry,
                         tempo      = s.track.mt,
-                        albumArt   = s.track.au,
+                        albumArt   = TrimAlbumArt(s.track.au),
                         genres     = s.track.ge,
                         difficulty = s.track.@in is null ? null : new
                         {
@@ -56,7 +82,16 @@ public static partial class ApiEndpoints
                 })
                 .ToList();
 
-            return Results.Ok(new { count = songs.Count, currentSeason, songs });
+            var payload = new { count = songs.Count, currentSeason, songs };
+            var jsonOpts = httpContext.RequestServices
+                .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+                .Value.SerializerOptions;
+            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+            var etag = songsCache.Set(jsonBytes);
+
+            httpContext.Response.Headers.ETag = etag;
+            httpContext.Response.ContentType = "application/json; charset=utf-8";
+            return Results.Bytes(jsonBytes, "application/json");
         })
         .WithTags("Songs")
         .RequireRateLimiting("public");

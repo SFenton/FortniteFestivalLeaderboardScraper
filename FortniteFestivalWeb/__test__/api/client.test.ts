@@ -3,13 +3,16 @@ import { api } from '../../src/api/client';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
   global.fetch = vi.fn();
 });
 
 function mockFetchOk(data: unknown) {
   (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
     ok: true,
+    status: 200,
     json: () => Promise.resolve(data),
+    headers: new Headers(),
   });
 }
 
@@ -28,6 +31,38 @@ describe('api/client', () => {
       mockFetchOk(data);
       const result = await api.getSongs();
       expect(result).toEqual(data);
+      expect(global.fetch).toHaveBeenCalledWith('/api/songs', { headers: {} });
+    });
+
+    it('sends If-None-Match when cached ETag exists', async () => {
+      // Seed localStorage with a cached response + etag
+      const cached = { songs: [{ songId: 's1', title: 'Old' }], count: 1, currentSeason: 5 };
+      localStorage.setItem('fst_songs_cache', JSON.stringify({ data: cached, etag: '"abc123"' }));
+
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ok: false,
+        status: 304,
+        headers: new Headers(),
+      });
+
+      const result = await api.getSongs();
+      expect(global.fetch).toHaveBeenCalledWith('/api/songs', { headers: { 'If-None-Match': '"abc123"' } });
+      expect(result).toEqual(cached);
+    });
+
+    it('updates cache on 200 with new ETag', async () => {
+      const data = { songs: [{ songId: 's2', title: 'New' }], count: 1, currentSeason: 6 };
+      (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(data),
+        headers: new Headers({ etag: '"newetag"' }),
+      });
+
+      await api.getSongs();
+      const stored = JSON.parse(localStorage.getItem('fst_songs_cache')!);
+      expect(stored.etag).toBe('"newetag"');
+      expect(stored.data.songs[0].songId).toBe('s2');
     });
   });
 
