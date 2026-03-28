@@ -142,7 +142,6 @@ export default function ShopPage() {
       scrollRestoreKey="shop"
       staggerRushRef={staggerRushRef}
       scrollDeps={[loadPhase, shopSongs]}
-      containerStyle={shopStyles.contentArea}
       loadPhase={loadPhase}
       firstRun={{ key: 'shop', label: t('nav.shop'), slides: shopSlides, gateContext: firstRunGateCtx }}
       before={
@@ -202,9 +201,6 @@ export default function ShopPage() {
 
 function useShopPageStyles() {
   return useMemo(() => ({
-    contentArea: {
-      paddingTop: Gap.md,
-    } as CSSProperties,
     count: {
       fontSize: Font.sm,
       color: Colors.textSubtle,

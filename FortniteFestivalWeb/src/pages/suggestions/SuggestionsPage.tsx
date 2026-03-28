@@ -277,7 +277,6 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
       scrollDeps={[phase, visibleCategories]}
       firstRun={{ key: 'suggestions', label: t('nav.suggestions'), slides: suggestionsSlides, gateContext: firstRunGateCtx }}
       loadPhase={phase}
-      containerStyle={{ paddingTop: isMobile ? Gap.sm : Gap.md }}
       before={<>
         {!isMobileChrome && (
           <PageHeader

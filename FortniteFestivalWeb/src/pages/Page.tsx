@@ -16,8 +16,8 @@
 import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode, type RefObject, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigationType } from 'react-router-dom';
-import { Colors, ZIndex, MaxWidth, Layout, Position, Size, Spinner, Border, flexColumn, flexCenter, fixedFill, CssValue, Opacity, BorderStyle, PointerEvents, padding, SPINNER_FADE_MS } from '@festival/theme';
-import { useIsMobileChrome } from '../hooks/ui/useIsMobile';
+import { Colors, ZIndex, MaxWidth, Layout, Position, Size, Spinner, Border, flexColumn, flexCenter, fixedFill, CssValue, Opacity, BorderStyle, PointerEvents, padding, Gap, SPINNER_FADE_MS } from '@festival/theme';
+import { useIsMobile, useIsMobileChrome } from '../hooks/ui/useIsMobile';
 import { useScrollMask, type ScrollMaskOptions } from '../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../hooks/ui/useStaggerRush';
 import { useScrollRestore } from '../hooks/ui/useScrollRestore';
@@ -242,6 +242,7 @@ export default function Page({
     return () => { portal?.style.removeProperty('--collapse'); };
   }, [portalTarget]);
 
+  const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
 
   // 'fixed' mode: shrink the shell scroll container so content never scrolls behind the FAB
@@ -275,7 +276,7 @@ export default function Page({
         </div>
       )}
       <div data-testid="scroll-area" className={scrollClassName} style={{ ...saStyle, ...scrollStyle }}>
-        <div className={containerClassName} style={{ ...cStyle, ...containerStyle }}>
+        <div className={containerClassName} style={{ ...cStyle, paddingTop: isMobile ? Gap.sm : Gap.md, ...containerStyle }}>
           {loadPhase != null && loadPhase !== LoadPhase.ContentIn ? null : children}
         </div>
         {isMobileChrome && fabSpacer === 'end' && <div style={pageCss.fabSpacer} />}

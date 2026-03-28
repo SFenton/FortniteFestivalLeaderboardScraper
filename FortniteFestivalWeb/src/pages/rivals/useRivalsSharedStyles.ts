@@ -16,7 +16,6 @@ export function useRivalsSharedStyles() {
     container: {
       position: Position.relative,
       zIndex: ZIndex.base,
-      paddingTop: Gap.section,
       paddingBottom: Gap.section,
       ...flexColumn,
       gap: Gap.section,

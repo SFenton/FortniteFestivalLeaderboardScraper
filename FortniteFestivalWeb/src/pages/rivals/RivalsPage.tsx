@@ -15,7 +15,7 @@ import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { IoChevronForward } from 'react-icons/io5';
 import { InstrumentHeaderSize } from '@festival/core';
 import { LoadPhase } from '@festival/core';
-import { Gap, Colors, Font, Weight, Radius, Layout, Position, ZIndex, Display, Align, Justify, Cursor, CssValue, WhiteSpace, flexColumn, flexCenter, flexRow, frostedCard, padding, transition, CssProp, NAV_TRANSITION_MS } from '@festival/theme';
+import { Gap, Colors, Font, Weight, Radius, Position, ZIndex, Display, Align, Justify, Cursor, CssValue, WhiteSpace, flexColumn, flexCenter, flexRow, frostedCard, padding, transition, CssProp, NAV_TRANSITION_MS } from '@festival/theme';
 import { serverInstrumentLabel, type RivalsListResponse, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import type { RivalSummary } from '@festival/core/api/serverTypes';
 import { deriveComboFromSettings } from './helpers/comboUtils';
@@ -212,7 +212,6 @@ export default function RivalsPage() {
   const shared = useRivalsSharedStyles();
   const styles = useMemo(() => ({
     ...shared,
-    container: { ...shared.container, paddingTop: Layout.paddingTop } as CSSProperties,
   }), [shared]);
 
   /* v8 ignore start -- guard + computed state */

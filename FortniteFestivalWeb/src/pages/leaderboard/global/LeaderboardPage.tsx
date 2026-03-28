@@ -13,7 +13,7 @@ import { LoadPhase } from '@festival/core';
 import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
 import { LeaderboardEntry } from './components/LeaderboardEntry';
 import { PaginatedLeaderboard } from '../../../components/leaderboard/PaginatedLeaderboard';
-import { QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, QUERY_SHOW_STARS, Layout, MaxWidth, Position, CssValue, padding, FADE_DURATION, STAGGER_INTERVAL } from '@festival/theme';
+import { QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, QUERY_SHOW_STARS, FADE_DURATION, STAGGER_INTERVAL } from '@festival/theme';
 import { buildStaggerStyle, clearStaggerStyle } from '../../../hooks/ui/useStaggerStyle';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import { PageMessage } from '../../PageMessage';
@@ -268,7 +268,7 @@ export default function LeaderboardPage() {
       scrollDeps={[loadPhase, entries.length]}
       staggerRushRef={staggerRushRef}
       headerCollapse={{ disabled: isNarrow, onCollapse: handleHeaderCollapse }}
-      containerStyle={lbStyles.container}
+      containerVariant="z"
       fabSpacer="none"
       background={<PageBackground src={song?.albumArt} />}
       before={
@@ -351,15 +351,3 @@ export default function LeaderboardPage() {
   );
 }
 
-/* â”€â”€ Static styles â”€â”€ */
-
-const lbStyles = {
-  container: {
-    maxWidth: MaxWidth.card,
-    margin: CssValue.marginCenter,
-    width: CssValue.full,
-    padding: padding(0, Layout.paddingHorizontal),
-    position: Position.relative,
-    zIndex: 1,
-  } as CSSProperties,
-};

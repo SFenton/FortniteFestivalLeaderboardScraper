@@ -369,7 +369,6 @@ export default function SongsPage() {
       scrollDeps={[loadPhase, filtered]}
       staggerRushRef={staggerRushRef}
       firstRun={{ key: 'songs', label: t('nav.songs'), slides: songsSlidesMemo, gateContext: firstRunGateCtx }}
-      containerStyle={{ paddingTop: isMobile ? Gap.sm : Gap.md }}
       fabSpacer="fixed"
       before={<>
         <LoadGate phase={loadPhase} overlay>

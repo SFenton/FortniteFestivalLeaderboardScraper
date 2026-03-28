@@ -211,7 +211,6 @@ export default function PlayerContent({
       scrollRestoreKey={`statistics:${data.accountId}`}
       scrollDeps={fadeDeps}
       scrollStyle={pps.scrollArea}
-      containerStyle={pps.container}
       before={
         <PageHeader
           title={data.displayName}

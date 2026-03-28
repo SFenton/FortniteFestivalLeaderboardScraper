@@ -527,7 +527,6 @@ function useCardStyles() {
 function useSettingsStyles(isMobile: boolean, filterOpen: boolean) {
   return useMemo(() => ({
     container: {
-      paddingTop: isMobile ? Gap.md : Layout.paddingTop,
       paddingBottom: Layout.paddingTop,
     } as CSSProperties,
     cardColumn: {
