@@ -1119,7 +1119,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     {
         var instList = (instruments ?? AllInstruments).ToList();
         var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(
-            maxConcurrency, 256, Math.Max(2048, maxConcurrency),
+            maxConcurrency, 256, maxConcurrency,
             _log);
 
         // Launch all instruments in parallel
@@ -1170,7 +1170,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 requests, accessToken, accountId, onSongComplete, ct, maxPages, pageConcurrency, songConcurrency);
 
         using var limiter = new AdaptiveConcurrencyLimiter(
-            maxConcurrency, minDop: 256, maxDop: Math.Max(2048, maxConcurrency),
+            maxConcurrency, minDop: 256, maxDop: maxConcurrency,
             _log);
         _progress.SetAdaptiveLimiter(limiter);
         var results = new ConcurrentDictionary<string, List<GlobalLeaderboardResult>>();
