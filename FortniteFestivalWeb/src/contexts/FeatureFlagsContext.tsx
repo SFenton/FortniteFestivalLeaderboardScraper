@@ -29,6 +29,8 @@ async function fetchFeatureFlags(): Promise<FeatureFlags> {
 /* ── Provider ── */
 
 export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
+  const isDev = import.meta.env.DEV;
+
   const { data } = useQuery<FeatureFlags>({
     queryKey: ['features'],
     queryFn: fetchFeatureFlags,
@@ -36,13 +38,13 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
     gcTime: 60 * 60 * 1000,
     retry: 1,
     refetchOnWindowFocus: false,
+    enabled: !isDev,
   });
 
   const flags = useMemo<FeatureFlags>(() => {
-    if (data) return data;
-    // Dev fallback: all features ON so developers don't need a running backend
-    return import.meta.env.DEV ? ALL_ON : ALL_OFF;
-  }, [data]);
+    if (isDev) return ALL_ON;
+    return data ?? ALL_OFF;
+  }, [isDev, data]);
 
   return (
     <FeatureFlagsContext.Provider value={flags}>

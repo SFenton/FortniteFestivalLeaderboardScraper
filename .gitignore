@@ -303,6 +303,7 @@ FSTService/data/
 .env
 .env.local
 .env*.local
+.env.e2e
 # Web stuff
 FortniteFestivalWeb/.yarn
 FortniteFestivalWeb/coverage

@@ -48,54 +48,75 @@ function makeWrapper() {
 }
 
 describe('FeatureFlagsContext', () => {
-  it('fetches flags from /api/features', async () => {
-    const wrapper = makeWrapper();
-    const { result } = renderHook(() => useFeatureFlags(), { wrapper });
+  describe('dev mode (default in vitest)', () => {
+    it('returns all flags ON without fetching', () => {
+      const wrapper = makeWrapper();
+      const { result } = renderHook(() => useFeatureFlags(), { wrapper });
 
-    await waitFor(() => {
       expect(result.current.shop).toBe(true);
+      expect(result.current.rivals).toBe(true);
+      expect(result.current.compete).toBe(true);
+      expect(result.current.leaderboards).toBe(true);
+      expect(result.current.firstRun).toBe(true);
+      expect(fetch).not.toHaveBeenCalled();
     });
-
-    expect(result.current.rivals).toBe(true);
-    expect(result.current.compete).toBe(true);
-    expect(result.current.leaderboards).toBe(true);
-    expect(result.current.firstRun).toBe(true);
-    expect(fetch).toHaveBeenCalledWith('/api/features');
   });
 
-  it('returns partial flags when server sends partial response', async () => {
-    flagValues.shop = false;
-    flagValues.leaderboards = false;
+  describe('prod mode', () => {
+    beforeEach(() => {
+      (import.meta.env as Record<string, unknown>).DEV = false;
+    });
+    afterEach(() => {
+      (import.meta.env as Record<string, unknown>).DEV = true;
+    });
 
-    const wrapper = makeWrapper();
-    const { result } = renderHook(() => useFeatureFlags(), { wrapper });
+    it('fetches flags from /api/features', async () => {
+      const wrapper = makeWrapper();
+      const { result } = renderHook(() => useFeatureFlags(), { wrapper });
 
-    await waitFor(() => {
+      await waitFor(() => {
+        expect(result.current.shop).toBe(true);
+      });
+
+      expect(result.current.rivals).toBe(true);
+      expect(result.current.compete).toBe(true);
+      expect(result.current.leaderboards).toBe(true);
+      expect(result.current.firstRun).toBe(true);
+      expect(fetch).toHaveBeenCalledWith('/api/features');
+    });
+
+    it('returns partial flags when server sends partial response', async () => {
+      flagValues.shop = false;
+      flagValues.leaderboards = false;
+
+      const wrapper = makeWrapper();
+      const { result } = renderHook(() => useFeatureFlags(), { wrapper });
+
+      await waitFor(() => {
+        expect(result.current.rivals).toBe(true);
+      });
+
       expect(result.current.shop).toBe(false);
+      expect(result.current.compete).toBe(true);
+      expect(result.current.leaderboards).toBe(false);
     });
 
-    expect(result.current.rivals).toBe(true);
-    expect(result.current.compete).toBe(true);
-    expect(result.current.leaderboards).toBe(false);
-  });
+    it('returns all flags OFF when fetch fails', async () => {
+      fetchShouldFail.value = true;
 
-  it('returns dev defaults (all ON) when fetch fails in dev mode', async () => {
-    fetchShouldFail.value = true;
+      const wrapper = makeWrapper();
+      const { result } = renderHook(() => useFeatureFlags(), { wrapper });
 
-    const wrapper = makeWrapper();
-    const { result } = renderHook(() => useFeatureFlags(), { wrapper });
+      await waitFor(() => {
+        expect(fetch).toHaveBeenCalled();
+      });
 
-    // In vitest (dev mode), import.meta.env.DEV is true
-    // So the fallback should be all ON
-    await waitFor(() => {
-      expect(fetch).toHaveBeenCalled();
+      expect(result.current.shop).toBe(false);
+      expect(result.current.rivals).toBe(false);
+      expect(result.current.compete).toBe(false);
+      expect(result.current.leaderboards).toBe(false);
+      expect(result.current.firstRun).toBe(false);
     });
-
-    expect(result.current.shop).toBe(true);
-    expect(result.current.rivals).toBe(true);
-    expect(result.current.compete).toBe(true);
-    expect(result.current.leaderboards).toBe(true);
-    expect(result.current.firstRun).toBe(true);
   });
 
   it('throws when used outside provider', () => {
