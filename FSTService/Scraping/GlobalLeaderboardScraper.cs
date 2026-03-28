@@ -807,9 +807,6 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                     limiter?.ReportFailure();
                     res.Dispose();
 
-                    _log.LogWarning("CDN block on {Song}/{Instrument} page {Page} (attempt {Attempt}). Entering CDN retry loop.",
-                        songId, instrument, page, attempt + 1);
-
                     var cdnDelays = new[] { 500, 1000, 2000, 5000, 10000, 15000, 30000, 45000, 60000 };
                     for (int cdnAttempt = 0; ; cdnAttempt++)
                     {
