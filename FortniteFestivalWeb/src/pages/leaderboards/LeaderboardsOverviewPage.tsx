@@ -15,6 +15,9 @@ import Modal from '../../components/modals/Modal';
 import { ModalSection } from '../../components/modals/components/ModalSection';
 import { RadioRow } from '../../components/common/RadioRow';
 import RankingCard from './components/RankingCard';
+import EmptyState from '../../components/common/EmptyState';
+import { parseApiError } from '../../utils/apiError';
+import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import type { RankingMetric, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { LoadPhase } from '@festival/core';
 import { RANKING_METRICS } from './helpers/rankingHelpers';
@@ -81,6 +84,7 @@ export default function LeaderboardsOverviewPage() {
 
   const isLoading = rankingQueries.some(q => q.isLoading);
   const hasCachedData = rankingQueries.every(q => q.data != null);
+  const allErrored = !isLoading && rankingQueries.length > 0 && rankingQueries.every(q => q.error);
   const loadPhase = isLoading ? LoadPhase.Loading : LoadPhase.ContentIn;
 
   const [shouldStagger, setShouldStagger] = useState(!hasCachedData);
@@ -115,7 +119,7 @@ export default function LeaderboardsOverviewPage() {
         <PageHeader
           title={t('rankings.title')}
           actions={
-            !isMobile ? (
+            !isMobile && !allErrored ? (
               <ActionPill
                 icon={<IoOptions size={Size.iconAction} />}
                 label={t(`rankings.metric.${metric}`)}
@@ -151,7 +155,11 @@ export default function LeaderboardsOverviewPage() {
         </Modal>
       }
     >
-      {loadPhase === LoadPhase.ContentIn && (
+      {loadPhase === LoadPhase.ContentIn && allErrored && (() => {
+        const parsed = parseApiError(String(rankingQueries[0]!.error));
+        return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={buildStaggerStyle(200)} onAnimationEnd={clearStaggerStyle} />;
+      })()}
+      {loadPhase === LoadPhase.ContentIn && !allErrored && (
         <div ref={gridRef} style={s.grid}>
           {instruments.map((inst, idx) => {
             const q = rankingQueries[idx];

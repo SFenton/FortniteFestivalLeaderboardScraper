@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigationType } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { staggerDelay, estimateVisibleCount } from '@festival/ui-utils';
-import { useStaggerStyle } from '../../hooks/ui/useStaggerStyle';
+import { useStaggerStyle, buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { useFestival } from '../../contexts/FestivalContext';
 import { usePlayerData } from '../../contexts/PlayerDataContext';
 import { useSettings } from '../../contexts/SettingsContext';
@@ -25,6 +25,7 @@ import Page from '../Page';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import SyncBanner from '../../components/page/SyncBanner';
 import EmptyState from '../../components/common/EmptyState';
+import { parseApiError } from '../../utils/apiError';
 import PageHeader from '../../components/common/PageHeader';
 import { SongRow } from './components/SongRow';
 import { SongsToolbar } from './components/SongsToolbar';
@@ -358,7 +359,8 @@ export default function SongsPage() {
   const songsStyles = useSongsStyles();
 
   if (error) {
-    return <div style={songsStyles.center}>{error}</div>;
+    const parsed = parseApiError(error);
+    return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={buildStaggerStyle(200)} onAnimationEnd={clearStaggerStyle} />;
   }
 
   return (

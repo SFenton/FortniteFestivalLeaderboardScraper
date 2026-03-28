@@ -174,7 +174,7 @@ describe('PlayerPage', () => {
     renderPlayerPage('/player/test-player-1');
 
     await waitFor(() => {
-      expect(screen.getByText('Network error')).toBeDefined();
+      expect(screen.getByText('Something Went Wrong')).toBeDefined();
     });
   });
 
@@ -184,7 +184,7 @@ describe('PlayerPage', () => {
     renderPlayerPage('/player/test-player-1');
 
     await waitFor(() => {
-      expect(screen.getByText('Failed to load player')).toBeDefined();
+      expect(screen.getByText('Something Went Wrong')).toBeDefined();
     });
   });
 

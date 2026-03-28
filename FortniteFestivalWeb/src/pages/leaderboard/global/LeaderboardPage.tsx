@@ -14,9 +14,11 @@ import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
 import { LeaderboardEntry } from './components/LeaderboardEntry';
 import { PaginatedLeaderboard } from '../../../components/leaderboard/PaginatedLeaderboard';
 import { QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, QUERY_SHOW_STARS, Layout, MaxWidth, Position, CssValue, padding, FADE_DURATION, STAGGER_INTERVAL } from '@festival/theme';
-import { clearStaggerStyle } from '../../../hooks/ui/useStaggerStyle';
+import { buildStaggerStyle, clearStaggerStyle } from '../../../hooks/ui/useStaggerStyle';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import { PageMessage } from '../../PageMessage';
+import EmptyState from '../../../components/common/EmptyState';
+import { parseApiError } from '../../../utils/apiError';
 import { useIsMobile, useIsMobileChrome } from '../../../hooks/ui/useIsMobile';
 import { useScoreFilter } from '../../../hooks/data/useScoreFilter';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
@@ -282,7 +284,7 @@ export default function LeaderboardPage() {
         </div>
       }
     >
-        {error && <PageMessage error>{error}</PageMessage>}
+        {error && (() => { const parsed = parseApiError(error); return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={buildStaggerStyle(200)} onAnimationEnd={clearStaggerStyle} />; })()}
 
         {!error && (
           <>

@@ -7,6 +7,7 @@ import { LeaderboardEntry } from '../../leaderboard/global/components/Leaderboar
 import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore, serverInstrumentLabel } from '@festival/core/api/serverTypes';
 import { QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, Colors, Font, Weight, Gap, Radius, Layout, Display, Align, Justify, Overflow, Cursor, Opacity, CssValue, FAST_FADE_MS, TRANSITION_MS, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, frostedCard, flexColumn, flexRow, transition, padding, border, Border } from '@festival/theme';
 import { CssProp } from '@festival/theme';
+import { parseApiError } from '../../../utils/apiError';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
 
 interface InstrumentCardProps {
@@ -74,7 +75,7 @@ export default memo(function InstrumentCard({
         /* v8 ignore stop */
       >
         <div style={st.cardBody}>
-        {prefetchedError && <span style={st.cardError}>{prefetchedError}</span>}
+        {prefetchedError && <span style={st.cardError}>{parseApiError(prefetchedError).title}</span>}
         {!prefetchedError && prefetchedEntries.length === 0 && !playerScore && (
           <div style={{ ...st.emptyCard, ...anim(baseDelay + STAGGER_ENTRY_OFFSET) }} onAnimationEnd={clearAnim}>{t('songDetail.noEntries', { instrument: serverInstrumentLabel(instrument) })}</div>
         )}

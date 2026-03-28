@@ -45,6 +45,18 @@
     "routeLoadFailed": "An error occurred loading this page. Try going back or reloading.",
     "goToSongs": "Go to Songs"
   },
+  "apiError": {
+    "clientError": "Request Error",
+    "clientErrorSubtitle": "The request could not be completed. Please try again.",
+    "notFound": "Not Found",
+    "notFoundSubtitle": "The requested data could not be found.",
+    "serverError": "Internal Server Error",
+    "serverErrorSubtitle": "An internal error has occurred. Please reach out to @SFentonX if this does not resolve shortly.",
+    "serviceUnavailable": "Service Unavailable",
+    "serviceUnavailableSubtitle": "The service is temporarily unavailable. Please try again later.",
+    "unknown": "Something Went Wrong",
+    "unknownSubtitle": "An unexpected error occurred. Please try again."
+  },
   "songs": {
     "title": "Songs",
     "searchPlaceholder": "Search songs or artists…",

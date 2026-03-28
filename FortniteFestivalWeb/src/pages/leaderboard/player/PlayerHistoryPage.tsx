@@ -20,11 +20,13 @@ import { LeaderboardEntry } from '../global/components/LeaderboardEntry';
 import PlayerScoreSortModal from './modals/PlayerScoreSortModal';
 import type { PlayerScoreSortMode, PlayerScoreSortDraft } from './modals/PlayerScoreSortModal';
 import { Gap, Size, QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, Colors, Radius, Layout, MaxWidth, Font, Border, Overflow, Position, Display, Align, CssValue, CssProp, flexRow, flexColumn, flexCenter, frostedCard, padding, border, transition, SPINNER_FADE_MS, FADE_DURATION } from '@festival/theme';
-import { clearStaggerStyle } from '../../../hooks/ui/useStaggerStyle';
+import { buildStaggerStyle, clearStaggerStyle } from '../../../hooks/ui/useStaggerStyle';
 import ArcSpinner from '../../../components/common/ArcSpinner';
 import { ActionPill } from '../../../components/common/ActionPill';
 import Page, { PageBackground } from '../../Page';
 import { PageMessage } from '../../PageMessage';
+import EmptyState from '../../../components/common/EmptyState';
+import { parseApiError } from '../../../utils/apiError';
 import { staggerDelay, estimateVisibleCount } from '@festival/ui-utils';
 import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import { useScoreFilter } from '../../../hooks/data/useScoreFilter';
@@ -230,7 +232,7 @@ export default function PlayerHistoryPage() {
       </>}
     >
 
-        {error && <PageMessage error>{error}</PageMessage>}
+        {error && (() => { const parsed = parseApiError(error); return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={buildStaggerStyle(200)} onAnimationEnd={clearStaggerStyle} />; })()}
 
         {!error && !player && !loading && (
           <PageMessage>{t('history.selectPlayer')}</PageMessage>

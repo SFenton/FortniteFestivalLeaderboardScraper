@@ -123,7 +123,7 @@ describe('LeaderboardPage', () => {
     mockApi.getLeaderboard.mockRejectedValue(new Error('Server Error'));
     renderLeaderboard();
     await waitFor(() => {
-      expect(screen.getByText('Server Error')).toBeDefined();
+      expect(screen.getByText('Something Went Wrong')).toBeDefined();
     });
   });
 
@@ -131,7 +131,7 @@ describe('LeaderboardPage', () => {
     mockApi.getLeaderboard.mockRejectedValue('fail');
     renderLeaderboard();
     await waitFor(() => {
-      expect(screen.getByText('Failed to load leaderboard')).toBeDefined();
+      expect(screen.getByText('Something Went Wrong')).toBeDefined();
     });
   });
 

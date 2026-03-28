@@ -108,7 +108,7 @@ describe('SongsPage', () => {
     mockApi.getSongs.mockRejectedValue(new Error('API Down'));
     renderSongsPage();
     await act(async () => { await vi.advanceTimersByTimeAsync(200); });
-    expect(screen.getByText((text) => text.includes('API Down') || text.includes('service'))).toBeDefined();
+    expect(screen.getByText('Something Went Wrong')).toBeDefined();
   });
 
   it('shows song count in toolbar', async () => {

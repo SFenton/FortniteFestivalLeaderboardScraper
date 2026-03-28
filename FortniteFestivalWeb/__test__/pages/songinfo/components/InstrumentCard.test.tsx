@@ -76,7 +76,7 @@ describe('InstrumentCard', () => {
 
   it('shows error message when prefetchedError is set', () => {
     renderCard({ prefetchedError: 'Failed to load' });
-    expect(screen.getByText('Failed to load')).toBeTruthy();
+    expect(screen.getByText('Something Went Wrong')).toBeTruthy();
   });
 
   it('shows no entries message with instrument name when entries are empty', () => {

@@ -7,6 +7,7 @@ import InstrumentHeader from '../../../components/display/InstrumentHeader';
 import { RankingEntry } from './RankingEntry';
 import type { ServerInstrumentKey as InstrumentKey, AccountRankingEntry, AccountRankingDto, RankingMetric } from '@festival/core/api/serverTypes';
 import { Routes } from '../../../routes';
+import { parseApiError } from '../../../utils/apiError';
 import { getRankForMetric, formatRating, getRatingForMetric, computeRankWidth } from '../helpers/rankingHelpers';
 import { staggerDelay } from '@festival/ui-utils';
 import {
@@ -82,7 +83,7 @@ export default memo(function RankingCard({
         <InstrumentHeader instrument={instrument} size={InstrumentHeaderSize.MD} />
       </div>
       <div style={st.cardBody}>
-        {error && <span style={st.cardError}>{error}</span>}
+        {error && <span style={st.cardError}>{parseApiError(error).title}</span>}
         {!error && entries.length === 0 && (
           <span style={st.cardMuted}>{t('rankings.noRankings')}</span>
         )}

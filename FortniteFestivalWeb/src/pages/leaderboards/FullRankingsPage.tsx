@@ -25,6 +25,9 @@ import { useModalState } from '../../hooks/ui/useModalState';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useFabSearch } from '../../contexts/FabSearchContext';
+import EmptyState from '../../components/common/EmptyState';
+import { parseApiError } from '../../utils/apiError';
+import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { Size } from '@festival/theme';
 
 const PAGE_SIZE = 25;
@@ -174,7 +177,7 @@ export default function FullRankingsPage() {
       }
     >
 
-      {error && <div style={errorStyle}>{String(error)}</div>}
+      {error && (() => { const parsed = parseApiError(String(error)); return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={buildStaggerStyle(200)} onAnimationEnd={clearStaggerStyle} />; })()}
 
       <PaginatedLeaderboard
         entries={entries}
@@ -220,5 +223,3 @@ export default function FullRankingsPage() {
     </Page>
   );
 }
-
-const errorStyle = { fontSize: 14, color: '#ef4444', textAlign: 'center' as const, padding: '16px 0' };

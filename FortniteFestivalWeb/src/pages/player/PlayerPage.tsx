@@ -7,9 +7,12 @@ import { usePlayerData } from '../../contexts/PlayerDataContext';
 import { useSyncStatus } from '../../hooks/data/useSyncStatus';
 import { api } from '../../api/client';
 import ArcSpinner from '../../components/common/ArcSpinner';
+import EmptyState from '../../components/common/EmptyState';
+import { parseApiError } from '../../utils/apiError';
+import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import { LoadPhase } from '@festival/core';
-import { Colors, Font, Layout, flexCenter, Display, Align, Justify, CssValue, SPINNER_FADE_MS } from '@festival/theme';
+import { flexCenter, SPINNER_FADE_MS } from '@festival/theme';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../../api/queryKeys';
 import PlayerContent from '../leaderboard/player/components/PlayerContent';
@@ -100,7 +103,10 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
 
   const styles = useStyles();
 
-  if (error) return <div style={styles.centerError}>{error}</div>;
+  if (error) {
+    const parsed = parseApiError(error);
+    return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={buildStaggerStyle(200)} onAnimationEnd={clearStaggerStyle} />;
+  }
   if (!loading && !data) return <div style={styles.center}>{t('player.playerNotFound')}</div>;
 
   return (
@@ -130,13 +136,6 @@ function useStyles() {
       ...flexCenter,
       flex: 1,
       animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards`,
-    } as CSSProperties,
-    centerError: {
-      ...flexCenter,
-      minHeight: CssValue.viewportFull,
-      color: Colors.statusRed,
-      backgroundColor: Colors.bgApp,
-      fontSize: Font.lg,
     } as CSSProperties,
   }), []);
 }

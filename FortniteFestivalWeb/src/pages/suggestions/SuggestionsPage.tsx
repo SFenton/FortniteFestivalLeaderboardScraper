@@ -238,7 +238,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
 
   
   if (!playerData && !playerLoading && categories.length === 0) {
-    return <div style={suggestionsStyles.center}>{t('common.couldNotLoadPlayer')}</div>;
+    return <EmptyState fullPage title={t('common.couldNotLoadPlayer')} subtitle={t('common.serviceDown')} style={buildStaggerStyle(200)} onAnimationEnd={clearStaggerStyle} />;
   }
 
   if (categories.length === 0 && !hasMore) {

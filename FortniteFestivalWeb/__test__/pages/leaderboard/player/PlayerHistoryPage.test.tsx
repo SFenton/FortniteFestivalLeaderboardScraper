@@ -131,7 +131,7 @@ describe('PlayerHistoryPage', () => {
     mockApi.getPlayerHistory.mockRejectedValue(new Error('API Error'));
     renderHistory();
     await waitFor(() => {
-      expect(screen.getByText('API Error')).toBeDefined();
+      expect(screen.getByText('Something Went Wrong')).toBeDefined();
     });
   });
 
@@ -139,7 +139,7 @@ describe('PlayerHistoryPage', () => {
     mockApi.getPlayerHistory.mockRejectedValue('fail');
     renderHistory();
     await waitFor(() => {
-      expect(screen.getByText('Failed to load history')).toBeDefined();
+      expect(screen.getByText('Something Went Wrong')).toBeDefined();
     });
   });
 

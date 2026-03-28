@@ -125,7 +125,7 @@ export default function ShopPage() {
   const gridInterval = Math.max(20, Math.floor(MAX_GRID_CASCADE_MS / Math.max(maxVisibleGrid, 1)));
   const rowInterval = Math.max(40, Math.floor(MAX_ROW_CASCADE_MS / Math.max(maxVisibleRows, 1)));
 
-  if (sorted.length > 0 && !shouldStaggerInitRef.current && !skipShopAnim) {
+  if (!shouldStaggerInitRef.current && !skipShopAnim) {
     shouldStaggerInitRef.current = true;
   }
   // Initial load uses shouldStaggerInitRef; view toggles use transition.shouldStagger
@@ -149,7 +149,7 @@ export default function ShopPage() {
         isMobileChrome ? undefined : (
         <PageHeader
           title={t('nav.shop')}
-          actions={<>
+          actions={sorted.length > 0 ? <>
             <span style={shopStyles.count}>{t('format.songCount', { count: sorted.length })}</span>
             {!isNarrow && !isMobileChrome && (
               <ActionPill
@@ -158,7 +158,7 @@ export default function ShopPage() {
                 onClick={toggleView}
               />
             )}
-          </>}
+          </> : undefined}
         />
         )
       }

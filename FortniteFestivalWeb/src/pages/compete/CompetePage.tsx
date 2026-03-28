@@ -12,6 +12,9 @@ import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { comboIdFromInstruments } from '@festival/core/combos';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
+import EmptyState from '../../components/common/EmptyState';
+import { parseApiError } from '../../utils/apiError';
+import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { RankingEntry } from '../leaderboards/components/RankingEntry';
 import { formatRating } from '../leaderboards/helpers/rankingHelpers';
 import { Routes } from '../../routes';
@@ -44,7 +47,7 @@ export default function CompetePage() {
   );
 
   // Leaderboard top 10 — combo rankings (2+ instruments) or per-instrument (1)
-  const { data: leaderboardData, isLoading: leaderboardLoading } = useQuery({
+  const { data: leaderboardData, isLoading: leaderboardLoading, error: leaderboardError } = useQuery({
     queryKey: isMulti
       ? queryKeys.comboRankings(comboId!, 'totalscore', 1, 10)
       : queryKeys.rankings(previewInstrument ?? 'Solo_Guitar', 'totalscore', 1, 10),
@@ -114,7 +117,7 @@ export default function CompetePage() {
   const leaderboardNavTarget = isMulti ? Routes.leaderboards : Routes.fullRankings(previewInstrument!, 'totalscore');
 
   // Rivals — closest 3 above + 3 below for first visible instrument
-  const { data: rivalsData } = useQuery({
+  const { data: rivalsData, error: rivalsError } = useQuery({
     queryKey: queryKeys.rivalsList(accountId, previewInstrument ?? ''),
     queryFn: () => api.getRivalsList(accountId, previewInstrument!),
     enabled: !!accountId && !!previewInstrument,
@@ -124,8 +127,9 @@ export default function CompetePage() {
   const below = rivalsData?.below.slice(0, 3) ?? [];
 
   // Wait for leaderboards; also wait for rivals if a player is tracked
-  const rivalsReady = !accountId || !previewInstrument || !!rivalsData;
-  const isReady = !leaderboardLoading && rivalsReady;
+  const rivalsReady = !accountId || !previewInstrument || !!rivalsData || !!rivalsError;
+  const isReady = (!leaderboardLoading || !!leaderboardError) && rivalsReady;
+  const hasError = !!leaderboardError;
   const { phase, shouldStagger } = usePageTransition('compete', isReady, isReady);
   const { next: stagger, clearAnim } = useStagger(shouldStagger);
   const s = useCompeteStyles();
@@ -135,7 +139,11 @@ export default function CompetePage() {
     <Page scrollRestoreKey="compete" loadPhase={phase} before={isMobile ? undefined : <PageHeader title={t('compete.title')} />}
       firstRun={{ key: 'compete', label: t('nav.compete'), slides: competeSlides, gateContext: firstRunGateCtx }}
     >
-      {phase === 'contentIn' && (
+      {phase === 'contentIn' && hasError && (() => {
+        const parsed = parseApiError(String(leaderboardError));
+        return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={buildStaggerStyle(200)} onAnimationEnd={clearStaggerStyle} />;
+      })()}
+      {phase === 'contentIn' && !hasError && (
       <div style={s.content}>
       {/* Leaderboards section */}
       <div style={s.section}>
