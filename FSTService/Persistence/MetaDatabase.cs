@@ -363,6 +363,24 @@ public sealed class MetaDatabase : IDisposable
         // ── Migration: rebuild combo tables when combo version bumps ──
         MigrateFeatureVersion(conn, "Combo", ComboVersion, ResetComboTables);
 
+        // ── Performance indexes for frequently-queried columns ──
+        using (var perfIdx = conn.CreateCommand())
+        {
+            perfIdx.CommandText = """
+                CREATE INDEX IF NOT EXISTS IX_AccountNames_Unresolved
+                    ON AccountNames (LastResolved) WHERE LastResolved IS NULL;
+                CREATE INDEX IF NOT EXISTS IX_BackfillStatus_Status
+                    ON BackfillStatus (Status);
+                CREATE INDEX IF NOT EXISTS IX_HistoryReconStatus_Status
+                    ON HistoryReconStatus (Status);
+                CREATE INDEX IF NOT EXISTS IX_ScrapeLog_Completed
+                    ON ScrapeLog (Id DESC) WHERE CompletedAt IS NOT NULL;
+                CREATE INDEX IF NOT EXISTS IX_AccountNames_Name
+                    ON AccountNames (DisplayName COLLATE NOCASE) WHERE DisplayName IS NOT NULL;
+                """;
+            perfIdx.ExecuteNonQuery();
+        }
+
         _initialized = true;
 
         _log.LogDebug("Meta DB schema ensured.");
@@ -1951,6 +1969,15 @@ public sealed class MetaDatabase : IDisposable
         return _persistentConn;
     }
 
+    /// <summary>Force a WAL checkpoint on the meta database.</summary>
+    public void Checkpoint()
+    {
+        var conn = GetPersistentConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+        cmd.ExecuteNonQuery();
+    }
+
     public void Dispose()
     {
         if (_persistentConn is not null)
@@ -2924,6 +2951,59 @@ public sealed class MetaDatabase : IDisposable
         using var reader = cmd.ExecuteReader();
         if (!reader.Read()) return null;
         return ReadCompositeDto(reader);
+    }
+
+    /// <summary>Fetch composite ranking neighbors around a given account (above/self/below).</summary>
+    public (List<CompositeRankingDto> Above, CompositeRankingDto? Self, List<CompositeRankingDto> Below)
+        GetCompositeRankingNeighborhood(string accountId, int radius = 5)
+    {
+        var self = GetCompositeRanking(accountId);
+        if (self is null) return ([], null, []);
+
+        using var conn = OpenConnection();
+        var above = new List<CompositeRankingDto>();
+        var below = new List<CompositeRankingDto>();
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT AccountId, InstrumentsPlayed, TotalSongsPlayed, CompositeRating, CompositeRank,
+                       GuitarAdjustedSkill, GuitarSkillRank, BassAdjustedSkill, BassSkillRank,
+                       DrumsAdjustedSkill, DrumsSkillRank, VocalsAdjustedSkill, VocalsSkillRank,
+                       ProGuitarAdjustedSkill, ProGuitarSkillRank, ProBassAdjustedSkill, ProBassSkillRank,
+                       ComputedAt
+                FROM CompositeRankings
+                WHERE CompositeRank < @selfRank
+                ORDER BY CompositeRank DESC
+                LIMIT @radius;
+                """;
+            cmd.Parameters.AddWithValue("@selfRank", self.CompositeRank);
+            cmd.Parameters.AddWithValue("@radius", radius);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read()) above.Add(ReadCompositeDto(reader));
+        }
+        above.Reverse(); // Return in ascending rank order
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT AccountId, InstrumentsPlayed, TotalSongsPlayed, CompositeRating, CompositeRank,
+                       GuitarAdjustedSkill, GuitarSkillRank, BassAdjustedSkill, BassSkillRank,
+                       DrumsAdjustedSkill, DrumsSkillRank, VocalsAdjustedSkill, VocalsSkillRank,
+                       ProGuitarAdjustedSkill, ProGuitarSkillRank, ProBassAdjustedSkill, ProBassSkillRank,
+                       ComputedAt
+                FROM CompositeRankings
+                WHERE CompositeRank > @selfRank
+                ORDER BY CompositeRank ASC
+                LIMIT @radius;
+                """;
+            cmd.Parameters.AddWithValue("@selfRank", self.CompositeRank);
+            cmd.Parameters.AddWithValue("@radius", radius);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read()) below.Add(ReadCompositeDto(reader));
+        }
+
+        return (above, self, below);
     }
 
     /// <summary>Snapshot today's composite ranks for top N + additional accounts.</summary>

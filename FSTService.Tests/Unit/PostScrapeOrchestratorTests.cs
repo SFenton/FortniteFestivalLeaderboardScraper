@@ -22,6 +22,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     private readonly AccountNameResolver _nameResolver;
     private readonly PersonalDbBuilder _personalDbBuilder;
     private readonly PostScrapeRefresher _refresher;
+    private readonly SongProcessingMachine _machine;
     private readonly NotificationService _notifications;
     private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<PostScrapeOrchestrator> _log;
@@ -81,6 +82,15 @@ public class PostScrapeOrchestratorTests : IDisposable
             scraper, _persistence, new ScrapeProgressTracker(),
             Substitute.For<ILogger<PostScrapeRefresher>>());
 
+        _machine = Substitute.For<SongProcessingMachine>(
+            scraper, new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>()),
+            _persistence, new ScrapeProgressTracker(), Substitute.For<ILogger<SongProcessingMachine>>());
+        _machine.RunAsync(
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<AdaptiveConcurrencyLimiter>(),
+            Arg.Any<int>(), Arg.Any<IWorkCompletionHandler?>(), Arg.Any<CancellationToken>())
+            .Returns(new SongProcessingMachine.MachineResult());
+
         _notifications = new NotificationService(Substitute.For<ILogger<NotificationService>>());
         _progress = new ScrapeProgressTracker();
         _log = Substitute.For<ILogger<PostScrapeOrchestrator>>();
@@ -91,7 +101,10 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         _sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _personalDbBuilder, _refresher, rivalsOrchestrator, rankingsCalculator, _notifications,
+            _personalDbBuilder, _refresher,
+            _machine,
+            Substitute.For<HistoryReconstructor>(scraper, _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
+            rivalsOrchestrator, rankingsCalculator, _notifications,
             _tokenManager, _progress, Options.Create(new ScraperOptions()), _log);
         _testLimiter = new AdaptiveConcurrencyLimiter(16, minDop: 2, maxDop: 64, Substitute.For<ILogger>());
     }
@@ -194,31 +207,19 @@ public class PostScrapeOrchestratorTests : IDisposable
             .Returns("test-access-token");
         _tokenManager.AccountId.Returns("caller-001");
 
-        _refresher.RefreshAllAsync(
-            Arg.Any<HashSet<string>>(),
-            Arg.Any<HashSet<(string, string, string)>>(),
-            Arg.Any<List<string>>(),
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(),
-            Arg.Any<int>(),
-            Arg.Any<int>(),
-            Arg.Any<CancellationToken>())
-            .Returns(5);
-
         var ctx = CreateContext(registeredIds: new HashSet<string> { "user-1" });
 
         await _sut.RefreshRegisteredUsersAsync(ctx, _testLimiter, CancellationToken.None);
 
-        await _refresher.Received(1).RefreshAllAsync(
-            Arg.Any<HashSet<string>>(),
-            Arg.Any<HashSet<(string, string, string)>>(),
-            Arg.Any<List<string>>(),
+        // Verify the song processing machine was invoked with the correct token
+        await _machine.Received(1).RunAsync(
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
             Arg.Is("test-access-token"),
             Arg.Is("caller-001"),
-            Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(),
+            Arg.Any<AdaptiveConcurrencyLimiter>(),
             Arg.Any<int>(),
-            Arg.Any<int>(),
+            Arg.Any<IWorkCompletionHandler?>(),
             Arg.Any<CancellationToken>());
     }
 
@@ -243,16 +244,10 @@ public class PostScrapeOrchestratorTests : IDisposable
             .Returns("test-access-token");
         _tokenManager.AccountId.Returns("caller-001");
 
-        _refresher.RefreshAllAsync(
-            Arg.Any<HashSet<string>>(),
-            Arg.Any<HashSet<(string, string, string)>>(),
-            Arg.Any<List<string>>(),
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(),
-            Arg.Any<int>(),
-            Arg.Any<int>(),
-            Arg.Any<CancellationToken>())
+        _machine.RunAsync(
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<AdaptiveConcurrencyLimiter>(),
+            Arg.Any<int>(), Arg.Any<IWorkCompletionHandler?>(), Arg.Any<CancellationToken>())
             .Throws(new InvalidOperationException("API error"));
 
         var ctx = CreateContext(registeredIds: new HashSet<string> { "user-1" });
@@ -347,7 +342,10 @@ public class PostScrapeOrchestratorTests : IDisposable
         var rankingsCalculator2 = new RankingsCalculator(_persistence, _metaDb, new PathDataStore(Path.Combine(_tempDir, "core.db")), _progress, Substitute.For<ILogger<RankingsCalculator>>());
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _personalDbBuilder, _refresher, rivalsOrchestrator, rankingsCalculator2, _notifications,
+            _personalDbBuilder, _refresher,
+            Substitute.For<SongProcessingMachine>(Substitute.For<ILeaderboardQuerier>(), new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>()), _persistence, new ScrapeProgressTracker(), Substitute.For<ILogger<SongProcessingMachine>>()),
+            Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
+            rivalsOrchestrator, rankingsCalculator2, _notifications,
             _tokenManager, _progress, opts, _log);
 
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
@@ -400,7 +398,10 @@ public class PostScrapeOrchestratorTests : IDisposable
         var rankingsCalculator3 = new RankingsCalculator(_persistence, _metaDb, new PathDataStore(Path.Combine(_tempDir, "core.db")), _progress, Substitute.For<ILogger<RankingsCalculator>>());
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _personalDbBuilder, _refresher, rivalsOrchestrator, rankingsCalculator3, _notifications,
+            _personalDbBuilder, _refresher,
+            Substitute.For<SongProcessingMachine>(Substitute.For<ILeaderboardQuerier>(), new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>()), _persistence, new ScrapeProgressTracker(), Substitute.For<ILogger<SongProcessingMachine>>()),
+            Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
+            rivalsOrchestrator, rankingsCalculator3, _notifications,
             _tokenManager, _progress, opts, _log);
 
         var ctx = CreateContext();

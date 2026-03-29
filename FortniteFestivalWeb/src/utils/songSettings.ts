@@ -54,6 +54,7 @@ export type SongFilters = {
   missingFCs: Record<string, boolean>;
   hasScores: Record<string, boolean>;
   hasFCs: Record<string, boolean>;
+  overThreshold: Record<string, boolean>;
   seasonFilter: Record<number, boolean>;
   percentileFilter: Record<number, boolean>;
   starsFilter: Record<number, boolean>;
@@ -65,6 +66,7 @@ export const defaultSongFilters = (): SongFilters => ({
   missingFCs: {},
   hasScores: {},
   hasFCs: {},
+  overThreshold: {},
   seasonFilter: {},
   percentileFilter: {},
   starsFilter: {},
@@ -76,7 +78,8 @@ export const isFilterActive = (f: SongFilters, instrument?: InstrumentKey | null
     Object.values(f.missingScores).some(v => v === true) ||
     Object.values(f.missingFCs).some(v => v === true) ||
     Object.values(f.hasScores).some(v => v === true) ||
-    Object.values(f.hasFCs).some(v => v === true);
+    Object.values(f.hasFCs).some(v => v === true) ||
+    Object.values(f.overThreshold ?? {}).some(v => v === true);
   if (hasPerInstrument) return true;
   // When instrument is explicitly null, ignore instrument-dependent filters
   // (season/percentile/stars/difficulty) since they won't be applied.

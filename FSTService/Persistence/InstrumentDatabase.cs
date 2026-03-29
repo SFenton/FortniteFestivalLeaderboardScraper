@@ -117,6 +117,11 @@ public sealed class InstrumentDatabase : IDisposable
         srcIdx.CommandText = "CREATE INDEX IF NOT EXISTS IX_Song_Source ON LeaderboardEntries (SongId, Source);";
         srcIdx.ExecuteNonQuery();
 
+        // ── Index for neighborhood queries (rank-range lookups per song) ──
+        using var rankIdx = conn.CreateCommand();
+        rankIdx.CommandText = "CREATE INDEX IF NOT EXISTS IX_Song_Rank ON LeaderboardEntries (SongId, Rank);";
+        rankIdx.ExecuteNonQuery();
+
         _initialized = true;
 
         // ── Rankings tables (SongStats, AccountRankings, RankHistory) ──

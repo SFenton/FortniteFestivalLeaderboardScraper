@@ -104,6 +104,7 @@ public sealed class RivalsOrchestrator
             _persistence.Meta.ReplaceRivalsData(accountId, result.Rivals, result.Samples);
             _persistence.Meta.CompleteRivals(accountId, result.CombosComputed, result.Rivals.Count);
             _rivalsCache.InvalidateAll();
+            _calculator.InvalidateSongGapsCache();
 
             try { _notifications.NotifyRivalsCompleteAsync(accountId).GetAwaiter().GetResult(); }
             catch { /* best effort */ }

@@ -43,6 +43,10 @@ export function instPercentileBucketUpdater(inst: InstrumentKey, pct: number) {
   return (s: SongSettings): SongSettings => ({ ...s, instrument: inst, sortAscending: true, filters: { ...cleanFilters(s, inst), percentileFilter: buildPercentileFilter(pct) } });
 }
 
+export function instOverThresholdUpdater(inst: InstrumentKey) {
+  return (s: SongSettings): SongSettings => ({ ...s, instrument: inst, sortMode: 'score' as const, sortAscending: false, filters: { ...cleanFilters(s, inst), overThreshold: { ...s.filters.overThreshold, [inst]: true } } });
+}
+
 export function pctGold(v: string): string | undefined {
   return /^Top [1-5]%$/.test(v) ? Colors.gold : undefined;
 }
@@ -56,6 +60,11 @@ export function buildInstrumentStatsItems(
   navigateToSongs: NavigateToSongs,
   navigateToSongDetail: NavigateToSongDetail,
   cardStyle: React.CSSProperties,
+  isScoreValid?: (songId: string, instrument: InstrumentKey | string, score: number) => boolean,
+  filterInvalidScores?: boolean,
+  /** Unfiltered scores for this instrument — used to count over-threshold entries
+   *  (the main `scores` array has already been stripped by filterPlayerScores). */
+  rawScores?: PlayerScore[],
 ): PlayerItem[] {
   if (scores.length === 0) return [];
 
@@ -87,6 +96,17 @@ export function buildInstrumentStatsItems(
     cards.push({ label: t('player.fcs'), value: stats.fcPercent === '100.0' ? stats.fcCount.toLocaleString() : `${stats.fcCount} (${stats.fcPercent}%)`, color: stats.fcPercent === '100.0' ? Colors.gold : undefined, onClick: () => {
       navigateToSongs(instFCsUpdater(inst));
     } });
+  }
+
+  // Scores over CHOpt threshold card (only when filterInvalidScores is enabled)
+  if (filterInvalidScores && isScoreValid) {
+    const source = rawScores ?? scores;
+    const overCount = source.filter(s => s.score > 0 && !isScoreValid(s.songId, inst, s.score)).length;
+    if (overCount > 0) {
+      cards.push({ label: t('player.overThreshold'), value: overCount.toLocaleString(), color: Colors.statusRed, onClick: () => {
+        navigateToSongs(instOverThresholdUpdater(inst));
+      } });
+    }
   }
 
   // Star count cards

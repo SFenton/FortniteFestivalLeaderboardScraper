@@ -234,11 +234,13 @@ public static partial class ApiEndpoints
             var (entries, totalAccounts) = metaDb.GetComboLeaderboard(
                 comboId, metric, page ?? 1, Math.Clamp(pageSize ?? 50, 1, 200));
 
-            var enriched = entries.Select(e => new
+            var entryList = entries.ToList();
+            var names = metaDb.GetDisplayNames(entryList.Select(e => e.AccountId));
+            var enriched = entryList.Select(e => new
             {
                 e.Rank,
                 e.AccountId,
-                displayName = metaDb.GetDisplayName(e.AccountId),
+                displayName = names.GetValueOrDefault(e.AccountId),
                 e.AdjustedRating,
                 e.WeightedRating,
                 e.FcRate,
@@ -444,6 +446,74 @@ public static partial class ApiEndpoints
 
             httpContext.Response.Headers.ETag = etag;
             return Results.Bytes(jsonBytes, "application/json");
+        })
+        .WithTags("Rankings")
+        .RequireRateLimiting("public");
+
+        // ─── Batch rankings overview (all instruments in one call) ──
+
+        app.MapGet("/api/rankings/overview", (
+            HttpContext httpContext,
+            string? rankBy,
+            int? pageSize,
+            GlobalLeaderboardPersistence persistence,
+            MetaDatabase metaDb) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
+            var metric = rankBy ?? "adjusted";
+            var effectivePageSize = Math.Clamp(pageSize ?? 10, 1, 50);
+            var instrumentKeys = persistence.GetInstrumentKeys();
+
+            var allAccountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var perInstrument = new Dictionary<string, (List<AccountRankingDto> Entries, int Total)>();
+
+            foreach (var instrument in instrumentKeys)
+            {
+                var db = persistence.GetOrCreateInstrumentDb(instrument);
+                var (entries, total) = db.GetAccountRankings(metric, 1, effectivePageSize);
+                var entryList = entries.ToList();
+
+                foreach (var e in entryList)
+                    allAccountIds.Add(e.AccountId);
+
+                perInstrument[instrument] = (entryList, total);
+            }
+
+            // Single bulk name resolution across all instruments
+            var names = metaDb.GetDisplayNames(allAccountIds);
+
+            var result = new Dictionary<string, object>();
+            foreach (var (instrument, (entries, total)) in perInstrument)
+            {
+                result[instrument] = new
+                {
+                    totalAccounts = total,
+                    entries = entries.Select(e => new
+                    {
+                        e.AccountId,
+                        displayName = names.GetValueOrDefault(e.AccountId),
+                        e.AdjustedSkillRating,
+                        e.AdjustedSkillRank,
+                        e.WeightedRating,
+                        e.WeightedRank,
+                        e.FcRate,
+                        e.FcRateRank,
+                        e.TotalScore,
+                        e.TotalScoreRank,
+                        e.MaxScorePercent,
+                        e.MaxScorePercentRank,
+                        e.SongsPlayed,
+                        e.Coverage,
+                    }).ToList(),
+                };
+            }
+
+            return Results.Ok(new
+            {
+                rankBy = metric,
+                pageSize = effectivePageSize,
+                instruments = result,
+            });
         })
         .WithTags("Rankings")
         .RequireRateLimiting("public");

@@ -172,6 +172,8 @@ builder.Services.AddSingleton<PersonalDbBuilder>(sp =>
 builder.Services.AddSingleton<BackfillQueue>();
 builder.Services.AddSingleton<ScoreBackfiller>();
 builder.Services.AddSingleton<PostScrapeRefresher>();
+builder.Services.AddSingleton<BatchResultProcessor>();
+builder.Services.AddTransient<SongProcessingMachine>();
 builder.Services.AddSingleton<FirstSeenSeasonCalculator>();
 builder.Services.AddSingleton<FSTService.Api.NotificationService>();
 builder.Services.AddSingleton<FSTService.Api.SongsCacheService>();

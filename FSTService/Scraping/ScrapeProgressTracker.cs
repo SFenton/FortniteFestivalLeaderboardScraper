@@ -30,6 +30,7 @@ public sealed class ScrapeProgressTracker
         ComputingRivals,
         BackfillingScores,
         ReconstructingHistory,
+        SongMachine,
     }
 
     private volatile ScrapePhase _phase = ScrapePhase.Idle;
@@ -188,6 +189,9 @@ public sealed class ScrapeProgressTracker
 
     /// <summary>Add to the total work item count (for incrementally-discovered work).</summary>
     public void AddPhaseItems(int additional) => Interlocked.Add(ref _phaseTotal, additional);
+
+    /// <summary>Update the total account count mid-phase (e.g. when hot-adding users).</summary>
+    public void SetPhaseAccounts(int total) { _phaseAccountsTotal = total; Interlocked.Increment(ref _changeSequence); }
 
     /// <summary>Report one work item completed.</summary>
     public void ReportPhaseItemComplete() { Interlocked.Increment(ref _phaseCompleted); Interlocked.Increment(ref _changeSequence); }

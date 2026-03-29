@@ -30,6 +30,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
     protected readonly ScoreBackfiller _backfiller;
     protected readonly BackfillQueue _backfillQueue;
     protected readonly PostScrapeRefresher _refresher;
+    protected readonly SongProcessingMachine _machine;
     protected readonly HistoryReconstructor _historyReconstructor;
     protected readonly FirstSeenSeasonCalculator _firstSeenCalculator;
     protected readonly FestivalService _festivalService;
@@ -93,6 +94,16 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _scraper, _persistence, new ScrapeProgressTracker(),
             Substitute.For<ILogger<PostScrapeRefresher>>());
 
+        _machine = Substitute.For<SongProcessingMachine>(
+            (ILeaderboardQuerier)_scraper,
+            new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>()),
+            _persistence, _progress, Substitute.For<ILogger<SongProcessingMachine>>());
+        _machine.RunAsync(
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<AdaptiveConcurrencyLimiter>(),
+            Arg.Any<int>(), Arg.Any<IWorkCompletionHandler?>(), Arg.Any<CancellationToken>())
+            .Returns(new SongProcessingMachine.MachineResult());
+
         _historyReconstructor = Substitute.For<HistoryReconstructor>(
             _scraper, _persistence, new HttpClient(), _progress,
             Substitute.For<ILogger<HistoryReconstructor>>());
@@ -145,7 +156,10 @@ public abstract class ScraperWorkerTestBase : IDisposable
 
         var postScrapeOrchestrator = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _personalDbBuilder, _refresher, rivalsOrchestrator, rankingsCalculator, notifications,
+            _personalDbBuilder, _refresher,
+            _machine,
+            _historyReconstructor,
+            rivalsOrchestrator, rankingsCalculator, notifications,
             _tokenManager, _progress, options,
             Substitute.For<ILogger<PostScrapeOrchestrator>>());
 

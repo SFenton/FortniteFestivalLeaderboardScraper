@@ -20,6 +20,10 @@ interface FilterSortOptions {
   allScoreMap: Map<string, Map<InstrumentKey, PlayerScore>>;
   /** Set of songIds currently in the item shop (for 'shop' sort mode). */
   shopSongIds?: ReadonlySet<string> | null;
+  /** Callback to check whether a score is within the CHOpt max threshold. */
+  isScoreValid?: (songId: string, instrument: InstrumentKey | string, score: number) => boolean;
+  /** Whether the "Filter Invalid Scores" app setting is enabled (gates overThreshold filter). */
+  filterInvalidScoresEnabled?: boolean;
 }
 
 const PCT_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100];
@@ -34,6 +38,8 @@ export function useFilteredSongs({
   scoreMap,
   allScoreMap,
   shopSongIds,
+  isScoreValid,
+  filterInvalidScoresEnabled,
 }: FilterSortOptions): Song[] {
   return useMemo(() => {
     const q = search.toLowerCase();
@@ -45,6 +51,9 @@ export function useFilteredSongs({
     for (const [k, v] of Object.entries(f.missingFCs)) { if (v) filterInstruments.add(k as InstrumentKey); }
     for (const [k, v] of Object.entries(f.hasScores)) { if (v) filterInstruments.add(k as InstrumentKey); }
     for (const [k, v] of Object.entries(f.hasFCs)) { if (v) filterInstruments.add(k as InstrumentKey); }
+    if (filterInvalidScoresEnabled) {
+      for (const [k, v] of Object.entries(f.overThreshold ?? {})) { if (v) filterInstruments.add(k as InstrumentKey); }
+    }
     const activeFilterInstruments = inst
       ? (filterInstruments.has(inst) ? [inst] : [])
       : [...filterInstruments];
@@ -84,6 +93,10 @@ export function useFilteredSongs({
           }
           if (passed && (mf || hf)) {
             if (!(mf && !hasFC) && !(hf && hasFC)) passed = false;
+          }
+          if (passed && filterInvalidScoresEnabled && f.overThreshold?.[key] && isScoreValid) {
+            const over = ps?.score != null && ps.score > 0 && !isScoreValid(s.songId, key, ps.score);
+            if (!over) passed = false;
           }
           if (passed) { anyInstrumentPassed = true; break; }
         }
@@ -162,5 +175,5 @@ export function useFilteredSongs({
       }
       return cmp === 0 ? a.title.localeCompare(b.title) * dir : cmp * dir;
     });
-  }, [songs, search, sortMode, sortAscending, f, inst, scoreMap, allScoreMap, shopSongIds]);
+  }, [songs, search, sortMode, sortAscending, f, inst, scoreMap, allScoreMap, shopSongIds, isScoreValid, filterInvalidScoresEnabled]);
 }

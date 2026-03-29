@@ -57,7 +57,7 @@ export default function PlayerContent({
   const navigate = useNavigate();
   const { player: trackedPlayer, setPlayer } = useTrackedPlayer();
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
-  const { filterPlayerScores } = useScoreFilter();
+  const { filterPlayerScores, isScoreValid, enabled: filterInvalidScores } = useScoreFilter();
   const { registerPlayerPageSelect } = usePlayerPageSelect();
 
   // Register FAB "Select as Profile" action
@@ -110,6 +110,10 @@ export default function PlayerContent({
 
   const songMap = useMemo(() => new Map(songs.map((s) => [s.songId, s])), [songs]);
   const byInstrument = useMemo(() => groupByInstrument(effectiveScores), [effectiveScores]);
+  const rawByInstrument = useMemo(() => {
+    const visible = data.scores.filter(s => isInstrumentVisible(settings, s.instrument as InstrumentKey));
+    return groupByInstrument(visible);
+  }, [data.scores, settings]);
   const overallStats = useMemo(() => computeOverallStats(effectiveScores), [effectiveScores]);
 
   // Stable navigation helpers to reduce closure overhead in onClick handlers
@@ -172,7 +176,8 @@ export default function PlayerContent({
   for (const inst of visibleKeys) {
     const scores = byInstrument.get(inst);
     if (!scores || scores.length === 0) continue;
-    items.push(...buildInstrumentStatsItems(t, inst, scores, songs.length, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle));
+    const raw = rawByInstrument.get(inst);
+    items.push(...buildInstrumentStatsItems(t, inst, scores, songs.length, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle, isScoreValid, filterInvalidScores, raw));
   }
 
   // --- Top Songs heading ---

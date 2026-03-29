@@ -360,10 +360,11 @@ public sealed class ScraperWorker : BackgroundService
         catch (Exception ex) { _log.LogError(ex, "Path generation task faulted during scrape pass."); }
 
         // ── Post-pass: enrichment, refresh, backfill, history recon, cleanup ──
+        // The SongProcessingMachine inside PostScrapeOrchestrator now handles
+        // backfill and history reconstruction alongside post-scrape refresh,
+        // so explicit RunBackfillAsync/RunHistoryReconAsync are no longer needed
+        // in the normal scrape pass.
         await _postScrapeOrchestrator.RunAsync(result.Context, service, ct);
-
-        await _backfillOrchestrator.RunBackfillAsync(service, ct);
-        await _backfillOrchestrator.RunHistoryReconAsync(ct);
 
         _songsCache.Invalidate();
         _playerCache.InvalidateAll();

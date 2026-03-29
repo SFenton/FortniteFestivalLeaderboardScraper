@@ -197,6 +197,72 @@ public static partial class ApiEndpoints
         .WithTags("Rivals")
         .RequireRateLimiting("public");
 
+        // ─── Batch: all combos in one call ─────────────────────────
+        // Registered before {combo} to avoid "all" matching as a combo value.
+
+        app.MapGet("/api/player/{accountId}/rivals/all", (
+            HttpContext httpContext,
+            string accountId,
+            MetaDatabase metaDb,
+            [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
+
+            var cacheKey = $"all:{accountId}";
+            var cached = rivalsCache.Get(cacheKey);
+            if (cached is not null)
+            {
+                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
+                {
+                    httpContext.Response.Headers.ETag = cached.Value.ETag;
+                    return Results.StatusCode(304);
+                }
+                httpContext.Response.Headers.ETag = cached.Value.ETag;
+                return Results.Bytes(cached.Value.Json, "application/json");
+            }
+
+            var combos = metaDb.GetRivalCombos(accountId);
+            if (combos.Count == 0)
+                return Results.NotFound(new { error = "No rivals found." });
+
+            var allRivalIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var comboData = new Dictionary<string, (List<UserRivalRow> Above, List<UserRivalRow> Below)>();
+
+            foreach (var c in combos)
+            {
+                var above = metaDb.GetUserRivals(accountId, c.InstrumentCombo, "above");
+                var below = metaDb.GetUserRivals(accountId, c.InstrumentCombo, "below");
+                comboData[c.InstrumentCombo] = (above, below);
+                foreach (var r in above) allRivalIds.Add(r.RivalAccountId);
+                foreach (var r in below) allRivalIds.Add(r.RivalAccountId);
+            }
+
+            var names = metaDb.GetDisplayNames(allRivalIds);
+
+            var payload = new
+            {
+                accountId,
+                combos = comboData.Select(kv => new
+                {
+                    combo = kv.Key,
+                    above = kv.Value.Above.Select(r => MapRivalSummary(r, names)),
+                    below = kv.Value.Below.Select(r => MapRivalSummary(r, names)),
+                }).ToList(),
+            };
+
+            var jsonOpts = httpContext.RequestServices
+                .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+                .Value.SerializerOptions;
+            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+            var etag = rivalsCache.Set(cacheKey, jsonBytes);
+
+            httpContext.Response.Headers.ETag = etag;
+            return Results.Bytes(jsonBytes, "application/json");
+        })
+        .WithTags("Rivals")
+        .RequireRateLimiting("public");
+
         // ─── Rival list for a specific combo ───────────────────────
 
         app.MapGet("/api/player/{accountId}/rivals/{combo}", (

@@ -24,6 +24,7 @@ export function cleanFilters(s: SongSettings, inst: InstrumentKey): SongFilters 
     missingFCs: { ...s.filters.missingFCs, [inst]: false },
     hasScores: { ...s.filters.hasScores, [inst]: false },
     hasFCs: { ...s.filters.hasFCs, [inst]: false },
+    overThreshold: { ...s.filters.overThreshold, [inst]: false },
   };
 }
 

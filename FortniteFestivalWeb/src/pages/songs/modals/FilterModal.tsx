@@ -50,12 +50,16 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
   const toggleHasFCs = (key: InstrumentKey) => {
     onChange({ ...draft, hasFCs: { ...draft.hasFCs, [key]: !(draft.hasFCs[key] ?? false) } });
   };
+  const toggleOverThreshold = (key: InstrumentKey) => {
+    onChange({ ...draft, overThreshold: { ...draft.overThreshold, [key]: !(draft.overThreshold?.[key] ?? false) } });
+  };
 
   // Global toggles: set/unset all visible instruments at once
   const allOn = (map: Record<string, boolean>) => visibleKeys.every(k => map[k] === true);
-  const toggleGlobal = (field: 'missingScores' | 'missingFCs' | 'hasScores' | 'hasFCs') => {
-    const current = allOn(draft[field]);
-    const updated: Record<string, boolean> = { ...draft[field] };
+  const toggleGlobal = (field: 'missingScores' | 'missingFCs' | 'hasScores' | 'hasFCs' | 'overThreshold') => {
+    const src = field === 'overThreshold' ? (draft[field] ?? {}) : draft[field];
+    const current = visibleKeys.every(k => src[k] === true);
+    const updated: Record<string, boolean> = { ...src };
     for (const k of visibleKeys) updated[k] = !current;
     onChange({ ...draft, [field]: updated });
   };
@@ -108,6 +112,14 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
             checked={allOn(draft.hasFCs)}
             onToggle={() => toggleGlobal('hasFCs')}
           />
+          {appSettings.filterInvalidScores && (
+            <ToggleRow
+              label={t('filter.overThreshold')}
+              description={t('filter.overThresholdDesc')}
+              checked={allOn(draft.overThreshold ?? {})}
+              onToggle={() => toggleGlobal('overThreshold')}
+            />
+          )}
         </Accordion>
       </ModalSection>
 
@@ -139,6 +151,14 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
               checked={draft.hasFCs[key] ?? false}
               onToggle={() => toggleHasFCs(key)}
             />
+            {appSettings.filterInvalidScores && (
+              <ToggleRow
+                label={t('filter.instrumentOverThreshold', { instrument: INSTRUMENT_LABELS[key] })}
+                description={t('filter.instrumentOverThresholdDesc', { instrument: INSTRUMENT_LABELS[key] })}
+                checked={draft.overThreshold?.[key] ?? false}
+                onToggle={() => toggleOverThreshold(key)}
+              />
+            )}
           </Accordion>
         ))}
       </ModalSection>

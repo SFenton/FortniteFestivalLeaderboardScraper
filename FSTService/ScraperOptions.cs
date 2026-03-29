@@ -158,6 +158,24 @@ public sealed class ScraperOptions
     /// </summary>
     public bool RefreshCurrentSeasonSessions { get; set; } = true;
 
+    // ─── Song Processing Machine ───────────────────────────
+
+    /// <summary>
+    /// Initial degree of parallelism for the song processing machine.
+    /// Controls how many concurrent V2 batch API calls are in flight.
+    /// </summary>
+    public int MachineDop { get; set; } = 64;
+
+    /// <summary>
+    /// Minimum DOP the adaptive limiter can reduce to during machine operation.
+    /// </summary>
+    public int MachineMinDop { get; set; } = 2;
+
+    /// <summary>
+    /// Maximum DOP the adaptive limiter can increase to during machine operation.
+    /// </summary>
+    public int MachineMaxDop { get; set; } = 256;
+
     /// <summary>
     /// Capacity of each per-instrument bounded channel in the persistence pipeline.
     /// Higher values allow more buffering between scraper and writer tasks; lower

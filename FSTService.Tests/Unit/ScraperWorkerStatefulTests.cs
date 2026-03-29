@@ -349,11 +349,12 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
 
         await InvokePrivateAsync(worker, "RunScrapePassAsync", service, opts, CancellationToken.None);
 
-        await _refresher.Received().RefreshAllAsync(
-            Arg.Any<IReadOnlySet<string>>(),
-            Arg.Any<HashSet<(string, string, string)>>(),
+        await _machine.Received().RunAsync(
             Arg.Any<IReadOnlyList<string>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), Arg.Any<int>(), Arg.Any<int>(), ct: Arg.Any<CancellationToken>());
+            Arg.Any<IReadOnlyList<FSTService.Persistence.SeasonWindowInfo>>(),
+            Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(),
+            Arg.Any<int>(), Arg.Any<IWorkCompletionHandler?>(), Arg.Any<CancellationToken>());
 
         _personalDbBuilder.Received().RebuildForAccounts(
             Arg.Any<HashSet<string>>(), Arg.Any<MetaDatabase>());

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using FSTService.Persistence;
 
 namespace FSTService.Scraping;
@@ -27,6 +28,9 @@ public sealed class RivalsCalculator
     /// <summary>Maximum song samples to store per rival per instrument.</summary>
     internal const int MaxSamplesPerRivalPerInstrument = 200;
 
+    private static readonly TimeSpan SongGapsCacheTtl = TimeSpan.FromMinutes(5);
+    private readonly ConcurrentDictionary<string, (SongGapsResult Result, DateTime CachedAt)> _songGapsCache = new();
+
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly ILogger<RivalsCalculator> _log;
 
@@ -37,6 +41,9 @@ public sealed class RivalsCalculator
         _persistence = persistence;
         _log = log;
     }
+
+    /// <summary>Invalidate all cached song gap results (call after scrape completion).</summary>
+    public void InvalidateSongGapsCache() => _songGapsCache.Clear();
 
     /// <summary>
     /// Quickly count how many valid instrument combos a user will have.
@@ -373,6 +380,20 @@ public sealed class RivalsCalculator
         IReadOnlyList<string> instruments,
         int cap = MaxSongGapsPerDirection)
     {
+        var sortedInsts = instruments.OrderBy(i => i, StringComparer.Ordinal).ToList();
+        var cacheKey = $"{userId}:{rivalId}:{string.Join('+', sortedInsts)}";
+
+        if (_songGapsCache.TryGetValue(cacheKey, out var cached) &&
+            DateTime.UtcNow - cached.CachedAt < SongGapsCacheTtl)
+        {
+            // Cap may differ per call but the underlying data is the same — re-cap from cached full result
+            return new SongGapsResult
+            {
+                SongsToCompete = cached.Result.SongsToCompete.Take(cap).ToList(),
+                YourExclusives = cached.Result.YourExclusives.Take(cap).ToList(),
+            };
+        }
+
         var songsToCompete = new List<SongGapEntry>();
         var yourExclusives = new List<SongGapEntry>();
 
@@ -431,16 +452,22 @@ public sealed class RivalsCalculator
         }
 
         // Sort by rank ascending (best songs first), cap at limit
-        return new SongGapsResult
+        var fullResult = new SongGapsResult
         {
             SongsToCompete = songsToCompete
                 .OrderBy(e => e.Rank <= 0 ? int.MaxValue : e.Rank)
-                .Take(cap)
                 .ToList(),
             YourExclusives = yourExclusives
                 .OrderBy(e => e.Rank <= 0 ? int.MaxValue : e.Rank)
-                .Take(cap)
                 .ToList(),
+        };
+
+        _songGapsCache[cacheKey] = (fullResult, DateTime.UtcNow);
+
+        return new SongGapsResult
+        {
+            SongsToCompete = fullResult.SongsToCompete.Take(cap).ToList(),
+            YourExclusives = fullResult.YourExclusives.Take(cap).ToList(),
         };
     }
 
