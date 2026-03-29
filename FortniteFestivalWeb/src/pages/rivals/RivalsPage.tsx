@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
@@ -12,10 +12,10 @@ import PageHeader from '../../components/common/PageHeader';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
-import { IoChevronForward } from 'react-icons/io5';
+import { IoChevronForward, IoMusicalNotes, IoTrophy } from 'react-icons/io5';
 import { InstrumentHeaderSize } from '@festival/core';
 import { LoadPhase } from '@festival/core';
-import { Gap, Colors, Font, Weight, Radius, Position, ZIndex, Display, Align, Justify, Cursor, CssValue, WhiteSpace, flexColumn, flexCenter, flexRow, frostedCard, padding, transition, CssProp, NAV_TRANSITION_MS } from '@festival/theme';
+import { Gap, Size, flexColumn } from '@festival/theme';
 import { serverInstrumentLabel, type RivalsListResponse, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import type { RivalSummary } from '@festival/core/api/serverTypes';
 import { deriveComboFromSettings } from './helpers/comboUtils';
@@ -26,6 +26,8 @@ import { useRivalsSharedStyles } from './useRivalsSharedStyles';
 import Page from '../Page';
 import { rivalsSlides } from './firstRun';
 import LeaderboardRivalsTab from './LeaderboardRivalsTab';
+import { ActionPill } from '../../components/common/ActionPill';
+import { useFabSearch } from '../../contexts/FabSearchContext';
 
 // Module-level data cache so back-navigation has instant data
 let _cachedInstrumentRivals: InstrumentRivals[] = [];
@@ -48,11 +50,16 @@ export default function RivalsPage() {
   const { player } = useTrackedPlayer();
   const isMobile = useIsMobileChrome();
   const accountId = player?.accountId;
+  const fabSearch = useFabSearch();
 
   const activeTab = (searchParams.get('tab') === 'leaderboard' ? 'leaderboard' : 'song') as 'song' | 'leaderboard';
   const setTab = useCallback((tab: 'song' | 'leaderboard') => {
     setSearchParams(tab === 'song' ? {} : { tab }, { replace: true });
   }, [setSearchParams]);
+
+  const toggleTab = useCallback(() => {
+    setTab(activeTab === 'song' ? 'leaderboard' : 'song');
+  }, [activeTab, setTab]);
 
   const activeInstruments = visibleInstruments(settings);
   const combo = useMemo(() => deriveComboFromSettings(settings), [settings]);
@@ -65,6 +72,18 @@ export default function RivalsPage() {
   const [comboLoading, setComboLoading] = useState(false);
   const [computedAt, setComputedAt] = useState<string | null>(hasCachedData ? _cachedComputedAt : null);
   const [, setPlayerName] = useState<string | null>(null);
+
+  // Register toggle action for FAB and sync active tab
+  const toggleTabRef = useRef(toggleTab);
+  toggleTabRef.current = toggleTab;
+  /* v8 ignore start — FAB registration */
+  useEffect(() => {
+    fabSearch.registerRivalsActions({ toggleTab: () => toggleTabRef.current() });
+  }, [fabSearch]);
+  useEffect(() => {
+    fabSearch.setRivalsActiveTab(activeTab);
+  }, [fabSearch, activeTab]);
+  /* v8 ignore stop */
 
   // Resolve player display name
   /* v8 ignore start — async data fetch */
@@ -256,28 +275,25 @@ export default function RivalsPage() {
       scrollDeps={[phase]}
       loadPhase={phase}
       containerStyle={styles.container}
-      before={isMobile ? undefined : <PageHeader title={t('rivals.title')} />}
+      before={
+        isMobile ? undefined : (
+          <PageHeader
+            title={activeTab === 'song' ? t('rivals.tabSong') : t('rivals.tabLeaderboard')}
+            actions={phase === LoadPhase.ContentIn ? (
+              <ActionPill
+                icon={activeTab === 'song' ? <IoTrophy size={Size.iconAction} /> : <IoMusicalNotes size={Size.iconAction} />}
+                label={activeTab === 'song' ? t('rivals.tabLeaderboard') : t('rivals.tabSong')}
+                onClick={toggleTab}
+              />
+            ) : undefined}
+          />
+        )
+      }
       firstRun={{ key: 'rivals', label: t('rivals.title'), slides: rivalsSlides, gateContext: firstRunGateCtx }}
       fabSpacer={phase === LoadPhase.ContentIn && !hasAnyRivals ? 'none' : 'end'}
     >
       {phase === LoadPhase.ContentIn && (
             <>
-              {/* Tab toggle: Song Rivals | Leaderboard Rivals */}
-              <div style={tabBarStyles.bar}>
-                <button
-                  style={activeTab === 'song' ? tabBarStyles.pillActive : tabBarStyles.pill}
-                  onClick={() => setTab('song')}
-                >
-                  {t('rivals.tabSong')}
-                </button>
-                <button
-                  style={activeTab === 'leaderboard' ? tabBarStyles.pillActive : tabBarStyles.pill}
-                  onClick={() => setTab('leaderboard')}
-                >
-                  {t('rivals.tabLeaderboard')}
-                </button>
-              </div>
-
               {activeTab === 'song' ? (
             <div style={{ ...flexColumn, gap: Gap.section }}>
               {!hasAnyRivals && (
@@ -391,37 +407,3 @@ export default function RivalsPage() {
 }
 
 /* v8 ignore stop */
-
-const pillBase: CSSProperties = {
-  ...flexCenter,
-  flex: 1,
-  padding: padding(Gap.xs, Gap.md),
-  borderRadius: Radius.full,
-  fontSize: Font.sm,
-  fontWeight: Weight.semibold,
-  cursor: Cursor.pointer,
-  border: CssValue.none,
-  transition: transition(CssProp.backgroundColor, 150),
-  whiteSpace: WhiteSpace.nowrap,
-};
-
-const tabBarStyles = {
-  bar: {
-    ...flexRow,
-    gap: Gap.xs,
-    padding: padding(Gap.xs),
-    borderRadius: Radius.full,
-    backgroundColor: Colors.backgroundCardAlt,
-    marginBottom: Gap.md,
-  } as CSSProperties,
-  pill: {
-    ...pillBase,
-    backgroundColor: CssValue.transparent,
-    color: Colors.textSecondary,
-  } as CSSProperties,
-  pillActive: {
-    ...pillBase,
-    backgroundColor: Colors.purpleHighlight,
-    color: Colors.textPrimary,
-  } as CSSProperties,
-};

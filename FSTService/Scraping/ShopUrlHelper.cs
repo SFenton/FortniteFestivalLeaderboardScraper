@@ -65,9 +65,9 @@ public static partial class ShopUrlHelper
         {
             if (char.IsLetterOrDigit(c))
                 sb.Append(char.ToLowerInvariant(c));
-            else if (c is ' ' or '-' or '_')
+            else if (c is ' ' or '_')
                 sb.Append('-');
-            // Other characters (punctuation, apostrophes, etc.) are dropped
+            // Other characters (hyphens, punctuation, apostrophes, etc.) are dropped
         }
 
         // Collapse multiple consecutive hyphens and trim

@@ -3157,6 +3157,73 @@ public sealed class MetaDatabase : IDisposable
         };
     }
 
+    /// <summary>Run a WAL checkpoint to keep the WAL file small.</summary>
+    public void Checkpoint()
+    {
+        try
+        {
+            using var conn = OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+            cmd.ExecuteNonQuery();
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "WAL checkpoint failed for meta database. Will retry next pass.");
+        }
+    }
+
+    /// <summary>Get a composite ranking neighborhood: accounts above, the target, and accounts below.</summary>
+    public (List<CompositeRankingDto> Above, CompositeRankingDto? Self, List<CompositeRankingDto> Below) GetCompositeRankingNeighborhood(
+        string accountId, int radius = 5)
+    {
+        using var conn = OpenConnection();
+
+        int? selfRank;
+        using (var lookup = conn.CreateCommand())
+        {
+            lookup.CommandText = "SELECT CompositeRank FROM CompositeRankings WHERE AccountId = @accountId;";
+            lookup.Parameters.AddWithValue("@accountId", accountId);
+            var result = lookup.ExecuteScalar();
+            selfRank = result is not null ? Convert.ToInt32(result) : null;
+        }
+
+        if (selfRank is null)
+            return ([], null, []);
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT AccountId, InstrumentsPlayed, TotalSongsPlayed, CompositeRating, CompositeRank,
+                   GuitarAdjustedSkill, GuitarSkillRank, BassAdjustedSkill, BassSkillRank,
+                   DrumsAdjustedSkill, DrumsSkillRank, VocalsAdjustedSkill, VocalsSkillRank,
+                   ProGuitarAdjustedSkill, ProGuitarSkillRank, ProBassAdjustedSkill, ProBassSkillRank,
+                   ComputedAt
+            FROM CompositeRankings
+            WHERE CompositeRank BETWEEN @lo AND @hi
+            ORDER BY CompositeRank ASC;
+            """;
+        cmd.Parameters.AddWithValue("@lo", Math.Max(1, selfRank.Value - radius));
+        cmd.Parameters.AddWithValue("@hi", selfRank.Value + radius);
+
+        var above = new List<CompositeRankingDto>();
+        CompositeRankingDto? self = null;
+        var below = new List<CompositeRankingDto>();
+
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var dto = ReadCompositeDto(reader);
+            if (dto.AccountId == accountId)
+                self = dto;
+            else if (dto.CompositeRank < selfRank.Value)
+                above.Add(dto);
+            else
+                below.Add(dto);
+        }
+
+        return (above, self, below);
+    }
+
     /// <summary>
     /// Idempotent migration: adds a column to a table if it doesn't already exist.
     /// </summary>

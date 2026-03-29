@@ -61,6 +61,17 @@ public class ShopUrlHelperTests
             url);
     }
 
+    [Fact]
+    public void BlingBangBangBorn_HyphensInTitleDropped()
+    {
+        var url = ShopUrlHelper.ComputeShopUrl(
+            "3cae5d92-14b7-450f-b37c-54f52fc75340", "Bling-Bang-Bang-Born");
+
+        Assert.Equal(
+            "https://www.fortnite.com/item-shop/jam-tracks/blingbangbangborn-54f52fc75340",
+            url);
+    }
+
     // ─── ExtractHash ────────────────────────────────────
 
     [Fact]
@@ -137,5 +148,28 @@ public class ShopUrlHelperTests
     {
         var slug = ShopUrlHelper.Slugify("HOT TO GO!");
         Assert.Equal("hot-to-go", slug);
+    }
+
+    [Fact]
+    public void Slugify_DropsHyphensInTitle()
+    {
+        var slug = ShopUrlHelper.Slugify("Bling-Bang-Bang-Born");
+        Assert.Equal("blingbangbangborn", slug);
+    }
+
+    [Fact]
+    public void Slugify_DropsHyphenBetweenDigitAndWord()
+    {
+        // "8-Bit Beat" → hyphen dropped, space becomes hyphen
+        var slug = ShopUrlHelper.Slugify("8-Bit Beat");
+        Assert.Equal("8bit-beat", slug);
+    }
+
+    [Fact]
+    public void Slugify_HyphenSurroundedBySpaces()
+    {
+        // "Undone - The Sweater Song" → spaces become hyphens, hyphen dropped, collapses
+        var slug = ShopUrlHelper.Slugify("Undone - The Sweater Song");
+        Assert.Equal("undone-the-sweater-song", slug);
     }
 }

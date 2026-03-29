@@ -1,5 +1,5 @@
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
-import { IoPerson, IoPersonAdd, IoSearch, IoSwapVerticalSharp, IoFunnel, IoFlash, IoBagHandle, IoGrid, IoList, IoOptions } from 'react-icons/io5';
+import { IoPerson, IoPersonAdd, IoSearch, IoSwapVerticalSharp, IoFunnel, IoFlash, IoBagHandle, IoGrid, IoList, IoOptions, IoMusicalNotes, IoTrophy } from 'react-icons/io5';
 import { useEffect, useState, useMemo, useRef, useCallback, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FestivalProvider, useFestival } from './contexts/FestivalContext';
@@ -305,7 +305,7 @@ function AppShell() {
     [AppRoutes.statistics]: t('nav.statistics'),
     [AppRoutes.settings]: t('nav.settings'),
     [AppRoutes.compete]: t('compete.title'),
-    [AppRoutes.rivals]: t('rivals.title'),
+    [AppRoutes.rivals]: fabSearch.rivalsActiveTab === 'song' ? t('rivals.tabSong') : t('rivals.tabLeaderboard'),
     [AppRoutes.leaderboards]: t('rankings.title'),
     [AppRoutes.shop]: t('nav.shop'),
   };
@@ -577,7 +577,27 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.shop && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && (
+      {isMobile && RoutePatterns.rivals.test(location.pathname) && (
+        <FloatingActionButton
+          mode="players"
+          actionGroups={[
+            [{
+              label: fabSearch.rivalsActiveTab === 'song' ? t('rivals.tabLeaderboard') : t('rivals.tabSong'),
+              icon: fabSearch.rivalsActiveTab === 'song' ? <IoTrophy size={Size.iconFab} /> : <IoMusicalNotes size={Size.iconFab} />,
+              onPress: () => fabSearch.rivalsToggleTab(),
+            }],
+            [
+              { label: t('common.findPlayer'), icon: <IoSearch size={Size.iconFab} />, onPress: () => setFindPlayerOpen(true) },
+              player
+                ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
+                : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
+              ...(isShopVisible ? [{ label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />, onPress: () => navigate(AppRoutes.shop) }] : []),
+            ],
+          ]}
+          onPress={() => {}}
+        />
+      )}
+      {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.shop && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && (
         <FloatingActionButton
           mode="players"
           actionGroups={[

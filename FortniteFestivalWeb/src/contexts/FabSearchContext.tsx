@@ -16,6 +16,10 @@ type FabSearchContextType = {
   setShopViewMode: (mode: 'grid' | 'list') => void;
   registerLeaderboardActions: (actions: { openMetric: () => void }) => void;
   openLeaderboardMetric: () => void;
+  registerRivalsActions: (actions: { toggleTab: () => void }) => void;
+  rivalsToggleTab: () => void;
+  rivalsActiveTab: 'song' | 'leaderboard';
+  setRivalsActiveTab: (tab: 'song' | 'leaderboard') => void;
   registerPlayerPageSelect: (action: { displayName: string; onSelect: () => void } | null) => void;
   playerPageSelect: { displayName: string; onSelect: () => void } | null;
 };
@@ -27,6 +31,7 @@ const FabSearchContext = createContext<FabSearchContextType>({
   registerSongDetailActions: () => {}, openPaths: () => {},
   registerShopActions: () => {}, shopToggleView: () => {}, shopViewMode: 'grid', setShopViewMode: () => {},
   registerLeaderboardActions: () => {}, openLeaderboardMetric: () => {},
+  registerRivalsActions: () => {}, rivalsToggleTab: () => {}, rivalsActiveTab: 'song', setRivalsActiveTab: () => {},
   registerPlayerPageSelect: () => {}, playerPageSelect: null,
 });
 
@@ -37,6 +42,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
   const songDetailActionsRef = useRef<{ openPaths: () => void }>({ openPaths: () => {} });
   const shopActionsRef = useRef<{ toggleView: () => void }>({ toggleView: () => {} });
   const leaderboardActionsRef = useRef<{ openMetric: () => void }>({ openMetric: () => {} });
+  const rivalsActionsRef = useRef<{ toggleTab: () => void }>({ toggleTab: () => {} });
 
   const registerActions = useCallback((actions: { openSort: () => void; openFilter: () => void }) => {
     actionsRef.current = actions;
@@ -62,6 +68,10 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     leaderboardActionsRef.current = actions;
   }, []);
 
+  const registerRivalsActions = useCallback((actions: { toggleTab: () => void }) => {
+    rivalsActionsRef.current = actions;
+  }, []);
+
   const openSort = useCallback(() => actionsRef.current.openSort(), []);
   const openFilter = useCallback(() => actionsRef.current.openFilter(), []);
   const openSuggestionsFilter = useCallback(() => suggestionsActionsRef.current.openFilter(), []);
@@ -69,8 +79,10 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
   const openPaths = useCallback(() => songDetailActionsRef.current.openPaths(), []);
   const shopToggleView = useCallback(() => shopActionsRef.current.toggleView(), []);
   const openLeaderboardMetric = useCallback(() => leaderboardActionsRef.current.openMetric(), []);
+  const rivalsToggleTab = useCallback(() => rivalsActionsRef.current.toggleTab(), []);
 
   const [shopViewMode, setShopViewMode] = useState<'grid' | 'list'>('grid');
+  const [rivalsActiveTab, setRivalsActiveTab] = useState<'song' | 'leaderboard'>('song');
 
   const [playerPageSelect, setPlayerPageSelect] = useState<{ displayName: string; onSelect: () => void } | null>(null);
   const registerPlayerPageSelect = useCallback((action: { displayName: string; onSelect: () => void } | null) => {
@@ -84,6 +96,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     registerSongDetailActions, openPaths,
     registerShopActions, shopToggleView, shopViewMode, setShopViewMode,
     registerLeaderboardActions, openLeaderboardMetric,
+    registerRivalsActions, rivalsToggleTab, rivalsActiveTab, setRivalsActiveTab,
     registerPlayerPageSelect, playerPageSelect,
   }), [registerActions, openSort, openFilter,
     registerSuggestionsActions, openSuggestionsFilter,
@@ -91,6 +104,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     registerSongDetailActions, openPaths,
     registerShopActions, shopToggleView, shopViewMode, setShopViewMode,
     registerLeaderboardActions, openLeaderboardMetric,
+    registerRivalsActions, rivalsToggleTab, rivalsActiveTab, setRivalsActiveTab,
     registerPlayerPageSelect, playerPageSelect]);
 
   return (

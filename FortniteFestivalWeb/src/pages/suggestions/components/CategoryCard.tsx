@@ -4,6 +4,7 @@
  */
 import { memo, useMemo, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { InstrumentKeys, type InstrumentKey } from '@festival/core/instruments';
 import type { LeaderboardData } from '@festival/core/models';
 import type { SuggestionCategory, SuggestionSongItem } from '@festival/core/suggestions/types';
@@ -17,6 +18,7 @@ import {
   Display, Align, Justify, TextAlign, ObjectFit, Overflow, CssValue, CssProp,
   flexRow, flexColumn, flexCenter, frostedCard, truncate, border, padding, transition,
 } from '@festival/theme';
+import { resolveCategoryI18n } from '../suggestionsHelpers';
 
 const BASE = import.meta.env.BASE_URL;
 
@@ -74,15 +76,19 @@ export const CategoryCard = memo(function CategoryCard({
   albumArtMap: Map<string, string>;
   scoresIndex: Record<string, LeaderboardData>;
 }) {
+  const { t } = useTranslation();
   const st = useCategoryStyles();
   const catInstrument = getCatInstrument(category.key);
+  const resolved = resolveCategoryI18n(category.key, category.title, category.description);
+  const title = resolved ? t(resolved.titleKey, resolved.params) : category.title;
+  const description = resolved ? t(resolved.descKey, resolved.params) : category.description;
   return (
     <div style={st.card}>
       <div style={st.cardHeader}>
         <div style={st.cardHeaderRow}>
           <div>
-            <span style={st.cardTitle}>{category.title}</span>
-            <span style={st.cardDesc}>{category.description}</span>
+            <span style={st.cardTitle}>{title}</span>
+            <span style={st.cardDesc}>{description}</span>
           </div>
           {catInstrument && <InstrumentIcon instrument={catInstrument} size={InstrumentSize.sm} />}
         </div>

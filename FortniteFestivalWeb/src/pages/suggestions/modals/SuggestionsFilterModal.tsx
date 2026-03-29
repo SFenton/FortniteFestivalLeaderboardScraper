@@ -177,8 +177,8 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
           {SUGGESTION_TYPES.map(st => (
             <ToggleRow
               key={st.id}
-              label={st.label}
-              description={st.description}
+              label={t(`suggestionFilterType.${st.id}`)}
+              description={t(`suggestionFilterType.${st.id}Desc`)}
               checked={!!draft[globalKeyFor(st.id)]}
               onToggle={() => toggleGlobal(st.id)}
             />
@@ -200,8 +200,8 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
             return (
               <ToggleRow
                 key={st.id}
-                label={st.label}
-                description={st.description}
+                label={t(`suggestionFilterType.${st.id}`)}
+                description={t(`suggestionFilterType.${st.id}Desc`)}
                 checked={!!draft[key]}
                 onToggle={() => { if (effectiveSelectedInstrument) togglePerInstrument(effectiveSelectedInstrument, st.id); }}
               />
