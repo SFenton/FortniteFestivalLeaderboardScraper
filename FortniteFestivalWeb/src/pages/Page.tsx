@@ -22,12 +22,14 @@ import { useScrollMask, type ScrollMaskOptions } from '../hooks/ui/useScrollMask
 import { useStaggerRush } from '../hooks/ui/useStaggerRush';
 import { useScrollRestore } from '../hooks/ui/useScrollRestore';
 import { useScrollContainer, useHeaderPortal } from '../contexts/ScrollContainerContext';
+import { useSettings } from '../contexts/SettingsContext';
 import { useRegisterFirstRun } from '../hooks/ui/useRegisterFirstRun';
 import { useFirstRun } from '../hooks/ui/useFirstRun';
 import FirstRunCarousel from '../components/firstRun/FirstRunCarousel';
 import type { FirstRunSlideDef, FirstRunGateContext } from '../firstRun/types';
 import { LoadPhase } from '@festival/core';
 import ArcSpinner from '../components/common/ArcSpinner';
+import { useProximityGlow } from '../hooks/ui/useProximityGlow';
 
 /** Page-level style objects — importable by SuspenseFallback, PlayerPage consumers, etc. */
 export const pageCss = {
@@ -242,6 +244,11 @@ export default function Page({
 
   const isMobile = useIsMobile();
 
+  // Proximity glow for frosted cards — driven by settings toggle
+  const contentRef = useRef<HTMLDivElement>(null);
+  const { settings: { disableLightTrails } } = useSettings();
+  useProximityGlow(contentRef, !disableLightTrails);
+
   // 'fixed' mode: shrink the shell scroll container so content never scrolls behind the FAB
   useEffect(() => {
     if (fabSpacer !== 'fixed') return;
@@ -273,7 +280,7 @@ export default function Page({
         </div>
       )}
       <div data-testid="scroll-area" className={scrollClassName} style={{ ...saStyle, ...scrollStyle }}>
-        <div className={containerClassName} style={{ ...cStyle, paddingTop: isMobile ? Gap.sm : Gap.md, ...containerStyle }}>
+        <div ref={contentRef} className={containerClassName} style={{ ...cStyle, paddingTop: isMobile ? Gap.sm : Gap.md, ...containerStyle }}>
           {loadPhase != null && loadPhase !== LoadPhase.ContentIn ? null : children}
         </div>
         {fabSpacer === 'end' && <div style={pageCss.fabSpacer} />}

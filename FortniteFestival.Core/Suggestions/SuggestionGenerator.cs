@@ -13,6 +13,7 @@ public class SuggestionGenerator
     private readonly Queue<Func<IEnumerable<SuggestionCategory>>> _pipelines = new Queue<Func<IEnumerable<SuggestionCategory>>>();
     private bool _initialized;
     private readonly Random _rand = new Random();
+    private RivalDataIndex _rivalData;
     
     // Standard instrument list used throughout the generator
     private static readonly string[] Instruments = { "guitar", "bass", "drums", "vocals", "pro_guitar", "pro_bass" };
@@ -41,6 +42,12 @@ public class SuggestionGenerator
     public SuggestionGenerator(IFestivalService service)
     {
         _service = service;
+    }
+
+    /// <summary>Inject rival data for rivalry-aware suggestion strategies. Pass null to disable.</summary>
+    public void SetRivalData(RivalDataIndex data)
+    {
+        _rivalData = data;
     }
 
     private LeaderboardData TryGetBoard(string songId)
@@ -112,6 +119,24 @@ public class SuggestionGenerator
             SameNameSets,
             SameNameNearFc
         };
+        // Add rival strategies (no-op when _rivalData is null)
+        list.Add(SongRivalBattleground);
+        list.Add(SongRivalNearFc);
+        list.Add(SongRivalStale);
+        list.Add(SongRivalStarGains);
+        list.Add(SongRivalPctPush);
+        if (_rivalData?.SongRivals != null)
+        {
+            foreach (var r in _rivalData.SongRivals)
+            {
+                var id = r.AccountId;
+                list.Add(() => SongRivalGap(id));
+                list.Add(() => SongRivalProtect(id));
+                list.Add(() => SongRivalSpotlight(id));
+                list.Add(() => SongRivalSlipping(id));
+                list.Add(() => SongRivalDominate(id));
+            }
+        }
         // Fisher-Yates shuffle
         for (int i = list.Count - 1; i > 0; i--)
         {
@@ -915,6 +940,339 @@ public class SuggestionGenerator
         while (_recentArtists.Count > ArtistReuseCooldown) _recentArtists.Dequeue();
     }
     private bool IsSongRecentlyUsed(string songId) => _recentSongIds.Contains(songId);
+    #endregion
+
+    #region Rival Strategies
+    private SuggestionSongItem AnnotateWithRival(Song song, string instrument)
+    {
+        if (_rivalData == null) return null;
+        var key = $"{song.track.su}:{instrument}";
+        if (!_rivalData.ClosestRivalBySong.TryGetValue(key, out var match)) return null;
+        return new SuggestionSongItem
+        {
+            RivalName = match.Rival.DisplayName,
+            RivalAccountId = match.Rival.AccountId,
+            RivalRankDelta = match.RankDelta,
+            RivalSource = match.Rival.Source == RivalSourceKind.Song ? "song" : "leaderboard",
+        };
+    }
+
+    private SuggestionSongItem MapRivalSong(Song song, ScoreTracker tracker, RivalInfo rival, int rankDelta)
+    {
+        var item = MapUniqueSong((song, tracker));
+        item.RivalName = rival.DisplayName;
+        item.RivalAccountId = rival.AccountId;
+        item.RivalRankDelta = rankDelta;
+        item.RivalSource = rival.Source == RivalSourceKind.Song ? "song" : "leaderboard";
+        return item;
+    }
+
+    private IEnumerable<SuggestionCategory> SongRivalGap(string rivalId)
+    {
+        if (_rivalData == null || !_rivalData.ByRival.TryGetValue(rivalId, out var matches) || matches.Count == 0) yield break;
+        var rival = matches[0].Rival;
+        var pool = matches.Where(m => m.RankDelta < 0)
+            .OrderBy(m => Math.Abs(m.RankDelta))
+            .Select(m => { var s = _service.Songs.FirstOrDefault(x => x.track?.su == m.SongId); return (song: s, m); })
+            .Where(x => x.song != null)
+            .Select(x => (song: x.song, tracker: GetTracker(TryGetBoard(x.song.track.su), x.m.Instrument)))
+            .ToList();
+        if (pool.Count == 0) yield break;
+        var key = $"song_rival_gap_{rivalId}";
+        var freshCount = GetFreshCount(pool);
+        if (!ShouldEmit(key, freshCount)) yield break;
+        var take = GetDisplayCount();
+        var final = SelectNewFirst(key, pool, take);
+        if (final.Count == 0) yield break;
+        yield return new SuggestionCategory
+        {
+            Key = key,
+            Title = $"Close the Gap vs {rival.DisplayName}",
+            Description = $"Songs where {rival.DisplayName} barely leads you. One good run could overtake them.",
+            Songs = final.Select(p =>
+            {
+                var m = matches.FirstOrDefault(x => x.SongId == p.Item1.track.su);
+                return MapRivalSong(p.Item1, p.Item2, rival, m?.RankDelta ?? 0);
+            }).ToList()
+        };
+    }
+
+    private IEnumerable<SuggestionCategory> SongRivalProtect(string rivalId)
+    {
+        if (_rivalData == null || !_rivalData.ByRival.TryGetValue(rivalId, out var matches) || matches.Count == 0) yield break;
+        var rival = matches[0].Rival;
+        var pool = matches.Where(m => m.RankDelta > 0)
+            .OrderBy(m => m.RankDelta)
+            .Select(m => { var s = _service.Songs.FirstOrDefault(x => x.track?.su == m.SongId); return (song: s, m); })
+            .Where(x => x.song != null)
+            .Select(x => (song: x.song, tracker: GetTracker(TryGetBoard(x.song.track.su), x.m.Instrument)))
+            .ToList();
+        if (pool.Count == 0) yield break;
+        var key = $"song_rival_protect_{rivalId}";
+        var freshCount = GetFreshCount(pool);
+        if (!ShouldEmit(key, freshCount)) yield break;
+        var take = GetDisplayCount();
+        var final = SelectNewFirst(key, pool, take);
+        if (final.Count == 0) yield break;
+        yield return new SuggestionCategory
+        {
+            Key = key,
+            Title = $"Protect Your Lead vs {rival.DisplayName}",
+            Description = $"You're barely ahead of {rival.DisplayName} on these. Don't let them pass you.",
+            Songs = final.Select(p =>
+            {
+                var m = matches.FirstOrDefault(x => x.SongId == p.Item1.track.su);
+                return MapRivalSong(p.Item1, p.Item2, rival, m?.RankDelta ?? 0);
+            }).ToList()
+        };
+    }
+
+    private IEnumerable<SuggestionCategory> SongRivalBattleground()
+    {
+        if (_rivalData == null) yield break;
+        var rivalCountBySong = new Dictionary<string, int>();
+        foreach (var kv in _rivalData.ByRival)
+            foreach (var m in kv.Value)
+                if (Math.Abs(m.RankDelta) <= 10)
+                {
+                    var k = $"{m.SongId}:{m.Instrument}";
+                    rivalCountBySong[k] = rivalCountBySong.GetValueOrDefault(k) + 1;
+                }
+        var pool = rivalCountBySong.Where(kv => kv.Value >= 2)
+            .Select(kv => { var parts = kv.Key.Split(':'); var s = _service.Songs.FirstOrDefault(x => x.track?.su == parts[0]); return (song: s, instrument: parts.Length > 1 ? parts[1] : null); })
+            .Where(x => x.song != null)
+            .Select(x => (song: x.song, tracker: GetTracker(TryGetBoard(x.song.track.su), x.instrument)))
+            .ToList();
+        if (pool.Count == 0) yield break;
+        Shuffle(pool);
+        var key = "song_rival_battleground";
+        var freshCount = GetFreshCount(pool);
+        if (!ShouldEmit(key, freshCount)) yield break;
+        var take = GetDisplayCount();
+        var final = SelectNewFirst(key, pool, take);
+        if (final.Count == 0) yield break;
+        yield return new SuggestionCategory
+        {
+            Key = key,
+            Title = "Battleground Songs",
+            Description = "Multiple rivals are clustered around your rank on these songs.",
+            Songs = final.Select(p => MapUniqueSong(p)).ToList()
+        };
+    }
+
+    private IEnumerable<SuggestionCategory> SongRivalSpotlight(string rivalId)
+    {
+        if (_rivalData == null || !_rivalData.ByRival.TryGetValue(rivalId, out var matches) || matches.Count < 3) yield break;
+        var rival = matches[0].Rival;
+        var behind = matches.Where(m => m.RankDelta < 0).OrderBy(m => Math.Abs(m.RankDelta)).ToList();
+        var ahead = matches.Where(m => m.RankDelta > 0).OrderBy(m => m.RankDelta).ToList();
+        var picks = new List<RivalSongMatch>();
+        if (behind.Count > 0) picks.Add(behind[0]);
+        if (behind.Count > 1) picks.Add(behind[1]);
+        if (ahead.Count > 0) picks.Add(ahead[0]);
+        if (ahead.Count > 1) picks.Add(ahead[1]);
+        var closest = matches.OrderBy(m => Math.Abs(m.RankDelta)).FirstOrDefault(m => !picks.Any(p => p.SongId == m.SongId));
+        if (closest != null) picks.Add(closest);
+
+        var pool = picks
+            .Select(m => { var s = _service.Songs.FirstOrDefault(x => x.track?.su == m.SongId); return (song: s, m); })
+            .Where(x => x.song != null)
+            .ToList();
+        if (pool.Count < 3) yield break;
+        var key = $"song_rival_spotlight_{rivalId}";
+        if (_emitted.Contains(key)) yield break;
+        yield return new SuggestionCategory
+        {
+            Key = key,
+            Title = $"Rival Spotlight: {rival.DisplayName}",
+            Description = $"A curated mix of your rivalry with {rival.DisplayName}.",
+            Songs = pool.Select(p => MapRivalSong(p.song, GetTracker(TryGetBoard(p.song.track.su), p.m.Instrument), rival, p.m.RankDelta)).ToList()
+        };
+    }
+
+    private IEnumerable<SuggestionCategory> SongRivalSlipping(string rivalId)
+    {
+        if (_rivalData == null || !_rivalData.ByRival.TryGetValue(rivalId, out var matches)) yield break;
+        var rival = matches[0].Rival;
+        var pool = matches.Where(m => m.RankDelta < -20)
+            .Select(m => { var s = _service.Songs.FirstOrDefault(x => x.track?.su == m.SongId); return (song: s, m); })
+            .Where(x => x.song != null)
+            .Select(x => (song: x.song, tracker: GetTracker(TryGetBoard(x.song.track.su), x.m.Instrument)))
+            .ToList();
+        if (pool.Count == 0) yield break;
+        Shuffle(pool);
+        var key = $"song_rival_slipping_{rivalId}";
+        var freshCount = GetFreshCount(pool);
+        if (!ShouldEmit(key, freshCount)) yield break;
+        var take = GetDisplayCount();
+        var final = SelectNewFirst(key, pool, take);
+        if (final.Count == 0) yield break;
+        yield return new SuggestionCategory
+        {
+            Key = key,
+            Title = $"{rival.DisplayName} is Pulling Ahead",
+            Description = $"{rival.DisplayName} has a big lead on these songs.",
+            Songs = final.Select(p =>
+            {
+                var m = matches.FirstOrDefault(x => x.SongId == p.Item1.track.su);
+                return MapRivalSong(p.Item1, p.Item2, rival, m?.RankDelta ?? 0);
+            }).ToList()
+        };
+    }
+
+    private IEnumerable<SuggestionCategory> SongRivalDominate(string rivalId)
+    {
+        if (_rivalData == null || !_rivalData.ByRival.TryGetValue(rivalId, out var matches)) yield break;
+        var rival = matches[0].Rival;
+        var pool = matches.Where(m => m.RankDelta > 30)
+            .Select(m => { var s = _service.Songs.FirstOrDefault(x => x.track?.su == m.SongId); return (song: s, m); })
+            .Where(x => x.song != null)
+            .Select(x => (song: x.song, tracker: GetTracker(TryGetBoard(x.song.track.su), x.m.Instrument)))
+            .ToList();
+        if (pool.Count == 0) yield break;
+        Shuffle(pool);
+        var key = $"song_rival_dominate_{rivalId}";
+        var freshCount = GetFreshCount(pool);
+        if (!ShouldEmit(key, freshCount)) yield break;
+        var take = GetDisplayCount();
+        var final = SelectNewFirst(key, pool, take);
+        if (final.Count == 0) yield break;
+        yield return new SuggestionCategory
+        {
+            Key = key,
+            Title = $"Dominate {rival.DisplayName}",
+            Description = $"You're crushing {rival.DisplayName} on these. Keep it up.",
+            Songs = final.Select(p =>
+            {
+                var m = matches.FirstOrDefault(x => x.SongId == p.Item1.track.su);
+                return MapRivalSong(p.Item1, p.Item2, rival, m?.RankDelta ?? 0);
+            }).ToList()
+        };
+    }
+
+    private IEnumerable<SuggestionCategory> SongRivalNearFc()
+    {
+        if (_rivalData == null) yield break;
+        var pool = _service.Songs
+            .Select(s => (song: s, board: TryGetBoard(s.track.su)))
+            .SelectMany(t => EachTracker(t.song, t.board, (tr, ins) => tr != null && tr.numStars >= 5 && tr.percentHit >= 920000 && !tr.isFullCombo))
+            .Where(p => _rivalData.ClosestRivalBySong.ContainsKey($"{p.song.track.su}:{InstrumentFromTracker(p)}"))
+            .ToList();
+        if (pool.Count == 0) yield break;
+        Shuffle(pool);
+        var key = "song_rival_near_fc";
+        var freshCount = GetFreshCount(pool);
+        if (!ShouldEmit(key, freshCount)) yield break;
+        var take = GetDisplayCount();
+        var final = SelectNewFirst(key, pool, take);
+        if (final.Count == 0) yield break;
+        yield return new SuggestionCategory
+        {
+            Key = key,
+            Title = "FC These to Beat a Rival!",
+            Description = "Almost FC songs where a rival also competes.",
+            Songs = final.Select(MapUniqueSong).ToList()
+        };
+    }
+
+    private IEnumerable<SuggestionCategory> SongRivalStale()
+    {
+        if (_rivalData == null) yield break;
+        var pool = new List<(Song song, ScoreTracker tracker)>();
+        foreach (var s in _service.Songs)
+        {
+            var board = TryGetBoard(s.track.su);
+            if (board == null) continue;
+            foreach (var ins in Instruments)
+            {
+                var tr = GetTracker(board, ins);
+                if (tr == null || tr.seasonAchieved == 0) continue;
+                var key = $"{s.track.su}:{ins}";
+                if (_rivalData.ClosestRivalBySong.TryGetValue(key, out var match) && match.RankDelta < 0)
+                    pool.Add((s, tr));
+            }
+        }
+        if (pool.Count == 0) yield break;
+        Shuffle(pool);
+        var catKey = "song_rival_stale";
+        var freshCount = GetFreshCount(pool);
+        if (!ShouldEmit(catKey, freshCount)) yield break;
+        var take = GetDisplayCount();
+        var final = SelectNewFirst(catKey, pool, take);
+        if (final.Count == 0) yield break;
+        yield return new SuggestionCategory
+        {
+            Key = catKey,
+            Title = "Stale Songs Your Rivals Are Beating You On",
+            Description = "Songs you haven't touched in a while where rivals have pulled ahead.",
+            Songs = final.Select(MapUniqueSong).ToList()
+        };
+    }
+
+    private IEnumerable<SuggestionCategory> SongRivalStarGains()
+    {
+        if (_rivalData == null) yield break;
+        var pool = _service.Songs
+            .Select(s => (song: s, board: TryGetBoard(s.track.su)))
+            .SelectMany(t => EachTracker(t.song, t.board, (tr, ins) => tr != null && tr.numStars >= 3 && tr.numStars <= 5))
+            .Where(p => {
+                var k = $"{p.song.track.su}:{InstrumentFromTracker(p)}";
+                return _rivalData.ClosestRivalBySong.TryGetValue(k, out var m) && m.RankDelta < 0;
+            })
+            .ToList();
+        if (pool.Count == 0) yield break;
+        Shuffle(pool);
+        var key = "song_rival_star_gains";
+        var freshCount = GetFreshCount(pool);
+        if (!ShouldEmit(key, freshCount)) yield break;
+        var take = GetDisplayCount();
+        var final = SelectNewFirst(key, pool, take);
+        if (final.Count == 0) yield break;
+        yield return new SuggestionCategory
+        {
+            Key = key,
+            Title = "Gain Stars & Beat a Rival",
+            Description = "Improving your star count on these would also overtake a rival.",
+            Songs = final.Select(MapUniqueSong).ToList()
+        };
+    }
+
+    private IEnumerable<SuggestionCategory> SongRivalPctPush()
+    {
+        if (_rivalData == null) yield break;
+        var pool = new List<(Song song, ScoreTracker tracker)>();
+        foreach (var s in _service.Songs)
+        {
+            var board = TryGetBoard(s.track.su);
+            if (board == null) continue;
+            foreach (var ins in Instruments)
+            {
+                var tr = GetTracker(board, ins);
+                if (tr == null || tr.rawPercentile <= 0) continue;
+                var k = $"{s.track.su}:{ins}";
+                if (_rivalData.ClosestRivalBySong.TryGetValue(k, out var match) && match.RankDelta < 0)
+                    pool.Add((s, tr));
+            }
+        }
+        if (pool.Count == 0) yield break;
+        Shuffle(pool);
+        var key = "song_rival_pct_push";
+        var freshCount = GetFreshCount(pool);
+        if (!ShouldEmit(key, freshCount)) yield break;
+        var take = GetDisplayCount();
+        var final = SelectNewFirst(key, pool, take);
+        if (final.Count == 0) yield break;
+        yield return new SuggestionCategory
+        {
+            Key = key,
+            Title = "Climb Past a Rival",
+            Description = "A percentile push on these would also move you past a rival.",
+            Songs = final.Select(MapUniqueSong).ToList()
+        };
+    }
+
+    /// <summary>Helper to extract instrument string from a tracker pair.</summary>
+    private static string InstrumentFromTracker((Song song, ScoreTracker tracker) pair) => pair.tracker?.ToString() ?? "";
     #endregion
 }
 }

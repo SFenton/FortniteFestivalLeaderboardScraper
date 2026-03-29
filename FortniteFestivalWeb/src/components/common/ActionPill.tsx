@@ -27,7 +27,7 @@ const pillStyle: CSSProperties = {
   paddingRight: Gap.xl,
   fontSize: Font.sm,
   ...frostedCard,
-  color: Colors.textTertiary,
+  color: Colors.textPrimary,
   transition: PILL_TRANSITION,
 };
 

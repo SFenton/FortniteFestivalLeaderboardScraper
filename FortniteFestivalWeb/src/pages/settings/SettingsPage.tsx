@@ -12,9 +12,10 @@ import ConfirmAlert from '../../components/modals/ConfirmAlert';
 import { modalStyles as modalCss } from '../../components/modals/modalStyles';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
-import { Colors, Font, Gap, Weight, Radius, Layout, Display, Align, Justify, Overflow, CssValue, LineHeight, TextAlign, frostedCard, btnDanger, btnPrimary, flexColumn, flexRow, flexBetween, padding, transition, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION } from '@festival/theme';
+import { Colors, Font, Gap, Weight, Radius, Layout, Display, Align, Justify, Overflow, CssValue, LineHeight, TextAlign, btnDanger, btnPrimary, flexColumn, flexRow, flexBetween, padding, transition, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION } from '@festival/theme';
 import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
 import { useFirstRunReplay } from '../../hooks/ui/useFirstRun';
+import { FrostedCard } from '../../components/common/FrostedCard';
 import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
 import { statisticsSlides } from '../player/firstRun';
 import { suggestionsSlides } from '../suggestions/firstRun';
@@ -329,6 +330,13 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
+            <ToggleRow
+              label={t('settings.lightTrails', 'Light Trails')}
+              description={t('settings.lightTrailsDesc', 'Show a soft glow that follows your cursor across cards. Only visible with a mouse — disabling may improve performance.')}
+              checked={!settings.disableLightTrails}
+              onToggle={() => updateSettings({ disableLightTrails: !settings.disableLightTrails })}
+              large={isMobile}
+            />
           </Card>
           </FadeInDiv>
 
@@ -509,13 +517,12 @@ export default function SettingsPage() {
 
 function Card({ children }: { children: React.ReactNode }) {
   const st = useCardStyles();
-  return <div style={st.card}>{children}</div>;
+  return <FrostedCard style={st.card}>{children}</FrostedCard>;
 }
 
 function useCardStyles() {
   return useMemo(() => ({
     card: {
-      ...frostedCard,
       borderRadius: Radius.md,
       padding: padding(Layout.paddingTop),
       ...flexColumn,

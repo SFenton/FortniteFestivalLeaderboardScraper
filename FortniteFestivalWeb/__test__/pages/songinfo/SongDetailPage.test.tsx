@@ -230,6 +230,11 @@ describe('SongDetailPage', () => {
     await waitFor(() => {
       expect(screen.getByText('Test Song')).toBeDefined();
     });
+    await waitFor(() => {
+      expect(screen.getByText('Something Went Wrong')).toBeDefined();
+    });
+    // Instrument cards should not be rendered when all errored
+    expect(screen.queryByText('Lead')).toBeNull();
   });
 
   it('renders with tracked player showing score history chart', async () => {

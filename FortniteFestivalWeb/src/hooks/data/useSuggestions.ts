@@ -3,6 +3,11 @@ import { SuggestionGenerator } from '@festival/core/suggestions/suggestionGenera
 import type { SuggestionCategory } from '@festival/core/suggestions/types';
 import type { Song as CoreSong, LeaderboardData } from '@festival/core/models';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
+import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
+import { api } from '../../api/client';
+import { buildRivalDataIndex } from '../../utils/suggestionAdapter';
+import { deriveComboFromSettings } from '../../pages/rivals/helpers/comboUtils';
+import { useSettings } from '../../contexts/SettingsContext';
 
 const BATCH_SIZE = 6;
 const INITIAL_BATCH = 10;
@@ -21,6 +26,9 @@ export function useSuggestions(
   scoresIndex: Record<string, LeaderboardData>,
   currentSeason = 0,
 ) {
+  const flags = useFeatureFlags();
+  const { settings } = useSettings();
+
   // Restore from cache if same account
   const cached = _cache?.accountId === accountId ? _cache : null;
 
@@ -86,6 +94,29 @@ export function useSuggestions(
     _cache = { accountId, categories: first, generator: gen, scrollY: 0 };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- currentSeason only needed at init
   }, [accountId, coreSongs, scoresIndex]);
+
+  // Fetch rival data when rivals feature is enabled and inject into generator
+  const rivalDataInjectedRef = useRef(false);
+  useEffect(() => {
+    if (!flags.rivals || !generatorRef.current || rivalDataInjectedRef.current) return;
+
+    let cancelled = false;
+    const combo = deriveComboFromSettings(settings) ?? undefined;
+
+    api.getRivalSuggestions(accountId, combo, 5)
+      .then((response) => {
+        if (cancelled || !generatorRef.current) return;
+        const index = buildRivalDataIndex(response);
+        generatorRef.current.setRivalData(index);
+        rivalDataInjectedRef.current = true;
+      })
+      .catch(() => {
+        // Graceful degradation — rival suggestions simply won't appear
+      });
+
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- only run once after generator init
+  }, [accountId, flags.rivals, generatorRef.current]);
 
   const loadMore = useCallback(() => {
     const gen = generatorRef.current;

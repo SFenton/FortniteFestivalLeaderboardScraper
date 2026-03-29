@@ -359,3 +359,20 @@ public sealed class ComboLeaderboardEntry
     public int FullComboCount { get; init; }
     public string ComputedAt { get; init; } = "";
 }
+
+// ─── Rival Suggestions DTOs ────────────────────────────────
+
+/// <summary>
+/// A rival entry in the batch suggestions response,
+/// containing the rival summary and their song samples for suggestion generation.
+/// </summary>
+public sealed class RivalSuggestionEntry
+{
+    public string AccountId { get; init; } = "";
+    public string? DisplayName { get; init; }
+    public string Direction { get; init; } = "";
+    public int SharedSongCount { get; init; }
+    public int AheadCount { get; init; }
+    public int BehindCount { get; init; }
+    public List<RivalSongSampleRow> Songs { get; init; } = [];
+}

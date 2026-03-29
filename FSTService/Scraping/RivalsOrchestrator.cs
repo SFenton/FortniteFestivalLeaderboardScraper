@@ -13,6 +13,7 @@ public sealed class RivalsOrchestrator
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly NotificationService _notifications;
     private readonly ScrapeProgressTracker _progress;
+    private readonly ResponseCacheService _rivalsCache;
     private readonly ILogger<RivalsOrchestrator> _log;
 
     public RivalsOrchestrator(
@@ -20,12 +21,14 @@ public sealed class RivalsOrchestrator
         GlobalLeaderboardPersistence persistence,
         NotificationService notifications,
         ScrapeProgressTracker progress,
+        [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache,
         ILogger<RivalsOrchestrator> log)
     {
         _calculator = calculator;
         _persistence = persistence;
         _notifications = notifications;
         _progress = progress;
+        _rivalsCache = rivalsCache;
         _log = log;
     }
 
@@ -100,6 +103,7 @@ public sealed class RivalsOrchestrator
 
             _persistence.Meta.ReplaceRivalsData(accountId, result.Rivals, result.Samples);
             _persistence.Meta.CompleteRivals(accountId, result.CombosComputed, result.Rivals.Count);
+            _rivalsCache.InvalidateAll();
 
             try { _notifications.NotifyRivalsCompleteAsync(accountId).GetAwaiter().GetResult(); }
             catch { /* best effort */ }

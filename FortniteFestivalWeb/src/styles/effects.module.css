@@ -106,3 +106,35 @@
   mask-image: linear-gradient(to bottom, transparent 0%, black 36px, black calc(100% - 36px), transparent 100%);
   -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 36px, black calc(100% - 36px), transparent 100%);
 }
+
+/* ── Frosted card hover glow (light-trail spotlight) ──
+ * Targets any element whose inline style contains the --frosted-card
+ * custom property marker set by the frostedCard theme mixin.
+ * The ::before pseudo-element is invisible (opacity 0) by default;
+ * useProximityGlow in Page sets --glow-x/y/opacity imperatively.
+ */
+:global([style*="--frosted-card"]) {
+  position: relative;
+}
+
+:global([style*="--frosted-card"])::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    circle 250px at var(--glow-x, -999px) var(--glow-y, -999px),
+    var(--glow-color) 0%,
+    transparent 100%
+  );
+  opacity: var(--glow-opacity, 0);
+  transition: opacity 200ms ease;
+  pointer-events: none;
+  z-index: 1;
+}
+
+@media (hover: none) {
+  :global([style*="--frosted-card"])::before {
+    display: none;
+  }
+}

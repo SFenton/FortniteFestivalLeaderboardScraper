@@ -86,7 +86,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         _log = Substitute.For<ILogger<PostScrapeOrchestrator>>();
 
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
-        var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
+        var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, new Api.ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
         var rankingsCalculator = new RankingsCalculator(_persistence, _metaDb, new PathDataStore(Path.Combine(_tempDir, "core.db")), _progress, Substitute.For<ILogger<RankingsCalculator>>());
 
         _sut = new PostScrapeOrchestrator(
@@ -343,7 +343,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         // Create SUT with MaxPages=1 → maxEntries=100, but we seed 200 entries
         var opts = Options.Create(new ScraperOptions { MaxPagesPerLeaderboard = 1 });
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
-        var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new NotificationService(Substitute.For<ILogger<NotificationService>>()), _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
+        var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new NotificationService(Substitute.For<ILogger<NotificationService>>()), _progress, new ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
         var rankingsCalculator2 = new RankingsCalculator(_persistence, _metaDb, new PathDataStore(Path.Combine(_tempDir, "core.db")), _progress, Substitute.For<ILogger<RankingsCalculator>>());
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
@@ -396,7 +396,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     {
         var opts = Options.Create(new ScraperOptions { MaxPagesPerLeaderboard = 0 });
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
-        var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new NotificationService(Substitute.For<ILogger<NotificationService>>()), _progress, Substitute.For<ILogger<RivalsOrchestrator>>());
+        var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new NotificationService(Substitute.For<ILogger<NotificationService>>()), _progress, new ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
         var rankingsCalculator3 = new RankingsCalculator(_persistence, _metaDb, new PathDataStore(Path.Combine(_tempDir, "core.db")), _progress, Substitute.For<ILogger<RankingsCalculator>>());
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,

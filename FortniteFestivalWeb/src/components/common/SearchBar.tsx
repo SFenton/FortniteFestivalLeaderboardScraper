@@ -89,7 +89,7 @@ function useStyles() {
       cursor: Cursor.text,
     },
     searchIcon: {
-      color: Colors.textTertiary,
+      color: Colors.textPrimary,
       flexShrink: 0,
     },
     searchInput: {

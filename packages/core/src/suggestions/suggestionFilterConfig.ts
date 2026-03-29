@@ -43,6 +43,8 @@ export const SUGGESTION_TYPES = [
   {id: 'PercentilePush',    label: 'Percentile Push',    description: 'Close to the next percentile bracket.'},
   {id: 'Stale',             label: 'Stale Songs',        description: "Songs you haven't played in a while."},
   {id: 'PctImprove',        label: 'Percentile Improve', description: 'Songs with room for percentile improvement.'},
+  {id: 'SongRivals',        label: 'Song Rivals',        description: 'Suggestions based on per-song rivals.'},
+  {id: 'LeaderboardRivals', label: 'Leaderboard Rivals', description: 'Suggestions based on ranking neighbors.'},
 ] as const;
 
 export type SuggestionTypeId = (typeof SUGGESTION_TYPES)[number]['id'];
@@ -106,6 +108,10 @@ export const instrumentSettingPrefix = (instrument: InstrumentKey): string =>
  */
 export function getCategoryTypeId(categoryKey: string): SuggestionTypeId | null {
   const key = categoryKey.toLowerCase();
+  // Song rivals: song_rival_*
+  if (key.startsWith('song_rival_')) return 'SongRivals';
+  // Leaderboard rivals: lb_rival_*
+  if (key.startsWith('lb_rival_')) return 'LeaderboardRivals';
   // Near FC: near_fc_any, near_fc_relaxed, unfc_*, samename_nearfc_*
   if (key.startsWith('near_fc') || key.startsWith('unfc_') || key.includes('samename_nearfc')) return 'NearFC';
   // Star progress: almost_six_star, star_gains, more_stars

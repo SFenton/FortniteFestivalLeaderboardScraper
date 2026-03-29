@@ -1,7 +1,9 @@
+using System.Text.Json;
 using FortniteFestival.Core.Models;
 using FortniteFestival.Core.Services;
 using FSTService.Persistence;
 using FSTService.Scraping;
+using Microsoft.Extensions.Options;
 
 namespace FSTService.Api;
 
@@ -14,13 +16,29 @@ public static partial class ApiEndpoints
         app.MapGet("/api/player/{accountId}/rivals", (
             HttpContext httpContext,
             string accountId,
-            MetaDatabase metaDb) =>
+            MetaDatabase metaDb,
+            [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache) =>
         {
-            httpContext.Response.Headers.CacheControl = "public, max-age=300";
+            httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
+
+            var cacheKey = $"overview:{accountId}";
+            var cached = rivalsCache.Get(cacheKey);
+            if (cached is not null)
+            {
+                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
+                {
+                    httpContext.Response.Headers.ETag = cached.Value.ETag;
+                    return Results.StatusCode(304);
+                }
+                httpContext.Response.Headers.ETag = cached.Value.ETag;
+                return Results.Bytes(cached.Value.Json, "application/json");
+            }
+
             var status = metaDb.GetRivalsStatus(accountId);
             var combos = metaDb.GetRivalCombos(accountId);
 
-            return Results.Ok(new
+            var payload = new
             {
                 accountId,
                 computedAt = status?.CompletedAt,
@@ -30,7 +48,149 @@ public static partial class ApiEndpoints
                     aboveCount = c.AboveCount,
                     belowCount = c.BelowCount,
                 }).ToList(),
-            });
+            };
+            var jsonOpts = httpContext.RequestServices
+                .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+                .Value.SerializerOptions;
+            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+            var etag = rivalsCache.Set(cacheKey, jsonBytes);
+
+            httpContext.Response.Headers.ETag = etag;
+            return Results.Bytes(jsonBytes, "application/json");
+        })
+        .WithTags("Rivals")
+        .RequireRateLimiting("public");
+
+        // ─── Batch rivals data for suggestion generation ───────────
+        // Registered before {combo} route to avoid "suggestions" matching as combo value.
+
+        app.MapGet("/api/player/{accountId}/rivals/suggestions", (
+            HttpContext httpContext,
+            string accountId,
+            string? combo,
+            int? limit,
+            MetaDatabase metaDb,
+            [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
+
+            var effectiveLimit = limit ?? 5;
+            var effectiveCombo = combo ?? "";
+            var cacheKey = $"suggestions:{accountId}:{effectiveCombo}:{effectiveLimit}";
+            var cached = rivalsCache.Get(cacheKey);
+            if (cached is not null)
+            {
+                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
+                {
+                    httpContext.Response.Headers.ETag = cached.Value.ETag;
+                    return Results.StatusCode(304);
+                }
+                httpContext.Response.Headers.ETag = cached.Value.ETag;
+                return Results.Bytes(cached.Value.Json, "application/json");
+            }
+
+            var status = metaDb.GetRivalsStatus(accountId);
+
+            // Determine which combos to query
+            var combosToQuery = new List<string>();
+            if (!string.IsNullOrEmpty(effectiveCombo))
+            {
+                combosToQuery.Add(effectiveCombo);
+            }
+            else
+            {
+                // No combo specified — use all available combos
+                var allCombos = metaDb.GetRivalCombos(accountId);
+                combosToQuery.AddRange(allCombos.Select(c => c.InstrumentCombo));
+            }
+
+            // Gather top N rivals per direction across all requested combos
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var aboveRivals = new List<UserRivalRow>();
+            var belowRivals = new List<UserRivalRow>();
+
+            foreach (var c in combosToQuery)
+            {
+                foreach (var r in metaDb.GetUserRivals(accountId, c, "above"))
+                {
+                    if (seen.Add(r.RivalAccountId + ":above"))
+                        aboveRivals.Add(r);
+                }
+                foreach (var r in metaDb.GetUserRivals(accountId, c, "below"))
+                {
+                    if (seen.Add(r.RivalAccountId + ":below"))
+                        belowRivals.Add(r);
+                }
+            }
+
+            // Take top N per direction (sorted by RivalScore descending)
+            var topAbove = aboveRivals.OrderByDescending(r => r.RivalScore).Take(effectiveLimit).ToList();
+            var topBelow = belowRivals.OrderByDescending(r => r.RivalScore).Take(effectiveLimit).ToList();
+            var allRivals = topAbove.Concat(topBelow).ToList();
+
+            if (allRivals.Count == 0)
+                return Results.NotFound(new { error = "No rivals found." });
+
+            // Bulk name resolution
+            var rivalIds = allRivals.Select(r => r.RivalAccountId).Distinct().ToList();
+            var names = metaDb.GetDisplayNames(rivalIds);
+
+            // Parse combo(s) into instrument list for sample fetching
+            var instrumentSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var c in combosToQuery)
+            {
+                if (c.Contains('+'))
+                    foreach (var i in c.Split('+')) instrumentSet.Add(i);
+                else if (c.Length <= 2 && int.TryParse(c, System.Globalization.NumberStyles.HexNumber, null, out _))
+                    foreach (var i in ComboIds.ToInstruments(c)) instrumentSet.Add(i);
+                else
+                    instrumentSet.Add(c);
+            }
+
+            // Build entries with song samples
+            var entries = allRivals.Select(r =>
+            {
+                var songs = new List<RivalSongSampleRow>();
+                foreach (var inst in instrumentSet)
+                    songs.AddRange(metaDb.GetRivalSongSamples(accountId, r.RivalAccountId, inst));
+
+                return new
+                {
+                    accountId = r.RivalAccountId,
+                    displayName = names.GetValueOrDefault(r.RivalAccountId),
+                    direction = r.Direction,
+                    sharedSongCount = r.SharedSongCount,
+                    aheadCount = r.AheadCount,
+                    behindCount = r.BehindCount,
+                    songs = songs.Select(s => new
+                    {
+                        s.SongId,
+                        s.Instrument,
+                        s.UserRank,
+                        s.RivalRank,
+                        s.RankDelta,
+                        s.UserScore,
+                        s.RivalScore,
+                    }).ToList(),
+                };
+            }).ToList();
+
+            var payload = new
+            {
+                accountId,
+                combo = effectiveCombo,
+                computedAt = status?.CompletedAt,
+                rivals = entries,
+            };
+            var jsonOpts = httpContext.RequestServices
+                .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+                .Value.SerializerOptions;
+            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+            var etag = rivalsCache.Set(cacheKey, jsonBytes);
+
+            httpContext.Response.Headers.ETag = etag;
+            return Results.Bytes(jsonBytes, "application/json");
         })
         .WithTags("Rivals")
         .RequireRateLimiting("public");
@@ -41,9 +201,25 @@ public static partial class ApiEndpoints
             HttpContext httpContext,
             string accountId,
             string combo,
-            MetaDatabase metaDb) =>
+            MetaDatabase metaDb,
+            [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache) =>
         {
-            httpContext.Response.Headers.CacheControl = "public, max-age=300";
+            httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
+
+            var cacheKey = $"list:{accountId}:{combo}";
+            var cached = rivalsCache.Get(cacheKey);
+            if (cached is not null)
+            {
+                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
+                {
+                    httpContext.Response.Headers.ETag = cached.Value.ETag;
+                    return Results.StatusCode(304);
+                }
+                httpContext.Response.Headers.ETag = cached.Value.ETag;
+                return Results.Bytes(cached.Value.Json, "application/json");
+            }
+
             var above = metaDb.GetUserRivals(accountId, combo, "above");
             var below = metaDb.GetUserRivals(accountId, combo, "below");
 
@@ -51,17 +227,22 @@ public static partial class ApiEndpoints
                 return Results.NotFound(new { error = "No rivals found for this combo." });
 
             var rivalIds = above.Concat(below).Select(r => r.RivalAccountId).Distinct().ToList();
-            var names = rivalIds.ToDictionary(
-                id => id,
-                id => metaDb.GetDisplayName(id),
-                StringComparer.OrdinalIgnoreCase);
+            var names = metaDb.GetDisplayNames(rivalIds);
 
-            return Results.Ok(new
+            var payload = new
             {
                 combo,
                 above = above.Select(r => MapRivalSummary(r, names)),
                 below = below.Select(r => MapRivalSummary(r, names)),
-            });
+            };
+            var jsonOpts = httpContext.RequestServices
+                .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+                .Value.SerializerOptions;
+            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+            var etag = rivalsCache.Set(cacheKey, jsonBytes);
+
+            httpContext.Response.Headers.ETag = etag;
+            return Results.Bytes(jsonBytes, "application/json");
         })
         .WithTags("Rivals")
         .RequireRateLimiting("public");
@@ -78,9 +259,28 @@ public static partial class ApiEndpoints
             string? sort,
             MetaDatabase metaDb,
             FestivalService festivalService,
-            RivalsCalculator rivalsCalculator) =>
+            RivalsCalculator rivalsCalculator,
+            [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache) =>
         {
-            httpContext.Response.Headers.CacheControl = "public, max-age=120";
+            httpContext.Response.Headers.CacheControl = "public, max-age=120, stale-while-revalidate=300";
+
+            var effectiveLimit = limit ?? 50;
+            var effectiveOffset = offset ?? 0;
+            var sortMode = sort?.ToLowerInvariant() ?? "closest";
+            var cacheKey = $"detail:{accountId}:{combo}:{rivalId}:{effectiveLimit}:{effectiveOffset}:{sortMode}";
+            var cached = rivalsCache.Get(cacheKey);
+            if (cached is not null)
+            {
+                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
+                {
+                    httpContext.Response.Headers.ETag = cached.Value.ETag;
+                    return Results.StatusCode(304);
+                }
+                httpContext.Response.Headers.ETag = cached.Value.ETag;
+                return Results.Bytes(cached.Value.Json, "application/json");
+            }
+
             // Parse combo into instruments — accepts hex ID ("03") or legacy ("Solo_Guitar+Solo_Bass") or single ("Solo_Guitar")
             string[] instruments;
             if (combo.Contains('+'))
@@ -99,7 +299,6 @@ public static partial class ApiEndpoints
                 return Results.NotFound(new { error = "No song data for this rival." });
 
             // Sort
-            var sortMode = sort?.ToLowerInvariant() ?? "closest";
             IEnumerable<RivalSongSampleRow> sorted = sortMode switch
             {
                 "they_lead" => allSamples.OrderBy(s => s.RankDelta),
@@ -108,8 +307,6 @@ public static partial class ApiEndpoints
             };
 
             var total = allSamples.Count;
-            var effectiveLimit = limit ?? 50;
-            var effectiveOffset = offset ?? 0;
 
             // limit=0 means all
             var page = effectiveLimit == 0
@@ -124,7 +321,7 @@ public static partial class ApiEndpoints
             // Compute song gaps on-the-fly
             var gaps = rivalsCalculator.ComputeSongGaps(accountId, rivalId, instruments);
 
-            return Results.Ok(new
+            var payload = new
             {
                 rival = new { accountId = rivalId, displayName = rivalName },
                 combo,
@@ -174,7 +371,15 @@ public static partial class ApiEndpoints
                         g.Rank,
                     };
                 }).ToList(),
-            });
+            };
+            var jsonOpts = httpContext.RequestServices
+                .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+                .Value.SerializerOptions;
+            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+            var etag = rivalsCache.Set(cacheKey, jsonBytes);
+
+            httpContext.Response.Headers.ETag = etag;
+            return Results.Bytes(jsonBytes, "application/json");
         })
         .WithTags("Rivals")
         .RequireRateLimiting("public");
@@ -190,14 +395,32 @@ public static partial class ApiEndpoints
             int? offset,
             string? sort,
             MetaDatabase metaDb,
-            FestivalService festivalService) =>
+            FestivalService festivalService,
+            [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache) =>
         {
-            httpContext.Response.Headers.CacheControl = "public, max-age=120";
+            httpContext.Response.Headers.CacheControl = "public, max-age=120, stale-while-revalidate=300";
+
+            var effectiveLimit = limit ?? 50;
+            var effectiveOffset = offset ?? 0;
+            var sortMode = sort?.ToLowerInvariant() ?? "closest";
+            var cacheKey = $"songs:{accountId}:{rivalId}:{instrument}:{effectiveLimit}:{effectiveOffset}:{sortMode}";
+            var cached = rivalsCache.Get(cacheKey);
+            if (cached is not null)
+            {
+                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
+                {
+                    httpContext.Response.Headers.ETag = cached.Value.ETag;
+                    return Results.StatusCode(304);
+                }
+                httpContext.Response.Headers.ETag = cached.Value.ETag;
+                return Results.Bytes(cached.Value.Json, "application/json");
+            }
+
             var samples = metaDb.GetRivalSongSamples(accountId, rivalId, instrument);
             if (samples.Count == 0)
                 return Results.NotFound(new { error = "No song data for this rival on this instrument." });
 
-            var sortMode = sort?.ToLowerInvariant() ?? "closest";
             IEnumerable<RivalSongSampleRow> sorted = sortMode switch
             {
                 "they_lead" => samples.OrderBy(s => s.RankDelta),
@@ -206,8 +429,6 @@ public static partial class ApiEndpoints
             };
 
             var total = samples.Count;
-            var effectiveLimit = limit ?? 50;
-            var effectiveOffset = offset ?? 0;
             var page = effectiveLimit == 0
                 ? sorted.Skip(effectiveOffset).ToList()
                 : sorted.Skip(effectiveOffset).Take(effectiveLimit).ToList();
@@ -217,7 +438,7 @@ public static partial class ApiEndpoints
                 .ToDictionary(s => s.track.su, StringComparer.OrdinalIgnoreCase);
             var rivalName = metaDb.GetDisplayName(rivalId);
 
-            return Results.Ok(new
+            var payload = new
             {
                 rival = new { accountId = rivalId, displayName = rivalName },
                 instrument,
@@ -240,7 +461,15 @@ public static partial class ApiEndpoints
                         s.RivalScore,
                     };
                 }).ToList(),
-            });
+            };
+            var jsonOpts = httpContext.RequestServices
+                .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+                .Value.SerializerOptions;
+            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+            var etag = rivalsCache.Set(cacheKey, jsonBytes);
+
+            httpContext.Response.Headers.ETag = etag;
+            return Results.Bytes(jsonBytes, "application/json");
         })
         .WithTags("Rivals")
         .RequireRateLimiting("public");
@@ -261,7 +490,7 @@ public static partial class ApiEndpoints
         .RequireAuthorization();
     }
 
-    private static object MapRivalSummary(UserRivalRow r, Dictionary<string, string?> names)
+    private static object MapRivalSummary(UserRivalRow r, Dictionary<string, string> names)
     {
         return new
         {

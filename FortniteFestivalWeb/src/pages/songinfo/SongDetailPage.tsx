@@ -26,6 +26,8 @@ import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import { useShopState } from '../../hooks/data/useShopState';
 import { LoadPhase } from '@festival/core';
 import PathsModal from './components/path/PathsModal';
+import EmptyState from '../../components/common/EmptyState';
+import { parseApiError } from '../../utils/apiError';
 import InstrumentCard from './components/InstrumentCard';
 import { songInfoSlides } from './firstRun';
 
@@ -208,6 +210,9 @@ export default function SongDetailPage() {
     [playerScores, filterPlayerScores],
   );
 
+  const allErrored = activeInstruments.length > 0
+    && activeInstruments.every((k) => instrumentData[k].error && !instrumentData[k].loading);
+
   // Compute a global score width so season pills align across all sections
   const globalScoreWidth = useMemo(() => {
     let maxLen = 1;
@@ -333,6 +338,7 @@ export default function SongDetailPage() {
     <Page
       scrollDeps={[phase, activeInstruments.length]}
       variant="withBgClip"
+      fabSpacer={phase === LoadPhase.ContentIn && allErrored ? 'none' : 'end'}
       headerCollapse={{ disabled: hasFab, onCollapse: setHeaderCollapsed }}
       firstRun={{ key: 'songinfo', label: t('nav.songInfo', 'Song Info'), slides: songInfoSlidesMemo, gateContext: firstRunGateCtx }}
       background={<PageBackground src={song?.albumArt} />}
@@ -366,7 +372,11 @@ export default function SongDetailPage() {
           <ArcSpinner />
         </div>
       )}
-      {phase === LoadPhase.ContentIn && (
+      {phase === LoadPhase.ContentIn && allErrored && (() => {
+        const parsed = parseApiError(String(instrumentData[activeInstruments[0]].error));
+        return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={stagger(200)} onAnimationEnd={clearAnim} />;
+      })()}
+      {phase === LoadPhase.ContentIn && !allErrored && (
         <div style={styles.container}>
           {player && scoreHistoryReady && filteredScoreHistory.length > 0 && (
             <div style={{ ...stagger(150), marginBottom: Gap.section }} onAnimationEnd={clearAnim}>

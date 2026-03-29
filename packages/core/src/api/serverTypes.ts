@@ -480,3 +480,35 @@ export type CompositeNeighborhoodResponse = {
   self: CompositeNeighborEntry;
   below: CompositeNeighborEntry[];
 };
+
+// ─── Rival suggestions types ──────────────────────────────────
+
+/** A song sample in the rival suggestions batch response. */
+export type RivalSuggestionSongSample = {
+  songId: string;
+  instrument: string;
+  userRank: number;
+  rivalRank: number;
+  rankDelta: number;
+  userScore: number | null;
+  rivalScore: number | null;
+};
+
+/** A single rival entry in the batch suggestions response. */
+export type RivalSuggestionEntry = {
+  accountId: string;
+  displayName: string | null;
+  direction: 'above' | 'below';
+  sharedSongCount: number;
+  aheadCount: number;
+  behindCount: number;
+  songs: RivalSuggestionSongSample[];
+};
+
+/** Batch response for GET /api/player/{id}/rivals/suggestions. */
+export type RivalSuggestionsResponse = {
+  accountId: string;
+  combo: string;
+  computedAt: string | null;
+  rivals: RivalSuggestionEntry[];
+};

@@ -12,6 +12,7 @@ import type {
   RivalsOverviewResponse,
   RivalsListResponse,
   RivalDetailResponse,
+  RivalSuggestionsResponse,
   RankingsPageResponse,
   AccountRankingDto,
   CompositePageResponse,
@@ -220,4 +221,13 @@ export const api = {
     getWithETag<CompositeNeighborhoodResponse>(
       `/api/rankings/composite/${encodeURIComponent(accountId)}/neighborhood?radius=${radius}`,
     ),
+
+  getRivalSuggestions: (accountId: string, combo?: string, limit = 5) => {
+    const params = new URLSearchParams();
+    if (combo) params.set('combo', combo);
+    params.set('limit', String(limit));
+    return getWithETag<RivalSuggestionsResponse>(
+      `/api/player/${encodeURIComponent(accountId)}/rivals/suggestions?${params}`,
+    );
+  },
 };

@@ -20,6 +20,7 @@ export type AppSettings = {
   songRowVisualOrder: string[];
   filterInvalidScores: boolean;
   filterInvalidScoresLeeway: number;
+  disableLightTrails: boolean;
 
   /* Item Shop */
   hideItemShop: boolean;
@@ -48,6 +49,7 @@ export const defaultAppSettings = (): AppSettings => ({
   songRowVisualOrder: [...DEFAULT_METADATA_ORDER],
   filterInvalidScores: false,
   filterInvalidScoresLeeway: 1,
+  disableLightTrails: false,
 
   hideItemShop: false,
   disableShopHighlighting: false,

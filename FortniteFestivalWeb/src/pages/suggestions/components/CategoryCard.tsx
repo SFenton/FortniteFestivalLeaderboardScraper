@@ -45,10 +45,12 @@ function getCatInstrument(key: string): InstrumentKey | null {
   return null;
 }
 
-type RowLayout = 'instrumentChips' | 'singleInstrument' | 'percentile' | 'season' | 'unfcAccuracy' | 'hidden';
+type RowLayout = 'instrumentChips' | 'singleInstrument' | 'percentile' | 'season' | 'unfcAccuracy' | 'hidden' | 'rival';
 
 function getRowLayout(categoryKey: string): RowLayout {
   const k = categoryKey.toLowerCase();
+  // Rival categories use the rival layout
+  if (k.startsWith('song_rival_') || k.startsWith('lb_rival_')) return 'rival';
   if (k.startsWith('variety_pack') || k.startsWith('artist_sampler_') || k.startsWith('artist_unplayed_')
     || k.startsWith('unplayed_')
     || (k.startsWith('samename_') && !k.startsWith('samename_nearfc_'))) return 'hidden';
@@ -153,6 +155,26 @@ function RightContent({ song, layout, leaderboardData, starCount = 0, starSrc,
   starSrc?: string;
 }) {
   if (layout === 'hidden') return null;
+
+  // Rival layout: shows rival name + rank delta pill + instrument icon
+  if (layout === 'rival') {
+    const delta = song.rivalRankDelta ?? 0;
+    const isAhead = delta > 0;
+    const color = isAhead ? Colors.statusGreen : delta < 0 ? Colors.statusRed : Colors.textSecondary;
+    const label = delta > 0 ? `+${delta}` : String(delta);
+    const isSongRival = song.rivalSource === 'song';
+    return (
+      <div style={categoryCardStyles.badges}>
+        {song.rivalName && (
+          <span style={{ ...categoryCardStyles.rivalBadge, backgroundColor: isSongRival ? 'rgba(66,133,244,0.2)' : 'rgba(251,188,4,0.2)', color: isSongRival ? '#4285F4' : '#FBBC04' }}>
+            {song.rivalName.length > 12 ? song.rivalName.slice(0, 11) + '…' : song.rivalName}
+          </span>
+        )}
+        {delta !== 0 && <span style={{ ...categoryCardStyles.rivalDelta, color }}>{label}</span>}
+        {song.instrumentKey && <InstrumentIcon instrument={song.instrumentKey} size={28} />}
+      </div>
+    );
+  }
 
   if (layout === 'unfcAccuracy') {
     const pct = song.percent;
@@ -329,5 +351,21 @@ const categoryCardStyles = {
     display: Display.inlineFlex,
     gap: 3,
     alignItems: Align.center,
+  } as CSSProperties,
+  rivalBadge: {
+    fontSize: Font.xs,
+    fontWeight: Weight.semibold,
+    borderRadius: Radius.md,
+    padding: `${Gap.xs}px ${Gap.sm}px`,
+    whiteSpace: 'nowrap',
+    overflow: Overflow.hidden,
+    textOverflow: 'ellipsis',
+    maxWidth: 100,
+  } as CSSProperties,
+  rivalDelta: {
+    fontSize: Font.sm,
+    fontWeight: Weight.bold,
+    fontVariantNumeric: FontVariant.tabularNums,
+    flexShrink: 0,
   } as CSSProperties,
 };

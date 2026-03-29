@@ -1,6 +1,6 @@
 import type {InstrumentKey} from '../instruments';
 import type {LeaderboardData, ScoreTracker, Song} from '../models';
-import type {SuggestionCategory, SuggestionSongItem} from './types';
+import type {RivalDataIndex, SuggestionCategory, SuggestionSongItem} from './types';
 
 export type Rng = {nextInt: (maxExclusive: number) => number; nextDouble: () => number};
 
@@ -86,6 +86,7 @@ export class SuggestionGenerator {
 
   private songs: Song[] = [];
   private scoresIndex: Readonly<Record<string, LeaderboardData | undefined>> = {};
+  private rivalData: RivalDataIndex | null = null;
 
   private emitted = new Set<string>();
   private pipelines: Array<() => SuggestionCategory[]> = [];
@@ -108,6 +109,11 @@ export class SuggestionGenerator {
   setSource(songs: Song[], scoresIndex: Readonly<Record<string, LeaderboardData | undefined>>): void {
     this.songs = songs;
     this.scoresIndex = scoresIndex;
+  }
+
+  /** Inject rival data for rivalry-aware suggestion strategies. Pass null to disable. */
+  setRivalData(data: RivalDataIndex | null): void {
+    this.rivalData = data;
   }
 
   private shuffleInPlace<T>(arr: T[]): void {
@@ -291,7 +297,10 @@ export class SuggestionGenerator {
 
   private mapSongWithInstrument(pair: SongPair): SuggestionSongItem {
     const base = this.mapSong(pair);
-    return pair.instrumentKey ? {...base, instrumentKey: pair.instrumentKey} : base;
+    const withInstrument = pair.instrumentKey ? {...base, instrumentKey: pair.instrumentKey} : base;
+    // Cross-pollination: annotate with closest rival if available
+    const ann = this.annotateWithRival(pair.song.track.su, pair.instrumentKey);
+    return Object.keys(ann).length > 0 ? {...withInstrument, ...ann} : withInstrument;
   }
 
   private addRecentSong(songId: string, artist: string | undefined): void {
@@ -512,6 +521,19 @@ export class SuggestionGenerator {
       ...Instruments.flatMap(ins => [
         () => this.improveInstrumentRankings(ins),
         ...[2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50].map(b => () => this.percentileImproveInstrument(ins, b)),
+      ]),
+      // ─── Rival strategies (no-op when rivalData is null) ─────
+      () => this.songRivalBattleground(),
+      () => this.songRivalNearFc(),
+      () => this.songRivalStale(),
+      () => this.songRivalStarGains(),
+      () => this.songRivalPctPush(),
+      ...(this.rivalData?.songRivals ?? []).flatMap(r => [
+        () => this.songRivalGap(r.accountId),
+        () => this.songRivalProtect(r.accountId),
+        () => this.songRivalSpotlight(r.accountId),
+        () => this.songRivalSlipping(r.accountId),
+        () => this.songRivalDominate(r.accountId),
       ]),
     ];
     this.shuffleInPlace(list);
@@ -1517,6 +1539,429 @@ export class SuggestionGenerator {
       title: `Improve ${instrumentLabel(instrument)} Rankings`,
       description: `A varied mix of ${instrumentLabel(instrument)} songs across different percentile brackets — all with room to grow.`,
       songs: final.map(p => this.mapUniqueSong(p)),
+    }];
+  }
+
+  // ─── Rival strategies ────────────────────────────────────────
+
+  /**
+   * Annotates a song item with closest rival info (for cross-pollination).
+   * Returns partial fields to spread onto SuggestionSongItem.
+   */
+  private annotateWithRival(songId: string, instrument: InstrumentKey | undefined): Partial<SuggestionSongItem> {
+    if (!this.rivalData) return {};
+    const key = instrument ? `${songId}:${instrument}` : undefined;
+    const match = key ? this.rivalData.closestRivalBySong.get(key) : undefined;
+    if (!match) return {};
+    return {
+      rivalName: match.rival.displayName,
+      rivalAccountId: match.rival.accountId,
+      rivalRankDelta: match.rankDelta,
+      rivalSource: match.rival.source,
+    };
+  }
+
+  /** Map a SongPair with rival annotation. Used by rival strategies. */
+  private mapRivalSong(pair: SongPair, rival: {displayName: string; accountId: string; source: 'song' | 'leaderboard'}, rankDelta: number): SuggestionSongItem {
+    const base = this.mapSongWithInstrument(pair);
+    this.addRecentSong(pair.song.track.su, pair.song.track.an);
+    return {
+      ...base,
+      rivalName: rival.displayName,
+      rivalAccountId: rival.accountId,
+      rivalRankDelta: rankDelta,
+      rivalSource: rival.source,
+    };
+  }
+
+  /** Close the Gap vs {rival}: songs where rival barely leads (rankDelta < 0, sorted by |delta| asc) */
+  private songRivalGap(rivalId: string): SuggestionCategory[] {
+    if (!this.rivalData) return [];
+    const matches = this.rivalData.byRival.get(rivalId);
+    if (!matches || matches.length === 0) return [];
+    const rival = matches[0]!.rival;
+
+    // Songs where rival leads (negative delta), sorted by smallest gap
+    const pool: SongPair[] = [];
+    for (const m of matches) {
+      if (m.rankDelta >= 0) continue;
+      const song = this.findSong(m.songId);
+      if (!song) continue;
+      const board = this.scoresIndex[m.songId];
+      const tracker = board ? getTracker(board, m.instrument) ?? null : null;
+      pool.push({song, tracker, instrumentKey: m.instrument});
+    }
+    if (pool.length === 0) return [];
+    // Sort by |rankDelta| ascending for closest gaps
+    pool.sort((a, b) => {
+      const ma = matches.find(m => m.songId === a.song.track.su && m.instrument === a.instrumentKey);
+      const mb = matches.find(m => m.songId === b.song.track.su && m.instrument === b.instrumentKey);
+      return Math.abs(ma?.rankDelta ?? 999) - Math.abs(mb?.rankDelta ?? 999);
+    });
+
+    const key = `song_rival_gap_${rivalId}`;
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst(key, pool, take);
+    if (final.length === 0) return [];
+    return [{
+      key,
+      title: `Close the Gap vs ${rival.displayName}`,
+      description: `Songs where ${rival.displayName} barely leads you. One good run could overtake them.`,
+      songs: final.map(p => {
+        const m = matches.find(x => x.songId === p.song.track.su && x.instrument === p.instrumentKey);
+        return this.mapRivalSong(p, rival, m?.rankDelta ?? 0);
+      }),
+    }];
+  }
+
+  /** Protect Your Lead vs {rival}: songs where you barely lead (rankDelta > 0, sorted asc) */
+  private songRivalProtect(rivalId: string): SuggestionCategory[] {
+    if (!this.rivalData) return [];
+    const matches = this.rivalData.byRival.get(rivalId);
+    if (!matches || matches.length === 0) return [];
+    const rival = matches[0]!.rival;
+
+    const pool: SongPair[] = [];
+    for (const m of matches) {
+      if (m.rankDelta <= 0) continue;
+      const song = this.findSong(m.songId);
+      if (!song) continue;
+      const board = this.scoresIndex[m.songId];
+      const tracker = board ? getTracker(board, m.instrument) ?? null : null;
+      pool.push({song, tracker, instrumentKey: m.instrument});
+    }
+    if (pool.length === 0) return [];
+    pool.sort((a, b) => {
+      const ma = matches.find(m => m.songId === a.song.track.su && m.instrument === a.instrumentKey);
+      const mb = matches.find(m => m.songId === b.song.track.su && m.instrument === b.instrumentKey);
+      return (ma?.rankDelta ?? 999) - (mb?.rankDelta ?? 999);
+    });
+
+    const key = `song_rival_protect_${rivalId}`;
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst(key, pool, take);
+    if (final.length === 0) return [];
+    return [{
+      key,
+      title: `Protect Your Lead vs ${rival.displayName}`,
+      description: `You're barely ahead of ${rival.displayName} on these. Don't let them pass you.`,
+      songs: final.map(p => {
+        const m = matches.find(x => x.songId === p.song.track.su && x.instrument === p.instrumentKey);
+        return this.mapRivalSong(p, rival, m?.rankDelta ?? 0);
+      }),
+    }];
+  }
+
+  /** Battleground Songs: songs where 2+ rivals cluster near your rank */
+  private songRivalBattleground(): SuggestionCategory[] {
+    if (!this.rivalData) return [];
+    // Count rivals within ±10 ranks per song+instrument
+    const rivalCountBySong = new Map<string, number>();
+    for (const [, matches] of this.rivalData.byRival) {
+      for (const m of matches) {
+        if (Math.abs(m.rankDelta) <= 10) {
+          const k = `${m.songId}:${m.instrument}`;
+          rivalCountBySong.set(k, (rivalCountBySong.get(k) ?? 0) + 1);
+        }
+      }
+    }
+
+    const pool: SongPair[] = [];
+    for (const [k, count] of rivalCountBySong) {
+      if (count < 2) continue;
+      const [songId, instrument] = k.split(':') as [string, InstrumentKey];
+      const song = this.findSong(songId);
+      if (!song) continue;
+      const board = this.scoresIndex[songId];
+      const tracker = board ? getTracker(board, instrument) ?? null : null;
+      pool.push({song, tracker, instrumentKey: instrument});
+    }
+    if (pool.length === 0) return [];
+    this.shuffleInPlace(pool);
+
+    const key = 'song_rival_battleground';
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst(key, pool, take);
+    if (final.length === 0) return [];
+    return [{
+      key,
+      title: 'Battleground Songs',
+      description: 'Multiple rivals are clustered around your rank on these songs. Every position matters.',
+      songs: final.map(p => {
+        const ann = this.annotateWithRival(p.song.track.su, p.instrumentKey);
+        return {...this.mapUniqueSongWithInstrument(p), ...ann};
+      }),
+    }];
+  }
+
+  /** Rival Spotlight: curated mix of songs across sentiments for one rival */
+  private songRivalSpotlight(rivalId: string): SuggestionCategory[] {
+    if (!this.rivalData) return [];
+    const matches = this.rivalData.byRival.get(rivalId);
+    if (!matches || matches.length < 3) return [];
+    const rival = matches[0]!.rival;
+
+    const behind = matches.filter(m => m.rankDelta < 0).sort((a, b) => Math.abs(a.rankDelta) - Math.abs(b.rankDelta));
+    const ahead = matches.filter(m => m.rankDelta > 0).sort((a, b) => a.rankDelta - b.rankDelta);
+    const closest = [...matches].sort((a, b) => Math.abs(a.rankDelta) - Math.abs(b.rankDelta));
+
+    const picks: typeof matches = [];
+    // 1-2 catchup, 1-2 protect, 1 closest
+    if (behind.length > 0) picks.push(behind[0]!);
+    if (behind.length > 1) picks.push(behind[1]!);
+    if (ahead.length > 0) picks.push(ahead[0]!);
+    if (ahead.length > 1) picks.push(ahead[1]!);
+    const closestNew = closest.find(m => !picks.some(p => p.songId === m.songId));
+    if (closestNew) picks.push(closestNew);
+
+    const pool: SongPair[] = [];
+    for (const m of picks) {
+      const song = this.findSong(m.songId);
+      if (!song) continue;
+      const board = this.scoresIndex[m.songId];
+      const tracker = board ? getTracker(board, m.instrument) ?? null : null;
+      pool.push({song, tracker, instrumentKey: m.instrument});
+    }
+    if (pool.length < 3) return [];
+
+    const key = `song_rival_spotlight_${rivalId}`;
+    if (this.emitted.has(key)) return [];
+    return [{
+      key,
+      title: `Rival Spotlight: ${rival.displayName}`,
+      description: `A curated mix of your rivalry with ${rival.displayName} — catches, defenses, and closest battles.`,
+      songs: pool.map(p => {
+        const m = matches.find(x => x.songId === p.song.track.su && x.instrument === p.instrumentKey);
+        return this.mapRivalSong(p, rival, m?.rankDelta ?? 0);
+      }),
+    }];
+  }
+
+  /** {rival} is Pulling Ahead: large rival leads (rankDelta < -20) */
+  private songRivalSlipping(rivalId: string): SuggestionCategory[] {
+    if (!this.rivalData) return [];
+    const matches = this.rivalData.byRival.get(rivalId);
+    if (!matches) return [];
+    const rival = matches[0]!.rival;
+
+    const pool: SongPair[] = [];
+    for (const m of matches) {
+      if (m.rankDelta >= -20) continue;
+      const song = this.findSong(m.songId);
+      if (!song) continue;
+      const board = this.scoresIndex[m.songId];
+      const tracker = board ? getTracker(board, m.instrument) ?? null : null;
+      pool.push({song, tracker, instrumentKey: m.instrument});
+    }
+    if (pool.length === 0) return [];
+    this.shuffleInPlace(pool);
+
+    const key = `song_rival_slipping_${rivalId}`;
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst(key, pool, take);
+    if (final.length === 0) return [];
+    return [{
+      key,
+      title: `${rival.displayName} is Pulling Ahead`,
+      description: `${rival.displayName} has a big lead on these songs. Time to close the gap.`,
+      songs: final.map(p => {
+        const m = matches.find(x => x.songId === p.song.track.su && x.instrument === p.instrumentKey);
+        return this.mapRivalSong(p, rival, m?.rankDelta ?? 0);
+      }),
+    }];
+  }
+
+  /** Dominate {rival}: large user leads (rankDelta > 30) */
+  private songRivalDominate(rivalId: string): SuggestionCategory[] {
+    if (!this.rivalData) return [];
+    const matches = this.rivalData.byRival.get(rivalId);
+    if (!matches) return [];
+    const rival = matches[0]!.rival;
+
+    const pool: SongPair[] = [];
+    for (const m of matches) {
+      if (m.rankDelta <= 30) continue;
+      const song = this.findSong(m.songId);
+      if (!song) continue;
+      const board = this.scoresIndex[m.songId];
+      const tracker = board ? getTracker(board, m.instrument) ?? null : null;
+      pool.push({song, tracker, instrumentKey: m.instrument});
+    }
+    if (pool.length === 0) return [];
+    this.shuffleInPlace(pool);
+
+    const key = `song_rival_dominate_${rivalId}`;
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst(key, pool, take);
+    if (final.length === 0) return [];
+    return [{
+      key,
+      title: `Dominate ${rival.displayName}`,
+      description: `You're crushing ${rival.displayName} on these. Keep up the dominance.`,
+      songs: final.map(p => {
+        const m = matches.find(x => x.songId === p.song.track.su && x.instrument === p.instrumentKey);
+        return this.mapRivalSong(p, rival, m?.rankDelta ?? 0);
+      }),
+    }];
+  }
+
+  // ─── Cross-pollination rivalry-enhanced variants ─────────────
+
+  /** Near FC songs where a rival also has a score (per-song data). */
+  private songRivalNearFc(): SuggestionCategory[] {
+    if (!this.rivalData) return [];
+    const pool: SongPair[] = [];
+    for (const s of this.songs) {
+      const board = this.scoresIndex[s.track.su];
+      const pairs = this.eachTracker(s, board, t => t.numStars >= 5 && t.percentHit >= 920000 && !t.isFullCombo);
+      for (const p of pairs) {
+        const key = `${p.song.track.su}:${p.instrumentKey}`;
+        if (this.rivalData.closestRivalBySong.has(key)) pool.push(p);
+      }
+    }
+    if (pool.length === 0) return [];
+    this.shuffleInPlace(pool);
+
+    const key = 'song_rival_near_fc';
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst(key, pool, take);
+    if (final.length === 0) return [];
+    const firstMatch = this.rivalData.closestRivalBySong.get(`${final[0]!.song.track.su}:${final[0]!.instrumentKey}`);
+    const rivalName = firstMatch?.rival.displayName ?? 'a rival';
+    return [{
+      key,
+      title: `FC These to Beat ${rivalName}!`,
+      description: 'Almost FC songs where your rival also competes. Nail the combo to pull ahead.',
+      songs: final.map(p => {
+        const ann = this.annotateWithRival(p.song.track.su, p.instrumentKey);
+        return {...this.mapUniqueSongWithInstrument(p), ...ann};
+      }),
+    }];
+  }
+
+  /** Stale songs where a rival is beating you. */
+  private songRivalStale(): SuggestionCategory[] {
+    if (!this.rivalData || this.currentSeason === 0) return [];
+    const pool: SongPair[] = [];
+    for (const s of this.songs) {
+      const board = this.scoresIndex[s.track.su];
+      if (!board) continue;
+      for (const ins of Instruments) {
+        const tr = getTracker(board, ins);
+        if (!tr || tr.seasonAchieved === 0) continue;
+        if (this.currentSeason - tr.seasonAchieved < 2) continue; // Must be stale (2+ seasons old)
+        const rivalKey = `${s.track.su}:${ins}`;
+        const match = this.rivalData.closestRivalBySong.get(rivalKey);
+        if (match && match.rankDelta < 0) { // Rival is ahead on this stale song
+          pool.push({song: s, tracker: tr, instrumentKey: ins});
+        }
+      }
+    }
+    if (pool.length === 0) return [];
+    this.shuffleInPlace(pool);
+
+    const key = 'song_rival_stale';
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst(key, pool, take);
+    if (final.length === 0) return [];
+    return [{
+      key,
+      title: 'Stale Songs Your Rivals Are Beating You On',
+      description: "Songs you haven't touched in a while where rivals have pulled ahead.",
+      songs: final.map(p => {
+        const ann = this.annotateWithRival(p.song.track.su, p.instrumentKey);
+        return {...this.mapUniqueSongWithInstrument(p), ...ann};
+      }),
+    }];
+  }
+
+  /** Star gain songs where improving would also pass a rival. */
+  private songRivalStarGains(): SuggestionCategory[] {
+    if (!this.rivalData) return [];
+    const pool: SongPair[] = [];
+    for (const s of this.songs) {
+      const board = this.scoresIndex[s.track.su];
+      const pairs = this.eachTracker(s, board, t => t.numStars >= 3 && t.numStars <= 5);
+      for (const p of pairs) {
+        const k = `${p.song.track.su}:${p.instrumentKey}`;
+        const match = this.rivalData.closestRivalBySong.get(k);
+        if (match && match.rankDelta < 0) pool.push(p);
+      }
+    }
+    if (pool.length === 0) return [];
+    this.shuffleInPlace(pool);
+
+    const key = 'song_rival_star_gains';
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst(key, pool, take);
+    if (final.length === 0) return [];
+    const firstMatch = this.rivalData.closestRivalBySong.get(`${final[0]!.song.track.su}:${final[0]!.instrumentKey}`);
+    const rivalName = firstMatch?.rival.displayName ?? 'a rival';
+    return [{
+      key,
+      title: `Gain Stars & Beat ${rivalName}`,
+      description: 'Improving your star count on these would also overtake a rival.',
+      songs: final.map(p => {
+        const ann = this.annotateWithRival(p.song.track.su, p.instrumentKey);
+        return {...this.mapUniqueSongWithInstrument(p), ...ann};
+      }),
+    }];
+  }
+
+  /** Percentile push songs where climbing would also pass a rival. */
+  private songRivalPctPush(): SuggestionCategory[] {
+    if (!this.rivalData) return [];
+    const pool: SongPair[] = [];
+    for (const s of this.songs) {
+      const board = this.scoresIndex[s.track.su];
+      if (!board) continue;
+      for (const ins of Instruments) {
+        const tr = getTracker(board, ins);
+        if (!tr || tr.rawPercentile <= 0) continue;
+        const bucket = SuggestionGenerator.percentileBucket(tr.rawPercentile);
+        if (bucket == null || bucket <= 1) continue; // Already top 1%
+        const k = `${s.track.su}:${ins}`;
+        const match = this.rivalData.closestRivalBySong.get(k);
+        if (match && match.rankDelta < 0) {
+          pool.push({song: s, tracker: tr, instrumentKey: ins});
+        }
+      }
+    }
+    if (pool.length === 0) return [];
+    this.shuffleInPlace(pool);
+
+    const key = 'song_rival_pct_push';
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst(key, pool, take);
+    if (final.length === 0) return [];
+    const firstMatch = this.rivalData.closestRivalBySong.get(`${final[0]!.song.track.su}:${final[0]!.instrumentKey}`);
+    const rivalName = firstMatch?.rival.displayName ?? 'a rival';
+    return [{
+      key,
+      title: `Climb Past ${rivalName}`,
+      description: 'A percentile push on these would also move you past a rival.',
+      songs: final.map(p => {
+        const ann = this.annotateWithRival(p.song.track.su, p.instrumentKey);
+        return {...this.mapUniqueSongWithInstrument(p), ...ann};
+      }),
     }];
   }
 }
