@@ -3,6 +3,7 @@ import type { FirstRunSlideDef } from '../../../firstRun/types';
 import ShopOverviewDemo from './demo/ShopOverviewDemo';
 import ShopViewsDemo from './demo/ShopViewsDemo';
 import ShopHighlightingDemo from './demo/ShopHighlightingDemo';
+import ShopLeavingTomorrowDemo from './demo/ShopLeavingTomorrowDemo';
 
 const shopOverviewSlide: FirstRunSlideDef = {
   id: 'shop-overview',
@@ -32,8 +33,19 @@ const shopHighlightingSlide: FirstRunSlideDef = {
   contentStaggerCount: 5,
 };
 
+const shopLeavingTomorrowSlide: FirstRunSlideDef = {
+  id: 'shop-leaving-tomorrow',
+  version: 1,
+  title: 'firstRun.shop.leaving.title',
+  description: 'firstRun.shop.leaving.description',
+  gate: (ctx) => !!ctx.shopHighlightEnabled,
+  render: () => createElement(ShopLeavingTomorrowDemo),
+  contentStaggerCount: 5,
+};
+
 export const shopSlides: FirstRunSlideDef[] = [
   shopOverviewSlide,
   shopViewsSlide,
   shopHighlightingSlide,
+  shopLeavingTomorrowSlide,
 ];

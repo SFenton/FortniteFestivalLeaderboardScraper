@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { shopSlides } from '../../../src/pages/shop/firstRun';
 
 describe('shop first-run slides', () => {
-  it('exports 3 slides', () => {
-    expect(shopSlides).toHaveLength(3);
+  it('exports 4 slides', () => {
+    expect(shopSlides).toHaveLength(4);
   });
 
   it('all slides have required fields', () => {

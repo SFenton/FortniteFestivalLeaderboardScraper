@@ -390,6 +390,8 @@ export default memo(function ScoreHistoryChart({
                     season={displayedPoint.season}
                     accuracy={displayedPoint.accuracy * ACCURACY_SCALE}
                     isFullCombo={!!displayedPoint.isFullCombo}
+                    difficulty={displayedPoint.difficulty}
+                    showDifficulty={displayedPoint.difficulty != null}
                     showSeason={displayedPoint.season != null}
                     showAccuracy
                     scoreWidth={scoreWidthProp}

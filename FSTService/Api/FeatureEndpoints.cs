@@ -16,6 +16,7 @@ public static partial class ApiEndpoints
                 compete = f.Compete,
                 leaderboards = f.Leaderboards,
                 firstRun = f.FirstRun,
+                difficulty = f.Difficulty,
             });
         })
         .WithTags("Features")

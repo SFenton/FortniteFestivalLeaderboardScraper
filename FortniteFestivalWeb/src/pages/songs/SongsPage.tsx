@@ -157,7 +157,7 @@ export default function SongsPage() {
   /* v8 ignore stop */
   const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress } = usePlayerData();
   const shopCtx = useShop();
-  const { isShopHighlighted, isShopVisible } = useShopState();
+  const { isShopHighlighted, isLeavingTomorrow, isShopVisible } = useShopState();
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!playerData, shopHighlightEnabled: isShopVisible && !appSettings.disableShopHighlighting }), [playerData, isShopVisible, appSettings.disableShopHighlighting]);
 
   // Build lookup: songId â†’ PlayerScore for the selected instrument
@@ -488,6 +488,7 @@ export default function SongsPage() {
                       staggerDelay={shouldStagger && i < maxVisibleSongs ? (staggerDelay(i, 125, maxVisibleSongs) ?? maxVisibleSongs * 125) : undefined}
                       /* v8 ignore stop */
                       shopHighlight={isShopHighlighted(song.songId)}
+                      shopHighlightRed={isLeavingTomorrow(song.songId)}
                     />
                   </div>
                 );

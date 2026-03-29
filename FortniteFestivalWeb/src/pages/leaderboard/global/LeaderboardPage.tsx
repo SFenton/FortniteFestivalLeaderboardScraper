@@ -306,6 +306,8 @@ export default function LeaderboardPage() {
                     isFullCombo={!!e.isFullCombo}
                     stars={e.stars}
                     isPlayer={playerData?.accountId === e.accountId}
+                    difficulty={e.difficulty}
+                    showDifficulty={showSeason}
                     showSeason={showSeason}
                     showAccuracy={showAccuracy}
                     showStars={showStars}
@@ -328,6 +330,8 @@ export default function LeaderboardPage() {
                         isFullCombo={!!playerScore!.isFullCombo}
                         stars={playerScore!.stars}
                         isPlayer
+                        difficulty={playerScore!.difficulty}
+                        showDifficulty={showSeason}
                         showSeason={showSeason}
                         showAccuracy={showAccuracy}
                         showStars={showStars}

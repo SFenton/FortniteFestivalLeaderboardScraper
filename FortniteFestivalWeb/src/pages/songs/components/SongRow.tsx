@@ -132,6 +132,7 @@ export const SongRow = memo(function SongRow({ song,
   isMobile,
   staggerDelay,
   shopHighlight,
+  shopHighlightRed,
   externalHref,
 }: {
   song: Song;
@@ -146,6 +147,8 @@ export const SongRow = memo(function SongRow({ song,
   isMobile: boolean;
   staggerDelay?: number;
   shopHighlight?: boolean;
+  /** When true, uses red "leaving tomorrow" pulse instead of blue shop pulse. */
+  shopHighlightRed?: boolean;
   /** When set, the row links to this external URL in a new tab instead of routing internally. */
   externalHref?: string;
 }) {
@@ -201,7 +204,7 @@ export const SongRow = memo(function SongRow({ song,
 
   /* v8 ignore start -- computed rendering variables with ternaries */
   const rowStyle = isMobile ? s.rowMobile : s.row;
-  const rowClassName = shopHighlight ? anim.shopHighlight : undefined;
+  const rowClassName = shopHighlightRed ? anim.shopHighlightRed : shopHighlight ? anim.shopHighlight : undefined;
 
   const songInfo = <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} />;
 

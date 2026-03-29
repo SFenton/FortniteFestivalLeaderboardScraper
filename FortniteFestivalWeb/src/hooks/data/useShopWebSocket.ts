@@ -23,6 +23,8 @@ function getWsUrl(): string {
 export type ShopState = {
   /** Set of songIds currently in the item shop. Null until first snapshot. */
   shopSongIds: ReadonlySet<string> | null;
+  /** Set of in-shop songIds whose offer expires tomorrow (UTC). */
+  leavingTomorrowIds: ReadonlySet<string> | null;
   /** Whether the WebSocket is currently connected. */
   connected: boolean;
 };
@@ -34,8 +36,12 @@ export type ShopState = {
  *                         Used as the starting set before the first WS snapshot arrives.
  */
 /* v8 ignore start -- WebSocket lifecycle cannot be exercised in jsdom */
-export function useShopWebSocket(initialShopIds: ReadonlySet<string> | null): ShopState {
+export function useShopWebSocket(
+  initialShopIds: ReadonlySet<string> | null,
+  initialLeavingIds: ReadonlySet<string> | null = null,
+): ShopState {
   const [shopSongIds, setShopSongIds] = useState<ReadonlySet<string> | null>(initialShopIds);
+  const [leavingTomorrowIds, setLeavingTomorrowIds] = useState<ReadonlySet<string> | null>(initialLeavingIds);
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectDelay = useRef(RECONNECT_BASE_MS);
@@ -49,6 +55,12 @@ export function useShopWebSocket(initialShopIds: ReadonlySet<string> | null): Sh
     }
   }, [initialShopIds, shopSongIds]);
 
+  useEffect(() => {
+    if (initialLeavingIds && !leavingTomorrowIds) {
+      setLeavingTomorrowIds(initialLeavingIds);
+    }
+  }, [initialLeavingIds, leavingTomorrowIds]);
+
   const handleMessage = useCallback((event: MessageEvent) => {
     try {
       const msg = JSON.parse(event.data as string) as WsNotificationMessage;
@@ -56,6 +68,7 @@ export function useShopWebSocket(initialShopIds: ReadonlySet<string> | null): Sh
         case 'shop_snapshot': {
           const snap = msg as ShopSnapshotMessage;
           setShopSongIds(new Set(snap.songIds));
+          setLeavingTomorrowIds(new Set(snap.leavingTomorrow ?? []));
           break;
         }
         case 'shop_changed': {
@@ -66,6 +79,7 @@ export function useShopWebSocket(initialShopIds: ReadonlySet<string> | null): Sh
             for (const id of delta.added) next.add(id);
             return next;
           });
+          setLeavingTomorrowIds(new Set(delta.leavingTomorrow ?? []));
           break;
         }
         // Other notification types can be handled here in the future
@@ -117,6 +131,6 @@ export function useShopWebSocket(initialShopIds: ReadonlySet<string> | null): Sh
     };
   }, [connect]);
 
-  return { shopSongIds, connected };
+  return { shopSongIds, leavingTomorrowIds, connected };
 }
 /* v8 ignore stop */

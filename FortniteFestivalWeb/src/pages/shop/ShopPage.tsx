@@ -41,7 +41,7 @@ function loadViewMode(): 'grid' | 'list' {
 
 export default function ShopPage() {
   const { t } = useTranslation();
-  const { shopSongs } = useShopState();
+  const { shopSongs, isLeavingTomorrow } = useShopState();
   const { settings } = useSettings();
   const isMobileChrome = useIsMobileChrome();
   const navType = useNavigationType();
@@ -172,6 +172,7 @@ export default function ShopPage() {
             <div className={fx.shopGrid} key={`grid-${staggerGen}`}>
               {sorted.map((song, i) => (
                 <ShopCard key={song.songId} song={song}
+                  leavingTomorrow={isLeavingTomorrow(song.songId)}
                   staggerDelay={shouldStagger ? calcStagger(Math.min(i, maxVisibleGrid - 1), gridInterval, maxVisibleGrid) : undefined}
                 />
               ))}
@@ -189,6 +190,8 @@ export default function ShopPage() {
                   sortMode="title"
                   isMobile={false}
                   externalHref={song.shopUrl}
+                  shopHighlight
+                  shopHighlightRed={isLeavingTomorrow(song.songId)}
                   staggerDelay={shouldStagger ? calcStagger(Math.min(i, maxVisibleRows - 1), rowInterval, maxVisibleRows) : undefined}
                 />
               ))}

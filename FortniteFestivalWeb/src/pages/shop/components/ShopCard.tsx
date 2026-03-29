@@ -3,14 +3,16 @@ import { memo, useRef, useCallback, useMemo, type CSSProperties } from 'react';
 import type { ServerSong as Song } from '@festival/core/api/serverTypes';
 import { Colors, Font, Weight, Gap, Radius, Border, Display, Position, Overflow, ObjectFit, WhiteSpace, Opacity, CssValue, border, FADE_DURATION } from '@festival/theme';
 import { truncate } from '@festival/theme';
+import anim from '../../../styles/animations.module.css';
 
 interface ShopCardProps {
   song: Song;
+  leavingTomorrow?: boolean;
   staggerDelay?: number;
 }
 
 /* v8 ignore start -- visual component tested via ShopPage integration */
-export default memo(function ShopCard({ song, staggerDelay }: ShopCardProps) {
+export default memo(function ShopCard({ song, leavingTomorrow, staggerDelay }: ShopCardProps) {
   const href = song.shopUrl ?? `/songs/${song.songId}`;
   const isExternal = !!song.shopUrl;
   const ref = useRef<HTMLAnchorElement>(null);
@@ -36,6 +38,7 @@ export default memo(function ShopCard({ song, staggerDelay }: ShopCardProps) {
       href={isExternal ? href : `#${href}`}
       {...(isExternal ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
       style={{ ...s.card, ...animStyle }}
+      className={leavingTomorrow ? anim.shopHighlightRed : undefined}
       onAnimationEnd={handleAnimEnd}
     >
       {song.albumArt ? (

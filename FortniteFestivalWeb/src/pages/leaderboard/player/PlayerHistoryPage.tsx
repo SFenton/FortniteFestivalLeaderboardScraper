@@ -290,6 +290,8 @@ export default function PlayerHistoryPage() {
                     accuracy={h.accuracy}
                     isFullCombo={!!h.isFullCombo}
                     isPlayer={isHighScore}
+                    difficulty={h.difficulty}
+                    showDifficulty={showSeason}
                     showSeason={showSeason}
                     showAccuracy={showAccuracy}
                     scoreWidth={scoreWidth}

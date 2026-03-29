@@ -12,7 +12,7 @@ public sealed class MetaDatabase : IDisposable
     /// Bump this when data-collection logic changes in a way that requires
     /// re-running backfill / history reconstruction for all users.
     /// </summary>
-    internal const int DataCollectionVersion = 2;
+    internal const int DataCollectionVersion = 3;
 
     /// <summary>
     /// Bump this when rivals computation logic changes in a way that requires
@@ -272,8 +272,9 @@ public sealed class MetaDatabase : IDisposable
                 ON RivalSongSamples (UserId, RivalAccountId, Instrument);
 
             CREATE TABLE IF NOT EXISTS ItemShopTracks (
-                SongId    TEXT PRIMARY KEY,
-                ScrapedAt TEXT NOT NULL
+                SongId          TEXT    PRIMARY KEY,
+                ScrapedAt       TEXT    NOT NULL,
+                LeavingTomorrow INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS CompositeRankings (
@@ -2704,7 +2705,7 @@ public sealed class MetaDatabase : IDisposable
     /// <summary>
     /// Replaces the entire ItemShopTracks table with the given set of song IDs.
     /// </summary>
-    public void SaveItemShopTracks(IReadOnlySet<string> songIds, DateTime scrapedAt)
+    public void SaveItemShopTracks(IReadOnlySet<string> songIds, IReadOnlySet<string> leavingTomorrow, DateTime scrapedAt)
     {
         var ts = scrapedAt.ToString("o");
         using var conn = OpenConnection();
@@ -2720,14 +2721,16 @@ public sealed class MetaDatabase : IDisposable
         using (var ins = conn.CreateCommand())
         {
             ins.Transaction = tx;
-            ins.CommandText = "INSERT INTO ItemShopTracks (SongId, ScrapedAt) VALUES (@songId, @ts);";
+            ins.CommandText = "INSERT INTO ItemShopTracks (SongId, ScrapedAt, LeavingTomorrow) VALUES (@songId, @ts, @leaving);";
             var pSongId = ins.Parameters.Add("@songId", Microsoft.Data.Sqlite.SqliteType.Text);
             var pTs = ins.Parameters.Add("@ts", Microsoft.Data.Sqlite.SqliteType.Text);
+            var pLeaving = ins.Parameters.Add("@leaving", Microsoft.Data.Sqlite.SqliteType.Integer);
             pTs.Value = ts;
 
             foreach (var songId in songIds)
             {
                 pSongId.Value = songId;
+                pLeaving.Value = leavingTomorrow.Contains(songId) ? 1 : 0;
                 ins.ExecuteNonQuery();
             }
         }
@@ -2736,19 +2739,25 @@ public sealed class MetaDatabase : IDisposable
     }
 
     /// <summary>
-    /// Loads the persisted set of in-shop song IDs from the database.
+    /// Loads the persisted set of in-shop song IDs and leaving-tomorrow set from the database.
     /// </summary>
-    public HashSet<string> LoadItemShopTracks()
+    public (HashSet<string> InShop, HashSet<string> LeavingTomorrow) LoadItemShopTracks()
     {
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT SongId FROM ItemShopTracks;";
+        cmd.CommandText = "SELECT SongId, LeavingTomorrow FROM ItemShopTracks;";
 
-        var set = new HashSet<string>();
+        var inShop = new HashSet<string>();
+        var leaving = new HashSet<string>();
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
-            set.Add(reader.GetString(0));
-        return set;
+        {
+            var songId = reader.GetString(0);
+            inShop.Add(songId);
+            if (reader.GetInt64(1) == 1)
+                leaving.Add(songId);
+        }
+        return (inShop, leaving);
     }
 
     // ─── Rankings ───────────────────────────────────────────────

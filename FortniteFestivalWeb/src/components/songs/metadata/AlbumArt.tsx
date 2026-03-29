@@ -14,7 +14,7 @@ export function _resetLoadedSrcs() { loadedSrcs.clear(); }
 /** @internal — exposed for tests only */
 export function _markLoaded(src: string) { loadedSrcs.add(src); }
 
-export default memo(function AlbumArt({ src, size, style, priority, pulse }: { src?: string; size: number; style?: CSSProperties; priority?: boolean; pulse?: boolean }) {
+export default memo(function AlbumArt({ src, size, style, priority, pulse, pulseRed }: { src?: string; size: number; style?: CSSProperties; priority?: boolean; pulse?: boolean; pulseRed?: boolean }) {
   const styles = useStyles();
   const alreadyKnown = !!(src && loadedSrcs.has(src));
   const [loaded, setLoaded] = useState(alreadyKnown);
@@ -36,7 +36,7 @@ export default memo(function AlbumArt({ src, size, style, priority, pulse }: { s
   const sizeVars = { ...styles.root, width: size, height: size, ...style } as CSSProperties;
 
   /* v8 ignore start -- pulse and failed branches */
-  const rootClass = pulse ? anim.albumPulse : undefined;
+  const rootClass = pulseRed ? anim.albumPulseRed : pulse ? anim.albumPulse : undefined;
 
   if (!src || failed) {
     return <div className={rootClass} style={sizeVars} />;

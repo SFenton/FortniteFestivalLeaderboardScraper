@@ -65,7 +65,7 @@ export default function SongDetailPage() {
   const fabSearch = useFabSearch();
   const { filterPlayerScores, filterHistory: filterScoreHistory, leewayParam } = useScoreFilter();
   const [pathsOpen, setPathsOpen] = useState(false);
-  const { isShopVisible, isShopHighlighted, getShopUrl } = useShopState();
+  const { isShopVisible, isShopHighlighted, isLeavingTomorrow, getShopUrl } = useShopState();
 
   const navType = useNavigationType();
   const location = useLocation();
@@ -346,6 +346,7 @@ export default function SongDetailPage() {
             onOpenPaths={() => setPathsOpen(true)}
             shopUrl={showShop ? shopUrl : undefined}
             shopPulse={showShop && song ? isShopHighlighted(song.songId) : false}
+            shopLeavingTomorrow={showShop && song ? isLeavingTomorrow(song.songId) : false}
             hideBackground
           />
         </div>

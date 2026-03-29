@@ -28,6 +28,7 @@ function useStyles(isCurrent: boolean) {
       color: isCurrent ? Colors.surfaceSubtle : Colors.textSecondary,
       fontSize: Font.lg,
       fontWeight: Weight.semibold,
+      lineHeight: '20px',
       border: border(Border.thick, isCurrent ? Colors.surfaceSubtle : Colors.borderSubtle),
       display: Display.inlineBlock,
     } as CSSProperties,

@@ -9,9 +9,9 @@ import { shopButtonMobileSlide, shopButtonDesktopSlide } from '../../../../src/p
 import { historySlide } from '../../../../src/pages/songinfo/firstRun/pages/History';
 
 describe('songInfoSlides', () => {
-  it('returns 6 slides', () => {
-    expect(songInfoSlides(false)).toHaveLength(6);
-    expect(songInfoSlides(true)).toHaveLength(6);
+  it('returns 7 slides', () => {
+    expect(songInfoSlides(false)).toHaveLength(7);
+    expect(songInfoSlides(true)).toHaveLength(7);
   });
 
   it('returns desktop paths slide when isMobile is false', () => {

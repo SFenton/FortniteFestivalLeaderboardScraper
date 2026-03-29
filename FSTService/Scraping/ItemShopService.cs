@@ -14,7 +14,11 @@ namespace FSTService.Scraping;
 public interface IShopProvider
 {
     IReadOnlySet<string> InShopSongIds { get; }
+    IReadOnlySet<string> LeavingTomorrowSongIds { get; }
 }
+
+/// <summary>Entry extracted from the fortnite-api.com shop JSON for a single jam track.</summary>
+internal readonly record struct ShopTrackEntry(string Title, DateTime? OutDate);
 
 /// <summary>
 /// Scrapes the Fortnite Item Shop Jam Tracks page to determine which songs
@@ -35,6 +39,7 @@ public sealed partial class ItemShopService : IShopProvider
     private FSTService.Api.SongsCacheService? _songsCache;
 
     private HashSet<string> _inShopSongIds = new();
+    private HashSet<string> _leavingTomorrowSongIds = new();
     private string? _lastContentHash;
     private DateTime? _lastScrapedAt;
     private Timer? _midnightTimer;
@@ -44,6 +49,12 @@ public sealed partial class ItemShopService : IShopProvider
     public IReadOnlySet<string> InShopSongIds
     {
         get { lock (_lock) return _inShopSongIds; }
+    }
+
+    /// <summary>The subset of in-shop songIds whose offer expires tomorrow (UTC).</summary>
+    public IReadOnlySet<string> LeavingTomorrowSongIds
+    {
+        get { lock (_lock) return _leavingTomorrowSongIds; }
     }
 
     /// <summary>When the last successful scrape completed (UTC).</summary>
@@ -80,13 +91,15 @@ public sealed partial class ItemShopService : IShopProvider
     public async Task InitializeAsync(CancellationToken ct = default)
     {
         // Load stale-but-valid data from DB to serve immediately
-        var persisted = _metaDb.LoadItemShopTracks();
+        var (persisted, persistedLeaving) = _metaDb.LoadItemShopTracks();
         if (persisted.Count > 0)
         {
             lock (_lock)
             {
                 _inShopSongIds = persisted;
-                _log.LogInformation("Loaded {Count} in-shop songs from DB.", persisted.Count);
+                _leavingTomorrowSongIds = persistedLeaving;
+                _log.LogInformation("Loaded {Count} in-shop songs from DB ({Leaving} leaving tomorrow).",
+                    persisted.Count, persistedLeaving.Count);
             }
         }
 
@@ -122,8 +135,9 @@ public sealed partial class ItemShopService : IShopProvider
         response.EnsureSuccessStatusCode();
         var json = await response.Content.ReadAsStringAsync(ct);
 
-        // Parse the API response for jam track titles
-        var titles = ExtractJamTrackTitles(json);
+        // Parse the API response for jam track entries (title + outDate)
+        var entries = ExtractJamTrackEntries(json);
+        var titles = entries.Select(e => e.Title).ToList();
         if (titles.Count == 0)
         {
             _log.LogWarning("No Jam Tracks found in fortnite-api.com shop response.");
@@ -176,17 +190,21 @@ public sealed partial class ItemShopService : IShopProvider
         var added = matched.Except(previousIds).ToList();
         var removed = previousIds.Except(matched).ToList();
 
+        // Compute leaving-tomorrow set from outDate
+        var leavingTomorrow = ComputeLeavingTomorrow(entries, matched);
+
         // Update state
         var now = DateTime.UtcNow;
         lock (_lock)
         {
             _inShopSongIds = matched;
+            _leavingTomorrowSongIds = leavingTomorrow;
             _lastContentHash = contentHash;
             _lastScrapedAt = now;
         }
 
         // Persist to DB
-        _metaDb.SaveItemShopTracks(matched, now);
+        _metaDb.SaveItemShopTracks(matched, leavingTomorrow, now);
 
         // Invalidate songs cache so /api/songs picks up shop changes
         _songsCache?.Invalidate();
@@ -196,7 +214,7 @@ public sealed partial class ItemShopService : IShopProvider
         {
             try
             {
-                await _notifications.NotifyShopChangedAsync(added, removed, matched.Count);
+                await _notifications.NotifyShopChangedAsync(added, removed, matched.Count, leavingTomorrow);
                 _log.LogInformation(
                     "Shop change broadcast: {Added} added, {Removed} removed.",
                     added.Count, removed.Count);
@@ -270,22 +288,44 @@ public sealed partial class ItemShopService : IShopProvider
     /// </summary>
     internal static List<string> ExtractJamTrackTitles(string json)
     {
-        var titles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        return ExtractJamTrackEntries(json).Select(e => e.Title).ToList();
+    }
+
+    /// <summary>
+    /// Extracts Jam Track entries (title + outDate) from the fortnite-api.com /v2/shop JSON response.
+    /// Each shop entry has an <c>outDate</c> that applies to all tracks within it.
+    /// </summary>
+    internal static List<ShopTrackEntry> ExtractJamTrackEntries(string json)
+    {
+        var result = new List<ShopTrackEntry>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
             using var doc = System.Text.Json.JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("data", out var data)) return [];
-            if (!data.TryGetProperty("entries", out var entries)) return [];
+            if (!doc.RootElement.TryGetProperty("data", out var data)) return result;
+            if (!data.TryGetProperty("entries", out var entries)) return result;
 
             foreach (var entry in entries.EnumerateArray())
             {
                 if (!entry.TryGetProperty("tracks", out var tracks)) continue;
+
+                DateTime? outDate = null;
+                if (entry.TryGetProperty("outDate", out var outDateProp) &&
+                    outDateProp.GetString() is { Length: > 0 } outDateStr &&
+                    DateTime.TryParse(outDateStr, System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+                        out var parsedOutDate))
+                {
+                    outDate = parsedOutDate;
+                }
+
                 foreach (var track in tracks.EnumerateArray())
                 {
                     if (track.TryGetProperty("title", out var title) &&
-                        title.GetString() is { Length: > 0 } t)
+                        title.GetString() is { Length: > 0 } t &&
+                        seen.Add(t))
                     {
-                        titles.Add(t);
+                        result.Add(new ShopTrackEntry(t, outDate));
                     }
                 }
             }
@@ -294,7 +334,52 @@ public sealed partial class ItemShopService : IShopProvider
         {
             // Malformed JSON — return empty
         }
-        return titles.ToList();
+        return result;
+    }
+
+    /// <summary>
+    /// Given the parsed shop entries and matched songIds, returns the set of songIds
+    /// whose offer expires tomorrow (UTC).
+    /// </summary>
+    internal static HashSet<string> ComputeLeavingTomorrow(
+        List<ShopTrackEntry> entries,
+        HashSet<string> matchedSongIds,
+        Dictionary<string, string> titleToSongId,
+        DateTime? utcNow = null)
+    {
+        var now = utcNow ?? DateTime.UtcNow;
+        var tomorrow = now.Date.AddDays(1);
+        var leaving = new HashSet<string>();
+
+        foreach (var entry in entries)
+        {
+            if (!entry.OutDate.HasValue) continue;
+            if (entry.OutDate.Value.Date != tomorrow) continue;
+            if (titleToSongId.TryGetValue(entry.Title, out var songId) &&
+                matchedSongIds.Contains(songId))
+            {
+                leaving.Add(songId);
+            }
+        }
+
+        return leaving;
+    }
+
+    /// <summary>
+    /// Instance overload that resolves title→songId from the FestivalService catalog.
+    /// </summary>
+    private HashSet<string> ComputeLeavingTomorrow(
+        List<ShopTrackEntry> entries,
+        HashSet<string> matchedSongIds)
+    {
+        var titleToSongId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var song in _festivalService.Songs)
+        {
+            if (song.track?.tt is not null && song.track.su is not null)
+                titleToSongId.TryAdd(song.track.tt, song.track.su);
+        }
+
+        return ComputeLeavingTomorrow(entries, matchedSongIds, titleToSongId);
     }
 
     // ─── HTML Parsing (legacy) ──────────────────────────────────
@@ -345,6 +430,10 @@ public sealed partial class ItemShopService : IShopProvider
     {
         _log.LogInformation("Midnight UTC — starting shop rotation poll...");
 
+        // Recompute leaving-tomorrow since the date boundary shifted,
+        // even before we detect any content change.
+        await RecomputeLeavingTomorrowAsync();
+
         for (int attempt = 1; attempt <= MidnightMaxRetries; attempt++)
         {
             try
@@ -374,6 +463,53 @@ public sealed partial class ItemShopService : IShopProvider
 
         // Re-schedule for next midnight
         ScheduleMidnightTimer();
+    }
+
+    // ─── Leaving-Tomorrow Recompute ────────────────────────────
+
+    /// <summary>
+    /// Re-fetches the shop JSON solely to recompute the leaving-tomorrow set
+    /// (the date boundary has shifted at midnight). Broadcasts the updated set
+    /// even if the shop content hasn't changed.
+    /// </summary>
+    private async Task RecomputeLeavingTomorrowAsync()
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, FortniteApiShopUrl);
+            request.Headers.Accept.ParseAdd("application/json");
+            using var response = await _http.SendAsync(request, CancellationToken.None);
+            response.EnsureSuccessStatusCode();
+            var json = await response.Content.ReadAsStringAsync(CancellationToken.None);
+
+            var entries = ExtractJamTrackEntries(json);
+            HashSet<string> currentIds;
+            lock (_lock) currentIds = _inShopSongIds;
+
+            var leavingTomorrow = ComputeLeavingTomorrow(entries, currentIds);
+            HashSet<string> previousLeaving;
+            lock (_lock)
+            {
+                previousLeaving = _leavingTomorrowSongIds;
+                _leavingTomorrowSongIds = leavingTomorrow;
+            }
+
+            if (!leavingTomorrow.SetEquals(previousLeaving))
+            {
+                _metaDb.SaveItemShopTracks(currentIds, leavingTomorrow, DateTime.UtcNow);
+                _songsCache?.Invalidate();
+
+                if (_notifications is not null)
+                {
+                    await _notifications.NotifyShopChangedAsync([], [], currentIds.Count, leavingTomorrow);
+                    _log.LogInformation("Leaving-tomorrow set updated at midnight: {Count} songs.", leavingTomorrow.Count);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to recompute leaving-tomorrow set at midnight.");
+        }
     }
 
     // ─── Regex ──────────────────────────────────────────────────

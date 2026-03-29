@@ -8,7 +8,7 @@ import { useSettings } from '../../contexts/SettingsContext';
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 
 export function useShopState() {
-  const { shopSongIds, getShopUrl, shopSongs, connected } = useShop();
+  const { shopSongIds, leavingTomorrowIds, getShopUrl, shopSongs, connected } = useShop();
   const { settings } = useSettings();
   const flags = useFeatureFlags();
 
@@ -26,6 +26,12 @@ export function useShopState() {
     return shopSongIds?.has(songId) ?? false;
   }, [shopSongIds]);
 
+  /** True if the song's offer expires tomorrow and highlighting is enabled. */
+  const isLeavingTomorrow = useCallback((songId: string): boolean => {
+    if (effectiveHighlightDisabled) return false;
+    return leavingTomorrowIds?.has(songId) ?? false;
+  }, [leavingTomorrowIds, effectiveHighlightDisabled]);
+
   /** True if shop UI elements should be visible. */
   const isShopVisible = !shopFeatureOff && !settings.hideItemShop;
 
@@ -37,6 +43,7 @@ export function useShopState() {
   return {
     isShopHighlighted,
     isInShop,
+    isLeavingTomorrow,
     isShopVisible,
     getShopUrl,
     shopSongs: visibleShopSongs,

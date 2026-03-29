@@ -9,9 +9,10 @@ import { filterSlide } from './pages/Filter';
 import { songIconsSlide } from './pages/SongIcons';
 import { metadataSlide } from './pages/MetadataFilter';
 import { shopHighlightSlide } from './pages/ShopHighlight';
+import { leavingTomorrowSlide } from './pages/LeavingTomorrow';
 import type { FirstRunSlideDef } from '../../../firstRun/types';
 
 export function songSlides(isMobile: boolean): FirstRunSlideDef[] {
   const navSlide = isMobile ? navigationMobileSlide : navigationDesktopSlide;
-  return [songListSlide, sortSlide, navSlide, filterSlide, songIconsSlide, metadataSlide, shopHighlightSlide];
+  return [songListSlide, sortSlide, navSlide, filterSlide, songIconsSlide, metadataSlide, shopHighlightSlide, leavingTomorrowSlide];
 }

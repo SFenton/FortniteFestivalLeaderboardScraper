@@ -199,7 +199,7 @@ export default function SettingsPage() {
   const skipAnimRef = useRef(_hasRendered);
   _hasRendered = true;
 
-  const st = useSettingsStyles(isMobile, settings.filterInvalidScores);
+  const st = useSettingsStyles(isMobile, settings.filterInvalidScores, settings.songRowVisualOrderEnabled);
 
   /* v8 ignore start — version fetch + settings callbacks */
   useEffect(() => {
@@ -292,8 +292,8 @@ export default function SettingsPage() {
               onToggle={() => updateSettings({ songRowVisualOrderEnabled: !settings.songRowVisualOrderEnabled })}
               large={isMobile}
             />
-            {settings.songRowVisualOrderEnabled && (
-              <div>
+            <div data-testid="visual-order-collapse" style={st.visualOrderCollapseGrid}>
+              <div style={st.visualOrderCollapseInner}>
                 <div style={st.innerSectionTitle}>{t('settings.songRowVisualOrder')}</div>
                 <div style={st.sectionHint}>
                   {t('settings.songRowVisualOrderDesc')}
@@ -307,7 +307,7 @@ export default function SettingsPage() {
                   />
                 </div>
               </div>
-            )}
+            </div>
             <ToggleRow
               label={t('settings.filterInvalidScores')}
               description={t('settings.filterInvalidScoresToggleDesc')}
@@ -524,7 +524,7 @@ function useCardStyles() {
   }), []);
 }
 
-function useSettingsStyles(isMobile: boolean, filterOpen: boolean) {
+function useSettingsStyles(isMobile: boolean, filterOpen: boolean, visualOrderOpen: boolean) {
   return useMemo(() => ({
     container: {
       paddingBottom: Layout.paddingTop,
@@ -547,6 +547,15 @@ function useSettingsStyles(isMobile: boolean, filterOpen: boolean) {
     } as CSSProperties,
     reorderListWrap: {
       marginTop: Gap.md,
+    } as CSSProperties,
+    visualOrderCollapseGrid: {
+      display: Display.grid,
+      gridTemplateRows: visualOrderOpen ? '1fr' : '0fr',
+      transition: transition(CssProp.gridTemplateRows, FAST_FADE_MS),
+    } as CSSProperties,
+    visualOrderCollapseInner: {
+      overflow: Overflow.hidden,
+      minHeight: 0,
     } as CSSProperties,
     collapseGrid: {
       display: Display.grid,
@@ -590,9 +599,12 @@ function useSettingsStyles(isMobile: boolean, filterOpen: boolean) {
     } as CSSProperties,
     firstRunBtn: {
       ...btnPrimary,
-      padding: padding(Gap.sm, Gap.section),
+      padding: padding(0, Gap.section),
       fontSize: Font.md,
       flexShrink: 0,
+      height: Layout.toggleTrackHeight,
+      display: Display.inlineFlex,
+      alignItems: Align.center,
     } as CSSProperties,
-  }), [isMobile, filterOpen]);
+  }), [isMobile, filterOpen, visualOrderOpen]);
 }

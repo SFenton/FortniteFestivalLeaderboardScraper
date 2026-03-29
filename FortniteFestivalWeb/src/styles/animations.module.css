@@ -125,3 +125,70 @@
   animation: pulse 2s ease-in-out infinite;
   pointer-events: none;
 }
+
+/* ── Red "leaving tomorrow" pulse variants ── */
+
+@keyframes shopPulseRed {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.7; }
+}
+
+.shopPulseRed {
+  position: relative;
+}
+
+.shopPulseRed::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 2px solid var(--color-leaving-red, #ef4444);
+  opacity: 0;
+  animation: shopPulseRed 2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.albumPulseRed {
+  composes: shopPulseRed;
+}
+
+.shopHighlightRed {
+  composes: shopPulseRed;
+}
+
+@keyframes shopBreatheRed {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.shopBreatheRed {
+  position: relative;
+  background-color: transparent;
+  isolation: isolate;
+}
+
+.shopBreatheRed::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: var(--color-leaving-red, #ef4444);
+  animation: shopBreatheRed 3s ease-in-out infinite;
+  z-index: -1;
+}
+
+.shopCircleBreatheRed {
+  position: relative;
+  background-color: transparent;
+  isolation: isolate;
+}
+
+.shopCircleBreatheRed::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-color: var(--color-leaving-red, #ef4444);
+  animation: shopBreatheRed 3s ease-in-out infinite;
+  z-index: -1;
+}

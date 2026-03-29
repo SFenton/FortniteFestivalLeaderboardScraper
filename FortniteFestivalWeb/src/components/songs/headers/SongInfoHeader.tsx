@@ -44,6 +44,8 @@ export interface SongInfoHeaderProps {
   shopUrl?: string;
   /** When true, the shop button pulses to draw attention. */
   shopPulse?: boolean;
+  /** When true, uses red "leaving tomorrow" pulse instead of blue. */
+  shopLeavingTomorrow?: boolean;
   /** Skip rendering BackgroundImage (caller renders it separately). */
   hideBackground?: boolean;
   /** Extra inline styles on the outer PageHeader wrapper. */
@@ -60,6 +62,7 @@ export default function SongInfoHeader({
   onOpenPaths,
   shopUrl,
   shopPulse,
+  shopLeavingTomorrow,
   hideBackground,
   style: extraStyle,
 }: SongInfoHeaderProps) {
@@ -109,13 +112,13 @@ export default function SongInfoHeader({
               </button>
             )}
             {!isMobile && showShop && (
-              <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopButtonPulse : s.shopButton} className={shopPulse ? anim.shopBreathe : undefined}>
+              <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopButtonPulse : s.shopButton} className={shopPulse ? (shopLeavingTomorrow ? anim.shopBreatheRed : anim.shopBreathe) : undefined}>
                 <IoBagHandle size={IconSize.action} style={{ marginRight: Gap.md }} />
                 {t('common.itemShop', 'Item Shop')}
               </a>
             )}
             {isMobile && showShop && (
-              <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopCirclePulse : s.shopCircle} className={shopPulse ? anim.shopCircleBreathe : undefined} aria-label={t('common.itemShop', 'Item Shop')}>
+              <a href={shopUrl} target="_blank" rel="noopener noreferrer" style={shopPulse ? s.shopCirclePulse : s.shopCircle} className={shopPulse ? (shopLeavingTomorrow ? anim.shopCircleBreatheRed : anim.shopCircleBreathe) : undefined} aria-label={t('common.itemShop', 'Item Shop')}>
                 <IoBagHandle size={IconSize.sm} />
               </a>
             )}

@@ -64,6 +64,7 @@ export type ServerSong = {
   difficulty?: SongDifficulty;
   maxScores?: Partial<Record<ServerInstrumentKey, number>>;
   shopUrl?: string;
+  leavingTomorrow?: boolean;
 };
 
 /** Minimal song shape for display purposes (album art required). */
@@ -82,12 +83,14 @@ export type ShopChangedMessage = {
   added: string[];
   removed: string[];
   total: number;
+  leavingTomorrow: string[];
 };
 
 export type ShopSnapshotMessage = {
   type: 'shop_snapshot';
   songIds: string[];
   total: number;
+  leavingTomorrow: string[];
 };
 
 export type WsNotificationMessage =
@@ -108,6 +111,7 @@ export type LeaderboardEntry = {
   isFullCombo?: boolean;
   stars?: number;
   season?: number;
+  difficulty?: number;
 };
 
 export type LeaderboardResponse = {
@@ -131,6 +135,7 @@ export type PlayerScore = {
   isFullCombo?: boolean;
   stars?: number;
   season?: number;
+  difficulty?: number;
   endTime?: string;
   totalEntries?: number;
 };
@@ -227,6 +232,7 @@ export type ServerScoreHistoryEntry = {
   scoreAchievedAt?: string;
   seasonRank?: number;
   allTimeRank?: number;
+  difficulty?: number;
   changedAt: string;
 };
 

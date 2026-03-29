@@ -70,6 +70,8 @@ const ScoreCardList = memo(function ScoreCardList({ displayedCards, listHeight, 
                 accuracy={point.accuracy * ACCURACY_SCALE}
                 isFullCombo={!!point.isFullCombo}
                 isPlayer={i === 0}
+                difficulty={point.difficulty}
+                showDifficulty={showSeason}
                 showSeason={showSeason}
                 showAccuracy={showAccuracy}
                 scoreWidth={scoreWidth}

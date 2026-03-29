@@ -7,6 +7,8 @@ import { useFeatureFlags } from './FeatureFlagsContext';
 type ShopContextValue = {
   /** Set of songIds currently in the item shop (null until data loaded). */
   shopSongIds: ReadonlySet<string> | null;
+  /** Set of in-shop songIds whose offer expires tomorrow (UTC). */
+  leavingTomorrowIds: ReadonlySet<string> | null;
   /** Whether the WebSocket is connected. */
   connected: boolean;
   /** Look up the shopUrl for a song, if it's in the shop. */
@@ -28,7 +30,14 @@ export function ShopProvider({ children }: { children: ReactNode }) {
     return ids.length > 0 ? new Set(ids) as ReadonlySet<string> : null;
   }, [songs, flags.shop]);
 
-  const { shopSongIds, connected }: ShopState = useShopWebSocket(initialShopIds);
+  // Build initial leaving-tomorrow IDs from songs
+  const initialLeavingIds = useMemo(() => {
+    if (!flags.shop) return null;
+    const ids = songs.filter(s => s.shopUrl && s.leavingTomorrow).map(s => s.songId);
+    return ids.length > 0 ? new Set(ids) as ReadonlySet<string> : null;
+  }, [songs, flags.shop]);
+
+  const { shopSongIds, leavingTomorrowIds, connected }: ShopState = useShopWebSocket(initialShopIds, initialLeavingIds);
 
   // Index songs by ID for O(1) lookup
   const songById = useMemo(() => {
@@ -48,10 +57,11 @@ export function ShopProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<ShopContextValue>(() => ({
     shopSongIds,
+    leavingTomorrowIds,
     connected,
     getShopUrl,
     shopSongs,
-  }), [shopSongIds, connected, getShopUrl, shopSongs]);
+  }), [shopSongIds, leavingTomorrowIds, connected, getShopUrl, shopSongs]);
 
   return (
     <ShopContext.Provider value={value}>

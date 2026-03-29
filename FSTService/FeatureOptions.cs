@@ -20,6 +20,9 @@ public sealed class FeatureOptions
     /// <summary>First-run experience carousels on every page.</summary>
     public bool FirstRun { get; set; }
 
+    /// <summary>Difficulty pill on leaderboard and score history rows.</summary>
+    public bool Difficulty { get; set; }
+
     /// <summary>
     /// Compete page — derived from <see cref="Rivals"/> AND <see cref="Leaderboards"/>.
     /// CompetePage links to both rivals and rankings; if either is off, compete is off.

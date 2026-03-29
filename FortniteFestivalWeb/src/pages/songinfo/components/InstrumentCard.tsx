@@ -102,6 +102,8 @@ export default memo(function InstrumentCard({
                 accuracy={e.accuracy}
                 isFullCombo={!!e.isFullCombo}
                 isPlayer={isPlayer}
+                difficulty={e.difficulty}
+                showDifficulty={showSeason}
                 showSeason={showSeason}
                 showAccuracy={showAccuracy}
                 scoreWidth={scoreWidth}
@@ -130,6 +132,8 @@ export default memo(function InstrumentCard({
               accuracy={playerScore.accuracy}
               isFullCombo={!!playerScore.isFullCombo}
               isPlayer
+              difficulty={playerScore.difficulty}
+              showDifficulty={showSeason}
               showSeason={showSeason}
               showAccuracy={showAccuracy}
               scoreWidth={scoreWidth}

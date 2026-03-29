@@ -15,6 +15,7 @@ export type ChartPoint = {
   colorAccuracy?: number;
   stars?: number;
   season?: number;
+  difficulty?: number;
 };
 
 /**
@@ -71,6 +72,7 @@ export function useChartData(
         isFullCombo: h.isFullCombo ?? false,
         stars: h.stars ?? undefined,
         season: h.season ?? undefined,
+        difficulty: h.difficulty ?? undefined,
       };
     });
   }, [filtered]);

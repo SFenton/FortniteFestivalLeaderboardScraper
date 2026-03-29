@@ -133,17 +133,21 @@ public sealed class NotificationService
     /// <summary>
     /// Broadcast that the item shop has changed. Sends added/removed songId deltas.
     /// </summary>
-    public Task NotifyShopChangedAsync(IReadOnlyCollection<string> added, IReadOnlyCollection<string> removed, int total)
+    public Task NotifyShopChangedAsync(
+        IReadOnlyCollection<string> added,
+        IReadOnlyCollection<string> removed,
+        int total,
+        IReadOnlyCollection<string> leavingTomorrow)
     {
-        return BroadcastAllAsync(new { type = "shop_changed", added, removed, total });
+        return BroadcastAllAsync(new { type = "shop_changed", added, removed, total, leavingTomorrow });
     }
 
     /// <summary>
     /// Send the current shop snapshot to a single WebSocket (used on reconnect).
     /// </summary>
-    public async Task SendShopSnapshotAsync(WebSocket ws, IReadOnlyCollection<string> songIds)
+    public async Task SendShopSnapshotAsync(WebSocket ws, IReadOnlyCollection<string> songIds, IReadOnlyCollection<string> leavingTomorrow)
     {
-        var json = JsonSerializer.Serialize(new { type = "shop_snapshot", songIds, total = songIds.Count });
+        var json = JsonSerializer.Serialize(new { type = "shop_snapshot", songIds, total = songIds.Count, leavingTomorrow });
         var bytes = Encoding.UTF8.GetBytes(json);
         if (ws.State == WebSocketState.Open)
             await ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None);
@@ -194,7 +198,8 @@ public sealed class NotificationService
             try
             {
                 var shopIds = _shopProvider.InShopSongIds;
-                await SendShopSnapshotAsync(ws, shopIds.ToArray());
+                var leavingIds = _shopProvider.LeavingTomorrowSongIds;
+                await SendShopSnapshotAsync(ws, shopIds.ToArray(), leavingIds.ToArray());
             }
             catch (Exception ex)
             {

@@ -41,11 +41,13 @@ public static partial class ApiEndpoints
             var maxScoresMap = pathStore.GetAllMaxScores();
             var currentSeason = metaDb.GetCurrentSeason();
             var inShop = shopService.InShopSongIds;
+            var leavingTomorrow = shopService.LeavingTomorrowSongIds;
             var songs = service.Songs
                 .Where(s => s.track?.su is not null)
                 .Select(s =>
                 {
                     maxScoresMap.TryGetValue(s.track.su, out var ms);
+                    var isInShop = inShop.Contains(s.track.su);
                     return new
                     {
                         songId     = s.track.su,
@@ -75,9 +77,10 @@ public static partial class ApiEndpoints
                             Solo_PeripheralBass   = ms.MaxProBassScore,
                         },
                         pathsGeneratedAt = ms?.GeneratedAt,
-                        shopUrl = inShop.Contains(s.track.su)
+                        shopUrl = isInShop
                             ? ShopUrlHelper.ComputeShopUrl(s.track.su, s.track.tt)
                             : null,
+                        leavingTomorrow = isInShop && leavingTomorrow.Contains(s.track.su),
                     };
                 })
                 .ToList();

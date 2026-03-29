@@ -388,6 +388,10 @@
       "shop": {
         "title": "Item Shop Highlights",
         "description": "Songs currently available in the Item Shop are highlighted with a pulsing glow so you can spot them at a glance."
+      },
+      "leaving": {
+        "title": "Leaving Tomorrow",
+        "description": "Songs about to leave the Item Shop pulse red so you know which ones to grab before they're gone."
       }
     },
     "statistics": {
@@ -480,6 +484,11 @@
         "title": "Item Shop Link",
         "descriptionMobile": "When a song is in the Item Shop, a shop icon appears on the song card. Tap it to go straight to the store.",
         "descriptionDesktop": "When a song is in the Item Shop, an Item Shop button appears in the header. Tap it to go straight to the store."
+      },
+      "leaving": {
+        "title": "Leaving Tomorrow",
+        "descriptionMobile": "When a song is about to leave the Item Shop, the shop icon turns red so you know to act fast.",
+        "descriptionDesktop": "When a song is about to leave the Item Shop, the Item Shop button turns red so you know to act fast."
       }
     },
     "playerHistory": {
@@ -547,6 +556,10 @@
       "highlighting": {
         "title": "Shop Highlighting",
         "description": "Songs from the Item Shop are highlighted with a pulsing glow on the Songs page so you can spot them at a glance."
+      },
+      "leaving": {
+        "title": "Leaving Tomorrow",
+        "description": "Songs about to leave the Item Shop pulse red — in the grid, list, and on the Songs page — so you never miss a last-chance purchase."
       }
     }
   },

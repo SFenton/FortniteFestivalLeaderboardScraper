@@ -8,10 +8,12 @@
  */
 import { memo, useMemo } from 'react';
 import { Align, Colors, Display, Font, FontVariant, Gap, Justify, Layout, TextAlign, Weight, flexRow, truncate } from '@festival/theme';
+import { useFeatureFlags } from '../../../../contexts/FeatureFlagsContext';
 import SeasonPill from '../../../../components/songs/metadata/SeasonPill';
 import ScorePill from '../../../../components/songs/metadata/ScorePill';
 import AccuracyDisplay from '../../../../components/songs/metadata/AccuracyDisplay';
 import MiniStars from '../../../../components/songs/metadata/MiniStars';
+import DifficultyPill from '../../../../components/songs/metadata/DifficultyPill';
 
 export interface LeaderboardEntryProps {
   /** Numeric rank displayed as "#1", "#2", etc. */
@@ -26,6 +28,10 @@ export interface LeaderboardEntryProps {
   stars?: number | null;
   /** Whether this entry should use bold styling (tracked player or high score). */
   isPlayer?: boolean;
+  /** Difficulty level (0=Easy, 1=Medium, 2=Hard, 3=Expert). */
+  difficulty?: number | null;
+  /** Show the difficulty pill column. */
+  showDifficulty?: boolean;
   /** Show the season pill column. */
   showSeason?: boolean;
   /** Show the accuracy column. */
@@ -46,12 +52,15 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
   isFullCombo,
   stars,
   isPlayer,
+  difficulty,
+  showDifficulty,
   showSeason,
   showAccuracy,
   showStars,
   scoreWidth,
 }: LeaderboardEntryProps) {
   const s = useStyles(isPlayer);
+  const { difficulty: difficultyEnabled } = useFeatureFlags();
 
   return (
     <>
@@ -60,6 +69,7 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
         : null}
       <span style={s.colName}>{label ?? displayName}</span>
       <span style={s.seasonScoreGroup}>
+        {difficultyEnabled && showDifficulty && difficulty != null && difficulty > 0 && <DifficultyPill difficulty={difficulty} />}
         {showSeason && season != null && <SeasonPill season={season} />}
         <ScorePill score={score} width={scoreWidth} />
       </span>

@@ -94,6 +94,12 @@ export const Colors = {
   diffExpertBg: '#2D1B3A',
   diffExpertAccent: '#C084FC',
 
+  // Difficulty Pill (solid backgrounds for the E/M/H/X pill)
+  diffPillEasy: '#2ECC71',
+  diffPillMedium: '#C62828',
+  diffPillHard: '#2D82E6',
+  diffPillExpert: '#7C3AED',
+
   // Semantic Buttons
   dangerBg: 'rgba(198,40,40,0.4)',
   successBg: 'rgba(40,167,69,0.4)',

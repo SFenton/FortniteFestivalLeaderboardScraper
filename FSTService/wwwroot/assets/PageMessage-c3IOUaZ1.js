@@ -1,0 +1,1 @@
+import{j as a,r as o,m as n,F as r,c as i,o as g,p,G as e}from"./index-CMUQfcsG.js";function u({children:s}){const t=c();return a.jsx("div",{style:t.message,children:s})}function c(){return o.useMemo(()=>({message:{...g,padding:p(e.section,e.none),color:i.textSecondary,fontSize:r.lg,minHeight:n.pageMessageMinHeight}}),[])}export{u as P};

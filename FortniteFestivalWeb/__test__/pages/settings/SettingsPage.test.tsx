@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { SettingsProvider } from '../../../src/contexts/SettingsContext';
 import { FirstRunProvider } from '../../../src/contexts/FirstRunContext';
@@ -100,12 +100,12 @@ describe('SettingsPage', () => {
   it('renders Show Instrument Metadata section', () => {
     renderSettings();
     expect(screen.getByText('Show Instrument Metadata')).toBeDefined();
-    expect(screen.getByText('Score')).toBeDefined();
-    expect(screen.getByText('Percentage')).toBeDefined();
-    expect(screen.getByText('Percentile')).toBeDefined();
-    expect(screen.getByText('Season Achieved')).toBeDefined();
-    expect(screen.getByText('Song Intensity')).toBeDefined();
-    expect(screen.getByText('Stars')).toBeDefined();
+    expect(screen.getAllByText('Score').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Percentage').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Percentile').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Season Achieved').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Song Intensity').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Stars').length).toBeGreaterThanOrEqual(1);
   });
 
   it('renders Reset Settings section', () => {
@@ -152,7 +152,8 @@ describe('SettingsPage', () => {
 
   it('toggles metadata visibility', () => {
     renderSettings();
-    const scoreToggle = screen.getByText('Score').closest('button')!;
+    const metadataSection = screen.getByText('Show Instrument Metadata').closest('div')!.parentElement!;
+    const scoreToggle = within(metadataSection).getByText('Score').closest('button')!;
     fireEvent.click(scoreToggle);
 
     const stored = JSON.parse(localStorage.getItem('fst:appSettings')!);
@@ -162,15 +163,16 @@ describe('SettingsPage', () => {
   it('shows visual order reorder list when enabled', () => {
     renderSettings();
 
-    // Visual order section should not be visible initially
-    expect(screen.queryByText('Song Row Visual Order')).toBeNull();
+    // Visual order section should be collapsed initially (grid-template-rows: 0fr)
+    const collapseGrid = screen.getByTestId('visual-order-collapse');
+    expect(collapseGrid.style.gridTemplateRows).toBe('0fr');
 
     // Enable visual order
     const visualToggle = screen.getByText('Enable Independent Song Row Visual Order').closest('button')!;
     fireEvent.click(visualToggle);
 
-    // Now the reorder list should appear
-    expect(screen.getByText('Song Row Visual Order')).toBeDefined();
+    // Now the reorder list should be expanded (grid-template-rows: 1fr)
+    expect(collapseGrid.style.gridTemplateRows).toBe('1fr');
   });
 
   it('resets settings to defaults', () => {

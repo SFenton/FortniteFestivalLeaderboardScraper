@@ -9,9 +9,9 @@ import { metadataSlide } from '../../../../src/pages/songs/firstRun/pages/Metada
 import { shopHighlightSlide } from '../../../../src/pages/songs/firstRun/pages/ShopHighlight';
 
 describe('songSlides', () => {
-  it('returns 7 slides', () => {
-    expect(songSlides(false)).toHaveLength(7);
-    expect(songSlides(true)).toHaveLength(7);
+  it('returns 8 slides', () => {
+    expect(songSlides(false)).toHaveLength(8);
+    expect(songSlides(true)).toHaveLength(8);
   });
 
   it('returns desktop navigation slide when isMobile is false', () => {

@@ -9,10 +9,11 @@ export type FeatureFlags = {
   compete: boolean;
   leaderboards: boolean;
   firstRun: boolean;
+  difficulty: boolean;
 };
 
-const ALL_ON: FeatureFlags = { shop: true, rivals: true, compete: true, leaderboards: true, firstRun: true };
-const ALL_OFF: FeatureFlags = { shop: false, rivals: false, compete: false, leaderboards: false, firstRun: false };
+const ALL_ON: FeatureFlags = { shop: true, rivals: true, compete: true, leaderboards: true, firstRun: true, difficulty: true };
+const ALL_OFF: FeatureFlags = { shop: false, rivals: false, compete: false, leaderboards: false, firstRun: false, difficulty: false };
 
 /* ── Context ── */
 

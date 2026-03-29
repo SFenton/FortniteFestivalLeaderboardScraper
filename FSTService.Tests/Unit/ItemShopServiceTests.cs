@@ -245,6 +245,26 @@ public class ItemShopServiceTests
         """;
     }
 
+    private static string MakeShopJsonWithDates(params (string title, string? outDate)[] items)
+    {
+        var entries = string.Join(",\n",
+            items.Select(i =>
+            {
+                var outDatePart = i.outDate is not null
+                    ? $""", "outDate": "{i.outDate}" """
+                    : "";
+                return $$"""{ "tracks": [{ "title": "{{i.title}}" }]{{outDatePart}} }""";
+            }));
+        return $$"""
+        {
+            "data": {
+                "hash": "abc",
+                "entries": [{{entries}}]
+            }
+        }
+        """;
+    }
+
     [Fact]
     public async Task ScrapeAsync_WithMatchingJson_ReturnsSongCount()
     {
@@ -342,5 +362,202 @@ public class ItemShopServiceTests
         Assert.Equal(0, result); // No matches
 
         metaFixture.Dispose();
+    }
+
+    // ─── ExtractJamTrackEntries (outDate parsing) ────────
+
+    [Fact]
+    public void ExtractEntries_ParsesOutDate()
+    {
+        var json = """
+        {
+            "data": {
+                "entries": [
+                    { "tracks": [{ "title": "Dream On" }], "outDate": "2026-03-30T23:59:59.999Z" },
+                    { "tracks": [{ "title": "Flowers" }], "outDate": "2026-04-02T23:59:59.999Z" }
+                ]
+            }
+        }
+        """;
+
+        var entries = ItemShopService.ExtractJamTrackEntries(json);
+        Assert.Equal(2, entries.Count);
+
+        var dreamOn = entries.First(e => e.Title == "Dream On");
+        Assert.NotNull(dreamOn.OutDate);
+        Assert.Equal(new DateTime(2026, 3, 30, 23, 59, 59, 999, DateTimeKind.Utc), dreamOn.OutDate!.Value);
+
+        var flowers = entries.First(e => e.Title == "Flowers");
+        Assert.NotNull(flowers.OutDate);
+        Assert.Equal(2026, flowers.OutDate!.Value.Year);
+        Assert.Equal(4, flowers.OutDate!.Value.Month);
+        Assert.Equal(2, flowers.OutDate!.Value.Day);
+    }
+
+    [Fact]
+    public void ExtractEntries_MissingOutDate_ReturnsNull()
+    {
+        var json = """
+        {
+            "data": {
+                "entries": [
+                    { "tracks": [{ "title": "Dream On" }] }
+                ]
+            }
+        }
+        """;
+
+        var entries = ItemShopService.ExtractJamTrackEntries(json);
+        Assert.Single(entries);
+        Assert.Null(entries[0].OutDate);
+    }
+
+    [Fact]
+    public void ExtractEntries_Deduplicates()
+    {
+        var json = """
+        {
+            "data": {
+                "entries": [
+                    { "tracks": [{ "title": "Dream On" }], "outDate": "2026-03-30T23:59:59.999Z" },
+                    { "tracks": [{ "title": "Dream On" }], "outDate": "2026-04-01T23:59:59.999Z" }
+                ]
+            }
+        }
+        """;
+
+        var entries = ItemShopService.ExtractJamTrackEntries(json);
+        Assert.Single(entries);
+        // First occurrence wins
+        Assert.Equal(30, entries[0].OutDate!.Value.Day);
+    }
+
+    [Fact]
+    public void ExtractEntries_BackwardsCompatible_WithTitles()
+    {
+        var json = MakeShopJson("Dream On", "Flowers");
+
+        // ExtractJamTrackTitles should still work (it delegates to ExtractJamTrackEntries)
+        var titles = ItemShopService.ExtractJamTrackTitles(json);
+        Assert.Equal(2, titles.Count);
+        Assert.Contains("Dream On", titles);
+        Assert.Contains("Flowers", titles);
+    }
+
+    // ─── ComputeLeavingTomorrow ─────────────────────────
+
+    [Fact]
+    public void ComputeLeavingTomorrow_OutDateTomorrow_ReturnsTrue()
+    {
+        var now = new DateTime(2026, 3, 28, 12, 0, 0, DateTimeKind.Utc);
+        var tomorrow = new DateTime(2026, 3, 29, 23, 59, 59, 999, DateTimeKind.Utc);
+
+        var entries = new List<ShopTrackEntry> { new("Dream On", tomorrow) };
+        var matched = new HashSet<string> { "song-123" };
+        var titleToSongId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Dream On"] = "song-123"
+        };
+
+        var result = ItemShopService.ComputeLeavingTomorrow(entries, matched, titleToSongId, now);
+        Assert.Single(result);
+        Assert.Contains("song-123", result);
+    }
+
+    [Fact]
+    public void ComputeLeavingTomorrow_OutDateToday_ReturnsFalse()
+    {
+        var now = new DateTime(2026, 3, 28, 12, 0, 0, DateTimeKind.Utc);
+        var today = new DateTime(2026, 3, 28, 23, 59, 59, 999, DateTimeKind.Utc);
+
+        var entries = new List<ShopTrackEntry> { new("Dream On", today) };
+        var matched = new HashSet<string> { "song-123" };
+        var titleToSongId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Dream On"] = "song-123"
+        };
+
+        var result = ItemShopService.ComputeLeavingTomorrow(entries, matched, titleToSongId, now);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void ComputeLeavingTomorrow_OutDateFarFuture_ReturnsFalse()
+    {
+        var now = new DateTime(2026, 3, 28, 12, 0, 0, DateTimeKind.Utc);
+        var future = new DateTime(2026, 4, 5, 23, 59, 59, 999, DateTimeKind.Utc);
+
+        var entries = new List<ShopTrackEntry> { new("Dream On", future) };
+        var matched = new HashSet<string> { "song-123" };
+        var titleToSongId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Dream On"] = "song-123"
+        };
+
+        var result = ItemShopService.ComputeLeavingTomorrow(entries, matched, titleToSongId, now);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void ComputeLeavingTomorrow_NullOutDate_ReturnsFalse()
+    {
+        var now = new DateTime(2026, 3, 28, 12, 0, 0, DateTimeKind.Utc);
+
+        var entries = new List<ShopTrackEntry> { new("Dream On", null) };
+        var matched = new HashSet<string> { "song-123" };
+        var titleToSongId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Dream On"] = "song-123"
+        };
+
+        var result = ItemShopService.ComputeLeavingTomorrow(entries, matched, titleToSongId, now);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void ComputeLeavingTomorrow_MixedDates_ReturnsOnlyTomorrow()
+    {
+        var now = new DateTime(2026, 3, 28, 12, 0, 0, DateTimeKind.Utc);
+
+        var entries = new List<ShopTrackEntry>
+        {
+            new("Dream On", new DateTime(2026, 3, 29, 23, 59, 59, DateTimeKind.Utc)),   // tomorrow
+            new("Flowers",  new DateTime(2026, 4, 2, 23, 59, 59, DateTimeKind.Utc)),    // future
+            new("Maps",     new DateTime(2026, 3, 28, 23, 59, 59, DateTimeKind.Utc)),   // today
+        };
+        var matched = new HashSet<string> { "song-1", "song-2", "song-3" };
+        var titleToSongId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Dream On"] = "song-1",
+            ["Flowers"]  = "song-2",
+            ["Maps"]     = "song-3",
+        };
+
+        var result = ItemShopService.ComputeLeavingTomorrow(entries, matched, titleToSongId, now);
+        Assert.Single(result);
+        Assert.Contains("song-1", result);
+    }
+
+    [Fact]
+    public async Task ScrapeAsync_WithOutDates_SetsLeavingTomorrow()
+    {
+        // Build JSON where "Flowers" leaves tomorrow
+        var tomorrow = DateTime.UtcNow.Date.AddDays(1).AddHours(23).AddMinutes(59).AddSeconds(59);
+        var farFuture = DateTime.UtcNow.Date.AddDays(7);
+        var json = MakeShopJsonWithDates(
+            ("Flowers", tomorrow.ToString("o")),
+            ("Unknown Song", farFuture.ToString("o")));
+
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk(json);
+
+        var metaFixture = new InMemoryMetaDatabase();
+        var service = CreateService(handler, metaFixture.Db);
+
+        await service.ScrapeAsync(CancellationToken.None);
+
+        // "Flowers" matched, and its outDate is tomorrow
+        Assert.Single(service.InShopSongIds);
+        Assert.Single(service.LeavingTomorrowSongIds);
     }
 }
