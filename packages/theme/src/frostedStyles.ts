@@ -27,7 +27,6 @@ export const frostedCard = {
   boxShadow: [
     'inset 0 1px 0 rgba(255,255,255,0.06)',
     'inset 0 0 30px rgba(255,255,255,0.02)',
-    '0 4px 20px rgba(0,0,0,0.4)',
   ].join(', '),
 } as const;
 
