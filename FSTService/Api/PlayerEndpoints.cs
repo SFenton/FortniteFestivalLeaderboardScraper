@@ -44,6 +44,7 @@ public static partial class ApiEndpoints
                     s.Accuracy,
                     s.IsFullCombo,
                     s.Stars,
+                    s.Difficulty,
                     s.Season,
                     s.Percentile,
                     Rank = rank,

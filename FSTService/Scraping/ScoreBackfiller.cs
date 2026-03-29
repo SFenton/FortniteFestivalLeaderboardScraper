@@ -255,7 +255,8 @@ public class ScoreBackfiller
                 percentile: entry.Percentile,
                 season: entry.Season,
                 scoreAchievedAt: entry.EndTime,
-                allTimeRank: entry.Rank);
+                allTimeRank: entry.Rank,
+                difficulty: entry.Difficulty);
         }
 
         _metaDb.MarkBackfillSongChecked(accountId, songId, instrument, entryFound: true);

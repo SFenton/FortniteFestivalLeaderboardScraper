@@ -254,6 +254,7 @@ public sealed class ScraperWorker : BackgroundService
                 {
                     _log.LogInformation("Song catalog refresh: {NewCount} new song(s) discovered ({Total} total).",
                         after - before, after);
+                    _songsCache.Invalidate();
                 }
                 else
                     _log.LogDebug("Song catalog refresh: {Total} songs in catalog (no changes).", after);

@@ -566,7 +566,7 @@ public class HistoryReconstructor
                 bestRank, session.Rank,
                 session.Accuracy, session.IsFullCombo, session.Stars,
                 session.Percentile, season, session.EndTime,
-                seasonRank: session.Rank);
+                seasonRank: session.Rank, difficulty: session.Difficulty);
 
             entriesCreated++;
 

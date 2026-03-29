@@ -104,6 +104,9 @@ public sealed class InstrumentDatabase : IDisposable
         // ── Migration: add Source column (scrape / backfill / neighbor) ──
         MigrateAddColumn(conn, "Source", "TEXT NOT NULL DEFAULT 'scrape'");
 
+        // ── Migration: add Difficulty column (0=Easy, 1=Medium, 2=Hard, 3=Expert) ──
+        MigrateAddColumn(conn, "Difficulty", "INTEGER DEFAULT 0");
+
         // ── Index for efficient Source-based filtering ──
         using var srcIdx = conn.CreateCommand();
         srcIdx.CommandText = "CREATE INDEX IF NOT EXISTS IX_Song_Source ON LeaderboardEntries (SongId, Source);";
@@ -203,15 +206,16 @@ public sealed class InstrumentDatabase : IDisposable
         cmd.Transaction = tx;
         cmd.CommandText = """
             INSERT INTO LeaderboardEntries
-                (SongId, AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, Rank, EndTime, ApiRank, Source, FirstSeenAt, LastUpdatedAt)
+                (SongId, AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Difficulty, Percentile, Rank, EndTime, ApiRank, Source, FirstSeenAt, LastUpdatedAt)
             VALUES
-                (@songId, @accountId, @score, @accuracy, @fc, @stars, @season, @pct, @rank, @endTime, @apiRank, @source, @now, @now)
+                (@songId, @accountId, @score, @accuracy, @fc, @stars, @season, @difficulty, @pct, @rank, @endTime, @apiRank, @source, @now, @now)
             ON CONFLICT(SongId, AccountId) DO UPDATE SET
                 Score         = excluded.Score,
                 Accuracy      = excluded.Accuracy,
                 IsFullCombo   = excluded.IsFullCombo,
                 Stars         = excluded.Stars,
                 Season        = excluded.Season,
+                Difficulty    = excluded.Difficulty,
                 Percentile    = CASE
                                   WHEN excluded.Score != LeaderboardEntries.Score THEN excluded.Percentile
                                   WHEN excluded.Percentile > 0 AND LeaderboardEntries.Percentile <= 0 THEN excluded.Percentile
@@ -248,6 +252,7 @@ public sealed class InstrumentDatabase : IDisposable
         var pFc        = cmd.Parameters.Add("@fc", SqliteType.Integer);
         var pStars     = cmd.Parameters.Add("@stars", SqliteType.Integer);
         var pSeason    = cmd.Parameters.Add("@season", SqliteType.Integer);
+        var pDifficulty = cmd.Parameters.Add("@difficulty", SqliteType.Integer);
         var pPct       = cmd.Parameters.Add("@pct", SqliteType.Real);
         var pRank      = cmd.Parameters.Add("@rank", SqliteType.Integer);
         var pEndTime   = cmd.Parameters.Add("@endTime", SqliteType.Text);
@@ -266,6 +271,7 @@ public sealed class InstrumentDatabase : IDisposable
             pFc.Value        = entry.IsFullCombo ? 1 : 0;
             pStars.Value     = entry.Stars;
             pSeason.Value    = entry.Season;
+            pDifficulty.Value = entry.Difficulty;
             pPct.Value       = entry.Percentile;
             pRank.Value      = entry.Rank;
             pEndTime.Value   = (object?)entry.EndTime ?? DBNull.Value;
@@ -291,7 +297,7 @@ public sealed class InstrumentDatabase : IDisposable
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime, Rank, ApiRank, Source
+            SELECT Score, Accuracy, IsFullCombo, Stars, Season, Difficulty, Percentile, EndTime, Rank, ApiRank, Source
             FROM LeaderboardEntries
             WHERE SongId = @songId AND AccountId = @accountId;
             """;
@@ -309,11 +315,12 @@ public sealed class InstrumentDatabase : IDisposable
             IsFullCombo  = !reader.IsDBNull(2) && reader.GetInt32(2) == 1,
             Stars        = reader.IsDBNull(3) ? 0 : reader.GetInt32(3),
             Season       = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
-            Percentile   = reader.IsDBNull(5) ? 0 : reader.GetDouble(5),
-            EndTime      = reader.IsDBNull(6) ? null : reader.GetString(6),
-            Rank         = reader.IsDBNull(7) ? 0 : reader.GetInt32(7),
-            ApiRank      = reader.IsDBNull(8) ? 0 : reader.GetInt32(8),
-            Source       = reader.IsDBNull(9) ? "scrape" : reader.GetString(9),
+            Difficulty   = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
+            Percentile   = reader.IsDBNull(6) ? 0 : reader.GetDouble(6),
+            EndTime      = reader.IsDBNull(7) ? null : reader.GetString(7),
+            Rank         = reader.IsDBNull(8) ? 0 : reader.GetInt32(8),
+            ApiRank      = reader.IsDBNull(9) ? 0 : reader.GetInt32(9),
+            Source       = reader.IsDBNull(10) ? "scrape" : reader.GetString(10),
         };
     }
 
@@ -343,7 +350,7 @@ public sealed class InstrumentDatabase : IDisposable
         }
 
         cmd.CommandText = $"""
-            SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime, Rank, Source
+            SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Difficulty, Percentile, EndTime, Rank, Source
             FROM LeaderboardEntries
             WHERE SongId = @songId AND AccountId IN ({string.Join(", ", placeholders)});
             """;
@@ -360,10 +367,11 @@ public sealed class InstrumentDatabase : IDisposable
                 IsFullCombo = !reader.IsDBNull(3) && reader.GetInt32(3) == 1,
                 Stars       = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
                 Season      = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
-                Percentile  = reader.IsDBNull(6) ? 0 : reader.GetDouble(6),
-                EndTime     = reader.IsDBNull(7) ? null : reader.GetString(7),
-                Rank        = reader.IsDBNull(8) ? 0 : reader.GetInt32(8),
-                Source      = reader.IsDBNull(9) ? "scrape" : reader.GetString(9),
+                Difficulty  = reader.IsDBNull(6) ? 0 : reader.GetInt32(6),
+                Percentile  = reader.IsDBNull(7) ? 0 : reader.GetDouble(7),
+                EndTime     = reader.IsDBNull(8) ? null : reader.GetString(8),
+                Rank        = reader.IsDBNull(9) ? 0 : reader.GetInt32(9),
+                Source      = reader.IsDBNull(10) ? "scrape" : reader.GetString(10),
             };
             result[entry.AccountId] = entry;
         }
@@ -424,7 +432,7 @@ public sealed class InstrumentDatabase : IDisposable
         if (top.HasValue)
         {
             cmd.CommandText = @"
-                SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime,
+                SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Difficulty, Percentile, EndTime,
                        ROW_NUMBER() OVER (ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC) AS Rank
                 FROM LeaderboardEntries WHERE SongId = @songId
                 ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC
@@ -435,7 +443,7 @@ public sealed class InstrumentDatabase : IDisposable
         else
         {
             cmd.CommandText = @"
-                SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime,
+                SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Difficulty, Percentile, EndTime,
                        ROW_NUMBER() OVER (ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC) AS Rank
                 FROM LeaderboardEntries WHERE SongId = @songId
                 ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC;";
@@ -553,7 +561,7 @@ public sealed class InstrumentDatabase : IDisposable
             idx++;
         }
 
-        cmd.CommandText = $"SELECT SongId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime, Rank, ApiRank FROM LeaderboardEntries WHERE AccountId = @accountId AND SongId IN ({string.Join(",", placeholders)}) ORDER BY SongId;";
+        cmd.CommandText = $"SELECT SongId, Score, Accuracy, IsFullCombo, Stars, Season, Difficulty, Percentile, EndTime, Rank, ApiRank FROM LeaderboardEntries WHERE AccountId = @accountId AND SongId IN ({string.Join(",", placeholders)}) ORDER BY SongId;";
         cmd.Parameters.AddWithValue("@accountId", accountId);
 
         var scores = new List<PlayerScoreDto>();
@@ -569,10 +577,11 @@ public sealed class InstrumentDatabase : IDisposable
                 IsFullCombo  = !reader.IsDBNull(3) && reader.GetInt32(3) == 1,
                 Stars        = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
                 Season       = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
-                Percentile   = reader.IsDBNull(6) ? 0 : reader.GetDouble(6),
-                EndTime      = reader.IsDBNull(7) ? null : reader.GetString(7),
-                Rank         = reader.IsDBNull(8) ? 0 : reader.GetInt32(8),
-                ApiRank      = reader.IsDBNull(9) ? 0 : reader.GetInt32(9),
+                Difficulty   = reader.IsDBNull(6) ? 0 : reader.GetInt32(6),
+                Percentile   = reader.IsDBNull(7) ? 0 : reader.GetDouble(7),
+                EndTime      = reader.IsDBNull(8) ? null : reader.GetString(8),
+                Rank         = reader.IsDBNull(9) ? 0 : reader.GetInt32(9),
+                ApiRank      = reader.IsDBNull(10) ? 0 : reader.GetInt32(10),
             });
         }
         return scores;
@@ -588,7 +597,7 @@ public sealed class InstrumentDatabase : IDisposable
         var where = "AccountId = @accountId";
         if (songId is not null)
             where += " AND SongId = @songId";
-        cmd.CommandText = $"SELECT SongId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime, Rank, ApiRank FROM LeaderboardEntries WHERE {where} ORDER BY SongId;";
+        cmd.CommandText = $"SELECT SongId, Score, Accuracy, IsFullCombo, Stars, Season, Difficulty, Percentile, EndTime, Rank, ApiRank FROM LeaderboardEntries WHERE {where} ORDER BY SongId;";
         cmd.Parameters.AddWithValue("@accountId", accountId);
         if (songId is not null)
             cmd.Parameters.AddWithValue("@songId", songId);
@@ -606,10 +615,11 @@ public sealed class InstrumentDatabase : IDisposable
                 IsFullCombo  = !reader.IsDBNull(3) && reader.GetInt32(3) == 1,
                 Stars        = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
                 Season       = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
-                Percentile   = reader.IsDBNull(6) ? 0 : reader.GetDouble(6),
-                EndTime      = reader.IsDBNull(7) ? null : reader.GetString(7),
-                Rank         = reader.IsDBNull(8) ? 0 : reader.GetInt32(8),
-                ApiRank      = reader.IsDBNull(9) ? 0 : reader.GetInt32(9),
+                Difficulty   = reader.IsDBNull(6) ? 0 : reader.GetInt32(6),
+                Percentile   = reader.IsDBNull(7) ? 0 : reader.GetDouble(7),
+                EndTime      = reader.IsDBNull(8) ? null : reader.GetString(8),
+                Rank         = reader.IsDBNull(9) ? 0 : reader.GetInt32(9),
+                ApiRank      = reader.IsDBNull(10) ? 0 : reader.GetInt32(10),
             });
         }
         return scores;
@@ -848,7 +858,7 @@ public sealed class InstrumentDatabase : IDisposable
         if (top.HasValue)
         {
             cmd.CommandText = $@"
-                SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime,
+                SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Difficulty, Percentile, EndTime,
                        ROW_NUMBER() OVER (ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC) AS Rank,
                        COUNT(*) OVER () AS TotalCount,
                        ApiRank, Source
@@ -861,11 +871,11 @@ public sealed class InstrumentDatabase : IDisposable
         else
         {
             cmd.CommandText = $@"
-                SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, EndTime,
+                SELECT AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Difficulty, Percentile, EndTime,
                        ROW_NUMBER() OVER (ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC) AS Rank,
                        COUNT(*) OVER () AS TotalCount,
                        ApiRank, Source
-                FROM LeaderboardEntries {whereClause}
+                From LeaderboardEntries {whereClause}
                 ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC;";
         }
         cmd.Parameters.AddWithValue("@songId", songId);
@@ -879,7 +889,7 @@ public sealed class InstrumentDatabase : IDisposable
         {
             entries.Add(ReadEntryDto(reader));
             if (totalCount == 0)
-                totalCount = reader.GetInt32(9);
+                totalCount = reader.GetInt32(10);
         }
         return (entries, totalCount);
     }
@@ -894,11 +904,12 @@ public sealed class InstrumentDatabase : IDisposable
             IsFullCombo  = !reader.IsDBNull(3) && reader.GetInt32(3) == 1,
             Stars        = reader.IsDBNull(4) ? 0 : reader.GetInt32(4),
             Season       = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
-            Percentile   = reader.IsDBNull(6) ? 0 : reader.GetDouble(6),
-            EndTime      = reader.IsDBNull(7) ? null : reader.GetString(7),
-            Rank         = reader.FieldCount > 8 && !reader.IsDBNull(8) ? reader.GetInt32(8) : 0,
-            ApiRank      = reader.FieldCount > 10 && !reader.IsDBNull(10) ? reader.GetInt32(10) : 0,
-            Source       = reader.FieldCount > 11 && !reader.IsDBNull(11) ? reader.GetString(11) : "scrape",
+            Difficulty   = reader.IsDBNull(6) ? 0 : reader.GetInt32(6),
+            Percentile   = reader.IsDBNull(7) ? 0 : reader.GetDouble(7),
+            EndTime      = reader.IsDBNull(8) ? null : reader.GetString(8),
+            Rank         = reader.FieldCount > 9 && !reader.IsDBNull(9) ? reader.GetInt32(9) : 0,
+            ApiRank      = reader.FieldCount > 11 && !reader.IsDBNull(11) ? reader.GetInt32(11) : 0,
+            Source       = reader.FieldCount > 12 && !reader.IsDBNull(12) ? reader.GetString(12) : "scrape",
         };
     }
 

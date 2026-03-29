@@ -327,6 +327,7 @@ public sealed class MetaDatabase : IDisposable
         MigrateAddColumn(conn, "ScoreHistory", "ScoreAchievedAt", "TEXT");
         MigrateAddColumn(conn, "ScoreHistory", "SeasonRank", "INTEGER");
         MigrateAddColumn(conn, "ScoreHistory", "AllTimeRank", "INTEGER");
+        MigrateAddColumn(conn, "ScoreHistory", "Difficulty", "INTEGER");
 
         // ── Migration: dedup index on ScoreHistory ──
         using (var idxCmd = conn.CreateCommand())
@@ -451,7 +452,8 @@ public sealed class MetaDatabase : IDisposable
                                   int? accuracy = null, bool? isFullCombo = null,
                                   int? stars = null, double? percentile = null,
                                   int? season = null, string? scoreAchievedAt = null,
-                                  int? seasonRank = null, int? allTimeRank = null)
+                                  int? seasonRank = null, int? allTimeRank = null,
+                                  int? difficulty = null)
     {
         var now = DateTime.UtcNow.ToString("o");
         lock (_writeLock)
@@ -461,15 +463,16 @@ public sealed class MetaDatabase : IDisposable
         cmd.CommandText = """
             INSERT INTO ScoreHistory (SongId, Instrument, AccountId, OldScore, NewScore, OldRank, NewRank,
                                      Accuracy, IsFullCombo, Stars, Percentile, Season, ScoreAchievedAt,
-                                     SeasonRank, AllTimeRank, ChangedAt)
+                                     SeasonRank, AllTimeRank, Difficulty, ChangedAt)
             VALUES (@songId, @instrument, @accountId, @oldScore, @newScore, @oldRank, @newRank,
                     @accuracy, @fc, @stars, @percentile, @season, @scoreAchievedAt,
-                    @seasonRank, @allTimeRank, @now)
+                    @seasonRank, @allTimeRank, @difficulty, @now)
             ON CONFLICT(AccountId, SongId, Instrument, NewScore, ScoreAchievedAt) DO UPDATE SET
                 SeasonRank  = COALESCE(excluded.SeasonRank,  ScoreHistory.SeasonRank),
                 AllTimeRank = COALESCE(excluded.AllTimeRank, ScoreHistory.AllTimeRank),
                 OldScore    = COALESCE(excluded.OldScore,    ScoreHistory.OldScore),
                 OldRank     = COALESCE(excluded.OldRank,     ScoreHistory.OldRank),
+                Difficulty  = COALESCE(excluded.Difficulty,   ScoreHistory.Difficulty),
                 ChangedAt   = excluded.ChangedAt;
             """;
         cmd.Parameters.AddWithValue("@songId", songId);
@@ -487,6 +490,7 @@ public sealed class MetaDatabase : IDisposable
         cmd.Parameters.AddWithValue("@scoreAchievedAt", (object?)scoreAchievedAt ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@seasonRank", seasonRank.HasValue ? seasonRank.Value : DBNull.Value);
         cmd.Parameters.AddWithValue("@allTimeRank", allTimeRank.HasValue ? allTimeRank.Value : DBNull.Value);
+        cmd.Parameters.AddWithValue("@difficulty", difficulty.HasValue ? difficulty.Value : DBNull.Value);
         cmd.Parameters.AddWithValue("@now", now);
         cmd.ExecuteNonQuery();
         } // lock
@@ -510,15 +514,16 @@ public sealed class MetaDatabase : IDisposable
         cmd.CommandText = """
             INSERT INTO ScoreHistory (SongId, Instrument, AccountId, OldScore, NewScore, OldRank, NewRank,
                                      Accuracy, IsFullCombo, Stars, Percentile, Season, ScoreAchievedAt,
-                                     SeasonRank, AllTimeRank, ChangedAt)
+                                     SeasonRank, AllTimeRank, Difficulty, ChangedAt)
             VALUES (@songId, @instrument, @accountId, @oldScore, @newScore, @oldRank, @newRank,
                     @accuracy, @fc, @stars, @percentile, @season, @scoreAchievedAt,
-                    @seasonRank, @allTimeRank, @now)
+                    @seasonRank, @allTimeRank, @difficulty, @now)
             ON CONFLICT(AccountId, SongId, Instrument, NewScore, ScoreAchievedAt) DO UPDATE SET
                 SeasonRank  = COALESCE(excluded.SeasonRank,  ScoreHistory.SeasonRank),
                 AllTimeRank = COALESCE(excluded.AllTimeRank, ScoreHistory.AllTimeRank),
                 OldScore    = COALESCE(excluded.OldScore,    ScoreHistory.OldScore),
                 OldRank     = COALESCE(excluded.OldRank,     ScoreHistory.OldRank),
+                Difficulty  = COALESCE(excluded.Difficulty,   ScoreHistory.Difficulty),
                 ChangedAt   = excluded.ChangedAt;
             """;
 
@@ -537,6 +542,7 @@ public sealed class MetaDatabase : IDisposable
         var pScoreAchievedAt = cmd.Parameters.Add("@scoreAchievedAt", SqliteType.Text);
         var pSeasonRank     = cmd.Parameters.Add("@seasonRank", SqliteType.Integer);
         var pAllTimeRank    = cmd.Parameters.Add("@allTimeRank", SqliteType.Integer);
+        var pDifficulty     = cmd.Parameters.Add("@difficulty", SqliteType.Integer);
         var pNow            = cmd.Parameters.Add("@now", SqliteType.Text);
         cmd.Prepare();
 
@@ -558,6 +564,7 @@ public sealed class MetaDatabase : IDisposable
             pScoreAchievedAt.Value = (object?)c.ScoreAchievedAt ?? DBNull.Value;
             pSeasonRank.Value     = c.SeasonRank.HasValue ? c.SeasonRank.Value : DBNull.Value;
             pAllTimeRank.Value    = c.AllTimeRank.HasValue ? c.AllTimeRank.Value : DBNull.Value;
+            pDifficulty.Value     = c.Difficulty.HasValue ? c.Difficulty.Value : DBNull.Value;
             pNow.Value            = now;
             inserted += cmd.ExecuteNonQuery();
         }
@@ -827,7 +834,7 @@ public sealed class MetaDatabase : IDisposable
         cmd.CommandText = $"""
             SELECT SongId, Instrument, OldScore, NewScore, OldRank, NewRank,
                    Accuracy, IsFullCombo, Stars, Percentile, Season, ScoreAchievedAt, ChangedAt,
-                   SeasonRank, AllTimeRank
+                   SeasonRank, AllTimeRank, Difficulty
             FROM ScoreHistory
             WHERE {where}
             ORDER BY Id DESC
@@ -861,6 +868,7 @@ public sealed class MetaDatabase : IDisposable
                 ChangedAt   = reader.GetString(12),
                 SeasonRank  = reader.IsDBNull(13) ? null : reader.GetInt32(13),
                 AllTimeRank = reader.IsDBNull(14) ? null : reader.GetInt32(14),
+                Difficulty  = reader.IsDBNull(15) ? null : reader.GetInt32(15),
             });
         }
         return entries;

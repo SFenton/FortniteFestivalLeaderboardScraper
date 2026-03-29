@@ -192,7 +192,7 @@ public class PostScrapeRefresher
                     existing.Score, entry.Score, existing.Rank, entry.Rank,
                     entry.Accuracy, entry.IsFullCombo, entry.Stars,
                     entry.Percentile, entry.Season, entry.EndTime,
-                    allTimeRank: entry.Rank);
+                    allTimeRank: entry.Rank, difficulty: entry.Difficulty);
             }
         }
         else
@@ -203,7 +203,7 @@ public class PostScrapeRefresher
                 null, entry.Score, null, entry.Rank,
                 entry.Accuracy, entry.IsFullCombo, entry.Stars,
                 entry.Percentile, entry.Season, entry.EndTime,
-                allTimeRank: entry.Rank);
+                allTimeRank: entry.Rank, difficulty: entry.Difficulty);
         }
 
         entry.ApiRank = entry.Rank;
@@ -329,7 +329,7 @@ public class PostScrapeRefresher
                         existing?.Rank, session.Rank,
                         session.Accuracy, session.IsFullCombo, session.Stars,
                         session.Percentile, session.Season, session.EndTime,
-                        seasonRank: session.Rank);
+                        seasonRank: session.Rank, difficulty: session.Difficulty);
 
                     newSessions++;
                 }

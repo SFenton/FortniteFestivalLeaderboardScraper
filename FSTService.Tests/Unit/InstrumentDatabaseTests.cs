@@ -13,7 +13,7 @@ public sealed class InstrumentDatabaseTests : IDisposable
     public void Dispose() => _fixture.Dispose();
 
     private static LeaderboardEntry MakeEntry(string accountId, int score,
-        int accuracy = 95, bool fc = false, int stars = 5, int season = 3) =>
+        int accuracy = 95, bool fc = false, int stars = 5, int season = 3, int difficulty = 3) =>
         new()
         {
             AccountId = accountId,
@@ -22,6 +22,7 @@ public sealed class InstrumentDatabaseTests : IDisposable
             IsFullCombo = fc,
             Stars = stars,
             Season = season,
+            Difficulty = difficulty,
             Percentile = 99.0,
             EndTime = "2025-01-15T12:00:00Z",
         };

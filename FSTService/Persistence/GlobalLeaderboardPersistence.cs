@@ -176,7 +176,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                             Accuracy = entry.Accuracy, IsFullCombo = entry.IsFullCombo,
                             Stars = entry.Stars, Percentile = entry.Percentile,
                             Season = entry.Season, ScoreAchievedAt = entry.EndTime,
-                            AllTimeRank = entry.Rank,
+                            AllTimeRank = entry.Rank, Difficulty = entry.Difficulty,
                         });
                         changedAccountIds.Add(entry.AccountId);
                     }
@@ -193,7 +193,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                         Accuracy = entry.Accuracy, IsFullCombo = entry.IsFullCombo,
                         Stars = entry.Stars, Percentile = entry.Percentile,
                         Season = entry.Season, ScoreAchievedAt = entry.EndTime,
-                        AllTimeRank = entry.Rank,
+                        AllTimeRank = entry.Rank, Difficulty = entry.Difficulty,
                     });
                     changedAccountIds.Add(entry.AccountId);
                 }

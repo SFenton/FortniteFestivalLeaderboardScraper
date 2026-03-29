@@ -253,6 +253,7 @@ public class PersonalDbBuilder
                 ScoreAchievedAt TEXT,
                 SeasonRank  INTEGER,
                 AllTimeRank INTEGER,
+                Difficulty  INTEGER,
                 ChangedAt   TEXT    NOT NULL
             );
 
@@ -527,7 +528,7 @@ public class PersonalDbBuilder
                 paramMap[$"@{prefix}Pct"].Value      = score.Accuracy;
                 paramMap[$"@{prefix}Season"].Value   = score.Season;
                 paramMap[$"@{prefix}Rank"].Value     = rank;
-                paramMap[$"@{prefix}GameDiff"].Value = -1;
+                paramMap[$"@{prefix}GameDiff"].Value = score.Difficulty;
                 paramMap[$"@{prefix}Total"].Value    = total;
                 paramMap[$"@{prefix}RawPct"].Value   = rawPct;
                 paramMap[$"@{prefix}CalcTotal"].Value = calcTotal;
@@ -557,11 +558,11 @@ public class PersonalDbBuilder
             INSERT INTO ScoreHistory
                 (SongId, Instrument, OldScore, NewScore, OldRank, NewRank,
                  Accuracy, IsFullCombo, Stars, Percentile, Season, ScoreAchievedAt,
-                 SeasonRank, AllTimeRank, ChangedAt)
+                 SeasonRank, AllTimeRank, Difficulty, ChangedAt)
             VALUES
                 (@songId, @instrument, @oldScore, @newScore, @oldRank, @newRank,
                  @accuracy, @isFullCombo, @stars, @percentile, @season, @scoreAchievedAt,
-                 @seasonRank, @allTimeRank, @changedAt);
+                 @seasonRank, @allTimeRank, @difficulty, @changedAt);
             """;
 
         var pSongId      = cmd.Parameters.Add("@songId", SqliteType.Text);
@@ -578,6 +579,7 @@ public class PersonalDbBuilder
         var pScoreAt     = cmd.Parameters.Add("@scoreAchievedAt", SqliteType.Text);
         var pSeasonRank  = cmd.Parameters.Add("@seasonRank", SqliteType.Integer);
         var pAllTimeRank = cmd.Parameters.Add("@allTimeRank", SqliteType.Integer);
+        var pDifficulty  = cmd.Parameters.Add("@difficulty", SqliteType.Integer);
         var pChangedAt   = cmd.Parameters.Add("@changedAt", SqliteType.Text);
         cmd.Prepare();
 
@@ -597,6 +599,7 @@ public class PersonalDbBuilder
             pScoreAt.Value     = (object?)entry.ScoreAchievedAt ?? DBNull.Value;
             pSeasonRank.Value  = (object?)entry.SeasonRank ?? DBNull.Value;
             pAllTimeRank.Value = (object?)entry.AllTimeRank ?? DBNull.Value;
+            pDifficulty.Value  = (object?)entry.Difficulty ?? DBNull.Value;
             pChangedAt.Value   = entry.ChangedAt;
 
             cmd.ExecuteNonQuery();
@@ -862,7 +865,7 @@ public class PersonalDbBuilder
                     row[$"{prefix}Pct"]      = score.Accuracy;
                     row[$"{prefix}Season"]   = score.Season;
                     row[$"{prefix}Rank"]     = rank;
-                    row[$"{prefix}GameDiff"] = -1;
+                    row[$"{prefix}GameDiff"] = score.Difficulty;
                     row[$"{prefix}Total"]    = total;
                     row[$"{prefix}RawPct"]   = rawPct;
                     row[$"{prefix}CalcTotal"]= calcTotal;
@@ -902,6 +905,7 @@ public class PersonalDbBuilder
                 ["ScoreAchievedAt"]= e.ScoreAchievedAt,
                 ["SeasonRank"]     = e.SeasonRank,
                 ["AllTimeRank"]    = e.AllTimeRank,
+                ["Difficulty"]     = e.Difficulty,
                 ["ChangedAt"]      = e.ChangedAt,
             });
         }

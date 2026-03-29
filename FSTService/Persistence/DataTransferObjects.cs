@@ -13,6 +13,8 @@ public sealed class LeaderboardEntryDto
     public bool IsFullCombo { get; init; }
     public int Stars { get; init; }
     public int Season { get; init; }
+    /// <summary>Epic difficulty level: 0 = Easy, 1 = Medium, 2 = Hard, 3 = Expert.</summary>
+    public int Difficulty { get; init; }
     public double Percentile { get; init; }
     /// <summary>ISO 8601 timestamp when the session ended (from Epic API). Null for legacy data.</summary>
     public string? EndTime { get; init; }
@@ -34,6 +36,8 @@ public sealed class PlayerScoreDto
     public bool IsFullCombo { get; init; }
     public int Stars { get; init; }
     public int Season { get; init; }
+    /// <summary>Epic difficulty level: 0 = Easy, 1 = Medium, 2 = Hard, 3 = Expert.</summary>
+    public int Difficulty { get; init; }
     public double Percentile { get; init; }
     /// <summary>All-time rank from Epic API (0 = not yet enriched).</summary>
     public int Rank { get; init; }
@@ -60,6 +64,8 @@ public sealed class ScoreHistoryEntry
     public bool? IsFullCombo { get; init; }
     /// <summary>Star rating achieved (snapshot — difficulty level).</summary>
     public int? Stars { get; init; }
+    /// <summary>Epic difficulty level at the time of this score: 0 = Easy, 1 = Medium, 2 = Hard, 3 = Expert.</summary>
+    public int? Difficulty { get; init; }
     /// <summary>Percentile ranking at the time of this score (snapshot).</summary>
     public double? Percentile { get; init; }
     /// <summary>Season in which this score was set (snapshot).</summary>
@@ -177,6 +183,7 @@ public sealed class ScoreChangeRecord
     public int? Accuracy { get; init; }
     public bool? IsFullCombo { get; init; }
     public int? Stars { get; init; }
+    public int? Difficulty { get; init; }
     public double? Percentile { get; init; }
     public int? Season { get; init; }
     public string? ScoreAchievedAt { get; init; }

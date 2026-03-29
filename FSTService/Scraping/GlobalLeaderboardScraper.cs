@@ -660,6 +660,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 ? se.GetInt32() : 0;
             int season = ts.TryGetProperty("SEASON", out var sn) && sn.ValueKind == JsonValueKind.Number
                 ? sn.GetInt32() : 0;
+            int difficulty = ts.TryGetProperty("DIFFICULTY", out var df) && df.ValueKind == JsonValueKind.Number
+                ? df.GetInt32() : 0;
             string? endTime = session.TryGetProperty("endTime", out var et) && et.ValueKind == JsonValueKind.String
                 ? et.GetString() : null;
 
@@ -673,6 +675,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 IsFullCombo = fullCombo == 1,
                 Stars = stars,
                 Season = season,
+                Difficulty = difficulty,
                 EndTime = endTime,
             });
         }
@@ -1496,6 +1499,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             int bestFullCombo = 0;
             int bestStars = 0;
             int bestSeason = 0;
+            int bestDifficulty = 0;
             string? bestEndTime = null;
 
             foreach (var session in sh.EnumerateArray())
@@ -1517,6 +1521,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         ? se.GetInt32() : 0;
                     bestSeason = ts.TryGetProperty("SEASON", out var sn) && sn.ValueKind == JsonValueKind.Number
                         ? sn.GetInt32() : 0;
+                    bestDifficulty = ts.TryGetProperty("DIFFICULTY", out var df) && df.ValueKind == JsonValueKind.Number
+                        ? df.GetInt32() : 0;
                     bestEndTime = session.TryGetProperty("endTime", out var et) && et.ValueKind == JsonValueKind.String
                         ? et.GetString() : null;
                 }
@@ -1527,6 +1533,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             entry.IsFullCombo = bestFullCombo == 1;
             entry.Stars = bestStars;
             entry.Season = bestSeason;
+            entry.Difficulty = bestDifficulty;
             entry.EndTime = bestEndTime;
         }
 
@@ -1549,6 +1556,8 @@ public sealed class LeaderboardEntry
     public bool IsFullCombo { get; set; }
     public int Stars { get; set; }
     public int Season { get; set; }
+    /// <summary>Epic difficulty level: 0 = Easy, 1 = Medium, 2 = Hard, 3 = Expert.</summary>
+    public int Difficulty { get; set; }
     /// <summary>ISO 8601 timestamp when the best session ended (from API's endTime field). Null when not available.</summary>
     public string? EndTime { get; set; }
     /// <summary>Real rank from Epic API (backfill/lookup). Survives RecomputeAllRanks. 0 = not set.</summary>
@@ -1571,6 +1580,8 @@ public sealed class SessionHistoryEntry
     public bool IsFullCombo { get; set; }
     public int Stars { get; set; }
     public int Season { get; set; }
+    /// <summary>Epic difficulty level: 0 = Easy, 1 = Medium, 2 = Hard, 3 = Expert.</summary>
+    public int Difficulty { get; set; }
     /// <summary>ISO 8601 timestamp when the session ended.</summary>
     public string? EndTime { get; set; }
 }
