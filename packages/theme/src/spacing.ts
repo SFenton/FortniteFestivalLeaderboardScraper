@@ -270,8 +270,7 @@ export const Layout = {
   paginationHeight: 50,
   /** Height for player song rows. */
   playerSongRowHeight: 64,
-  /** PWA bottom offset adjustment. */
-  pwaBottomOffset: 66,
+
   /** Search input + FAB height. */
   searchInputHeight: 56,
   /** Left padding for shop button pill text. */

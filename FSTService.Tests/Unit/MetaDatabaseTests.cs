@@ -1382,4 +1382,94 @@ public sealed class MetaDatabaseTests : IDisposable
         // Should not throw even when there's nothing to checkpoint
         Db.Checkpoint();
     }
+
+    // ═══ GetCompositeRankingNeighborhood ═════════════════════
+
+    private void SeedCompositeRankings(params (string AccountId, double Rating, int Rank)[] accounts)
+    {
+        Db.ReplaceCompositeRankings(accounts.Select(a => new CompositeRankingDto
+        {
+            AccountId = a.AccountId,
+            InstrumentsPlayed = 2,
+            TotalSongsPlayed = 50,
+            CompositeRating = a.Rating,
+            CompositeRank = a.Rank,
+            ComputedAt = "2025-01-01T00:00:00Z",
+        }).ToList());
+    }
+
+    [Fact]
+    public void GetCompositeRankingNeighborhood_returns_above_self_below()
+    {
+        SeedCompositeRankings(
+            ("a1", 0.1, 1), ("a2", 0.2, 2), ("a3", 0.3, 3),
+            ("a4", 0.4, 4), ("a5", 0.5, 5));
+
+        var (above, self, below) = Db.GetCompositeRankingNeighborhood("a3", radius: 2);
+
+        Assert.NotNull(self);
+        Assert.Equal("a3", self.AccountId);
+        Assert.Equal(3, self.CompositeRank);
+        Assert.Equal(2, above.Count);
+        Assert.Equal("a1", above[0].AccountId);
+        Assert.Equal("a2", above[1].AccountId);
+        Assert.Equal(2, below.Count);
+        Assert.Equal("a4", below[0].AccountId);
+        Assert.Equal("a5", below[1].AccountId);
+    }
+
+    [Fact]
+    public void GetCompositeRankingNeighborhood_rank1_has_no_above()
+    {
+        SeedCompositeRankings(
+            ("a1", 0.1, 1), ("a2", 0.2, 2), ("a3", 0.3, 3));
+
+        var (above, self, below) = Db.GetCompositeRankingNeighborhood("a1", radius: 2);
+
+        Assert.NotNull(self);
+        Assert.Equal("a1", self.AccountId);
+        Assert.Empty(above);
+        Assert.Equal(2, below.Count);
+    }
+
+    [Fact]
+    public void GetCompositeRankingNeighborhood_last_rank_has_no_below()
+    {
+        SeedCompositeRankings(
+            ("a1", 0.1, 1), ("a2", 0.2, 2), ("a3", 0.3, 3));
+
+        var (above, self, below) = Db.GetCompositeRankingNeighborhood("a3", radius: 2);
+
+        Assert.NotNull(self);
+        Assert.Equal("a3", self.AccountId);
+        Assert.Equal(2, above.Count);
+        Assert.Empty(below);
+    }
+
+    [Fact]
+    public void GetCompositeRankingNeighborhood_unknown_account_returns_nulls()
+    {
+        SeedCompositeRankings(("a1", 0.1, 1));
+
+        var (above, self, below) = Db.GetCompositeRankingNeighborhood("unknown");
+
+        Assert.Null(self);
+        Assert.Empty(above);
+        Assert.Empty(below);
+    }
+
+    [Fact]
+    public void GetCompositeRankingNeighborhood_default_radius_is_5()
+    {
+        var accounts = Enumerable.Range(1, 11)
+            .Select(i => ($"a{i}", (double)i * 0.1, i))
+            .ToArray();
+        SeedCompositeRankings(accounts);
+
+        var (above, self, below) = Db.GetCompositeRankingNeighborhood("a6");
+
+        Assert.NotNull(self);
+        Assert.Equal(5, above.Count);
+        Assert.Equal(5, below.Count);
+    }
 }

@@ -1348,6 +1348,65 @@ public sealed class InstrumentDatabase : IDisposable
         return Convert.ToInt32(cmd.ExecuteScalar());
     }
 
+    /// <summary>
+    /// Returns the ±<paramref name="radius"/> accounts around <paramref name="accountId"/>
+    /// on the TotalScoreRank axis, split into above/self/below.
+    /// </summary>
+    public (List<AccountRankingDto> Above, AccountRankingDto? Self, List<AccountRankingDto> Below) GetAccountRankingNeighborhood(
+        string accountId, int radius = 5)
+    {
+        using var conn = OpenConnection();
+
+        // 1. Look up the target account's rank
+        int? selfRank;
+        using (var lookup = conn.CreateCommand())
+        {
+            lookup.CommandText = "SELECT TotalScoreRank FROM AccountRankings WHERE AccountId = @accountId;";
+            lookup.Parameters.AddWithValue("@accountId", accountId);
+            var result = lookup.ExecuteScalar();
+            selfRank = result is not null ? Convert.ToInt32(result) : null;
+        }
+
+        if (selfRank is null)
+            return ([], null, []);
+
+        // 2. Fetch the neighborhood (self ± radius)
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT AccountId, SongsPlayed, TotalChartedSongs, Coverage,
+                   RawSkillRating, AdjustedSkillRating, AdjustedSkillRank,
+                   WeightedRating, WeightedRank,
+                   FcRate, FcRateRank,
+                   TotalScore, TotalScoreRank,
+                   MaxScorePercent, MaxScorePercentRank,
+                   AvgAccuracy, FullComboCount, AvgStars, BestRank, AvgRank,
+                   ComputedAt
+            FROM AccountRankings
+            WHERE TotalScoreRank BETWEEN @lo AND @hi
+            ORDER BY TotalScoreRank ASC;
+            """;
+        cmd.Parameters.AddWithValue("@lo", Math.Max(1, selfRank.Value - radius));
+        cmd.Parameters.AddWithValue("@hi", selfRank.Value + radius);
+
+        var above = new List<AccountRankingDto>();
+        AccountRankingDto? self = null;
+        var below = new List<AccountRankingDto>();
+
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var dto = ReadAccountRankingDto(reader, _instrument);
+            if (dto.AccountId == accountId)
+                self = dto;
+            else if (dto.TotalScoreRank < selfRank.Value)
+                above.Add(dto);
+            else
+                below.Add(dto);
+        }
+
+        return (above, self, below);
+    }
+
     private static AccountRankingDto ReadAccountRankingDto(SqliteDataReader reader, string instrument)
     {
         return new AccountRankingDto

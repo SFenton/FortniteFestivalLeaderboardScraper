@@ -179,6 +179,8 @@ builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("PlayerC
     (_, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(2)));
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("LeaderboardAllCache",
     (_, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(5)));
+builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("NeighborhoodCache",
+    (_, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(2)));
 builder.Services.AddSingleton<RivalsCalculator>();
 builder.Services.AddSingleton<RivalsOrchestrator>();
 builder.Services.AddSingleton<RankingsCalculator>();

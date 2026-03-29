@@ -1,4 +1,6 @@
+using System.Text.Json;
 using FSTService.Persistence;
+using Microsoft.Extensions.Options;
 
 namespace FSTService.Api;
 
@@ -299,6 +301,149 @@ public static partial class ApiEndpoints
                 totalAccounts,
                 entry.ComputedAt,
             });
+        })
+        .WithTags("Rankings")
+        .RequireRateLimiting("public");
+
+        // ─── Per-instrument ranking neighborhood ───────────────
+
+        app.MapGet("/api/rankings/{instrument}/{accountId}/neighborhood", (
+            HttpContext httpContext,
+            string instrument,
+            string accountId,
+            int? radius,
+            GlobalLeaderboardPersistence persistence,
+            MetaDatabase metaDb,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService cache) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
+
+            var effectiveRadius = Math.Clamp(radius ?? 5, 1, 25);
+            var cacheKey = $"neighborhood:{instrument}:{accountId}:{effectiveRadius}";
+
+            var cached = cache.Get(cacheKey);
+            if (cached is not null)
+            {
+                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
+                {
+                    httpContext.Response.Headers.ETag = cached.Value.ETag;
+                    return Results.StatusCode(304);
+                }
+                httpContext.Response.Headers.ETag = cached.Value.ETag;
+                return Results.Bytes(cached.Value.Json, "application/json");
+            }
+
+            var db = persistence.GetOrCreateInstrumentDb(instrument);
+            var (above, self, below) = db.GetAccountRankingNeighborhood(accountId, effectiveRadius);
+
+            if (self is null)
+                return Results.NotFound(new { error = "Account not found in rankings for this instrument." });
+
+            var allIds = above.Select(e => e.AccountId)
+                .Append(self.AccountId)
+                .Concat(below.Select(e => e.AccountId));
+            var names = metaDb.GetDisplayNames(allIds);
+
+            object Map(AccountRankingDto e) => new
+            {
+                e.AccountId,
+                displayName = names.GetValueOrDefault(e.AccountId),
+                e.TotalScore,
+                e.TotalScoreRank,
+                e.SongsPlayed,
+                e.TotalChartedSongs,
+                e.Coverage,
+                e.AdjustedSkillRating,
+                e.AdjustedSkillRank,
+            };
+
+            var payload = new
+            {
+                instrument,
+                accountId,
+                rank = self.TotalScoreRank,
+                above = above.Select(Map).ToList(),
+                self = Map(self),
+                below = below.Select(Map).ToList(),
+            };
+
+            var jsonOpts = httpContext.RequestServices
+                .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+                .Value.SerializerOptions;
+            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+            var etag = cache.Set(cacheKey, jsonBytes);
+
+            httpContext.Response.Headers.ETag = etag;
+            return Results.Bytes(jsonBytes, "application/json");
+        })
+        .WithTags("Rankings")
+        .RequireRateLimiting("public");
+
+        // ─── Composite ranking neighborhood ────────────────────
+
+        app.MapGet("/api/rankings/composite/{accountId}/neighborhood", (
+            HttpContext httpContext,
+            string accountId,
+            int? radius,
+            MetaDatabase metaDb,
+            [FromKeyedServices("NeighborhoodCache")] ResponseCacheService cache) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
+
+            var effectiveRadius = Math.Clamp(radius ?? 5, 1, 25);
+            var cacheKey = $"neighborhood:composite:{accountId}:{effectiveRadius}";
+
+            var cached = cache.Get(cacheKey);
+            if (cached is not null)
+            {
+                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
+                {
+                    httpContext.Response.Headers.ETag = cached.Value.ETag;
+                    return Results.StatusCode(304);
+                }
+                httpContext.Response.Headers.ETag = cached.Value.ETag;
+                return Results.Bytes(cached.Value.Json, "application/json");
+            }
+
+            var (above, self, below) = metaDb.GetCompositeRankingNeighborhood(accountId, effectiveRadius);
+
+            if (self is null)
+                return Results.NotFound(new { error = "Account not found in composite rankings." });
+
+            var allIds = above.Select(e => e.AccountId)
+                .Append(self.AccountId)
+                .Concat(below.Select(e => e.AccountId));
+            var names = metaDb.GetDisplayNames(allIds);
+
+            object Map(CompositeRankingDto e) => new
+            {
+                e.AccountId,
+                displayName = names.GetValueOrDefault(e.AccountId),
+                e.CompositeRating,
+                e.CompositeRank,
+                e.InstrumentsPlayed,
+                e.TotalSongsPlayed,
+            };
+
+            var payload = new
+            {
+                accountId,
+                rank = self.CompositeRank,
+                above = above.Select(Map).ToList(),
+                self = Map(self),
+                below = below.Select(Map).ToList(),
+            };
+
+            var jsonOpts = httpContext.RequestServices
+                .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+                .Value.SerializerOptions;
+            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+            var etag = cache.Set(cacheKey, jsonBytes);
+
+            httpContext.Response.Headers.ETag = etag;
+            return Results.Bytes(jsonBytes, "application/json");
         })
         .WithTags("Rankings")
         .RequireRateLimiting("public");

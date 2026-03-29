@@ -32,4 +32,8 @@ export const queryKeys = {
     ['comboRankings', comboId, { rankBy, page, pageSize }] as const,
   playerComboRanking: (accountId: string, comboId: string, rankBy?: string) =>
     ['playerComboRanking', accountId, comboId, { rankBy }] as const,
+  leaderboardNeighborhood: (instrument: string, accountId: string) =>
+    ['leaderboardNeighborhood', instrument, accountId] as const,
+  compositeNeighborhood: (accountId: string) =>
+    ['compositeNeighborhood', accountId] as const,
 };

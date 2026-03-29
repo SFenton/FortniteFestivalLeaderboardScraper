@@ -44,6 +44,7 @@ import MobilePlayerSearchModal from './components/shell/mobile/MobilePlayerSearc
 import { clearSongDetailCache, clearLeaderboardCache, clearPlayerPageCache } from './api/pageCache';
 import { IS_IOS, IS_ANDROID, IS_PWA } from '@festival/ui-utils';
 import ChangelogModal from './components/modals/ChangelogModal';
+import ConfirmAlert from './components/modals/ConfirmAlert';
 import { APP_VERSION } from './hooks/data/useVersions';
 import { changelogHash } from './changelog';
 import ErrorBoundary from './components/page/ErrorBoundary';
@@ -268,9 +269,14 @@ function AppShell() {
   /* v8 ignore stop */
 
   /* v8 ignore start — deep AppInner: deselect callback */
+  const [showDeselectConfirm, setShowDeselectConfirm] = useState(false);
   const handleDeselect = useCallback(() => {
+    setShowDeselectConfirm(true);
+  }, []);
+  const confirmDeselect = useCallback(() => {
     resetSongSettingsForDeselect();
     clearPlayer();
+    setShowDeselectConfirm(false);
   }, [clearPlayer]);
   /* v8 ignore stop */
 
@@ -602,6 +608,15 @@ function AppShell() {
         title={t('common.findPlayer')}
       />
       {showChangelog && <ChangelogModal onDismiss={dismissChangelog} onExitComplete={() => setChangelogDismissed(true)} />}
+      {showDeselectConfirm && (
+        <ConfirmAlert
+          title={t('common.deselectConfirmTitle')}
+          message={t('common.deselectConfirmMessage')}
+          onNo={() => setShowDeselectConfirm(false)}
+          onYes={confirmDeselect}
+          onExitComplete={() => setShowDeselectConfirm(false)}
+        />
+      )}
       {/* v8 ignore stop */}
     </div>
     </PlayerDataProvider>

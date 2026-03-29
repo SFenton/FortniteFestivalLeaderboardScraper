@@ -1,7 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
 import { usePageTransition } from '../../hooks/ui/usePageTransition';
@@ -25,6 +25,7 @@ import fx from '../../styles/effects.module.css';
 import { useRivalsSharedStyles } from './useRivalsSharedStyles';
 import Page from '../Page';
 import { rivalsSlides } from './firstRun';
+import LeaderboardRivalsTab from './LeaderboardRivalsTab';
 
 // Module-level data cache so back-navigation has instant data
 let _cachedInstrumentRivals: InstrumentRivals[] = [];
@@ -42,10 +43,16 @@ type InstrumentRivals = {
 export default function RivalsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { settings } = useSettings();
   const { player } = useTrackedPlayer();
   const isMobile = useIsMobileChrome();
   const accountId = player?.accountId;
+
+  const activeTab = (searchParams.get('tab') === 'leaderboard' ? 'leaderboard' : 'song') as 'song' | 'leaderboard';
+  const setTab = useCallback((tab: 'song' | 'leaderboard') => {
+    setSearchParams(tab === 'song' ? {} : { tab }, { replace: true });
+  }, [setSearchParams]);
 
   const activeInstruments = visibleInstruments(settings);
   const combo = useMemo(() => deriveComboFromSettings(settings), [settings]);
@@ -254,6 +261,24 @@ export default function RivalsPage() {
       fabSpacer={phase === LoadPhase.ContentIn && !hasAnyRivals ? 'none' : 'end'}
     >
       {phase === LoadPhase.ContentIn && (
+            <>
+              {/* Tab toggle: Song Rivals | Leaderboard Rivals */}
+              <div style={tabBarStyles.bar}>
+                <button
+                  style={activeTab === 'song' ? tabBarStyles.pillActive : tabBarStyles.pill}
+                  onClick={() => setTab('song')}
+                >
+                  {t('rivals.tabSong')}
+                </button>
+                <button
+                  style={activeTab === 'leaderboard' ? tabBarStyles.pillActive : tabBarStyles.pill}
+                  onClick={() => setTab('leaderboard')}
+                >
+                  {t('rivals.tabLeaderboard')}
+                </button>
+              </div>
+
+              {activeTab === 'song' ? (
             <div style={{ ...flexColumn, gap: Gap.section }}>
               {!hasAnyRivals && (
                 <EmptyState fullPage title={t('rivals.noRivals')} style={stagger(200)} onAnimationEnd={clearAnim} />
@@ -356,9 +381,47 @@ export default function RivalsPage() {
                 );
               })}
             </div>
+              ) : (
+                <LeaderboardRivalsTab accountId={accountId} shouldStagger={shouldStagger} />
+              )}
+            </>
       )}
     </Page>
   );
 }
 
 /* v8 ignore stop */
+
+const pillBase: CSSProperties = {
+  ...flexCenter,
+  flex: 1,
+  padding: padding(Gap.xs, Gap.md),
+  borderRadius: Radius.full,
+  fontSize: Font.sm,
+  fontWeight: Weight.semibold,
+  cursor: Cursor.pointer,
+  border: CssValue.none,
+  transition: transition(CssProp.backgroundColor, 150),
+  whiteSpace: WhiteSpace.nowrap,
+};
+
+const tabBarStyles = {
+  bar: {
+    ...flexRow,
+    gap: Gap.xs,
+    padding: padding(Gap.xs),
+    borderRadius: Radius.full,
+    backgroundColor: Colors.backgroundCardAlt,
+    marginBottom: Gap.md,
+  } as CSSProperties,
+  pill: {
+    ...pillBase,
+    backgroundColor: CssValue.transparent,
+    color: Colors.textSecondary,
+  } as CSSProperties,
+  pillActive: {
+    ...pillBase,
+    backgroundColor: Colors.purpleHighlight,
+    color: Colors.textPrimary,
+  } as CSSProperties,
+};

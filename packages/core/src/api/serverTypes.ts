@@ -436,3 +436,47 @@ export type RivalDetailResponse = {
   sort: string;
   songs: RivalSongComparison[];
 };
+
+// ─── Leaderboard neighborhood types ───────────────────────────
+
+/** A neighbor entry in a per-instrument ranking neighborhood. */
+export type LeaderboardNeighborEntry = {
+  accountId: string;
+  displayName?: string;
+  totalScore: number;
+  totalScoreRank: number;
+  songsPlayed: number;
+  totalChartedSongs: number;
+  coverage: number;
+  adjustedSkillRating: number;
+  adjustedSkillRank: number;
+};
+
+/** Per-instrument ranking neighborhood response. */
+export type LeaderboardNeighborhoodResponse = {
+  instrument: string;
+  accountId: string;
+  rank: number;
+  above: LeaderboardNeighborEntry[];
+  self: LeaderboardNeighborEntry;
+  below: LeaderboardNeighborEntry[];
+};
+
+/** A neighbor entry in the composite ranking neighborhood. */
+export type CompositeNeighborEntry = {
+  accountId: string;
+  displayName?: string;
+  compositeRating: number;
+  compositeRank: number;
+  instrumentsPlayed: number;
+  totalSongsPlayed: number;
+};
+
+/** Composite ranking neighborhood response. */
+export type CompositeNeighborhoodResponse = {
+  accountId: string;
+  rank: number;
+  above: CompositeNeighborEntry[];
+  self: CompositeNeighborEntry;
+  below: CompositeNeighborEntry[];
+};

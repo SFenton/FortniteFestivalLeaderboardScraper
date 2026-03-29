@@ -1001,4 +1001,115 @@ public sealed class InstrumentDatabaseTests : IDisposable
         // Should not throw even when there's nothing to checkpoint
         Db.Checkpoint();
     }
+
+    // ═══ GetAccountRankingNeighborhood ═══════════════════════
+
+    private void SeedAccountRankings(params (string AccountId, long TotalScore, int TotalScoreRank)[] accounts)
+    {
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_fixture.DbPath}");
+        conn.Open();
+        foreach (var (id, score, rank) in accounts)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO AccountRankings
+                (AccountId, SongsPlayed, TotalChartedSongs, Coverage,
+                 RawSkillRating, AdjustedSkillRating, AdjustedSkillRank,
+                 WeightedRating, WeightedRank,
+                 FcRate, FcRateRank,
+                 TotalScore, TotalScoreRank,
+                 MaxScorePercent, MaxScorePercentRank,
+                 AvgAccuracy, FullComboCount, AvgStars, BestRank, AvgRank,
+                 ComputedAt)
+                VALUES (@id, 10, 100, 0.1,
+                        0.5, 0.5, @rank,
+                        0.5, @rank,
+                        0.5, @rank,
+                        @score, @rank,
+                        0.5, @rank,
+                        95.0, 0, 4.5, 1, 5.0,
+                        '2025-01-01T00:00:00Z');
+                """;
+            cmd.Parameters.AddWithValue("@id", id);
+            cmd.Parameters.AddWithValue("@score", score);
+            cmd.Parameters.AddWithValue("@rank", rank);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    [Fact]
+    public void GetAccountRankingNeighborhood_returns_above_self_below()
+    {
+        SeedAccountRankings(
+            ("a1", 5000, 1), ("a2", 4000, 2), ("a3", 3000, 3),
+            ("a4", 2000, 4), ("a5", 1000, 5));
+
+        var (above, self, below) = Db.GetAccountRankingNeighborhood("a3", radius: 2);
+
+        Assert.NotNull(self);
+        Assert.Equal("a3", self.AccountId);
+        Assert.Equal(3, self.TotalScoreRank);
+        Assert.Equal(2, above.Count);
+        Assert.Equal("a1", above[0].AccountId);
+        Assert.Equal("a2", above[1].AccountId);
+        Assert.Equal(2, below.Count);
+        Assert.Equal("a4", below[0].AccountId);
+        Assert.Equal("a5", below[1].AccountId);
+    }
+
+    [Fact]
+    public void GetAccountRankingNeighborhood_rank1_has_no_above()
+    {
+        SeedAccountRankings(
+            ("a1", 5000, 1), ("a2", 4000, 2), ("a3", 3000, 3));
+
+        var (above, self, below) = Db.GetAccountRankingNeighborhood("a1", radius: 2);
+
+        Assert.NotNull(self);
+        Assert.Equal("a1", self.AccountId);
+        Assert.Empty(above);
+        Assert.Equal(2, below.Count);
+    }
+
+    [Fact]
+    public void GetAccountRankingNeighborhood_last_rank_has_no_below()
+    {
+        SeedAccountRankings(
+            ("a1", 5000, 1), ("a2", 4000, 2), ("a3", 3000, 3));
+
+        var (above, self, below) = Db.GetAccountRankingNeighborhood("a3", radius: 2);
+
+        Assert.NotNull(self);
+        Assert.Equal("a3", self.AccountId);
+        Assert.Equal(2, above.Count);
+        Assert.Empty(below);
+    }
+
+    [Fact]
+    public void GetAccountRankingNeighborhood_unknown_account_returns_nulls()
+    {
+        SeedAccountRankings(("a1", 5000, 1));
+
+        var (above, self, below) = Db.GetAccountRankingNeighborhood("unknown");
+
+        Assert.Null(self);
+        Assert.Empty(above);
+        Assert.Empty(below);
+    }
+
+    [Fact]
+    public void GetAccountRankingNeighborhood_default_radius_is_5()
+    {
+        // Seed 11 accounts (ranks 1-11), target at rank 6
+        var accounts = Enumerable.Range(1, 11)
+            .Select(i => ($"a{i}", (long)(12000 - i * 1000), i))
+            .ToArray();
+        SeedAccountRankings(accounts);
+
+        var (above, self, below) = Db.GetAccountRankingNeighborhood("a6");
+
+        Assert.NotNull(self);
+        Assert.Equal(5, above.Count);
+        Assert.Equal(5, below.Count);
+    }
 }

@@ -19,6 +19,8 @@ import type {
   ComboPageResponse,
   ComboRankingEntry,
   RankingMetric,
+  LeaderboardNeighborhoodResponse,
+  CompositeNeighborhoodResponse,
 } from '@festival/core/api/serverTypes';
 
 const BASE = '';
@@ -207,5 +209,15 @@ export const api = {
   getPlayerComboRanking: (accountId: string, comboId: string, rankBy: RankingMetric = 'adjusted') =>
     get<{ comboId: string; rankBy: string; totalAccounts: number } & ComboRankingEntry>(
       `/api/rankings/combo/${encodeURIComponent(accountId)}?combo=${encodeURIComponent(comboId)}&rankBy=${encodeURIComponent(rankBy)}`,
+    ),
+
+  getLeaderboardNeighborhood: (instrument: InstrumentKey, accountId: string, radius = 5) =>
+    getWithETag<LeaderboardNeighborhoodResponse>(
+      `/api/rankings/${encodeURIComponent(instrument)}/${encodeURIComponent(accountId)}/neighborhood?radius=${radius}`,
+    ),
+
+  getCompositeNeighborhood: (accountId: string, radius = 5) =>
+    getWithETag<CompositeNeighborhoodResponse>(
+      `/api/rankings/composite/${encodeURIComponent(accountId)}/neighborhood?radius=${radius}`,
     ),
 };

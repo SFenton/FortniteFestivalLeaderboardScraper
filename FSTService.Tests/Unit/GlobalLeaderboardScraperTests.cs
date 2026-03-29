@@ -868,12 +868,11 @@ public class GlobalLeaderboardScraperTests
         // Page 0: reports 10 pages so pages 1-9 are fetched in parallel
         handler.EnqueueJsonOk("""{"page":0,"totalPages":10,"entries":[{"teamId":"a1","rank":1,"percentile":1.0,"sessionHistory":[{"trackedStats":{"SCORE":100}}]}]}""");
 
-        // Pages 1-3: all 403 → triggers access boundary cancellation (ForbiddenThreshold = 3)
-        for (int i = 0; i < 3; i++)
-            handler.EnqueueError(HttpStatusCode.Forbidden, """{"errorCode":"forbidden"}""");
-
-        // Pages 4-9: enqueue enough responses so cancelled tasks that somehow proceed don't throw
-        for (int i = 0; i < 6; i++)
+        // Pages 1-9: each JSON 403 triggers one retry (attempt 0 → 5s backoff → attempt 1),
+        // consuming 2 queued responses per page. With DOP=2, cancellation after the
+        // ForbiddenThreshold (3 consecutive 403s) may not propagate before additional
+        // pages acquire the semaphore, so enqueue enough for all 9 pages × 2 attempts.
+        for (int i = 0; i < 18; i++)
             handler.EnqueueError(HttpStatusCode.Forbidden, """{"errorCode":"forbidden"}""");
 
         // Use a limiter with a small max so any over-release would trigger SemaphoreFullException
