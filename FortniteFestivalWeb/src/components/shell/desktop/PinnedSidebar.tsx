@@ -122,7 +122,8 @@ function useStyles() {
       border: border(Border.thin, CssValue.transparent),
       boxShadow: CssValue.none,
       transition: bgTransition,
-    };
+      '--frosted-card': '1',
+    } as CSSProperties;
     return {
       sidebar: {
         width: Layout.sidebarWidth,

@@ -24,10 +24,6 @@ export const frostedCard = {
   backgroundImage: noiseUrl,
   backgroundRepeat: 'repeat',
   border: `1px solid ${Colors.glassBorder}`,
-  boxShadow: [
-    'inset 0 1px 0 rgba(255,255,255,0.06)',
-    'inset 0 0 30px rgba(255,255,255,0.02)',
-  ].join(', '),
   '--frosted-card': '1',
 } as const;
 

@@ -69,7 +69,7 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
         : null}
       <span style={s.colName}>{label ?? displayName}</span>
       <span style={s.seasonScoreGroup}>
-        {difficultyEnabled && showDifficulty && difficulty != null && difficulty > 0 && <DifficultyPill difficulty={difficulty} />}
+        {difficultyEnabled && showDifficulty && difficulty != null && difficulty >= 0 && <DifficultyPill difficulty={difficulty} />}
         {showSeason && season != null && <SeasonPill season={season} />}
         <ScorePill score={score} width={scoreWidth} />
       </span>

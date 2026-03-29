@@ -8,8 +8,9 @@ import { PaginationButton } from '../common/PaginationButton';
 import ArcSpinner from '../common/ArcSpinner';
 import { staggerDelay } from '@festival/ui-utils';
 import { Gap, Layout, STAGGER_INTERVAL, FADE_DURATION, SPINNER_FADE_MS } from '@festival/theme';
+import { useIsWideDesktop } from '../../hooks/ui/useIsMobile';
 import { LoadPhase } from '@festival/core';
-import { plbStyles as s } from './paginatedLeaderboardStyles';
+import { plbStyles as s, fixedFooterWide } from './paginatedLeaderboardStyles';
 
 export interface PaginatedLeaderboardProps<T> {
   /** Page entries to render. */
@@ -98,6 +99,8 @@ export function PaginatedLeaderboard<T>({
   staggerRushRef,
 }: PaginatedLeaderboardProps<T>) {
   const { t } = useTranslation();
+  const isWideDesktop = useIsWideDesktop();
+  const wideOverride = isWideDesktop ? fixedFooterWide : undefined;
   const scrollContainerRef = useScrollContainer();
 
   const hasPagination = totalPages > 1;
@@ -256,7 +259,7 @@ export function PaginatedLeaderboard<T>({
       {createPortal(
         <>
           {hasLoadedOnce.current && !error && hasPagination && (
-            <div style={hasFab ? s.mobilePagination : s.desktopPagination}>
+            <div style={{ ...(hasFab ? s.mobilePagination : s.desktopPagination), ...wideOverride }}>
               <div
                 className={hasFab ? 'fab-player-footer' : ''}
                 style={isMobile ? s.paginationMobile : s.pagination}
@@ -283,7 +286,7 @@ export function PaginatedLeaderboard<T>({
           )}
           {hasPlayerFooter && renderPlayerFooter && (
             <div
-              style={{ ...(hasFab ? s.playerFooterFab : s.desktopPlayerFooter), ...footerStaggerStyle }}
+              style={{ ...(hasFab ? s.playerFooterFab : s.desktopPlayerFooter), ...wideOverride, ...footerStaggerStyle }}
               onAnimationEnd={(ev) => {
                 footerShownRef.current = true;
                 const el = ev.currentTarget;

@@ -104,8 +104,13 @@ public sealed class InstrumentDatabase : IDisposable
         // ── Migration: add Source column (scrape / backfill / neighbor) ──
         MigrateAddColumn(conn, "Source", "TEXT NOT NULL DEFAULT 'scrape'");
 
-        // ── Migration: add Difficulty column (0=Easy, 1=Medium, 2=Hard, 3=Expert) ──
-        MigrateAddColumn(conn, "Difficulty", "INTEGER DEFAULT 0");
+        // ── Migration: add Difficulty column (-1=unset, 0=Easy, 1=Medium, 2=Hard, 3=Expert) ──
+        MigrateAddColumn(conn, "Difficulty", "INTEGER DEFAULT -1");
+
+        // ── Migration: reset ambiguous Difficulty=0 → -1 (v1) ──
+        // 0 was the original default and also means "Easy", making them indistinguishable.
+        // -1 now means "unset". The scraper will re-populate real values on next pass.
+        MigrateDifficultyReset(conn);
 
         // ── Index for efficient Source-based filtering ──
         using var srcIdx = conn.CreateCommand();
@@ -242,7 +247,8 @@ public sealed class InstrumentDatabase : IDisposable
                OR (excluded.Rank > 0 AND (LeaderboardEntries.Rank IS NULL OR LeaderboardEntries.Rank = 0))
                OR (excluded.ApiRank > 0 AND (LeaderboardEntries.ApiRank IS NULL OR LeaderboardEntries.ApiRank = 0 OR LeaderboardEntries.ApiRank != excluded.ApiRank))
                OR (excluded.Percentile > 0 AND LeaderboardEntries.Percentile <= 0)
-               OR (excluded.Source != LeaderboardEntries.Source AND (excluded.Source = 'scrape' OR (excluded.Source = 'backfill' AND LeaderboardEntries.Source = 'neighbor')));
+               OR (excluded.Source != LeaderboardEntries.Source AND (excluded.Source = 'scrape' OR (excluded.Source = 'backfill' AND LeaderboardEntries.Source = 'neighbor')))
+               OR (excluded.Difficulty >= 0 AND LeaderboardEntries.Difficulty < 0);
             """;
 
         var pSongId    = cmd.Parameters.Add("@songId", SqliteType.Text);
@@ -1546,5 +1552,37 @@ public sealed class InstrumentDatabase : IDisposable
         alter.ExecuteNonQuery();
 
         _log.LogInformation("Migrated {Instrument}: added column {Column} ({Type})", _instrument, columnName, columnType);
+    }
+
+    /// <summary>
+    /// One-time migration: reset Difficulty=0 → -1 so that 0 unambiguously means "Easy".
+    /// Tracked via a <c>_MigrationVersion</c> table to run only once.
+    /// </summary>
+    private void MigrateDifficultyReset(SqliteConnection conn)
+    {
+        using var create = conn.CreateCommand();
+        create.CommandText = "CREATE TABLE IF NOT EXISTS _MigrationVersion (Version INTEGER NOT NULL DEFAULT 0);";
+        create.ExecuteNonQuery();
+
+        using var seed = conn.CreateCommand();
+        seed.CommandText = "INSERT OR IGNORE INTO _MigrationVersion (rowid, Version) VALUES (1, 0);";
+        seed.ExecuteNonQuery();
+
+        using var read = conn.CreateCommand();
+        read.CommandText = "SELECT Version FROM _MigrationVersion WHERE rowid = 1;";
+        var version = Convert.ToInt32(read.ExecuteScalar());
+
+        if (version < 1)
+        {
+            using var upd = conn.CreateCommand();
+            upd.CommandText = "UPDATE LeaderboardEntries SET Difficulty = -1 WHERE Difficulty = 0;";
+            var affected = upd.ExecuteNonQuery();
+
+            using var ver = conn.CreateCommand();
+            ver.CommandText = "UPDATE _MigrationVersion SET Version = 1 WHERE rowid = 1;";
+            ver.ExecuteNonQuery();
+
+            _log.LogInformation("Migrated {Instrument}: reset {Count} rows Difficulty 0 → -1", _instrument, affected);
+        }
     }
 }

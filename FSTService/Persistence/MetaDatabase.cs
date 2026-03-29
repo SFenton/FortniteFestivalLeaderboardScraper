@@ -351,9 +351,6 @@ public sealed class MetaDatabase : IDisposable
         MigrateAddColumn(conn, "RegisteredUsers", "Platform", "TEXT");
         MigrateAddColumn(conn, "RegisteredUsers", "LastLoginAt", "TEXT");
 
-        // ── Migration: add LeavingTomorrow to ItemShopTracks (existing DBs) ──
-        MigrateAddColumn(conn, "ItemShopTracks", "LeavingTomorrow", "INTEGER NOT NULL DEFAULT 0");
-
         // ── Migration: add TotalCombosToCompute to RivalsStatus (existing DBs) ──
         MigrateAddColumn(conn, "RivalsStatus", "TotalCombosToCompute", "INTEGER NOT NULL DEFAULT 0");
 
@@ -1935,26 +1932,6 @@ public sealed class MetaDatabase : IDisposable
         }
     }
 
-    /// <summary>
-    /// Run a WAL checkpoint to move committed pages back into the main database file.
-    /// Call after heavy write phases to keep the WAL file small and prevent
-    /// auto-checkpoints from firing during API reads.
-    /// </summary>
-    public void Checkpoint()
-    {
-        try
-        {
-            using var conn = OpenConnection();
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
-            cmd.ExecuteNonQuery();
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "WAL checkpoint on meta DB failed. Will retry next pass.");
-        }
-    }
-
     // ─── SongFirstSeenSeason ────────────────────────────────────
 
     /// <summary>
@@ -2919,62 +2896,6 @@ public sealed class MetaDatabase : IDisposable
         using var reader = cmd.ExecuteReader();
         if (!reader.Read()) return null;
         return ReadCompositeDto(reader);
-    }
-
-    /// <summary>
-    /// Returns the ±<paramref name="radius"/> accounts around <paramref name="accountId"/>
-    /// on the CompositeRank axis, split into above/self/below.
-    /// </summary>
-    public (List<CompositeRankingDto> Above, CompositeRankingDto? Self, List<CompositeRankingDto> Below) GetCompositeRankingNeighborhood(
-        string accountId, int radius = 5)
-    {
-        using var conn = OpenConnection();
-
-        // 1. Look up the target account's composite rank
-        int? selfRank;
-        using (var lookup = conn.CreateCommand())
-        {
-            lookup.CommandText = "SELECT CompositeRank FROM CompositeRankings WHERE AccountId = @accountId;";
-            lookup.Parameters.AddWithValue("@accountId", accountId);
-            var result = lookup.ExecuteScalar();
-            selfRank = result is not null ? Convert.ToInt32(result) : null;
-        }
-
-        if (selfRank is null)
-            return ([], null, []);
-
-        // 2. Fetch the neighborhood (self ± radius)
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT AccountId, InstrumentsPlayed, TotalSongsPlayed, CompositeRating, CompositeRank,
-                   GuitarAdjustedSkill, GuitarSkillRank, BassAdjustedSkill, BassSkillRank,
-                   DrumsAdjustedSkill, DrumsSkillRank, VocalsAdjustedSkill, VocalsSkillRank,
-                   ProGuitarAdjustedSkill, ProGuitarSkillRank, ProBassAdjustedSkill, ProBassSkillRank,
-                   ComputedAt
-            FROM CompositeRankings
-            WHERE CompositeRank BETWEEN @lo AND @hi
-            ORDER BY CompositeRank ASC;
-            """;
-        cmd.Parameters.AddWithValue("@lo", Math.Max(1, selfRank.Value - radius));
-        cmd.Parameters.AddWithValue("@hi", selfRank.Value + radius);
-
-        var above = new List<CompositeRankingDto>();
-        CompositeRankingDto? self = null;
-        var below = new List<CompositeRankingDto>();
-
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            var dto = ReadCompositeDto(reader);
-            if (dto.AccountId == accountId)
-                self = dto;
-            else if (dto.CompositeRank < selfRank.Value)
-                above.Add(dto);
-            else
-                below.Add(dto);
-        }
-
-        return (above, self, below);
     }
 
     /// <summary>Snapshot today's composite ranks for top N + additional accounts.</summary>

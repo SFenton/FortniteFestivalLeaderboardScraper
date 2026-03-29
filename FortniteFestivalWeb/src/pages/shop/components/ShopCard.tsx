@@ -1,7 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { memo, useRef, useCallback, useMemo, type CSSProperties } from 'react';
 import type { ServerSong as Song } from '@festival/core/api/serverTypes';
-import { Colors, Font, Weight, Gap, Radius, Border, Display, Position, Overflow, ObjectFit, WhiteSpace, Opacity, CssValue, border, FADE_DURATION } from '@festival/theme';
+import { Colors, Font, Weight, Gap, Radius, Border, Display, Position, Overflow, ObjectFit, WhiteSpace, Opacity, CssValue, border, FADE_DURATION, frostedCard } from '@festival/theme';
 import { truncate } from '@festival/theme';
 import anim from '../../../styles/animations.module.css';
 
@@ -58,6 +58,7 @@ export default memo(function ShopCard({ song, leavingTomorrow, staggerDelay }: S
 function useStyles() {
   return useMemo(() => ({
     card: {
+      ...frostedCard,
       display: Display.block,
       position: Position.relative,
       aspectRatio: '1',
@@ -65,8 +66,6 @@ function useStyles() {
       overflow: Overflow.hidden,
       textDecoration: CssValue.none,
       color: CssValue.inherit,
-      border: border(Border.thin, Colors.glassBorder),
-      backgroundColor: Colors.surfaceFrosted,
     } as CSSProperties,
     art: {
       width: CssValue.full,

@@ -35,6 +35,7 @@ import MobileHeader from './components/shell/mobile/MobileHeader';
 import { FabSearchProvider, useFabSearch } from './contexts/FabSearchContext';
 import { SearchQueryProvider } from './contexts/SearchQueryContext';
 import { useSettings } from './contexts/SettingsContext';
+import { useProximityGlow } from './hooks/ui/useProximityGlow';
 import BottomNav from './components/shell/mobile/BottomNav';
 import Sidebar from './components/shell/desktop/Sidebar';
 import DesktopNav from './components/shell/desktop/DesktopNav';
@@ -199,6 +200,10 @@ function AppShell() {
   const { player, setPlayer, clearPlayer } = useTrackedPlayer();
   const { state: { songs } } = useFestival();
   const { settings } = useSettings();
+
+  // Proximity glow for frosted cards — document-level for full coverage
+  useProximityGlow(!settings.disableLightTrails);
+
   const location = useLocation();
   const isMobile = useIsMobileChrome();
   const isNarrow = useIsMobile();

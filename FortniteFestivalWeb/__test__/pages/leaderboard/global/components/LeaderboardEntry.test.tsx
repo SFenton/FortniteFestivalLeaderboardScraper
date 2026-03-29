@@ -119,15 +119,18 @@ describe('LeaderboardEntry', () => {
     expect(screen.queryByText('X')).toBeFalsy();
   });
 
-  it('hides difficulty pill when difficulty is 0 (unset/ambiguous)', () => {
-    render(<W><LeaderboardEntry rank={1} displayName="P1" score={100000} showDifficulty difficulty={0} /></W>);
+  it('hides difficulty pill when difficulty is -1 (unset)', () => {
+    render(<W><LeaderboardEntry rank={1} displayName="P1" score={100000} showDifficulty difficulty={-1} /></W>);
     expect(screen.queryByText('E')).toBeFalsy();
+    expect(screen.queryByText('M')).toBeFalsy();
+    expect(screen.queryByText('H')).toBeFalsy();
+    expect(screen.queryByText('X')).toBeFalsy();
   });
 
-  it('renders difficulty pill for each non-zero difficulty value', () => {
-    const labels = ['M', 'H', 'X'];
+  it('renders difficulty pill for each difficulty value including Easy', () => {
+    const labels = ['E', 'M', 'H', 'X'];
     labels.forEach((label, i) => {
-      const { unmount } = render(<W><LeaderboardEntry rank={1} displayName="P" score={100000} showDifficulty difficulty={i + 1} /></W>);
+      const { unmount } = render(<W><LeaderboardEntry rank={1} displayName="P" score={100000} showDifficulty difficulty={i} /></W>);
       expect(screen.getByText(label)).toBeTruthy();
       unmount();
     });
