@@ -151,7 +151,7 @@ export default function RivalsDetailDemo() {
                 song={song}
                 albumArt={song.albumArt}
                 playerName="You"
-                rivalName="keysAndDreams"
+                rivalName="KeyDrifter"
                 onClick={NOOP}
                 standalone
               />
