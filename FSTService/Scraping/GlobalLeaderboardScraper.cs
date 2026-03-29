@@ -1000,8 +1000,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         if (totalPages > 1)
         {
             _log.LogDebug(
-                "Scraping {Label} ({Song}/{Instrument}): {EntriesPerPage} entries/page × {TotalPages:N0} pages (~{EstEntries:N0} entries reported by Epic).",
-                label ?? songId, songId, instrument, entriesPerPage, totalPages, (long)entriesPerPage * totalPages);
+                "Scraping {Label} ({Song}/{Instrument}): {EntriesPerPage} entries/page × {TotalPages:N0} pages (of {ReportedPages:N0} reported, ~{EstEntries:N0} entries reported by Epic).",
+                label ?? songId, songId, instrument, entriesPerPage, totalPages, reportedPages, (long)entriesPerPage * reportedPages);
         }
 
         var allEntries = new ConcurrentDictionary<int, List<LeaderboardEntry>>();
