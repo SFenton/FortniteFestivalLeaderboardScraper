@@ -1,31 +1,35 @@
+import { createElement } from 'react';
 import type { FirstRunSlideDef } from '../../../firstRun/types';
+import CompeteHubDemo from './demo/CompeteHubDemo';
+import CompeteLeaderboardsDemo from './demo/CompeteLeaderboardsDemo';
+import CompeteRivalsDemo from './demo/CompeteRivalsDemo';
 
 const competeHubSlide: FirstRunSlideDef = {
   id: 'compete-hub',
-  version: 1,
+  version: 2,
   title: 'firstRun.compete.hub.title',
   description: 'firstRun.compete.hub.description',
-  render: () => null,
+  render: () => createElement(CompeteHubDemo),
   contentStaggerCount: 1,
 };
 
 const competeLeaderboardsSlide: FirstRunSlideDef = {
   id: 'compete-leaderboards',
-  version: 1,
+  version: 2,
   title: 'firstRun.compete.leaderboards.title',
   description: 'firstRun.compete.leaderboards.description',
-  render: () => null,
-  contentStaggerCount: 1,
+  render: () => createElement(CompeteLeaderboardsDemo),
+  contentStaggerCount: 6,
 };
 
 const competeRivalsSlide: FirstRunSlideDef = {
   id: 'compete-rivals',
-  version: 1,
+  version: 2,
   title: 'firstRun.compete.rivals.title',
   description: 'firstRun.compete.rivals.description',
   gate: (ctx) => !!ctx.hasPlayer,
-  render: () => null,
-  contentStaggerCount: 1,
+  render: () => createElement(CompeteRivalsDemo),
+  contentStaggerCount: 4,
 };
 
 export const competeSlides: FirstRunSlideDef[] = [
