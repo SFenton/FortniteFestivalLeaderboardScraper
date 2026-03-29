@@ -91,4 +91,46 @@ public sealed class ComboIdsTests
     {
         Assert.Null(ComboIds.NormalizeComboParam(input));
     }
+
+    // ── NormalizeAnyComboParam ──
+
+    [Theory]
+    [InlineData("01", "01")]
+    [InlineData("03", "03")]
+    [InlineData("3f", "3f")]
+    public void NormalizeAnyComboParam_accepts_hex_ids(string input, string expected)
+    {
+        Assert.Equal(expected, ComboIds.NormalizeAnyComboParam(input));
+    }
+
+    [Theory]
+    [InlineData("Solo_Guitar", "01")]
+    [InlineData("Solo_Bass", "02")]
+    [InlineData("Solo_Drums", "04")]
+    [InlineData("Solo_Vocals", "08")]
+    [InlineData("Solo_PeripheralGuitar", "10")]
+    [InlineData("Solo_PeripheralBass", "20")]
+    public void NormalizeAnyComboParam_accepts_single_instrument_names(string input, string expected)
+    {
+        Assert.Equal(expected, ComboIds.NormalizeAnyComboParam(input));
+    }
+
+    [Theory]
+    [InlineData("Solo_Guitar+Solo_Bass", "03")]
+    [InlineData("Solo_Bass+Solo_Guitar", "03")]
+    public void NormalizeAnyComboParam_accepts_multi_instrument_strings(string input, string expected)
+    {
+        Assert.Equal(expected, ComboIds.NormalizeAnyComboParam(input));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("  ")]
+    [InlineData("NotAnInstrument")]
+    [InlineData("00")]
+    public void NormalizeAnyComboParam_returns_null_for_invalid(string? input)
+    {
+        Assert.Null(ComboIds.NormalizeAnyComboParam(input));
+    }
 }

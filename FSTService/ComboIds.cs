@@ -91,6 +91,38 @@ public static class ComboIds
         return FromInstruments(parts);
     }
 
+    /// <summary>
+    /// Normalize a combo parameter to a hex combo ID — accepts a hex ID, a single instrument
+    /// name, or a "+" delimited instrument list. Unlike <see cref="NormalizeComboParam"/>,
+    /// this allows single-instrument values. Returns null if invalid.
+    /// </summary>
+    public static string? NormalizeAnyComboParam(string? param)
+    {
+        if (string.IsNullOrWhiteSpace(param)) return null;
+
+        // If it looks like a hex combo ID (1-2 hex chars), validate and return
+        if (param.Length <= 2 && int.TryParse(param, System.Globalization.NumberStyles.HexNumber, null, out int mask))
+        {
+            if (mask > 0 && mask <= 0x3F)
+                return mask.ToString("x2");
+        }
+
+        // Otherwise treat as "Instrument+Instrument+..." format (including single)
+        var parts = param.Split('+', StringSplitOptions.RemoveEmptyEntries)
+            .Select(p => p.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (parts.Count == 0) return null;
+
+        foreach (var p in parts)
+        {
+            if (IndexOf(p) < 0) return null;
+        }
+
+        return FromInstruments(parts);
+    }
+
     private static int IndexOf(string instrument)
     {
         for (int i = 0; i < CanonicalOrder.Count; i++)

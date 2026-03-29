@@ -75,7 +75,9 @@ public static partial class ApiEndpoints
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
 
             var effectiveLimit = limit ?? 5;
-            var effectiveCombo = combo ?? "";
+            var effectiveCombo = !string.IsNullOrEmpty(combo)
+                ? (ComboIds.NormalizeAnyComboParam(combo) ?? combo)
+                : "";
             var cacheKey = $"suggestions:{accountId}:{effectiveCombo}:{effectiveLimit}";
             var cached = rivalsCache.Get(cacheKey);
             if (cached is not null)
@@ -205,6 +207,12 @@ public static partial class ApiEndpoints
             [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
+
+            // Normalize combo — accept instrument name ("Solo_Guitar") or hex ID ("01")
+            var normalizedCombo = ComboIds.NormalizeAnyComboParam(combo);
+            if (normalizedCombo is null)
+                return Results.BadRequest(new { error = $"Invalid combo: {combo}" });
+            combo = normalizedCombo;
 
             var cacheKey = $"list:{accountId}:{combo}";
             var cached = rivalsCache.Get(cacheKey);
