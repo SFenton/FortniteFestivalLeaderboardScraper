@@ -16,7 +16,7 @@ import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import {
   Colors, Font, Weight, Gap, Radius, Layout, Border, InstrumentSize, FontVariant,
   Display, Align, Justify, TextAlign, ObjectFit, Overflow, CssValue, CssProp,
-  flexRow, flexColumn, flexCenter, frostedCard, truncate, border, padding, transition,
+  flexRow, flexColumn, flexCenter, frostedCardSurface, truncate, border, padding, transition,
 } from '@festival/theme';
 import { resolveCategoryI18n } from '../suggestionsHelpers';
 
@@ -263,7 +263,7 @@ function RightContent({ song, layout, leaderboardData, starCount = 0, starSrc,
 function useCategoryStyles() {
   return useMemo(() => ({
     card: {
-      ...frostedCard,
+      ...frostedCardSurface,
       borderRadius: Radius.md,
       marginBottom: Gap.section,
       overflow: Overflow.hidden,
@@ -303,6 +303,7 @@ function useRowStyles() {
       textDecoration: CssValue.none,
       color: CssValue.inherit,
       transition: transition(CssProp.backgroundColor, 120),
+      '--frosted-card': '1',
     } as CSSProperties,
     rowMainLine: {
       ...flexRow,

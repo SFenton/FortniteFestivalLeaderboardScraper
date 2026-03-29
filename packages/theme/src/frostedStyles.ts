@@ -28,6 +28,19 @@ export const frostedCard = {
 } as const;
 
 /**
+ * Surface-only variant of frostedCard — same visual appearance (background,
+ * noise, border) but WITHOUT the `--frosted-card` marker.  Use this for
+ * card wrappers that contain multiple rows when each row should receive its
+ * own proximity-glow spotlight instead of the entire card.
+ */
+export const frostedCardSurface = {
+  backgroundColor: Colors.surfaceFrosted,
+  backgroundImage: noiseUrl,
+  backgroundRepeat: 'repeat',
+  border: `1px solid ${Colors.glassBorder}`,
+} as const;
+
+/**
  * Lightweight variant for repeated list items (song rows, leaderboard rows).
  * Same background and border as frostedCard but without box-shadows and
  * SVG noise — dramatically cheaper to composite when hundreds are in the DOM.

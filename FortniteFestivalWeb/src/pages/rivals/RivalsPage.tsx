@@ -301,16 +301,21 @@ export default function RivalsPage() {
               )}
 
               {/* Common rivals (appears in ALL selected instruments, 2+ required) */}
-              {(commonRivals.above.length > 0 || commonRivals.below.length > 0) && (
+              {(commonRivals.above.length > 0 || commonRivals.below.length > 0) && (() => {
+                const previewAbove = commonRivals.above.slice(0, PREVIEW_COUNT);
+                const previewBelow = commonRivals.below.slice(0, PREVIEW_COUNT);
+                const allPreview = [...previewAbove, ...previewBelow];
+                const navigateToCommon = () => navigate(Routes.allRivals('common'), { state: { from: 'rivals' } });
+                return (
                 <div style={styles.section}>
                   <div
                     className={fx.sectionHeaderClickable}
                     style={{ ...styles.sectionHeaderClickable, ...nextStagger() }}
                     onAnimationEnd={clearAnim}
-                    onClick={() => navigate(Routes.allRivals('common'), { state: { from: 'rivals' } })}
+                    onClick={navigateToCommon}
                     role="button"
                     tabIndex={0}
-                    onKeyDown={e => { if (e.key === 'Enter') navigate(Routes.allRivals('common'), { state: { from: 'rivals' } }); }}
+                    onKeyDown={e => { if (e.key === 'Enter') navigateToCommon(); }}
                   >
                     <div style={styles.cardHeaderText}>
                       <span style={styles.cardTitle}>{t('rivals.commonRivalsShort', 'Common Rivals')}</span>
@@ -318,43 +323,66 @@ export default function RivalsPage() {
                     <span style={styles.seeAll}>{t('rivals.seeAll', 'See All')}</span>
                     <IoChevronForward size={20} style={styles.chevron} />
                   </div>
-                  <div style={{ ...styles.rivalList, ...nameWidthVar([...commonRivals.above, ...commonRivals.below]) }}>
-                    {[...commonRivals.above, ...commonRivals.below].map(rival => (
+                  <div style={{ ...styles.rivalList, ...nameWidthVar(allPreview) }}>
+                    {allPreview.map(rival => (
                       <RivalRow
                         key={rival.accountId}
                         rival={rival}
-                        direction={commonRivals.above.includes(rival) ? 'above' : 'below'}
+                        direction={previewAbove.includes(rival) ? 'above' : 'below'}
                         onClick={() => navigateToRival(rival.accountId, rival.displayName)}
                         style={nextStagger()}
                         onAnimationEnd={clearAnim}
                       />
                     ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Combo section (if 2+ instruments enabled) */}
-              {combo && comboRivals && (comboRivals.above.length > 0 || comboRivals.below.length > 0) && (
-                <div style={styles.section}>
-                  <div style={{ ...styles.sectionHeader, ...nextStagger() }} onAnimationEnd={clearAnim}>
-                    <div>
-                      <span style={styles.cardTitle}>{t('rivals.instrumentRivalsShort', { instrument: t('rivals.combo') })}</span>
+                    <div style={{ ...styles.viewAllButton, ...nextStagger() }} onAnimationEnd={clearAnim} onClick={navigateToCommon}>
+                      {t('rivals.viewAllRivals')}
                     </div>
                   </div>
-                  <div style={{ ...styles.rivalList, ...nameWidthVar([...comboRivals.above, ...comboRivals.below]) }}>
-                    {[...comboRivals.above, ...comboRivals.below].map(rival => (
+                </div>
+                );
+              })()}
+
+              {/* Combo section (if 2+ instruments enabled) */}
+              {combo && comboRivals && (comboRivals.above.length > 0 || comboRivals.below.length > 0) && (() => {
+                const previewAbove = comboRivals.above.slice(0, PREVIEW_COUNT);
+                const previewBelow = comboRivals.below.slice(0, PREVIEW_COUNT);
+                const allPreview = [...previewAbove, ...previewBelow];
+                const navigateToCombo = () => navigate(Routes.allRivals('combo'), { state: { from: 'rivals' } });
+                return (
+                <div style={styles.section}>
+                  <div
+                    className={fx.sectionHeaderClickable}
+                    style={{ ...styles.sectionHeaderClickable, ...nextStagger() }}
+                    onAnimationEnd={clearAnim}
+                    onClick={navigateToCombo}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={e => { if (e.key === 'Enter') navigateToCombo(); }}
+                  >
+                    <div style={styles.cardHeaderText}>
+                      <span style={styles.cardTitle}>{t('rivals.instrumentRivalsShort', { instrument: t('rivals.combo') })}</span>
+                    </div>
+                    <span style={styles.seeAll}>{t('rivals.seeAll', 'See All')}</span>
+                    <IoChevronForward size={20} style={styles.chevron} />
+                  </div>
+                  <div style={{ ...styles.rivalList, ...nameWidthVar(allPreview) }}>
+                    {allPreview.map(rival => (
                       <RivalRow
                         key={rival.accountId}
                         rival={rival}
-                        direction={comboRivals.above.some(r => r.accountId === rival.accountId) ? 'above' : 'below'}
+                        direction={previewAbove.includes(rival) ? 'above' : 'below'}
                         onClick={() => navigateToRival(rival.accountId, rival.displayName)}
                         style={nextStagger()}
                         onAnimationEnd={clearAnim}
                       />
                     ))}
+                    <div style={{ ...styles.viewAllButton, ...nextStagger() }} onAnimationEnd={clearAnim} onClick={navigateToCombo}>
+                      {t('rivals.viewAllRivals')}
+                    </div>
                   </div>
                 </div>
-              )}
+                );
+              })()}
 
               {/* Per-instrument sections */}
               {instrumentRivals.map(entry => {
@@ -392,6 +420,9 @@ export default function RivalsPage() {
                           onAnimationEnd={clearAnim}
                         />
                       ))}
+                      <div style={{ ...styles.viewAllButton, ...nextStagger() }} onAnimationEnd={clearAnim} onClick={navigateToInstrument}>
+                        {t('rivals.viewAllRivals')}
+                      </div>
                     </div>
                   </div>
                 );

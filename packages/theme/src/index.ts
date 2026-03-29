@@ -2,7 +2,7 @@ export { Colors } from './colors';
 export type { ColorKey } from './colors';
 export { Radius, Font, Weight, ZIndex, LineHeight, Gap, Opacity, Border, Shadow, SpinnerSize, Spinner, IconSize, InstrumentSize, StarSize, AlbumArtSize, MetadataSize, ChartSize, GeneralSize, Size, MaxWidth, Layout } from './spacing';
 export { goldFill, goldOutline, goldOutlineSkew, GOLD_SKEW } from './goldStyles';
-export { frostedCard, frostedCardLight, modalOverlay, modalCard, btnPrimary, btnDanger, purpleGlass } from './frostedStyles';
+export { frostedCard, frostedCardSurface, frostedCardLight, modalOverlay, modalCard, btnPrimary, btnDanger, purpleGlass } from './frostedStyles';
 export { flexColumn, flexRow, flexCenter, flexBetween, textBold, textSemibold, truncate, absoluteFill, fixedFill, centerVertical } from './factories';
 export { Display, Position, Align, Justify, TextAlign, FontStyle, FontVariant, WordBreak, WhiteSpace, Isolation, TransformOrigin, TextTransform, BoxSizing, BorderStyle, Overflow, ObjectFit, Cursor, PointerEvents, CssValue, CssProp, GridTemplate } from './cssEnums';
 export { border, padding, margin, transition, transitions, scale, translateY, scaleTranslateY } from './cssHelpers';

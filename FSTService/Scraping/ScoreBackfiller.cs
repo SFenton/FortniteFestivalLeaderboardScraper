@@ -258,6 +258,12 @@ public class ScoreBackfiller
                 allTimeRank: entry.Rank,
                 difficulty: entry.Difficulty);
         }
+        else if (entry.Difficulty >= 0)
+        {
+            // Backfill difficulty on existing ScoreHistory rows that are missing it.
+            _metaDb.BackfillScoreHistoryDifficulty(
+                accountId, songId, instrument, entry.Score, entry.Difficulty);
+        }
 
         _metaDb.MarkBackfillSongChecked(accountId, songId, instrument, entryFound: true);
 

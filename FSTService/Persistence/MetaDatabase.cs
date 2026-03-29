@@ -498,6 +498,34 @@ public sealed class MetaDatabase : IDisposable
     }
 
     /// <summary>
+    /// Backfill difficulty on existing ScoreHistory rows where it is currently NULL.
+    /// Only writes when there are matching rows to update; no-ops otherwise.
+    /// </summary>
+    public void BackfillScoreHistoryDifficulty(string accountId, string songId, string instrument, int score, int difficulty)
+    {
+        lock (_writeLock)
+        {
+        var conn = GetPersistentConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE ScoreHistory
+               SET Difficulty = @difficulty
+             WHERE AccountId = @accountId
+               AND SongId = @songId
+               AND Instrument = @instrument
+               AND NewScore = @score
+               AND Difficulty IS NULL;
+            """;
+        cmd.Parameters.AddWithValue("@accountId", accountId);
+        cmd.Parameters.AddWithValue("@songId", songId);
+        cmd.Parameters.AddWithValue("@instrument", instrument);
+        cmd.Parameters.AddWithValue("@score", score);
+        cmd.Parameters.AddWithValue("@difficulty", difficulty);
+        cmd.ExecuteNonQuery();
+        } // lock
+    }
+
+    /// <summary>
     /// Batch-insert multiple score changes in a single transaction.
     /// Avoids per-call connection overhead when called from the scrape pipeline.
     /// </summary>
@@ -3155,73 +3183,6 @@ public sealed class MetaDatabase : IDisposable
             ProBassSkillRank = reader.IsDBNull(16) ? null : reader.GetInt32(16),
             ComputedAt = reader.GetString(17),
         };
-    }
-
-    /// <summary>Run a WAL checkpoint to keep the WAL file small.</summary>
-    public void Checkpoint()
-    {
-        try
-        {
-            using var conn = OpenConnection();
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
-            cmd.ExecuteNonQuery();
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "WAL checkpoint failed for meta database. Will retry next pass.");
-        }
-    }
-
-    /// <summary>Get a composite ranking neighborhood: accounts above, the target, and accounts below.</summary>
-    public (List<CompositeRankingDto> Above, CompositeRankingDto? Self, List<CompositeRankingDto> Below) GetCompositeRankingNeighborhood(
-        string accountId, int radius = 5)
-    {
-        using var conn = OpenConnection();
-
-        int? selfRank;
-        using (var lookup = conn.CreateCommand())
-        {
-            lookup.CommandText = "SELECT CompositeRank FROM CompositeRankings WHERE AccountId = @accountId;";
-            lookup.Parameters.AddWithValue("@accountId", accountId);
-            var result = lookup.ExecuteScalar();
-            selfRank = result is not null ? Convert.ToInt32(result) : null;
-        }
-
-        if (selfRank is null)
-            return ([], null, []);
-
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT AccountId, InstrumentsPlayed, TotalSongsPlayed, CompositeRating, CompositeRank,
-                   GuitarAdjustedSkill, GuitarSkillRank, BassAdjustedSkill, BassSkillRank,
-                   DrumsAdjustedSkill, DrumsSkillRank, VocalsAdjustedSkill, VocalsSkillRank,
-                   ProGuitarAdjustedSkill, ProGuitarSkillRank, ProBassAdjustedSkill, ProBassSkillRank,
-                   ComputedAt
-            FROM CompositeRankings
-            WHERE CompositeRank BETWEEN @lo AND @hi
-            ORDER BY CompositeRank ASC;
-            """;
-        cmd.Parameters.AddWithValue("@lo", Math.Max(1, selfRank.Value - radius));
-        cmd.Parameters.AddWithValue("@hi", selfRank.Value + radius);
-
-        var above = new List<CompositeRankingDto>();
-        CompositeRankingDto? self = null;
-        var below = new List<CompositeRankingDto>();
-
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            var dto = ReadCompositeDto(reader);
-            if (dto.AccountId == accountId)
-                self = dto;
-            else if (dto.CompositeRank < selfRank.Value)
-                above.Add(dto);
-            else
-                below.Add(dto);
-        }
-
-        return (above, self, below);
     }
 
     /// <summary>

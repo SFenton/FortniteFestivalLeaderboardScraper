@@ -70,6 +70,7 @@ function useStyles(isLast: boolean) {
         fontSize: Font.md,
         color: Colors.textPrimary,
         minWidth: Gap.none,
+        '--frosted-card': '1',
       },
       countText: {
         fontWeight: Weight.semibold,

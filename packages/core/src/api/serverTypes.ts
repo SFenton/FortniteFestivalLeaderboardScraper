@@ -436,3 +436,45 @@ export type RivalDetailResponse = {
   sort: string;
   songs: RivalSongComparison[];
 };
+
+/** Neighbor entry in a per-instrument leaderboard neighborhood. */
+export type LeaderboardNeighborEntry = {
+  accountId: string;
+  displayName?: string | null;
+  totalScore: number;
+  totalScoreRank: number;
+  songsPlayed: number;
+  totalChartedSongs: number;
+  coverage: number;
+  adjustedSkillRating: number;
+  adjustedSkillRank: number;
+};
+
+/** Per-instrument leaderboard neighborhood response. */
+export type LeaderboardNeighborhoodResponse = {
+  instrument: string;
+  accountId: string;
+  rank: number;
+  above: LeaderboardNeighborEntry[];
+  self: LeaderboardNeighborEntry;
+  below: LeaderboardNeighborEntry[];
+};
+
+/** Neighbor entry in a composite ranking neighborhood. */
+export type CompositeNeighborEntry = {
+  accountId: string;
+  displayName?: string | null;
+  compositeRating: number;
+  compositeRank: number;
+  instrumentsPlayed: number;
+  totalSongsPlayed: number;
+};
+
+/** Composite ranking neighborhood response. */
+export type CompositeNeighborhoodResponse = {
+  accountId: string;
+  rank: number;
+  above: CompositeNeighborEntry[];
+  self: CompositeNeighborEntry;
+  below: CompositeNeighborEntry[];
+};

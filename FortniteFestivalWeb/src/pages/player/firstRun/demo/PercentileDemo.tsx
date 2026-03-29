@@ -5,7 +5,7 @@
  */
 import { type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Radius, frostedCard, Gap, Overflow, PointerEvents, CssValue } from '@festival/theme';
+import { Radius, frostedCardSurface, Gap, Overflow, PointerEvents, CssValue } from '@festival/theme';
 import { PlayerPercentileHeader, PlayerPercentileRow } from '../../../../components/player/PlayerPercentileTable';
 import FadeIn from '../../../../components/page/FadeIn';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
@@ -16,7 +16,7 @@ const ROW_HEIGHT = 44;
 const NOOP = () => {};
 /* v8 ignore stop */
 
-const cardStyle: CSSProperties = { ...frostedCard, borderRadius: Radius.md, overflow: Overflow.hidden };
+const cardStyle: CSSProperties = { ...frostedCardSurface, borderRadius: Radius.md, overflow: Overflow.hidden };
 
 const DEMO_BUCKETS = [
   { pct: 1, count: 3 },

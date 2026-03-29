@@ -6,7 +6,7 @@ import { ACCURACY_SCALE } from '@festival/core';
 import { InstrumentHeaderSize } from '@festival/core';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import type { PlayerScore } from '@festival/core/api/serverTypes';
-import { Colors, Gap, Overflow } from '@festival/theme';
+import { Colors, Gap, Overflow, Radius, frostedCardSurface } from '@festival/theme';
 import { computeInstrumentStats, formatClamped, formatClamped2, accuracyColor } from '../helpers/playerStats';
 import StatBox from '../../../components/player/StatBox';
 import { cleanFilters, buildStarFilter, buildPercentileFilter } from '../helpers/playerFilterHelpers';
@@ -131,7 +131,7 @@ export function buildInstrumentStatsItems(
       key: `${inst}-pct-table`,
       span: true,
       heightEstimate: 40 + stats.percentileBuckets.length * 44,
-      style: { ...cardStyle, overflow: Overflow.hidden, marginBottom: Gap.md },
+      style: { ...frostedCardSurface, borderRadius: Radius.md, overflow: Overflow.hidden, marginBottom: Gap.md },
       node: (
         <div>
           <PlayerPercentileHeader percentileLabel={t('player.percentileHeader')} songsLabel={t('player.songsHeader')} />

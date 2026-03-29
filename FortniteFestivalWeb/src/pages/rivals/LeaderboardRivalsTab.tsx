@@ -1,12 +1,14 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
 import { useStagger } from '../../hooks/ui/useStagger';
 import EmptyState from '../../components/common/EmptyState';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
 import { InstrumentHeaderSize } from '@festival/core';
+import { IoChevronForward } from 'react-icons/io5';
 import { Gap, Font, Colors, flexColumn } from '@festival/theme';
 import { serverInstrumentLabel, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import type {
@@ -15,6 +17,8 @@ import type {
 } from '@festival/core/api/serverTypes';
 import { LeaderboardNeighborRow } from './components/LeaderboardNeighborRow';
 import { useRivalsSharedStyles } from './useRivalsSharedStyles';
+import { Routes } from '../../routes';
+import fx from '../../styles/effects.module.css';
 
 // Module-level cache for instant back-navigation
 let _cachedInstrumentNeighborhoods: InstrumentNeighborhood[] = [];
@@ -35,6 +39,7 @@ interface LeaderboardRivalsTabProps {
 
 export default function LeaderboardRivalsTab({ accountId, shouldStagger }: LeaderboardRivalsTabProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const { settings } = useSettings();
   const activeInstruments = visibleInstruments(settings);
   const showComposite = activeInstruments.length >= 2;
@@ -123,6 +128,8 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
 
   const hasAnyData = neighborhoods.some(n => n.data) || composite;
 
+  const LEADERBOARD_PREVIEW = 2;
+
   /* v8 ignore start -- JSX render tree */
   return (
     <div style={{ ...flexColumn, gap: Gap.section }}>
@@ -133,9 +140,20 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
       {/* Per-instrument neighborhoods */}
       {neighborhoods.map(entry => {
         if (!entry.data) return null;
+        const previewAbove = entry.data.above.slice(-LEADERBOARD_PREVIEW);
+        const previewBelow = entry.data.below.slice(0, LEADERBOARD_PREVIEW);
+        const navigateToRankings = () => navigate(Routes.fullRankings(entry.instrument));
         return (
           <div key={entry.instrument} style={shared.section}>
-            <div style={{ ...shared.sectionHeader, ...nextStagger() }} onAnimationEnd={clearAnim}>
+            <div
+              className={fx.sectionHeaderClickable}
+              style={{ ...shared.sectionHeaderClickable, ...nextStagger() }}
+              onAnimationEnd={clearAnim}
+              onClick={navigateToRankings}
+              role="button"
+              tabIndex={0}
+              onKeyDown={e => { if (e.key === 'Enter') navigateToRankings(); }}
+            >
               <InstrumentHeader instrument={entry.instrument} size={InstrumentHeaderSize.SM} iconOnly />
               <div style={shared.cardHeaderText}>
                 <span style={shared.cardTitle}>
@@ -143,9 +161,11 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
                 </span>
                 <span style={styles.subtitle}>{t('rivals.leaderboardSubtitle')}</span>
               </div>
+              <span style={shared.seeAll}>{t('rivals.seeAll', 'See All')}</span>
+              <IoChevronForward size={20} style={shared.chevron} />
             </div>
             <div style={styles.neighborhoodList}>
-              {entry.data.above.map(n => (
+              {previewAbove.map(n => (
                 <LeaderboardNeighborRow
                   key={n.accountId}
                   rank={n.totalScoreRank}
@@ -167,7 +187,7 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
                 style={nextStagger()}
                 onAnimationEnd={clearAnim}
               />
-              {entry.data.below.map(n => (
+              {previewBelow.map(n => (
                 <LeaderboardNeighborRow
                   key={n.accountId}
                   rank={n.totalScoreRank}
@@ -179,13 +199,19 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
                   onAnimationEnd={clearAnim}
                 />
               ))}
+              <div style={{ ...shared.viewAllButton, ...nextStagger() }} onAnimationEnd={clearAnim} onClick={navigateToRankings}>
+                {t('rivals.viewAllRankings')}
+              </div>
             </div>
           </div>
         );
       })}
 
       {/* Composite neighborhood */}
-      {composite && (
+      {composite && (() => {
+        const previewAbove = composite.above.slice(-LEADERBOARD_PREVIEW);
+        const previewBelow = composite.below.slice(0, LEADERBOARD_PREVIEW);
+        return (
         <div style={shared.section}>
           <div style={{ ...shared.sectionHeader, ...nextStagger() }} onAnimationEnd={clearAnim}>
             <div style={shared.cardHeaderText}>
@@ -194,7 +220,7 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
             </div>
           </div>
           <div style={styles.neighborhoodList}>
-            {composite.above.map(n => (
+            {previewAbove.map(n => (
               <LeaderboardNeighborRow
                 key={n.accountId}
                 rank={n.compositeRank}
@@ -216,7 +242,7 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
               style={nextStagger()}
               onAnimationEnd={clearAnim}
             />
-            {composite.below.map(n => (
+            {previewBelow.map(n => (
               <LeaderboardNeighborRow
                 key={n.accountId}
                 rank={n.compositeRank}
@@ -228,9 +254,13 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
                 onAnimationEnd={clearAnim}
               />
             ))}
+            <div style={{ ...shared.viewAllButton, ...nextStagger() }} onAnimationEnd={clearAnim} onClick={() => navigate(Routes.leaderboards)}>
+              {t('rivals.viewAllRankings')}
+            </div>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
   /* v8 ignore stop */

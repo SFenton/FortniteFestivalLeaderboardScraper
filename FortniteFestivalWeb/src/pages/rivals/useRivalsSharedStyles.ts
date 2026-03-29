@@ -3,8 +3,8 @@ import { useMemo, type CSSProperties } from 'react';
 import {
   Gap, Colors, Font, Weight, Radius, Layout, Position, ZIndex,
   Display, Align, Justify, Cursor, CssValue, WhiteSpace, InstrumentSize,
-  flexColumn, flexCenter, flexRow, padding, transition,
-  CssProp, NAV_TRANSITION_MS,
+  flexColumn, flexCenter, flexRow, padding, transition, frostedCard,
+  CssProp, FAST_FADE_MS, NAV_TRANSITION_MS,
 } from '@festival/theme';
 
 /**
@@ -82,6 +82,19 @@ export function useRivalsSharedStyles() {
       padding: padding(Layout.pillButtonHeight, Gap.none),
       color: Colors.textSecondary,
       fontSize: Font.lg,
+    } as CSSProperties,
+    viewAllButton: {
+      ...frostedCard,
+      display: Display.flex,
+      alignItems: Align.center,
+      justifyContent: Justify.center,
+      height: Layout.entryRowHeight,
+      borderRadius: Radius.md,
+      color: Colors.textPrimary,
+      fontSize: Font.md,
+      fontWeight: Weight.semibold,
+      cursor: Cursor.pointer,
+      transition: transition(CssProp.backgroundColor, FAST_FADE_MS),
     } as CSSProperties,
   }), []);
 }

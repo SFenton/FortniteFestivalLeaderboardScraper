@@ -671,6 +671,8 @@
     "leaderboardSubtitle": "All-Time Total Score Rankings",
     "leaderboardComposite": "Overall",
     "leaderboardEmpty": "No ranking data available.",
+    "viewAllRivals": "View all rivals",
+    "viewAllRankings": "View all rankings",
     "detail": {
       "vs": "vs. {{name}}",
       "summary": "{{total}} shared songs \u00b7 {{ahead}} ahead / {{behind}} behind",
