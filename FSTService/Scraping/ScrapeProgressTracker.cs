@@ -405,7 +405,8 @@ public sealed class ScrapeProgressTracker
             ScrapePhase.ReconstructingHistory or
             ScrapePhase.CalculatingFirstSeen or
             ScrapePhase.ComputingRankings or
-            ScrapePhase.ComputingRivals => BuildGenericPhaseSnapshot(phase.ToString(), elapsed),
+            ScrapePhase.ComputingRivals or
+            ScrapePhase.SongMachine => BuildGenericPhaseSnapshot(phase.ToString(), elapsed),
             ScrapePhase.PostScrapeEnrichment => BuildPostScrapeEnrichmentSnapshot(elapsed),
             _ => null,
         };
