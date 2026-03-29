@@ -194,20 +194,19 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
           onSelect={handleInstrumentSelect}
           deferSelection
         >
-          {effectiveSelectedInstrument && (
-            SUGGESTION_TYPES.map(st => {
-              const key = perInstrumentKeyFor(effectiveSelectedInstrument, st.id);
-              return (
-                <ToggleRow
-                  key={st.id}
-                  label={st.label}
-                  description={st.description}
-                  checked={!!draft[key]}
-                  onToggle={() => togglePerInstrument(effectiveSelectedInstrument, st.id)}
-                />
-              );
-            })
-          )}
+          {SUGGESTION_TYPES.map(st => {
+            const inst = effectiveSelectedInstrument ?? visibleInstruments[0]?.key ?? 'guitar';
+            const key = perInstrumentKeyFor(inst, st.id);
+            return (
+              <ToggleRow
+                key={st.id}
+                label={st.label}
+                description={st.description}
+                checked={!!draft[key]}
+                onToggle={() => { if (effectiveSelectedInstrument) togglePerInstrument(effectiveSelectedInstrument, st.id); }}
+              />
+            );
+          })}
         </InstrumentSelector>
       </ModalSection>
     </Modal>

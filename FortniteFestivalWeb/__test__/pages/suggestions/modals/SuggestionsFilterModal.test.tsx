@@ -109,7 +109,8 @@ describe('SuggestionsFilterModal', () => {
     renderModal();
     fireEvent.click(screen.getByText('General'));
     for (const st of SUGGESTION_TYPES) {
-      expect(screen.getByText(st.label)).toBeDefined();
+      // Labels appear in both General and always-rendered Instrument-Specific sections
+      expect(screen.getAllByText(st.label).length).toBeGreaterThanOrEqual(1);
     }
   });
 
@@ -117,7 +118,7 @@ describe('SuggestionsFilterModal', () => {
     const props = defaultProps();
     renderModal(props);
     fireEvent.click(screen.getByText('General'));
-    fireEvent.click(screen.getByText('Near FC'));
+    fireEvent.click(screen.getAllByText('Near FC')[0]!);
     expect(props.onChange).toHaveBeenCalledTimes(1);
     const newDraft = props.onChange.mock.calls[0]![0] as SuggestionsFilterDraft;
     expect(newDraft[globalKeyFor('NearFC')]).toBe(false);
@@ -139,7 +140,7 @@ describe('SuggestionsFilterModal', () => {
     props.draft = draft;
     renderModal(props);
     fireEvent.click(screen.getByText('General'));
-    fireEvent.click(screen.getByText('Near FC'));
+    fireEvent.click(screen.getAllByText('Near FC')[0]!);
     const newDraft = props.onChange.mock.calls[0]![0] as SuggestionsFilterDraft;
     expect(newDraft[globalKeyFor('NearFC')]).toBe(true);
     expect(newDraft[perInstrumentKeyFor('guitar', 'NearFC')]).toBe(true);
@@ -236,20 +237,21 @@ describe('SuggestionsFilterModal', () => {
   it('resets instrument selection when modal reopens', () => {
     const props = defaultProps();
     const { rerender } = renderModal(props);
-    // Select Lead — per-instrument toggles should appear
+    // Select Lead — per-instrument toggles become interactive
     fireEvent.click(screen.getByTitle('Lead'));
-    const countWithInstrument = screen.getAllByText('Near FC').length;
-    expect(countWithInstrument).toBeGreaterThanOrEqual(2); // general + per-instrument
+    const nearFcBtns = screen.getAllByText('Near FC');
+    fireEvent.click(nearFcBtns[nearFcBtns.length - 1]!);
+    expect(props.onChange).toHaveBeenCalled();
+    props.onChange.mockClear();
 
     // Close modal then reopen
     rerender(<TestProviders><SuggestionsFilterModal {...props} visible={false} /></TestProviders>);
     rerender(<TestProviders><SuggestionsFilterModal {...props} visible={true} /></TestProviders>);
 
-    // Expand General accordion so its "Near FC" is visible
-    fireEvent.click(screen.getByText('General'));
-    // Only the general toggle should be visible — per-instrument section collapsed
-    const countAfterReopen = screen.getAllByText('Near FC').length;
-    expect(countAfterReopen).toBeLessThan(countWithInstrument);
+    // After reopening, instrument selection is reset — per-instrument toggles should be non-interactive
+    const nearFcAfter = screen.getAllByText('Near FC');
+    fireEvent.click(nearFcAfter[nearFcAfter.length - 1]!);
+    expect(props.onChange).not.toHaveBeenCalled();
   });
 
   /* ── Apply / Reset / Cancel ── */
