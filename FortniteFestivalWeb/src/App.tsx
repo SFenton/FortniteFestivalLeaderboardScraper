@@ -460,6 +460,7 @@ function AppShell() {
               player
                 ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
                 : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
+              ...(isShopVisible ? [{ label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />, onPress: () => navigate(AppRoutes.shop) }] : []),
             ],
           ]}
           onPress={() => {}}
@@ -477,6 +478,7 @@ function AppShell() {
               player
                 ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
                 : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
+              ...(isShopVisible ? [{ label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />, onPress: () => navigate(AppRoutes.shop) }] : []),
             ],
           ]}
           onPress={() => {}}
@@ -494,6 +496,7 @@ function AppShell() {
               player
                 ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
                 : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
+              ...(isShopVisible ? [{ label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />, onPress: () => navigate(AppRoutes.shop) }] : []),
             ],
           ]}
           onPress={() => {}}
@@ -521,6 +524,7 @@ function AppShell() {
               player
                 ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
                 : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
+              ...(isShopVisible ? [{ label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />, onPress: () => navigate(AppRoutes.shop) }] : []),
             ],
           ]}
           onPress={() => {}}
@@ -556,6 +560,7 @@ function AppShell() {
               player
                 ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
                 : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
+              ...(isShopVisible ? [{ label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />, onPress: () => navigate(AppRoutes.shop) }] : []),
             ],
           ]}
           onPress={() => {}}
@@ -573,6 +578,7 @@ function AppShell() {
               player
                 ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
                 : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
+              ...(isShopVisible ? [{ label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />, onPress: () => navigate(AppRoutes.shop) }] : []),
             ],
           ]}
           onPress={() => {}}
