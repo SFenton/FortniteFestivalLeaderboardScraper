@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import React, { type ReactNode } from 'react';
-import Page from '../../../src/pages/Page';
+import Page, { pageCss } from '../../../src/pages/Page';
 import { ScrollContainerProvider, useScrollContainer, useHeaderPortalRef } from '../../../src/contexts/ScrollContainerContext';
 
 function ShellInjector({ children }: { children: ReactNode }) {
@@ -54,5 +54,26 @@ describe('Page', () => {
   it('renders with custom className', () => {
     const { container } = render(<PageWrapper className="custom"><div>C</div></PageWrapper>);
     expect(container.querySelector('.custom')).toBeTruthy();
+  });
+
+  it('renders fabSpacer at end of scroll area by default', () => {
+    const { container } = render(<PageWrapper><div>Content</div></PageWrapper>);
+    const scrollArea = container.querySelector('[data-testid="scroll-area"]')!;
+    const spacer = scrollArea.lastElementChild as HTMLElement;
+    expect(spacer.style.height).toBe(`${pageCss.fabSpacer.height}px`);
+    expect(spacer.style.flexShrink).toBe('0');
+  });
+
+  it('omits fabSpacer when fabSpacer="none"', () => {
+    const { container } = render(<PageWrapper fabSpacer="none"><div>Content</div></PageWrapper>);
+    const scrollArea = container.querySelector('[data-testid="scroll-area"]')!;
+    const lastChild = scrollArea.lastElementChild as HTMLElement;
+    expect(lastChild.style.height).not.toBe(`${pageCss.fabSpacer.height}px`);
+  });
+
+  it('applies marginBottom to scroll container when fabSpacer="fixed"', () => {
+    render(<PageWrapper fabSpacer="fixed"><div>Content</div></PageWrapper>);
+    const scrollContainer = screen.getByTestId('test-scroll-container');
+    expect(scrollContainer.style.marginBottom).toBe(`${pageCss.fabSpacer.height}px`);
   });
 });

@@ -1387,15 +1387,15 @@ public sealed class InstrumentDatabase : IDisposable
         if (!_pragmasInitialized)
         {
             using var pragma = conn.CreateCommand();
-            pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;";
+            pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;";
             pragma.ExecuteNonQuery();
             _pragmasInitialized = true;
         }
         else
         {
-            // WAL and synchronous persist per-file; foreign_keys is per-connection
+            // WAL and synchronous persist per-file; foreign_keys and busy_timeout are per-connection
             using var pragma = conn.CreateCommand();
-            pragma.CommandText = "PRAGMA foreign_keys=ON;";
+            pragma.CommandText = "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;";
             pragma.ExecuteNonQuery();
         }
 
@@ -1429,6 +1429,26 @@ public sealed class InstrumentDatabase : IDisposable
         {
             _persistentConn.Dispose();
             _persistentConn = null;
+        }
+    }
+
+    /// <summary>
+    /// Run a WAL checkpoint to move committed pages back into the main database file.
+    /// Call after heavy write phases (e.g. scrape pass drain) to keep the WAL file small
+    /// and prevent auto-checkpoints from firing during API reads.
+    /// </summary>
+    public void Checkpoint()
+    {
+        try
+        {
+            using var conn = OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+            cmd.ExecuteNonQuery();
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "WAL checkpoint failed for {Instrument}. Will retry next pass.", _instrument);
         }
     }
 

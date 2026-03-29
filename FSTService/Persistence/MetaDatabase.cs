@@ -351,6 +351,9 @@ public sealed class MetaDatabase : IDisposable
         MigrateAddColumn(conn, "RegisteredUsers", "Platform", "TEXT");
         MigrateAddColumn(conn, "RegisteredUsers", "LastLoginAt", "TEXT");
 
+        // ── Migration: add LeavingTomorrow to ItemShopTracks (existing DBs) ──
+        MigrateAddColumn(conn, "ItemShopTracks", "LeavingTomorrow", "INTEGER NOT NULL DEFAULT 0");
+
         // ── Migration: add TotalCombosToCompute to RivalsStatus (existing DBs) ──
         MigrateAddColumn(conn, "RivalsStatus", "TotalCombosToCompute", "INTEGER NOT NULL DEFAULT 0");
 
@@ -1929,6 +1932,26 @@ public sealed class MetaDatabase : IDisposable
         {
             _persistentConn.Dispose();
             _persistentConn = null;
+        }
+    }
+
+    /// <summary>
+    /// Run a WAL checkpoint to move committed pages back into the main database file.
+    /// Call after heavy write phases to keep the WAL file small and prevent
+    /// auto-checkpoints from firing during API reads.
+    /// </summary>
+    public void Checkpoint()
+    {
+        try
+        {
+            using var conn = OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+            cmd.ExecuteNonQuery();
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "WAL checkpoint on meta DB failed. Will retry next pass.");
         }
     }
 

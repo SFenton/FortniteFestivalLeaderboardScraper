@@ -113,6 +113,7 @@ export default function LeaderboardsOverviewPage() {
       scrollRef={scrollRef}
       scrollRestoreKey="leaderboards"
       loadPhase={loadPhase}
+      fabSpacer={loadPhase === LoadPhase.ContentIn && allErrored ? 'none' : 'end'}
       firstRun={{ key: 'leaderboards', label: t('nav.leaderboards'), slides: leaderboardsSlides, gateContext: firstRunGateCtx }}
       before={
         isMobile ? undefined : (

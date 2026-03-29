@@ -190,7 +190,6 @@ export default function ShopPage() {
                   sortMode="title"
                   isMobile={false}
                   externalHref={song.shopUrl}
-                  shopHighlight
                   shopHighlightRed={isLeavingTomorrow(song.songId)}
                   staggerDelay={shouldStagger ? calcStagger(Math.min(i, maxVisibleRows - 1), rowInterval, maxVisibleRows) : undefined}
                 />

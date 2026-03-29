@@ -17,7 +17,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode, 
 import { createPortal } from 'react-dom';
 import { useNavigationType } from 'react-router-dom';
 import { Colors, ZIndex, MaxWidth, Layout, Position, Size, Spinner, Border, flexColumn, flexCenter, fixedFill, CssValue, Opacity, BorderStyle, PointerEvents, padding, Gap, SPINNER_FADE_MS } from '@festival/theme';
-import { useIsMobile, useIsMobileChrome } from '../hooks/ui/useIsMobile';
+import { useIsMobile } from '../hooks/ui/useIsMobile';
 import { useScrollMask, type ScrollMaskOptions } from '../hooks/ui/useScrollMask';
 import { useStaggerRush } from '../hooks/ui/useStaggerRush';
 import { useScrollRestore } from '../hooks/ui/useScrollRestore';
@@ -153,12 +153,10 @@ export interface PageProps {
    */
   loadPhase?: LoadPhase;
   /**
-   * Controls how the FAB bottom spacer behaves on mobile chrome.
-   * - `'end'` (default): spacer sits at the end of scrollable content — content can
-   *   scroll under the FAB before reaching the spacer.
-   * - `'fixed'`: shrinks the scroll viewport itself so content never scrolls behind
-   *   the FAB/search bar.
-   * - `'none'`: disables all FAB spacing — caller manages its own bottom clearance.
+   * Controls bottom spacing to keep content clear of fixed overlays (FAB, pagination, etc.).
+   * - `'end'` (default): spacer div at the end of scrollable content.
+   * - `'fixed'`: shrinks the scroll viewport itself (marginBottom on shell scroll container).
+   * - `'none'`: disables all spacing — caller manages its own bottom clearance.
    */
   fabSpacer?: 'end' | 'fixed' | 'none';
   children: ReactNode;
@@ -243,16 +241,15 @@ export default function Page({
   }, [portalTarget]);
 
   const isMobile = useIsMobile();
-  const isMobileChrome = useIsMobileChrome();
 
   // 'fixed' mode: shrink the shell scroll container so content never scrolls behind the FAB
   useEffect(() => {
-    if (!isMobileChrome || fabSpacer !== 'fixed') return;
+    if (fabSpacer !== 'fixed') return;
     const el = scrollContainerRef.current;
     if (!el) return;
     el.style.marginBottom = `${Layout.fabPaddingBottom}px`;
     return () => { el.style.marginBottom = ''; };
-  }, [isMobileChrome, fabSpacer, scrollContainerRef]);
+  }, [fabSpacer, scrollContainerRef]);
 
   const pgStyle = pageStyle(variant);
   const saStyle = scrollAreaStyle(scrollVariant);
@@ -279,7 +276,7 @@ export default function Page({
         <div className={containerClassName} style={{ ...cStyle, paddingTop: isMobile ? Gap.sm : Gap.md, ...containerStyle }}>
           {loadPhase != null && loadPhase !== LoadPhase.ContentIn ? null : children}
         </div>
-        {isMobileChrome && fabSpacer === 'end' && <div style={pageCss.fabSpacer} />}
+        {fabSpacer === 'end' && <div style={pageCss.fabSpacer} />}
       </div>
       {after}
       {firstRunConfig && <PageFirstRun config={firstRunConfig} />}

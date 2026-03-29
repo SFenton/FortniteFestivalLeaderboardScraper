@@ -390,6 +390,18 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>
+    /// Run WAL checkpoints on all instrument databases and the meta database.
+    /// Call after heavy write phases (scrape drain, post-scrape enrichment) to keep
+    /// WAL files small and prevent auto-checkpoints from firing during API reads.
+    /// </summary>
+    public void CheckpointAll()
+    {
+        Parallel.ForEach(_instrumentDbs.Values, db => db.Checkpoint());
+        _metaDb.Checkpoint();
+        _log.LogDebug("WAL checkpoint completed on all databases.");
+    }
+
+    /// <summary>
     /// Get a player's scores across all instruments (player profile).
     /// </summary>
     public List<PlayerScoreDto> GetPlayerProfile(string accountId, string? songId = null, HashSet<string>? instruments = null)

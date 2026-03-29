@@ -11,6 +11,7 @@ public sealed class TempInstrumentDatabase : IDisposable
 {
     private readonly string _dbPath;
     public InstrumentDatabase Db { get; }
+    public string DbPath => _dbPath;
 
     public TempInstrumentDatabase(string instrument = "Solo_Guitar")
     {

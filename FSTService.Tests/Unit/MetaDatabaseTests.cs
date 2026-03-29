@@ -1364,4 +1364,22 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Null(stats[0].BestRankSongId);
         Assert.Null(stats[0].PercentileDist);
     }
+
+    // ═══ Checkpoint ═════════════════════════════════════════════
+
+    [Fact]
+    public void Checkpoint_succeeds_after_writes()
+    {
+        Db.StartScrapeRun();
+
+        // Should not throw
+        Db.Checkpoint();
+    }
+
+    [Fact]
+    public void Checkpoint_succeeds_on_empty_database()
+    {
+        // Should not throw even when there's nothing to checkpoint
+        Db.Checkpoint();
+    }
 }

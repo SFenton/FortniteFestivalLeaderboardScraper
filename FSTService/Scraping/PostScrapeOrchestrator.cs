@@ -77,6 +77,10 @@ public sealed class PostScrapeOrchestrator
         await RefreshRegisteredUsersAsync(ctx, limiter, ct);
         await ComputeRivalsAsync(ctx, ct);
         CleanupSessions();
+
+        // Checkpoint all WAL files after post-scrape writes (enrichment, refresh,
+        // rankings) to keep them small for subsequent API reads.
+        _persistence.CheckpointAll();
     }
 
     /// <summary>

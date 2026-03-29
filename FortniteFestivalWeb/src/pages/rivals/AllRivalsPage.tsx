@@ -216,6 +216,7 @@ export default function AllRivalsPage() {
       scrollDeps={[phase]}
       loadPhase={phase}
       containerClassName={undefined}
+      fabSpacer={phase === LoadPhase.ContentIn && !hasRivals ? 'none' : 'end'}
       before={
         <PageHeader
           title={

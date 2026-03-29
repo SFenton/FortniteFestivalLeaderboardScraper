@@ -251,6 +251,7 @@ export default function RivalsPage() {
       containerStyle={styles.container}
       before={isMobile ? undefined : <PageHeader title={t('rivals.title')} />}
       firstRun={{ key: 'rivals', label: t('rivals.title'), slides: rivalsSlides, gateContext: firstRunGateCtx }}
+      fabSpacer={phase === LoadPhase.ContentIn && !hasAnyRivals ? 'none' : 'end'}
     >
       {phase === LoadPhase.ContentIn && (
             <div style={{ ...flexColumn, gap: Gap.section }}>

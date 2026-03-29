@@ -112,6 +112,10 @@ public sealed class ScrapeOrchestrator
         // Wait for all per-instrument writers to drain
         await _persistence.DrainWritersAsync();
 
+        // Checkpoint all WAL files after the heavy write phase to keep them small
+        // and prevent auto-checkpoints from firing during API reads.
+        _persistence.CheckpointAll();
+
         sw.Stop();
 
         // Save page estimate for next run
