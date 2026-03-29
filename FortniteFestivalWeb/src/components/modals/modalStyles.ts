@@ -51,6 +51,7 @@ export const modalStyles = {
 
   /* ── ToggleRow ── */
   toggleRow: { display: Display.flex, alignItems: Align.center, gap: Gap.xl, width: CssValue.full, padding: padding(Gap.md, 0), backgroundColor: CssValue.transparent, border: CssValue.none, borderRadius: Gap.none, cursor: Cursor.pointer, textAlign: TextAlign.left, color: Colors.textPrimary, transition: modalTransition } as CSSProperties,
+  toggleRowSmallerGap: { display: Display.flex, alignItems: Align.center, gap: Gap.xl, width: CssValue.full, padding: padding(Gap.sm, 0), backgroundColor: CssValue.transparent, border: CssValue.none, borderRadius: Gap.none, cursor: Cursor.pointer, textAlign: TextAlign.left, color: Colors.textPrimary, transition: modalTransition } as CSSProperties,
   toggleRowLarge: { display: Display.flex, alignItems: Align.center, gap: Gap.xl, width: CssValue.full, padding: padding(Gap.lg, 0), backgroundColor: CssValue.transparent, border: CssValue.none, borderRadius: Gap.none, cursor: Cursor.pointer, textAlign: TextAlign.left, color: Colors.textPrimary, transition: modalTransition } as CSSProperties,
   toggleRowDisabled: { opacity: Opacity.disabled, cursor: Cursor.default } as CSSProperties,
   toggleIcon: { flexShrink: 0, display: Display.flex, alignItems: Align.center } as CSSProperties,

@@ -421,38 +421,38 @@ export default function SettingsPage() {
           <FadeInDiv delay={stagger(staggerIndex++)}>
           <SectionHeader title={t('firstRun.settings.showFirstRunTitle')} description={t('firstRun.settings.showFirstRunHint')} />
           <Card>
-            <button style={modalCss.toggleRow} onClick={songsReplay.open}>
+            <button style={modalCss.toggleRowSmallerGap} onClick={songsReplay.open}>
               <div style={modalCss.toggleContent}>
                 <div style={modalCss.toggleLabel}>{t('nav.songs')}</div>
               </div>
               <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
-            <button style={modalCss.toggleRow} onClick={songInfoReplay.open}>
+            <button style={modalCss.toggleRowSmallerGap} onClick={songInfoReplay.open}>
               <div style={modalCss.toggleContent}>
                 <div style={modalCss.toggleLabel}>{t('nav.songInfo', 'Song Info')}</div>
               </div>
               <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
-            <button style={modalCss.toggleRow} onClick={statsReplay.open}>
+            <button style={modalCss.toggleRowSmallerGap} onClick={statsReplay.open}>
               <div style={modalCss.toggleContent}>
                 <div style={modalCss.toggleLabel}>{t('nav.statistics')}</div>
               </div>
               <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
-            <button style={modalCss.toggleRow} onClick={suggestionsReplay.open}>
+            <button style={modalCss.toggleRowSmallerGap} onClick={suggestionsReplay.open}>
               <div style={modalCss.toggleContent}>
                 <div style={modalCss.toggleLabel}>{t('nav.suggestions')}</div>
               </div>
               <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
-            <button style={modalCss.toggleRow} onClick={playerHistoryReplay.open}>
+            <button style={modalCss.toggleRowSmallerGap} onClick={playerHistoryReplay.open}>
               <div style={modalCss.toggleContent}>
                 <div style={modalCss.toggleLabel}>{t('history.title')}</div>
               </div>
               <span style={st.firstRunBtn}>{t('firstRun.settings.showButton')}</span>
             </button>
             {flags.leaderboards && (
-            <button style={modalCss.toggleRow} onClick={leaderboardsReplay.open}>
+            <button style={modalCss.toggleRowSmallerGap} onClick={leaderboardsReplay.open}>
               <div style={modalCss.toggleContent}>
                 <div style={modalCss.toggleLabel}>{t('nav.leaderboards')}</div>
               </div>
@@ -460,7 +460,7 @@ export default function SettingsPage() {
             </button>
             )}
             {flags.compete && (
-            <button style={modalCss.toggleRow} onClick={competeReplay.open}>
+            <button style={modalCss.toggleRowSmallerGap} onClick={competeReplay.open}>
               <div style={modalCss.toggleContent}>
                 <div style={modalCss.toggleLabel}>{t('nav.compete')}</div>
               </div>
@@ -468,7 +468,7 @@ export default function SettingsPage() {
             </button>
             )}
             {flags.rivals && (
-            <button style={modalCss.toggleRow} onClick={rivalsReplay.open}>
+            <button style={modalCss.toggleRowSmallerGap} onClick={rivalsReplay.open}>
               <div style={modalCss.toggleContent}>
                 <div style={modalCss.toggleLabel}>{t('rivals.title')}</div>
               </div>
@@ -476,7 +476,7 @@ export default function SettingsPage() {
             </button>
             )}
             {flags.shop && (
-            <button style={modalCss.toggleRow} onClick={shopReplay.open}>
+            <button style={modalCss.toggleRowSmallerGap} onClick={shopReplay.open}>
               <div style={modalCss.toggleContent}>
                 <div style={modalCss.toggleLabel}>{t('nav.shop')}</div>
               </div>
@@ -599,10 +599,9 @@ function useSettingsStyles(isMobile: boolean, filterOpen: boolean, visualOrderOp
     } as CSSProperties,
     firstRunBtn: {
       ...btnPrimary,
-      padding: padding(0, Gap.section),
+      padding: padding(Gap.sm, Gap.xl),
       fontSize: Font.md,
       flexShrink: 0,
-      height: Layout.toggleTrackHeight,
       display: Display.inlineFlex,
       alignItems: Align.center,
     } as CSSProperties,
