@@ -149,6 +149,7 @@ export const CssProp = {
   boxShadow: 'box-shadow',
   width: 'width',
   height: 'height',
+  left: 'left',
   gridTemplateRows: 'grid-template-rows',
   all: 'all',
 } as const;

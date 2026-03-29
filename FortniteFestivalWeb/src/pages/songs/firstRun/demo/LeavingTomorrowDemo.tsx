@@ -67,9 +67,7 @@ export default function LeavingTomorrowDemo() {
     <div style={{ width: CssValue.full, ...flexColumn, gap: Gap.sm }}>
       {rows.map(({ song, state }, i) => {
         const baseStyle = isMobile ? songRowMobile : songRow;
-        const className = state === 'leaving' ? anim.shopHighlightRed
-          : state === 'shop' ? anim.shopHighlight
-          : undefined;
+        const className = state === 'leaving' ? anim.shopHighlightRed : undefined;
         return (
           <div key={i} className={className}
             style={initialDone

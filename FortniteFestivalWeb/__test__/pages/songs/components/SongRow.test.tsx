@@ -177,6 +177,20 @@ describe('SongRow', () => {
     expect(screen.getByText('150,000')).toBeTruthy();
   });
 
+  it('wraps songInfo in mobileTopRow on mobile with no score and no chips', () => {
+    const { container } = renderSongRow({ isMobile: true, score: undefined, showInstrumentIcons: false });
+    expect(screen.getByText('Test Song')).toBeTruthy();
+    expect(screen.getByText(/Test Artist/)).toBeTruthy();
+    // SongInfo children should be inside the mobileTopRow wrapper (flexRow), not direct children of the Link
+    const link = container.querySelector('a')!;
+    // The Link's only child should be the mobileTopRow div, not bare AlbumArt/text fragments
+    expect(link.children).toHaveLength(1);
+    const topRow = link.children[0] as HTMLElement;
+    expect(topRow.tagName).toBe('DIV');
+    // Album art + text div inside the wrapper
+    expect(topRow.children.length).toBeGreaterThanOrEqual(2);
+  });
+
   it('renders mobile layout with instrument chips', () => {
     const allScoreMap = new Map<string, PlayerScore>([
       ['Solo_Guitar', baseScore],

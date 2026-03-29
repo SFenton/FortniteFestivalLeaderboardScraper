@@ -296,6 +296,26 @@ export const SongRow = memo(function SongRow({ song,
     );
   }
 
+  if (isMobile) {
+    const mergedPlainStyle = animStyle ? { ...rowStyle, ...animStyle } : rowStyle;
+    return (
+      externalHref ? (
+        <a ref={linkRef as React.Ref<HTMLAnchorElement>} {...linkProps} className={rowClassName} style={mergedPlainStyle} onAnimationEnd={handleAnimEnd}>
+          <div style={s.mobileTopRow}>
+            {songInfo}
+          </div>
+          {externalIndicator}
+        </a>
+      ) : (
+      <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={mergedPlainStyle} onAnimationEnd={handleAnimEnd}>
+        <div style={s.mobileTopRow}>
+          {songInfo}
+        </div>
+      </Link>
+      )
+    );
+  }
+
   const desktopStyle = animStyle ? { ...rowStyle, ...animStyle } : rowStyle;
   return (
     externalHref ? (
