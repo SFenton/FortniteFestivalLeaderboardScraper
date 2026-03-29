@@ -78,6 +78,27 @@ function normalizeDisplayName<T extends { displayName: string }>(data: T): T {
   return data;
 }
 
+// ── Generic ETag cache (in-memory, per-URL) ─────────────────
+
+const etagCache = new Map<string, { data: unknown; etag: string }>();
+
+async function getWithETag<T>(path: string): Promise<T> {
+  const url = `${BASE}${path}`;
+  const cached = etagCache.get(url);
+  const headers: Record<string, string> = {};
+  if (cached?.etag) headers['If-None-Match'] = cached.etag;
+
+  const res = await fetch(url, { headers });
+
+  if (res.status === 304 && cached) return cached.data as T;
+  if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
+
+  const data = await res.json() as T;
+  const etag = res.headers.get('etag');
+  if (etag) etagCache.set(url, { data, etag });
+  return data;
+}
+
 export const api = {
   getSongs: async (): Promise<SongsResponse> => {
     const cached = loadSongsCache();
@@ -107,7 +128,7 @@ export const api = {
     if (songId) params.set('songId', songId);
     if (instruments?.length) params.set('instruments', instruments.join(','));
     const qs = params.toString();
-    return get<PlayerResponse>(
+    return getWithETag<PlayerResponse>(
       `/api/player/${encodeURIComponent(accountId)}${qs ? `?${qs}` : ''}`,
     ).then(normalizeDisplayName);
   },
@@ -134,7 +155,7 @@ export const api = {
   },
 
   getAllLeaderboards: (songId: string, top = 10, leeway?: number) =>
-    get<AllLeaderboardsResponse>(
+    getWithETag<AllLeaderboardsResponse>(
       `/api/leaderboard/${encodeURIComponent(songId)}/all?top=${top}${leeway != null ? `&leeway=${leeway}` : ''}`,
     ),
 

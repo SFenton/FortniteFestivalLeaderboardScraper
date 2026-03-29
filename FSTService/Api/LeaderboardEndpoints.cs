@@ -99,16 +99,17 @@ public static partial class ApiEndpoints
             // ── Build response ───────────────────────────────────
             var instrumentKeys = persistence.GetInstrumentKeys();
             var population = metaDb.GetAllLeaderboardPopulation();
-            var allAccountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             Dictionary<string, SongMaxScores>? maxScoresMap = leeway.HasValue
                 ? pathStore.GetAllMaxScores()
                 : null;
 
-            // Collect raw data per instrument
-            var rawInstruments = new List<(string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries)>();
-            foreach (var instrument in instrumentKeys)
+            // Collect raw data per instrument (parallel — each instrument is a separate SQLite DB)
+            var instrumentArr = instrumentKeys.ToArray();
+            var rawResults = new (string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries)?[instrumentArr.Length];
+            Parallel.For(0, instrumentArr.Length, i =>
             {
+                var instrument = instrumentArr[i];
                 int? maxScore = null;
                 if (maxScoresMap is not null && maxScoresMap.TryGetValue(songId, out var ms))
                 {
@@ -117,7 +118,7 @@ public static partial class ApiEndpoints
                         maxScore = (int)(raw.Value * (1.0 + leeway!.Value / 100.0));
                 }
                 var result = persistence.GetLeaderboardWithCount(songId, instrument, top ?? 10, maxScore: maxScore);
-                if (result is null) continue;
+                if (result is null) return;
 
                 var (entries, dbCount) = result.Value;
                 var popKey = (songId, instrument);
@@ -125,10 +126,18 @@ public static partial class ApiEndpoints
                     population.TryGetValue(popKey, out var pop) && pop > 0 ? (int)pop : 0,
                     dbCount);
 
-                foreach (var e in entries)
-                    allAccountIds.Add(e.AccountId);
+                rawResults[i] = (instrument, entries, dbCount, totalEntries);
+            });
 
-                rawInstruments.Add((instrument, entries, dbCount, totalEntries));
+            var allAccountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var rawInstruments = new List<(string Instrument, List<LeaderboardEntryDto> Entries, int DbCount, int TotalEntries)>();
+            foreach (var r in rawResults)
+            {
+                if (r is null) continue;
+                var val = r.Value;
+                foreach (var e in val.Entries)
+                    allAccountIds.Add(e.AccountId);
+                rawInstruments.Add(val);
             }
 
             // Single bulk name lookup

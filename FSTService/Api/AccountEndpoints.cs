@@ -24,8 +24,9 @@ public static partial class ApiEndpoints
         .RequireRateLimiting("public");
 
         // Search account display names (autocomplete)
-        app.MapGet("/api/account/search", (string q, int? limit, MetaDatabase metaDb) =>
+        app.MapGet("/api/account/search", (HttpContext httpContext, string q, int? limit, MetaDatabase metaDb) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=60";
             if (string.IsNullOrWhiteSpace(q))
                 return Results.Ok(new { results = Array.Empty<object>() });
 

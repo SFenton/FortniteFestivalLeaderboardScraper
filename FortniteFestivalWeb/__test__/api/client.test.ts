@@ -85,15 +85,15 @@ describe('api/client', () => {
     it('fetches player with accountId', async () => {
       mockFetchOk({ accountId: 'p1', displayName: 'Player', totalScores: 0, scores: [] });
       const result = await api.getPlayer('p1');
-      expect(global.fetch).toHaveBeenCalledWith('/api/player/p1');
+      expect(global.fetch).toHaveBeenCalledWith('/api/player/p1', { headers: {} });
       expect(result.displayName).toBe('Player');
     });
 
     it('includes songId and instruments query params', async () => {
       mockFetchOk({ accountId: 'p1', displayName: 'Player', totalScores: 0, scores: [] });
       await api.getPlayer('p1', 's1', ['Solo_Guitar', 'Solo_Bass']);
-      expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('songId=s1'));
-      expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('instruments=Solo_Guitar%2CSolo_Bass'));
+      expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('songId=s1'), expect.any(Object));
+      expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('instruments=Solo_Guitar%2CSolo_Bass'), expect.any(Object));
     });
 
     it('normalizes empty displayName to Unknown User', async () => {
@@ -153,7 +153,7 @@ describe('api/client', () => {
     it('fetches all leaderboards for a song', async () => {
       mockFetchOk({ songId: 's1', instruments: [] });
       await api.getAllLeaderboards('s1', 10, 2.0);
-      expect(global.fetch).toHaveBeenCalledWith('/api/leaderboard/s1/all?top=10&leeway=2');
+      expect(global.fetch).toHaveBeenCalledWith('/api/leaderboard/s1/all?top=10&leeway=2', { headers: {} });
     });
   });
 

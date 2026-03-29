@@ -12,9 +12,11 @@ public static partial class ApiEndpoints
         // ─── Combo overview ────────────────────────────────────────
 
         app.MapGet("/api/player/{accountId}/rivals", (
+            HttpContext httpContext,
             string accountId,
             MetaDatabase metaDb) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
             var status = metaDb.GetRivalsStatus(accountId);
             var combos = metaDb.GetRivalCombos(accountId);
 
@@ -36,10 +38,12 @@ public static partial class ApiEndpoints
         // ─── Rival list for a specific combo ───────────────────────
 
         app.MapGet("/api/player/{accountId}/rivals/{combo}", (
+            HttpContext httpContext,
             string accountId,
             string combo,
             MetaDatabase metaDb) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
             var above = metaDb.GetUserRivals(accountId, combo, "above");
             var below = metaDb.GetUserRivals(accountId, combo, "below");
 
@@ -65,6 +69,7 @@ public static partial class ApiEndpoints
         // ─── Detailed comparison with a rival for a combo (paginated) ──
 
         app.MapGet("/api/player/{accountId}/rivals/{combo}/{rivalId}", (
+            HttpContext httpContext,
             string accountId,
             string combo,
             string rivalId,
@@ -75,6 +80,7 @@ public static partial class ApiEndpoints
             FestivalService festivalService,
             RivalsCalculator rivalsCalculator) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=120";
             // Parse combo into instruments — accepts hex ID ("03") or legacy ("Solo_Guitar+Solo_Bass") or single ("Solo_Guitar")
             string[] instruments;
             if (combo.Contains('+'))
@@ -176,6 +182,7 @@ public static partial class ApiEndpoints
         // ─── Per-instrument songs for a rival (no combo context) ───
 
         app.MapGet("/api/player/{accountId}/rivals/{rivalId}/songs/{instrument}", (
+            HttpContext httpContext,
             string accountId,
             string rivalId,
             string instrument,
@@ -185,6 +192,7 @@ public static partial class ApiEndpoints
             MetaDatabase metaDb,
             FestivalService festivalService) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=120";
             var samples = metaDb.GetRivalSongSamples(accountId, rivalId, instrument);
             if (samples.Count == 0)
                 return Results.NotFound(new { error = "No song data for this rival on this instrument." });

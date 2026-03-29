@@ -69,11 +69,13 @@ public static partial class ApiEndpoints
         // ─── Single account per-instrument ranking ─────────────
 
         app.MapGet("/api/rankings/{instrument}/{accountId}", (
+            HttpContext httpContext,
             string instrument,
             string accountId,
             GlobalLeaderboardPersistence persistence,
             MetaDatabase metaDb) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
             var db = persistence.GetOrCreateInstrumentDb(instrument);
             var ranking = db.GetAccountRanking(accountId);
             if (ranking is null)
@@ -115,11 +117,13 @@ public static partial class ApiEndpoints
         // ─── Rank history for a player on an instrument ────────
 
         app.MapGet("/api/rankings/{instrument}/{accountId}/history", (
+            HttpContext httpContext,
             string instrument,
             string accountId,
             int? days,
             GlobalLeaderboardPersistence persistence) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
             var db = persistence.GetOrCreateInstrumentDb(instrument);
             var history = db.GetRankHistory(accountId, days ?? 30);
             return Results.Ok(new { instrument, accountId, history });
@@ -176,9 +180,11 @@ public static partial class ApiEndpoints
         // ─── Single account composite ranking ──────────────────
 
         app.MapGet("/api/rankings/composite/{accountId}", (
+            HttpContext httpContext,
             string accountId,
             MetaDatabase metaDb) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
             var ranking = metaDb.GetCompositeRanking(accountId);
             if (ranking is null)
                 return Results.NotFound(new { error = "Account not found in composite rankings." });
@@ -209,6 +215,7 @@ public static partial class ApiEndpoints
         // ─── Combo leaderboard (paginated) ─────────────────────
 
         app.MapGet("/api/rankings/combo", (
+            HttpContext httpContext,
             string? combo,
             string? instruments,
             string? rankBy,
@@ -216,6 +223,7 @@ public static partial class ApiEndpoints
             int? pageSize,
             MetaDatabase metaDb) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
             var comboId = ComboIds.NormalizeComboParam(combo ?? instruments);
             if (string.IsNullOrEmpty(comboId))
                 return Results.BadRequest(new { error = "At least two instruments required. Use 'combo' (hex ID) or 'instruments' (e.g. Solo_Guitar+Solo_Bass)." });
@@ -255,12 +263,14 @@ public static partial class ApiEndpoints
         // ─── Single account combo rank ─────────────────────────
 
         app.MapGet("/api/rankings/combo/{accountId}", (
+            HttpContext httpContext,
             string accountId,
             string? combo,
             string? instruments,
             string? rankBy,
             MetaDatabase metaDb) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
             var comboId = ComboIds.NormalizeComboParam(combo ?? instruments);
             if (string.IsNullOrEmpty(comboId))
                 return Results.BadRequest(new { error = "At least two instruments required. Use 'combo' (hex ID) or 'instruments' (e.g. Solo_Guitar+Solo_Bass)." });

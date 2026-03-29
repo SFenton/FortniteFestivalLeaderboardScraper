@@ -21,8 +21,9 @@ public static partial class ApiEndpoints
             },
         });
 
-        app.MapGet("/api/version", () =>
+        app.MapGet("/api/version", (HttpContext httpContext) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=86400";
             var assembly = typeof(ApiEndpoints).Assembly;
             var version = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
                 ?.InformationalVersion
