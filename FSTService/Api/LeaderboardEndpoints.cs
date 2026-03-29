@@ -1,5 +1,7 @@
+using System.Text.Json;
 using FSTService.Persistence;
 using FSTService.Scraping;
+using Microsoft.Extensions.Options;
 
 namespace FSTService.Api;
 
@@ -74,9 +76,27 @@ public static partial class ApiEndpoints
             double? leeway,
             GlobalLeaderboardPersistence persistence,
             MetaDatabase metaDb,
-            PathDataStore pathStore) =>
+            PathDataStore pathStore,
+            [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService lbCache) =>
         {
-            httpContext.Response.Headers.CacheControl = "public, max-age=300";
+            httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
+
+            // ── Check cache ──────────────────────────────────────
+            var cacheKey = $"lb:{songId}:{top}:{leeway}";
+            var cached = lbCache.Get(cacheKey);
+            if (cached is not null)
+            {
+                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
+                {
+                    httpContext.Response.Headers.ETag = cached.Value.ETag;
+                    return Results.StatusCode(304);
+                }
+                httpContext.Response.Headers.ETag = cached.Value.ETag;
+                return Results.Bytes(cached.Value.Json, "application/json");
+            }
+
+            // ── Build response ───────────────────────────────────
             var instrumentKeys = persistence.GetInstrumentKeys();
             var population = metaDb.GetAllLeaderboardPopulation();
             var allAccountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -136,11 +156,19 @@ public static partial class ApiEndpoints
                 }).ToList(),
             }).ToList();
 
-            return Results.Ok(new
+            var payload = new
             {
                 songId,
                 instruments,
-            });
+            };
+            var jsonOpts = httpContext.RequestServices
+                .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+                .Value.SerializerOptions;
+            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+            var etag = lbCache.Set(cacheKey, jsonBytes);
+
+            httpContext.Response.Headers.ETag = etag;
+            return Results.Bytes(jsonBytes, "application/json");
         })
         .WithTags("Leaderboards")
         .RequireRateLimiting("public");

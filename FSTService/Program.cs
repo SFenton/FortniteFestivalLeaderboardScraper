@@ -175,6 +175,10 @@ builder.Services.AddSingleton<PostScrapeRefresher>();
 builder.Services.AddSingleton<FirstSeenSeasonCalculator>();
 builder.Services.AddSingleton<FSTService.Api.NotificationService>();
 builder.Services.AddSingleton<FSTService.Api.SongsCacheService>();
+builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("PlayerCache",
+    (_, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(2)));
+builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("LeaderboardAllCache",
+    (_, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(5)));
 builder.Services.AddSingleton<RivalsCalculator>();
 builder.Services.AddSingleton<RivalsOrchestrator>();
 builder.Services.AddSingleton<RankingsCalculator>();

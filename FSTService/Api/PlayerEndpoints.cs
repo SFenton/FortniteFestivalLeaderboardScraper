@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FortniteFestival.Core.Services;
 using FSTService.Auth;
 using FSTService.Persistence;
@@ -16,9 +17,29 @@ public static partial class ApiEndpoints
             string? songId,
             string? instruments,
             GlobalLeaderboardPersistence persistence,
-            MetaDatabase metaDb) =>
+            MetaDatabase metaDb,
+            [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache) =>
         {
-            httpContext.Response.Headers.CacheControl = "public, max-age=30";
+            httpContext.Response.Headers.CacheControl = "public, max-age=120, stale-while-revalidate=300";
+
+            // Build cache key from all parameters
+            var cacheKey = $"player:{accountId}:{songId}:{instruments}";
+
+            // ── Check cache ──────────────────────────────────────
+            var cached = playerCache.Get(cacheKey);
+            if (cached is not null)
+            {
+                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
+                {
+                    httpContext.Response.Headers.ETag = cached.Value.ETag;
+                    return Results.StatusCode(304);
+                }
+                httpContext.Response.Headers.ETag = cached.Value.ETag;
+                return Results.Bytes(cached.Value.Json, "application/json");
+            }
+
+            // ── Build response ───────────────────────────────────
             // Optional instrument filter: ?instruments=Solo_Guitar,Solo_Bass
             HashSet<string>? instrumentFilter = null;
             if (!string.IsNullOrWhiteSpace(instruments))
@@ -53,13 +74,21 @@ public static partial class ApiEndpoints
                 };
             }).ToList();
 
-            return Results.Ok(new
+            var payload = new
             {
                 accountId,
                 displayName,
                 totalScores = enriched.Count,
                 scores = enriched
-            });
+            };
+            var jsonOpts = httpContext.RequestServices
+                .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+                .Value.SerializerOptions;
+            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+            var etag = playerCache.Set(cacheKey, jsonBytes);
+
+            httpContext.Response.Headers.ETag = etag;
+            return Results.Bytes(jsonBytes, "application/json");
         })
         .WithTags("Players")
         .RequireRateLimiting("public");
@@ -169,9 +198,11 @@ public static partial class ApiEndpoints
         .RequireRateLimiting("public");
 
         app.MapGet("/api/player/{accountId}/sync-status", (
+            HttpContext httpContext,
             string accountId,
             MetaDatabase metaDb) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=5";
             var backfill = metaDb.GetBackfillStatus(accountId);
             var historyRecon = metaDb.GetHistoryReconStatus(accountId);
             var rivals = metaDb.GetRivalsStatus(accountId);
@@ -215,9 +246,11 @@ public static partial class ApiEndpoints
         .RequireRateLimiting("public");
 
         app.MapGet("/api/player/{accountId}/stats", (
+            HttpContext httpContext,
             string accountId,
             MetaDatabase metaDb) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300";
             var stats = metaDb.GetPlayerStats(accountId);
             if (stats.Count == 0)
                 return Results.Ok(new { accountId, stats = Array.Empty<object>() });
@@ -245,12 +278,14 @@ public static partial class ApiEndpoints
         .RequireRateLimiting("public");
 
         app.MapGet("/api/player/{accountId}/history", (
+            HttpContext httpContext,
             string accountId,
             int? limit,
             string? songId,
             string? instrument,
             MetaDatabase metaDb) =>
         {
+            httpContext.Response.Headers.CacheControl = "public, max-age=60";
             // Check if the account is a registered user
             var registeredIds = metaDb.GetRegisteredAccountIds();
             if (!registeredIds.Contains(accountId))

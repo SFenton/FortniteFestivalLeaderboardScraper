@@ -34,6 +34,8 @@ public sealed class ScraperWorker : BackgroundService
     private readonly PathGenerator _pathGenerator;
     private readonly PathDataStore _pathDataStore;
     private readonly SongsCacheService _songsCache;
+    private readonly ResponseCacheService _playerCache;
+    private readonly ResponseCacheService _leaderboardAllCache;
     private readonly ScrapeProgressTracker _progress;
     private readonly IOptions<ScraperOptions> _options;
     private readonly IHostApplicationLifetime _lifetime;
@@ -54,6 +56,8 @@ public sealed class ScraperWorker : BackgroundService
         PathGenerator pathGenerator,
         PathDataStore pathDataStore,
         SongsCacheService songsCache,
+        [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache,
+        [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService leaderboardAllCache,
         ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
         IHostApplicationLifetime lifetime,
@@ -70,6 +74,8 @@ public sealed class ScraperWorker : BackgroundService
         _pathGenerator = pathGenerator;
         _pathDataStore = pathDataStore;
         _songsCache = songsCache;
+        _playerCache = playerCache;
+        _leaderboardAllCache = leaderboardAllCache;
         _progress = progress;
         _options = options;
         _lifetime = lifetime;
@@ -360,6 +366,8 @@ public sealed class ScraperWorker : BackgroundService
         await _backfillOrchestrator.RunHistoryReconAsync(ct);
 
         _songsCache.Invalidate();
+        _playerCache.InvalidateAll();
+        _leaderboardAllCache.InvalidateAll();
         _progress.EndPass();
     }
 

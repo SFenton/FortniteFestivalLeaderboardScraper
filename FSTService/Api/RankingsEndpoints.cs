@@ -17,7 +17,7 @@ public static partial class ApiEndpoints
             GlobalLeaderboardPersistence persistence,
             MetaDatabase metaDb) =>
         {
-            httpContext.Response.Headers.CacheControl = "public, max-age=60";
+            httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
             var db = persistence.GetOrCreateInstrumentDb(instrument);
             var (entries, total) = db.GetAccountRankings(
                 rankBy ?? "adjusted",
@@ -135,7 +135,7 @@ public static partial class ApiEndpoints
             int? pageSize,
             MetaDatabase metaDb) =>
         {
-            httpContext.Response.Headers.CacheControl = "public, max-age=60";
+            httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
             var (entries, total) = metaDb.GetCompositeRankings(
                 page ?? 1,
                 Math.Clamp(pageSize ?? 50, 1, 200));
