@@ -6,6 +6,9 @@ import {
   frostedCard, flexRow, flexColumn, padding, border, transition,
   NAV_TRANSITION_MS,
 } from '@festival/theme';
+import { IS_PWA } from '@festival/ui-utils';
+
+const pwaOffset = IS_PWA ? Gap.section - Gap.md : 0;
 
 const entryBase: CSSProperties = {
   ...frostedCard,
@@ -110,13 +113,13 @@ export const plbStyles = {
   /* ── Fixed footer positioning (portaled to body) ── */
   mobilePagination: {
     position: Position.fixed,
-    bottom: Layout.fabBottom + (Layout.fabSize - Layout.entryRowHeight) / 2 + Layout.entryRowHeight + Gap.sm,
+    bottom: Layout.fabBottom + pwaOffset + (Layout.fabSize - Layout.entryRowHeight) / 2 + Layout.entryRowHeight + Gap.sm,
     ...fixedFooterBase,
   } as CSSProperties,
 
   mobilePaginationNoPlayer: {
     position: Position.fixed,
-    bottom: Layout.fabBottom + Layout.fabSize + Gap.sm,
+    bottom: Layout.fabBottom + pwaOffset + Layout.fabSize + Gap.sm,
     ...fixedFooterBase,
   } as CSSProperties,
 
@@ -134,7 +137,7 @@ export const plbStyles = {
 
   playerFooterFab: {
     position: Position.fixed,
-    bottom: Layout.fabBottom + (Layout.fabSize - Layout.entryRowHeight) / 2,
+    bottom: Layout.fabBottom + pwaOffset + (Layout.fabSize - Layout.entryRowHeight) / 2,
     ...fixedFooterBase,
   } as CSSProperties,
 

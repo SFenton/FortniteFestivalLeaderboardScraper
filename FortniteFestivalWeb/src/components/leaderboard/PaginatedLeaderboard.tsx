@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import Paginator from '../common/Paginator';
 import ArcSpinner from '../common/ArcSpinner';
-import { staggerDelay } from '@festival/ui-utils';
+import { staggerDelay, IS_PWA } from '@festival/ui-utils';
 import { Gap, Layout, STAGGER_INTERVAL, FADE_DURATION, SPINNER_FADE_MS } from '@festival/theme';
 import { useIsWideDesktop } from '../../hooks/ui/useIsMobile';
 import { LoadPhase } from '@festival/core';
@@ -165,9 +165,10 @@ export function PaginatedLeaderboard<T>({
     if (hasFab) {
       margin = Layout.fabPaddingBottom;
       if (hasPagination) {
+        const pwaOffset = IS_PWA ? Gap.section - Gap.md : 0;
         const paginationCssBottom = hasPlayerFooter
-          ? Layout.fabBottom + (Layout.fabSize - Layout.entryRowHeight) / 2 + Layout.entryRowHeight + Gap.sm
-          : Layout.fabBottom + Layout.fabSize + Gap.sm;
+          ? Layout.fabBottom + pwaOffset + (Layout.fabSize - Layout.entryRowHeight) / 2 + Layout.entryRowHeight + Gap.sm
+          : Layout.fabBottom + pwaOffset + Layout.fabSize + Gap.sm;
         const paginationTop = paginationCssBottom + Layout.paginationHeight;
         const naturalHeight = el.clientHeight + (parseFloat(el.style.marginBottom) || 0);
         const headerHeight = el.getBoundingClientRect().top;
