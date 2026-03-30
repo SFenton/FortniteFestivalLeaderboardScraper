@@ -12,6 +12,9 @@ import { useEffect, useRef } from 'react';
 /** Attribute selector matching elements with the --frosted-card CSS custom property marker. */
 const FROSTED_SELECTOR = '[style*="--frosted-card"]';
 
+/** Attribute selector for an exclusive glow scope container. */
+const SCOPE_SELECTOR = '[data-glow-scope]';
+
 /**
  * Proximity-based glow for frosted cards.
  *
@@ -44,9 +47,16 @@ export function useProximityGlow(enabled: boolean): void {
       rafId.current = requestAnimationFrame(() => {
         rafId.current = 0;
         const cards = root.querySelectorAll<HTMLElement>(FROSTED_SELECTOR);
+        const scope = root.querySelector<HTMLElement>(SCOPE_SELECTOR);
         const mx = e.clientX;
         const my = e.clientY;
         for (const card of cards) {
+          // When a glow scope is active, suppress painting on cards outside it
+          if (scope && !scope.contains(card)) {
+            card.style.setProperty('--glow-opacity', '0');
+            card.style.setProperty('--glow-hover', '0');
+            continue;
+          }
           const r = card.getBoundingClientRect();
           // Local coordinates (can be negative / beyond bounds — that's the point)
           const lx = mx - r.left;

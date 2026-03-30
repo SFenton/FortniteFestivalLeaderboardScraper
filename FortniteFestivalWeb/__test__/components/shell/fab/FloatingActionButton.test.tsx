@@ -149,4 +149,29 @@ describe('FloatingActionButton', () => {
     fireEvent.click(screen.getByRole('button', { name: /actions/i }));
     // Should not throw — FABMenu receives empty array
   });
+
+  it('menu container has data-glow-scope attribute when open', () => {
+    const actionGroups: ActionItem[][] = [[
+      { label: 'Sort', icon: <span>S</span>, onPress: vi.fn() },
+    ]];
+    renderFAB({ actionGroups });
+
+    fireEvent.click(screen.getByRole('button', { name: /actions/i }));
+
+    const sortButton = screen.getByText('Sort');
+    const menu = sortButton.closest('[data-glow-scope]');
+    expect(menu).toBeTruthy();
+  });
+
+  it('menu items have frosted-card marker for light painting', () => {
+    const actionGroups: ActionItem[][] = [[
+      { label: 'Sort', icon: <span>S</span>, onPress: vi.fn() },
+    ]];
+    renderFAB({ actionGroups });
+
+    fireEvent.click(screen.getByRole('button', { name: /actions/i }));
+
+    const sortButton = screen.getByText('Sort').closest('button');
+    expect(sortButton?.style.getPropertyValue('--frosted-card')).toBeTruthy();
+  });
 });

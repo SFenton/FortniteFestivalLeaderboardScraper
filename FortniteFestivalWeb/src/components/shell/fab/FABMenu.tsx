@@ -4,7 +4,7 @@
  * Renders grouped action items with dividers between groups.
  */
 import { Fragment, memo, useMemo, type CSSProperties } from 'react';
-import { Colors, Font, Gap, Radius, Layout, Shadow, ZIndex, Display, Align, Position, Cursor, TextAlign, WhiteSpace, PointerEvents, IconSize, CssValue, TransformOrigin, flexRow, flexCenter, padding, scale, EASE_OVERSHOOT, FAB_OPEN_MS, TRANSITION_MS } from '@festival/theme';
+import { Colors, Font, Gap, Radius, Layout, Shadow, ZIndex, Display, Align, Position, Cursor, TextAlign, WhiteSpace, PointerEvents, Overflow, IconSize, CssValue, TransformOrigin, flexRow, flexCenter, padding, scale, EASE_OVERSHOOT, FAB_OPEN_MS, TRANSITION_MS } from '@festival/theme';
 import type { ActionItem } from './FloatingActionButton';
 
 interface FABMenuProps {
@@ -18,6 +18,7 @@ const FABMenu = memo(function FABMenu({ groups, visible, onAction }: FABMenuProp
   return (
     <div
       style={s.menu}
+      data-glow-scope=""
     >
       {groups.map((group, gi) => (
         <Fragment key={gi}>
@@ -46,7 +47,7 @@ function useFABMenuStyles(visible: boolean) {
       pointerEvents: PointerEvents.auto,
       backgroundColor: Colors.backgroundCard,
       borderRadius: Radius.sm,
-      padding: padding(Gap.sm, 0),
+      overflow: Overflow.hidden,
       minWidth: Layout.fabMenuMinWidth,
       whiteSpace: WhiteSpace.nowrap,
       boxShadow: Shadow.tooltip,
@@ -58,16 +59,20 @@ function useFABMenuStyles(visible: boolean) {
         : `transform ${TRANSITION_MS}ms ease, opacity ${TRANSITION_MS}ms ease`,
     } as CSSProperties,
     item: {
+      '--frosted-card': '1',
       ...flexRow,
       gap: Gap.xl,
       width: CssValue.full,
-      padding: padding(Gap.xl, Gap.section),
+      padding: padding(Gap.xl + Gap.sm, Gap.section),
       background: CssValue.none,
       border: CssValue.none,
+      boxShadow: 'inset 0 0 0 100vmax rgba(255, 255, 255, calc(0.03 * var(--glow-hover, 0)))',
       color: Colors.textSecondary,
       fontSize: Font.md,
       cursor: Cursor.pointer,
       textAlign: TextAlign.left,
+      position: Position.relative,
+      overflow: Overflow.hidden,
     } as CSSProperties,
     itemIcon: {
       ...flexCenter,
@@ -78,7 +83,6 @@ function useFABMenuStyles(visible: boolean) {
     divider: {
       height: 1,
       backgroundColor: Colors.glassBorder,
-      margin: padding(Gap.sm, 0),
     } as CSSProperties,
   }), [visible]);
 }
