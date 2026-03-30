@@ -810,6 +810,10 @@
     "rankByCancelTitle": "Discard changes?",
     "rankByCancelMessage": "You have unsaved changes to the ranking metric. Discard them?",
     "changeRanking": "Change Leaderboard Ranking",
+    "changeInstrument": "Change Instrument",
+    "instrumentHint": "Choose which instrument's leaderboard to view.",
+    "instrumentCancelTitle": "Discard changes?",
+    "instrumentCancelMessage": "You have unsaved changes to the instrument selection. Discard them?",
     "metric": {
       "adjusted": "Adjusted Skill",
       "adjustedDesc": "Average percentile across all songs, adjusted for credibility.",

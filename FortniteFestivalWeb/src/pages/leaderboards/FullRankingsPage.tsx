@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router-dom';
-import { IoOptions } from 'react-icons/io5';
+import { IoOptions, IoMusicalNotes } from 'react-icons/io5';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { useQuery } from '@tanstack/react-query';
@@ -19,7 +19,7 @@ import { RadioRow } from '../../components/common/RadioRow';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
 import type { ServerInstrumentKey as InstrumentKey, RankingMetric } from '@festival/core/api/serverTypes';
 import { InstrumentHeaderSize } from '@festival/core';
-import { serverInstrumentLabel } from '@festival/core/api/serverTypes';
+import { serverInstrumentLabel, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
 import { getRankForMetric, formatRating, getRatingForMetric, RANKING_METRICS, EXPERIMENTAL_METRICS, computeRankWidth } from './helpers/rankingHelpers';
 import { rankingsCache } from '../../api/pageCache';
 import { useModalState } from '../../hooks/ui/useModalState';
@@ -32,6 +32,7 @@ import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
 import { getMetricInfoSlides } from './firstRun/metricInfo';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { Size } from '@festival/theme';
+import InstrumentPickerModal from './modals/InstrumentPickerModal';
 
 const PAGE_SIZE = 25;
 
@@ -52,11 +53,16 @@ export default function FullRankingsPage() {
   const scrollContainerRef = useScrollContainer();
 
   const metricModal = useModalState<RankingMetric>(() => 'totalscore');
+  const instrumentModal = useModalState<InstrumentKey>(() => DEFAULT_INSTRUMENT);
   const [infoMetric, setInfoMetric] = useState<RankingMetric | null>(null);
 
   const openMetricModal = useCallback(() => {
     metricModal.open(metric);
   }, [metricModal, metric]);
+
+  const openInstrumentModal = useCallback(() => {
+    instrumentModal.open(instrument);
+  }, [instrumentModal, instrument]);
 
   const applyMetric = useCallback(() => {
     const m = metricModal.draft;
@@ -66,10 +72,18 @@ export default function FullRankingsPage() {
     setSearchParams({ instrument, rankBy: m, page: '1' }, { replace: true });
   }, [metricModal, instrument, setSearchParams]);
 
+  const applyInstrument = useCallback(() => {
+    const inst = instrumentModal.draft;
+    instrumentModal.close();
+    scrollContainerRef.current?.scrollTo(0, 0);
+    setPage(1);
+    setSearchParams({ instrument: inst, rankBy: metric, page: '1' }, { replace: true });
+  }, [instrumentModal, metric, setSearchParams]);
+
   useEffect(() => {
-    fabSearch.registerLeaderboardActions({ openMetric: openMetricModal });
-    return () => fabSearch.registerLeaderboardActions({ openMetric: () => {} });
-  }, [fabSearch, openMetricModal]);
+    fabSearch.registerLeaderboardActions({ openMetric: openMetricModal, openInstrument: openInstrumentModal });
+    return () => fabSearch.registerLeaderboardActions({ openMetric: () => {}, openInstrument: () => {} });
+  }, [fabSearch, openMetricModal, openInstrumentModal]);
 
   const cacheKey = `${instrument}:${metric}`;
   const cached = rankingsCache.get(cacheKey);
@@ -149,18 +163,36 @@ export default function FullRankingsPage() {
             />
           }
           actions={
-            !isMobileChrome && settings.enableExperimentalRanks ? (
-              <ActionPill
-                icon={<IoOptions size={Size.iconAction} />}
-                label={t(`rankings.metric.${metric}`)}
-                onClick={openMetricModal}
-                active={metric !== 'totalscore'}
-              />
+            !isMobileChrome ? (
+              <>
+                <ActionPill
+                  icon={<IoMusicalNotes size={Size.iconAction} />}
+                  label={serverInstrumentLabel(instrument)}
+                  onClick={openInstrumentModal}
+                  active={instrument !== DEFAULT_INSTRUMENT}
+                />
+                {settings.enableExperimentalRanks && (
+                  <ActionPill
+                    icon={<IoOptions size={Size.iconAction} />}
+                    label={t(`rankings.metric.${metric}`)}
+                    onClick={openMetricModal}
+                    active={metric !== 'totalscore'}
+                  />
+                )}
+              </>
             ) : undefined
           }
         />
       }
       after={<>
+        <InstrumentPickerModal
+          visible={instrumentModal.visible}
+          draft={instrumentModal.draft}
+          savedDraft={instrument}
+          onChange={instrumentModal.setDraft}
+          onCancel={instrumentModal.close}
+          onApply={applyInstrument}
+        />
         <Modal
           visible={metricModal.visible}
           title={t('rankings.rankBy')}

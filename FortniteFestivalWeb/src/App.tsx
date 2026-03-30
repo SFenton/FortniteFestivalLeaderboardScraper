@@ -561,11 +561,16 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      {isMobile && RoutePatterns.leaderboards.test(location.pathname) && (
+      {isMobile && RoutePatterns.leaderboards.test(location.pathname) && (() => {
+        const leaderboardActions = [
+          ...(location.pathname === '/leaderboards/all' ? [{ label: t('rankings.changeInstrument'), icon: <IoMusicalNotes size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardInstrument() }] : []),
+          ...(settings.enableExperimentalRanks ? [{ label: t('rankings.changeRanking'), icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() }] : []),
+        ];
+        return (
         <FloatingActionButton
           mode="players"
           actionGroups={[
-            ...(settings.enableExperimentalRanks ? [[{ label: t('rankings.changeRanking'), icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() }]] : []),
+            ...(leaderboardActions.length > 0 ? [leaderboardActions] : []),
             [
               { label: t('common.findPlayer'), icon: <IoSearch size={Size.iconFab} />, onPress: () => setFindPlayerOpen(true) },
               player
@@ -576,7 +581,8 @@ function AppShell() {
           ]}
           onPress={() => {}}
         />
-      )}
+        );
+      })()}
       {isMobile && RoutePatterns.rivals.test(location.pathname) && (
         <FloatingActionButton
           mode="players"

@@ -62,8 +62,8 @@ export default function LeaderboardsOverviewPage() {
   }, [metricModal, setSearchParams]);
 
   useEffect(() => {
-    fabSearch.registerLeaderboardActions({ openMetric: openMetricModal });
-    return () => fabSearch.registerLeaderboardActions({ openMetric: () => {} });
+    fabSearch.registerLeaderboardActions({ openMetric: openMetricModal, openInstrument: () => {} });
+    return () => fabSearch.registerLeaderboardActions({ openMetric: () => {}, openInstrument: () => {} });
   }, [fabSearch, openMetricModal]);
 
   const instruments = useMemo(() => visibleInstruments(settings), [settings]);

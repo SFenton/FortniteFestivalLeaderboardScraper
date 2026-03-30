@@ -14,8 +14,9 @@ type FabSearchContextType = {
   shopToggleView: () => void;
   shopViewMode: 'grid' | 'list';
   setShopViewMode: (mode: 'grid' | 'list') => void;
-  registerLeaderboardActions: (actions: { openMetric: () => void }) => void;
+  registerLeaderboardActions: (actions: { openMetric: () => void; openInstrument: () => void }) => void;
   openLeaderboardMetric: () => void;
+  openLeaderboardInstrument: () => void;
   registerRivalsActions: (actions: { toggleTab: () => void }) => void;
   rivalsToggleTab: () => void;
   rivalsActiveTab: 'song' | 'leaderboard';
@@ -30,7 +31,7 @@ const FabSearchContext = createContext<FabSearchContextType>({
   registerPlayerHistoryActions: () => {}, openPlayerHistorySort: () => {},
   registerSongDetailActions: () => {}, openPaths: () => {},
   registerShopActions: () => {}, shopToggleView: () => {}, shopViewMode: 'grid', setShopViewMode: () => {},
-  registerLeaderboardActions: () => {}, openLeaderboardMetric: () => {},
+  registerLeaderboardActions: () => {}, openLeaderboardMetric: () => {}, openLeaderboardInstrument: () => {},
   registerRivalsActions: () => {}, rivalsToggleTab: () => {}, rivalsActiveTab: 'song', setRivalsActiveTab: () => {},
   registerPlayerPageSelect: () => {}, playerPageSelect: null,
 });
@@ -41,7 +42,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
   const playerHistoryActionsRef = useRef<{ openSort: () => void }>({ openSort: () => {} });
   const songDetailActionsRef = useRef<{ openPaths: () => void }>({ openPaths: () => {} });
   const shopActionsRef = useRef<{ toggleView: () => void }>({ toggleView: () => {} });
-  const leaderboardActionsRef = useRef<{ openMetric: () => void }>({ openMetric: () => {} });
+  const leaderboardActionsRef = useRef<{ openMetric: () => void; openInstrument: () => void }>({ openMetric: () => {}, openInstrument: () => {} });
   const rivalsActionsRef = useRef<{ toggleTab: () => void }>({ toggleTab: () => {} });
 
   const registerActions = useCallback((actions: { openSort: () => void; openFilter: () => void }) => {
@@ -64,7 +65,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     shopActionsRef.current = actions;
   }, []);
 
-  const registerLeaderboardActions = useCallback((actions: { openMetric: () => void }) => {
+  const registerLeaderboardActions = useCallback((actions: { openMetric: () => void; openInstrument: () => void }) => {
     leaderboardActionsRef.current = actions;
   }, []);
 
@@ -79,6 +80,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
   const openPaths = useCallback(() => songDetailActionsRef.current.openPaths(), []);
   const shopToggleView = useCallback(() => shopActionsRef.current.toggleView(), []);
   const openLeaderboardMetric = useCallback(() => leaderboardActionsRef.current.openMetric(), []);
+  const openLeaderboardInstrument = useCallback(() => leaderboardActionsRef.current.openInstrument(), []);
   const rivalsToggleTab = useCallback(() => rivalsActionsRef.current.toggleTab(), []);
 
   const [shopViewMode, setShopViewMode] = useState<'grid' | 'list'>('grid');
@@ -95,7 +97,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     registerPlayerHistoryActions, openPlayerHistorySort,
     registerSongDetailActions, openPaths,
     registerShopActions, shopToggleView, shopViewMode, setShopViewMode,
-    registerLeaderboardActions, openLeaderboardMetric,
+    registerLeaderboardActions, openLeaderboardMetric, openLeaderboardInstrument,
     registerRivalsActions, rivalsToggleTab, rivalsActiveTab, setRivalsActiveTab,
     registerPlayerPageSelect, playerPageSelect,
   }), [registerActions, openSort, openFilter,
@@ -103,7 +105,7 @@ export function FabSearchProvider({ children }: { children: ReactNode }) {
     registerPlayerHistoryActions, openPlayerHistorySort,
     registerSongDetailActions, openPaths,
     registerShopActions, shopToggleView, shopViewMode, setShopViewMode,
-    registerLeaderboardActions, openLeaderboardMetric,
+    registerLeaderboardActions, openLeaderboardMetric, openLeaderboardInstrument,
     registerRivalsActions, rivalsToggleTab, rivalsActiveTab, setRivalsActiveTab,
     registerPlayerPageSelect, playerPageSelect]);
 

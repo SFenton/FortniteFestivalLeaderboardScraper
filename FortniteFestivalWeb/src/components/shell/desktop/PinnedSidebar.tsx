@@ -147,6 +147,7 @@ function useStyles() {
       linkActive: {
         ...link,
         ...purpleGlass,
+        boxShadow: CssValue.none,
         color: Colors.textPrimary,
       } as CSSProperties,
       linkIcon: {
