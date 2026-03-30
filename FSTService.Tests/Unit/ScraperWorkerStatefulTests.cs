@@ -323,9 +323,6 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         _nameResolver.ResolveNewAccountsAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(0));
 
-        _personalDbBuilder.RebuildForAccounts(Arg.Any<HashSet<string>>(), Arg.Any<MetaDatabase>())
-            .Returns(1);
-
         _refresher.RefreshAllAsync(
             Arg.Any<IReadOnlySet<string>>(),
             Arg.Any<HashSet<(string, string, string)>>(),
@@ -345,9 +342,6 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<SharedDopPool>(),
             Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
-
-        _personalDbBuilder.Received().RebuildForAccounts(
-            Arg.Any<HashSet<string>>(), Arg.Any<MetaDatabase>());
     }
 
     [Fact]
@@ -426,9 +420,6 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
 
         _nameResolver.ResolveNewAccountsAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(0));
-
-        _personalDbBuilder.RebuildForAccounts(Arg.Any<HashSet<string>>(), Arg.Any<MetaDatabase>())
-            .Returns(x => throw new InvalidOperationException("DB rebuild failed"));
 
         _refresher.RefreshAllAsync(
             Arg.Any<IReadOnlySet<string>>(),

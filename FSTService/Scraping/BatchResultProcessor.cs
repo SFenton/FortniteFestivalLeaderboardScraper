@@ -12,7 +12,7 @@ namespace FSTService.Scraping;
 public class BatchResultProcessor
 {
     private readonly GlobalLeaderboardPersistence _persistence;
-    private readonly MetaDatabase _metaDb;
+    private readonly IMetaDatabase _metaDb;
     private readonly ILogger<BatchResultProcessor> _log;
 
     public BatchResultProcessor(

@@ -26,7 +26,6 @@ public abstract class ScraperWorkerTestBase : IDisposable
     protected readonly TokenManager _tokenManager;
     protected readonly GlobalLeaderboardScraper _scraper;
     protected readonly AccountNameResolver _nameResolver;
-    protected readonly PersonalDbBuilder _personalDbBuilder;
     protected readonly ScoreBackfiller _backfiller;
     protected readonly BackfillQueue _backfillQueue;
     protected readonly PostScrapeRefresher _refresher;
@@ -74,14 +73,6 @@ public abstract class ScraperWorkerTestBase : IDisposable
             new HttpClient(), _metaDb, _tokenManager,
             new ScrapeProgressTracker(),
             Substitute.For<ILogger<AccountNameResolver>>());
-
-        _personalDbBuilder = Substitute.For<PersonalDbBuilder>(
-            _persistence,
-            new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null),
-            _metaDb,
-            new ScrapeProgressTracker(),
-            _tempDir,
-            Substitute.For<ILogger<PersonalDbBuilder>>());
 
         _backfiller = Substitute.For<ScoreBackfiller>(
             _scraper, _persistence, new ScrapeProgressTracker(),
@@ -164,7 +155,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
 
         var postScrapeOrchestrator = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _personalDbBuilder, _refresher,
+            _refresher,
             serviceProvider,
             _historyReconstructor,
             _pool,
@@ -174,7 +165,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
 
         var backfillOrchestrator = new BackfillOrchestrator(
             _backfillQueue, _historyReconstructor,
-            _personalDbBuilder, rivalsOrchestrator, notifications, _persistence,
+            rivalsOrchestrator, notifications, _persistence,
             _tokenManager, _progress, options,
             serviceProvider, _pool,
             Substitute.For<ILogger<BackfillOrchestrator>>());
@@ -227,7 +218,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
         serviceProvider.GetService(typeof(SongProcessingMachine)).Returns(_machine);
         return new BackfillOrchestrator(
             _backfillQueue, _historyReconstructor,
-            _personalDbBuilder, rivalsOrchestrator, notifications, _persistence,
+            rivalsOrchestrator, notifications, _persistence,
             _tokenManager, _progress, options,
             serviceProvider, _pool,
             Substitute.For<ILogger<BackfillOrchestrator>>());

@@ -8,6 +8,7 @@ using FSTService.Persistence;
 using FSTService.Scraping;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.HttpOverrides;
+using Npgsql;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 
@@ -93,6 +94,10 @@ builder.Services.PostConfigure<ScraperOptions>(opts =>
         {
             opts.TestSongQuery = args[++i];
         }
+        else if (args[i].Equals("--migrate-to-pg", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.MigrateToPg = true;
+        }
     }
 });
 
@@ -140,34 +145,42 @@ builder.Services.AddSingleton<TokenManager>();
 
 // ─── Persistence ────────────────────────────────────────────
 
+var dbProvider = builder.Configuration.GetValue<string>("DatabaseProvider") ?? "SQLite";
+
+if (dbProvider.Equals("PostgreSQL", StringComparison.OrdinalIgnoreCase))
+{
+    var pgConnStr = builder.Configuration.GetConnectionString("PostgreSQL")
+        ?? throw new InvalidOperationException("ConnectionStrings:PostgreSQL is required when DatabaseProvider=PostgreSQL");
+    var pgDataSource = NpgsqlDataSource.Create(pgConnStr);
+    builder.Services.AddSingleton(pgDataSource);
+
+    // PG implementations
+    builder.Services.AddSingleton<IMetaDatabase>(sp =>
+        new FSTService.Persistence.Pg.PgMetaDatabase(sp.GetRequiredService<NpgsqlDataSource>(),
+            sp.GetRequiredService<ILogger<FSTService.Persistence.Pg.PgMetaDatabase>>()));
+
+    builder.Services.AddSingleton<IPathDataStore>(sp =>
+        new FSTService.Scraping.PgPathDataStore(sp.GetRequiredService<NpgsqlDataSource>()));
+}
+else
+{
+// SQLite registrations (used when DatabaseProvider=SQLite)
 builder.Services.AddSingleton<MetaDatabase>(sp =>
 {
     var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
     var metaPath = Path.Combine(Path.GetFullPath(opts.DataDirectory), "fst-meta.db");
     return new MetaDatabase(metaPath, sp.GetRequiredService<ILogger<MetaDatabase>>());
 });
+builder.Services.AddSingleton<IMetaDatabase>(sp => sp.GetRequiredService<MetaDatabase>());
 
 builder.Services.AddSingleton<GlobalLeaderboardPersistence>(sp =>
 {
     var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
     return new GlobalLeaderboardPersistence(
         Path.GetFullPath(opts.DataDirectory),
-        sp.GetRequiredService<MetaDatabase>(),
+        sp.GetRequiredService<IMetaDatabase>(),
         sp.GetRequiredService<ILoggerFactory>(),
         sp.GetRequiredService<ILogger<GlobalLeaderboardPersistence>>());
-});
-
-// PersonalDbBuilder — generates per-device personal SQLite DBs for mobile sync
-builder.Services.AddSingleton<PersonalDbBuilder>(sp =>
-{
-    var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
-    return new PersonalDbBuilder(
-        sp.GetRequiredService<GlobalLeaderboardPersistence>(),
-        sp.GetRequiredService<FestivalService>(),
-        sp.GetRequiredService<MetaDatabase>(),
-        sp.GetRequiredService<FSTService.Scraping.ScrapeProgressTracker>(),
-        Path.GetFullPath(opts.DataDirectory),
-        sp.GetRequiredService<ILogger<PersonalDbBuilder>>());
 });
 
 builder.Services.AddSingleton<BackfillQueue>();
@@ -212,7 +225,7 @@ builder.Services.AddSingleton<ItemShopService>(sp =>
         ? new ItemShopService(
             http,
             sp.GetRequiredService<FestivalService>(),
-            sp.GetRequiredService<MetaDatabase>(),
+            sp.GetRequiredService<IMetaDatabase>(),
             sp.GetRequiredService<ILogger<ItemShopService>>())
         : throw new InvalidOperationException());
 
@@ -234,6 +247,8 @@ builder.Services.AddSingleton<PathDataStore>(sp =>
     var dbPath = Path.GetFullPath(opts.DatabasePath);
     return new PathDataStore(dbPath);
 });
+builder.Services.AddSingleton<IPathDataStore>(sp => sp.GetRequiredService<PathDataStore>());
+} // end SQLite registrations
 
 builder.Services.AddHttpClient<PathGenerator>()
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
@@ -360,6 +375,24 @@ builder.Services.AddHostedService<ScraperWorker>();
 // ─── Build and configure pipeline ───────────────────────────
 
 var app = builder.Build();
+
+// Initialize PG schema if using PostgreSQL
+if (dbProvider.Equals("PostgreSQL", StringComparison.OrdinalIgnoreCase))
+{
+    var pgDs = app.Services.GetRequiredService<NpgsqlDataSource>();
+    await FSTService.Persistence.Pg.PgDatabaseInitializer.EnsureSchemaAsync(pgDs);
+
+    // One-shot migration: --migrate-to-pg
+    var scraperOpts = app.Services.GetRequiredService<IOptions<ScraperOptions>>().Value;
+    if (scraperOpts.MigrateToPg)
+    {
+        var migLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("DataMigrator");
+        var dataDir = Path.GetFullPath(scraperOpts.DataDirectory);
+        await FSTService.Persistence.Pg.DataMigrator.MigrateAsync(dataDir, pgDs, migLog);
+        migLog.LogInformation("Migration complete. Exiting.");
+        return;
+    }
+}
 
 // Security: block path traversal attempts first
 app.UseMiddleware<PathTraversalGuardMiddleware>();

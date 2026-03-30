@@ -9,7 +9,7 @@ namespace FSTService.Scraping;
 /// Resolves Epic account IDs to display names via Epic's bulk account lookup API.
 ///
 /// After a scrape pass, all account IDs are collected and deduplicated. IDs already
-/// present in MetaDatabase.AccountNames are skipped. New IDs are batched (100 per request)
+/// present in IMetaDatabase.AccountNames are skipped. New IDs are batched (100 per request)
 /// and resolved. Results are persisted to AccountNames for future lookups.
 ///
 /// This is best-effort: if the API is down or an account is unresolvable, the scrape
@@ -24,14 +24,14 @@ public class AccountNameResolver
 
     private readonly HttpClient _http;
     private readonly ResilientHttpExecutor _executor;
-    private readonly MetaDatabase _metaDb;
+    private readonly IMetaDatabase _metaDb;
     private readonly TokenManager _tokenManager;
     private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<AccountNameResolver> _log;
 
     public AccountNameResolver(
         HttpClient http,
-        MetaDatabase metaDb,
+        IMetaDatabase metaDb,
         TokenManager tokenManager,
         ScrapeProgressTracker progress,
         ILogger<AccountNameResolver> log)

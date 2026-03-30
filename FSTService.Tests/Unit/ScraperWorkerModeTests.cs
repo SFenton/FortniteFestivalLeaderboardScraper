@@ -208,15 +208,12 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
 
         await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
 
-        // Machine called, then per-user completion actions (personal DB rebuild, etc.)
+        // Machine called for backfill
         await _machine.Received(1).RunAsync(
             Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
             Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
-        // Personal DB rebuild happens for all users after machine run (not conditionally)
-        _personalDbBuilder.Received(1).RebuildForAccounts(
-            Arg.Any<IReadOnlySet<string>>(), Arg.Any<MetaDatabase>());
     }
 
     [Fact]
@@ -249,10 +246,6 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
         _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<string?>("token"));
         _tokenManager.AccountId.Returns("callerAcct");
-
-        _personalDbBuilder.RebuildForAccounts(
-            Arg.Any<IReadOnlySet<string>>(), Arg.Any<MetaDatabase>())
-            .Throws(new IOException("disk full"));
 
         var orchestrator = CreateBackfillOrchestrator();
 

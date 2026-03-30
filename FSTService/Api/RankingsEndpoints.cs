@@ -17,7 +17,7 @@ public static partial class ApiEndpoints
             int? page,
             int? pageSize,
             GlobalLeaderboardPersistence persistence,
-            MetaDatabase metaDb) =>
+            IMetaDatabase metaDb) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
             var db = persistence.GetOrCreateInstrumentDb(instrument);
@@ -75,7 +75,7 @@ public static partial class ApiEndpoints
             string instrument,
             string accountId,
             GlobalLeaderboardPersistence persistence,
-            MetaDatabase metaDb) =>
+            IMetaDatabase metaDb) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
             var db = persistence.GetOrCreateInstrumentDb(instrument);
@@ -139,7 +139,7 @@ public static partial class ApiEndpoints
             HttpContext httpContext,
             int? page,
             int? pageSize,
-            MetaDatabase metaDb) =>
+            IMetaDatabase metaDb) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
             var (entries, total) = metaDb.GetCompositeRankings(
@@ -184,7 +184,7 @@ public static partial class ApiEndpoints
         app.MapGet("/api/rankings/composite/{accountId}", (
             HttpContext httpContext,
             string accountId,
-            MetaDatabase metaDb) =>
+            IMetaDatabase metaDb) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
             var ranking = metaDb.GetCompositeRanking(accountId);
@@ -223,7 +223,7 @@ public static partial class ApiEndpoints
             string? rankBy,
             int? page,
             int? pageSize,
-            MetaDatabase metaDb) =>
+            IMetaDatabase metaDb) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
             var comboId = ComboIds.NormalizeComboParam(combo ?? instruments);
@@ -272,7 +272,7 @@ public static partial class ApiEndpoints
             string? combo,
             string? instruments,
             string? rankBy,
-            MetaDatabase metaDb) =>
+            IMetaDatabase metaDb) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
             var comboId = ComboIds.NormalizeComboParam(combo ?? instruments);
@@ -315,7 +315,7 @@ public static partial class ApiEndpoints
             string accountId,
             int? radius,
             GlobalLeaderboardPersistence persistence,
-            MetaDatabase metaDb,
+            IMetaDatabase metaDb,
             [FromKeyedServices("NeighborhoodCache")] ResponseCacheService cache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
@@ -388,7 +388,7 @@ public static partial class ApiEndpoints
             HttpContext httpContext,
             string accountId,
             int? radius,
-            MetaDatabase metaDb,
+            IMetaDatabase metaDb,
             [FromKeyedServices("NeighborhoodCache")] ResponseCacheService cache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
@@ -457,7 +457,7 @@ public static partial class ApiEndpoints
             string? rankBy,
             int? pageSize,
             GlobalLeaderboardPersistence persistence,
-            MetaDatabase metaDb) =>
+            IMetaDatabase metaDb) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
             var metric = rankBy ?? "adjusted";

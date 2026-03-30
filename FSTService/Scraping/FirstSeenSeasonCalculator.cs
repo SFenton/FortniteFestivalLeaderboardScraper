@@ -14,7 +14,7 @@ namespace FSTService.Scraping;
 ///   3. If MIN is > 2, probe season (MIN - 1) to see if the song existed.
 ///   4. If the probe finds a valid window (no HTTP error), the first-seen season is
 ///      the probed season; otherwise it's the observed MIN.
-///   5. Store the result in MetaDatabase.SongFirstSeenSeason.
+///   5. Store the result in IMetaDatabase.SongFirstSeenSeason.
 ///
 /// Songs whose FirstSeenSeason is already set are skipped (NULL = needs calculation).
 /// </summary>
@@ -22,7 +22,7 @@ public class FirstSeenSeasonCalculator
 {
     private readonly ILeaderboardQuerier _scraper;
     private readonly GlobalLeaderboardPersistence _persistence;
-    private readonly MetaDatabase _metaDb;
+    private readonly IMetaDatabase _metaDb;
     private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<FirstSeenSeasonCalculator> _log;
 

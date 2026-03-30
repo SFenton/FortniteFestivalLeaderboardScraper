@@ -14,7 +14,7 @@ public class PostScrapeRefresher
 {
     private readonly ILeaderboardQuerier _scraper;
     private readonly GlobalLeaderboardPersistence _persistence;
-    private readonly MetaDatabase _metaDb;
+    private readonly IMetaDatabase _metaDb;
     private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<PostScrapeRefresher> _log;
 

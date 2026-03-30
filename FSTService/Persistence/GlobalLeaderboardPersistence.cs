@@ -23,15 +23,15 @@ namespace FSTService.Persistence;
 public sealed class GlobalLeaderboardPersistence : IDisposable
 {
     private readonly Dictionary<string, InstrumentDatabase> _instrumentDbs = new(StringComparer.OrdinalIgnoreCase);
-    private readonly MetaDatabase _metaDb;
+    private readonly IMetaDatabase _metaDb;
     private readonly ILogger<GlobalLeaderboardPersistence> _log;
     private readonly ILoggerFactory _loggerFactory;
     private readonly string _dataDir;
 
     /// <summary>The meta database (ScrapeLog, ScoreHistory, etc.).</summary>
-    public MetaDatabase Meta => _metaDb;
+    public IMetaDatabase Meta => _metaDb;
 
-    public GlobalLeaderboardPersistence(string dataDir, MetaDatabase metaDb,
+    public GlobalLeaderboardPersistence(string dataDir, IMetaDatabase metaDb,
                                         ILoggerFactory loggerFactory,
                                         ILogger<GlobalLeaderboardPersistence> log)
     {
@@ -506,7 +506,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// Compute rank for every song a player has across all instruments.
     /// Uses a window function for efficient rank computation.
     /// TotalEntries is no longer returned here — callers should use
-    /// <see cref="MetaDatabase.GetAllLeaderboardPopulation"/> instead.
+    /// <see cref="IMetaDatabase.GetAllLeaderboardPopulation"/> instead.
     /// </summary>
     public Dictionary<(string SongId, string Instrument), int> GetPlayerRankings(string accountId, string? songId = null, HashSet<string>? instruments = null)
     {

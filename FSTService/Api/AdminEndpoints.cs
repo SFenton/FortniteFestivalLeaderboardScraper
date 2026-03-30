@@ -12,7 +12,7 @@ public static partial class ApiEndpoints
     {
         app.MapGet("/api/status", (
             GlobalLeaderboardPersistence persistence,
-            MetaDatabase metaDb) =>
+            IMetaDatabase metaDb) =>
         {
             var lastRun = metaDb.GetLastCompletedScrapeRun();
             var counts = persistence.GetEntryCounts();
@@ -86,8 +86,7 @@ public static partial class ApiEndpoints
 
         app.MapPost("/api/register", (
             RegisterRequest request,
-            MetaDatabase metaDb,
-            PersonalDbBuilder personalDbBuilder) =>
+            IMetaDatabase metaDb) =>
         {
             if (string.IsNullOrWhiteSpace(request.DeviceId) ||
                 string.IsNullOrWhiteSpace(request.Username))
@@ -110,20 +109,12 @@ public static partial class ApiEndpoints
             var displayName = metaDb.GetDisplayName(accountId);
             var isNew = metaDb.RegisterUser(request.DeviceId, accountId);
 
-            // Build the personal DB immediately on registration
-            string? dbPath = null;
-            if (isNew)
-            {
-                dbPath = personalDbBuilder.Build(request.DeviceId, accountId);
-            }
-
             return Results.Ok(new
             {
                 registered = isNew,
                 deviceId = request.DeviceId,
                 accountId,
                 displayName,
-                personalDbReady = dbPath is not null,
             });
         })
         .WithTags("Registration")
@@ -133,8 +124,7 @@ public static partial class ApiEndpoints
         app.MapDelete("/api/register", (
             string deviceId,
             string accountId,
-            MetaDatabase metaDb,
-            PersonalDbBuilder personalDbBuilder) =>
+            IMetaDatabase metaDb) =>
         {
             if (string.IsNullOrWhiteSpace(deviceId) ||
                 string.IsNullOrWhiteSpace(accountId))
@@ -143,14 +133,6 @@ public static partial class ApiEndpoints
             }
 
             var removed = metaDb.UnregisterUser(deviceId, accountId);
-
-            // Clean up the personal DB file if it exists
-            if (removed)
-            {
-                var dbPath = personalDbBuilder.GetPersonalDbPath(accountId, deviceId);
-                if (File.Exists(dbPath))
-                    File.Delete(dbPath);
-            }
 
             return Results.Ok(new
             {
@@ -165,7 +147,7 @@ public static partial class ApiEndpoints
 
         // ─── FirstSeenSeason endpoints ────────────────────
 
-        app.MapGet("/api/firstseen", (MetaDatabase metaDb) =>
+        app.MapGet("/api/firstseen", (IMetaDatabase metaDb) =>
         {
             var all = metaDb.GetAllFirstSeenSeasons();
             var songs = all.Select(kvp => new
@@ -221,7 +203,7 @@ public static partial class ApiEndpoints
             string? songId,
             bool? force,
             PathGenerator pathGenerator,
-            PathDataStore pathStore,
+            IPathDataStore pathStore,
             FestivalService festivalService,
             ScrapeProgressTracker progress,
             IHostApplicationLifetime lifetime,
@@ -306,7 +288,7 @@ public static partial class ApiEndpoints
 
         app.MapGet("/api/backfill/{accountId}/status", (
             string accountId,
-            MetaDatabase metaDb) =>
+            IMetaDatabase metaDb) =>
         {
             var status = metaDb.GetBackfillStatus(accountId);
             if (status is null)
@@ -332,10 +314,9 @@ public static partial class ApiEndpoints
             string accountId,
             ScoreBackfiller backfiller,
             HistoryReconstructor historyReconstructor,
-            PersonalDbBuilder personalDbBuilder,
             FestivalService festivalService,
             TokenManager tokenManager,
-            MetaDatabase metaDb,
+            IMetaDatabase metaDb,
             IOptions<ScraperOptions> scraperOptions,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
@@ -391,7 +372,6 @@ public static partial class ApiEndpoints
 
             // ── Step 3: Rebuild personal DB ──
             var accountSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { accountId };
-            var personalDbsRebuilt = personalDbBuilder.RebuildForAccounts(accountSet, metaDb);
 
             return Results.Ok(new
             {
@@ -402,7 +382,6 @@ public static partial class ApiEndpoints
                 totalSongsToCheck = status?.TotalSongsToCheck,
                 entriesFound = status?.EntriesFound,
                 historyEntriesCreated = historyEntries,
-                personalDbsRebuilt,
             });
         })
         .WithTags("Backfill")
@@ -411,7 +390,7 @@ public static partial class ApiEndpoints
 
 
 
-        app.MapGet("/api/leaderboard-population", (MetaDatabase metaDb) =>
+        app.MapGet("/api/leaderboard-population", (IMetaDatabase metaDb) =>
         {
             var data = metaDb.GetAllLeaderboardPopulation();
             var result = data.Select(kv => new

@@ -17,7 +17,7 @@ public class PersonalDbBuilder
 {
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly FestivalService _festivalService;
-    private readonly MetaDatabase _metaDb;
+    private readonly IMetaDatabase _metaDb;
     private readonly Scraping.ScrapeProgressTracker _progress;
     private readonly string _personalDir;
     private readonly ILogger<PersonalDbBuilder> _log;
@@ -38,7 +38,7 @@ public class PersonalDbBuilder
     public PersonalDbBuilder(
         GlobalLeaderboardPersistence persistence,
         FestivalService festivalService,
-        MetaDatabase metaDb,
+        IMetaDatabase metaDb,
         Scraping.ScrapeProgressTracker progress,
         string dataDir,
         ILogger<PersonalDbBuilder> log)
@@ -120,7 +120,7 @@ public class PersonalDbBuilder
     /// per account and then copied to each device path.
     /// Returns the number of device DBs written.
     /// </summary>
-    public virtual int RebuildForAccounts(IReadOnlySet<string> changedAccountIds, MetaDatabase metaDb)
+    public virtual int RebuildForAccounts(IReadOnlySet<string> changedAccountIds, IMetaDatabase metaDb)
     {
         if (changedAccountIds.Count == 0) return 0;
 

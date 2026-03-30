@@ -16,7 +16,7 @@ public sealed class ScrapeOrchestrator
 {
     private readonly GlobalLeaderboardScraper _globalScraper;
     private readonly GlobalLeaderboardPersistence _persistence;
-    private readonly PathDataStore _pathDataStore;
+    private readonly IPathDataStore _pathDataStore;
     private readonly ScrapeProgressTracker _progress;
     private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<ScrapeOrchestrator> _log;
@@ -24,14 +24,14 @@ public sealed class ScrapeOrchestrator
     public ScrapeOrchestrator(
         GlobalLeaderboardScraper globalScraper,
         GlobalLeaderboardPersistence persistence,
-        PathDataStore pathDataStore,
+        IPathDataStore IPathDataStore,
         ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
         ILogger<ScrapeOrchestrator> log)
     {
         _globalScraper = globalScraper;
         _persistence = persistence;
-        _pathDataStore = pathDataStore;
+        _pathDataStore = IPathDataStore;
         _progress = progress;
         _options = options;
         _log = log;

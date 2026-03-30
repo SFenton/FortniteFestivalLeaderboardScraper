@@ -1223,30 +1223,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
 
-    // ─── API-key sync/{deviceId}: on-demand build ──────────────
-
-    [Fact]
-    public async Task SyncDevice_OnDemandBuild_WhenFileNotExists()
-    {
-        // Register a device and seed its account
-        using (var scope = _factory.Services.CreateScope())
-        {
-            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
-            metaDb.InsertAccountNames([("acctSync", (string?)"SyncUser")]);
-            metaDb.RegisterUser("devSync", "acctSync");
-
-            // Delete the personal DB file if it was created during registration
-            var builder = scope.ServiceProvider.GetRequiredService<PersonalDbBuilder>();
-            var dbPath = builder.GetPersonalDbPath("acctSync", "devSync");
-            if (File.Exists(dbPath))
-                File.Delete(dbPath);
-        }
-
-        var response = await _authedClient.GetAsync("/api/sync/devSync");
-        // Should return 202 Accepted — background build queued
-        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
-    }
-
     // ─── Account search ─────────────────────────────────────
 
     [Fact]

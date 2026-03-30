@@ -17,7 +17,7 @@ public static partial class ApiEndpoints
 
     public static void MapSongEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/songs", (HttpContext httpContext, FestivalService service, PathDataStore pathStore, MetaDatabase metaDb, ItemShopService shopService, SongsCacheService songsCache) =>
+        app.MapGet("/api/songs", (HttpContext httpContext, FestivalService service, IPathDataStore pathStore, IMetaDatabase metaDb, ItemShopService shopService, SongsCacheService songsCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
 

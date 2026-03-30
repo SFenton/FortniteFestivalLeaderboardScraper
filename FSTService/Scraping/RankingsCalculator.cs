@@ -32,15 +32,15 @@ public sealed class RankingsCalculator
     private const double PopulationMedian = 0.5;
 
     private readonly GlobalLeaderboardPersistence _persistence;
-    private readonly MetaDatabase _metaDb;
-    private readonly PathDataStore _pathStore;
+    private readonly IMetaDatabase _metaDb;
+    private readonly IPathDataStore _pathStore;
     private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<RankingsCalculator> _log;
 
     public RankingsCalculator(
         GlobalLeaderboardPersistence persistence,
-        MetaDatabase metaDb,
-        PathDataStore pathStore,
+        IMetaDatabase metaDb,
+        IPathDataStore pathStore,
         ScrapeProgressTracker progress,
         ILogger<RankingsCalculator> log)
     {
