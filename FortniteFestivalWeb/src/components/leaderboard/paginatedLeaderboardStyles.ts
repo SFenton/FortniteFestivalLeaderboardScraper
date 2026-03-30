@@ -116,9 +116,21 @@ export const plbStyles = {
     ...fixedFooterBase,
   } as CSSProperties,
 
+  mobilePaginationNoPlayer: {
+    position: Position.fixed,
+    bottom: Layout.fabBottom + Layout.fabSize + Gap.sm,
+    ...fixedFooterBase,
+  } as CSSProperties,
+
   desktopPagination: {
     position: Position.fixed,
     bottom: Layout.entryRowHeight + Gap.xl,
+    ...fixedFooterBase,
+  } as CSSProperties,
+
+  desktopPaginationNoPlayer: {
+    position: Position.fixed,
+    bottom: Gap.none,
     ...fixedFooterBase,
   } as CSSProperties,
 

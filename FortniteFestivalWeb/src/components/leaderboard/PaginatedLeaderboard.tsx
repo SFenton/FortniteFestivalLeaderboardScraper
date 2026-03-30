@@ -167,9 +167,9 @@ export function PaginatedLeaderboard<T>({
     if (hasFab) {
       margin = Layout.fabPaddingBottom;
       if (hasPagination) {
-        const paginationCssBottom = Layout.fabBottom
-          + (Layout.fabSize - Layout.entryRowHeight) / 2
-          + Layout.entryRowHeight + Gap.sm;
+        const paginationCssBottom = hasPlayerFooter
+          ? Layout.fabBottom + (Layout.fabSize - Layout.entryRowHeight) / 2 + Layout.entryRowHeight + Gap.sm
+          : Layout.fabBottom + Layout.fabSize + Gap.sm;
         const paginationTop = paginationCssBottom + Layout.paginationHeight;
         const naturalHeight = el.clientHeight + (parseFloat(el.style.marginBottom) || 0);
         const headerHeight = el.getBoundingClientRect().top;
@@ -259,7 +259,9 @@ export function PaginatedLeaderboard<T>({
       {createPortal(
         <>
           {hasLoadedOnce.current && !error && hasPagination && (
-            <div style={{ ...(hasFab ? s.mobilePagination : s.desktopPagination), ...wideOverride }}>
+            <div style={{ ...(hasFab
+              ? (hasPlayerFooter ? s.mobilePagination : s.mobilePaginationNoPlayer)
+              : (hasPlayerFooter ? s.desktopPagination : s.desktopPaginationNoPlayer)), ...wideOverride }}>
               <div
                 className={hasFab ? 'fab-player-footer' : ''}
                 style={isMobile ? s.paginationMobile : s.pagination}
