@@ -12,7 +12,7 @@ namespace FSTService.Persistence;
 /// Keeps a long-lived connection open in WAL mode for the duration of the
 /// application lifetime, avoiding per-call connection setup overhead.
 /// </summary>
-public sealed class InstrumentDatabase : IDisposable
+public sealed class InstrumentDatabase : IInstrumentDatabase
 {
     private readonly string _instrument;
     private readonly string _connectionString;

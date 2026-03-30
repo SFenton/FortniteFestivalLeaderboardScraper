@@ -17,8 +17,8 @@ public static partial class ApiEndpoints
             int? offset,
             double? leeway,
             GlobalLeaderboardPersistence persistence,
-            MetaDatabase metaDb,
-            PathDataStore pathStore) =>
+            IMetaDatabase metaDb,
+            IPathDataStore pathStore) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
             int? maxScore = null;
@@ -75,8 +75,8 @@ public static partial class ApiEndpoints
             int? top,
             double? leeway,
             GlobalLeaderboardPersistence persistence,
-            MetaDatabase metaDb,
-            PathDataStore pathStore,
+            IMetaDatabase metaDb,
+            IPathDataStore pathStore,
             [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService lbCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";

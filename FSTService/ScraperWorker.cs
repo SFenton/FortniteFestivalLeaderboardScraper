@@ -32,7 +32,7 @@ public sealed class ScraperWorker : BackgroundService
     private readonly PostScrapeOrchestrator _postScrapeOrchestrator;
     private readonly BackfillOrchestrator _backfillOrchestrator;
     private readonly PathGenerator _pathGenerator;
-    private readonly PathDataStore _pathDataStore;
+    private readonly IPathDataStore _pathDataStore;
     private readonly SongsCacheService _songsCache;
     private readonly ResponseCacheService _playerCache;
     private readonly ResponseCacheService _leaderboardAllCache;
@@ -54,7 +54,7 @@ public sealed class ScraperWorker : BackgroundService
         PostScrapeOrchestrator postScrapeOrchestrator,
         BackfillOrchestrator backfillOrchestrator,
         PathGenerator pathGenerator,
-        PathDataStore pathDataStore,
+        IPathDataStore IPathDataStore,
         SongsCacheService songsCache,
         [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache,
         [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService leaderboardAllCache,
@@ -72,7 +72,7 @@ public sealed class ScraperWorker : BackgroundService
         _postScrapeOrchestrator = postScrapeOrchestrator;
         _backfillOrchestrator = backfillOrchestrator;
         _pathGenerator = pathGenerator;
-        _pathDataStore = pathDataStore;
+        _pathDataStore = IPathDataStore;
         _songsCache = songsCache;
         _playerCache = playerCache;
         _leaderboardAllCache = leaderboardAllCache;

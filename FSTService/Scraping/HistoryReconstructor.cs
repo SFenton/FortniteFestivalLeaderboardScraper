@@ -29,7 +29,7 @@ public class HistoryReconstructor
 {
     private readonly ILeaderboardQuerier _scraper;
     private readonly GlobalLeaderboardPersistence _persistence;
-    private readonly MetaDatabase _metaDb;
+    private readonly IMetaDatabase _metaDb;
     private readonly HttpClient _http;
     private readonly ResilientHttpExecutor _executor;
     private readonly ScrapeProgressTracker _progress;

@@ -16,7 +16,7 @@ public static partial class ApiEndpoints
         app.MapGet("/api/player/{accountId}/rivals", (
             HttpContext httpContext,
             string accountId,
-            MetaDatabase metaDb,
+            IMetaDatabase metaDb,
             [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
@@ -69,7 +69,7 @@ public static partial class ApiEndpoints
             string accountId,
             string? combo,
             int? limit,
-            MetaDatabase metaDb,
+            IMetaDatabase metaDb,
             [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
@@ -203,7 +203,7 @@ public static partial class ApiEndpoints
         app.MapGet("/api/player/{accountId}/rivals/all", (
             HttpContext httpContext,
             string accountId,
-            MetaDatabase metaDb,
+            IMetaDatabase metaDb,
             [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
@@ -268,7 +268,7 @@ public static partial class ApiEndpoints
 
         app.MapGet("/api/player/{accountId}/rivals/diagnostics", (
             string accountId,
-            MetaDatabase metaDb,
+            IMetaDatabase metaDb,
             RivalsCalculator rivalsCalculator) =>
         {
             var status = metaDb.GetRivalsStatus(accountId);
@@ -332,7 +332,7 @@ public static partial class ApiEndpoints
             HttpContext httpContext,
             string accountId,
             string combo,
-            MetaDatabase metaDb,
+            IMetaDatabase metaDb,
             [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
@@ -394,7 +394,7 @@ public static partial class ApiEndpoints
             int? limit,
             int? offset,
             string? sort,
-            MetaDatabase metaDb,
+            IMetaDatabase metaDb,
             FestivalService festivalService,
             RivalsCalculator rivalsCalculator,
             [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache) =>
@@ -531,7 +531,7 @@ public static partial class ApiEndpoints
             int? limit,
             int? offset,
             string? sort,
-            MetaDatabase metaDb,
+            IMetaDatabase metaDb,
             FestivalService festivalService,
             [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache) =>
         {
@@ -615,7 +615,7 @@ public static partial class ApiEndpoints
 
         app.MapPost("/api/player/{accountId}/rivals/recompute", (
             string accountId,
-            MetaDatabase metaDb,
+            IMetaDatabase metaDb,
             RivalsOrchestrator rivalsOrchestrator) =>
         {
             metaDb.EnsureRivalsStatus(accountId);

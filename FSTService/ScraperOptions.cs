@@ -98,6 +98,13 @@ public sealed class ScraperOptions
     /// </summary>
     public string? TestSongQuery { get; set; }
 
+    /// <summary>
+    /// When true, migrate all SQLite data to PostgreSQL and exit.
+    /// Requires <c>DatabaseProvider=PostgreSQL</c> and a valid connection string.
+    /// Set via <c>--migrate-to-pg</c> CLI argument.
+    /// </summary>
+    public bool MigrateToPg { get; set; }
+
     // ─── Path Generation ───────────────────────────────────────
 
     /// <summary>

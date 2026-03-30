@@ -19,7 +19,6 @@ public sealed class PostScrapeOrchestrator
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly FirstSeenSeasonCalculator _firstSeenCalculator;
     private readonly AccountNameResolver _nameResolver;
-    private readonly PersonalDbBuilder _personalDbBuilder;
     private readonly PostScrapeRefresher _refresher;
     private readonly IServiceProvider _serviceProvider;
     private readonly HistoryReconstructor _historyReconstructor;
@@ -29,7 +28,7 @@ public sealed class PostScrapeOrchestrator
     private readonly NotificationService _notifications;
     private readonly TokenManager _tokenManager;
     private readonly ScrapeProgressTracker _progress;
-    private readonly PathDataStore _pathDataStore;
+    private readonly IPathDataStore _pathDataStore;
     private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<PostScrapeOrchestrator> _log;
 
@@ -37,7 +36,6 @@ public sealed class PostScrapeOrchestrator
         GlobalLeaderboardPersistence persistence,
         FirstSeenSeasonCalculator firstSeenCalculator,
         AccountNameResolver nameResolver,
-        PersonalDbBuilder personalDbBuilder,
         PostScrapeRefresher refresher,
         IServiceProvider serviceProvider,
         HistoryReconstructor historyReconstructor,
@@ -47,14 +45,13 @@ public sealed class PostScrapeOrchestrator
         NotificationService notifications,
         TokenManager tokenManager,
         ScrapeProgressTracker progress,
-        PathDataStore pathDataStore,
+        IPathDataStore IPathDataStore,
         IOptions<ScraperOptions> options,
         ILogger<PostScrapeOrchestrator> log)
     {
         _persistence = persistence;
         _firstSeenCalculator = firstSeenCalculator;
         _nameResolver = nameResolver;
-        _personalDbBuilder = personalDbBuilder;
         _refresher = refresher;
         _serviceProvider = serviceProvider;
         _historyReconstructor = historyReconstructor;
@@ -64,7 +61,7 @@ public sealed class PostScrapeOrchestrator
         _notifications = notifications;
         _tokenManager = tokenManager;
         _progress = progress;
-        _pathDataStore = pathDataStore;
+        _pathDataStore = IPathDataStore;
         _options = options;
         _log = log;
     }
@@ -182,32 +179,10 @@ public sealed class PostScrapeOrchestrator
     /// <summary>
     /// Rebuild personal DBs for registered users whose scores changed during the scrape.
     /// </summary>
-    internal async Task RebuildPersonalDbsAsync(ScrapePassContext ctx, CancellationToken ct)
+    internal Task RebuildPersonalDbsAsync(ScrapePassContext ctx, CancellationToken ct)
     {
-        if (ctx.Aggregates.ChangedAccountIds.Count == 0)
-            return;
-
-        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.RebuildingPersonalDbs);
-        _progress.BeginPhaseProgress(totalItems: 0, totalAccounts: ctx.Aggregates.ChangedAccountIds.Count);
-        try
-        {
-            var changedIds = new HashSet<string>(ctx.Aggregates.ChangedAccountIds, StringComparer.OrdinalIgnoreCase);
-            var rebuilt = _personalDbBuilder.RebuildForAccounts(changedIds, _persistence.Meta);
-            if (rebuilt > 0)
-            {
-                _log.LogInformation("Rebuilt {Count} personal DB(s) for users with score changes.", rebuilt);
-
-                foreach (var changedId in changedIds)
-                {
-                    try { await _notifications.NotifyPersonalDbReadyAsync(changedId); }
-                    catch { /* best effort */ }
-                }
-            }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogWarning(ex, "Personal DB rebuild failed. Will retry next pass.");
-        }
+        // Personal DB rebuild is deprecated (mobile sync removed).
+        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -327,11 +302,7 @@ public sealed class PostScrapeOrchestrator
                 {
                     _persistence.Meta.CompleteBackfill(user.AccountId);
                     _rivalsOrchestrator.ComputeForUser(user.AccountId);
-                    _personalDbBuilder.RebuildForAccounts(
-                        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { user.AccountId },
-                        _persistence.Meta);
                     _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
-                    _ = _notifications.NotifyPersonalDbReadyAsync(user.AccountId);
                 }
                 catch (Exception ex)
                 {
@@ -350,11 +321,7 @@ public sealed class PostScrapeOrchestrator
                         _persistence.Meta.EnqueueHistoryRecon(user.AccountId, 0);
 
                     _persistence.Meta.CompleteHistoryRecon(user.AccountId);
-                    _personalDbBuilder.RebuildForAccounts(
-                        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { user.AccountId },
-                        _persistence.Meta);
                     _ = _notifications.NotifyHistoryReconCompleteAsync(user.AccountId);
-                    _ = _notifications.NotifyPersonalDbReadyAsync(user.AccountId);
                 }
                 catch (Exception ex)
                 {
@@ -468,12 +435,6 @@ public sealed class PostScrapeOrchestrator
             foreach (var orphanedAccountId in orphaned)
             {
                 var deviceIds = _persistence.Meta.UnregisterAccount(orphanedAccountId);
-                foreach (var deviceId in deviceIds)
-                {
-                    var dbPath = _personalDbBuilder.GetPersonalDbPath(orphanedAccountId, deviceId);
-                    if (File.Exists(dbPath))
-                        File.Delete(dbPath);
-                }
 
                 var displayName = _persistence.Meta.GetDisplayName(orphanedAccountId);
                 _log.LogInformation(

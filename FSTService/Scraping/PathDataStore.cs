@@ -6,7 +6,7 @@ namespace FSTService.Scraping;
 /// Reads and writes path generation data (max scores, .dat hashes) in the
 /// Songs table of fst-service.db.
 /// </summary>
-public sealed class PathDataStore
+public sealed class PathDataStore : IPathDataStore
 {
     private readonly string _connectionString;
 

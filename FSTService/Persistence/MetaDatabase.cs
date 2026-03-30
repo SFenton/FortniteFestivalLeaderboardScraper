@@ -6,7 +6,7 @@ namespace FSTService.Persistence;
 /// Manages the central <c>fst-meta.db</c> database containing cross-cutting
 /// concerns: ScrapeLog, ScoreHistory, AccountNames, RegisteredUsers.
 /// </summary>
-public sealed class MetaDatabase : IDisposable
+public sealed class MetaDatabase : IMetaDatabase
 {
     /// <summary>
     /// Bump this when data-collection logic changes in a way that requires

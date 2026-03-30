@@ -33,7 +33,7 @@ public sealed partial class ItemShopService : IShopProvider
 
     private readonly HttpClient _http;
     private readonly FestivalService _festivalService;
-    private readonly MetaDatabase _metaDb;
+    private readonly IMetaDatabase _metaDb;
     private readonly ILogger<ItemShopService> _log;
     private NotificationService? _notifications;
     private FSTService.Api.SongsCacheService? _songsCache;
@@ -66,7 +66,7 @@ public sealed partial class ItemShopService : IShopProvider
     public ItemShopService(
         HttpClient http,
         FestivalService festivalService,
-        MetaDatabase metaDb,
+        IMetaDatabase metaDb,
         ILogger<ItemShopService> log)
     {
         _http = http;
@@ -86,7 +86,7 @@ public sealed partial class ItemShopService : IShopProvider
 
     /// <summary>
     /// Loads persisted shop data from DB, then kicks off an async scrape.
-    /// Call after FestivalService and MetaDatabase are initialized.
+    /// Call after FestivalService and IMetaDatabase are initialized.
     /// </summary>
     public async Task InitializeAsync(CancellationToken ct = default)
     {

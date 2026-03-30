@@ -20,7 +20,6 @@ public class PostScrapeOrchestratorTests : IDisposable
     private readonly TokenManager _tokenManager;
     private readonly FirstSeenSeasonCalculator _firstSeenCalculator;
     private readonly AccountNameResolver _nameResolver;
-    private readonly PersonalDbBuilder _personalDbBuilder;
     private readonly PostScrapeRefresher _refresher;
     private readonly SongProcessingMachine _machine;
     private readonly SharedDopPool _pool;
@@ -71,14 +70,6 @@ public class PostScrapeOrchestratorTests : IDisposable
             new ScrapeProgressTracker(),
             Substitute.For<ILogger<AccountNameResolver>>());
 
-        _personalDbBuilder = Substitute.For<PersonalDbBuilder>(
-            _persistence,
-            new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null),
-            _metaDb,
-            new ScrapeProgressTracker(),
-            _tempDir,
-            Substitute.For<ILogger<PersonalDbBuilder>>());
-
         _refresher = Substitute.For<PostScrapeRefresher>(
             scraper, _persistence, new ScrapeProgressTracker(),
             Substitute.For<ILogger<PostScrapeRefresher>>());
@@ -110,7 +101,7 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         _sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _personalDbBuilder, _refresher,
+            _refresher,
             serviceProvider,
             Substitute.For<HistoryReconstructor>(scraper, _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
@@ -140,58 +131,6 @@ public class PostScrapeOrchestratorTests : IDisposable
             ScrapeRequests = scrapeRequests ?? Array.Empty<GlobalLeaderboardScraper.SongScrapeRequest>(),
             DegreeOfParallelism = 4,
         };
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // RebuildPersonalDbsAsync
-    // ═══════════════════════════════════════════════════════════
-
-    [Fact]
-    public async Task RebuildPersonalDbs_NoChanges_SkipsRebuild()
-    {
-        var ctx = CreateContext();
-
-        await _sut.RebuildPersonalDbsAsync(ctx, CancellationToken.None);
-
-        _personalDbBuilder.DidNotReceiveWithAnyArgs()
-            .RebuildForAccounts(default!, default!);
-    }
-
-    [Fact]
-    public async Task RebuildPersonalDbs_WithChanges_RebuildsAndNotifies()
-    {
-        var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
-        aggregates.AddChangedAccountIds(new[] { "acct-1", "acct-2" });
-
-        _personalDbBuilder.RebuildForAccounts(
-            Arg.Any<IReadOnlySet<string>>(),
-            Arg.Any<MetaDatabase>())
-            .Returns(2);
-
-        var ctx = CreateContext(aggregates: aggregates);
-
-        await _sut.RebuildPersonalDbsAsync(ctx, CancellationToken.None);
-
-        _personalDbBuilder.Received(1).RebuildForAccounts(
-            Arg.Is<IReadOnlySet<string>>(s => s.Count == 2),
-            Arg.Any<MetaDatabase>());
-    }
-
-    [Fact]
-    public async Task RebuildPersonalDbs_ThrowsException_DoesNotPropagate()
-    {
-        var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
-        aggregates.AddChangedAccountIds(new[] { "acct-1" });
-
-        _personalDbBuilder.RebuildForAccounts(
-            Arg.Any<IReadOnlySet<string>>(),
-            Arg.Any<MetaDatabase>())
-            .Throws(new InvalidOperationException("DB error"));
-
-        var ctx = CreateContext(aggregates: aggregates);
-
-        // Should not throw — exception is caught and logged
-        await _sut.RebuildPersonalDbsAsync(ctx, CancellationToken.None);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -354,7 +293,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         var rankingsCalculator2 = new RankingsCalculator(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _personalDbBuilder, _refresher,
+            _refresher,
             Substitute.For<IServiceProvider>(),
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
@@ -411,7 +350,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         var rankingsCalculator3 = new RankingsCalculator(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _personalDbBuilder, _refresher,
+            _refresher,
             Substitute.For<IServiceProvider>(),
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
@@ -576,7 +515,7 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
-            _personalDbBuilder, _refresher,
+            _refresher,
             Substitute.For<IServiceProvider>(),
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,

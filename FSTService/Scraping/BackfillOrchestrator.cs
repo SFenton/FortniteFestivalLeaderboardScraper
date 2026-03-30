@@ -15,7 +15,6 @@ public sealed class BackfillOrchestrator
 {
     private readonly BackfillQueue _backfillQueue;
     private readonly HistoryReconstructor _historyReconstructor;
-    private readonly PersonalDbBuilder _personalDbBuilder;
     private readonly RivalsOrchestrator _rivalsOrchestrator;
     private readonly NotificationService _notifications;
     private readonly GlobalLeaderboardPersistence _persistence;
@@ -29,7 +28,6 @@ public sealed class BackfillOrchestrator
     public BackfillOrchestrator(
         BackfillQueue backfillQueue,
         HistoryReconstructor historyReconstructor,
-        PersonalDbBuilder personalDbBuilder,
         RivalsOrchestrator rivalsOrchestrator,
         NotificationService notifications,
         GlobalLeaderboardPersistence persistence,
@@ -42,7 +40,6 @@ public sealed class BackfillOrchestrator
     {
         _backfillQueue = backfillQueue;
         _historyReconstructor = historyReconstructor;
-        _personalDbBuilder = personalDbBuilder;
         _rivalsOrchestrator = rivalsOrchestrator;
         _notifications = notifications;
         _persistence = persistence;
@@ -153,11 +150,7 @@ public sealed class BackfillOrchestrator
                 {
                     _persistence.Meta.CompleteBackfill(user.AccountId);
                     _rivalsOrchestrator.ComputeForUser(user.AccountId);
-                    _personalDbBuilder.RebuildForAccounts(
-                        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { user.AccountId },
-                        _persistence.Meta);
                     _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
-                    _ = _notifications.NotifyPersonalDbReadyAsync(user.AccountId);
                 }
                 catch (Exception ex)
                 {
@@ -290,11 +283,7 @@ public sealed class BackfillOrchestrator
                         _persistence.Meta.EnqueueHistoryRecon(user.AccountId, 0);
 
                     _persistence.Meta.CompleteHistoryRecon(user.AccountId);
-                    _personalDbBuilder.RebuildForAccounts(
-                        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { user.AccountId },
-                        _persistence.Meta);
                     _ = _notifications.NotifyHistoryReconCompleteAsync(user.AccountId);
-                    _ = _notifications.NotifyPersonalDbReadyAsync(user.AccountId);
                 }
                 catch (Exception ex)
                 {

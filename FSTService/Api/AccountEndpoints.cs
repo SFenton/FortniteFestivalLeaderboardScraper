@@ -7,7 +7,7 @@ public static partial class ApiEndpoints
     public static void MapAccountEndpoints(this WebApplication app)
     {
         // Check if an account exists by username (used by mobile app before login)
-        app.MapGet("/api/account/check", (string username, MetaDatabase metaDb) =>
+        app.MapGet("/api/account/check", (string username, IMetaDatabase metaDb) =>
         {
             if (string.IsNullOrWhiteSpace(username))
                 return Results.BadRequest(new { error = "username query parameter is required." });
@@ -24,7 +24,7 @@ public static partial class ApiEndpoints
         .RequireRateLimiting("public");
 
         // Search account display names (autocomplete)
-        app.MapGet("/api/account/search", (HttpContext httpContext, string q, int? limit, MetaDatabase metaDb) =>
+        app.MapGet("/api/account/search", (HttpContext httpContext, string q, int? limit, IMetaDatabase metaDb) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=60";
             if (string.IsNullOrWhiteSpace(q))

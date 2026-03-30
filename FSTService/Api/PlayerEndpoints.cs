@@ -18,8 +18,8 @@ public static partial class ApiEndpoints
             string? instruments,
             double? leeway,
             GlobalLeaderboardPersistence persistence,
-            MetaDatabase metaDb,
-            PathDataStore pathStore,
+            IMetaDatabase metaDb,
+            IPathDataStore pathStore,
             [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=120, stale-while-revalidate=300";
@@ -199,11 +199,10 @@ public static partial class ApiEndpoints
 
         app.MapPost("/api/player/{accountId}/track", (
             string accountId,
-            MetaDatabase metaDb,
+            IMetaDatabase metaDb,
             FestivalService festivalService,
             ScoreBackfiller backfiller,
             HistoryReconstructor historyReconstructor,
-            PersonalDbBuilder personalDbBuilder,
             NotificationService notifications,
             TokenManager tokenManager,
             IOptions<ScraperOptions> scraperOptions,
@@ -271,12 +270,6 @@ public static partial class ApiEndpoints
                             }
                         }
 
-                        // Rebuild personal DB and notify
-                        var accountSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { accountId };
-                        personalDbBuilder.RebuildForAccounts(accountSet, metaDb);
-                        try { await notifications.NotifyPersonalDbReadyAsync(accountId); }
-                        catch { /* best effort */ }
-
                         log.LogInformation("Track-triggered backfill for {AccountId} completed.", accountId);
                     }
                     catch (Exception ex)
@@ -309,7 +302,7 @@ public static partial class ApiEndpoints
         app.MapGet("/api/player/{accountId}/sync-status", (
             HttpContext httpContext,
             string accountId,
-            MetaDatabase metaDb) =>
+            IMetaDatabase metaDb) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=5";
             var backfill = metaDb.GetBackfillStatus(accountId);
@@ -357,7 +350,7 @@ public static partial class ApiEndpoints
         app.MapGet("/api/player/{accountId}/stats", (
             HttpContext httpContext,
             string accountId,
-            MetaDatabase metaDb) =>
+            IMetaDatabase metaDb) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
             var stats = metaDb.GetPlayerStats(accountId);
@@ -392,7 +385,7 @@ public static partial class ApiEndpoints
             int? limit,
             string? songId,
             string? instrument,
-            MetaDatabase metaDb) =>
+            IMetaDatabase metaDb) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=60";
             // Check if the account is a registered user
