@@ -7,6 +7,7 @@ import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { useQuery } from '@tanstack/react-query';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
+import { useSettings } from '../../contexts/SettingsContext';
 import { RankingEntry } from './components/RankingEntry';
 import { PaginatedLeaderboard } from '../../components/leaderboard/PaginatedLeaderboard';
 import Page from '../Page';
@@ -19,7 +20,7 @@ import InstrumentHeader from '../../components/display/InstrumentHeader';
 import type { ServerInstrumentKey as InstrumentKey, RankingMetric } from '@festival/core/api/serverTypes';
 import { InstrumentHeaderSize } from '@festival/core';
 import { serverInstrumentLabel } from '@festival/core/api/serverTypes';
-import { getRankForMetric, formatRating, getRatingForMetric, RANKING_METRICS, computeRankWidth } from './helpers/rankingHelpers';
+import { getRankForMetric, formatRating, getRatingForMetric, RANKING_METRICS, EXPERIMENTAL_METRICS, computeRankWidth } from './helpers/rankingHelpers';
 import { rankingsCache } from '../../api/pageCache';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
@@ -27,6 +28,8 @@ import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import EmptyState from '../../components/common/EmptyState';
 import { parseApiError } from '../../utils/apiError';
+import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
+import { getMetricInfoSlides } from './firstRun/metricInfo';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { Size } from '@festival/theme';
 
@@ -35,9 +38,11 @@ const PAGE_SIZE = 25;
 export default function FullRankingsPage() {
   const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { settings } = useSettings();
 
   const instrument = (searchParams.get('instrument') ?? 'Solo_Guitar') as InstrumentKey;
-  const metric = (searchParams.get('rankBy') ?? 'totalscore') as RankingMetric;
+  const rawMetric = (searchParams.get('rankBy') ?? 'totalscore') as RankingMetric;
+  const metric = settings.enableExperimentalRanks ? rawMetric : 'totalscore' as RankingMetric;
   const pageParam = Math.max(1, Number(searchParams.get('page')) || 1);
 
   const { player } = useTrackedPlayer();
@@ -47,6 +52,7 @@ export default function FullRankingsPage() {
   const scrollContainerRef = useScrollContainer();
 
   const metricModal = useModalState<RankingMetric>(() => 'totalscore');
+  const [infoMetric, setInfoMetric] = useState<RankingMetric | null>(null);
 
   const openMetricModal = useCallback(() => {
     metricModal.open(metric);
@@ -143,7 +149,7 @@ export default function FullRankingsPage() {
           }
           subtitle={data ? t('rankings.totalRanked', { count: data.totalAccounts, formattedCount: data.totalAccounts.toLocaleString() }) : undefined}
           actions={
-            !isMobileChrome ? (
+            !isMobileChrome && settings.enableExperimentalRanks ? (
               <ActionPill
                 icon={<IoOptions size={Size.iconAction} />}
                 label={t(`rankings.metric.${metric}`)}
@@ -154,7 +160,7 @@ export default function FullRankingsPage() {
           }
         />
       }
-      after={
+      after={<>
         <Modal
           visible={metricModal.visible}
           title={t('rankings.rankBy')}
@@ -172,11 +178,13 @@ export default function FullRankingsPage() {
                 hint={t(`rankings.metric.${m}Desc`)}
                 selected={metricModal.draft === m}
                 onSelect={() => metricModal.setDraft(m)}
+                onInfo={EXPERIMENTAL_METRICS.includes(m) ? () => setInfoMetric(m) : undefined}
               />
             ))}
           </ModalSection>
         </Modal>
-      }
+        {infoMetric && <FirstRunCarousel slides={getMetricInfoSlides(infoMetric)} onDismiss={() => setInfoMetric(null)} />}
+      </>}
     >
 
       {error && (() => { const parsed = parseApiError(String(error)); return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={buildStaggerStyle(200)} onAnimationEnd={clearStaggerStyle} />; })()}

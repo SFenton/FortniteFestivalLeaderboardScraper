@@ -257,6 +257,8 @@
     "visualOrder": "Song Row Visual Order",
     "scoreFiltering": "Score Filtering",
     "filterInvalidScores": "Filter Invalid Scores",
+    "experimentalRanks": "Enable Experimental Leaderboard Ranks",
+    "experimentalRanksDesc": "Enable this to see more ranking mechanisms in the Leaderboards page.",
     "leeway": "Leeway",
     "resetAll": "Reset All Settings",
     "resetSection": "Reset Settings",
@@ -600,13 +602,67 @@
         "title": "Global Rankings",
         "description": "See how players rank across all songs on each instrument. Rankings are computed after every scrape pass."
       },
-      "metrics": {
-        "title": "Ranking Metrics",
-        "description": "Sort by Adjusted Skill, Weighted Rating, FC Rate, Total Score, or Max Score %. Use the chips at the top to switch."
+      "experimentalMetrics": {
+        "title": "Experimental Ranking Metrics",
+        "description": "Sort by Adjusted Skill, Weighted Rating, FC Rate, or Max Score %. These metrics use statistical formulas and may not perfectly reflect skill — tap the ? icon on any metric for details."
       },
       "yourRank": {
         "title": "Your Rank",
         "description": "Your position appears in purple. Tap 'View all rankings' to see the full leaderboard for any instrument."
+      },
+      "metricInfo": {
+        "adjusted": {
+          "what": {
+            "title": "What Is Adjusted Skill?",
+            "description": "How your average percentile rank across all songs is computed."
+          },
+          "formula": {
+            "title": "Bayesian Credibility",
+            "description": "A statistical adjustment prevents small sample sizes from dominating the rankings."
+          },
+          "experimental": {
+            "title": "Why Experimental?",
+            "description": "The credibility threshold is a tuning parameter, and all songs are weighted equally regardless of difficulty."
+          }
+        },
+        "weighted": {
+          "what": {
+            "title": "What Is Weighted Rating?",
+            "description": "Like Adjusted Skill, but songs with more players count more heavily."
+          },
+          "formula": {
+            "title": "Popularity Weighting",
+            "description": "Each song's contribution is scaled by the logarithm of its entry count."
+          },
+          "experimental": {
+            "title": "Why Experimental?",
+            "description": "Weighting by popularity is subjective — more players doesn't necessarily mean more difficulty."
+          }
+        },
+        "fcrate": {
+          "what": {
+            "title": "What Is FC Rate?",
+            "description": "The percentage of your played songs where you achieved a Full Combo."
+          },
+          "experimental": {
+            "title": "Why Experimental?",
+            "description": "Doesn't account for song difficulty or how close you were to a Full Combo."
+          }
+        },
+        "maxscore": {
+          "what": {
+            "title": "What Is Max Score %?",
+            "description": "How close your scores are to the computed maximum for each song."
+          },
+          "formula": {
+            "title": "CHOpt Maximum + Bayesian",
+            "description": "Scores are compared to the theoretical maximum, then adjusted for credibility."
+          },
+          "experimental": {
+            "title": "Why Experimental?",
+            "description": "CHOpt's computed maximum can be inaccurate, and new songs may lack data."
+          }
+        }
       }
     },
     "compete": {

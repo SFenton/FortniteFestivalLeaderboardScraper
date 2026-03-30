@@ -4,6 +4,8 @@ export type FirstRunGateContext = {
   hasPlayer: boolean;
   /** True when shop highlighting is active (not hidden + not disabled). */
   shopHighlightEnabled?: boolean;
+  /** True when the experimental leaderboard ranks setting is enabled. */
+  experimentalRanksEnabled?: boolean;
   /** When false, the carousel waits to show until context stabilizes. Default: true. */
   ready?: boolean;
   /** When true, bypass seen-state and always show all gate-passing slides. */

@@ -565,7 +565,7 @@ function AppShell() {
         <FloatingActionButton
           mode="players"
           actionGroups={[
-            [{ label: t('rankings.changeRanking'), icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() }],
+            ...(settings.enableExperimentalRanks ? [[{ label: t('rankings.changeRanking'), icon: <IoOptions size={Size.iconFab} />, onPress: () => fabSearch.openLeaderboardMetric() }]] : []),
             [
               { label: t('common.findPlayer'), icon: <IoSearch size={Size.iconFab} />, onPress: () => setFindPlayerOpen(true) },
               player

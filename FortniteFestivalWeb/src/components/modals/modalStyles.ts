@@ -48,6 +48,7 @@ export const modalStyles = {
   radioDotSelected: { width: Layout.radioDotSize, height: Layout.radioDotSize, borderRadius: CssValue.circle, border: border(Border.thick, Colors.accentBlue), backgroundColor: Colors.accentBlue, boxShadow: `inset 0 0 0 ${Border.thick}px ${Colors.surfaceFrosted}`, flexShrink: 0, boxSizing: BoxSizing.borderBox, position: Position.relative, top: Border.thin } as CSSProperties,
   radioLabelGroup: { display: Display.flex, flexDirection: 'column' as const, gap: Gap.xs, alignItems: Align.start } as CSSProperties,
   radioRowHint: { fontSize: Font.sm, color: Colors.textTertiary, fontWeight: Weight.normal, lineHeight: 1.3 } as CSSProperties,
+  radioInfoBtn: { display: Display.flex, alignItems: Align.center, justifyContent: Justify.center, width: 28, height: 28, borderRadius: CssValue.circle, backgroundColor: Colors.surfaceMuted, color: Colors.textSecondary, border: CssValue.none, cursor: Cursor.pointer, flexShrink: 0, marginLeft: 'auto', padding: 0 } as CSSProperties,
 
   /* ── ToggleRow ── */
   toggleRow: { display: Display.flex, alignItems: Align.center, gap: Gap.xl, width: CssValue.full, padding: padding(Gap.md, 0), backgroundColor: CssValue.transparent, border: CssValue.none, borderRadius: Gap.none, cursor: Cursor.pointer, textAlign: TextAlign.left, color: Colors.textPrimary, transition: modalTransition } as CSSProperties,

@@ -1,7 +1,7 @@
 import { createElement } from 'react';
 import type { FirstRunSlideDef } from '../../../firstRun/types';
 import RankingsOverviewDemo from './demo/RankingsOverviewDemo';
-import RankingMetricsDemo from './demo/RankingMetricsDemo';
+import ExperimentalMetricsDemo from './demo/ExperimentalMetricsDemo';
 import YourRankDemo from './demo/YourRankDemo';
 
 const rankingsOverviewSlide: FirstRunSlideDef = {
@@ -13,12 +13,13 @@ const rankingsOverviewSlide: FirstRunSlideDef = {
   contentStaggerCount: 4,
 };
 
-const rankingMetricsSlide: FirstRunSlideDef = {
-  id: 'leaderboards-metrics',
-  version: 2,
-  title: 'firstRun.leaderboards.metrics.title',
-  description: 'firstRun.leaderboards.metrics.description',
-  render: () => createElement(RankingMetricsDemo),
+const experimentalMetricsSlide: FirstRunSlideDef = {
+  id: 'leaderboards-experimental-metrics',
+  version: 1,
+  title: 'firstRun.leaderboards.experimentalMetrics.title',
+  description: 'firstRun.leaderboards.experimentalMetrics.description',
+  gate: (ctx) => !!ctx.experimentalRanksEnabled,
+  render: () => createElement(ExperimentalMetricsDemo),
   contentStaggerCount: 6,
 };
 
@@ -34,6 +35,6 @@ const yourRankSlide: FirstRunSlideDef = {
 
 export const leaderboardsSlides: FirstRunSlideDef[] = [
   rankingsOverviewSlide,
-  rankingMetricsSlide,
+  experimentalMetricsSlide,
   yourRankSlide,
 ];

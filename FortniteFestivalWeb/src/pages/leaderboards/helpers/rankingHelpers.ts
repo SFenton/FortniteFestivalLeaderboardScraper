@@ -37,8 +37,14 @@ export function formatRating(value: number, metric: RankingMetric): string {
   }
 }
 
+/** The default (non-experimental) metric. */
+export const DEFAULT_METRICS: RankingMetric[] = ['totalscore'];
+
+/** Experimental metrics gated behind the enableExperimentalRanks setting. */
+export const EXPERIMENTAL_METRICS: RankingMetric[] = ['adjusted', 'weighted', 'fcrate', 'maxscore'];
+
 /** All available ranking metrics in display order. */
-export const RANKING_METRICS: RankingMetric[] = ['totalscore', 'adjusted', 'weighted', 'fcrate', 'maxscore'];
+export const RANKING_METRICS: RankingMetric[] = [...DEFAULT_METRICS, ...EXPERIMENTAL_METRICS];
 
 /**
  * Compute a pixel-based width that fits the longest formatted rank in a list.

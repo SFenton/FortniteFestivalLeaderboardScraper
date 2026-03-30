@@ -20,7 +20,7 @@ import { parseApiError } from '../../utils/apiError';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import type { RankingMetric, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { LoadPhase } from '@festival/core';
-import { RANKING_METRICS } from './helpers/rankingHelpers';
+import { RANKING_METRICS, EXPERIMENTAL_METRICS } from './helpers/rankingHelpers';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useGridColumnCount } from '../../hooks/ui/useGridColumnCount';
@@ -31,6 +31,8 @@ import {
   GridTemplate, Size, STAGGER_INTERVAL, FADE_DURATION,
 } from '@festival/theme';
 import { leaderboardsSlides } from './firstRun';
+import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
+import { getMetricInfoSlides } from './firstRun/metricInfo';
 
 /** Set to 1 to stagger the right column one slot (125 ms) after the left. */
 const COLUMN_STAGGER_OFFSET = 1;
@@ -42,9 +44,11 @@ export default function LeaderboardsOverviewPage() {
   const isMobile = useIsMobileChrome();
   const fabSearch = useFabSearch();
   const [searchParams, setSearchParams] = useSearchParams();
-  const metric = (searchParams.get('rankBy') ?? 'totalscore') as RankingMetric;
+  const rawMetric = (searchParams.get('rankBy') ?? 'totalscore') as RankingMetric;
+  const metric = settings.enableExperimentalRanks ? rawMetric : 'totalscore' as RankingMetric;
 
   const metricModal = useModalState<RankingMetric>(() => 'totalscore');
+  const [infoMetric, setInfoMetric] = useState<RankingMetric | null>(null);
 
   const openMetricModal = useCallback(() => {
     metricModal.open(metric);
@@ -106,7 +110,7 @@ export default function LeaderboardsOverviewPage() {
   }, [loadPhase, shouldStagger, maxEntriesPerCard, cols, instruments.length, itemsPerCard]);
 
   const s = useLeaderboardsStyles();
-  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player }), [player]);
+  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player, experimentalRanksEnabled: settings.enableExperimentalRanks }), [player, settings.enableExperimentalRanks]);
 
   return (
     <Page
@@ -120,7 +124,7 @@ export default function LeaderboardsOverviewPage() {
         <PageHeader
           title={t('rankings.title')}
           actions={
-            !isMobile && !allErrored ? (
+            !isMobile && !allErrored && settings.enableExperimentalRanks ? (
               <ActionPill
                 icon={<IoOptions size={Size.iconAction} />}
                 label={t(`rankings.metric.${metric}`)}
@@ -132,7 +136,7 @@ export default function LeaderboardsOverviewPage() {
         />
         )
       }
-      after={
+      after={<>
         <Modal
           visible={metricModal.visible}
           title={t('rankings.rankBy')}
@@ -150,11 +154,13 @@ export default function LeaderboardsOverviewPage() {
                 hint={t(`rankings.metric.${m}Desc`)}
                 selected={metricModal.draft === m}
                 onSelect={() => metricModal.setDraft(m)}
+                onInfo={EXPERIMENTAL_METRICS.includes(m) ? () => setInfoMetric(m) : undefined}
               />
             ))}
           </ModalSection>
         </Modal>
-      }
+        {infoMetric && <FirstRunCarousel slides={getMetricInfoSlides(infoMetric)} onDismiss={() => setInfoMetric(null)} />}
+      </>}
     >
       {loadPhase === LoadPhase.ContentIn && allErrored && (() => {
         const parsed = parseApiError(String(rankingQueries[0]!.error));

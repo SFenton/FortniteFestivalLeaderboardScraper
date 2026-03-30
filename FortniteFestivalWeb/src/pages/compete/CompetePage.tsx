@@ -133,7 +133,7 @@ export default function CompetePage() {
   const { phase, shouldStagger } = usePageTransition('compete', isReady, isReady);
   const { next: stagger, clearAnim } = useStagger(shouldStagger);
   const s = useCompeteStyles();
-  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player }), [player]);
+  const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!player, experimentalRanksEnabled: settings.enableExperimentalRanks }), [player, settings.enableExperimentalRanks]);
 
   return (
     <Page scrollRestoreKey="compete" loadPhase={phase} before={isMobile ? undefined : <PageHeader title={t('compete.title')} />}
