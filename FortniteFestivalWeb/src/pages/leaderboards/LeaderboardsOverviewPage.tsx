@@ -159,7 +159,7 @@ export default function LeaderboardsOverviewPage() {
             ))}
           </ModalSection>
         </Modal>
-        {infoMetric && <FirstRunCarousel slides={getMetricInfoSlides(infoMetric)} onDismiss={() => setInfoMetric(null)} />}
+        {infoMetric && <FirstRunCarousel slides={getMetricInfoSlides(infoMetric)} onDismiss={() => {}} onExitComplete={() => setInfoMetric(null)} />}
       </>}
     >
       {loadPhase === LoadPhase.ContentIn && allErrored && (() => {

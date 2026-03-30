@@ -1,49 +1,97 @@
-import { createElement } from 'react';
+import { createElement, useCallback } from 'react';
 import type { FirstRunSlideDef } from '../../../../firstRun/types';
 import type { RankingMetric } from '@festival/core/api/serverTypes';
 import MetricInfoSlide from './MetricInfoSlide';
+import SongDemoSlide from './SongDemoSlide';
+import FcRateHowDemo from './FcRateHowDemo';
 
 /* ── Adjusted Skill ── */
 
+function AdjustedHowDemo() {
+  const buildRows = useCallback((songs: { albumArt?: string; title: string; artist: string }[]) => [
+    { ...songs[0]!, valueLabel: '#10 of 1,000 → Top 1.0%' },
+    { ...songs[1]!, valueLabel: '#50 of 500 → Top 10.0%' },
+    { ...songs[2]!, valueLabel: '#5 of 200 → Top 2.5%' },
+  ], []);
+
+  return createElement(SongDemoSlide, {
+    paragraphs: [
+      'Your rank on each song is turned into a percentile — how you compare to everyone else who played it. Adjusted Skill averages these across all your songs.',
+    ],
+    buildRows,
+    songSummary: 'Your average: 4.5% — lower is better',
+  });
+}
+
 const adjustedSlides: FirstRunSlideDef[] = [
   {
-    id: 'metric-info-adjusted-what',
-    version: 1,
-    title: 'firstRun.leaderboards.metricInfo.adjusted.what.title',
-    description: 'firstRun.leaderboards.metricInfo.adjusted.what.description',
-    render: () => createElement(MetricInfoSlide, {
-      paragraphs: [
-        'For every song you\'ve played, your rank is compared against every other player who also played it. This gives a percentile — e.g. ranking 10th out of 1,000 entries is the 1st percentile.',
-        'Your Adjusted Skill rating is the average of these percentiles across all your songs. Lower is better — a perfect player would be near 0%.',
-      ],
-    }),
-    contentStaggerCount: 2,
+    id: 'metric-info-adjusted-how',
+    version: 2,
+    title: 'firstRun.leaderboards.metricInfo.adjusted.how.title',
+    description: 'firstRun.leaderboards.metricInfo.adjusted.how.description',
+    render: () => createElement(AdjustedHowDemo),
+    contentStaggerCount: 3,
   },
   {
-    id: 'metric-info-adjusted-formula',
-    version: 1,
-    title: 'firstRun.leaderboards.metricInfo.adjusted.formula.title',
-    description: 'firstRun.leaderboards.metricInfo.adjusted.formula.description',
+    id: 'metric-info-adjusted-experience',
+    version: 2,
+    title: 'firstRun.leaderboards.metricInfo.adjusted.experience.title',
+    description: 'firstRun.leaderboards.metricInfo.adjusted.experience.description',
     render: () => createElement(MetricInfoSlide, {
       paragraphs: [
-        'To prevent a player with one perfect score from dominating, a Bayesian credibility adjustment is applied:',
+        'With few songs played, the system isn\'t sure how good you are — so it keeps your rating close to 50% (average). As you play more, your rating reflects your true skill.',
       ],
-      formulas: [
-        '\\text{Rating} = \\frac{n \\cdot \\bar{x} + m \\cdot C}{n + m}',
-        '\\text{where } m = 50,\\; C = 0.5',
+      cards: [
+        {
+          label: 'After 5 songs',
+          entries: [
+            { rank: 52, displayName: 'FretPhenom', ratingLabel: '47.1%' },
+            { rank: 53, displayName: 'NeonPick', ratingLabel: '47.0%' },
+            { rank: 54, displayName: 'You', ratingLabel: '46.3%', isPlayer: true },
+            { rank: 55, displayName: 'DrumSurge', ratingLabel: '46.1%' },
+          ],
+          highlight: 'Still near average — unproven',
+        },
+        {
+          label: 'After 100 songs',
+          entries: [
+            { rank: 7, displayName: 'BeatLegend', ratingLabel: '5.2%' },
+            { rank: 8, displayName: 'TopClutch', ratingLabel: '5.0%' },
+            { rank: 9, displayName: 'You', ratingLabel: '4.8%', isPlayer: true },
+            { rank: 10, displayName: 'ComboKing', ratingLabel: '4.6%' },
+          ],
+          highlight: 'True skill shines through',
+        },
       ],
+      callout: 'Everyone starts near 50%. Each song you play pulls your rating closer to what you\'ve actually earned.',
     }),
     contentStaggerCount: 3,
   },
   {
+    id: 'metric-info-adjusted-hood',
+    version: 2,
+    title: 'firstRun.leaderboards.metricInfo.adjusted.hood.title',
+    description: 'firstRun.leaderboards.metricInfo.adjusted.hood.description',
+    render: () => createElement(MetricInfoSlide, {
+      paragraphs: [
+        'The formula blends your actual average with a 50% starting point. The more songs you play, the less the starting point matters.',
+      ],
+      formulas: [
+        '\\text{Rating} = \\frac{n \\cdot \\bar{x} + 50 \\cdot 0.5}{n + 50}',
+      ],
+      callout: 'n = songs played, x̄ = your real average percentile.\nAfter 5 songs: (5 × 0.03 + 50 × 0.5) ÷ 55 ≈ 46%.\nAfter 100 songs: (100 × 0.03 + 50 × 0.5) ÷ 150 ≈ 19%.',
+    }),
+    contentStaggerCount: 4,
+  },
+  {
     id: 'metric-info-adjusted-experimental',
-    version: 1,
+    version: 2,
     title: 'firstRun.leaderboards.metricInfo.adjusted.experimental.title',
     description: 'firstRun.leaderboards.metricInfo.adjusted.experimental.description',
     render: () => createElement(MetricInfoSlide, {
       paragraphs: [
-        'The credibility threshold (m = 50) is a tuning parameter — there\'s no objectively "correct" value. It determines how many songs you need before your rating stabilizes.',
-        'Additionally, percentile-based ranking treats all songs equally regardless of difficulty. A top rank on a challenging song counts the same as an easy one.',
+        'All songs count equally — finishing top 1% on an easy song counts the same as a hard one.',
+        'The "experience threshold" of 50 songs is a tuning choice, not a scientifically proven number. A different threshold would shift everyone\'s rankings.',
       ],
     }),
     contentStaggerCount: 2,
@@ -52,45 +100,89 @@ const adjustedSlides: FirstRunSlideDef[] = [
 
 /* ── Weighted ── */
 
+function WeightedHowDemo() {
+  const buildRows = useCallback((songs: { albumArt?: string; title: string; artist: string }[]) => [
+    { ...songs[0]!, valueLabel: '12,000 players · Top 3%' },
+    { ...songs[1]!, valueLabel: '80 players · Top 3%' },
+  ], []);
+
+  return createElement(SongDemoSlide, {
+    paragraphs: [
+      'Like Adjusted Skill, this uses your percentile on each song — but songs with more players on the leaderboard carry more weight.',
+    ],
+    buildRows,
+    maxSongs: 2,
+    callout: 'Same percentile, but the popular song counts much more — doing well where competition is fierce is a stronger signal of skill.',
+  });
+}
+
 const weightedSlides: FirstRunSlideDef[] = [
   {
-    id: 'metric-info-weighted-what',
-    version: 1,
-    title: 'firstRun.leaderboards.metricInfo.weighted.what.title',
-    description: 'firstRun.leaderboards.metricInfo.weighted.what.description',
-    render: () => createElement(MetricInfoSlide, {
-      paragraphs: [
-        'Like Adjusted Skill, this uses your percentile on each song — but songs with more leaderboard entries count more heavily.',
-        'The intuition: performing well on a popular, competitive song is a stronger signal of skill than an obscure one with few players.',
-      ],
-    }),
-    contentStaggerCount: 2,
+    id: 'metric-info-weighted-how',
+    version: 2,
+    title: 'firstRun.leaderboards.metricInfo.weighted.how.title',
+    description: 'firstRun.leaderboards.metricInfo.weighted.how.description',
+    render: () => createElement(WeightedHowDemo),
+    contentStaggerCount: 3,
   },
   {
-    id: 'metric-info-weighted-formula',
-    version: 1,
-    title: 'firstRun.leaderboards.metricInfo.weighted.formula.title',
-    description: 'firstRun.leaderboards.metricInfo.weighted.formula.description',
+    id: 'metric-info-weighted-experience',
+    version: 2,
+    title: 'firstRun.leaderboards.metricInfo.weighted.experience.title',
+    description: 'firstRun.leaderboards.metricInfo.weighted.experience.description',
     render: () => createElement(MetricInfoSlide, {
       paragraphs: [
-        'Each song\'s percentile is weighted by the logarithm of its entry count, then the same Bayesian adjustment is applied:',
+        'New players start near 50% and converge toward their true rating as they play more — the same experience boost as Adjusted Skill.',
       ],
-      formulas: [
-        '\\text{Weight}_i = \\log_2(\\text{entries}_i)',
-        '\\text{Rating} = \\frac{n \\cdot \\frac{\\sum p_i \\cdot w_i}{\\sum w_i} + m \\cdot C}{n + m}',
+      cards: [
+        {
+          label: 'After 5 songs',
+          entries: [
+            { rank: 38, displayName: 'StageKnight', ratingLabel: '44.8%' },
+            { rank: 39, displayName: 'You', ratingLabel: '44.1%', isPlayer: true },
+            { rank: 40, displayName: 'RhythmEdge', ratingLabel: '43.5%' },
+          ],
+          highlight: 'Still near average',
+        },
+        {
+          label: 'After 100 songs',
+          entries: [
+            { rank: 4, displayName: 'GoldStreak', ratingLabel: '4.2%' },
+            { rank: 5, displayName: 'NoteHunter', ratingLabel: '4.0%' },
+            { rank: 6, displayName: 'You', ratingLabel: '3.9%', isPlayer: true },
+          ],
+          highlight: 'True skill shines through',
+        },
       ],
     }),
     contentStaggerCount: 3,
   },
   {
+    id: 'metric-info-weighted-hood',
+    version: 2,
+    title: 'firstRun.leaderboards.metricInfo.weighted.hood.title',
+    description: 'firstRun.leaderboards.metricInfo.weighted.hood.description',
+    render: () => createElement(MetricInfoSlide, {
+      paragraphs: [
+        'Each song\'s percentile is multiplied by its weight before averaging. Then the same experience adjustment applies.',
+      ],
+      formulas: [
+        '\\text{Weight}_i = \\log_2(\\text{players}_i)',
+        '\\text{Rating} = \\frac{n \\cdot \\overline{w} + 50 \\cdot 0.5}{n + 50}',
+      ],
+      callout: 'A song with 10,000 players has ~13× the weight of one with 10 players. The logarithm keeps things from getting too extreme.',
+    }),
+    contentStaggerCount: 4,
+  },
+  {
     id: 'metric-info-weighted-experimental',
-    version: 1,
+    version: 2,
     title: 'firstRun.leaderboards.metricInfo.weighted.experimental.title',
     description: 'firstRun.leaderboards.metricInfo.weighted.experimental.description',
     render: () => createElement(MetricInfoSlide, {
       paragraphs: [
-        'The choice to weight by popularity is subjective. A song with 10,000 entries isn\'t necessarily harder than one with 100 — it may just be more well-known.',
-        'The logarithmic scale softens extreme differences, but the fundamental assumption that "more popular = more meaningful" is debatable.',
+        'More players doesn\'t necessarily mean harder. A viral song might have 10,000 casual players, making it easier to rank highly.',
+        'The logarithmic weighting softens extremes but is still a subjective choice — a different scale would produce different rankings.',
       ],
     }),
     contentStaggerCount: 2,
@@ -101,30 +193,71 @@ const weightedSlides: FirstRunSlideDef[] = [
 
 const fcRateSlides: FirstRunSlideDef[] = [
   {
-    id: 'metric-info-fcrate-what',
-    version: 1,
-    title: 'firstRun.leaderboards.metricInfo.fcrate.what.title',
-    description: 'firstRun.leaderboards.metricInfo.fcrate.what.description',
-    render: () => createElement(MetricInfoSlide, {
-      paragraphs: [
-        'FC Rate measures the percentage of your played songs where you achieved a Full Combo — hitting every note without breaking your streak.',
-        'Like other metrics, a Bayesian adjustment prevents players with very few songs from ranking unrealistically high:',
-      ],
-      formulas: [
-        '\\text{FC Rate} = \\frac{n \\cdot \\frac{\\text{FCs}}{\\text{Songs}} + m \\cdot C}{n + m}',
-      ],
-    }),
+    id: 'metric-info-fcrate-how',
+    version: 2,
+    title: 'firstRun.leaderboards.metricInfo.fcrate.how.title',
+    description: 'firstRun.leaderboards.metricInfo.fcrate.how.description',
+    render: () => createElement(FcRateHowDemo),
     contentStaggerCount: 3,
   },
   {
+    id: 'metric-info-fcrate-experience',
+    version: 2,
+    title: 'firstRun.leaderboards.metricInfo.fcrate.experience.title',
+    description: 'firstRun.leaderboards.metricInfo.fcrate.experience.description',
+    render: () => createElement(MetricInfoSlide, {
+      paragraphs: [
+        'Without the experience boost, anyone could play two easy songs, FC both, and claim a perfect 100% rate.',
+      ],
+      cards: [
+        {
+          label: 'NovaBurst · 2 songs, 2 FCs',
+          entries: [
+            { rank: 40, displayName: 'SonicRush', ratingLabel: '51.1%' },
+            { rank: 41, displayName: 'NovaBurst', ratingLabel: '50.9%', isPlayer: true },
+            { rank: 42, displayName: 'DeepGroove', ratingLabel: '50.7%' },
+          ],
+          highlight: 'Raw: 100% — but adjusted to ~51%',
+        },
+        {
+          label: 'BeatLegend · 100 songs, 65 FCs',
+          entries: [
+            { rank: 6, displayName: 'VocalStorm', ratingLabel: '48.6%' },
+            { rank: 7, displayName: 'TopClutch', ratingLabel: '48.5%' },
+            { rank: 8, displayName: 'BeatLegend', ratingLabel: '48.3%', isPlayer: true },
+          ],
+          highlight: 'Raw: 65% — proven consistency',
+        },
+      ],
+      callout: 'Sustained consistency across many songs is more trustworthy than a perfect record on just a few.',
+    }),
+    contentStaggerCount: 4,
+  },
+  {
+    id: 'metric-info-fcrate-hood',
+    version: 2,
+    title: 'firstRun.leaderboards.metricInfo.fcrate.hood.title',
+    description: 'firstRun.leaderboards.metricInfo.fcrate.hood.description',
+    render: () => createElement(MetricInfoSlide, {
+      paragraphs: [
+        'The formula is the same experience adjustment used by all metrics — blending your real FC rate with a 50% starting point.',
+      ],
+      formulas: [
+        '\\text{Rating} = \\frac{n \\cdot \\frac{\\text{FCs}}{\\text{Songs}} + 50 \\cdot 0.5}{n + 50}',
+      ],
+      callout: 'NovaBurst (2/2): (2 × 1.0 + 50 × 0.5) ÷ 52 ≈ 52%.\nBeatLegend (65/100): (100 × 0.65 + 50 × 0.5) ÷ 150 ≈ 60%.',
+    }),
+    contentStaggerCount: 4,
+  },
+  {
     id: 'metric-info-fcrate-experimental',
-    version: 1,
+    version: 2,
     title: 'firstRun.leaderboards.metricInfo.fcrate.experimental.title',
     description: 'firstRun.leaderboards.metricInfo.fcrate.experimental.description',
     render: () => createElement(MetricInfoSlide, {
       paragraphs: [
-        'FC Rate doesn\'t account for song difficulty. A player who only FCs easy songs will rank higher than one who plays — and sometimes misses notes on — extremely hard songs.',
-        'It also doesn\'t reflect how close you were to an FC. Missing one note on a 2,000-note chart counts the same as missing hundreds.',
+        'FC\'ing an easy song counts the same as an extremely hard one. A player who only attempts easy charts will have a higher FC rate than an ambitious player who tackles everything.',
+        'A near-miss doesn\'t count — missing one note out of 2,000 gets the same "no FC" result as missing hundreds.',
       ],
     }),
     contentStaggerCount: 2,
@@ -133,45 +266,89 @@ const fcRateSlides: FirstRunSlideDef[] = [
 
 /* ── Max Score % ── */
 
+function MaxScoreHowDemo() {
+  const buildRows = useCallback((songs: { albumArt?: string; title: string; artist: string }[]) => [
+    { ...songs[0]!, valueLabel: '95,210 / 100,000 → 95.2%' },
+    { ...songs[1]!, valueLabel: '87,400 / 92,500 → 94.5%' },
+    { ...songs[2]!, valueLabel: '103,200 / 98,000 → 105% cap' },
+  ], []);
+
+  return createElement(SongDemoSlide, {
+    paragraphs: [
+      'For each song, a tool called CHOpt computes the highest theoretically possible score. Max Score % is how close you get to that ceiling, averaged across all your songs. Scores above the max are capped at 105%.',
+    ],
+    buildRows,
+    songSummary: 'Your average: 94.9% (third song capped)',
+  });
+}
+
 const maxScoreSlides: FirstRunSlideDef[] = [
   {
-    id: 'metric-info-maxscore-what',
-    version: 1,
-    title: 'firstRun.leaderboards.metricInfo.maxscore.what.title',
-    description: 'firstRun.leaderboards.metricInfo.maxscore.what.description',
-    render: () => createElement(MetricInfoSlide, {
-      paragraphs: [
-        'Max Score % measures how close your scores are to the theoretical maximum for each song. The maximum is computed by CHOpt, a tool that analyzes each song\'s note chart to find the optimal Star Power activation path.',
-        'Your rating is the average of (your score ÷ CHOpt max) across all your played songs, capped at 105% per song.',
-      ],
-    }),
-    contentStaggerCount: 2,
+    id: 'metric-info-maxscore-how',
+    version: 2,
+    title: 'firstRun.leaderboards.metricInfo.maxscore.how.title',
+    description: 'firstRun.leaderboards.metricInfo.maxscore.how.description',
+    render: () => createElement(MaxScoreHowDemo),
+    contentStaggerCount: 3,
   },
   {
-    id: 'metric-info-maxscore-formula',
-    version: 1,
-    title: 'firstRun.leaderboards.metricInfo.maxscore.formula.title',
-    description: 'firstRun.leaderboards.metricInfo.maxscore.formula.description',
+    id: 'metric-info-maxscore-experience',
+    version: 2,
+    title: 'firstRun.leaderboards.metricInfo.maxscore.experience.title',
+    description: 'firstRun.leaderboards.metricInfo.maxscore.experience.description',
     render: () => createElement(MetricInfoSlide, {
       paragraphs: [
-        'The Bayesian adjustment is applied after averaging:',
+        'A player who scored 99% on two songs isn\'t as proven as one who averages 94% across a hundred. Same experience boost as the other metrics.',
       ],
-      formulas: [
-        '\\bar{s} = \\text{avg}\\!\\left(\\min\\!\\left(\\frac{\\text{score}_i}{\\text{max}_i},\\; 1.05\\right)\\right)',
-        '\\text{Rating} = \\frac{n \\cdot \\bar{s} + m \\cdot C}{n + m}',
+      cards: [
+        {
+          label: 'After 3 songs',
+          entries: [
+            { rank: 55, displayName: 'StageKnight', ratingLabel: '52.0%' },
+            { rank: 56, displayName: 'You', ratingLabel: '51.2%', isPlayer: true },
+            { rank: 57, displayName: 'FretBlaze', ratingLabel: '50.8%' },
+          ],
+          highlight: 'Still near 50% — unproven',
+        },
+        {
+          label: 'After 100 songs',
+          entries: [
+            { rank: 3, displayName: 'GoldStreak', ratingLabel: '94.5%' },
+            { rank: 4, displayName: 'NoteHunter', ratingLabel: '94.3%' },
+            { rank: 5, displayName: 'You', ratingLabel: '94.1%', isPlayer: true },
+          ],
+          highlight: 'True accuracy proven',
+        },
       ],
     }),
     contentStaggerCount: 3,
   },
   {
+    id: 'metric-info-maxscore-hood',
+    version: 2,
+    title: 'firstRun.leaderboards.metricInfo.maxscore.hood.title',
+    description: 'firstRun.leaderboards.metricInfo.maxscore.hood.description',
+    render: () => createElement(MetricInfoSlide, {
+      paragraphs: [
+        'Scores are capped at 105% per song to limit the impact of any inaccuracies in the computed maximum.',
+      ],
+      formulas: [
+        '\\bar{s} = \\text{avg}\\!\\left(\\min\\!\\left(\\frac{\\text{score}_i}{\\text{max}_i},\\; 1.05\\right)\\right)',
+        '\\text{Rating} = \\frac{n \\cdot \\bar{s} + 50 \\cdot 0.5}{n + 50}',
+      ],
+      callout: 'After 3 songs (avg 95%): (3 × 0.95 + 50 × 0.5) ÷ 53 ≈ 53%.\nAfter 100 songs (avg 95%): (100 × 0.95 + 50 × 0.5) ÷ 150 ≈ 80%.',
+    }),
+    contentStaggerCount: 4,
+  },
+  {
     id: 'metric-info-maxscore-experimental',
-    version: 1,
+    version: 2,
     title: 'firstRun.leaderboards.metricInfo.maxscore.experimental.title',
     description: 'firstRun.leaderboards.metricInfo.maxscore.experimental.description',
     render: () => createElement(MetricInfoSlide, {
       paragraphs: [
-        'CHOpt\'s computed maximum can occasionally be inaccurate — some songs have edge cases where the actual achievable score differs from the computed optimum.',
-        'Newly added songs may temporarily lack CHOpt data, excluding them from this metric entirely until the next path generation pass.',
+        'The computed maximum score for a song can occasionally be slightly off — advanced techniques like squeezing can push scores higher than the calculated ceiling.',
+        'Newly added songs may not have a computed maximum yet, so they\'re temporarily excluded from this metric until the next processing pass.',
       ],
     }),
     contentStaggerCount: 2,

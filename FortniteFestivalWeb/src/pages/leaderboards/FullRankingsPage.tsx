@@ -183,7 +183,7 @@ export default function FullRankingsPage() {
             ))}
           </ModalSection>
         </Modal>
-        {infoMetric && <FirstRunCarousel slides={getMetricInfoSlides(infoMetric)} onDismiss={() => setInfoMetric(null)} />}
+        {infoMetric && <FirstRunCarousel slides={getMetricInfoSlides(infoMetric)} onDismiss={() => {}} onExitComplete={() => setInfoMetric(null)} />}
       </>}
     >
 

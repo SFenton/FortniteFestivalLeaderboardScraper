@@ -16,6 +16,8 @@ export default function ConfirmAlert({
   onNo,
   onYes,
   onExitComplete,
+  noLabel,
+  yesLabel,
 }: {
   title: string;
   message: string;
@@ -23,6 +25,10 @@ export default function ConfirmAlert({
   onYes: () => void;
   /** When provided, enables exit animation: dismiss fades out then calls onExitComplete to unmount. */
   onExitComplete?: () => void;
+  /** Custom label for the "No" / dismiss button. Defaults to t('common.no'). */
+  noLabel?: string;
+  /** Custom label for the "Yes" / confirm button. Defaults to t('common.yes'). */
+  yesLabel?: string;
 }) {
   const { t } = useTranslation();
   const [animIn, setAnimIn] = useState(false);
@@ -65,13 +71,13 @@ export default function ConfirmAlert({
 
   return createPortal(
     /* v8 ignore start — animation ternaries */
-    <div style={s.overlay} onClick={handleNo} data-glow-scope="">
+    <div style={s.overlay} onClick={e => { e.stopPropagation(); handleNo(); }} data-glow-scope="">
       <div style={s.card} onClick={e => e.stopPropagation()}>
         <div style={s.title}>{title}</div>
         <div style={s.message}>{message}</div>
         <div style={s.buttons}>
-          <button style={s.btnNo} onClick={handleNo}>{t('common.no')}</button>
-          <button style={s.btnYes} onClick={handleYes}>{t('common.yes')}</button>
+          <button style={s.btnNo} onClick={handleNo}>{noLabel ?? t('common.no')}</button>
+          <button style={s.btnYes} onClick={handleYes}>{yesLabel ?? t('common.yes')}</button>
         </div>
       </div>
     </div>,

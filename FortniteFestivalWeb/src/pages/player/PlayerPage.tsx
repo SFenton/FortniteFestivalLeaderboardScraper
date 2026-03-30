@@ -13,7 +13,7 @@ import { parseApiError } from '../../utils/apiError';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import { LoadPhase } from '@festival/core';
-import { flexCenter, SPINNER_FADE_MS } from '@festival/theme';
+import { fixedFill, flexCenter, ZIndex, SPINNER_FADE_MS } from '@festival/theme';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../../api/queryKeys';
 import PlayerContent from '../leaderboard/player/components/PlayerContent';
@@ -132,12 +132,14 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
 function useStyles() {
   return useMemo(() => ({
     center: {
+      ...fixedFill,
+      zIndex: ZIndex.dropdown,
       ...flexCenter,
-      flex: 1,
     } as CSSProperties,
     centerFadeOut: {
+      ...fixedFill,
+      zIndex: ZIndex.dropdown,
       ...flexCenter,
-      flex: 1,
       animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards`,
     } as CSSProperties,
   }), []);
