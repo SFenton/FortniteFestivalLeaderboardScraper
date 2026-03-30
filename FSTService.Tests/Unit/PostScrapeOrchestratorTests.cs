@@ -585,11 +585,11 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
 
-        // 150 over-threshold entries (scores 2000–510, all > 1050)
+        // 150 over-threshold entries (scores 5000–3510, all > 1050)
         var overEntries = Enumerable.Range(0, 150).Select(i =>
             new LeaderboardEntry
             {
-                AccountId = $"exploiter_{i}", Score = 2000 - i * 10,
+                AccountId = $"exploiter_{i}", Score = 5000 - i * 10,
                 Accuracy = 95, Stars = 5, Season = 3,
             }).ToList();
 
@@ -616,7 +616,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         // Highest over-threshold entry still present
         var topExploiter = db.GetPlayerScores("exploiter_0", "song1");
         Assert.Single(topExploiter);
-        Assert.Equal(2000, topExploiter[0].Score);
+        Assert.Equal(5000, topExploiter[0].Score);
 
         // Top valid entry still present
         var topValid = db.GetPlayerScores("valid_0", "song1");
