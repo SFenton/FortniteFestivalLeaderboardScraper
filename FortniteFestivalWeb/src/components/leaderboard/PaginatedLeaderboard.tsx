@@ -61,6 +61,13 @@ export interface PaginatedLeaderboardProps<T> {
 
   /** Ref for the Page's stagger rush callback (resetRush on page change). */
   staggerRushRef?: RefObject<(() => void) | undefined>;
+
+  /**
+   * Key that controls when the player footer re-staggers.
+   * Footer re-animates only when this key changes (e.g. instrument or metric),
+   * NOT on pagination.
+   */
+  footerAnimKey?: string;
 }
 
 /**
@@ -96,6 +103,7 @@ export function PaginatedLeaderboard<T>({
   error = false,
   emptyMessage,
   staggerRushRef,
+  footerAnimKey,
 }: PaginatedLeaderboardProps<T>) {
   const isWideDesktop = useIsWideDesktop();
   const wideOverride = isWideDesktop ? fixedFooterWide : undefined;
@@ -140,7 +148,6 @@ export function PaginatedLeaderboard<T>({
     const id = setTimeout(() => {
       staggerRushRef?.current?.();
       setAnimMode(prev => prev === 'cached' ? 'paginate' : prev);
-      footerShownRef.current = false;
       setLoadPhase(LoadPhase.ContentIn);
       // Retire stagger animations after they've had time to finish.
       const staggerWindow = maxVisibleRows * STAGGER_INTERVAL + FADE_DURATION + 100;
@@ -149,6 +156,15 @@ export function PaginatedLeaderboard<T>({
     return () => { clearTimeout(id); clearTimeout(retireId); };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- animation sequence
   }, [loading, error]);
+
+  // Reset footer animation when the footerAnimKey changes (instrument / metric).
+  const prevFooterKeyRef = useRef(footerAnimKey);
+  useEffect(() => {
+    if (footerAnimKey !== prevFooterKeyRef.current) {
+      prevFooterKeyRef.current = footerAnimKey;
+      footerShownRef.current = false;
+    }
+  }, [footerAnimKey]);
 
   // Reset animMode to 'paginate' when `page` changes (after initial mount).
   const prevPageRef = useRef(page);

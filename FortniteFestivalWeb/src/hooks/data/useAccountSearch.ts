@@ -12,6 +12,8 @@ export interface AccountSearchState {
   activeIndex: number;
   setActiveIndex: (i: number) => void;
   loading: boolean;
+  debouncing: boolean;
+  resultSeq: number;
   handleChange: (value: string) => void;
   handleKeyDown: (e: React.KeyboardEvent) => void;
   selectResult: (r: AccountSearchResult) => void;
@@ -39,6 +41,8 @@ export function useAccountSearch(
   const [results, setResults] = useState<AccountSearchResult[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [debouncing, setDebouncing] = useState(false);
+  const [resultSeq, setResultSeq] = useState(0);
   const [activeIndex, setActiveIndex] = useState(-1);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -49,10 +53,12 @@ export function useAccountSearch(
       setIsOpen(false);
       return;
     }
+    setDebouncing(false);
     setLoading(true);
     try {
       const res = await api.searchAccounts(q, limit);
       setResults(res.results);
+      setResultSeq(s => s + 1);
       setIsOpen(res.results.length > 0);
       setActiveIndex(-1);
     } catch {
@@ -66,6 +72,13 @@ export function useAccountSearch(
   const handleChange = useCallback((value: string) => {
     setQuery(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (value.trim().length < 2) {
+      setDebouncing(false);
+      setResults([]);
+      setIsOpen(false);
+      return;
+    }
+    setDebouncing(true);
     debounceRef.current = setTimeout(() => {
       void search(value.trim());
     }, debounceMs);
@@ -112,6 +125,6 @@ export function useAccountSearch(
 
   return {
     query, setQuery, results, isOpen, activeIndex, setActiveIndex,
-    loading, handleChange, handleKeyDown, selectResult, close, containerRef,
+    loading, debouncing, resultSeq, handleChange, handleKeyDown, selectResult, close, containerRef,
   };
 }

@@ -258,3 +258,86 @@ describe('useAccountSearch — additional branch coverage', () => {
     expect(result.current.activeIndex).toBe(0);
   });
 });
+
+describe('useAccountSearch — debouncing & resultSeq', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('debouncing is true while waiting for debounce timer', () => {
+    const onSelect = vi.fn();
+    const { result } = renderHook(() => useAccountSearch(onSelect, { debounceMs: 100 }));
+
+    act(() => { result.current.handleChange('test'); });
+    expect(result.current.debouncing).toBe(true);
+  });
+
+  it('debouncing becomes false when search starts', async () => {
+    mockSearch.mockResolvedValue({ results: [{ accountId: 'a1', displayName: 'A' }] });
+    const onSelect = vi.fn();
+    const { result } = renderHook(() => useAccountSearch(onSelect, { debounceMs: 10 }));
+
+    act(() => { result.current.handleChange('test'); });
+    expect(result.current.debouncing).toBe(true);
+
+    await act(async () => { vi.advanceTimersByTime(10); });
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    expect(result.current.debouncing).toBe(false);
+    expect(result.current.loading).toBe(false);
+  });
+
+  it('debouncing resets to false when query drops below 2 chars', () => {
+    const onSelect = vi.fn();
+    const { result } = renderHook(() => useAccountSearch(onSelect, { debounceMs: 100 }));
+
+    act(() => { result.current.handleChange('test'); });
+    expect(result.current.debouncing).toBe(true);
+
+    act(() => { result.current.handleChange('t'); });
+    expect(result.current.debouncing).toBe(false);
+  });
+
+  it('debouncing stays false for short queries', () => {
+    const onSelect = vi.fn();
+    const { result } = renderHook(() => useAccountSearch(onSelect, { debounceMs: 100 }));
+
+    act(() => { result.current.handleChange('a'); });
+    expect(result.current.debouncing).toBe(false);
+  });
+
+  it('resultSeq increments on each successful search', async () => {
+    mockSearch.mockResolvedValue({ results: [{ accountId: 'a1', displayName: 'A' }] });
+    const onSelect = vi.fn();
+    const { result } = renderHook(() => useAccountSearch(onSelect, { debounceMs: 10 }));
+
+    expect(result.current.resultSeq).toBe(0);
+
+    act(() => { result.current.handleChange('test'); });
+    await act(async () => { vi.advanceTimersByTime(10); });
+    await act(async () => { await vi.runAllTimersAsync(); });
+    expect(result.current.resultSeq).toBe(1);
+
+    act(() => { result.current.handleChange('test2'); });
+    await act(async () => { vi.advanceTimersByTime(10); });
+    await act(async () => { await vi.runAllTimersAsync(); });
+    expect(result.current.resultSeq).toBe(2);
+  });
+
+  it('resultSeq does not increment on search error', async () => {
+    mockSearch.mockRejectedValue(new Error('fail'));
+    const onSelect = vi.fn();
+    const { result } = renderHook(() => useAccountSearch(onSelect, { debounceMs: 10 }));
+
+    act(() => { result.current.handleChange('test'); });
+    await act(async () => { vi.advanceTimersByTime(10); });
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    expect(result.current.resultSeq).toBe(0);
+  });
+});

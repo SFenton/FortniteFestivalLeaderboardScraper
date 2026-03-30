@@ -10,6 +10,8 @@ export interface SearchBarProps {
   placeholder?: string;
   onKeyDown?: KeyboardEventHandler<HTMLInputElement>;
   onFocus?: () => void;
+  /** Called when the input loses focus. */
+  onBlur?: () => void;
   /** HTML enterkeyhint attribute for mobile keyboards. */
   enterKeyHint?: 'done' | 'search' | 'go' | 'send' | 'next';
   /** Hide the search icon. Default: false. */
@@ -36,6 +38,7 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
     placeholder,
     onKeyDown,
     onFocus,
+    onBlur,
     enterKeyHint,
     hideIcon,
     className,
@@ -71,6 +74,7 @@ const SearchBar = forwardRef<SearchBarRef, SearchBarProps>(function SearchBar(
         onChange={e => onChange(e.target.value)}
         onKeyDown={onKeyDown}
         onFocus={onFocus}
+        onBlur={onBlur}
         enterKeyHint={enterKeyHint}
         autoFocus={autoFocus}
       />
