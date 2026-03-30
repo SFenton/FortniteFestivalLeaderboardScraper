@@ -447,12 +447,12 @@ public class ItemShopServiceTests
     // ─── ComputeLeavingTomorrow ─────────────────────────
 
     [Fact]
-    public void ComputeLeavingTomorrow_OutDateTomorrow_ReturnsTrue()
+    public void ComputeLeavingTomorrow_OutDateToday_ReturnsTrue()
     {
         var now = new DateTime(2026, 3, 28, 12, 0, 0, DateTimeKind.Utc);
-        var tomorrow = new DateTime(2026, 3, 29, 23, 59, 59, 999, DateTimeKind.Utc);
+        var today = new DateTime(2026, 3, 28, 23, 59, 59, 999, DateTimeKind.Utc);
 
-        var entries = new List<ShopTrackEntry> { new("Dream On", tomorrow) };
+        var entries = new List<ShopTrackEntry> { new("Dream On", today) };
         var matched = new HashSet<string> { "song-123" };
         var titleToSongId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -465,12 +465,12 @@ public class ItemShopServiceTests
     }
 
     [Fact]
-    public void ComputeLeavingTomorrow_OutDateToday_ReturnsFalse()
+    public void ComputeLeavingTomorrow_OutDateTomorrow_ReturnsFalse()
     {
         var now = new DateTime(2026, 3, 28, 12, 0, 0, DateTimeKind.Utc);
-        var today = new DateTime(2026, 3, 28, 23, 59, 59, 999, DateTimeKind.Utc);
+        var tomorrow = new DateTime(2026, 3, 29, 23, 59, 59, 999, DateTimeKind.Utc);
 
-        var entries = new List<ShopTrackEntry> { new("Dream On", today) };
+        var entries = new List<ShopTrackEntry> { new("Dream On", tomorrow) };
         var matched = new HashSet<string> { "song-123" };
         var titleToSongId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -515,15 +515,15 @@ public class ItemShopServiceTests
     }
 
     [Fact]
-    public void ComputeLeavingTomorrow_MixedDates_ReturnsOnlyTomorrow()
+    public void ComputeLeavingTomorrow_MixedDates_ReturnsOnlyToday()
     {
         var now = new DateTime(2026, 3, 28, 12, 0, 0, DateTimeKind.Utc);
 
         var entries = new List<ShopTrackEntry>
         {
-            new("Dream On", new DateTime(2026, 3, 29, 23, 59, 59, DateTimeKind.Utc)),   // tomorrow
+            new("Dream On", new DateTime(2026, 3, 28, 23, 59, 59, DateTimeKind.Utc)),   // today (last day)
             new("Flowers",  new DateTime(2026, 4, 2, 23, 59, 59, DateTimeKind.Utc)),    // future
-            new("Maps",     new DateTime(2026, 3, 28, 23, 59, 59, DateTimeKind.Utc)),   // today
+            new("Maps",     new DateTime(2026, 3, 29, 23, 59, 59, DateTimeKind.Utc)),   // tomorrow
         };
         var matched = new HashSet<string> { "song-1", "song-2", "song-3" };
         var titleToSongId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -541,11 +541,11 @@ public class ItemShopServiceTests
     [Fact]
     public async Task ScrapeAsync_WithOutDates_SetsLeavingTomorrow()
     {
-        // Build JSON where "Flowers" leaves tomorrow
-        var tomorrow = DateTime.UtcNow.Date.AddDays(1).AddHours(23).AddMinutes(59).AddSeconds(59);
+        // Build JSON where "Flowers" leaves today (outDate = today = last day in shop)
+        var today = DateTime.UtcNow.Date.AddHours(23).AddMinutes(59).AddSeconds(59);
         var farFuture = DateTime.UtcNow.Date.AddDays(7);
         var json = MakeShopJsonWithDates(
-            ("Flowers", tomorrow.ToString("o")),
+            ("Flowers", today.ToString("o")),
             ("Unknown Song", farFuture.ToString("o")));
 
         var handler = new MockHttpMessageHandler();

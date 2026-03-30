@@ -422,6 +422,95 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(lbPosition, playerRank); // must match
     }
 
+    [Fact]
+    public async Task ApiLeaderboardAll_Rank_PrefersApiRank()
+    {
+        const string song = "apiRankAllSong";
+        const string inst = "Solo_Guitar";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var db = persistence.GetOrCreateInstrumentDb(inst);
+            db.UpsertEntries(song, new[]
+            {
+                // ApiRank=5000 from Epic backfill; computed ROW_NUMBER rank would be 1
+                new LeaderboardEntry { AccountId = "apiRkAcct1", Score = 90_000, ApiRank = 5000 },
+                // No ApiRank; computed ROW_NUMBER rank should be used (2)
+                new LeaderboardEntry { AccountId = "apiRkAcct2", Score = 80_000, ApiRank = 0 },
+            });
+        }
+
+        var response = await _client.GetAsync($"/api/leaderboard/{song}/all");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var instruments = json.GetProperty("instruments");
+
+        foreach (var instEl in instruments.EnumerateArray())
+        {
+            if (instEl.GetProperty("instrument").GetString() != inst) continue;
+            var entries = instEl.GetProperty("entries");
+            // First entry: ApiRank=5000 should be used instead of computed rank 1
+            Assert.Equal(5000, entries[0].GetProperty("rank").GetInt32());
+            // Second entry: ApiRank=0, so computed rank (2) is used
+            Assert.Equal(2, entries[1].GetProperty("rank").GetInt32());
+        }
+    }
+
+    [Fact]
+    public async Task ApiPlayer_Rank_PrefersApiRank_OverComputedRank()
+    {
+        const string song = "apiRankPlayerSong";
+        const string inst = "Solo_Guitar";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var db = persistence.GetOrCreateInstrumentDb(inst);
+            db.UpsertEntries(song, new[]
+            {
+                new LeaderboardEntry { AccountId = "apiRkOther1", Score = 90_000 },
+                // This player: computed rank = 2, but Epic says rank 10001
+                new LeaderboardEntry { AccountId = "apiRkPlayer", Score = 80_000, ApiRank = 10_001 },
+            });
+        }
+
+        var response = await _client.GetAsync($"/api/player/apiRkPlayer?songId={song}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        var score = json.GetProperty("scores")[0];
+        // ApiRank=10001 should take priority over computed rank (2)
+        Assert.Equal(10_001, score.GetProperty("rank").GetInt32());
+    }
+
+    [Fact]
+    public async Task ApiPlayer_Rank_FallsBackToComputed_WhenApiRankZero()
+    {
+        const string song = "apiRankFallbackSong";
+        const string inst = "Solo_Guitar";
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var db = persistence.GetOrCreateInstrumentDb(inst);
+            db.UpsertEntries(song, new[]
+            {
+                new LeaderboardEntry { AccountId = "fbOther1", Score = 90_000 },
+                // No ApiRank — should use computed rank (2)
+                new LeaderboardEntry { AccountId = "fbPlayer", Score = 80_000, ApiRank = 0, Rank = 99 },
+            });
+        }
+
+        var response = await _client.GetAsync($"/api/player/fbPlayer?songId={song}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        var score = json.GetProperty("scores")[0];
+        // ApiRank=0, so computed rank (2) is used — NOT stale stored rank (99)
+        Assert.Equal(2, score.GetProperty("rank").GetInt32());
+    }
+
 
     // ─── Protected endpoints (require API key) ──────────────────
 

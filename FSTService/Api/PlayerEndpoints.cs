@@ -54,8 +54,8 @@ public static partial class ApiEndpoints
             {
                 var key = (s.SongId, s.Instrument);
                 var computedRank = rankings.GetValueOrDefault(key, 0);
-                // Always use DB-computed rank for consistency with leaderboard ordering
-                var rank = computedRank > 0 ? computedRank : s.Rank;
+                // Priority: Epic ApiRank (authoritative) > computed rank (local DB) > stored rank
+                var rank = s.ApiRank > 0 ? s.ApiRank : (computedRank > 0 ? computedRank : s.Rank);
                 var totalEntries = population.TryGetValue(key, out var pop) && pop > 0 ? (int)pop : 0;
                 return new
                 {

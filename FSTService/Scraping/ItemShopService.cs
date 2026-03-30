@@ -183,15 +183,18 @@ public sealed partial class ItemShopService : IShopProvider
 
         // Compute diff before updating state
         HashSet<string> previousIds;
+        HashSet<string> previousLeaving;
         lock (_lock)
         {
             previousIds = _inShopSongIds;
+            previousLeaving = _leavingTomorrowSongIds;
         }
         var added = matched.Except(previousIds).ToList();
         var removed = previousIds.Except(matched).ToList();
 
         // Compute leaving-tomorrow set from outDate
         var leavingTomorrow = ComputeLeavingTomorrow(entries, matched);
+        var leavingChanged = !leavingTomorrow.SetEquals(previousLeaving);
 
         // Update state
         var now = DateTime.UtcNow;
@@ -210,14 +213,14 @@ public sealed partial class ItemShopService : IShopProvider
         _songsCache?.Invalidate();
 
         // Broadcast shop change to all connected WebSocket clients
-        if (_notifications is not null && (added.Count > 0 || removed.Count > 0))
+        if (_notifications is not null && (added.Count > 0 || removed.Count > 0 || leavingChanged))
         {
             try
             {
                 await _notifications.NotifyShopChangedAsync(added, removed, matched.Count, leavingTomorrow);
                 _log.LogInformation(
-                    "Shop change broadcast: {Added} added, {Removed} removed.",
-                    added.Count, removed.Count);
+                    "Shop change broadcast: {Added} added, {Removed} removed, leaving changed: {LeavingChanged}.",
+                    added.Count, removed.Count, leavingChanged);
             }
             catch (Exception ex)
             {
@@ -339,7 +342,8 @@ public sealed partial class ItemShopService : IShopProvider
 
     /// <summary>
     /// Given the parsed shop entries and matched songIds, returns the set of songIds
-    /// whose offer expires tomorrow (UTC).
+    /// whose offer ends today (outDate falls on today's date in UTC), meaning they
+    /// will no longer be available tomorrow.
     /// </summary>
     internal static HashSet<string> ComputeLeavingTomorrow(
         List<ShopTrackEntry> entries,
@@ -348,13 +352,13 @@ public sealed partial class ItemShopService : IShopProvider
         DateTime? utcNow = null)
     {
         var now = utcNow ?? DateTime.UtcNow;
-        var tomorrow = now.Date.AddDays(1);
+        var today = now.Date;
         var leaving = new HashSet<string>();
 
         foreach (var entry in entries)
         {
             if (!entry.OutDate.HasValue) continue;
-            if (entry.OutDate.Value.Date != tomorrow) continue;
+            if (entry.OutDate.Value.Date != today) continue;
             if (titleToSongId.TryGetValue(entry.Title, out var songId) &&
                 matchedSongIds.Contains(songId))
             {

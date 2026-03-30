@@ -154,7 +154,7 @@ public static partial class ApiEndpoints
                     e.AccountId,
                     DisplayName = names.GetValueOrDefault(e.AccountId),
                     e.Score,
-                    e.Rank,
+                    Rank = e.ApiRank > 0 ? e.ApiRank : e.Rank,
                     e.Accuracy,
                     e.IsFullCombo,
                     e.Stars,
