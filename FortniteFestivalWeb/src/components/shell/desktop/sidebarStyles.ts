@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import {
   Colors, Font, Gap, Weight, Radius, Border, Display, Align, Justify, Position, BoxSizing, Cursor, CssValue, CssProp, Layout,
-  flexColumn, flexRow, flexCenter, modalOverlay, btnDanger, purpleGlass,
+  flexColumn, flexRow, flexCenter, modalOverlay, btnDanger,
   padding, border, transition, transitions, LINK_TRANSITION_MS,
 } from '@festival/theme';
 
@@ -48,7 +48,6 @@ export const sidebarStyles = {
     borderRight: border(Border.thin, Colors.purpleBorderGlass),
     borderBottom: border(Border.thin, Colors.purpleBorderGlass),
     borderLeft: `3px solid ${Colors.accentPurple}`,
-    boxShadow: purpleGlass.boxShadow,
     color: Colors.textPrimary,
   } as CSSProperties,
   sidebarLinkIcon: { ...flexRow, flexShrink: 0, width: 20, justifyContent: Justify.center } as CSSProperties,
