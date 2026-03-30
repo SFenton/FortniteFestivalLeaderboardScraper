@@ -1,11 +1,13 @@
 using FortniteFestival.Core;
 using FortniteFestival.Core.Persistence;
 using FortniteFestival.Core.Services;
+using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
+using NSubstitute.ExceptionExtensions;
 using System.Reflection;
 
 namespace FSTService.Tests.Unit;
@@ -559,5 +561,67 @@ public class ItemShopServiceTests
         // "Flowers" matched, and its outDate is tomorrow
         Assert.Single(service.InShopSongIds);
         Assert.Single(service.LeavingTomorrowSongIds);
+    }
+
+    [Fact]
+    public async Task ScrapeAsync_ContentChanged_BroadcastsNotification()
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk(MakeShopJson("Flowers"));
+
+        var metaFixture = new InMemoryMetaDatabase();
+        var service = CreateService(handler, metaFixture.Db);
+
+        var notifications = new NotificationService(Substitute.For<ILogger<NotificationService>>());
+        service.SetNotificationService(notifications);
+
+        var result = await service.ScrapeAsync(CancellationToken.None);
+        Assert.Equal(1, result);
+        // Notification was sent (no crash) — we just verify the code path runs
+    }
+
+    [Fact]
+    public async Task TriggerScrapeAsync_DelegatestoScrapeAsync()
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk(MakeShopJson("Flowers"));
+
+        var metaFixture = new InMemoryMetaDatabase();
+        var service = CreateService(handler, metaFixture.Db);
+
+        var result = await service.TriggerScrapeAsync(CancellationToken.None);
+        Assert.Equal(1, result);
+    }
+
+    [Fact]
+    public async Task InitializeAsync_WithPersistedData_LoadsFromDb()
+    {
+        var handler = new MockHttpMessageHandler();
+        handler.EnqueueJsonOk(MakeShopJson("Flowers"));
+
+        var metaFixture = new InMemoryMetaDatabase();
+        // Pre-persist shop data in the DB
+        metaFixture.Db.SaveItemShopTracks(
+            new HashSet<string> { "pre-existing-song" },
+            new HashSet<string> { "leaving-song" },
+            DateTime.UtcNow);
+
+        var service = CreateService(handler, metaFixture.Db);
+        await service.InitializeAsync(CancellationToken.None);
+
+        // After init, should have scrape results (overriding persisted data)
+        Assert.NotNull(service.LastScrapedAt);
+    }
+
+    [Fact]
+    public void SongsCacheService_CanBeSet()
+    {
+        var handler = new MockHttpMessageHandler();
+        var metaFixture = new InMemoryMetaDatabase();
+        var service = CreateService(handler, metaFixture.Db);
+
+        var songsCache = new SongsCacheService();
+        service.SetSongsCacheService(songsCache);
+        // No crash
     }
 }

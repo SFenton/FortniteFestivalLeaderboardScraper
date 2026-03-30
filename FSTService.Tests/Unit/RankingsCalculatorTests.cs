@@ -371,4 +371,83 @@ public sealed class RankingsCalculatorTests : IDisposable
         Assert.NotNull(comp.GuitarAdjustedSkill);
         Assert.Null(comp.BassAdjustedSkill);
     }
+
+    [Fact]
+    public async Task ComputeAllAsync_OverThresholdEntries_HandlesFallbacks()
+    {
+        // Set max score in PathDataStore so CHOpt threshold is known
+        _pathStore.UpdateMaxScores("song_ot", new SongMaxScores { MaxLeadScore = 100_000 }, "hash_ot");
+
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        // Score 110000 exceeds 105% of 100000 (threshold = 105000)
+        guitarDb.UpsertEntries("song_ot", [
+            MakeEntry("p_over", 110_000, rank: 1),
+            MakeEntry("p_normal", 90_000, rank: 2),
+        ]);
+        guitarDb.RecomputeAllRanks();
+
+        // Insert a valid historical score for the over-threshold player
+        _metaFixture.Db.InsertScoreChange("song_ot", "Solo_Guitar", "p_over",
+            null, 95_000, null, 2,
+            accuracy: 98, isFullCombo: true, stars: 6,
+            scoreAchievedAt: "2025-01-01T00:00:00Z");
+
+        // Run full computation
+        var festivalService = CreateFestivalServiceWithSongs(1);
+        await _sut.ComputeAllAsync(festivalService, CancellationToken.None);
+
+        // The over-threshold player should still have rankings
+        var ranking = guitarDb.GetAccountRanking("p_over");
+        Assert.NotNull(ranking);
+    }
+
+    [Fact]
+    public async Task ComputeAllAsync_NoChartedSongsForInstrument_SkipsRankings()
+    {
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song_nc", [MakeEntry("p1", 50000, rank: 1)]);
+        guitarDb.RecomputeAllRanks();
+
+        // Create a festival service with no songs that match Solo_Guitar
+        var svc = new FestivalService((IFestivalPersistence?)null);
+        // Empty — no charted songs for any instrument
+
+        await _sut.ComputeAllAsync(svc, CancellationToken.None);
+
+        // No rankings should be computed (but no crash)
+        var ranking = guitarDb.GetAccountRanking("p1");
+        Assert.Null(ranking); // No charted songs = no rankings
+    }
+
+    [Fact]
+    public void CompositeRankings_TieBreaker_SortsByName()
+    {
+        // Two players with identical composite ratings but different names
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song_tb", [
+            MakeEntry("alpha", 5000, rank: 1),
+            MakeEntry("beta", 5000, rank: 2),
+        ]);
+        guitarDb.RecomputeAllRanks();
+        guitarDb.ComputeSongStats();
+        guitarDb.ComputeAccountRankings(totalChartedSongs: 1);
+
+        var bassDb = _persistence.GetOrCreateInstrumentDb("Solo_Bass");
+        bassDb.UpsertEntries("song_tb", [
+            MakeEntry("alpha", 5000, rank: 1),
+            MakeEntry("beta", 5000, rank: 2),
+        ]);
+        bassDb.RecomputeAllRanks();
+        bassDb.ComputeSongStats();
+        bassDb.ComputeAccountRankings(totalChartedSongs: 1);
+
+        _sut.ComputeCompositeRankings(["Solo_Guitar", "Solo_Bass"]);
+
+        var c1 = _metaFixture.Db.GetCompositeRanking("alpha");
+        var c2 = _metaFixture.Db.GetCompositeRanking("beta");
+        Assert.NotNull(c1);
+        Assert.NotNull(c2);
+        // Both should have valid ranks, alpha before beta by name
+        Assert.True(c1.CompositeRank < c2.CompositeRank);
+    }
 }

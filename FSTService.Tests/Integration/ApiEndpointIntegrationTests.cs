@@ -1644,10 +1644,10 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
         var rivals = new List<UserRivalRow>
         {
-            new() { UserId = "seeded_acct2", RivalAccountId = "rival_a", InstrumentCombo = "Solo_Guitar",
+            new() { UserId = "seeded_acct2", RivalAccountId = "rival_a", InstrumentCombo = "01",
                      Direction = "above", RivalScore = 42.0, AvgSignedDelta = -3.5,
                      SharedSongCount = 100, AheadCount = 60, BehindCount = 40, ComputedAt = "2026-01-01T00:00:00Z" },
-            new() { UserId = "seeded_acct2", RivalAccountId = "rival_b", InstrumentCombo = "Solo_Guitar",
+            new() { UserId = "seeded_acct2", RivalAccountId = "rival_b", InstrumentCombo = "01",
                      Direction = "below", RivalScore = 30.0, AvgSignedDelta = 2.0,
                      SharedSongCount = 80, AheadCount = 30, BehindCount = 50, ComputedAt = "2026-01-01T00:00:00Z" },
         };
@@ -1661,7 +1661,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var response = await _client.GetAsync("/api/player/seeded_acct2/rivals/Solo_Guitar");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("Solo_Guitar", json.GetProperty("combo").GetString());
+        Assert.Equal("01", json.GetProperty("combo").GetString());
         Assert.Equal(1, json.GetProperty("above").GetArrayLength());
         Assert.Equal(1, json.GetProperty("below").GetArrayLength());
     }
@@ -2489,6 +2489,537 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     {
         var response = await _authedClient.GetAsync("/api/sync/nonexistent_device");
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Coverage: Rivals cache paths + suggestions + all + diagnostics
+    // ═══════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Rivals_Overview_CacheHit_ReturnsFromCache()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var rivals = new List<UserRivalRow>
+        {
+            new() { UserId = "cache_acct", RivalAccountId = "r1", InstrumentCombo = "01",
+                     Direction = "above", RivalScore = 10, AvgSignedDelta = -1,
+                     SharedSongCount = 5, AheadCount = 3, BehindCount = 2, ComputedAt = "2026-01-01T00:00:00Z" },
+        };
+        metaDb.ReplaceRivalsData("cache_acct", rivals, Array.Empty<RivalSongSampleRow>());
+
+        // First request populates cache
+        var r1 = await _client.GetAsync("/api/player/cache_acct/rivals");
+        Assert.Equal(HttpStatusCode.OK, r1.StatusCode);
+        var etag = r1.Headers.ETag?.Tag;
+        Assert.NotNull(etag);
+
+        // Second request hits cache
+        var r2 = await _client.GetAsync("/api/player/cache_acct/rivals");
+        Assert.Equal(HttpStatusCode.OK, r2.StatusCode);
+
+        // Third request with If-None-Match returns 304
+        var req = new HttpRequestMessage(HttpMethod.Get, "/api/player/cache_acct/rivals");
+        req.Headers.TryAddWithoutValidation("If-None-Match", etag);
+        var r3 = await _client.SendAsync(req);
+        Assert.Equal(HttpStatusCode.NotModified, r3.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rivals_Suggestions_NoData_ReturnsNotFound()
+    {
+        var response = await _client.GetAsync("/api/player/no_rivals_sug/rivals/suggestions");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rivals_Suggestions_WithData_ReturnsRivals()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var rivals = new List<UserRivalRow>
+        {
+            new() { UserId = "sug_acct", RivalAccountId = "sug_r1", InstrumentCombo = "01",
+                     Direction = "above", RivalScore = 50, AvgSignedDelta = -2,
+                     SharedSongCount = 10, AheadCount = 6, BehindCount = 4, ComputedAt = "2026-01-01T00:00:00Z" },
+            new() { UserId = "sug_acct", RivalAccountId = "sug_r2", InstrumentCombo = "01",
+                     Direction = "below", RivalScore = 30, AvgSignedDelta = 1,
+                     SharedSongCount = 8, AheadCount = 3, BehindCount = 5, ComputedAt = "2026-01-01T00:00:00Z" },
+        };
+        var samples = new List<RivalSongSampleRow>
+        {
+            new() { UserId = "sug_acct", RivalAccountId = "sug_r1", Instrument = "Solo_Guitar",
+                     SongId = "s1", UserRank = 5, RivalRank = 3, RankDelta = -2, UserScore = 9000, RivalScore = 9200 },
+        };
+        metaDb.ReplaceRivalsData("sug_acct", rivals, samples);
+
+        var response = await _client.GetAsync("/api/player/sug_acct/rivals/suggestions?combo=Solo_Guitar&limit=2");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.GetProperty("rivals").GetArrayLength() >= 1);
+    }
+
+    [Fact]
+    public async Task Rivals_Suggestions_WithoutCombo_QueriesAllCombos()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var rivals = new List<UserRivalRow>
+        {
+            new() { UserId = "sug_all", RivalAccountId = "sr1", InstrumentCombo = "01",
+                     Direction = "above", RivalScore = 25, AvgSignedDelta = -1,
+                     SharedSongCount = 5, AheadCount = 3, BehindCount = 2, ComputedAt = "2026-01-01T00:00:00Z" },
+        };
+        metaDb.ReplaceRivalsData("sug_all", rivals, Array.Empty<RivalSongSampleRow>());
+
+        var response = await _client.GetAsync("/api/player/sug_all/rivals/suggestions");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rivals_Suggestions_CacheHit_Returns304()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var rivals = new List<UserRivalRow>
+        {
+            new() { UserId = "sug_cache", RivalAccountId = "sc1", InstrumentCombo = "01",
+                     Direction = "below", RivalScore = 20, AvgSignedDelta = 1,
+                     SharedSongCount = 5, AheadCount = 2, BehindCount = 3, ComputedAt = "2026-01-01T00:00:00Z" },
+        };
+        metaDb.ReplaceRivalsData("sug_cache", rivals, Array.Empty<RivalSongSampleRow>());
+
+        var r1 = await _client.GetAsync("/api/player/sug_cache/rivals/suggestions");
+        Assert.Equal(HttpStatusCode.OK, r1.StatusCode);
+        var etag = r1.Headers.ETag?.Tag;
+        Assert.NotNull(etag);
+
+        var req = new HttpRequestMessage(HttpMethod.Get, "/api/player/sug_cache/rivals/suggestions");
+        req.Headers.TryAddWithoutValidation("If-None-Match", etag);
+        var r2 = await _client.SendAsync(req);
+        Assert.Equal(HttpStatusCode.NotModified, r2.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rivals_All_NoData_ReturnsNotFound()
+    {
+        var response = await _client.GetAsync("/api/player/no_all_acct/rivals/all");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rivals_All_WithData_ReturnsCombos()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var rivals = new List<UserRivalRow>
+        {
+            new() { UserId = "all_acct", RivalAccountId = "ar1", InstrumentCombo = "01",
+                     Direction = "above", RivalScore = 40, AvgSignedDelta = -2,
+                     SharedSongCount = 10, AheadCount = 6, BehindCount = 4, ComputedAt = "2026-01-01T00:00:00Z" },
+            new() { UserId = "all_acct", RivalAccountId = "ar2", InstrumentCombo = "02",
+                     Direction = "below", RivalScore = 20, AvgSignedDelta = 1,
+                     SharedSongCount = 7, AheadCount = 3, BehindCount = 4, ComputedAt = "2026-01-01T00:00:00Z" },
+        };
+        metaDb.ReplaceRivalsData("all_acct", rivals, Array.Empty<RivalSongSampleRow>());
+
+        var response = await _client.GetAsync("/api/player/all_acct/rivals/all");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var combos = json.GetProperty("combos");
+        Assert.Equal(2, combos.GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Rivals_All_CacheHit_Returns304()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var rivals = new List<UserRivalRow>
+        {
+            new() { UserId = "allc_acct", RivalAccountId = "ac1", InstrumentCombo = "01",
+                     Direction = "above", RivalScore = 35, AvgSignedDelta = -1,
+                     SharedSongCount = 5, AheadCount = 3, BehindCount = 2, ComputedAt = "2026-01-01T00:00:00Z" },
+        };
+        metaDb.ReplaceRivalsData("allc_acct", rivals, Array.Empty<RivalSongSampleRow>());
+
+        var r1 = await _client.GetAsync("/api/player/allc_acct/rivals/all");
+        Assert.Equal(HttpStatusCode.OK, r1.StatusCode);
+        var etag = r1.Headers.ETag?.Tag;
+        Assert.NotNull(etag);
+
+        var req = new HttpRequestMessage(HttpMethod.Get, "/api/player/allc_acct/rivals/all");
+        req.Headers.TryAddWithoutValidation("If-None-Match", etag);
+        var r2 = await _client.SendAsync(req);
+        Assert.Equal(HttpStatusCode.NotModified, r2.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rivals_Diagnostics_RequiresAuth()
+    {
+        var response = await _client.GetAsync("/api/player/diag_acct/rivals/diagnostics");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rivals_Diagnostics_WithAuth_ReturnsOk()
+    {
+        // Seed rivals data so the diagnostics endpoint has status + combos to return
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.EnsureRivalsStatus("diag_acct");
+        metaDb.StartRivals("diag_acct", 1);
+        metaDb.CompleteRivals("diag_acct", 1, 2);
+        var rivals = new List<UserRivalRow>
+        {
+            new() { UserId = "diag_acct", RivalAccountId = "dr1", InstrumentCombo = "01",
+                     Direction = "above", RivalScore = 20, AvgSignedDelta = -1,
+                     SharedSongCount = 5, AheadCount = 3, BehindCount = 2, ComputedAt = "2026-01-01T00:00:00Z" },
+        };
+        metaDb.ReplaceRivalsData("diag_acct", rivals, Array.Empty<RivalSongSampleRow>());
+
+        var response = await _authedClient.GetAsync("/api/player/diag_acct/rivals/diagnostics");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("diag_acct", json.GetProperty("accountId").GetString());
+        Assert.NotNull(json.GetProperty("rivalsStatus"));
+        Assert.True(json.GetProperty("combosStored").GetArrayLength() > 0);
+        Assert.True(json.GetProperty("instruments").GetArrayLength() > 0);
+    }
+
+    [Fact]
+    public async Task Rivals_ComboList_CacheHit_Returns304()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var rivals = new List<UserRivalRow>
+        {
+            new() { UserId = "combo_cache", RivalAccountId = "cc1", InstrumentCombo = "01",
+                     Direction = "above", RivalScore = 15, AvgSignedDelta = -1,
+                     SharedSongCount = 5, AheadCount = 3, BehindCount = 2, ComputedAt = "2026-01-01T00:00:00Z" },
+        };
+        metaDb.ReplaceRivalsData("combo_cache", rivals, Array.Empty<RivalSongSampleRow>());
+
+        var r1 = await _client.GetAsync("/api/player/combo_cache/rivals/Solo_Guitar");
+        Assert.Equal(HttpStatusCode.OK, r1.StatusCode);
+        var etag = r1.Headers.ETag?.Tag;
+        Assert.NotNull(etag);
+
+        var req = new HttpRequestMessage(HttpMethod.Get, "/api/player/combo_cache/rivals/Solo_Guitar");
+        req.Headers.TryAddWithoutValidation("If-None-Match", etag);
+        var r2 = await _client.SendAsync(req);
+        Assert.Equal(HttpStatusCode.NotModified, r2.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rivals_ComboList_InvalidCombo_ReturnsBadRequest()
+    {
+        var response = await _client.GetAsync("/api/player/acct1/rivals/InvalidInstrument");
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rivals_Detail_CacheHit_Returns304()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var rivals = new List<UserRivalRow>
+        {
+            new() { UserId = "dtl_cache", RivalAccountId = "dc1", InstrumentCombo = "01",
+                     Direction = "above", RivalScore = 15, AvgSignedDelta = -1,
+                     SharedSongCount = 5, AheadCount = 3, BehindCount = 2, ComputedAt = "2026-01-01T00:00:00Z" },
+        };
+        var samples = new List<RivalSongSampleRow>
+        {
+            new() { UserId = "dtl_cache", RivalAccountId = "dc1", Instrument = "Solo_Guitar",
+                     SongId = "s1", UserRank = 5, RivalRank = 3, RankDelta = -2, UserScore = 9000, RivalScore = 9100 },
+        };
+        metaDb.ReplaceRivalsData("dtl_cache", rivals, samples);
+
+        var r1 = await _client.GetAsync("/api/player/dtl_cache/rivals/Solo_Guitar/dc1");
+        Assert.Equal(HttpStatusCode.OK, r1.StatusCode);
+        var etag = r1.Headers.ETag?.Tag;
+        Assert.NotNull(etag);
+
+        var req = new HttpRequestMessage(HttpMethod.Get, "/api/player/dtl_cache/rivals/Solo_Guitar/dc1");
+        req.Headers.TryAddWithoutValidation("If-None-Match", etag);
+        var r2 = await _client.SendAsync(req);
+        Assert.Equal(HttpStatusCode.NotModified, r2.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rivals_SongsPerInstrument_CacheHit_Returns304()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var rivals = new List<UserRivalRow>
+        {
+            new() { UserId = "song_cache", RivalAccountId = "sci1", InstrumentCombo = "01",
+                     Direction = "above", RivalScore = 15, AvgSignedDelta = -1,
+                     SharedSongCount = 5, AheadCount = 3, BehindCount = 2, ComputedAt = "2026-01-01T00:00:00Z" },
+        };
+        var samples = new List<RivalSongSampleRow>
+        {
+            new() { UserId = "song_cache", RivalAccountId = "sci1", Instrument = "Solo_Guitar",
+                     SongId = "s1", UserRank = 5, RivalRank = 3, RankDelta = -2, UserScore = 9000, RivalScore = 9100 },
+        };
+        metaDb.ReplaceRivalsData("song_cache", rivals, samples);
+
+        var r1 = await _client.GetAsync("/api/player/song_cache/rivals/sci1/songs/Solo_Guitar");
+        Assert.Equal(HttpStatusCode.OK, r1.StatusCode);
+        var etag = r1.Headers.ETag?.Tag;
+        Assert.NotNull(etag);
+
+        var req = new HttpRequestMessage(HttpMethod.Get, "/api/player/song_cache/rivals/sci1/songs/Solo_Guitar");
+        req.Headers.TryAddWithoutValidation("If-None-Match", etag);
+        var r2 = await _client.SendAsync(req);
+        Assert.Equal(HttpStatusCode.NotModified, r2.StatusCode);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Coverage: Rankings neighborhood + overview + combo single
+    // ═══════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Rankings_Neighborhood_ReturnsData_WhenSeeded()
+    {
+        var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        // Seed enough ranked players for a neighborhood
+        for (int i = 1; i <= 10; i++)
+        {
+            db.UpsertEntries("song_nb", [
+                new LeaderboardEntry { AccountId = $"nb_p{i}", Score = 100000 - (i * 1000), Accuracy = 99 - i, Stars = 6 }
+            ]);
+        }
+        db.RecomputeAllRanks();
+        db.ComputeSongStats();
+        db.ComputeAccountRankings(totalChartedSongs: 1);
+
+        var response = await _client.GetAsync("/api/rankings/Solo_Guitar/nb_p5/neighborhood?radius=2");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Solo_Guitar", json.GetProperty("instrument").GetString());
+        Assert.True(json.GetProperty("above").GetArrayLength() > 0);
+        Assert.True(json.GetProperty("below").GetArrayLength() > 0);
+        Assert.NotNull(json.GetProperty("self"));
+    }
+
+    [Fact]
+    public async Task Rankings_Neighborhood_NotFound_WhenUnknown()
+    {
+        var response = await _client.GetAsync("/api/rankings/Solo_Guitar/unknown_nb_acct/neighborhood");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rankings_Neighborhood_CacheHit_Returns304()
+    {
+        var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Bass");
+        db.UpsertEntries("song_nbc", [ new LeaderboardEntry { AccountId = "nbc_p1", Score = 50000, Accuracy = 90, Stars = 5 } ]);
+        db.RecomputeAllRanks();
+        db.ComputeSongStats();
+        db.ComputeAccountRankings(totalChartedSongs: 1);
+
+        var r1 = await _client.GetAsync("/api/rankings/Solo_Bass/nbc_p1/neighborhood");
+        Assert.Equal(HttpStatusCode.OK, r1.StatusCode);
+        var etag = r1.Headers.ETag?.Tag;
+        Assert.NotNull(etag);
+
+        var req = new HttpRequestMessage(HttpMethod.Get, "/api/rankings/Solo_Bass/nbc_p1/neighborhood");
+        req.Headers.TryAddWithoutValidation("If-None-Match", etag);
+        var r2 = await _client.SendAsync(req);
+        Assert.Equal(HttpStatusCode.NotModified, r2.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rankings_CompositeNeighborhood_ReturnsData_WhenSeeded()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var rankings = new List<CompositeRankingDto>();
+        for (int i = 1; i <= 5; i++)
+        {
+            rankings.Add(new CompositeRankingDto
+            {
+                AccountId = $"comp_nb_{i}",
+                InstrumentsPlayed = 2,
+                TotalSongsPlayed = 50,
+                CompositeRating = 100 - i * 10,
+                CompositeRank = i,
+            });
+        }
+        metaDb.ReplaceCompositeRankings(rankings);
+
+        var response = await _client.GetAsync("/api/rankings/composite/comp_nb_3/neighborhood?radius=2");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.TryGetProperty("self", out _));
+        Assert.True(json.GetProperty("above").GetArrayLength() > 0);
+        Assert.True(json.GetProperty("below").GetArrayLength() > 0);
+
+        // Clean up composite rankings to avoid polluting other tests
+        metaDb.ReplaceCompositeRankings([]);
+    }
+
+    [Fact]
+    public async Task Rankings_CompositeNeighborhood_NotFound_WhenUnknown()
+    {
+        var response = await _client.GetAsync("/api/rankings/composite/unknown_comp/neighborhood");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Rankings_CompositeNeighborhood_CacheHit_Returns304()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        metaDb.ReplaceCompositeRankings([new CompositeRankingDto
+        {
+            AccountId = "compnbc", InstrumentsPlayed = 1, TotalSongsPlayed = 10,
+            CompositeRating = 50, CompositeRank = 1,
+        }]);
+
+        var r1 = await _client.GetAsync("/api/rankings/composite/compnbc/neighborhood");
+        Assert.Equal(HttpStatusCode.OK, r1.StatusCode);
+        var etag = r1.Headers.ETag?.Tag;
+        Assert.NotNull(etag);
+
+        var req = new HttpRequestMessage(HttpMethod.Get, "/api/rankings/composite/compnbc/neighborhood");
+        req.Headers.TryAddWithoutValidation("If-None-Match", etag);
+        var r2 = await _client.SendAsync(req);
+        Assert.Equal(HttpStatusCode.NotModified, r2.StatusCode);
+
+        // Clean up composite rankings
+        metaDb.ReplaceCompositeRankings([]);
+    }
+
+    [Fact]
+    public async Task Rankings_Overview_ReturnsData()
+    {
+        var response = await _client.GetAsync("/api/rankings/overview?rankBy=adjusted&pageSize=5");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("adjusted", json.GetProperty("rankBy").GetString());
+        Assert.Equal(5, json.GetProperty("pageSize").GetInt32());
+        Assert.True(json.TryGetProperty("instruments", out _));
+    }
+
+    [Fact]
+    public async Task Rankings_ComboSingle_WithSeeded_ReturnsRanking()
+    {
+        var metaDb = _factory.Services.GetRequiredService<MetaDatabase>();
+        var comboId = ComboIds.FromInstruments(["Solo_Guitar", "Solo_Bass"]);
+        metaDb.ReplaceComboLeaderboard(comboId, [
+            ("combo_user1", 85.0, 80.0, 0.5, 500000, 90.0, 50, 25),
+            ("combo_user2", 75.0, 70.0, 0.3, 400000, 80.0, 40, 15),
+        ], 2);
+
+        var response = await _client.GetAsync($"/api/rankings/combo/combo_user1?instruments=Solo_Guitar%2BSolo_Bass");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(comboId, json.GetProperty("comboId").GetString());
+        Assert.Equal(2, json.GetProperty("totalAccounts").GetInt32());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Coverage: Leaderboard cache hit path
+    // ═══════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Leaderboard_CacheHit_Returns304()
+    {
+        var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        db.UpsertEntries("lb_cache_song", [ new LeaderboardEntry { AccountId = "lbc_p1", Score = 80000, Accuracy = 95, Stars = 6 } ]);
+
+        var r1 = await _client.GetAsync("/api/leaderboard/lb_cache_song?top=5");
+        Assert.Equal(HttpStatusCode.OK, r1.StatusCode);
+        var etag = r1.Headers.ETag?.Tag;
+        Assert.NotNull(etag);
+
+        var req = new HttpRequestMessage(HttpMethod.Get, "/api/leaderboard/lb_cache_song?top=5");
+        req.Headers.TryAddWithoutValidation("If-None-Match", etag);
+        var r2 = await _client.SendAsync(req);
+        Assert.Equal(HttpStatusCode.NotModified, r2.StatusCode);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Coverage: Player profile cache hit path
+    // ═══════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Player_Profile_CacheHit_Returns304()
+    {
+        var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        db.UpsertEntries("pl_cache_song", [ new LeaderboardEntry { AccountId = "plc_acct", Score = 70000, Accuracy = 95, Stars = 5 } ]);
+
+        var r1 = await _client.GetAsync("/api/player/plc_acct");
+        Assert.Equal(HttpStatusCode.OK, r1.StatusCode);
+        var etag = r1.Headers.ETag?.Tag;
+        Assert.NotNull(etag);
+
+        var req = new HttpRequestMessage(HttpMethod.Get, "/api/player/plc_acct");
+        req.Headers.TryAddWithoutValidation("If-None-Match", etag);
+        var r2 = await _client.SendAsync(req);
+        Assert.Equal(HttpStatusCode.NotModified, r2.StatusCode);
+    }
+
+    [Fact]
+    public async Task Player_Profile_WithInstrumentFilter_ReturnsFiltered()
+    {
+        var persistence = _factory.Services.GetRequiredService<GlobalLeaderboardPersistence>();
+        var guitarDb = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        var bassDb = persistence.GetOrCreateInstrumentDb("Solo_Bass");
+        guitarDb.UpsertEntries("filter_song", [ new LeaderboardEntry { AccountId = "filter_acct", Score = 80000, Accuracy = 95, Stars = 6 } ]);
+        bassDb.UpsertEntries("filter_song", [ new LeaderboardEntry { AccountId = "filter_acct", Score = 70000, Accuracy = 90, Stars = 5 } ]);
+
+        var response = await _client.GetAsync("/api/player/filter_acct?instruments=Solo_Guitar");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var scores = json.GetProperty("scores");
+        foreach (var score in scores.EnumerateArray())
+            Assert.Equal("Solo_Guitar", score.GetProperty("instrument").GetString());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Coverage: Song endpoint cache hit path
+    // ═══════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Songs_CacheHit_Returns304()
+    {
+        var r1 = await _client.GetAsync("/api/songs");
+        Assert.Equal(HttpStatusCode.OK, r1.StatusCode);
+        var etag = r1.Headers.ETag?.Tag;
+        Assert.NotNull(etag);
+
+        // Second request should use cache
+        var r2 = await _client.GetAsync("/api/songs");
+        Assert.Equal(HttpStatusCode.OK, r2.StatusCode);
+
+        // Request with matching ETag returns 304
+        var req = new HttpRequestMessage(HttpMethod.Get, "/api/songs");
+        req.Headers.TryAddWithoutValidation("If-None-Match", etag);
+        var r3 = await _client.SendAsync(req);
+        Assert.Equal(HttpStatusCode.NotModified, r3.StatusCode);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Coverage: Admin path regeneration + shop scrape trigger
+    // ═══════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Admin_RegeneratePaths_WithAuth_ReturnsExpected()
+    {
+        var response = await _authedClient.PostAsync("/api/admin/regenerate-paths", null);
+        // Depending on state: 404 (no songs with MIDI), 202 (accepted), 400 (disabled)
+        Assert.True(
+            response.StatusCode is HttpStatusCode.NotFound
+                or HttpStatusCode.Accepted
+                or HttpStatusCode.BadRequest,
+            $"Expected 400, 404, or 202 but got {(int)response.StatusCode}");
+    }
+
+    [Fact]
+    public async Task Admin_ShopRefresh_WithAuth_ReturnsResult()
+    {
+        var response = await _authedClient.PostAsync("/api/admin/shop/refresh", null);
+        // ShopService returns OK (mock handler returns 200 OK with empty body — scrape may fail gracefully)
+        Assert.True(
+            response.StatusCode == HttpStatusCode.OK ||
+            (int)response.StatusCode == 502);
     }
 
     // ═══════════════════════════════════════════════════════════════

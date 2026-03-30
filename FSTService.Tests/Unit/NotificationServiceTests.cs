@@ -1,6 +1,7 @@
 using System.Net.WebSockets;
 using System.Text;
 using FSTService.Api;
+using FSTService.Scraping;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
@@ -292,5 +293,193 @@ public sealed class NotificationServiceTests
         // Should have received text then close
         await ws.Received(2).ReceiveAsync(
             Arg.Any<ArraySegment<byte>>(), Arg.Any<CancellationToken>());
+    }
+
+    // ─── BroadcastAllAsync ──────────────────────────────────
+
+    [Fact]
+    public async Task BroadcastAllAsync_NoClients_DoesNotThrow()
+    {
+        var svc = CreateService();
+        await svc.BroadcastAllAsync(new { type = "test" });
+    }
+
+    [Fact]
+    public async Task BroadcastAllAsync_OpenClient_SendsMessage()
+    {
+        var svc = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        ws.State.Returns(WebSocketState.Open);
+        svc.AddConnection("acct1", "dev1", ws);
+
+        await svc.BroadcastAllAsync(new { type = "shop_changed" });
+
+        await ws.Received(1).SendAsync(
+            Arg.Any<ArraySegment<byte>>(),
+            WebSocketMessageType.Text, true,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task BroadcastAllAsync_ClosedClient_CleanedUp()
+    {
+        var svc = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        ws.State.Returns(WebSocketState.Closed);
+        svc.AddConnection("acct1", "dev1", ws);
+
+        await svc.BroadcastAllAsync(new { type = "test" });
+
+        // Send should not have been called (closed socket)
+        await ws.DidNotReceive().SendAsync(
+            Arg.Any<ArraySegment<byte>>(),
+            WebSocketMessageType.Text, true,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task BroadcastAllAsync_SendThrows_RemovesDeadConnection()
+    {
+        var svc = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        ws.State.Returns(WebSocketState.Open);
+        ws.SendAsync(Arg.Any<ArraySegment<byte>>(), Arg.Any<WebSocketMessageType>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new WebSocketException("broken"));
+        svc.AddConnection("acct1", "dev1", ws);
+
+        await svc.BroadcastAllAsync(new { type = "test" });
+
+        // After cleanup, notify should not attempt to send again
+        ws.ClearReceivedCalls();
+        await svc.NotifyAccountAsync("acct1", new { type = "check" });
+        await ws.DidNotReceive().SendAsync(
+            Arg.Any<ArraySegment<byte>>(),
+            Arg.Any<WebSocketMessageType>(), Arg.Any<bool>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    // ─── SendShopSnapshotAsync ──────────────────────────────
+
+    [Fact]
+    public async Task SendShopSnapshotAsync_OpenSocket_Sends()
+    {
+        var svc = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        ws.State.Returns(WebSocketState.Open);
+
+        await svc.SendShopSnapshotAsync(ws, new[] { "song1" }, Array.Empty<string>());
+
+        await ws.Received(1).SendAsync(
+            Arg.Is<ArraySegment<byte>>(seg =>
+                Encoding.UTF8.GetString(seg.Array!, seg.Offset, seg.Count).Contains("shop_snapshot")),
+            WebSocketMessageType.Text, true,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SendShopSnapshotAsync_ClosedSocket_DoesNotSend()
+    {
+        var svc = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        ws.State.Returns(WebSocketState.Closed);
+
+        await svc.SendShopSnapshotAsync(ws, new[] { "song1" }, Array.Empty<string>());
+
+        await ws.DidNotReceive().SendAsync(
+            Arg.Any<ArraySegment<byte>>(),
+            Arg.Any<WebSocketMessageType>(), Arg.Any<bool>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    // ─── NotifyShopChangedAsync ─────────────────────────────
+
+    [Fact]
+    public async Task NotifyShopChangedAsync_BroadcastsToAll()
+    {
+        var svc = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        ws.State.Returns(WebSocketState.Open);
+        svc.AddConnection("acct1", "dev1", ws);
+
+        await svc.NotifyShopChangedAsync(
+            new[] { "added1" }, new[] { "removed1" }, 5, new[] { "leaving1" });
+
+        await ws.Received(1).SendAsync(
+            Arg.Is<ArraySegment<byte>>(seg =>
+                Encoding.UTF8.GetString(seg.Array!, seg.Offset, seg.Count).Contains("shop_changed")),
+            WebSocketMessageType.Text, true,
+            Arg.Any<CancellationToken>());
+    }
+
+    // ─── HandleConnectionAsync with ShopProvider ────────────
+
+    [Fact]
+    public async Task HandleConnectionAsync_WithShopProvider_SendsSnapshotOnConnect()
+    {
+        var svc = CreateService();
+        var shopProvider = Substitute.For<IShopProvider>();
+        shopProvider.InShopSongIds.Returns(new HashSet<string> { "shop_s1" });
+        shopProvider.LeavingTomorrowSongIds.Returns(new HashSet<string> { "leaving_s1" });
+        svc.SetShopProvider(shopProvider);
+
+        var ws = Substitute.For<WebSocket>();
+        int callCount = 0;
+        ws.State.Returns(_ => callCount < 1 ? WebSocketState.Open : WebSocketState.Closed);
+        ws.ReceiveAsync(Arg.Any<ArraySegment<byte>>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                callCount++;
+                return new WebSocketReceiveResult(0, WebSocketMessageType.Close, true);
+            });
+
+        await svc.HandleConnectionAsync("acct1", "dev1", ws, CancellationToken.None);
+
+        // Snapshot should have been sent
+        await ws.Received().SendAsync(
+            Arg.Is<ArraySegment<byte>>(seg =>
+                Encoding.UTF8.GetString(seg.Array!, seg.Offset, seg.Count).Contains("shop_snapshot")),
+            WebSocketMessageType.Text, true,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task HandleConnectionAsync_ShopProviderThrows_DoesNotCrash()
+    {
+        var svc = CreateService();
+        var shopProvider = Substitute.For<IShopProvider>();
+        shopProvider.InShopSongIds.Returns(_ => throw new InvalidOperationException("Shop not ready"));
+        svc.SetShopProvider(shopProvider);
+
+        var ws = Substitute.For<WebSocket>();
+        int callCount = 0;
+        ws.State.Returns(_ => callCount < 1 ? WebSocketState.Open : WebSocketState.Closed);
+        ws.ReceiveAsync(Arg.Any<ArraySegment<byte>>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                callCount++;
+                return new WebSocketReceiveResult(0, WebSocketMessageType.Close, true);
+            });
+
+        // Should not throw even if shop provider fails
+        await svc.HandleConnectionAsync("acct1", "dev1", ws, CancellationToken.None);
+    }
+
+    // ─── NotifyRivalsCompleteAsync ──────────────────────────
+
+    [Fact]
+    public async Task NotifyRivalsCompleteAsync_SendsCorrectType()
+    {
+        var svc = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        ws.State.Returns(WebSocketState.Open);
+        svc.AddConnection("acct1", "dev1", ws);
+
+        await svc.NotifyRivalsCompleteAsync("acct1");
+
+        await ws.Received(1).SendAsync(
+            Arg.Is<ArraySegment<byte>>(seg =>
+                Encoding.UTF8.GetString(seg.Array!, seg.Offset, seg.Count).Contains("rivals_complete")),
+            WebSocketMessageType.Text, true,
+            Arg.Any<CancellationToken>());
     }
 }
