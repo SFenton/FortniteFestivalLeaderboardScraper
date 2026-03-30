@@ -131,6 +131,16 @@ export function PaginatedLeaderboard<T>({
     [entries.length, scrollViewHeight, ROW_SLOT],
   );
 
+  // Shared retirement timer — cancellable from both the loading effect and the
+  // page-change effect so a leftover timer from a previous page can't cut short
+  // the current page's stagger.
+  const retireTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const scheduleRetire = () => {
+    clearTimeout(retireTimerRef.current);
+    const staggerWindow = maxVisibleRows * STAGGER_INTERVAL + FADE_DURATION + 100;
+    retireTimerRef.current = setTimeout(() => setAnimMode('cached'), staggerWindow);
+  };
+
   // Spinner → SpinnerOut → ContentIn transition + animation retirement.
   useEffect(() => {
     if (loading || error) {
@@ -144,16 +154,13 @@ export function PaginatedLeaderboard<T>({
 
     // Fade out spinner, then show content.
     setLoadPhase(LoadPhase.SpinnerOut);
-    let retireId: ReturnType<typeof setTimeout>;
     const id = setTimeout(() => {
       staggerRushRef?.current?.();
       setAnimMode(prev => prev === 'cached' ? 'paginate' : prev);
       setLoadPhase(LoadPhase.ContentIn);
-      // Retire stagger animations after they've had time to finish.
-      const staggerWindow = maxVisibleRows * STAGGER_INTERVAL + FADE_DURATION + 100;
-      retireId = setTimeout(() => setAnimMode('cached'), staggerWindow);
+      scheduleRetire();
     }, SPINNER_FADE_MS);
-    return () => { clearTimeout(id); clearTimeout(retireId); };
+    return () => { clearTimeout(id); clearTimeout(retireTimerRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- animation sequence
   }, [loading, error]);
 
@@ -172,7 +179,9 @@ export function PaginatedLeaderboard<T>({
     if (page !== prevPageRef.current) {
       prevPageRef.current = page;
       setAnimMode('paginate');
+      scheduleRetire();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- scheduleRetire is stable
   }, [page]);
 
   // ── Scroll margin management ──

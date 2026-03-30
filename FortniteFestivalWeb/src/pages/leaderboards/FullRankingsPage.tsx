@@ -93,6 +93,13 @@ export default function FullRankingsPage() {
   const { data, isFetching, error } = useQuery({
     queryKey: queryKeys.rankings(instrument, metric, page, PAGE_SIZE),
     queryFn: () => api.getRankings(instrument, metric, page, PAGE_SIZE),
+    // Keep previous page data visible during pagination, but NOT across
+    // instrument/metric changes (those should trigger a full stagger cycle).
+    placeholderData: (prev, prevQuery) => {
+      if (!prev || !prevQuery) return undefined;
+      const [, prevInst, { rankBy: prevRankBy }] = prevQuery.queryKey;
+      return prevInst === instrument && prevRankBy === metric ? prev : undefined;
+    },
   });
 
   const { data: playerRanking } = useQuery({
@@ -261,6 +268,7 @@ export default function FullRankingsPage() {
         isMobile={isMobile}
         hasFab={hasFab}
         staggerRushRef={staggerRushRef}
+        footerAnimKey={`${instrument}:${metric}`}
       />
     </Page>
   );
