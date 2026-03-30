@@ -112,6 +112,15 @@ public sealed class ScraperWorker : BackgroundService
         _log.LogInformation("Song catalog loaded. {SongCount} songs available for API.",
             _festivalService.Songs.Count);
 
+        // Pre-warm the rankings cache for registered users so that the first
+        // API requests after startup hit the in-memory cache.
+        if (_persistence.GetInstrumentKeys().Count > 0)
+        {
+            var registeredIds = _persistence.Meta.GetRegisteredAccountIds();
+            if (registeredIds.Count > 0)
+                _persistence.PreWarmRankingsCache(registeredIds);
+        }
+
         // --api-only mode: skip all background work, let the API serve requests
         if (opts.ApiOnly)
         {

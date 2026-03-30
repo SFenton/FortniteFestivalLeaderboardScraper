@@ -28,7 +28,13 @@ public sealed class InstrumentDatabase : IDisposable
     /// Key: "accountId\0songId", Value: (result, expiry).</summary>
     private readonly ConcurrentDictionary<string, (Dictionary<string, int> Result, DateTime Expiry)>
         _rankingsCache = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly TimeSpan RankingsCacheTtl = TimeSpan.FromSeconds(15);
+
+    /// <summary>Short-lived cache for GetPlayerRankingsFiltered results (expensive CTE + temp table query).
+    /// Key: "accountId\0songId\0thresholdHash", Value: (result, expiry).</summary>
+    private readonly ConcurrentDictionary<string, (Dictionary<string, int> Result, DateTime Expiry)>
+        _filteredRankingsCache = new(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly TimeSpan RankingsCacheTtl = TimeSpan.FromMinutes(5);
 
     public string Instrument => _instrument;
 
@@ -319,7 +325,6 @@ public sealed class InstrumentDatabase : IDisposable
         }
 
         tx.Commit();
-        _rankingsCache.Clear();
         return affected;
         } // lock
     }
@@ -675,6 +680,7 @@ public sealed class InstrumentDatabase : IDisposable
 
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = 30;
         var songFilter = songId is not null ? "AND le.SongId = @songId" : "";
         cmd.CommandText = $@"
             WITH player_songs AS (
@@ -719,6 +725,12 @@ public sealed class InstrumentDatabase : IDisposable
     public Dictionary<string, int> GetPlayerRankingsFiltered(string accountId,
         Dictionary<string, int> maxScores, string? songId = null)
     {
+        // Build a stable cache key from account + song + threshold hash
+        var thresholdHash = ComputeThresholdHash(maxScores);
+        var cacheKey = $"{accountId}\0{songId ?? ""}\0{thresholdHash}";
+        if (_filteredRankingsCache.TryGetValue(cacheKey, out var cached) && cached.Expiry > DateTime.UtcNow)
+            return cached.Result;
+
         using var conn = OpenConnection();
         var songFilter = songId is not null ? "AND le.SongId = @songId" : "";
 
@@ -745,6 +757,7 @@ public sealed class InstrumentDatabase : IDisposable
 
         // Now run the filtered ranking query
         using var rankCmd = conn.CreateCommand();
+        rankCmd.CommandTimeout = 30;
         rankCmd.CommandText = $@"
             WITH player_songs AS (
                 SELECT SongId FROM LeaderboardEntries
@@ -779,7 +792,22 @@ public sealed class InstrumentDatabase : IDisposable
         cleanCmd.CommandText = "DELETE FROM _maxThresholds;";
         cleanCmd.ExecuteNonQuery();
 
+        _filteredRankingsCache[cacheKey] = (result, DateTime.UtcNow + RankingsCacheTtl);
         return result;
+    }
+
+    /// <summary>Compute a stable hash string from a maxScores dictionary for cache keying.</summary>
+    private static string ComputeThresholdHash(Dictionary<string, int> maxScores)
+    {
+        if (maxScores.Count == 0) return "";
+        // Sort by key for stability, then hash the concatenated "key=value" pairs
+        var hash = new HashCode();
+        foreach (var kv in maxScores.OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            hash.Add(kv.Key, StringComparer.OrdinalIgnoreCase);
+            hash.Add(kv.Value);
+        }
+        return hash.ToHashCode().ToString();
     }
 
     /// <summary>
@@ -1795,7 +1823,7 @@ public sealed class InstrumentDatabase : IDisposable
         {
             using var conn = OpenConnection();
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+            cmd.CommandText = "PRAGMA wal_checkpoint(PASSIVE);";
             cmd.ExecuteNonQuery();
         }
         catch (Exception ex)

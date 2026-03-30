@@ -7,6 +7,7 @@ using FSTService.Auth;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Options;
 
@@ -276,35 +277,61 @@ var isTesting = builder.Environment.IsEnvironment("Testing");
 builder.Services.AddRateLimiter(opts =>
 {
     opts.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-
-    opts.AddFixedWindowLimiter("public", window =>
+    opts.OnRejected = async (context, _) =>
     {
-        window.PermitLimit = isTesting ? 100_000 : 300;
-        window.Window = TimeSpan.FromMinutes(1);
-        window.QueueLimit = 0;
-    });
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+        {
+            context.HttpContext.Response.Headers.RetryAfter =
+                ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString();
+        }
+        else
+        {
+            // Default to 1 second for per-second windows
+            context.HttpContext.Response.Headers.RetryAfter = "1";
+        }
+        await Task.CompletedTask;
+    };
 
-    opts.AddFixedWindowLimiter("auth", window =>
-    {
-        window.PermitLimit = isTesting ? 100_000 : 10;
-        window.Window = TimeSpan.FromMinutes(1);
-        window.QueueLimit = 0;
-    });
+    static string GetClientIp(HttpContext ctx)
+        => ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
-    opts.AddFixedWindowLimiter("protected", window =>
-    {
-        window.PermitLimit = isTesting ? 100_000 : 30;
-        window.Window = TimeSpan.FromMinutes(1);
-        window.QueueLimit = 0;
-    });
+    opts.AddPolicy("public", context =>
+        isTesting
+            ? RateLimitPartition.GetNoLimiter("test")
+            : RateLimitPartition.GetFixedWindowLimiter(GetClientIp(context), _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 100,
+                Window = TimeSpan.FromSeconds(1),
+                QueueLimit = 0,
+            }));
+
+    opts.AddPolicy("auth", context =>
+        isTesting
+            ? RateLimitPartition.GetNoLimiter("test")
+            : RateLimitPartition.GetFixedWindowLimiter(GetClientIp(context), _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 100,
+                Window = TimeSpan.FromSeconds(1),
+                QueueLimit = 0,
+            }));
+
+    opts.AddPolicy("protected", context =>
+        isTesting
+            ? RateLimitPartition.GetNoLimiter("test")
+            : RateLimitPartition.GetFixedWindowLimiter(GetClientIp(context), _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 100,
+                Window = TimeSpan.FromSeconds(1),
+                QueueLimit = 0,
+            }));
 
     opts.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
         isTesting
             ? RateLimitPartition.GetNoLimiter("global")
-            : RateLimitPartition.GetFixedWindowLimiter("global", _ => new FixedWindowRateLimiterOptions
+            : RateLimitPartition.GetFixedWindowLimiter(GetClientIp(context), _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 600,
-                Window = TimeSpan.FromMinutes(1),
+                PermitLimit = 100,
+                Window = TimeSpan.FromSeconds(1),
                 QueueLimit = 0,
             }));
 });
@@ -349,6 +376,10 @@ notificationService.SetShopProvider(shopService);
 
 app.UseCors();
 app.UseWebSockets();
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+});
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();

@@ -697,6 +697,48 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════
+    // PreWarmRankingsCache
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public void PreWarmRankingsCache_warms_cache_for_registered_users()
+    {
+        // Seed an instrument DB with leaderboard data
+        var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        db.UpsertEntries("song_1",
+        [
+            new LeaderboardEntry
+            {
+                AccountId = "user-warm", Score = 100_000,
+                Accuracy = 95, IsFullCombo = false, Stars = 5,
+                Season = 3, Difficulty = 3, Percentile = 99.0,
+            },
+            new LeaderboardEntry
+            {
+                AccountId = "user-other", Score = 80_000,
+                Accuracy = 90, IsFullCombo = false, Stars = 4,
+                Season = 3, Difficulty = 3, Percentile = 95.0,
+            },
+        ]);
+
+        // Pre-warm cache for user-warm
+        _persistence.PreWarmRankingsCache(new HashSet<string> { "user-warm" });
+
+        // Subsequent call should return the same cached instance (not re-query)
+        var first = db.GetPlayerRankings("user-warm");
+        var second = db.GetPlayerRankings("user-warm");
+        Assert.Same(first, second);
+        Assert.Single(first);
+        Assert.Equal(1, first["song_1"]); // rank 1 (top score)
+    }
+
+    [Fact]
+    public void PreWarmRankingsCache_with_empty_accounts_does_not_throw()
+    {
+        _persistence.PreWarmRankingsCache(new HashSet<string>());
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // NoOpHttpHandler (shared utility)
     // ═══════════════════════════════════════════════════════════
 

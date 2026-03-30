@@ -87,6 +87,10 @@ public sealed class PostScrapeOrchestrator
         // Checkpoint all WAL files after post-scrape writes (enrichment, refresh,
         // rankings) to keep them small for subsequent API reads.
         _persistence.CheckpointAll();
+
+        // Pre-warm the rankings cache for registered users so that the first API
+        // request after a scrape pass is a cache hit rather than an expensive CTE query.
+        _persistence.PreWarmRankingsCache(ctx.RegisteredIds);
     }
 
     /// <summary>

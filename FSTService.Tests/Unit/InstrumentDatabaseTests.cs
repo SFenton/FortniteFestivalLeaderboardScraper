@@ -482,6 +482,66 @@ public sealed class InstrumentDatabaseTests : IDisposable
         Assert.Empty(rankings);
     }
 
+    // ═══ GetPlayerRankings caching ═════════════════════════════
+
+    [Fact]
+    public void GetPlayerRankings_returns_cached_result_on_second_call()
+    {
+        Db.UpsertEntries("song_1", [MakeEntry("acct_1", 100_000), MakeEntry("acct_2", 80_000)]);
+
+        var first = Db.GetPlayerRankings("acct_1");
+        var second = Db.GetPlayerRankings("acct_1");
+
+        // Same dictionary instance means it came from cache
+        Assert.Same(first, second);
+    }
+
+    [Fact]
+    public void GetPlayerRankings_cache_survives_upsert()
+    {
+        // Populate and warm the cache
+        Db.UpsertEntries("song_1", [MakeEntry("acct_1", 100_000)]);
+        var cached = Db.GetPlayerRankings("acct_1");
+
+        // Upsert new entries — should NOT clear the cache (TTL-based expiry only)
+        Db.UpsertEntries("song_2", [MakeEntry("acct_1", 50_000)]);
+        var afterUpsert = Db.GetPlayerRankings("acct_1");
+
+        // Cache should still return the same object (song_2 not reflected yet, by design)
+        Assert.Same(cached, afterUpsert);
+    }
+
+    [Fact]
+    public void GetPlayerRankingsFiltered_returns_cached_result_on_second_call()
+    {
+        Db.UpsertEntries("song_1", [MakeEntry("acct_1", 100_000), MakeEntry("acct_2", 200_000)]);
+        var maxScores = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) { ["song_1"] = 150_000 };
+
+        var first = Db.GetPlayerRankingsFiltered("acct_1", maxScores);
+        var second = Db.GetPlayerRankingsFiltered("acct_1", maxScores);
+
+        Assert.Same(first, second);
+    }
+
+    [Fact]
+    public void GetPlayerRankingsFiltered_different_thresholds_get_separate_cache_entries()
+    {
+        Db.UpsertEntries("song_1", [
+            MakeEntry("acct_1", 100_000),
+            MakeEntry("acct_2", 200_000),
+            MakeEntry("acct_3", 50_000),
+        ]);
+
+        var maxA = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) { ["song_1"] = 150_000 };
+        var maxB = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) { ["song_1"] = 250_000 };
+
+        var resultA = Db.GetPlayerRankingsFiltered("acct_1", maxA);
+        var resultB = Db.GetPlayerRankingsFiltered("acct_1", maxB);
+
+        // Different thresholds should produce different cache entries
+        Assert.NotSame(resultA, resultB);
+    }
+
     // ═══ Upsert edge cases ══════════════════════════════════════
 
     [Fact]

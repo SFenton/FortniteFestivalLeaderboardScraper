@@ -2136,7 +2136,7 @@ public sealed class MetaDatabase : IDisposable
     {
         var conn = GetPersistentConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+        cmd.CommandText = "PRAGMA wal_checkpoint(PASSIVE);";
         cmd.ExecuteNonQuery();
     }
 

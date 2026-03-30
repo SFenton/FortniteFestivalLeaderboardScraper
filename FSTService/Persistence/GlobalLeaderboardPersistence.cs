@@ -402,6 +402,30 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>
+    /// Pre-warm the per-song rankings cache for all registered users across all instruments.
+    /// Call after scrape passes and on service startup so that API requests for
+    /// registered users hit the in-memory cache instead of the expensive CTE query.
+    /// </summary>
+    public void PreWarmRankingsCache(IReadOnlyCollection<string> accountIds)
+    {
+        if (accountIds.Count == 0 || _instrumentDbs.Count == 0) return;
+
+        var instruments = _instrumentDbs.Keys.ToList();
+        foreach (var instrument in instruments)
+        {
+            var db = _instrumentDbs[instrument];
+            foreach (var accountId in accountIds)
+            {
+                db.GetPlayerRankings(accountId);
+            }
+        }
+
+        _log.LogInformation(
+            "Pre-warmed rankings cache for {UserCount} registered user(s) across {InstrumentCount} instrument(s).",
+            accountIds.Count, instruments.Count);
+    }
+
+    /// <summary>
     /// Get a player's scores across all instruments (player profile).
     /// </summary>
     public List<PlayerScoreDto> GetPlayerProfile(string accountId, string? songId = null, HashSet<string>? instruments = null)
