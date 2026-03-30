@@ -48,11 +48,12 @@ const fixedFooterBase: CSSProperties = {
 
 /** Wide-desktop total width: 2×sidebar + content + 2×pinned-padding. */
 const wideMaxWidth = Layout.sidebarWidth * 2 + MaxWidth.card + Layout.paddingHorizontalPinned * 2;
-const wideGutter = `max(${Layout.sidebarWidth}px, calc((100vw - ${wideMaxWidth}px) / 2 + ${Layout.sidebarWidth}px))`;
+const wideGutterMin = Layout.sidebarWidth + Layout.paddingHorizontalPinned;
+const wideGutter = `max(${wideGutterMin}px, calc((100vw - ${wideMaxWidth}px) / 2 + ${wideGutterMin}px))`;
 
 /**
  * Override left/right for fixed-position footers in wide-desktop mode
- * so they align with the center column instead of the full viewport.
+ * so they align with the content container instead of the full viewport.
  */
 export const fixedFooterWide: CSSProperties = {
   left: wideGutter,
