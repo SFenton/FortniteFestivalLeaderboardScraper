@@ -4,7 +4,7 @@
  * Cycles through rivalry category headers and swaps song rows.
  * Rank data alternates evenly between player-winning and player-losing.
  */
-import { useState, useEffect, useRef, useCallback, useMemo, type CSSProperties } from 'react';
+import { useState, useEffect, useRef, useMemo, type CSSProperties } from 'react';
 import type { RivalSongComparison } from '@festival/core/api/serverTypes';
 import RivalSongRow from '../../components/RivalSongRow';
 import FadeIn from '../../../../components/page/FadeIn';
@@ -13,7 +13,7 @@ import { useDemoSongs } from '../../../../hooks/data/useDemoSongs';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
 import {
   Colors, Font, Weight, Gap, Opacity, CssValue, PointerEvents, flexColumn,
-  FADE_DURATION, DEMO_SWAP_INTERVAL_MS,
+  FADE_DURATION,
 } from '@festival/theme';
 
 const ROW_HEIGHT = 130;
@@ -93,24 +93,31 @@ export default function RivalsDetailDemo() {
     autoSwap: true,
   });
 
-  // Cycle category header
+  // Fade all elements out together, then restagger them in when songs swap.
+  // When fadingIdx goes non-empty every element fades out; when it clears we
+  // bump staggerKey so FadeIn wrappers remount with fresh stagger delays.
   const [headerIdx, setHeaderIdx] = useState(0);
-  const [headerFading, setHeaderFading] = useState(false);
+  const [allFading, setAllFading] = useState(false);
+  const [staggerKey, setStaggerKey] = useState(0);
   const headerIdxRef = useRef(0);
-
-  const rotateHeader = useCallback(() => {
-    setHeaderFading(true);
-    setTimeout(() => {
-      headerIdxRef.current = (headerIdxRef.current + 1) % CATEGORIES.length;
-      setHeaderIdx(headerIdxRef.current);
-      requestAnimationFrame(() => setHeaderFading(false));
-    }, FADE_DURATION);
-  }, []);
+  const prevFadingRef = useRef(false);
 
   useEffect(() => {
-    const timer = setInterval(rotateHeader, DEMO_SWAP_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, [rotateHeader]);
+    const isFading = fadingIdx.size > 0;
+    const wasFading = prevFadingRef.current;
+    prevFadingRef.current = isFading;
+
+    if (isFading && !wasFading) {
+      // Swap starting — fade everything out
+      setAllFading(true);
+    } else if (!isFading && wasFading) {
+      // Swap complete — advance header and restagger everything in
+      headerIdxRef.current = (headerIdxRef.current + 1) % CATEGORIES.length;
+      setHeaderIdx(headerIdxRef.current);
+      setStaggerKey(k => k + 1);
+      setAllFading(false);
+    }
+  }, [fadingIdx]);
 
   const budget = h || 320;
   const maxRows = Math.max(1, Math.floor((budget - LABEL_HEIGHT - Gap.md) / (ROW_HEIGHT + Gap.sm)));
@@ -138,15 +145,15 @@ export default function RivalsDetailDemo() {
 
   return (
     <div style={s.wrapper}>
-      <FadeIn delay={0}>
-        <span style={{ ...s.label, ...(headerFading ? s.fading : s.visible) }}>
+      <FadeIn key={`hdr-${staggerKey}`} delay={allFading ? undefined : 0}>
+        <span style={{ ...s.label, ...(allFading ? s.fading : s.visible) }}>
           {categoryLabel}
         </span>
       </FadeIn>
       <div style={s.list}>
         {visible.map((song, i) => (
-          <FadeIn key={song.songId} delay={(i + 1) * 100}>
-            <div style={fadingIdx.has(i) ? s.fading : s.visible}>
+          <FadeIn key={`${staggerKey}-${song.songId}`} delay={allFading ? undefined : (i + 1) * 100}>
+            <div style={allFading ? s.fading : s.visible}>
               <RivalSongRow
                 song={song}
                 albumArt={song.albumArt}
