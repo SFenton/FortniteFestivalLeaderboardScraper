@@ -132,6 +132,8 @@ public sealed class ScraperOptions
     /// When CHOpt max scores are available, any leaderboard whose top score exceeds
     /// <c>CHOptMax × OverThresholdMultiplier</c> triggers a "deep scrape" wave 2 that
     /// fetches additional pages beyond <see cref="MaxPagesPerLeaderboard"/>.
+    /// This multiplier only controls the <b>trigger condition</b>; the valid-entry
+    /// cutoff used for counting and pruning is the raw CHOpt max (not multiplied).
     /// Default 1.05 = 5% above CHOpt's theoretical maximum.
     /// </summary>
     public double OverThresholdMultiplier { get; set; } = 1.05;
@@ -147,11 +149,13 @@ public sealed class ScraperOptions
     public int OverThresholdExtraPages { get; set; } = 100;
 
     /// <summary>
-    /// Target number of valid (≤ CHOpt threshold) leaderboard entries to capture
+    /// Target number of valid (≤ raw CHOpt max) leaderboard entries to capture
     /// per song/instrument during deep scrape. When the top score exceeds the CHOpt
-    /// threshold, wave 2 fetches additional pages in batches of <see cref="OverThresholdExtraPages"/>
+    /// trigger threshold (<c>CHOptMax × OverThresholdMultiplier</c>), wave 2 fetches
+    /// additional pages in batches of <see cref="OverThresholdExtraPages"/>
     /// until this many valid entries are found, the leaderboard is exhausted, or a 403
-    /// boundary is hit. Set to 0 to use legacy fixed-page behavior. Default 10,000.
+    /// boundary is hit. All entries above CHOpt max are captured unconditionally.
+    /// Set to 0 to use legacy fixed-page behavior. Default 10,000.
     /// </summary>
     public int ValidEntryTarget { get; set; } = 10_000;
 

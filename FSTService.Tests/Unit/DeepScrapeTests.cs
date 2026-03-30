@@ -404,4 +404,39 @@ public class DeepScrapeTests
         Assert.Equal(3, result.Entries.Count);
         Assert.Equal(2, result.PagesScraped);
     }
+
+    // ─── Valid entry target: entries between CHOpt max and trigger threshold are NOT valid ──
+
+    [Fact]
+    public async Task ValidTarget_EntriesBetweenChoptAndTrigger_NotCountedAsValid()
+    {
+        var (scraper, handler) = CreateScraper();
+
+        // CHOpt max = 1000. Trigger threshold = 1050 (1.05×). Valid cutoff = 1000 (raw).
+        // Page 0 has top score 1100 (triggers deep scrape) + score 1040 (between 1000 and 1050).
+        // Page 1 has score 1020 (also between CHOpt max and trigger — NOT valid).
+        // Under old logic both 1040 and 1020 would count as valid (≤ 1050). Under new logic
+        // they are over-threshold (> 1000). Target = 2 valid entries.
+        // Wave 1 has 0 valid entries → batch 1 fetches pages 2-4.
+        // Pages 2-4 have valid entries (900, 800, 700) → 3 valid ≥ 2 target → stop.
+        handler.EnqueueJsonOk(MakePage(0, 10, ("p1", 1100), ("p2", 1040)));
+        handler.EnqueueJsonOk(MakePage(1, 10, ("p3", 1020)));
+        // Batch 1: pages 2, 3, 4
+        handler.EnqueueJsonOk(MakePage(2, 10, ("p4", 900)));
+        handler.EnqueueJsonOk(MakePage(3, 10, ("p5", 800)));
+        handler.EnqueueJsonOk(MakePage(4, 10, ("p6", 700)));
+        // Pages 5-9 should NOT be fetched
+
+        var result = await scraper.ScrapeLeaderboardAsync(
+            "song1", "Solo_Guitar", "token", "acct",
+            maxPages: 2,
+            choptMaxScore: 1000,
+            overThresholdMultiplier: 1.05,
+            overThresholdExtraPages: 3,
+            validEntryTarget: 2);
+
+        // 6 entries total (3 over CHOpt max + 3 valid), from 5 pages
+        Assert.Equal(6, result.Entries.Count);
+        Assert.Equal(5, result.PagesScraped);
+    }
 }

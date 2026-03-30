@@ -999,19 +999,25 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             totalPages = maxPages;
 
         // ── Deep scrape detection: check if page 0's top score exceeds CHOpt threshold ──
+        // overThreshold = trigger threshold (CHOpt × multiplier) — used only to decide whether to deep scrape.
+        // validCutoff   = raw CHOpt max — entries above this are "over-threshold" (exploited/cheated);
+        //                 valid entry counting and pruning use this value.
         bool deepScrapeTriggered = false;
         int overThreshold = 0;
+        int validCutoff = 0;
         if (choptMaxScore.HasValue && page0.firstPage.Entries.Count > 0)
         {
             overThreshold = (int)(choptMaxScore.Value * overThresholdMultiplier);
+            validCutoff = choptMaxScore.Value;
             int topScore = page0.firstPage.Entries.Max(e => e.Score);
             if (topScore > overThreshold)
             {
                 deepScrapeTriggered = true;
                 _log.LogInformation(
                     "Deep scrape triggered for {Label} ({Song}/{Instrument}): top score {TopScore:N0} exceeds " +
-                    "1.05× CHOpt max {ChoptMax:N0} (threshold {Threshold:N0}).",
-                    label ?? songId, songId, instrument, topScore, choptMaxScore.Value, overThreshold);
+                    "{Multiplier:P0} CHOpt max {ChoptMax:N0} (trigger {Threshold:N0}, valid cutoff {Cutoff:N0}).",
+                    label ?? songId, songId, instrument, topScore,
+                    overThresholdMultiplier, choptMaxScore.Value, overThreshold, validCutoff);
             }
         }
 
@@ -1115,7 +1121,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             if (validEntryTarget > 0)
             {
                 // ── Target-driven mode: fetch in batches until valid entry target is met ──
-                int validCount = allEntries.Values.Sum(page => page.Count(e => e.Score <= overThreshold));
+                // Valid entries are those at or below raw CHOpt max (validCutoff), not the trigger threshold.
+                int validCount = allEntries.Values.Sum(page => page.Count(e => e.Score <= validCutoff));
                 int nextPage = wave2Start;
 
                 while (validCount < validEntryTarget && nextPage < reportedPages)
@@ -1199,7 +1206,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                     for (int p = nextPage; p < batchEnd; p++)
                     {
                         if (allEntries.TryGetValue(p, out var pageEntries))
-                            validCount += pageEntries.Count(e => e.Score <= overThreshold);
+                            validCount += pageEntries.Count(e => e.Score <= validCutoff);
                     }
 
                     nextPage = batchEnd;
@@ -1228,7 +1235,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 int lastOverThresholdPage = 0;
                 foreach (var (pageNum, pageEntries) in allEntries)
                 {
-                    if (pageEntries.Any(e => e.Score > overThreshold))
+                    if (pageEntries.Any(e => e.Score > validCutoff))
                         lastOverThresholdPage = Math.Max(lastOverThresholdPage, pageNum);
                 }
 
@@ -1312,7 +1319,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                     int wave2LastOverThreshold = 0;
                     for (int p = wave2Start; p < wave2End; p++)
                     {
-                        if (allEntries.TryGetValue(p, out var entries) && entries.Any(e => e.Score > overThreshold))
+                        if (allEntries.TryGetValue(p, out var entries) && entries.Any(e => e.Score > validCutoff))
                             wave2LastOverThreshold = p;
                     }
                     if (wave2LastOverThreshold >= wave2End - 1)

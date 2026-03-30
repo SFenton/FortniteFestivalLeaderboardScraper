@@ -1065,6 +1065,49 @@ public sealed class InstrumentDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void PruneExcessEntries_raw_chopt_threshold_keeps_entries_between_max_and_105()
+    {
+        // Simulate post-change pruning where threshold = raw CHOpt max (1000), not 1050.
+        // Entries at 1040 and 1020 are between CHOpt max (1000) and old 1.05× threshold (1050).
+        // Under raw CHOpt max threshold, these are over-threshold → kept unconditionally.
+        var entries = new[]
+        {
+            MakeEntry("cheater1", 2000),  // clearly over
+            MakeEntry("border1",  1040),  // between CHOpt and 1.05× — over-threshold with raw cutoff
+            MakeEntry("border2",  1020),  // between CHOpt and 1.05× — over-threshold with raw cutoff
+            MakeEntry("legit1",   1000),  // at exactly CHOpt max — valid (≤ threshold)
+            MakeEntry("legit2",    900),  // valid
+            MakeEntry("legit3",    800),  // valid
+            MakeEntry("legit4",    700),  // valid
+            MakeEntry("legit5",    600),  // valid — within top 3 valid
+            MakeEntry("legit6",    500),  // valid — outside top 3 valid → pruned
+            MakeEntry("legit7",    400),  // valid — outside top 3 valid → pruned
+        };
+        Db.UpsertEntries("song1", entries.ToList());
+
+        // Threshold = 1000 (raw CHOpt max), keep top 3 valid entries
+        var deleted = Db.PruneExcessEntries("song1", 3, new HashSet<string>(), overThresholdScore: 1000);
+        Assert.Equal(4, deleted); // 7 valid - 3 kept = 4 deleted
+
+        // Over-threshold entries (>1000) are all kept
+        Assert.Single(Db.GetPlayerScores("cheater1", "song1"));
+        Assert.Single(Db.GetPlayerScores("border1", "song1"));
+        Assert.Single(Db.GetPlayerScores("border2", "song1"));
+
+        // Top 3 valid entries kept (1000, 900, 800)
+        Assert.Single(Db.GetPlayerScores("legit1", "song1"));
+        Assert.Single(Db.GetPlayerScores("legit2", "song1"));
+        Assert.Single(Db.GetPlayerScores("legit3", "song1"));
+
+        // Below top 3 valid → pruned
+        Assert.Empty(Db.GetPlayerScores("legit6", "song1"));
+        Assert.Empty(Db.GetPlayerScores("legit7", "song1"));
+
+        // Total remaining: 3 over-threshold + 3 valid = 6
+        Assert.Equal(6, Db.GetLeaderboardCount("song1"));
+    }
+
+    [Fact]
     public void PruneAllSongs_prunes_across_songs()
     {
         for (int s = 0; s < 3; s++)

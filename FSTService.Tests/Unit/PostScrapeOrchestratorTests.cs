@@ -563,8 +563,8 @@ public class PostScrapeOrchestratorTests : IDisposable
     {
         // Simulate deep scrape scenario: many over-threshold (exploited) entries + valid entries.
         // MaxPages=1 → maxEntries=100 per song for valid entries.
-        // CHOpt max = 1000, multiplier = 1.05 → threshold = 1050.
-        // Over-threshold entries (scores > 1050) should NOT be pruned.
+        // CHOpt max = 1000. Pruning threshold = raw CHOpt max (1000).
+        // Over-threshold entries (scores > 1000) should NOT be pruned.
         var opts = Options.Create(new ScraperOptions { MaxPagesPerLeaderboard = 1, OverThresholdMultiplier = 1.05 });
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new NotificationService(Substitute.For<ILogger<NotificationService>>()), _progress, new ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
@@ -585,7 +585,7 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
 
-        // 150 over-threshold entries (scores 5000–3510, all > 1050)
+        // 150 over-threshold entries (scores 5000–3510, all > 1000)
         var overEntries = Enumerable.Range(0, 150).Select(i =>
             new LeaderboardEntry
             {
@@ -593,11 +593,11 @@ public class PostScrapeOrchestratorTests : IDisposable
                 Accuracy = 95, Stars = 5, Season = 3,
             }).ToList();
 
-        // 200 valid entries (scores 1050 down to 51)
+        // 200 valid entries (scores 1000 down to 5, all ≤ raw CHOpt max 1000)
         var validEntries = Enumerable.Range(0, 200).Select(i =>
             new LeaderboardEntry
             {
-                AccountId = $"valid_{i}", Score = 1050 - i * 5,
+                AccountId = $"valid_{i}", Score = 1000 - i * 5,
                 Accuracy = 95, Stars = 5, Season = 3,
             }).ToList();
 
