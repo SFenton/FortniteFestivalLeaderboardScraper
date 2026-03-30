@@ -139,6 +139,8 @@ export function PaginatedLeaderboard<T>({
     let retireId: ReturnType<typeof setTimeout>;
     const id = setTimeout(() => {
       staggerRushRef?.current?.();
+      setAnimMode(prev => prev === 'cached' ? 'paginate' : prev);
+      footerShownRef.current = false;
       setLoadPhase(LoadPhase.ContentIn);
       // Retire stagger animations after they've had time to finish.
       const staggerWindow = maxVisibleRows * STAGGER_INTERVAL + FADE_DURATION + 100;
