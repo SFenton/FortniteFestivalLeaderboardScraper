@@ -351,6 +351,14 @@ public sealed class RankHistoryDto
     public int FcRateRank { get; init; }
     public int TotalScoreRank { get; init; }
     public int MaxScorePercentRank { get; init; }
+    public double? AdjustedSkillRating { get; init; }
+    public double? WeightedRating { get; init; }
+    public double? FcRate { get; init; }
+    public long? TotalScore { get; init; }
+    public double? MaxScorePercent { get; init; }
+    public int? SongsPlayed { get; init; }
+    public double? Coverage { get; init; }
+    public int? FullComboCount { get; init; }
 }
 
 /// <summary>

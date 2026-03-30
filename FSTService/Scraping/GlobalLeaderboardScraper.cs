@@ -951,7 +951,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int maxPages = 0,
         int? choptMaxScore = null,
         double overThresholdMultiplier = 1.05,
-        int overThresholdExtraPages = 100)
+        int overThresholdExtraPages = 100,
+        int validEntryTarget = 0)
     {
         // ── Page 0: discover totalPages ──
         bool page0Acquired = false;
@@ -1104,109 +1105,223 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         }
 
         // ── Wave 2: deep scrape extension ──
-        // If deep scrape was triggered, find the last over-threshold entry in
-        // wave 1 results and fetch additional pages beyond the normal cap.
+        // If deep scrape was triggered, fetch additional pages beyond the normal cap.
+        // When validEntryTarget > 0: fetch in batches until enough valid entries are found.
+        // When validEntryTarget == 0 (legacy): fetch a fixed OverThresholdExtraPages block.
         if (deepScrapeTriggered && totalPages < reportedPages)
         {
-            // Find the last page that contains an over-threshold entry
-            int lastOverThresholdPage = 0;
-            foreach (var (pageNum, pageEntries) in allEntries)
-            {
-                if (pageEntries.Any(e => e.Score > overThreshold))
-                    lastOverThresholdPage = Math.Max(lastOverThresholdPage, pageNum);
-            }
-
-            // Wave 2 range: from the end of wave 1 to lastOverThresholdPage + extraPages
             int wave2Start = totalPages;
-            int wave2End = Math.Min(
-                Math.Max(lastOverThresholdPage + overThresholdExtraPages + 1, totalPages + overThresholdExtraPages),
-                reportedPages);
 
-            if (wave2End > wave2Start)
+            if (validEntryTarget > 0)
             {
-                int wave2PageCount = wave2End - wave2Start;
-                _log.LogInformation(
-                    "Deep scrape wave 2 for {Label} ({Song}/{Instrument}): fetching pages {Start}–{End} " +
-                    "({PageCount} pages, last over-threshold entry on page {LastPage}).",
-                    label ?? songId, songId, instrument, wave2Start, wave2End - 1,
-                    wave2PageCount, lastOverThresholdPage);
+                // ── Target-driven mode: fetch in batches until valid entry target is met ──
+                int validCount = allEntries.Values.Sum(page => page.Count(e => e.Score <= overThreshold));
+                int nextPage = wave2Start;
 
-                int wave2Consecutive403s = 0;
-                int wave2BoundaryLogged = 0;
-                using var wave2Cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-
-                var wave2Tasks = new List<Task>(wave2PageCount);
-                for (int p = wave2Start; p < wave2End; p++)
+                while (validCount < validEntryTarget && nextPage < reportedPages)
                 {
-                    int pageNum = p;
-                    wave2Tasks.Add(FetchWave2PageAsync(pageNum));
-                }
+                    int batchEnd = Math.Min(nextPage + overThresholdExtraPages, reportedPages);
+                    int batchSize = batchEnd - nextPage;
 
-                async Task FetchWave2PageAsync(int pageNum)
-                {
-                    if (wave2Cts.IsCancellationRequested) return;
-                    bool acquired = false;
-                    try
+                    _log.LogInformation(
+                        "Deep scrape for {Label} ({Song}/{Instrument}): fetching pages {Start}–{End} " +
+                        "({BatchSize} pages, {ValidCount:N0}/{Target:N0} valid entries so far).",
+                        label ?? songId, songId, instrument, nextPage, batchEnd - 1,
+                        batchSize, validCount, validEntryTarget);
+
+                    int batchConsecutive403s = 0;
+                    int batchBoundaryLogged = 0;
+                    bool hitBoundary = false;
+                    using var batchCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+                    var batchTasks = new List<Task>(batchSize);
+                    for (int p = nextPage; p < batchEnd; p++)
                     {
-                        if (limiter is not null)
-                        {
-                            await limiter.WaitAsync(wave2Cts.Token);
-                            acquired = true;
-                        }
+                        int pageNum = p;
+                        batchTasks.Add(FetchDeepScrapeBatchPageAsync(pageNum));
+                    }
 
-                        var (parsed, bodyLen, status) = await FetchPageAsync(
-                            songId, instrument, pageNum, accessToken, accountId, limiter, wave2Cts.Token);
-                        Interlocked.Increment(ref requestCount);
-                        Interlocked.Add(ref totalBytes, bodyLen);
-                        _progress.ReportPageFetched(bodyLen);
-
-                        if (parsed is not null)
+                    async Task FetchDeepScrapeBatchPageAsync(int pageNum)
+                    {
+                        if (batchCts.IsCancellationRequested) return;
+                        bool acquired = false;
+                        try
                         {
-                            allEntries[pageNum] = parsed.Entries;
-                            Interlocked.Exchange(ref wave2Consecutive403s, 0);
-                        }
-                        else if (status == FetchStatus.Forbidden)
-                        {
-                            var count = Interlocked.Increment(ref wave2Consecutive403s);
-                            if (count >= ForbiddenThreshold &&
-                                Interlocked.CompareExchange(ref wave2BoundaryLogged, 1, 0) == 0)
+                            if (limiter is not null)
                             {
-                                _log.LogInformation(
-                                    "Hit access boundary during deep scrape wave 2 for {Label} ({Song}/{Instrument}) at page {Page}.",
-                                    label ?? songId, songId, instrument, pageNum);
-                                try { wave2Cts.Cancel(); } catch { }
+                                await limiter.WaitAsync(batchCts.Token);
+                                acquired = true;
                             }
-                            else if (!wave2Cts.IsCancellationRequested && count >= ForbiddenThreshold)
+
+                            var (parsed, bodyLen, status) = await FetchPageAsync(
+                                songId, instrument, pageNum, accessToken, accountId, limiter, batchCts.Token);
+                            Interlocked.Increment(ref requestCount);
+                            Interlocked.Add(ref totalBytes, bodyLen);
+                            _progress.ReportPageFetched(bodyLen);
+
+                            if (parsed is not null)
                             {
-                                try { wave2Cts.Cancel(); } catch { }
+                                allEntries[pageNum] = parsed.Entries;
+                                Interlocked.Exchange(ref batchConsecutive403s, 0);
+                            }
+                            else if (status == FetchStatus.Forbidden)
+                            {
+                                var count = Interlocked.Increment(ref batchConsecutive403s);
+                                if (count >= ForbiddenThreshold &&
+                                    Interlocked.CompareExchange(ref batchBoundaryLogged, 1, 0) == 0)
+                                {
+                                    _log.LogInformation(
+                                        "Hit access boundary during deep scrape for {Label} ({Song}/{Instrument}) at page {Page}.",
+                                        label ?? songId, songId, instrument, pageNum);
+                                    hitBoundary = true;
+                                    try { batchCts.Cancel(); } catch { }
+                                }
+                                else if (!batchCts.IsCancellationRequested && count >= ForbiddenThreshold)
+                                {
+                                    hitBoundary = true;
+                                    try { batchCts.Cancel(); } catch { }
+                                }
                             }
                         }
+                        catch (OperationCanceledException) when (batchCts.IsCancellationRequested && !ct.IsCancellationRequested)
+                        {
+                            // Cancelled due to access boundary — not an error
+                        }
+                        finally
+                        {
+                            if (acquired) limiter?.Release();
+                        }
                     }
-                    catch (OperationCanceledException) when (wave2Cts.IsCancellationRequested && !ct.IsCancellationRequested)
+
+                    await Task.WhenAll(batchTasks);
+
+                    // Count new valid entries from this batch
+                    for (int p = nextPage; p < batchEnd; p++)
                     {
-                        // Cancelled due to access boundary — not an error
+                        if (allEntries.TryGetValue(p, out var pageEntries))
+                            validCount += pageEntries.Count(e => e.Score <= overThreshold);
                     }
-                    finally
-                    {
-                        if (acquired) limiter?.Release();
-                    }
+
+                    nextPage = batchEnd;
+
+                    if (hitBoundary) break;
                 }
 
-                await Task.WhenAll(wave2Tasks);
-
-                // Warn if over-threshold entries extend beyond wave 2
-                int wave2LastOverThreshold = 0;
-                for (int p = wave2Start; p < wave2End; p++)
-                {
-                    if (allEntries.TryGetValue(p, out var entries) && entries.Any(e => e.Score > overThreshold))
-                        wave2LastOverThreshold = p;
-                }
-                if (wave2LastOverThreshold >= wave2End - 1)
+                if (validCount < validEntryTarget && nextPage >= reportedPages)
                 {
                     _log.LogWarning(
-                        "Over-threshold entries may extend beyond deep scrape range for {Label} ({Song}/{Instrument}). " +
-                        "Last over-threshold entry found on page {Page} (wave 2 end = {Wave2End}).",
-                        label ?? songId, songId, instrument, wave2LastOverThreshold, wave2End - 1);
+                        "Deep scrape for {Label} ({Song}/{Instrument}): leaderboard exhausted with only " +
+                        "{ValidCount:N0}/{Target:N0} valid entries ({TotalPages:N0} pages scraped).",
+                        label ?? songId, songId, instrument, validCount, validEntryTarget, allEntries.Count);
+                }
+                else if (validCount >= validEntryTarget)
+                {
+                    _log.LogInformation(
+                        "Deep scrape for {Label} ({Song}/{Instrument}): target met with " +
+                        "{ValidCount:N0}/{Target:N0} valid entries ({TotalPages:N0} pages scraped).",
+                        label ?? songId, songId, instrument, validCount, validEntryTarget, allEntries.Count);
+                }
+            }
+            else
+            {
+                // ── Legacy mode: fixed page range ──
+                int lastOverThresholdPage = 0;
+                foreach (var (pageNum, pageEntries) in allEntries)
+                {
+                    if (pageEntries.Any(e => e.Score > overThreshold))
+                        lastOverThresholdPage = Math.Max(lastOverThresholdPage, pageNum);
+                }
+
+                int wave2End = Math.Min(
+                    Math.Max(lastOverThresholdPage + overThresholdExtraPages + 1, totalPages + overThresholdExtraPages),
+                    reportedPages);
+
+                if (wave2End > wave2Start)
+                {
+                    int wave2PageCount = wave2End - wave2Start;
+                    _log.LogInformation(
+                        "Deep scrape wave 2 for {Label} ({Song}/{Instrument}): fetching pages {Start}–{End} " +
+                        "({PageCount} pages, last over-threshold entry on page {LastPage}).",
+                        label ?? songId, songId, instrument, wave2Start, wave2End - 1,
+                        wave2PageCount, lastOverThresholdPage);
+
+                    int wave2Consecutive403s = 0;
+                    int wave2BoundaryLogged = 0;
+                    using var wave2Cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+                    var wave2Tasks = new List<Task>(wave2PageCount);
+                    for (int p = wave2Start; p < wave2End; p++)
+                    {
+                        int pageNum = p;
+                        wave2Tasks.Add(FetchWave2PageAsync(pageNum));
+                    }
+
+                    async Task FetchWave2PageAsync(int pageNum)
+                    {
+                        if (wave2Cts.IsCancellationRequested) return;
+                        bool acquired = false;
+                        try
+                        {
+                            if (limiter is not null)
+                            {
+                                await limiter.WaitAsync(wave2Cts.Token);
+                                acquired = true;
+                            }
+
+                            var (parsed, bodyLen, status) = await FetchPageAsync(
+                                songId, instrument, pageNum, accessToken, accountId, limiter, wave2Cts.Token);
+                            Interlocked.Increment(ref requestCount);
+                            Interlocked.Add(ref totalBytes, bodyLen);
+                            _progress.ReportPageFetched(bodyLen);
+
+                            if (parsed is not null)
+                            {
+                                allEntries[pageNum] = parsed.Entries;
+                                Interlocked.Exchange(ref wave2Consecutive403s, 0);
+                            }
+                            else if (status == FetchStatus.Forbidden)
+                            {
+                                var count = Interlocked.Increment(ref wave2Consecutive403s);
+                                if (count >= ForbiddenThreshold &&
+                                    Interlocked.CompareExchange(ref wave2BoundaryLogged, 1, 0) == 0)
+                                {
+                                    _log.LogInformation(
+                                        "Hit access boundary during deep scrape wave 2 for {Label} ({Song}/{Instrument}) at page {Page}.",
+                                        label ?? songId, songId, instrument, pageNum);
+                                    try { wave2Cts.Cancel(); } catch { }
+                                }
+                                else if (!wave2Cts.IsCancellationRequested && count >= ForbiddenThreshold)
+                                {
+                                    try { wave2Cts.Cancel(); } catch { }
+                                }
+                            }
+                        }
+                        catch (OperationCanceledException) when (wave2Cts.IsCancellationRequested && !ct.IsCancellationRequested)
+                        {
+                            // Cancelled due to access boundary — not an error
+                        }
+                        finally
+                        {
+                            if (acquired) limiter?.Release();
+                        }
+                    }
+
+                    await Task.WhenAll(wave2Tasks);
+
+                    // Warn if over-threshold entries extend beyond wave 2
+                    int wave2LastOverThreshold = 0;
+                    for (int p = wave2Start; p < wave2End; p++)
+                    {
+                        if (allEntries.TryGetValue(p, out var entries) && entries.Any(e => e.Score > overThreshold))
+                            wave2LastOverThreshold = p;
+                    }
+                    if (wave2LastOverThreshold >= wave2End - 1)
+                    {
+                        _log.LogWarning(
+                            "Over-threshold entries may extend beyond deep scrape range for {Label} ({Song}/{Instrument}). " +
+                            "Last over-threshold entry found on page {Page} (wave 2 end = {Wave2End}).",
+                            label ?? songId, songId, instrument, wave2LastOverThreshold, wave2End - 1);
+                    }
                 }
             }
         }
@@ -1249,7 +1364,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int maxPages = 0,
         SongMaxScores? maxScores = null,
         double overThresholdMultiplier = 1.05,
-        int overThresholdExtraPages = 100)
+        int overThresholdExtraPages = 100,
+        int validEntryTarget = 0)
     {
         var instList = (instruments ?? AllInstruments).ToList();
         var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(
@@ -1262,7 +1378,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             int? choptMax = maxScores?.GetByInstrument(inst);
             return ScrapeLeaderboardAsync(songId, inst, accessToken, accountId, limiter, ct, label, maxPages,
                 choptMaxScore: choptMax, overThresholdMultiplier: overThresholdMultiplier,
-                overThresholdExtraPages: overThresholdExtraPages);
+                overThresholdExtraPages: overThresholdExtraPages,
+                validEntryTarget: validEntryTarget);
         }).ToList();
 
         var resultsArr = await Task.WhenAll(tasks);
@@ -1305,12 +1422,13 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int songConcurrency = 1,
         int maxRequestsPerSecond = 0,
         double overThresholdMultiplier = 1.05,
-        int overThresholdExtraPages = 100)
+        int overThresholdExtraPages = 100,
+        int validEntryTarget = 0)
     {
         if (sequential)
             return await ScrapeManySongsSequentialAsync(
                 requests, accessToken, accountId, onSongComplete, ct, maxPages, pageConcurrency, songConcurrency,
-                maxRequestsPerSecond, overThresholdMultiplier, overThresholdExtraPages);
+                maxRequestsPerSecond, overThresholdMultiplier, overThresholdExtraPages, validEntryTarget);
 
         using var limiter = new AdaptiveConcurrencyLimiter(
             maxConcurrency, minDop: 256, maxDop: maxConcurrency,
@@ -1332,7 +1450,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 maxPages: maxPages,
                 maxScores: req.MaxScores,
                 overThresholdMultiplier: overThresholdMultiplier,
-                overThresholdExtraPages: overThresholdExtraPages);
+                overThresholdExtraPages: overThresholdExtraPages,
+                validEntryTarget: validEntryTarget);
 
             results[req.SongId] = songResults;
 
@@ -1366,7 +1485,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int songConcurrency,
         int maxRequestsPerSecond = 0,
         double overThresholdMultiplier = 1.05,
-        int overThresholdExtraPages = 100)
+        int overThresholdExtraPages = 100,
+        int validEntryTarget = 0)
     {
         var results = new ConcurrentDictionary<string, List<GlobalLeaderboardResult>>();
         int effectiveSongConcurrency = Math.Max(1, songConcurrency);
@@ -1394,7 +1514,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                     return ScrapeLeaderboardSequentialAsync(
                         req.SongId, inst, accessToken, accountId, ct, req.Label, maxPages, limiter,
                         choptMaxScore: choptMax, overThresholdMultiplier: overThresholdMultiplier,
-                        overThresholdExtraPages: overThresholdExtraPages);
+                        overThresholdExtraPages: overThresholdExtraPages,
+                        validEntryTarget: validEntryTarget);
                 }).ToList();
 
                 var songResults = (await Task.WhenAll(instTasks)).ToList();
@@ -1432,7 +1553,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         AdaptiveConcurrencyLimiter? limiter = null,
         int? choptMaxScore = null,
         double overThresholdMultiplier = 1.05,
-        int overThresholdExtraPages = 100)
+        int overThresholdExtraPages = 100,
+        int validEntryTarget = 0)
     {
         // ── Page 0 ──
         var page0 = await FetchPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct);

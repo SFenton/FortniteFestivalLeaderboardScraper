@@ -248,7 +248,11 @@ export const Layout = {
   shopDesktopHeight: 72,
   /** Size of the mobile Item Shop circle icon button. */
   shopCircleSize: 128,
-  /** Negative left margin for back-link chevron optical alignment. */
+  /** Fixed width for the leading icon cell in mobile headers (hamburger / back chevron). */
+  headerIconSlot: 28,
+  /** Shared negative left margin for mobile header icon optical alignment. */
+  headerIconNudge: -6,
+  /** @deprecated Use headerIconNudge instead. */
   backLinkNudge: -6,
   /** Height for progress bar tracks (SyncBanner). */
   progressBarHeight: 6,
@@ -267,7 +271,7 @@ export const Layout = {
   /** Height for instrument card entry rows. */
   entryRowHeight: 48,
   /** Extra scroll padding when mobile pagination bar is fixed above the FAB spacer. */
-  paginationHeight: 50,
+  paginationHeight: 56,
   /** Height for player song rows. */
   playerSongRowHeight: 64,
 

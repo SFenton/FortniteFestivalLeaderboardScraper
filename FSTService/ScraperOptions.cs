@@ -137,11 +137,23 @@ public sealed class ScraperOptions
     public double OverThresholdMultiplier { get; set; } = 1.05;
 
     /// <summary>
-    /// Number of extra pages to fetch in deep-scrape wave 2, starting from
-    /// <see cref="MaxPagesPerLeaderboard"/>, up to the page containing the last
-    /// over-threshold entry plus this many pages (max 10,000 additional entries).
+    /// Batch size (in pages) for deep-scrape wave 2 extension fetches.
+    /// When <see cref="ValidEntryTarget"/> is set, wave 2 fetches in batches of this
+    /// many pages, counting valid entries after each batch until the target is met.
+    /// When <see cref="ValidEntryTarget"/> is 0 (legacy mode), this is the fixed number
+    /// of extra pages fetched beyond <see cref="MaxPagesPerLeaderboard"/>.
+    /// Default 100 = 10,000 entries per batch.
     /// </summary>
     public int OverThresholdExtraPages { get; set; } = 100;
+
+    /// <summary>
+    /// Target number of valid (≤ CHOpt threshold) leaderboard entries to capture
+    /// per song/instrument during deep scrape. When the top score exceeds the CHOpt
+    /// threshold, wave 2 fetches additional pages in batches of <see cref="OverThresholdExtraPages"/>
+    /// until this many valid entries are found, the leaderboard is exhausted, or a 403
+    /// boundary is hit. Set to 0 to use legacy fixed-page behavior. Default 10,000.
+    /// </summary>
+    public int ValidEntryTarget { get; set; } = 10_000;
 
     /// <summary>
     /// When true, scrape songs one at a time instead of all in parallel.

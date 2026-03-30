@@ -193,6 +193,31 @@ public sealed class InstrumentDatabase : IDisposable
             );
             """;
         cmd.ExecuteNonQuery();
+
+        // ── Migration: add metric value columns to RankHistory (existing DBs) ──
+        MigrateAddColumn(conn, "RankHistory", "AdjustedSkillRating", "REAL");
+        MigrateAddColumn(conn, "RankHistory", "WeightedRating", "REAL");
+        MigrateAddColumn(conn, "RankHistory", "FcRate", "REAL");
+        MigrateAddColumn(conn, "RankHistory", "TotalScore", "INTEGER");
+        MigrateAddColumn(conn, "RankHistory", "MaxScorePercent", "REAL");
+        MigrateAddColumn(conn, "RankHistory", "SongsPlayed", "INTEGER");
+        MigrateAddColumn(conn, "RankHistory", "Coverage", "REAL");
+        MigrateAddColumn(conn, "RankHistory", "FullComboCount", "INTEGER");
+
+        // ── Valid score overrides for over-threshold entries with historical valid scores ──
+        using var overrideCmd = conn.CreateCommand();
+        overrideCmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS ValidScoreOverrides (
+                SongId      TEXT    NOT NULL,
+                AccountId   TEXT    NOT NULL,
+                Score       INTEGER NOT NULL,
+                Accuracy    INTEGER,
+                IsFullCombo INTEGER,
+                Stars       INTEGER,
+                PRIMARY KEY (SongId, AccountId)
+            );
+            """;
+        overrideCmd.ExecuteNonQuery();
     }
 
     /// <summary>
@@ -1154,6 +1179,84 @@ public sealed class InstrumentDatabase : IDisposable
     }
 
     /// <summary>
+    /// Returns entries whose current score exceeds 105% of the CHOpt max (from SongStats).
+    /// These are candidates for valid-score fallback from ScoreHistory.
+    /// </summary>
+    public List<(string AccountId, string SongId)> GetOverThresholdEntries()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT le.AccountId, le.SongId
+            FROM LeaderboardEntries le
+            JOIN SongStats ss ON ss.SongId = le.SongId
+            WHERE ss.MaxScore IS NOT NULL
+              AND le.Score > CAST(ss.MaxScore * 1.05 AS INTEGER);
+            """;
+
+        var result = new List<(string, string)>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            result.Add((reader.GetString(0), reader.GetString(1)));
+
+        return result;
+    }
+
+    /// <summary>
+    /// Replace <c>ValidScoreOverrides</c> contents with the supplied fallback scores.
+    /// Called before <see cref="ComputeAccountRankings"/> so the ranking SQL can include them.
+    /// </summary>
+    public void PopulateValidScoreOverrides(IReadOnlyList<(string SongId, string AccountId, int Score, int? Accuracy, bool? IsFullCombo, int? Stars)> overrides)
+    {
+        lock (_writeLock)
+        {
+            var conn = GetPersistentConnection();
+            using var tx = conn.BeginTransaction();
+
+            using (var del = conn.CreateCommand())
+            {
+                del.Transaction = tx;
+                del.CommandText = "DELETE FROM ValidScoreOverrides;";
+                del.ExecuteNonQuery();
+            }
+
+            if (overrides.Count == 0)
+            {
+                tx.Commit();
+                return;
+            }
+
+            using var ins = conn.CreateCommand();
+            ins.Transaction = tx;
+            ins.CommandText = """
+                INSERT INTO ValidScoreOverrides (SongId, AccountId, Score, Accuracy, IsFullCombo, Stars)
+                VALUES (@songId, @accountId, @score, @accuracy, @isFullCombo, @stars);
+                """;
+            var pSid = ins.Parameters.Add("@songId", SqliteType.Text);
+            var pAid = ins.Parameters.Add("@accountId", SqliteType.Text);
+            var pScore = ins.Parameters.Add("@score", SqliteType.Integer);
+            var pAccuracy = ins.Parameters.Add("@accuracy", SqliteType.Integer);
+            var pFc = ins.Parameters.Add("@isFullCombo", SqliteType.Integer);
+            var pStars = ins.Parameters.Add("@stars", SqliteType.Integer);
+            ins.Prepare();
+
+            foreach (var (songId, accountId, score, accuracy, isFullCombo, stars) in overrides)
+            {
+                pSid.Value = songId;
+                pAid.Value = accountId;
+                pScore.Value = score;
+                pAccuracy.Value = accuracy.HasValue ? accuracy.Value : DBNull.Value;
+                pFc.Value = isFullCombo.HasValue ? (isFullCombo.Value ? 1 : 0) : DBNull.Value;
+                pStars.Value = stars.HasValue ? stars.Value : DBNull.Value;
+                ins.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+            _log.LogDebug("Populated {Count} valid score overrides for {Instrument}.", overrides.Count, _instrument);
+        }
+    }
+
+    /// <summary>
     /// Recompute <c>AccountRankings</c> for all accounts on this instrument.
     /// Applies CHOpt filter (exclude scores &gt; maxScore × 1.05) and Bayesian adjustment.
     /// </summary>
@@ -1191,6 +1294,27 @@ public sealed class InstrumentDatabase : IDisposable
                     WHERE le.Score <= COALESCE(CAST(ss.MaxScore * 1.05 AS INTEGER), le.Score + 1)
                       AND ss.EntryCount > 0
                       AND COALESCE(NULLIF(le.ApiRank, 0), le.Rank) > 0
+
+                    UNION ALL
+
+                    -- Include valid historical scores for entries that exceed the CHOpt threshold.
+                    -- These overrides are populated from ScoreHistory before ranking computation.
+                    -- Rank is estimated as COUNT of valid entries with a higher score + 1.
+                    -- COALESCE nullable fields to safe defaults so aggregation (SUM, AVG) works.
+                    SELECT vso.SongId, vso.AccountId, vso.Score,
+                           COALESCE(vso.Accuracy, 0) AS Accuracy,
+                           COALESCE(vso.IsFullCombo, 0) AS IsFullCombo,
+                           COALESCE(vso.Stars, 0) AS Stars,
+                           (SELECT COUNT(*) + 1 FROM LeaderboardEntries le2
+                            JOIN SongStats ss2 ON ss2.SongId = le2.SongId
+                            WHERE le2.SongId = vso.SongId
+                              AND le2.Score > vso.Score
+                              AND le2.Score <= COALESCE(CAST(ss2.MaxScore * 1.05 AS INTEGER), le2.Score + 1)
+                              AND le2.AccountId != vso.AccountId) AS EffectiveRank,
+                           ss.EntryCount, ss.LogWeight, ss.MaxScore
+                    FROM ValidScoreOverrides vso
+                    JOIN SongStats ss ON ss.SongId = vso.SongId
+                    WHERE ss.EntryCount > 0
                 ),
                 Aggregated AS (
                     SELECT
@@ -1276,8 +1400,11 @@ public sealed class InstrumentDatabase : IDisposable
             {
                 ins.Transaction = tx;
                 ins.CommandText = """
-                    INSERT OR REPLACE INTO RankHistory (AccountId, SnapshotDate, AdjustedSkillRank, WeightedRank, FcRateRank, TotalScoreRank, MaxScorePercentRank)
-                    SELECT AccountId, @today, AdjustedSkillRank, WeightedRank, FcRateRank, TotalScoreRank, MaxScorePercentRank
+                    INSERT OR REPLACE INTO RankHistory
+                        (AccountId, SnapshotDate, AdjustedSkillRank, WeightedRank, FcRateRank, TotalScoreRank, MaxScorePercentRank,
+                         AdjustedSkillRating, WeightedRating, FcRate, TotalScore, MaxScorePercent, SongsPlayed, Coverage, FullComboCount)
+                    SELECT AccountId, @today, AdjustedSkillRank, WeightedRank, FcRateRank, TotalScoreRank, MaxScorePercentRank,
+                           AdjustedSkillRating, WeightedRating, FcRate, TotalScore, MaxScorePercent, SongsPlayed, Coverage, FullComboCount
                     FROM AccountRankings
                     WHERE AdjustedSkillRank <= @topN;
                     """;
@@ -1292,8 +1419,11 @@ public sealed class InstrumentDatabase : IDisposable
                 using var ins2 = conn.CreateCommand();
                 ins2.Transaction = tx;
                 ins2.CommandText = """
-                    INSERT OR REPLACE INTO RankHistory (AccountId, SnapshotDate, AdjustedSkillRank, WeightedRank, FcRateRank, TotalScoreRank, MaxScorePercentRank)
-                    SELECT AccountId, @today, AdjustedSkillRank, WeightedRank, FcRateRank, TotalScoreRank, MaxScorePercentRank
+                    INSERT OR REPLACE INTO RankHistory
+                        (AccountId, SnapshotDate, AdjustedSkillRank, WeightedRank, FcRateRank, TotalScoreRank, MaxScorePercentRank,
+                         AdjustedSkillRating, WeightedRating, FcRate, TotalScore, MaxScorePercent, SongsPlayed, Coverage, FullComboCount)
+                    SELECT AccountId, @today, AdjustedSkillRank, WeightedRank, FcRateRank, TotalScoreRank, MaxScorePercentRank,
+                           AdjustedSkillRating, WeightedRating, FcRate, TotalScore, MaxScorePercent, SongsPlayed, Coverage, FullComboCount
                     FROM AccountRankings
                     WHERE AccountId = @aid;
                     """;
@@ -1466,7 +1596,8 @@ public sealed class InstrumentDatabase : IDisposable
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT SnapshotDate, AdjustedSkillRank, WeightedRank, FcRateRank, TotalScoreRank, MaxScorePercentRank
+            SELECT SnapshotDate, AdjustedSkillRank, WeightedRank, FcRateRank, TotalScoreRank, MaxScorePercentRank,
+                   AdjustedSkillRating, WeightedRating, FcRate, TotalScore, MaxScorePercent, SongsPlayed, Coverage, FullComboCount
             FROM RankHistory
             WHERE AccountId = @accountId AND SnapshotDate >= @cutoff
             ORDER BY SnapshotDate ASC;
@@ -1486,6 +1617,14 @@ public sealed class InstrumentDatabase : IDisposable
                 FcRateRank = reader.GetInt32(3),
                 TotalScoreRank = reader.GetInt32(4),
                 MaxScorePercentRank = reader.GetInt32(5),
+                AdjustedSkillRating = reader.IsDBNull(6) ? null : reader.GetDouble(6),
+                WeightedRating = reader.IsDBNull(7) ? null : reader.GetDouble(7),
+                FcRate = reader.IsDBNull(8) ? null : reader.GetDouble(8),
+                TotalScore = reader.IsDBNull(9) ? null : reader.GetInt64(9),
+                MaxScorePercent = reader.IsDBNull(10) ? null : reader.GetDouble(10),
+                SongsPlayed = reader.IsDBNull(11) ? null : reader.GetInt32(11),
+                Coverage = reader.IsDBNull(12) ? null : reader.GetDouble(12),
+                FullComboCount = reader.IsDBNull(13) ? null : reader.GetInt32(13),
             });
         }
         return result;
@@ -1689,17 +1828,24 @@ public sealed class InstrumentDatabase : IDisposable
     /// Safe to call repeatedly — no-ops when the column is already present.
     /// </summary>
     private void MigrateAddColumn(SqliteConnection conn, string columnName, string columnType)
+        => MigrateAddColumn(conn, "LeaderboardEntries", columnName, columnType);
+
+    /// <summary>
+    /// Add a column to the specified table if it doesn't already exist.
+    /// Safe to call repeatedly — no-ops when the column is already present.
+    /// </summary>
+    private void MigrateAddColumn(SqliteConnection conn, string table, string columnName, string columnType)
     {
         using var check = conn.CreateCommand();
-        check.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('LeaderboardEntries') WHERE name = '{columnName}';";
+        check.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{columnName}';";
         var exists = (long)(check.ExecuteScalar() ?? 0);
         if (exists > 0) return;
 
         using var alter = conn.CreateCommand();
-        alter.CommandText = $"ALTER TABLE LeaderboardEntries ADD COLUMN {columnName} {columnType};";
+        alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {columnName} {columnType};";
         alter.ExecuteNonQuery();
 
-        _log.LogInformation("Migrated {Instrument}: added column {Column} ({Type})", _instrument, columnName, columnType);
+        _log.LogInformation("Migrated {Instrument}: added {Table}.{Column} ({Type})", _instrument, table, columnName, columnType);
     }
 
     /// <summary>

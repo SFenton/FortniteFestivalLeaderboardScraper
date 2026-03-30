@@ -115,7 +115,8 @@ public sealed class ScrapeOrchestrator
             songConcurrency: opts.SongConcurrency,
             maxRequestsPerSecond: opts.MaxRequestsPerSecond,
             overThresholdMultiplier: opts.OverThresholdMultiplier,
-            overThresholdExtraPages: opts.OverThresholdExtraPages);
+            overThresholdExtraPages: opts.OverThresholdExtraPages,
+            validEntryTarget: opts.ValidEntryTarget);
 
         // Wait for all per-instrument writers to drain
         await _persistence.DrainWritersAsync();

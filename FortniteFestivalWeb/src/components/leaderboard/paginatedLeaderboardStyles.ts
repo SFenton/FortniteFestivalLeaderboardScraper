@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import {
-  Colors, Font, Gap, Radius, Layout, MaxWidth, Border,
+  Colors, Font, Gap, Radius, Layout, MaxWidth, Border, IconSize,
   Display, Align, Justify, Overflow, CssValue, CssProp, TextAlign,
   Position, BoxSizing, ZIndex, PointerEvents,
   frostedCard, flexRow, flexColumn, padding, border, transition,
@@ -93,20 +93,18 @@ export const plbStyles = {
     gap: Gap.none,
   } as CSSProperties,
 
-  pageInfo: {
-    textAlign: TextAlign.center,
-  } as CSSProperties,
-
   pageInfoBadge: {
     ...frostedCard,
     display: Display.inlineFlex,
     alignItems: Align.center,
     justifyContent: Justify.center,
+    height: IconSize.lg,
     fontSize: Font.sm,
     color: Colors.textSecondary,
-    padding: padding(Gap.md, Gap.xl),
+    padding: padding(0, Gap.xl),
     borderRadius: Radius.sm,
     backgroundColor: Colors.backgroundCard,
+    boxSizing: BoxSizing.borderBox,
   } as CSSProperties,
 
   /* ── Fixed footer positioning (portaled to body) ── */

@@ -354,6 +354,11 @@ public sealed class MetaDatabase : IDisposable
         // ── Migration: add TotalCombosToCompute to RivalsStatus (existing DBs) ──
         MigrateAddColumn(conn, "RivalsStatus", "TotalCombosToCompute", "INTEGER NOT NULL DEFAULT 0");
 
+        // ── Migration: add metric value columns to CompositeRankHistory (existing DBs) ──
+        MigrateAddColumn(conn, "CompositeRankHistory", "CompositeRating", "REAL");
+        MigrateAddColumn(conn, "CompositeRankHistory", "InstrumentsPlayed", "INTEGER");
+        MigrateAddColumn(conn, "CompositeRankHistory", "TotalSongsPlayed", "INTEGER");
+
         // ── Migration: re-queue backfill / history recon when data-collection version bumps ──
         MigrateDataCollectionVersion(conn);
 
@@ -992,6 +997,88 @@ public sealed class MetaDatabase : IDisposable
         using var cleanCmd = conn.CreateCommand();
         cleanCmd.CommandText = "DELETE FROM _validThresholds;";
         cleanCmd.ExecuteNonQuery();
+
+        return result;
+    }
+
+    /// <summary>
+    /// Bulk lookup of best valid historical scores for multiple accounts across a single instrument.
+    /// Used by <see cref="Scraping.RankingsCalculator"/> to find fallback scores for entries
+    /// that exceed the CHOpt threshold, so they can still be counted in rankings.
+    /// </summary>
+    /// <param name="instrument">The instrument to query (e.g. "Solo_Guitar").</param>
+    /// <param name="entries">Map of (AccountId, SongId) → score threshold ceiling.</param>
+    /// <returns>Map of (AccountId, SongId) → best valid score details. Only entries with a valid score are returned.</returns>
+    public Dictionary<(string AccountId, string SongId), ValidScoreFallback> GetBulkBestValidScores(
+        string instrument, Dictionary<(string AccountId, string SongId), int> entries)
+    {
+        if (entries.Count == 0)
+            return new Dictionary<(string, string), ValidScoreFallback>();
+
+        using var conn = OpenConnection();
+
+        // Build temp table of thresholds
+        using var createCmd = conn.CreateCommand();
+        createCmd.CommandText = """
+            CREATE TEMP TABLE IF NOT EXISTS _bulkThresholds (
+                AccountId TEXT NOT NULL,
+                SongId    TEXT NOT NULL,
+                MaxScore  INTEGER NOT NULL,
+                PRIMARY KEY (AccountId, SongId)
+            );
+            DELETE FROM _bulkThresholds;
+            """;
+        createCmd.ExecuteNonQuery();
+
+        using var insertCmd = conn.CreateCommand();
+        insertCmd.CommandText = "INSERT INTO _bulkThresholds (AccountId, SongId, MaxScore) VALUES (@aid, @sid, @ms);";
+        var pAid = insertCmd.Parameters.Add("@aid", SqliteType.Text);
+        var pSid = insertCmd.Parameters.Add("@sid", SqliteType.Text);
+        var pMs = insertCmd.Parameters.Add("@ms", SqliteType.Integer);
+        insertCmd.Prepare();
+        foreach (var ((aid, sid), ms) in entries)
+        {
+            pAid.Value = aid;
+            pSid.Value = sid;
+            pMs.Value = ms;
+            insertCmd.ExecuteNonQuery();
+        }
+
+        // Find best valid score per (AccountId, SongId) from ScoreHistory
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT sh.AccountId, sh.SongId, sh.NewScore, sh.Accuracy, sh.IsFullCombo, sh.Stars
+            FROM ScoreHistory sh
+            JOIN _bulkThresholds bt ON bt.AccountId = sh.AccountId AND bt.SongId = sh.SongId
+            WHERE sh.Instrument = @instrument
+              AND sh.NewScore <= bt.MaxScore
+              AND sh.NewScore = (
+                  SELECT MAX(sh2.NewScore) FROM ScoreHistory sh2
+                  WHERE sh2.AccountId = sh.AccountId
+                    AND sh2.SongId = sh.SongId AND sh2.Instrument = @instrument
+                    AND sh2.NewScore <= bt.MaxScore
+              )
+            GROUP BY sh.AccountId, sh.SongId;
+            """;
+        cmd.Parameters.AddWithValue("@instrument", instrument);
+
+        var result = new Dictionary<(string, string), ValidScoreFallback>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var key = (reader.GetString(0), reader.GetString(1));
+            result[key] = new ValidScoreFallback
+            {
+                Score = reader.GetInt32(2),
+                Accuracy = reader.IsDBNull(3) ? null : reader.GetInt32(3),
+                IsFullCombo = reader.IsDBNull(4) ? null : reader.GetInt32(4) == 1,
+                Stars = reader.IsDBNull(5) ? null : reader.GetInt32(5),
+            };
+        }
+
+        using var cleanCmd2 = conn.CreateCommand();
+        cleanCmd2.CommandText = "DELETE FROM _bulkThresholds;";
+        cleanCmd2.ExecuteNonQuery();
 
         return result;
     }
@@ -3094,8 +3181,8 @@ public sealed class MetaDatabase : IDisposable
             {
                 ins.Transaction = tx;
                 ins.CommandText = """
-                    INSERT OR REPLACE INTO CompositeRankHistory (AccountId, SnapshotDate, CompositeRank)
-                    SELECT AccountId, @today, CompositeRank
+                    INSERT OR REPLACE INTO CompositeRankHistory (AccountId, SnapshotDate, CompositeRank, CompositeRating, InstrumentsPlayed, TotalSongsPlayed)
+                    SELECT AccountId, @today, CompositeRank, CompositeRating, InstrumentsPlayed, TotalSongsPlayed
                     FROM CompositeRankings
                     WHERE CompositeRank <= @topN;
                     """;
@@ -3109,8 +3196,8 @@ public sealed class MetaDatabase : IDisposable
                 using var ins2 = conn.CreateCommand();
                 ins2.Transaction = tx;
                 ins2.CommandText = """
-                    INSERT OR REPLACE INTO CompositeRankHistory (AccountId, SnapshotDate, CompositeRank)
-                    SELECT AccountId, @today, CompositeRank
+                    INSERT OR REPLACE INTO CompositeRankHistory (AccountId, SnapshotDate, CompositeRank, CompositeRating, InstrumentsPlayed, TotalSongsPlayed)
+                    SELECT AccountId, @today, CompositeRank, CompositeRating, InstrumentsPlayed, TotalSongsPlayed
                     FROM CompositeRankings
                     WHERE AccountId = @aid;
                     """;

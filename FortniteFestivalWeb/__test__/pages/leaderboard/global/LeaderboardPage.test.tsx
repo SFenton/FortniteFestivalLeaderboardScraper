@@ -179,10 +179,8 @@ describe('LeaderboardPage', () => {
       expect(document.body.textContent).toContain('1 / 2');
     });
 
-    // Button text includes arrow character: "Next ›" (portaled to body)
-    const nextBtn = Array.from(document.querySelectorAll('button')).find(
-      b => b.textContent?.includes('Next'),
-    );
+    // Paginator renders circular chevron buttons with aria-labels (portaled to body)
+    const nextBtn = document.querySelector('button[aria-label="Next"]');
     expect(nextBtn).toBeTruthy();
     fireEvent.click(nextBtn!);
 
@@ -296,7 +294,7 @@ describe('LeaderboardPage', () => {
     vi.useRealTimers();
   });
 
-  it('renders first/prev/next/last pagination buttons', async () => {
+  it('renders skip/prev/next/skip pagination buttons', async () => {
     renderLeaderboard();
     await waitFor(() => {
       expect(screen.getByText('Player One')).toBeDefined();
@@ -304,16 +302,14 @@ describe('LeaderboardPage', () => {
     await waitFor(() => {
       expect(document.body.textContent).toContain('1 / 2');
     });
-    // Verify all pagination buttons exist (portaled to body)
-    const buttons = Array.from(document.querySelectorAll('button'));
-    const buttonTexts = buttons.map(b => b.textContent);
-    expect(buttonTexts.some(t => t?.includes('First'))).toBe(true);
-    expect(buttonTexts.some(t => t?.includes('Prev'))).toBe(true);
-    expect(buttonTexts.some(t => t?.includes('Next'))).toBe(true);
-    expect(buttonTexts.some(t => t?.includes('Last'))).toBe(true);
+    // Verify all Paginator buttons exist by aria-label (portaled to body)
+    expect(document.querySelector('button[aria-label="Skip to start"]')).toBeTruthy();
+    expect(document.querySelector('button[aria-label="Previous"]')).toBeTruthy();
+    expect(document.querySelector('button[aria-label="Next"]')).toBeTruthy();
+    expect(document.querySelector('button[aria-label="Skip to end"]')).toBeTruthy();
   });
 
-  it('navigates to last page on Last click', async () => {
+  it('navigates to last page on Skip to end click', async () => {
     renderLeaderboard();
     await waitFor(() => {
       expect(screen.getByText('Player One')).toBeDefined();
@@ -321,9 +317,7 @@ describe('LeaderboardPage', () => {
     await waitFor(() => {
       expect(document.body.textContent).toContain('1 / 2');
     });
-    const lastBtn = Array.from(document.querySelectorAll('button')).find(
-      b => b.textContent?.includes('Last'),
-    );
+    const lastBtn = document.querySelector('button[aria-label="Skip to end"]');
     expect(lastBtn).toBeTruthy();
     fireEvent.click(lastBtn!);
     await waitFor(() => {
@@ -450,10 +444,8 @@ describe('LeaderboardPage — coverage: multi-page pagination', () => {
       expect(text).toContain('1 / 6');
     });
 
-    // Click "Last" button to go to last page
-    const lastBtn = Array.from(document.querySelectorAll('button')).find(
-      b => b.textContent?.includes('Last'),
-    );
+    // Click "Skip to end" button to go to last page
+    const lastBtn = document.querySelector('button[aria-label="Skip to end"]');
     expect(lastBtn).toBeTruthy();
     if (lastBtn) {
       fireEvent.click(lastBtn);

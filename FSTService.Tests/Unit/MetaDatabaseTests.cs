@@ -1545,4 +1545,80 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal(90_000, result[("song_1", "Solo_Guitar")].Score);
         Assert.Equal(85_000, result[("song_1", "Solo_Bass")].Score);
     }
+
+    // ═══ GetBulkBestValidScores ═════════════════════════════════
+
+    [Fact]
+    public void GetBulkBestValidScores_ReturnsHighestValidPerEntry()
+    {
+        // acct_1 on song_1: 80k, 90k (valid), 110k (invalid)
+        Db.InsertScoreChange("song_1", "Solo_Guitar", "acct_1", null, 80_000, null, 3,
+            accuracy: 90, isFullCombo: false, stars: 5, scoreAchievedAt: "2025-01-01T00:00:00Z");
+        Db.InsertScoreChange("song_1", "Solo_Guitar", "acct_1", 80_000, 90_000, 3, 2,
+            accuracy: 95, isFullCombo: true, stars: 6, scoreAchievedAt: "2025-02-01T00:00:00Z");
+        Db.InsertScoreChange("song_1", "Solo_Guitar", "acct_1", 90_000, 110_000, 2, 1,
+            accuracy: 98, isFullCombo: true, stars: 6, scoreAchievedAt: "2025-03-01T00:00:00Z");
+
+        // acct_2 on song_2: 50k (valid)
+        Db.InsertScoreChange("song_2", "Solo_Guitar", "acct_2", null, 50_000, null, 5,
+            accuracy: 85, isFullCombo: false, stars: 4, scoreAchievedAt: "2025-01-01T00:00:00Z");
+
+        var entries = new Dictionary<(string, string), int>
+        {
+            [("acct_1", "song_1")] = 100_000, // 110k exceeds, 90k is best valid
+            [("acct_2", "song_2")] = 100_000,
+        };
+        var result = Db.GetBulkBestValidScores("Solo_Guitar", entries);
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal(90_000, result[("acct_1", "song_1")].Score);
+        Assert.Equal(95, result[("acct_1", "song_1")].Accuracy);
+        Assert.True(result[("acct_1", "song_1")].IsFullCombo);
+        Assert.Equal(50_000, result[("acct_2", "song_2")].Score);
+    }
+
+    [Fact]
+    public void GetBulkBestValidScores_SkipsEntriesAboveThreshold()
+    {
+        // Only score is above threshold
+        Db.InsertScoreChange("song_1", "Solo_Guitar", "acct_1", null, 110_000, null, 1,
+            accuracy: 98, scoreAchievedAt: "2025-01-01T00:00:00Z");
+
+        var entries = new Dictionary<(string, string), int>
+        {
+            [("acct_1", "song_1")] = 100_000,
+        };
+        var result = Db.GetBulkBestValidScores("Solo_Guitar", entries);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void GetBulkBestValidScores_EmptyInput_ReturnsEmpty()
+    {
+        var result = Db.GetBulkBestValidScores("Solo_Guitar", new Dictionary<(string, string), int>());
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void GetBulkBestValidScores_FiltersbyInstrument()
+    {
+        // Same account/song but different instruments
+        Db.InsertScoreChange("song_1", "Solo_Guitar", "acct_1", null, 90_000, null, 1,
+            accuracy: 95, scoreAchievedAt: "2025-01-01T00:00:00Z");
+        Db.InsertScoreChange("song_1", "Solo_Bass", "acct_1", null, 70_000, null, 1,
+            accuracy: 85, scoreAchievedAt: "2025-01-01T00:00:00Z");
+
+        var entries = new Dictionary<(string, string), int>
+        {
+            [("acct_1", "song_1")] = 100_000,
+        };
+
+        var guitarResult = Db.GetBulkBestValidScores("Solo_Guitar", entries);
+        Assert.Single(guitarResult);
+        Assert.Equal(90_000, guitarResult[("acct_1", "song_1")].Score);
+
+        var bassResult = Db.GetBulkBestValidScores("Solo_Bass", entries);
+        Assert.Single(bassResult);
+        Assert.Equal(70_000, bassResult[("acct_1", "song_1")].Score);
+    }
 }

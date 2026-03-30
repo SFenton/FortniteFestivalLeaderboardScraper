@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { IoChevronBack } from 'react-icons/io5';
 import {
   Colors, Font, Weight, Gap, MaxWidth, Layout, ZIndex, IconSize,
-  Display, Position, Align, BoxSizing, CssValue,
+  Display, Position, Align, Justify, BoxSizing, CssValue,
   padding, flexRow,
   TRANSITION_MS,
 } from '@festival/theme';
@@ -27,7 +27,7 @@ export default function BackLink({ fallback, animate = true }: { fallback: strin
   return (
     <div className="sa-top" style={s.wrapper}>
       <Link to={backTo} onClick={handleClick} style={s.backLink}>
-        <IoChevronBack size={IconSize.back} style={s.backIcon} />
+        <span style={s.iconSlot}><IoChevronBack size={IconSize.back} /></span>
         {t('common.back')}
       </Link>
     </div>
@@ -56,8 +56,15 @@ function useStyles(animate: boolean) {
       fontSize: Font.title,
       fontWeight: Weight.bold,
       lineHeight: 1,
-      marginLeft: Layout.backLinkNudge,
+      marginLeft: Layout.headerIconNudge,
     } as const,
-    backIcon: {} as const,
+    iconSlot: {
+      display: Display.inlineFlex,
+      alignItems: Align.center,
+      justifyContent: Justify.center,
+      width: Layout.headerIconSlot,
+      height: Layout.headerIconSlot,
+      flexShrink: 0,
+    } as const,
   }), [animate]);
 }

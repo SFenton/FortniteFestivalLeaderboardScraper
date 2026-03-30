@@ -90,6 +90,45 @@ public sealed class RankingsCalculator
             // Phase 1: SongStats (uses MAX of local count, previous, real population)
             db.ComputeSongStats(maxScoresForInstrument, populationForInstrument);
 
+            // Phase 1.5: Populate valid score overrides for over-threshold entries
+            // Finds entries whose current score exceeds 1.05× CHOpt max, then looks up
+            // the best valid historical score from ScoreHistory to use in rankings.
+            var overThreshold = db.GetOverThresholdEntries();
+            if (overThreshold.Count > 0)
+            {
+                var thresholds = new Dictionary<(string AccountId, string SongId), int>();
+                foreach (var (accountId, songId) in overThreshold)
+                {
+                    if (maxScoresForInstrument.TryGetValue(songId, out var raw) && raw.HasValue)
+                        thresholds[(accountId, songId)] = (int)(raw.Value * 1.05);
+                }
+
+                if (thresholds.Count > 0)
+                {
+                    var fallbacks = _metaDb.GetBulkBestValidScores(instrument, thresholds);
+                    var overrides = fallbacks.Select(kvp => (
+                        SongId: kvp.Key.SongId,
+                        AccountId: kvp.Key.AccountId,
+                        Score: kvp.Value.Score,
+                        Accuracy: kvp.Value.Accuracy,
+                        IsFullCombo: kvp.Value.IsFullCombo,
+                        Stars: kvp.Value.Stars
+                    )).ToList();
+                    db.PopulateValidScoreOverrides(overrides);
+                    if (overrides.Count > 0)
+                        _log.LogInformation("{Instrument}: {OverCount} over-threshold entries, {FallbackCount} valid fallbacks found.",
+                            instrument, overThreshold.Count, overrides.Count);
+                }
+                else
+                {
+                    db.PopulateValidScoreOverrides([]);
+                }
+            }
+            else
+            {
+                db.PopulateValidScoreOverrides([]);
+            }
+
             // Phase 2: AccountRankings
             var totalCharted = CountChartedSongs(festivalService, instrument);
             if (totalCharted == 0)

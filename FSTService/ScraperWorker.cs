@@ -510,7 +510,8 @@ public sealed class ScraperWorker : BackgroundService
             maxPages: opts.MaxPagesPerLeaderboard,
             sequential: opts.SequentialScrape,
             pageConcurrency: opts.PageConcurrency,
-            songConcurrency: opts.SongConcurrency);
+            songConcurrency: opts.SongConcurrency,
+            validEntryTarget: opts.ValidEntryTarget);
         sw.Stop();
 
         // Grand summary

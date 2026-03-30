@@ -6,10 +6,9 @@ import { InstrumentIcon } from '../../display/InstrumentIcons';
 import HamburgerButton from '../HamburgerButton';
 import BackLink from './BackLink';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
-import { IS_IOS } from '@festival/ui-utils';
 import {
   Colors, Font, Weight, Gap, Layout, MaxWidth, ZIndex, InstrumentSize, IconSize,
-  Display, Align, Position, WhiteSpace, BoxSizing, CssValue, CssProp,
+  Display, Align, Justify, Position, WhiteSpace, BoxSizing, CssValue, CssProp,
   flexRow, padding, transition, TRANSITION_MS,
 } from '@festival/theme';
 
@@ -50,12 +49,12 @@ export default function MobileHeader({
             /* v8 ignore stop */
             style={s.titleBack}
           >
-            <IoChevronBack size={InstrumentSize.sm} />
+            <span style={s.iconSlot}><IoChevronBack size={IconSize.back} /></span>
             <span>{navTitle}</span>
           </a>
         ) : (
           <>
-            {onOpenSidebar && <HamburgerButton onClick={onOpenSidebar} size={IconSize.nav} style={{ marginLeft: -5, marginTop: IS_IOS ? 0 : 2 }} />}
+            {onOpenSidebar && <HamburgerButton onClick={onOpenSidebar} size={IconSize.nav} style={{ marginLeft: Layout.headerIconNudge }} />}
             <span style={s.title}>{navTitle}</span>
           </>
         )}
@@ -94,7 +93,7 @@ function useStyles() {
       fontWeight: Weight.bold,
       color: Colors.textPrimary,
       whiteSpace: WhiteSpace.nowrap,
-      lineHeight: `${InstrumentSize.sm}px`,
+      lineHeight: 1,
     } as CSSProperties,
     titleBack: {
       display: Display.inlineFlex,
@@ -105,8 +104,16 @@ function useStyles() {
       color: Colors.textPrimary,
       textDecoration: CssValue.none,
       whiteSpace: WhiteSpace.nowrap,
-      marginLeft: -Gap.sm,
-      lineHeight: `${InstrumentSize.sm}px`,
+      marginLeft: Layout.headerIconNudge,
+      lineHeight: 1,
+    } as CSSProperties,
+    iconSlot: {
+      display: Display.inlineFlex,
+      alignItems: Align.center,
+      justifyContent: Justify.center,
+      width: Layout.headerIconSlot,
+      height: Layout.headerIconSlot,
+      flexShrink: 0,
     } as CSSProperties,
   }), []);
 }

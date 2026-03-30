@@ -1,9 +1,9 @@
 import { memo, useEffect, useMemo, type ReactNode, type CSSProperties } from 'react';
-import { IoChevronBack, IoChevronForward, IoPlayBack, IoPlayForward } from 'react-icons/io5';
+import { IoChevronBack, IoChevronForward } from 'react-icons/io5';
 import {
-  Colors, Gap, IconSize, LineHeight, MetadataSize, Opacity, Border, Cursor,
+  Colors, Gap, IconSize, LineHeight, MetadataSize, Opacity, Cursor,
   CssValue, CssProp, PointerEvents,
-  flexCenter, flexRow, border, transition, transitions, scale, FAST_FADE_MS,
+  frostedCard, flexCenter, flexRow, transition, transitions, scale, FAST_FADE_MS,
 } from '@festival/theme';
 
 /* ── Types ── */
@@ -73,7 +73,8 @@ function PaginatorInner({
     <div className={className} style={{ ...(className ? {} : s.container), ...style }}>
       {onSkipPrev && (
         <button className={buttonClassName} style={buttonClassName ? undefined : s.prevBtn} disabled={prevDisabled} onClick={onSkipPrev} aria-label="Skip to start">
-          <IoPlayBack size={IconSize.chevron} />
+          <IoChevronBack size={IconSize.chevron} style={s.doubleChevronLeft} />
+          <IoChevronBack size={IconSize.chevron} style={s.doubleChevronRight} />
         </button>
       )}
       {onPrev && (
@@ -89,7 +90,8 @@ function PaginatorInner({
       )}
       {onSkipNext && (
         <button className={buttonClassName} style={buttonClassName ? undefined : s.nextBtn} disabled={nextDisabled} onClick={onSkipNext} aria-label="Skip to end">
-          <IoPlayForward size={IconSize.chevron} />
+          <IoChevronForward size={IconSize.chevron} style={s.doubleChevronLeft} />
+          <IoChevronForward size={IconSize.chevron} style={s.doubleChevronRight} />
         </button>
       )}
     </div>
@@ -135,11 +137,10 @@ export default Paginator;
 function usePaginatorStyles(prevDisabled?: boolean, nextDisabled?: boolean) {
   return useMemo(() => {
     const arrowBtnBase: CSSProperties = {
+      ...frostedCard,
       width: IconSize.lg,
       height: IconSize.lg,
       borderRadius: CssValue.circle,
-      background: Colors.surfaceElevated,
-      border: border(Border.thin, Colors.borderPrimary),
       color: Colors.textSecondary,
       ...flexCenter,
       flexShrink: 0,
@@ -153,11 +154,14 @@ function usePaginatorStyles(prevDisabled?: boolean, nextDisabled?: boolean) {
       cursor: disabled ? Cursor.default : Cursor.pointer,
       pointerEvents: disabled ? PointerEvents.none : undefined,
     });
+    const doubleChevronOverlap = -6;
     return {
       container: { ...flexCenter, gap: Gap.md } as CSSProperties,
       prevBtn: withDisabled(prevDisabled),
       nextBtn: withDisabled(nextDisabled),
       center: { ...flexRow, gap: Gap.sm } as CSSProperties,
+      doubleChevronLeft: { marginRight: doubleChevronOverlap } as CSSProperties,
+      doubleChevronRight: { marginLeft: doubleChevronOverlap } as CSSProperties,
     };
   }, [prevDisabled, nextDisabled]);
 }

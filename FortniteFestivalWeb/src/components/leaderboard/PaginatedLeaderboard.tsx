@@ -1,10 +1,9 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useRef, useState, useMemo, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
-import { PaginationButton } from '../common/PaginationButton';
+import Paginator from '../common/Paginator';
 import ArcSpinner from '../common/ArcSpinner';
 import { staggerDelay } from '@festival/ui-utils';
 import { Gap, Layout, STAGGER_INTERVAL, FADE_DURATION, SPINNER_FADE_MS } from '@festival/theme';
@@ -98,7 +97,6 @@ export function PaginatedLeaderboard<T>({
   emptyMessage,
   staggerRushRef,
 }: PaginatedLeaderboardProps<T>) {
-  const { t } = useTranslation();
   const isWideDesktop = useIsWideDesktop();
   const wideOverride = isWideDesktop ? fixedFooterWide : undefined;
   const scrollContainerRef = useScrollContainer();
@@ -262,28 +260,20 @@ export function PaginatedLeaderboard<T>({
             <div style={{ ...(hasFab
               ? (hasPlayerFooter ? s.mobilePagination : s.mobilePaginationNoPlayer)
               : (hasPlayerFooter ? s.desktopPagination : s.desktopPaginationNoPlayer)), ...wideOverride }}>
-              <div
+              <Paginator
                 className={hasFab ? 'fab-player-footer' : ''}
                 style={isMobile ? s.paginationMobile : s.pagination}
+                onSkipPrev={() => onGoToPage(1)}
+                onPrev={() => onGoToPage(page - 1)}
+                onNext={() => onGoToPage(page + 1)}
+                onSkipNext={() => onGoToPage(totalPages)}
+                prevDisabled={page <= 1}
+                nextDisabled={page >= totalPages}
               >
-                <PaginationButton disabled={page <= 1} onClick={() => onGoToPage(1)}>
-                  {t('leaderboard.first')}
-                </PaginationButton>
-                <PaginationButton disabled={page <= 1} onClick={() => onGoToPage(page - 1)}>
-                  {t('leaderboard.prev')}
-                </PaginationButton>
-                <span style={s.pageInfo}>
-                  <span style={s.pageInfoBadge}>
-                    {page.toLocaleString()} / {totalPages.toLocaleString()}
-                  </span>
+                <span style={s.pageInfoBadge}>
+                  {page.toLocaleString()} / {totalPages.toLocaleString()}
                 </span>
-                <PaginationButton disabled={page >= totalPages} onClick={() => onGoToPage(page + 1)}>
-                  {t('leaderboard.next')}
-                </PaginationButton>
-                <PaginationButton disabled={page >= totalPages} onClick={() => onGoToPage(totalPages)}>
-                  {t('leaderboard.last')}
-                </PaginationButton>
-              </div>
+              </Paginator>
             </div>
           )}
           {hasPlayerFooter && renderPlayerFooter && (
