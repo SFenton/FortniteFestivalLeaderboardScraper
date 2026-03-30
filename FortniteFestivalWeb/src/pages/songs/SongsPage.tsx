@@ -161,18 +161,71 @@ export default function SongsPage() {
   const { isShopHighlighted, isLeavingTomorrow, isShopVisible } = useShopState();
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!playerData, shopHighlightEnabled: isShopVisible && !appSettings.disableShopHighlighting }), [playerData, isShopVisible, appSettings.disableShopHighlighting]);
 
-  // Build lookup: songId â†’ PlayerScore for the selected instrument
+  const { isScoreValid, enabled: scoreFilterEnabled } = useScoreFilter();
+
+  // Apply invalid-score substitution/dropping (same logic as filterPlayerScores but
+  // also builds an invalidity map for the UI indicator, and exempts instruments where
+  // the overThreshold filter is active so the user can inspect the raw values).
+  /* v8 ignore start — effectiveScores: invalid-score substitution */
+  type InvalidReason = 'fallback' | 'no-fallback' | 'over-threshold';
+  const { effectiveScores, invalidScoreMap } = useMemo(() => {
+    const empty = { effectiveScores: [] as PlayerScore[], invalidScoreMap: new Map<string, Map<InstrumentKey, InvalidReason>>() };
+    if (!playerData) return empty;
+    if (!scoreFilterEnabled) return { effectiveScores: playerData.scores, invalidScoreMap: empty.invalidScoreMap };
+
+    const overThreshold = settings.filters.overThreshold ?? {};
+    const scores: PlayerScore[] = [];
+    const invalids = new Map<string, Map<InstrumentKey, InvalidReason>>();
+
+    for (const s of playerData.scores) {
+      const inst = s.instrument as InstrumentKey;
+      if (!isScoreValid(s.songId, inst, s.score)) {
+        // When overThreshold filter is active, pass through raw score but mark as over-threshold
+        if (overThreshold[inst]) {
+          scores.push(s);
+          let byInst = invalids.get(s.songId);
+          if (!byInst) { byInst = new Map(); invalids.set(s.songId, byInst); }
+          byInst.set(inst, 'over-threshold');
+        } else if (s.validScore != null) {
+          // Substitute with fallback values
+          scores.push({
+            ...s,
+            score: s.validScore,
+            rank: s.validRank ?? 0,
+            accuracy: s.validAccuracy ?? s.accuracy,
+            isFullCombo: s.validIsFullCombo ?? s.isFullCombo,
+            stars: s.validStars ?? s.stars,
+            totalEntries: s.validTotalEntries ?? s.totalEntries,
+          });
+          let byInst = invalids.get(s.songId);
+          if (!byInst) { byInst = new Map(); invalids.set(s.songId, byInst); }
+          byInst.set(inst, 'fallback');
+        } else {
+          // Invalid with no fallback — drop from effective scores
+          let byInst = invalids.get(s.songId);
+          if (!byInst) { byInst = new Map(); invalids.set(s.songId, byInst); }
+          byInst.set(inst, 'no-fallback');
+        }
+      } else {
+        scores.push(s);
+      }
+    }
+    return { effectiveScores: scores, invalidScoreMap: invalids };
+  }, [playerData, scoreFilterEnabled, isScoreValid, settings.filters.overThreshold]);
+  /* v8 ignore stop */
+
+  // Build lookup: songId → PlayerScore for the selected instrument
   /* v8 ignore start — scoreMap: instrument filter loop */
   const scoreMap = useMemo(() => {
     if (!playerData) return new Map<string, PlayerScore>();
     const map = new Map<string, PlayerScore>();
-    for (const s of playerData.scores) {
+    for (const s of effectiveScores) {
       if (s.instrument === instrument) {
         map.set(s.songId, s);
       }
     }
     return map;
-  }, [playerData, instrument]);
+  }, [playerData, effectiveScores, instrument]);
   /* v8 ignore stop */
 
   /* v8 ignore start — allScoreMap: multi-instrument lookup */
@@ -180,7 +233,7 @@ export default function SongsPage() {
   const allScoreMap = useMemo(() => {
     if (!playerData) return new Map<string, Map<InstrumentKey, PlayerScore>>();
     const map = new Map<string, Map<InstrumentKey, PlayerScore>>();
-    for (const sc of playerData.scores) {
+    for (const sc of effectiveScores) {
       let byInst = map.get(sc.songId);
       if (!byInst) {
         byInst = new Map();
@@ -189,10 +242,8 @@ export default function SongsPage() {
       byInst.set(sc.instrument as InstrumentKey, sc);
     }
     return map;
-  }, [playerData]);
+  }, [playerData, effectiveScores]);
   /* v8 ignore stop */
-
-  const { isScoreValid, enabled: scoreFilterEnabled } = useScoreFilter();
 
   const filtered = useFilteredSongs({
     songs,
@@ -494,6 +545,7 @@ export default function SongsPage() {
                       /* v8 ignore stop */
                       shopHighlight={isShopHighlighted(song.songId)}
                       shopHighlightRed={isLeavingTomorrow(song.songId)}
+                      invalidInstruments={invalidScoreMap.get(song.songId)}
                     />
                   </div>
                 );

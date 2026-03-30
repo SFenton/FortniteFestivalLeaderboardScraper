@@ -3,6 +3,7 @@
  * Song row components for the songs list, extracted from SongsPage.
  */
 import { memo, useMemo, useRef, useCallback, Fragment, type CSSProperties } from 'react';
+import InvalidScoreIcon from './InvalidScoreIcon';
 import { Link, useLocation } from 'react-router-dom';
 import { IoBagHandle, IoChevronForward } from 'react-icons/io5';
 import { formatPercentileBucket } from '@festival/core';
@@ -134,6 +135,7 @@ export const SongRow = memo(function SongRow({ song,
   shopHighlight,
   shopHighlightRed,
   externalHref,
+  invalidInstruments,
 }: {
   song: Song;
   score?: PlayerScore;
@@ -151,6 +153,8 @@ export const SongRow = memo(function SongRow({ song,
   shopHighlightRed?: boolean;
   /** When set, the row links to this external URL in a new tab instead of routing internally. */
   externalHref?: string;
+  /** Map of instrument → hasFallback for invalid scores on this song. */
+  invalidInstruments?: Map<InstrumentKey, 'fallback' | 'no-fallback' | 'over-threshold'>;
 }) {
   const s = useStyles();
   const instrumentChips = useMemo(() => {
@@ -221,6 +225,15 @@ export const SongRow = memo(function SongRow({ song,
     </div>
   ) : null;
 
+  // Show icon only when the relevant instrument(s) are invalid:
+  // - Instrument-filtered view: only if the selected instrument is in the invalid map
+  // - All-instruments (chips) view: if any instrument is invalid
+  const hasInvalid = invalidInstruments != null && invalidInstruments.size > 0
+    && (instrumentFilter == null || invalidInstruments.has(instrumentFilter));
+  const invalidIcon = hasInvalid ? (
+    <InvalidScoreIcon songTitle={song.title} invalidInstruments={invalidInstruments!} instrumentFilter={instrumentFilter} />
+  ) : null;
+
   const chipRow = instrumentChips && instrumentChips.length > 0 ? (
     <div style={s.instrumentStatusRow}>
       {instrumentChips.map(c => (
@@ -253,7 +266,7 @@ export const SongRow = memo(function SongRow({ song,
       <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={mergedStyle} onAnimationEnd={handleAnimEnd}>
         <div style={s.mobileTopRow}>
           {songInfo}
-          {scoreEntry && <div style={s.detailStrip}>{scoreEntry.el}</div>}
+          <div style={s.detailStrip}>{scoreEntry && scoreEntry.el}{invalidIcon}</div>
         </div>
         {bottomEntries.length > 0 && <MetadataBottomRow entries={bottomEntries} />}
       </Link>
@@ -284,12 +297,15 @@ export const SongRow = memo(function SongRow({ song,
         <div style={s.mobileTopRow}>
           {songInfo}
         </div>
-        <div style={{ ...s.instrumentStatusRow, justifyContent: Justify.center }}>
-          {instrumentChips!.map(c => (
-            <div key={c.key} style={{ ...s.instrumentStatusChip, backgroundColor: c.fill, borderColor: c.stroke }}>
-              <InstrumentIcon instrument={c.key} size={24} />
-            </div>
-          ))}
+        <div style={s.mobileChipRowWrapper}>
+          <div style={{ ...s.instrumentStatusRow, justifyContent: Justify.center }}>
+            {instrumentChips!.map(c => (
+              <div key={c.key} style={{ ...s.instrumentStatusChip, backgroundColor: c.fill, borderColor: c.stroke }}>
+                <InstrumentIcon instrument={c.key} size={24} />
+              </div>
+            ))}
+          </div>
+          {invalidIcon && <div style={s.mobileChipInvalidIcon}>{invalidIcon}</div>}
         </div>
       </Link>
       )
@@ -335,11 +351,14 @@ export const SongRow = memo(function SongRow({ song,
     <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={desktopStyle} onAnimationEnd={handleAnimEnd}>
       {songInfo}
       {chipRow}
+      {chipRow && invalidIcon}
       {entries.length > 0 && (
         <div style={s.scoreMeta}>
           {entries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}
+          {invalidIcon}
         </div>
       )}
+      {!chipRow && !entries.length && invalidIcon}
     </Link>
     )
   );
@@ -358,6 +377,8 @@ function useStyles() {
     rowTitle: { fontSize: Font.md, fontWeight: Weight.semibold, ...truncate } as CSSProperties,
     rowArtist: { fontSize: Font.sm, color: Colors.textSubtle, ...truncate } as CSSProperties,
     scoreMeta: { ...flexRow, gap: Gap.xl, flexShrink: 0 } as CSSProperties,
+    mobileChipRowWrapper: { position: Position.relative, display: Display.flex, alignItems: Align.center, justifyContent: Justify.center } as CSSProperties,
+    mobileChipInvalidIcon: { position: Position.absolute, right: 0, top: '50%', transform: 'translateY(-50%)' } as CSSProperties,
     externalIndicator: { ...flexRow, gap: Gap.xs, flexShrink: 0, marginLeft: CssValue.auto, color: Colors.textSubtle } as CSSProperties,
   }), []);
 }

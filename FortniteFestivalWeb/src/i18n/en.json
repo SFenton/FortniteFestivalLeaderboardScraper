@@ -13,6 +13,7 @@
     "unknownArtist": "Unknown Artist",
     "yes": "Yes",
     "no": "No",
+    "ok": "OK",
     "failedToLoad": "Failed to load data",
     "searchPlayer": "Search player…",
     "selectPlayerProfile": "Select Player Profile",
@@ -66,7 +67,17 @@
     "noResultsSubtitle": "Try adjusting your search or filters.",
     "count": "{{filtered}} of {{total}} songs",
     "sort": "Sort",
-    "filter": "Filter"
+    "filter": "Filter",
+    "invalidScoreTitle": "Filtered Score",
+    "invalidScoreHeader": "{{song}} has an invalid, filtered-out score on {{instruments}}.",
+    "invalidScoreHasFallback": "We are showing the next valid score here.",
+    "invalidScoreHasFallbackChip": "The {{instrument}} chip reflects the next valid score.",
+    "invalidScoreNoFallback": "Because there is no valid other score for {{instrument}}, the {{instrument}} icon chip is red here.",
+    "invalidScoreFooter": "To see the absolute highest score you've achieved, please turn off the {{toggle}} toggle in App Settings.",
+    "invalidScoreOverThreshold": "{{song}} has a score on {{instruments}} that exceeds the CHOpt maximum. This is the highest unfiltered invalid score.",
+    "invalidScoreOverThresholdDetail": "The {{instrument}} score shown exceeds the CHOpt maximum.",
+    "invalidScoreAriaLabel": "Invalid score indicator",
+    "goToSettings": "Settings"
   },
   "songDetail": {
     "leaderboard": "Leaderboard",
@@ -612,55 +623,75 @@
       },
       "metricInfo": {
         "adjusted": {
-          "what": {
-            "title": "What Is Adjusted Skill?",
-            "description": "How your average percentile rank across all songs is computed."
+          "how": {
+            "title": "How Adjusted Skill Works",
+            "description": "Your rank on each song becomes a percentile. Your rating is the average across all songs — lower is better."
           },
-          "formula": {
-            "title": "Bayesian Credibility",
-            "description": "A statistical adjustment prevents small sample sizes from dominating the rankings."
+          "experience": {
+            "title": "Why Playing More Songs Helps",
+            "description": "With few songs, you're unproven. Play more to let your true skill shine through."
+          },
+          "hood": {
+            "title": "Under the Hood",
+            "description": "The formula blends your real average with a 50% starting point. More songs = more weight on your actual performance."
           },
           "experimental": {
-            "title": "Why Experimental?",
-            "description": "The credibility threshold is a tuning parameter, and all songs are weighted equally regardless of difficulty."
+            "title": "Why It's Experimental",
+            "description": "All songs count equally regardless of difficulty, and the experience threshold is a tuning choice."
           }
         },
         "weighted": {
-          "what": {
-            "title": "What Is Weighted Rating?",
-            "description": "Like Adjusted Skill, but songs with more players count more heavily."
+          "how": {
+            "title": "How Weighted Rating Works",
+            "description": "Like Adjusted Skill, but songs with more players carry more weight."
           },
-          "formula": {
-            "title": "Popularity Weighting",
-            "description": "Each song's contribution is scaled by the logarithm of its entry count."
+          "experience": {
+            "title": "Why Playing More Songs Helps",
+            "description": "Same experience boost — new players start near 50% and converge toward their true rating."
+          },
+          "hood": {
+            "title": "Under the Hood",
+            "description": "Each song is weighted by its player count before averaging. Then the same experience adjustment applies."
           },
           "experimental": {
-            "title": "Why Experimental?",
-            "description": "Weighting by popularity is subjective — more players doesn't necessarily mean more difficulty."
+            "title": "Why It's Experimental",
+            "description": "More players doesn't mean harder. The logarithmic weighting is a subjective choice."
           }
         },
         "fcrate": {
-          "what": {
-            "title": "What Is FC Rate?",
-            "description": "The percentage of your played songs where you achieved a Full Combo."
+          "how": {
+            "title": "How FC Rate Works",
+            "description": "The percentage of songs you Full Combo'd — hitting every note without breaking your streak."
+          },
+          "experience": {
+            "title": "Why Playing More Songs Helps",
+            "description": "A perfect record on 2 songs isn't as trustworthy as consistent FCs across 100."
+          },
+          "hood": {
+            "title": "Under the Hood",
+            "description": "Same experience formula — your real FC rate blended with the 50% starting point."
           },
           "experimental": {
-            "title": "Why Experimental?",
-            "description": "Doesn't account for song difficulty or how close you were to a Full Combo."
+            "title": "Why It's Experimental",
+            "description": "Easy FCs count the same as hard ones, and near-misses aren't distinguished from total failures."
           }
         },
         "maxscore": {
-          "what": {
-            "title": "What Is Max Score %?",
-            "description": "How close your scores are to the computed maximum for each song."
+          "how": {
+            "title": "How Max Score % Works",
+            "description": "For each song, how close your score is to the computed theoretical maximum."
           },
-          "formula": {
-            "title": "CHOpt Maximum + Bayesian",
-            "description": "Scores are compared to the theoretical maximum, then adjusted for credibility."
+          "experience": {
+            "title": "Why Playing More Songs Helps",
+            "description": "A few near-perfect scores aren't as proven as consistent accuracy across many songs."
+          },
+          "hood": {
+            "title": "Under the Hood",
+            "description": "Scores are capped at 105% per song to limit the impact of inaccurate maximums."
           },
           "experimental": {
-            "title": "Why Experimental?",
-            "description": "CHOpt's computed maximum can be inaccurate, and new songs may lack data."
+            "title": "Why It's Experimental",
+            "description": "The computed maximum isn't always perfect, and new songs may temporarily lack data."
           }
         }
       }
