@@ -1,6 +1,6 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { useMemo, type CSSProperties } from 'react';
-import { STAGGER_INTERVAL, frostedCard, Radius, Font, Gap, Display, Align, CssValue, PointerEvents, Layout, Colors, Border, flexColumn, padding, border } from '@festival/theme';
+import { STAGGER_INTERVAL, frostedCard, Radius, Font, Gap, Display, Align, CssValue, PointerEvents, Layout, Colors, Border, padding, border } from '@festival/theme';
 import { useSlideHeight } from '../../../../../firstRun/SlideHeightContext';
 import { LeaderboardEntry } from '../../../global/components/LeaderboardEntry';
 import FadeIn from '../../../../../components/page/FadeIn';

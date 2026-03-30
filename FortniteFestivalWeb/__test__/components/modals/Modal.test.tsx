@@ -47,7 +47,7 @@ function renderModal(overrides: Partial<{
 
 describe('Modal', () => {
   it('fires handleContentScroll on content scroll', async () => {
-    const { container } = renderModal();
+    renderModal();
     // Flush mount/animIn effects
     await act(async () => {});
     // Content scroll area is the div with overflow-y: auto inside the dialog

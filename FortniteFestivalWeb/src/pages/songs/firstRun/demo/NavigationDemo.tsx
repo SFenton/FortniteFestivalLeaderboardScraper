@@ -9,8 +9,8 @@ import { IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings } from 'react-icon
 import { TabKey } from '@festival/core';
 import {
   Colors, Font, Weight, Gap, Layout, ZIndex, Radius, Border,
-  Display, Align, Justify, Position, BoxSizing, Cursor, CssValue, CssProp,
-  flexRow, flexColumn, flexCenter, purpleGlass, transition, padding, border,
+  Display, Align, Justify, Position, Cursor, CssValue, CssProp,
+  flexColumn, flexCenter, transition, padding, border,
   Size, TRANSITION_MS, NAV_TRANSITION_MS,
 } from '@festival/theme';
 import { bottomNavCss } from '../../../../components/shell/mobile/BottomNav';

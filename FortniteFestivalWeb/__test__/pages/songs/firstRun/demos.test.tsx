@@ -160,8 +160,7 @@ describe('SongRowDemo', () => {
     mockIsMobile = true;
     const { container } = wrap(<SongRowDemo />);
     // Mobile mode wraps content in mobileTopRow divs (inline styles after CSS migration)
-    const mobileRows = [...container.querySelectorAll('div[style]')].filter(
-      el => el.style.gap === '12px' && el.style.alignItems === 'center' && !el.style.borderRadius
+    const mobileRows = [...container.querySelectorAll('div[style]') as NodeListOf<HTMLElement>].filter( el => el.style.gap === '12px' && el.style.alignItems === 'center' && !el.style.borderRadius
     );
     expect(mobileRows.length).toBe(3);
   });
@@ -169,8 +168,7 @@ describe('SongRowDemo', () => {
   it('renders desktop layout when isMobile is false', () => {
     mockIsMobile = false;
     const { container } = wrap(<SongRowDemo />);
-    const mobileRows = [...container.querySelectorAll('div[style]')].filter(
-      el => el.style.gap === '12px' && el.style.alignItems === 'center' && !el.style.borderRadius
+    const mobileRows = [...container.querySelectorAll('div[style]') as NodeListOf<HTMLElement>].filter( el => el.style.gap === '12px' && el.style.alignItems === 'center' && !el.style.borderRadius
     );
     expect(mobileRows.length).toBe(0);
   });
@@ -306,8 +304,7 @@ describe('SongIconsDemo', () => {
   it('renders instrument chips', () => {
     const { container } = wrap(<SongIconsDemo />);
     // InstrumentChip rows use instrumentStatusRow style (gap: 4px)
-    const chips = [...container.querySelectorAll('div[style]')].filter(
-      el => el.style.gap === '4px' && el.style.alignItems === 'center'
+    const chips = [...container.querySelectorAll('div[style]') as NodeListOf<HTMLElement>].filter( el => el.style.gap === '4px' && el.style.alignItems === 'center'
     );
     expect(chips.length).toBeGreaterThanOrEqual(1);
   });
@@ -315,8 +312,7 @@ describe('SongIconsDemo', () => {
   it('renders mobile layout when isMobileChrome is true', () => {
     mockIsMobileChrome = true;
     const { container } = wrap(<SongIconsDemo />);
-    const mobileRows = [...container.querySelectorAll('div[style]')].filter(
-      el => el.style.gap === '12px' && el.style.alignItems === 'center' && !el.style.borderRadius
+    const mobileRows = [...container.querySelectorAll('div[style]') as NodeListOf<HTMLElement>].filter( el => el.style.gap === '12px' && el.style.alignItems === 'center' && !el.style.borderRadius
     );
     expect(mobileRows.length).toBe(3);
   });
@@ -324,8 +320,7 @@ describe('SongIconsDemo', () => {
   it('renders desktop layout when isMobileChrome is false', () => {
     mockIsMobileChrome = false;
     const { container } = wrap(<SongIconsDemo />);
-    const mobileRows = [...container.querySelectorAll('div[style]')].filter(
-      el => el.style.gap === '12px' && el.style.alignItems === 'center' && !el.style.borderRadius
+    const mobileRows = [...container.querySelectorAll('div[style]') as NodeListOf<HTMLElement>].filter( el => el.style.gap === '12px' && el.style.alignItems === 'center' && !el.style.borderRadius
     );
     expect(mobileRows.length).toBe(0);
   });
@@ -456,8 +451,7 @@ describe('MetadataDemo', () => {
   it('renders mobile layout when isMobile', () => {
     mockIsMobile = true;
     const { container } = wrap(<MetadataDemo />);
-    const mobileRows = [...container.querySelectorAll('div[style]')].filter(
-      el => el.style.gap === '12px' && el.style.alignItems === 'center' && !el.style.borderRadius && !el.style.flexShrink
+    const mobileRows = [...container.querySelectorAll('div[style]') as NodeListOf<HTMLElement>].filter( el => el.style.gap === '12px' && el.style.alignItems === 'center' && !el.style.borderRadius && !el.style.flexShrink
     );
     expect(mobileRows.length).toBe(3);
   });
@@ -466,8 +460,7 @@ describe('MetadataDemo', () => {
     mockIsMobile = false;
     const { container } = wrap(<MetadataDemo />);
     // scoreMeta style: gap 12px + flex-shrink: 0
-    const metaStrips = [...container.querySelectorAll('div[style]')].filter(
-      el => el.style.gap === '12px' && el.style.flexShrink === '0'
+    const metaStrips = [...container.querySelectorAll('div[style]') as NodeListOf<HTMLElement>].filter( el => el.style.gap === '12px' && el.style.flexShrink === '0'
     );
     expect(metaStrips.length).toBeGreaterThanOrEqual(1);
   });
@@ -488,8 +481,7 @@ describe('MetadataDemo', () => {
     mockIsMobile = true;
     const { container } = wrap(<MetadataDemo />);
     // Mobile mode shows metadataWrap elements (flex-wrap: wrap)
-    const metaWraps = [...container.querySelectorAll('div[style]')].filter(
-      el => el.style.flexWrap === 'wrap'
+    const metaWraps = [...container.querySelectorAll('div[style]') as NodeListOf<HTMLElement>].filter( el => el.style.flexWrap === 'wrap'
     );
     expect(metaWraps.length).toBeGreaterThanOrEqual(1);
   });

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useModalDraft } from '../../../src/hooks/ui/useModalDraft';
 
@@ -62,7 +62,7 @@ describe('useModalDraft', () => {
     const onCancel = vi.fn();
     const isEqual = (a: { x: number }, b: { x: number }) => a.x === b.x;
     const { result } = renderHook(() =>
-      useModalDraft({ x: 1, extra: 'a' }, { x: 1, extra: 'b' } as any, onCancel, isEqual),
+      useModalDraft({ x: 1, extra: 'a' } as any, { x: 1, extra: 'b' } as any, onCancel, isEqual),
     );
     // Custom isEqual only checks .x, so no changes detected
     expect(result.current.hasChanges).toBe(false);

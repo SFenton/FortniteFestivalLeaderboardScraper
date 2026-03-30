@@ -18,7 +18,7 @@ describe('BackgroundImage', () => {
   it('applies dimOpacity style when provided', () => {
     const { container } = render(<BackgroundImage src="https://example.com/img.jpg" dimOpacity={0.5} />);
     const divs = container.querySelectorAll('div');
-    const dim = divs[1]; // second div is dim
+    const dim = divs[1]!; // second div is dim
     expect(dim.style.opacity).toBe('0.5');
   });
 
@@ -32,7 +32,7 @@ describe('BackgroundImage', () => {
 
   it('starts with opacity 0 on the background layer', () => {
     const { container } = render(<BackgroundImage src="https://example.com/img.jpg" />);
-    const bg = container.querySelectorAll('div')[0];
+    const bg = container.querySelectorAll('div')[0]!;
     expect(bg.style.opacity).toBe('0');
   });
 
@@ -40,7 +40,7 @@ describe('BackgroundImage', () => {
     const { container } = render(<BackgroundImage src="https://example.com/img.jpg" />);
     const img = container.querySelector('img');
     fireEvent.load(img!);
-    const bg = container.querySelectorAll('div')[0];
+    const bg = container.querySelectorAll('div')[0]!;
     expect(bg.style.opacity).toBe('0.9');
   });
 });

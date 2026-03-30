@@ -113,7 +113,7 @@ function renderSongDetail(route = '/songs/song-1', accountId?: string) {
 
 describe('SongDetailPage', () => {
   it('renders without crashing', async () => {
-    const { container } = renderSongDetail();
+    renderSongDetail();
     await waitFor(() => {
       expect(document.body.innerHTML).toBeTruthy();
     });
@@ -127,7 +127,7 @@ describe('SongDetailPage', () => {
   });
 
   it('renders song artist', async () => {
-    const { container } = renderSongDetail();
+    renderSongDetail();
     await waitFor(() => {
       expect(document.body.textContent).toContain('Test Song');
     });
@@ -135,7 +135,7 @@ describe('SongDetailPage', () => {
   });
 
   it('renders instrument cards after loading', async () => {
-    const { container } = renderSongDetail();
+    renderSongDetail();
     await waitFor(() => {
       expect(document.body.textContent).toContain('Lead');
     });
@@ -180,7 +180,7 @@ describe('SongDetailPage', () => {
   });
 
   it('renders leaderboard entries in instrument cards', async () => {
-    const { container } = renderSongDetail();
+    renderSongDetail();
     await waitFor(() => {
       expect(document.body.textContent).toContain('Test Song');
     });
@@ -190,7 +190,7 @@ describe('SongDetailPage', () => {
   });
 
   it('renders score values from leaderboard entries', async () => {
-    const { container } = renderSongDetail();
+    renderSongDetail();
     await waitFor(() => {
       expect(document.body.textContent).toContain('145,000');
     });
@@ -239,7 +239,7 @@ describe('SongDetailPage', () => {
 
   it('renders with tracked player showing score history chart', async () => {
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player-1', displayName: 'TestPlayer' }));
-    const { container } = renderSongDetail('/songs/song-1', 'test-player-1');
+    renderSongDetail('/songs/song-1', 'test-player-1');
     await waitFor(() => {
       expect(document.body.textContent).toContain('Test Song');
     });
@@ -252,7 +252,7 @@ describe('SongDetailPage', () => {
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player-1', displayName: 'TestPlayer' }));
     mockApi.getPlayer.mockRejectedValue(new Error('Player fetch fail'));
     mockApi.getPlayerHistory.mockRejectedValue(new Error('History fetch fail'));
-    const { container } = renderSongDetail('/songs/song-1', 'test-player-1');
+    renderSongDetail('/songs/song-1', 'test-player-1');
     await waitFor(() => {
       expect(document.body.textContent).toContain('Test Song');
     });
@@ -261,7 +261,7 @@ describe('SongDetailPage', () => {
   it('renders without player when no player tracked', async () => {
     localStorage.removeItem('fst:trackedPlayer');
     mockApi.getPlayer.mockResolvedValue({ accountId: '', displayName: '', totalScores: 0, scores: [] });
-    const { container } = renderSongDetail('/songs/song-1');
+    renderSongDetail('/songs/song-1');
     await waitFor(() => {
       expect(document.body.textContent).toContain('Test Song');
     });
@@ -283,7 +283,7 @@ describe('SongDetailPage', () => {
   });
 
   it('calculates global score width from leaderboard entries', async () => {
-    const { container } = renderSongDetail();
+    renderSongDetail();
     await waitFor(() => {
       expect(document.body.textContent).toContain('145,000');
     });
@@ -295,14 +295,14 @@ describe('SongDetailPage', () => {
       filterInvalidScoresLeeway: 1,
     }));
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player-1', displayName: 'TestPlayer' }));
-    const { container } = renderSongDetail('/songs/song-1', 'test-player-1');
+    renderSongDetail('/songs/song-1', 'test-player-1');
     await waitFor(() => {
       expect(document.body.textContent).toContain('Test Song');
     });
   });
 
   it('renders album art background via PageBackground', async () => {
-    const { container } = renderSongDetail();
+    renderSongDetail();
     await waitFor(() => {
       expect(document.body.textContent).toContain('Test Song');
     });
@@ -311,7 +311,7 @@ describe('SongDetailPage', () => {
 
   it('handles missing song gracefully when songs list doesn\'t contain songId', async () => {
     mockApi.getSongs.mockResolvedValue({ songs: [], count: 0, currentSeason: 5 });
-    const { container } = renderSongDetail('/songs/nonexistent');
+    renderSongDetail('/songs/nonexistent');
     await waitFor(() => {
       expect(document.body.innerHTML).toBeTruthy();
     });
@@ -325,14 +325,14 @@ describe('SongDetailPage', () => {
         { songId: 'song-1', instrument: 'Solo_Bass', newScore: 100000, newRank: 5, accuracy: 85, changedAt: '2025-01-14T10:00:00Z' },
       ],
     });
-    const { container } = renderSongDetail('/songs/song-1', 'test-player-1');
+    renderSongDetail('/songs/song-1', 'test-player-1');
     await waitFor(() => {
       expect(document.body.textContent).toContain('Test Song');
     });
   });
 
   it('renders with instrument search param', async () => {
-    const { container } = render(
+    render(
       <TestProviders route="/songs/song-1?instrument=Solo_Guitar">
         <Routes>
           <Route path="/songs/:songId" element={<SongDetailPage />} />
@@ -345,7 +345,7 @@ describe('SongDetailPage', () => {
   });
 
   it('handles resize events', async () => {
-    const { container } = renderSongDetail();
+    renderSongDetail();
     await waitFor(() => {
       expect(document.body.textContent).toContain('Test Song');
     });
@@ -357,7 +357,7 @@ describe('SongDetailPage', () => {
 
   it('renders chart when player has score history', async () => {
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player-1', displayName: 'TestPlayer' }));
-    const { container } = renderSongDetail('/songs/song-1', 'test-player-1');
+    renderSongDetail('/songs/song-1', 'test-player-1');
     await waitFor(() => {
       expect(document.body.textContent).toContain('Test Song');
     });
@@ -389,7 +389,7 @@ describe('SongDetailPage', () => {
   });
 
   it('computes globalScoreWidth from entries', async () => {
-    const { container } = renderSongDetail();
+    renderSongDetail();
     await waitFor(() => {
       expect(document.body.textContent).toContain('Lead');
     });
@@ -457,7 +457,7 @@ describe('SongDetailPage — extra coverage', () => {
   /* ── Song not found ── */
   it('handles non-existent songId gracefully', async () => {
     mockApi.getAllLeaderboards.mockResolvedValue({ songId: 'xyz', instruments: [] });
-    const { container } = renderSongDetail('/songs/xyz', 'test-player-1');
+    renderSongDetail('/songs/xyz', 'test-player-1');
     await waitFor(() => {
       expect(document.body.innerHTML.length).toBeGreaterThan(0);
     });

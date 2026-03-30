@@ -139,7 +139,6 @@ export default function FullRankingsPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const staggerRushRef = useRef<(() => void) | undefined>(undefined);
 
-  const playerInPage = !!(player && entries.some(e => e.accountId === player.accountId));
   const hasPlayerFooter = !!playerRanking;
 
   // Compute rank column width from the longest rank across page entries (footer computes its own)

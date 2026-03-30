@@ -2,7 +2,7 @@
 import { useMemo, type CSSProperties } from 'react';
 import {
   Gap, Colors, Font, Weight, Radius, Layout, Position, ZIndex,
-  Display, Align, Justify, Cursor, CssValue, WhiteSpace, InstrumentSize,
+  Display, Align, Justify, Cursor, WhiteSpace, InstrumentSize,
   flexColumn, flexCenter, flexRow, padding, transition, frostedCard,
   CssProp, FAST_FADE_MS, NAV_TRANSITION_MS,
 } from '@festival/theme';

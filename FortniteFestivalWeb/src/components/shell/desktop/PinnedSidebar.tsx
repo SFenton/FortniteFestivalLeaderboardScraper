@@ -10,9 +10,9 @@ import MarqueeText from '../../common/MarqueeText';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import {
   Colors, Font, Weight, Gap, Radius, Border, Layout, ZIndex,
-  Display, Align, Justify, Position, Cursor, BoxSizing, CssValue, CssProp,
-  flexColumn, flexRow, flexCenter, purpleGlass, btnDanger, transition, transitions, padding, border, margin,
-  Overflow, FAST_FADE_MS, LINK_TRANSITION_MS, PointerEvents,
+  Display, Align, Justify, Cursor, BoxSizing, CssValue, CssProp,
+  flexColumn, flexRow, purpleGlass, btnDanger, transition, transitions, padding, border,
+  Overflow, LINK_TRANSITION_MS, PointerEvents,
 } from '@festival/theme';
 
 interface PinnedSidebarProps {

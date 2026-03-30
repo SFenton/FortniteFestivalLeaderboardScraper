@@ -15,7 +15,7 @@ describe('LeaderboardEntry', () => {
   });
 
   it('applies bold styling for tracked player', () => {
-    const { container } = render(<W><LeaderboardEntry rank={1} displayName="Me" score={100000} isPlayer /></W>);
+    render(<W><LeaderboardEntry rank={1} displayName="Me" score={100000} isPlayer /></W>);
     const nameEl = screen.getByText('Me');
     expect(nameEl.style.fontWeight).toBe('700');
   });
@@ -73,20 +73,20 @@ describe('LeaderboardEntry', () => {
   });
 
   it('renders label and hides rank column when only label is given', () => {
-    const { container } = render(<W><LeaderboardEntry label="Jan 15" displayName="P1" score={50000} /></W>);
+    render(<W><LeaderboardEntry label="Jan 15" displayName="P1" score={50000} /></W>);
     expect(screen.queryByText(/#\d/)).toBeFalsy();
     expect(screen.getByText('Jan 15')).toBeTruthy();
   });
 
   it('shows dash for stars=0 with showStars and fixed width', () => {
-    const { container } = render(<W><LeaderboardEntry rank={1} displayName="P1" score={100000} showStars stars={0} /></W>);
+    render(<W><LeaderboardEntry rank={1} displayName="P1" score={100000} showStars stars={0} /></W>);
     expect(screen.getByText('\u2014')).toBeTruthy();
     const starsCol = screen.getByText('\u2014').closest('span')!;
     expect(starsCol.style.width).toBe('132px');
   });
 
   it('shows dash for stars=null with showStars and fixed width', () => {
-    const { container } = render(<W><LeaderboardEntry rank={1} displayName="P1" score={100000} showStars stars={null} /></W>);
+    render(<W><LeaderboardEntry rank={1} displayName="P1" score={100000} showStars stars={null} /></W>);
     expect(screen.getByText('\u2014')).toBeTruthy();
     const starsCol = screen.getByText('\u2014').closest('span')!;
     expect(starsCol.style.width).toBe('132px');
@@ -111,7 +111,7 @@ describe('LeaderboardEntry', () => {
   });
 
   it('shows difficulty pill when showDifficulty is true and difficulty is provided', () => {
-    const { container } = render(<W><LeaderboardEntry rank={1} displayName="P1" score={100000} showDifficulty difficulty={2} /></W>);
+    render(<W><LeaderboardEntry rank={1} displayName="P1" score={100000} showDifficulty difficulty={2} /></W>);
     expect(screen.getByText('H')).toBeTruthy();
   });
 
@@ -144,7 +144,7 @@ describe('LeaderboardEntry', () => {
   });
 
   it('applies custom rankWidth to the rank column', () => {
-    const { container } = render(<W><LeaderboardEntry rank={12345} displayName="P1" score={100000} rankWidth={100} /></W>);
+    render(<W><LeaderboardEntry rank={12345} displayName="P1" score={100000} rankWidth={100} /></W>);
     const rankSpan = screen.getByText('#12,345');
     expect(rankSpan.style.width).toBe('100px');
   });

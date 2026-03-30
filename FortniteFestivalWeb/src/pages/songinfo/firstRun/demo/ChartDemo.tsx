@@ -2,7 +2,7 @@
 import { useRef, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
-import { Colors, Layout, Size, frostedCard, Radius, Font, Gap, Weight, Display, Align, Justify, CssValue, PointerEvents, Overflow, BoxSizing, flexColumn, padding, transition, CssProp, QUICK_FADE_MS } from '@festival/theme';
+import { Colors, Layout, Size, frostedCard, Radius, Font, Gap, Display, Align, Justify, CssValue, PointerEvents, BoxSizing, flexColumn, padding, transition, CssProp, QUICK_FADE_MS } from '@festival/theme';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { useChartDimensions } from '../../../../hooks/chart/useChartDimensions';
 import FadeIn from '../../../../components/page/FadeIn';

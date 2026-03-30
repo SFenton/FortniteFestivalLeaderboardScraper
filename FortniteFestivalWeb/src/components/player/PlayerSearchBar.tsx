@@ -80,8 +80,8 @@ export default function PlayerSearchBar({
   return (
     <>
       {showDropdown && (
-        // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- backdrop overlay
-        <div style={styles.backdrop} onClick={() => setFocused(false)} />
+        /* backdrop overlay — click dismisses dropdown */
+        <div style={styles.backdrop} onClick={() => setFocused(false)} role="presentation" />
       )}
       <div ref={s.containerRef} className={className} style={{ ...styles.container, ...containerStyle }} {...(showDropdown ? { 'data-glow-scope': '' } : undefined)}>
         <SearchBar

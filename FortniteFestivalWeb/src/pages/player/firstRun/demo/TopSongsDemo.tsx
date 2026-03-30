@@ -58,7 +58,7 @@ export default function TopSongsDemo() {
   );
 }
 
-function useStyles(count: number, fadingIdx: Set<number>, initialDone: boolean) {
+function useStyles(count: number, fadingIdx: ReadonlySet<number>, initialDone: boolean) {
   return useMemo(() => {
     const rows: CSSProperties[] = [];
     for (let i = 0; i < count; i++) {

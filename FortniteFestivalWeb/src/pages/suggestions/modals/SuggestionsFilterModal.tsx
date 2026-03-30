@@ -113,7 +113,7 @@ export default function SuggestionsFilterModal({ visible, draft, savedDraft, ins
 
   const toggle = (key: string) => onChange({ ...draft, [key]: !draft[key] });
 
-  const { hasChanges, confirmOpen, setConfirmOpen, handleClose, confirmDiscard } = useModalDraft(draft, savedDraft, onCancel);
+  const { hasChanges, confirmOpen, setConfirmOpen, handleClose } = useModalDraft(draft, savedDraft, onCancel);
 
   const toggleGlobal = (typeId: SuggestionTypeId) => {
     const gk = globalKeyFor(typeId);

@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { ImagePhase } from '@festival/core';
 import { Colors, Font, TRANSITION_MS, MIN_SPINNER_MS, STAGGER_INTERVAL, Opacity } from '@festival/theme';
-import { Gap, Radius, Weight, Display, Align, Justify, Cursor, CssValue, Position, Overflow, TextAlign, Border, Shadow, ObjectFit, frostedCard, flexColumn, transition, CssProp, BorderStyle, padding, border } from '@festival/theme';
+import { Gap, Radius, Weight, Display, Cursor, CssValue, TextAlign, Border, Shadow, ObjectFit, frostedCard, flexColumn, transition, CssProp, padding, border } from '@festival/theme';
 import { useFestival } from '../../../../contexts/FestivalContext';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
 import { InstrumentSelector, type InstrumentSelectorItem } from '../../../../components/common/InstrumentSelector';

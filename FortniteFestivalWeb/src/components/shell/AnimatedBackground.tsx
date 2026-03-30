@@ -1,6 +1,6 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties } from 'react';
-import { Colors, ZIndex, Position, Overflow, PointerEvents, fixedFill, absoluteFill } from '@festival/theme';
+import { Colors, ZIndex, Overflow, PointerEvents, fixedFill, absoluteFill } from '@festival/theme';
 import { type ServerSong as Song } from '@festival/core/api/serverTypes';
 
 const BG_DURATION = 1000;
@@ -75,7 +75,7 @@ export function AnimatedBackground({
     // Fisher-Yates shuffle (unbiased, unlike .sort(() => Math.random() - 0.5))
     for (let i = candidates.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+      [candidates[i], candidates[j]] = [candidates[j]!, candidates[i]!];
     }
     return candidates.slice(0, Math.min(100, candidates.length));
     // eslint-disable-next-line react-hooks/exhaustive-deps

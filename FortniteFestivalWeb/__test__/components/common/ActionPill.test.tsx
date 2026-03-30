@@ -33,7 +33,7 @@ describe('ActionPill', () => {
     const { container } = render(<ActionPill icon={<span>I</span>} label="Sort" onClick={vi.fn()} dot />);
     // Dot is a small circle span (6px wide with border-radius: 50%)
     const spans = container.querySelectorAll('button span');
-    const dotSpan = spans[spans.length - 1];
+    const dotSpan = spans[spans.length - 1] as HTMLElement | undefined;
     expect(dotSpan?.style.width).toBe('6px');
   });
 

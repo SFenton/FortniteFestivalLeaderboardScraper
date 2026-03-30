@@ -16,13 +16,12 @@ import { shouldShowCategory, filterCategoryForInstruments } from '@festival/core
 import type { SuggestionCategory } from '@festival/core/suggestions/types';
 import { useSettings } from '../../contexts/SettingsContext';
 import {
-  Size, Gap, Layout, MaxWidth, Colors, Border, Spinner, SpinnerSize,
-  Display, Align, Justify, Position, CssValue, Overflow,
-  fixedFill, flexCenter, flexColumn, padding,
-  FADE_DURATION, SPINNER_FADE_MS, SCROLL_PREFETCH_PX,
+  Size, Gap, Layout, MaxWidth, Colors, Spinner, SpinnerSize,
+  CssValue,
+  fixedFill, flexCenter, padding,
+  FADE_DURATION, SCROLL_PREFETCH_PX,
 } from '@festival/theme';
 import { LoadPhase } from '@festival/core';
-import ArcSpinner from '../../components/common/ArcSpinner';
 import Page from '../Page';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { clearScrollCache } from '../../hooks/ui/useScrollRestore';
@@ -60,7 +59,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
   } = useFestival();
 
   const { playerData, playerLoading } = usePlayerData();
-  const isMobile = useIsMobile();
+  useIsMobile();
   const isMobileChrome = useIsMobileChrome();
 
   
@@ -218,7 +217,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
   const skipAnim = !shouldStagger;
 
   // Per-card scroll fade
-  const updateCardFade = useScrollFade(scrollContainerRef, listRef, [phase, visibleCategories]);
+  useScrollFade(scrollContainerRef, listRef, [phase, visibleCategories]);
   
 
   // Track how many category cards have already been revealed so that newly
@@ -325,7 +324,7 @@ export default function SuggestionsPage({ accountId }: SuggestionsPageProps) {
             hasMore={effectiveHasMore}
             loader={phase === LoadPhase.ContentIn ? <div style={suggestionsStyles.loader}><div style={suggestionsStyles.loaderSpinner} /></div> : <></>}
             scrollThreshold={`${SCROLL_PREFETCH_PX}px`}
-            scrollableTarget={scrollContainerRef.current ?? undefined}
+            scrollableTarget={scrollContainerRef.current as unknown as React.ReactNode ?? undefined}
             style={{ overflow: 'visible' }}
           >
             <div ref={listRef}>

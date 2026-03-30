@@ -224,7 +224,7 @@ export default function LeaderboardPage() {
     });
   }, [loading, error, entries, totalEntries, localEntries, page, songId, cacheKey]);
 
-  // Spinner Ã¢â€ â€™ staggered-content transition
+  // Spinner -> staggered-content transition
   const hasLoadedOnce = useRef(hasCached);
   const loadPhaseRef = useRef(loadPhase);
   loadPhaseRef.current = loadPhase;

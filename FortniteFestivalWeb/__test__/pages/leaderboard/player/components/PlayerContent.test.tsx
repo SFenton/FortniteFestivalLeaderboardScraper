@@ -189,7 +189,7 @@ describe('PlayerContent', () => {
     expect(getByTestId('search-query').textContent).toBe('hello');
 
     // Click "Songs Played" stat card — triggers navigateToSongs
-    const songsPlayed = screen.getAllByText('Songs Played')[0];
+    const songsPlayed = screen.getAllByText('Songs Played')[0]!;
     fireEvent.click(songsPlayed);
 
     // Search query should be cleared

@@ -14,7 +14,7 @@ describe('Accordion', () => {
   });
 
   it('starts closed by default', () => {
-    const { container } = render(<Accordion title="Title"><span>content</span></Accordion>);
+    render(<Accordion title="Title"><span>content</span></Accordion>);
     // The body wrap is the div with display:grid after the button
     const button = screen.getByText('Title').closest('button')!;
     const bodyWrap = button.nextElementSibling as HTMLElement;
@@ -22,14 +22,14 @@ describe('Accordion', () => {
   });
 
   it('starts open when defaultOpen is true', () => {
-    const { container } = render(<Accordion title="Title" defaultOpen><span>content</span></Accordion>);
+    render(<Accordion title="Title" defaultOpen><span>content</span></Accordion>);
     const button = screen.getByText('Title').closest('button')!;
     const bodyWrap = button.nextElementSibling as HTMLElement;
     expect(bodyWrap?.style.gridTemplateRows).toBe('1fr');
   });
 
   it('toggles open/closed on header click', () => {
-    const { container } = render(<Accordion title="Toggle Me"><span>content</span></Accordion>);
+    render(<Accordion title="Toggle Me"><span>content</span></Accordion>);
     const button = screen.getByText('Toggle Me').closest('button')!;
     const getBodyWrap = () => button.nextElementSibling as HTMLElement;
 

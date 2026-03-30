@@ -4,7 +4,7 @@
  */
 import { memo, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Colors, Font, Weight, Gap, Radius, Layout, Overflow, Display, Align, CssValue, TRANSITION_MS, frostedCard, flexColumn, flexRow, transition } from '@festival/theme';
+import { Colors, Font, Weight, Gap, Radius, Layout, Overflow, CssValue, TRANSITION_MS, frostedCard, flexColumn, flexRow, transition } from '@festival/theme';
 import { CssProp } from '@festival/theme';
 import type { SyncPhase } from '../../hooks/data/useSyncStatus';
 import ArcSpinner, { SpinnerSize } from '../common/ArcSpinner';
@@ -16,7 +16,7 @@ interface SyncBannerProps {
   historyProgress: number;
 }
 
-const SyncBanner = memo(function SyncBanner({ displayName, phase, backfillProgress, historyProgress }: SyncBannerProps) {
+const SyncBanner = memo(function SyncBanner({ displayName: _displayName, phase, backfillProgress, historyProgress }: SyncBannerProps) {
   const { t } = useTranslation();
   const s = useSyncBannerStyles();
 

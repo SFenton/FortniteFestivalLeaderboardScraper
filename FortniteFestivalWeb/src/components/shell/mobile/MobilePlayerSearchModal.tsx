@@ -10,7 +10,7 @@ import ArcSpinner, { SpinnerSize } from '../../common/ArcSpinner';
 import { useFadeSpinner } from '../../../hooks/ui/useFadeSpinner';
 import ModalShell from '../../modals/components/ModalShell';
 import {
-  Gap, Radius, Font, Weight, Colors, Layout, Display, Align, Justify,
+  Gap, Radius, Font, Weight, Colors, Layout, Size, Display, Align, Justify,
   Overflow, CssValue, TextAlign, LineHeight, Cursor, WhiteSpace, PointerEvents, IconSize, BoxSizing,
   flexColumn, flexCenter,
   btnDanger, padding, Border,
@@ -173,8 +173,8 @@ function useModalSearchStyles() {
       display: Display.flex,
       alignItems: Align.center,
       justifyContent: Justify.center,
-      width: Layout.profileCircleSize,
-      height: Layout.profileCircleSize,
+      width: Size.profileCircleSize,
+      height: Size.profileCircleSize,
       borderRadius: Radius.full,
       backgroundColor: Colors.surfaceSubtle,
       border: `1px solid ${Colors.borderSubtle}`,

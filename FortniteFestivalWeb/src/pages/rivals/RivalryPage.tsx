@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client';
@@ -12,7 +12,7 @@ import PageHeader from '../../components/common/PageHeader';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import type { RivalSongComparison } from '@festival/core/api/serverTypes';
-import { STAGGER_INTERVAL, Gap, Position, ZIndex, Display, Align, Justify, Colors, Font, Layout, flexColumn, flexCenter, padding } from '@festival/theme';
+import { STAGGER_INTERVAL, Gap, Layout } from '@festival/theme';
 import { LoadPhase } from '@festival/core';
 import { deriveComboFromSettings, getEnabledInstruments } from './helpers/comboUtils';
 import { categorizeRivalSongs } from './helpers/rivalCategories';

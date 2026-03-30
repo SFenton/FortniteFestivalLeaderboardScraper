@@ -48,7 +48,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
   const { t } = useTranslation();
   const setMode = (sortMode: SongSortMode) => onChange({ ...draft, sortMode });
 
-  const { hasChanges, confirmOpen, setConfirmOpen, handleClose, confirmDiscard } = useModalDraft(
+  const { hasChanges, confirmOpen, setConfirmOpen, handleClose } = useModalDraft(
     draft, savedDraft, onCancel,
     (a, b) => a.sortMode === b.sortMode
       && a.sortAscending === b.sortAscending

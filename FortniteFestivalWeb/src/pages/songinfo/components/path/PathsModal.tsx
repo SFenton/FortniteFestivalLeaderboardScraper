@@ -12,7 +12,7 @@ import { InstrumentSelector, type InstrumentSelectorItem } from '../../../../com
 import ArcSpinner from '../../../../components/common/ArcSpinner';
 import {
   Colors, Radius, Font, Gap, Weight, Shadow,
-  Display, Position, Overflow, TextAlign, Cursor, CssValue, CssProp,
+  Display, Overflow, TextAlign, Cursor, CssValue, CssProp,
   frostedCard, border, padding, transition, transitions, btnPrimary,
 } from '@festival/theme';
 import { modalStyles } from '../../../../components/modals/modalStyles';

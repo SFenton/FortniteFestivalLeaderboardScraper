@@ -7,7 +7,7 @@ import {
   CssProp, CssValue,
   padding, transition, transitions, scale,
   modalOverlay, modalCard, btnPrimary, btnDanger, flexRow,
-  TRANSITION_MS, MODAL_SCALE_ENTER, FADE_DURATION,
+  TRANSITION_MS, MODAL_SCALE_ENTER,
 } from '@festival/theme';
 
 export default function ConfirmAlert({

@@ -1,7 +1,7 @@
 import { memo, useMemo, type CSSProperties } from 'react';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import {
-  Colors, Font, Weight, Gap, InstrumentSize, Display, WordBreak,
+  Colors, Font, Weight, Gap, InstrumentSize, WordBreak,
   flexRow, flexColumn,
 } from '@festival/theme';
 import { InstrumentIcon } from '../../../components/display/InstrumentIcons';

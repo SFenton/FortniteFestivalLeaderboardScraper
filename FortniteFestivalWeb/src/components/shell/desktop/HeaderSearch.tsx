@@ -5,9 +5,9 @@ import { useAccountSearch } from '../../../hooks/data/useAccountSearch';
 import SearchBar, { type SearchBarRef } from '../../common/SearchBar';
 import type { AccountSearchResult } from '@festival/core/api/serverTypes';
 import {
-  Colors, Font, Gap, Radius, Layout, ZIndex, MaxWidth,
+  Colors, Font, Gap, Radius, Layout, ZIndex,
   Display, Position, TextAlign, Cursor, Overflow, BoxSizing,
-  CssValue, frostedCard, border, padding,
+  CssValue, frostedCard, padding,
 } from '@festival/theme';
 
 /**

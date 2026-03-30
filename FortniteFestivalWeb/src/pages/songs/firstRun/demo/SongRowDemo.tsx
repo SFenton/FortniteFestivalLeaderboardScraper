@@ -1,7 +1,7 @@
 import { type CSSProperties } from 'react';
 import SongInfo from '../../../../components/songs/metadata/SongInfo';
 import { useIsMobile } from '../../../../hooks/ui/useIsMobile';
-import { Layout, Gap, Display, CssValue, flexColumn } from '@festival/theme';
+import { Layout, Gap, CssValue, flexColumn } from '@festival/theme';
 import { useDemoSongs } from '../../../../hooks/data/useDemoSongs';
 import { DemoSongRow } from './DemoSongRow';
 import { mobileTopRow } from '../../../../styles/songRowStyles';

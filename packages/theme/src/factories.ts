@@ -2,7 +2,12 @@
  * Reusable style factory objects for the most common CSS patterns.
  * Spread these into useStyles factories: `{ ...flexColumn, gap: Gap.md }`
  */
-import type { CSSProperties } from 'react';
+
+/**
+ * Minimal CSSProperties type so the theme package doesn't depend on @types/react.
+ * Consumers (FortniteFestivalWeb) cast through React.CSSProperties via their own imports.
+ */
+type CSSProperties = Record<string, string | number | undefined>;
 
 export const flexColumn: CSSProperties = {
   display: 'flex',

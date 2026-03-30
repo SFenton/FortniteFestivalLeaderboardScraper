@@ -6,11 +6,11 @@
  * per-file coverage thresholds.
  */
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, act } from '@testing-library/react';
 import { Route, Routes } from 'react-router-dom';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../helpers/browserStubs';
 import { TestProviders } from '../../helpers/TestProviders';
-import type { RivalSongComparison, RivalsListResponse, RivalDetailResponse, RivalSummary } from '@festival/core/api/serverTypes';
+import type { RivalSongComparison, RivalsListResponse, RivalDetailResponse } from '@festival/core/api/serverTypes';
 
 /* ── API mock ── */
 
@@ -20,14 +20,20 @@ const mockApi = vi.hoisted(() => ({
   ], count: 1 }),
   getPlayer: vi.fn().mockResolvedValue({ accountId: 'test-1', displayName: 'TestPlayer', totalScores: 0, scores: [] }),
   getRivalsList: vi.fn().mockResolvedValue({
-    above: [{ accountId: 'rival-1', displayName: 'RivalAbove', sharedSongCount: 5, rivalScore: 300, aheadCount: 2, behindCount: 3 }],
-    below: [{ accountId: 'rival-2', displayName: 'RivalBelow', sharedSongCount: 4, rivalScore: 200, aheadCount: 1, behindCount: 4 }],
+    combo: '01',
+    above: [{ accountId: 'rival-1', displayName: 'RivalAbove', sharedSongCount: 5, rivalScore: 300, aheadCount: 2, behindCount: 3, avgSignedDelta: 1.5 }],
+    below: [{ accountId: 'rival-2', displayName: 'RivalBelow', sharedSongCount: 4, rivalScore: 200, aheadCount: 1, behindCount: 4, avgSignedDelta: -1.2 }],
   } satisfies RivalsListResponse),
   getRivalDetail: vi.fn().mockResolvedValue({
     rival: { accountId: 'rival-1', displayName: 'TestRival' },
+    combo: '01',
+    totalSongs: 2,
+    offset: 0,
+    limit: 50,
+    sort: 'rankDelta',
     songs: [
-      { songId: 'song-1', title: 'Test Song', artist: 'Artist', instrument: 'Solo_Guitar', userRank: 5, rivalRank: 8, userScore: 150000, rivalScore: 145000, rankDelta: 3, scoreDelta: 5000 },
-      { songId: 'song-2', title: 'Song Two', artist: 'Artist B', instrument: 'Solo_Guitar', userRank: 10, rivalRank: 7, userScore: 130000, rivalScore: 135000, rankDelta: -3, scoreDelta: -5000 },
+      { songId: 'song-1', title: 'Test Song', artist: 'Artist', instrument: 'Solo_Guitar', userRank: 5, rivalRank: 8, userScore: 150000, rivalScore: 145000, rankDelta: 3 },
+      { songId: 'song-2', title: 'Song Two', artist: 'Artist B', instrument: 'Solo_Guitar', userRank: 10, rivalRank: 7, userScore: 130000, rivalScore: 135000, rankDelta: -3 },
     ] satisfies RivalSongComparison[],
   } satisfies RivalDetailResponse),
   getRivalsOverview: vi.fn().mockResolvedValue({ computedAt: '2024-01-01T00:00:00Z' }),

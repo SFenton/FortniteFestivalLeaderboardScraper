@@ -24,6 +24,7 @@ function baseSongSettings(): SongSettings {
       missingFCs: { Solo_Guitar: false, Solo_Bass: true },
       hasScores: { Solo_Guitar: true, Solo_Bass: false },
       hasFCs: { Solo_Guitar: false, Solo_Bass: true },
+      overThreshold: {},
     },
   };
 }

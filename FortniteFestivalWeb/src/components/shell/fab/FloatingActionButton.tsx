@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { IoMenu } from 'react-icons/io5';
 import { useSearchQuery } from '../../../contexts/SearchQueryContext';
 import { IS_PWA } from '@festival/ui-utils';
-import { Colors, Gap, Radius, Layout, MaxWidth, Shadow, ZIndex, Display, Align, Position, Cursor, BoxSizing, IconSize, PointerEvents, Overflow, CssValue, FAB_DISMISS_MS, frostedCard, purpleGlass, flexColumn, flexCenter, flexRow, padding, border, Border } from '@festival/theme';
+import { Colors, Gap, Radius, Layout, MaxWidth, Shadow, ZIndex, Align, Position, Cursor, BoxSizing, IconSize, PointerEvents, CssValue, FAB_DISMISS_MS, frostedCard, purpleGlass, flexColumn, flexCenter, flexRow, padding } from '@festival/theme';
 import SearchBar from '../../common/SearchBar';
 import FABMenu from './FABMenu';
 

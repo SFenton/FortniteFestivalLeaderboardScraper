@@ -20,6 +20,7 @@ function makeRival(overrides: Partial<RivalSummary> = {}): RivalSummary {
     rivalScore: 500,
     aheadCount: 3,
     behindCount: 7,
+    avgSignedDelta: 0,
     ...overrides,
   };
 }

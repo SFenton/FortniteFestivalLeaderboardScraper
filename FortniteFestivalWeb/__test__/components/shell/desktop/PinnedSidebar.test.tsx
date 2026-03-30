@@ -13,7 +13,6 @@ vi.mock('../../../../src/contexts/ScrollContainerContext', () => ({
 
 import PinnedSidebar from '../../../../src/components/shell/desktop/PinnedSidebar';
 import { SettingsProvider } from '../../../../src/contexts/SettingsContext';
-import { Colors } from '@festival/theme';
 
 function renderPinned(overrides: Partial<Parameters<typeof PinnedSidebar>[0]> = {}) {
   const defaults = {

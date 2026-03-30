@@ -70,7 +70,7 @@ describe('PlayerHistoryEntry', () => {
   });
 
   it('applies bold styling for high score', () => {
-    const { container } = render(
+    render(
       <PlayerHistoryEntry
         date="2025-01-15"
         score={145000}

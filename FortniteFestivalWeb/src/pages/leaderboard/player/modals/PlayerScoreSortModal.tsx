@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useMemo, useCallback, useState } from 'react';
+
 import { useTranslation } from 'react-i18next';
 import Modal from '../../../../components/modals/Modal';
 import { ModalSection } from '../../../../components/modals/components/ModalSection';
@@ -31,7 +31,7 @@ export default function PlayerScoreSortModal({ visible, draft, savedDraft, onCha
   const { t } = useTranslation();
   const setMode = (sortMode: PlayerScoreSortMode) => onChange({ ...draft, sortMode });
 
-  const { hasChanges, confirmOpen, setConfirmOpen, handleClose, confirmDiscard } = useModalDraft(
+  const { hasChanges, confirmOpen, setConfirmOpen, handleClose } = useModalDraft(
     draft, savedDraft, onCancel,
     (a, b) => a.sortMode === b.sortMode && a.sortAscending === b.sortAscending,
   );

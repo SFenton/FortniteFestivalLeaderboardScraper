@@ -8,8 +8,8 @@ import BackLink from './BackLink';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import {
   Colors, Font, Weight, Gap, Layout, MaxWidth, ZIndex, InstrumentSize, IconSize,
-  Display, Align, Justify, Position, WhiteSpace, BoxSizing, CssValue, CssProp,
-  flexRow, padding, transition, TRANSITION_MS,
+  Display, Align, Justify, Position, WhiteSpace, BoxSizing, CssValue,
+  flexRow, padding, TRANSITION_MS,
 } from '@festival/theme';
 
 export interface MobileHeaderProps {

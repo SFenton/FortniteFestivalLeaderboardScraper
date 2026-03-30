@@ -16,7 +16,7 @@ import { useIsMobile } from '../../../hooks/ui/useIsMobile';
 import {
   Colors, Font, Weight, Gap, Radius, Layout, Border, InstrumentSize, FontVariant,
   Display, Align, Justify, TextAlign, ObjectFit, Overflow, CssValue, CssProp,
-  flexRow, flexColumn, flexCenter, frostedCardSurface, truncate, border, padding, transition,
+  flexRow, flexColumn, flexCenter, frostedCardSurface, border, padding, transition,
 } from '@festival/theme';
 import { resolveCategoryI18n } from '../suggestionsHelpers';
 

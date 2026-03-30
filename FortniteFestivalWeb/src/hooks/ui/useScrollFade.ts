@@ -152,7 +152,7 @@ export function useScrollFade(
     );
 
     for (let i = 0; i < listEl.children.length; i++) {
-      observer.observe(listEl.children[i]);
+      observer.observe(listEl.children[i]!);
     }
 
     return () => observer.disconnect();

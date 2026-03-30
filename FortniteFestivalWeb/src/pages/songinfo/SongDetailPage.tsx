@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, useLayoutEffect, useState, useCallback, useRef, useMemo, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useState, useRef, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useSearchParams, useNavigationType, useLocation } from 'react-router-dom';
 import { useFestival } from '../../contexts/FestivalContext';
@@ -11,7 +11,7 @@ import {
   type PlayerScore,
   type ServerScoreHistoryEntry as ScoreHistoryEntry,
 } from '@festival/core/api/serverTypes';
-import { Gap, Colors, Font, Layout, MaxWidth, Position, ZIndex, Display, Overflow, Align, Justify, CssValue, flexCenter, flexColumn, padding, GridTemplate, SPINNER_FADE_MS, FADE_DURATION } from '@festival/theme';
+import { Gap, Colors, Font, Layout, MaxWidth, Position, ZIndex, Display, Overflow, CssValue, flexCenter, GridTemplate, SPINNER_FADE_MS, FADE_DURATION } from '@festival/theme';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import Page, { PageBackground } from '../Page';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
@@ -380,7 +380,7 @@ export default function SongDetailPage() {
         </div>
       )}
       {phase === LoadPhase.ContentIn && allErrored && (() => {
-        const parsed = parseApiError(String(instrumentData[activeInstruments[0]].error));
+        const parsed = parseApiError(String(instrumentData[activeInstruments[0]!].error));
         return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={stagger(200)} onAnimationEnd={clearAnim} />;
       })()}
       {phase === LoadPhase.ContentIn && !allErrored && (

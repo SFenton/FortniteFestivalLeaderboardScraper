@@ -22,7 +22,6 @@ function makeSong(overrides: Partial<RivalSongComparison> = {}): RivalSongCompar
     userScore: 150000,
     rivalScore: 148000,
     rankDelta: 2,
-    scoreDelta: 2000,
     ...overrides,
   };
 }

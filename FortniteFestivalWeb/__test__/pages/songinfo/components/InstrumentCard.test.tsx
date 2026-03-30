@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { TestProviders } from '../../../helpers/TestProviders';
 import InstrumentCard from '../../../../src/pages/songinfo/components/InstrumentCard';
 import type { LeaderboardEntry, PlayerScore, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 
@@ -60,9 +60,9 @@ const baseProps = {
 
 function renderCard(overrides: Partial<typeof baseProps> = {}) {
   return render(
-    <MemoryRouter>
+    <TestProviders>
       <InstrumentCard {...baseProps} {...overrides} />
-    </MemoryRouter>,
+    </TestProviders>,
   );
 }
 

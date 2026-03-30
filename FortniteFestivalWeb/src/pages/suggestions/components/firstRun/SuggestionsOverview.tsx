@@ -3,8 +3,7 @@ import { useMemo, type CSSProperties } from 'react';
 import { IoFlash } from 'react-icons/io5';
 import type { FirstRunSlideDef } from '../../../../firstRun/types';
 import {
-  Colors, Font, Weight, Gap, Radius, MaxWidth, CssValue,
-  Display, Align,
+  Colors, Font, Weight, Gap, Radius, Layout, CssValue,
   flexRow, padding,
 } from '@festival/theme';
 
@@ -45,7 +44,7 @@ function useStyles() {
   return useMemo(() => ({
     wrapper: {
       width: CssValue.full,
-      maxWidth: MaxWidth.search,
+      maxWidth: Layout.searchMaxWidth,
     } as CSSProperties,
     card: {
       ...flexRow,

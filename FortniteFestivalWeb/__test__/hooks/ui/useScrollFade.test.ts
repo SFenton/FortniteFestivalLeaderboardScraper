@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useScrollFade } from '../../../src/hooks/ui/useScrollFade';
-import { createScrollContainerWrapper } from '../../Helpers/scrollContainerWrapper';
-import { stubResizeObserver } from '../../Helpers/browserStubs';
+import { createScrollContainerWrapper } from '../../helpers/scrollContainerWrapper';
+import { stubResizeObserver } from '../../helpers/browserStubs';
 
 function makeListEl(childCount: number) {
   const list = document.createElement('div');

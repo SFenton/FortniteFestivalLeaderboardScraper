@@ -1,7 +1,7 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { memo, useRef, useCallback, useMemo, type CSSProperties } from 'react';
 import type { ServerSong as Song } from '@festival/core/api/serverTypes';
-import { Colors, Font, Weight, Gap, Radius, Border, Display, Position, Overflow, ObjectFit, WhiteSpace, Opacity, CssValue, border, FADE_DURATION, frostedCard } from '@festival/theme';
+import { Colors, Font, Weight, Gap, Radius, Display, Position, Overflow, ObjectFit, Opacity, CssValue, FADE_DURATION, frostedCard } from '@festival/theme';
 import { truncate } from '@festival/theme';
 import anim from '../../../styles/animations.module.css';
 

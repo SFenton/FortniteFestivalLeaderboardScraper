@@ -444,6 +444,33 @@ export type RivalDetailResponse = {
   songs: RivalSongComparison[];
 };
 
+export type RivalSuggestionSong = {
+  songId: string;
+  instrument: string;
+  userRank: number;
+  rivalRank: number;
+  rankDelta: number;
+  userScore: number | null;
+  rivalScore: number | null;
+};
+
+export type RivalSuggestionEntry = {
+  accountId: string;
+  displayName: string | null;
+  direction: string;
+  sharedSongCount: number;
+  aheadCount: number;
+  behindCount: number;
+  songs: RivalSuggestionSong[];
+};
+
+export type RivalSuggestionsResponse = {
+  accountId: string;
+  combo: string;
+  computedAt: string | null;
+  rivals: RivalSuggestionEntry[];
+};
+
 /** Neighbor entry in a per-instrument leaderboard neighborhood. */
 export type LeaderboardNeighborEntry = {
   accountId: string;

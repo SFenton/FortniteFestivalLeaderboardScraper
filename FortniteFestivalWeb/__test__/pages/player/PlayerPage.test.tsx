@@ -250,7 +250,7 @@ describe('PlayerPage', () => {
         { songId: 's2', instrument: 'Solo_Bass', score: 115000, rank: 5, percentile: 90, accuracy: 95, isFullCombo: false, stars: 5, season: 4 },
       ],
     });
-    const { container } = renderPlayerPage('/player/test-player-1');
+    renderPlayerPage('/player/test-player-1');
     await waitFor(() => {
       expect(document.body.textContent).toContain('TestPlayer');
     });
@@ -479,7 +479,7 @@ describe('PlayerPage — coverage: instrument stats + percentile + top/bottom so
     mockApi.getPlayer.mockResolvedValue(player);
     mockApi.getSyncStatus.mockResolvedValue({ accountId: 'rich-player', isTracked: false, backfill: null, historyRecon: null });
 
-    const { container } = renderPlayerPage('/player/rich-player');
+    renderPlayerPage('/player/rich-player');
 
     await waitFor(() => {
       expect(document.body.textContent).toContain('RichPlayer');
@@ -505,7 +505,7 @@ describe('PlayerPage — coverage: instrument stats + percentile + top/bottom so
     mockApi.getPlayer.mockResolvedValue(player);
     mockApi.getSyncStatus.mockResolvedValue({ accountId: 'top-bot', isTracked: false, backfill: null, historyRecon: null });
 
-    const { container } = renderPlayerPage('/player/top-bot');
+    renderPlayerPage('/player/top-bot');
 
     await waitFor(() => {
       expect(document.body.textContent).toContain('Top Songs Per Instrument');
@@ -521,7 +521,7 @@ describe('PlayerPage — coverage: instrument stats + percentile + top/bottom so
     mockApi.getPlayer.mockResolvedValue(player);
     mockApi.getSyncStatus.mockResolvedValue({ accountId: 'pct-player', isTracked: false, backfill: null, historyRecon: null });
 
-    const { container } = renderPlayerPage('/player/pct-player');
+    renderPlayerPage('/player/pct-player');
 
     await waitFor(() => {
       expect(document.body.textContent).toContain('Percentile');
@@ -548,7 +548,7 @@ describe('PlayerPage — coverage: sync banner', () => {
       historyRecon: null,
     });
 
-    const { container } = renderPlayerPage('/player/syncing-player');
+    renderPlayerPage('/player/syncing-player');
 
     await waitFor(() => {
       expect(document.body.textContent).toContain('RichPlayer');
@@ -569,7 +569,7 @@ describe('PlayerPage — coverage: sync banner', () => {
       historyRecon: { status: 'in_progress', songsProcessed: 10, totalSongsToProcess: 50, seasonsQueried: 2, historyEntriesFound: 30, startedAt: '2025-01-01T01:00:00Z' },
     });
 
-    const { container } = renderPlayerPage('/player/history-player');
+    renderPlayerPage('/player/history-player');
 
     await waitFor(() => {
       expect(document.body.textContent).toContain('RichPlayer');
@@ -655,7 +655,7 @@ describe('PlayerPage — coverage: stagger calculations', () => {
     });
     unmount();
 
-    const { container } = renderPlayerPage('/player/revisit-player');
+    renderPlayerPage('/player/revisit-player');
     await waitFor(() => {
       expect(document.body.textContent).toContain('RevisitPlayer');
     });

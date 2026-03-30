@@ -3,10 +3,10 @@ import { useMemo, useEffect, useLayoutEffect, useState, useRef, useCallback, typ
 import { useTranslation } from 'react-i18next';
 import { IoClose } from 'react-icons/io5';
 import {
-  Colors, Font, Weight, Gap, Radius, Border, ZIndex, Layout, LineHeight, IconSize, Opacity,
-  Display, Position, Align, Justify, Cursor, Overflow, TextTransform, BoxSizing,
+  Colors, Font, Weight, Gap, Radius, Border, ZIndex, Layout, LineHeight, Opacity,
+  Cursor, Overflow, TextTransform,
   CssProp, CssValue,
-  padding, border, transition, transitions, scale, scaleTranslateY,
+  padding, border, transition, transitions, scaleTranslateY,
   modalOverlay, modalCard, btnPrimary, flexColumn, flexBetween, flexCenter,
   TRANSITION_MS, MODAL_SCALE_ENTER, MODAL_SLIDE_OFFSET,
 } from '@festival/theme';

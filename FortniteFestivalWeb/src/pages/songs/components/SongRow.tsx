@@ -8,7 +8,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { IoBagHandle, IoChevronForward } from 'react-icons/io5';
 import { formatPercentileBucket } from '@festival/core';
 import type { ServerSong as Song, PlayerScore, SongDifficulty, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
-import { Colors, Gap, Radius, Font, Weight, InstrumentSize, frostedCard, flexRow, flexColumn, flexCenter, truncate, WhiteSpace, Overflow, TextAlign, Cursor, CssValue, Align, Justify, Display, Position, Layout, BorderStyle, padding } from '@festival/theme';
+import { Colors, Gap, Radius, Font, Weight, InstrumentSize, frostedCard, flexRow, flexColumn, flexCenter, truncate, CssValue, Align, Justify, Display, Position, Layout, BorderStyle, padding } from '@festival/theme';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../../../components/display/InstrumentIcons';
 import AccuracyDisplay from '../../../components/songs/metadata/AccuracyDisplay';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';

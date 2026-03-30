@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useScrollRestore, clearScrollCache } from '../../../src/hooks/ui/useScrollRestore';
-import { createScrollContainerWrapper } from '../../Helpers/scrollContainerWrapper';
+import { createScrollContainerWrapper } from '../../helpers/scrollContainerWrapper';
 
 describe('useScrollRestore', () => {
   beforeEach(() => {

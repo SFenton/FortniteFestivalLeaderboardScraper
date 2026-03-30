@@ -163,7 +163,7 @@ describe('SongInfoHeader', () => {
     );
     // animate mode uses CSS module classes for scroll-linked interpolation
     // instead of inline transitions — art img no longer has inline width/transition
-    const imgs = Array.from(container.querySelectorAll('img[src="https://example.com/art.jpg"]'));
+    const imgs = Array.from(container.querySelectorAll('img[src="https://example.com/art.jpg"]')) as HTMLElement[];
     const artImg = imgs.find((i) => !i.style.display);
     expect(artImg).toBeTruthy();
     expect(artImg!.style.width).toBeFalsy(); // driven by CSS module, not inline

@@ -95,7 +95,7 @@ describe('Sidebar', () => {
   });
 
   it('unmounts after transition ends while closed', () => {
-    const { container, rerender } = render(
+    const { rerender } = render(
       <MemoryRouter><SettingsProvider><Sidebar player={null} open={true} onClose={vi.fn()} onDeselect={vi.fn()} onSelectPlayer={vi.fn()} /></SettingsProvider></MemoryRouter>,
     );
     // Close it

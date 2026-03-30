@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useHeaderCollapse } from '../../../src/hooks/ui/useHeaderCollapse';
-import { createScrollContainerWrapper } from '../../Helpers/scrollContainerWrapper';
+import { createScrollContainerWrapper } from '../../helpers/scrollContainerWrapper';
 
 describe('useHeaderCollapse', () => {
   afterEach(() => {

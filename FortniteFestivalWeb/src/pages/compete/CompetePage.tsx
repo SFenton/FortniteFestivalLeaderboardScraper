@@ -10,6 +10,7 @@ import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { comboIdFromInstruments } from '@festival/core/combos';
+import type { RankingsPageResponse, ComboPageResponse, AccountRankingDto, ComboRankingEntry } from '@festival/core/api/serverTypes';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
 import EmptyState from '../../components/common/EmptyState';
@@ -46,8 +47,10 @@ export default function CompetePage() {
     [instruments, isMulti],
   );
 
+  type PlayerRankingResult = AccountRankingDto | ({ comboId: string; rankBy: string; totalAccounts: number } & ComboRankingEntry);
+
   // Leaderboard top 10 — combo rankings (2+ instruments) or per-instrument (1)
-  const { data: leaderboardData, isLoading: leaderboardLoading, error: leaderboardError } = useQuery({
+  const { data: leaderboardData, isLoading: leaderboardLoading, error: leaderboardError } = useQuery<RankingsPageResponse | ComboPageResponse>({
     queryKey: isMulti
       ? queryKeys.comboRankings(comboId!, 'totalscore', 1, 10)
       : queryKeys.rankings(previewInstrument ?? 'Solo_Guitar', 'totalscore', 1, 10),
@@ -58,7 +61,7 @@ export default function CompetePage() {
   });
 
   // Player's own ranking for the same metric
-  const { data: playerRanking } = useQuery({
+  const { data: playerRanking } = useQuery<PlayerRankingResult>({
     queryKey: isMulti
       ? queryKeys.playerComboRanking(accountId, comboId!, 'totalscore')
       : queryKeys.playerRanking(previewInstrument ?? 'Solo_Guitar', accountId),

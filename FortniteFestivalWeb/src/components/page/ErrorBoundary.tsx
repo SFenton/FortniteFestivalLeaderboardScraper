@@ -1,7 +1,7 @@
 import { Component, type ReactNode, type CSSProperties } from 'react';
 import i18next from 'i18next';
 import {
-  Colors, Font, Gap, Radius, Cursor, CssValue, Display,
+  Colors, Font, Gap, Radius, Cursor, CssValue,
   flexColumn, padding,
 } from '@festival/theme';
 

@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useScrollMask } from '../../../src/hooks/ui/useScrollMask';
-import { stubResizeObserver } from '../../Helpers/browserStubs';
-import { createScrollContainerWrapper } from '../../Helpers/scrollContainerWrapper';
+import { stubResizeObserver } from '../../helpers/browserStubs';
+import { createScrollContainerWrapper } from '../../helpers/scrollContainerWrapper';
 
 describe('useScrollMask', () => {
   beforeEach(() => { stubResizeObserver(); });

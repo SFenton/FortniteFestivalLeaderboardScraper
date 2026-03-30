@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useMemo, useCallback, useState } from 'react';
+import { useMemo, useCallback } from 'react';
 import Modal from '../../../components/modals/Modal';
 import { ModalSection } from '../../../components/modals/components/ModalSection';
 import { ToggleRow } from '../../../components/common/ToggleRow';
@@ -73,7 +73,7 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
     onChange({ ...draft, instrumentFilter: key });
   }, [draft, onChange]);
 
-  const { hasChanges, confirmOpen, setConfirmOpen, handleClose, confirmDiscard } = useModalDraft(draft, savedDraft, onCancel);
+  const { hasChanges, confirmOpen, setConfirmOpen, handleClose } = useModalDraft(draft, savedDraft, onCancel);
 
   return (
     <Modal visible={visible} title={t('common.filterSongs')} onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel={t('filter.resetLabel')} resetHint={t('filter.resetHint')} applyLabel={t('filter.applyLabel')} applyDisabled={!hasChanges} afterPanel={confirmOpen ? (

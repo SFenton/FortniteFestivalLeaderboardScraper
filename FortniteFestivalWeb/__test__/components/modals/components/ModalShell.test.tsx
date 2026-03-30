@@ -91,7 +91,7 @@ describe('ModalShell', () => {
   /* ── Overlay click ── */
   it('calls onClose when overlay is clicked', () => {
     const onClose = vi.fn();
-    const { container } = render(
+    render(
       <ModalShell visible={true} title="Test" onClose={onClose}>
         <div>Content</div>
       </ModalShell>,

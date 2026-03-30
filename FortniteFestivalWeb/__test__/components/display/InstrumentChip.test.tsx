@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import { InstrumentChip } from '../../../src/components/display/InstrumentChip';
-import { Colors } from '@festival/theme';
 
 describe('InstrumentChip', () => {
   it('renders with no score and no FC', () => {

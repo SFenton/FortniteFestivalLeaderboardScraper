@@ -41,20 +41,20 @@ describe('Modal', () => {
   });
 
   it('renders action buttons', () => {
-    const { container } = render(<Modal {...defaults}><p>C</p></Modal>);
+    render(<Modal {...defaults}><p>C</p></Modal>);
     const buttons = document.body.querySelectorAll('button');
     expect(buttons.length).toBeGreaterThanOrEqual(2); // Apply + Cancel at minimum
   });
 
   it('calls onApply when apply clicked', () => {
-    const { container } = render(<Modal {...defaults}><p>C</p></Modal>);
+    render(<Modal {...defaults}><p>C</p></Modal>);
     const applyBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('Apply'));
     if (applyBtn) fireEvent.click(applyBtn);
     expect(defaults.onApply).toHaveBeenCalled();
   });
 
   it('calls onClose when cancel clicked', () => {
-    const { container } = render(<Modal {...defaults}><p>C</p></Modal>);
+    render(<Modal {...defaults}><p>C</p></Modal>);
     // Cancel button may use "close" handler -- find by excluding Apply and Reset
     const buttons = Array.from(document.body.querySelectorAll('button'));
     const cancelBtn = buttons.find(b => {
@@ -67,7 +67,7 @@ describe('Modal', () => {
   });
 
   it('calls onReset when reset clicked', () => {
-    const { container } = render(<Modal {...defaults}><p>C</p></Modal>);
+    render(<Modal {...defaults}><p>C</p></Modal>);
     const resetBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('Reset'));
     if (resetBtn) fireEvent.click(resetBtn);
     expect(defaults.onReset).toHaveBeenCalled();
@@ -79,12 +79,12 @@ describe('Modal', () => {
   });
 
   it('supports custom apply label', () => {
-    const { container } = render(<Modal {...defaults} applyLabel="Confirm"><p>C</p></Modal>);
+    render(<Modal {...defaults} applyLabel="Confirm"><p>C</p></Modal>);
     expect(document.body.textContent).toContain('Confirm');
   });
 
   it('disables apply button when applyDisabled', () => {
-    const { container } = render(<Modal {...defaults} applyDisabled><p>C</p></Modal>);
+    render(<Modal {...defaults} applyDisabled><p>C</p></Modal>);
     const applyBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('Apply'));
     expect(applyBtn?.disabled).toBe(true);
   });
@@ -95,13 +95,13 @@ import ChangelogModal from '../../../src/components/modals/ChangelogModal';
 
 describe('ChangelogModal', () => {
   it('renders changelog content', () => {
-    const { container } = render(<ChangelogModal onDismiss={vi.fn()} />);
+    render(<ChangelogModal onDismiss={vi.fn()} />);
     expect(document.body.innerHTML.length).toBeGreaterThan(50);
   });
 
   it('calls onDismiss when dismiss button clicked', () => {
     const onDismiss = vi.fn();
-    const { container } = render(<ChangelogModal onDismiss={onDismiss} />);
+    render(<ChangelogModal onDismiss={onDismiss} />);
     const buttons = document.body.querySelectorAll('button');
     // Click any button -- the dismiss button
     if (buttons.length > 0) fireEvent.click(buttons[0]!);
@@ -115,14 +115,14 @@ import { Difficulty } from '@festival/core';
 
 describe('PathImage', () => {
   it('renders without crashing', () => {
-    const { container } = render(
+    render(
       <PathImage songId="song-1" instrument={'Solo_Guitar' as any} difficulty={Difficulty.Expert} />,
     );
     expect(document.body.innerHTML).toBeTruthy();
   });
 
   it('renders loading state initially', () => {
-    const { container } = render(
+    render(
       <PathImage songId="song-1" instrument={'Solo_Guitar' as any} difficulty={Difficulty.Hard} />,
     );
     // Should show spinner or loading state before image loads
@@ -145,19 +145,19 @@ describe('PlayerScoreSortModal', () => {
   };
 
   it('renders sort options when visible', () => {
-    const { container } = render(<PlayerScoreSortModal {...defaults} />);
+    render(<PlayerScoreSortModal {...defaults} />);
     expect(document.body.textContent).toContain('Score');
   });
 
   it('calls onApply when apply button clicked', () => {
-    const { container } = render(<PlayerScoreSortModal {...defaults} />);
+    render(<PlayerScoreSortModal {...defaults} />);
     const applyBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('Apply'));
     if (applyBtn) fireEvent.click(applyBtn);
     expect(defaults.onApply).toHaveBeenCalled();
   });
 
   it('calls onChange when sort option selected', () => {
-    const { container } = render(<PlayerScoreSortModal {...defaults} />);
+    render(<PlayerScoreSortModal {...defaults} />);
     // Click on a radio/button element that represents a sort option
     const dateOpt = Array.from(document.body.querySelectorAll('button, [role="radio"]')).find(el => el.textContent?.includes('Date'));
     if (dateOpt) fireEvent.click(dateOpt);
@@ -165,7 +165,7 @@ describe('PlayerScoreSortModal', () => {
   });
 
   it('does not render when not visible', () => {
-    const { container } = render(<PlayerScoreSortModal {...defaults} visible={false} />);
+    render(<PlayerScoreSortModal {...defaults} visible={false} />);
     expect(document.body.textContent?.includes('Score') ?? false).toBe(false);
   });
 });
@@ -188,7 +188,7 @@ describe('ReorderList', () => {
   });
 
   it('renders move buttons for each item', () => {
-    const { container } = render(<ReorderList items={items} onReorder={vi.fn()} />);
+    render(<ReorderList items={items} onReorder={vi.fn()} />);
     // ReorderList may use drag handles or buttons
     const interactiveEls = document.body.querySelectorAll('button, [role="button"], [draggable]');
     expect(interactiveEls.length + items.length).toBeGreaterThanOrEqual(3);
@@ -196,7 +196,7 @@ describe('ReorderList', () => {
 
   it('calls onReorder when move button clicked', () => {
     const onReorder = vi.fn();
-    const { container } = render(<ReorderList items={items} onReorder={onReorder} />);
+    render(<ReorderList items={items} onReorder={onReorder} />);
     const buttons = document.body.querySelectorAll('button');
     // Click a down button to move first item down
     if (buttons.length > 0) {
@@ -221,7 +221,7 @@ describe('DifficultyToggles', () => {
 
   it('calls onChange when toggled', () => {
     const onChange = vi.fn();
-    const { container } = render(<DifficultyToggles difficultyFilter={{ 1: true, 2: false, 3: false, 4: false, 5: false }} onChange={onChange} />);
+    render(<DifficultyToggles difficultyFilter={{ 1: true, 2: false, 3: false, 4: false, 5: false }} onChange={onChange} />);
     const btn = document.body.querySelector('button');
     if (btn) fireEvent.click(btn);
     expect(onChange).toHaveBeenCalled();
@@ -230,13 +230,13 @@ describe('DifficultyToggles', () => {
 
 describe('PercentileToggles', () => {
   it('renders percentile ranges', () => {
-    const { container } = render(<PercentileToggles percentileFilter={{ 0: true, 25: false, 50: false, 75: false, 90: false }} onChange={vi.fn()} />);
+    render(<PercentileToggles percentileFilter={{ 0: true, 25: false, 50: false, 75: false, 90: false }} onChange={vi.fn()} />);
     expect(document.body.querySelectorAll('button').length).toBeGreaterThanOrEqual(1);
   });
 
   it('calls onChange when toggled', () => {
     const onChange = vi.fn();
-    const { container } = render(<PercentileToggles percentileFilter={{ 0: true }} onChange={onChange} />);
+    render(<PercentileToggles percentileFilter={{ 0: true }} onChange={onChange} />);
     const btn = document.body.querySelector('button');
     if (btn) fireEvent.click(btn);
     expect(onChange).toHaveBeenCalled();
@@ -254,13 +254,13 @@ function ModalProviders({ children }: { children: React.ReactNode }) {
 
 describe('SeasonToggles', () => {
   it('renders season options', () => {
-    const { container } = render(<ModalProviders><SeasonToggles seasonFilter={{ 1: true, 2: false, 3: false }} onChange={vi.fn()} /></ModalProviders>);
+    render(<ModalProviders><SeasonToggles seasonFilter={{ 1: true, 2: false, 3: false }} onChange={vi.fn()} /></ModalProviders>);
     expect(document.body.querySelectorAll('button').length).toBeGreaterThanOrEqual(1);
   });
 
   it('calls onChange when toggled', () => {
     const onChange = vi.fn();
-    const { container } = render(<ModalProviders><SeasonToggles seasonFilter={{ 1: true }} onChange={onChange} /></ModalProviders>);
+    render(<ModalProviders><SeasonToggles seasonFilter={{ 1: true }} onChange={onChange} /></ModalProviders>);
     const btn = document.body.querySelector('button');
     if (btn) fireEvent.click(btn);
     expect(onChange).toHaveBeenCalled();
@@ -269,13 +269,13 @@ describe('SeasonToggles', () => {
 
 describe('StarsToggles', () => {
   it('renders star options', () => {
-    const { container } = render(<StarsToggles starsFilter={{ 0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true }} onChange={vi.fn()} />);
+    render(<StarsToggles starsFilter={{ 0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true }} onChange={vi.fn()} />);
     expect(document.body.querySelectorAll('button').length).toBeGreaterThanOrEqual(1);
   });
 
   it('calls onChange when toggled', () => {
     const onChange = vi.fn();
-    const { container } = render(<StarsToggles starsFilter={{ 6: true }} onChange={onChange} />);
+    render(<StarsToggles starsFilter={{ 6: true }} onChange={onChange} />);
     const btn = document.body.querySelector('button');
     if (btn) fireEvent.click(btn);
     expect(onChange).toHaveBeenCalled();
@@ -292,6 +292,7 @@ describe('FilterModal', () => {
     missingFCs: {} as Record<string, boolean>,
     hasScores: {} as Record<string, boolean>,
     hasFCs: {} as Record<string, boolean>,
+    overThreshold: {} as Record<string, boolean>,
     seasonFilter: {} as Record<number, boolean>,
     starsFilter: {} as Record<number, boolean>,
     percentileFilter: {} as Record<number, boolean>,
@@ -300,31 +301,31 @@ describe('FilterModal', () => {
   const defaults = { visible: true, draft, availableSeasons: [] as number[], onChange: vi.fn(), onCancel: vi.fn(), onReset: vi.fn(), onApply: vi.fn() };
 
   it('renders when visible', () => {
-    const { container } = render(<ModalProviders><FilterModal {...defaults} /></ModalProviders>);
+    render(<ModalProviders><FilterModal {...defaults} /></ModalProviders>);
     expect(document.body.innerHTML.length).toBeGreaterThan(50);
   });
 
   it('calls onApply on apply click', () => {
-    const { container } = render(<ModalProviders><FilterModal {...defaults} /></ModalProviders>);
+    render(<ModalProviders><FilterModal {...defaults} /></ModalProviders>);
     const applyBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('Apply'));
     if (applyBtn) fireEvent.click(applyBtn);
     expect(defaults.onApply).toHaveBeenCalled();
   });
 
   it('renders filter sections', () => {
-    const { container } = render(<ModalProviders><FilterModal {...defaults} /></ModalProviders>);
+    render(<ModalProviders><FilterModal {...defaults} /></ModalProviders>);
     expect(document.body.innerHTML.length).toBeGreaterThan(50);
   });
 
   it('calls onReset on reset click', () => {
-    const { container } = render(<ModalProviders><FilterModal {...defaults} /></ModalProviders>);
+    render(<ModalProviders><FilterModal {...defaults} /></ModalProviders>);
     const resetBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('Reset'));
     if (resetBtn) fireEvent.click(resetBtn);
     expect(defaults.onReset).toHaveBeenCalled();
   });
 
   it('does not render when not visible', () => {
-    const { container } = render(<ModalProviders><FilterModal {...defaults} visible={false} /></ModalProviders>);
+    render(<ModalProviders><FilterModal {...defaults} visible={false} /></ModalProviders>);
     expect(document.body.innerHTML.length).toBeLessThan(100);
   });
 });
@@ -340,24 +341,24 @@ describe('SortModal', () => {
   };
 
   it('renders when visible', () => {
-    const { container } = render(<SortModal {...defaults} />);
+    render(<SortModal {...defaults} />);
     expect(document.body.innerHTML.length).toBeGreaterThan(50);
   });
 
   it('calls onApply on apply click', () => {
-    const { container } = render(<SortModal {...defaults} />);
+    render(<SortModal {...defaults} />);
     const applyBtn = Array.from(document.body.querySelectorAll('button')).find(b => b.textContent?.includes('Apply'));
     if (applyBtn) fireEvent.click(applyBtn);
     expect(defaults.onApply).toHaveBeenCalled();
   });
 
   it('does not render when not visible', () => {
-    const { container } = render(<SortModal {...defaults} visible={false} />);
+    render(<SortModal {...defaults} visible={false} />);
     expect(document.body.innerHTML.length).toBeLessThan(50);
   });
 
   it('renders sort mode options', () => {
-    const { container } = render(<SortModal {...defaults} />);
+    render(<SortModal {...defaults} />);
     expect(document.body.textContent).toContain('Title');
   });
 });
@@ -377,12 +378,12 @@ describe('SuggestionsFilterModal', () => {
   };
 
   it('renders when visible', () => {
-    const { container } = render(<SuggestionsFilterModal {...defaults} />);
+    render(<SuggestionsFilterModal {...defaults} />);
     expect(document.body.innerHTML.length).toBeGreaterThan(50);
   });
 
   it('calls onApply on apply click', () => {
-    const { container } = render(<SuggestionsFilterModal {...defaults} />);
+    render(<SuggestionsFilterModal {...defaults} />);
     const buttons = Array.from(document.body.querySelectorAll('button'));
     const applyBtn = buttons.find(b => b.textContent?.includes('Apply'));
     if (applyBtn) {
@@ -393,7 +394,7 @@ describe('SuggestionsFilterModal', () => {
   });
 
   it('does not render when not visible', () => {
-    const { container } = render(<SuggestionsFilterModal {...defaults} visible={false} />);
+    render(<SuggestionsFilterModal {...defaults} visible={false} />);
     expect(document.body.innerHTML.length).toBeLessThan(50);
   });
 });

@@ -15,6 +15,30 @@ vi.mock('@festival/core/suggestions/suggestionGenerator', () => {
   };
 });
 
+vi.mock('../../../src/contexts/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ shop: true, rivals: true, compete: true, leaderboards: true, firstRun: true, difficulty: true }),
+}));
+
+vi.mock('../../../src/contexts/SettingsContext', () => ({
+  useSettings: () => ({ settings: { instruments: {} }, updateSettings: vi.fn() }),
+}));
+
+vi.mock('../../../src/contexts/ScrollContainerContext', () => ({
+  useScrollContainer: () => ({ current: null }),
+}));
+
+vi.mock('../../../src/api/client', () => ({
+  api: { getRivalSuggestions: vi.fn().mockResolvedValue({ rivals: [] }) },
+}));
+
+vi.mock('../../../src/utils/suggestionAdapter', () => ({
+  buildRivalDataIndex: vi.fn().mockReturnValue({ songRivals: [], byRival: new Map(), closestRivalBySong: new Map(), topRivalBySong: new Map() }),
+}));
+
+vi.mock('../../../src/pages/rivals/helpers/comboUtils', () => ({
+  deriveComboFromSettings: vi.fn().mockReturnValue('01'),
+}));
+
 // Import AFTER mock is set up
 import { useSuggestions } from '../../../src/hooks/data/useSuggestions';
 

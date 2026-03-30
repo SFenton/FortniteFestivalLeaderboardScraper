@@ -235,7 +235,7 @@ describe('InstrumentSelector', () => {
     const onSelect = vi.fn();
     const { container } = render(
       React.createElement(InstrumentSelector, {
-        instruments: clientInstruments as InstrumentSelectorItem[],
+        instruments: clientInstruments as unknown as InstrumentSelectorItem[],
         selected: null,
         onSelect,
       }),

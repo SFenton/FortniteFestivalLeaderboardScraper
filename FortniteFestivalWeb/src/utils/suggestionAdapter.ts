@@ -108,7 +108,7 @@ export function buildRivalDataIndex(response: RivalSuggestionsResponse): RivalDa
     const info: RivalInfo = {
       accountId: entry.accountId,
       displayName: entry.displayName ?? 'Unknown',
-      direction: entry.direction,
+      direction: entry.direction as 'above' | 'below',
       source: 'song',
       sharedSongCount: entry.sharedSongCount,
       aheadCount: entry.aheadCount,

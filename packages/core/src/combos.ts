@@ -36,7 +36,7 @@ export function instrumentsFromComboId(comboId: string): ServerInstrumentKey[] {
     throw new Error(`Invalid combo ID: ${comboId}`);
   const result: ServerInstrumentKey[] = [];
   for (let bit = 0; bit < COMBO_INSTRUMENTS.length; bit++) {
-    if (mask & (1 << bit)) result.push(COMBO_INSTRUMENTS[bit]);
+    if (mask & (1 << bit)) result.push(COMBO_INSTRUMENTS[bit]!);
   }
   return result;
 }
@@ -66,7 +66,7 @@ export const ALL_COMBO_IDS: ReadonlyMap<string, readonly ServerInstrumentKey[]> 
     if (bitCount(mask) < 2) continue;
     const instruments: ServerInstrumentKey[] = [];
     for (let bit = 0; bit < n; bit++) {
-      if (mask & (1 << bit)) instruments.push(COMBO_INSTRUMENTS[bit]);
+      if (mask & (1 << bit)) instruments.push(COMBO_INSTRUMENTS[bit]!);
     }
     map.set(mask.toString(16).padStart(2, '0'), instruments);
   }

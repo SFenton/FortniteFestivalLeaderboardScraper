@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useStagger } from '../../../src/hooks/ui/useStagger';
-import { STAGGER_INTERVAL, FADE_DURATION } from '@festival/theme';
+import { STAGGER_INTERVAL } from '@festival/theme';
 
 describe('useStagger', () => {
   it('returns undefined styles when shouldStagger is false', () => {

@@ -1,6 +1,6 @@
 import { memo, useMemo, type CSSProperties } from 'react';
 import { formatPercentileBucket } from '@festival/core';
-import { Colors, Font, Weight, Gap, Radius, Layout, Display, Align, TextAlign, CssValue, FAST_FADE_MS, border, transition, padding, frostedCard, flexRow, truncate } from '@festival/theme';
+import { Gap, Radius, Layout, TextAlign, CssValue, FAST_FADE_MS, transition, padding, frostedCard, flexRow } from '@festival/theme';
 import { CssProp } from '@festival/theme';
 import SongInfo from '../../../components/songs/metadata/SongInfo';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';

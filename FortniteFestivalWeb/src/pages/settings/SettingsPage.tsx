@@ -12,7 +12,7 @@ import ConfirmAlert from '../../components/modals/ConfirmAlert';
 import { modalStyles as modalCss } from '../../components/modals/modalStyles';
 import { InstrumentIcon } from '../../components/display/InstrumentIcons';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
-import { Colors, Font, Gap, Weight, Radius, Layout, Display, Align, Justify, Overflow, CssValue, LineHeight, TextAlign, btnDanger, btnPrimary, flexColumn, flexRow, flexBetween, padding, transition, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION } from '@festival/theme';
+import { Colors, Font, Gap, Weight, Radius, Layout, Size, Display, Align, Overflow, CssValue, LineHeight, TextAlign, btnDanger, btnPrimary, flexColumn, flexBetween, padding, transition, CssProp, FAST_FADE_MS, STAGGER_INTERVAL, FADE_DURATION } from '@festival/theme';
 import { useRegisterFirstRun } from '../../hooks/ui/useRegisterFirstRun';
 import { useFirstRunReplay } from '../../hooks/ui/useFirstRun';
 import { FrostedCard } from '../../components/common/FrostedCard';
@@ -584,7 +584,7 @@ function useSettingsStyles(isMobile: boolean, filterOpen: boolean, visualOrderOp
     } as CSSProperties,
     leewayContent: {
       paddingLeft: Gap.xl,
-      paddingRight: Layout.settingsSliderPadding,
+      paddingRight: Size.settingsSliderPadding,
       paddingBottom: Gap.md,
     } as CSSProperties,
     leewayDesc: {
