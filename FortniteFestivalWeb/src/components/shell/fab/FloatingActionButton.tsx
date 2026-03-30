@@ -60,6 +60,7 @@ export default function FloatingActionButton({
     if (!actionsOpen) return;
     const handler = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        e.preventDefault();
         e.stopPropagation();
         closeActions();
       }

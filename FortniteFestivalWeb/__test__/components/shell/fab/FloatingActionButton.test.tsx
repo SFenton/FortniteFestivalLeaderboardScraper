@@ -111,17 +111,23 @@ describe('FloatingActionButton', () => {
     expect(screen.getByTestId('custom-icon')).toBeTruthy();
   });
 
-  it('closes popup on outside click', () => {
+  it('closes popup on outside click and prevents default', () => {
     const actionGroups: ActionItem[][] = [[
       { label: 'Sort', icon: <span>S</span>, onPress: vi.fn() },
     ]];
-    const { container } = renderFAB({ actionGroups });
+    renderFAB({ actionGroups });
 
     fireEvent.click(screen.getByRole('button', { name: /actions/i }));
     expect(screen.getByText('Sort')).toBeTruthy();
 
-    // Click outside the container
-    fireEvent.click(container);
+    // Dispatch a click on document body; capture-phase handler should preventDefault + stopPropagation
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+    const pdSpy = vi.spyOn(event, 'preventDefault');
+    const spSpy = vi.spyOn(event, 'stopPropagation');
+    document.body.dispatchEvent(event);
+
+    expect(pdSpy).toHaveBeenCalled();
+    expect(spSpy).toHaveBeenCalled();
   });
 
   it('renders with default placeholder when none provided', () => {
