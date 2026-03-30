@@ -93,8 +93,8 @@ export const plbStyles = {
 
   paginationMobile: {
     ...paginationBase,
-    justifyContent: Justify.between,
-    gap: Gap.none,
+    justifyContent: Justify.center,
+    gap: Gap.sm,
   } as CSSProperties,
 
   pageInfoBadge: {
