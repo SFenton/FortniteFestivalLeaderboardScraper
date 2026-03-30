@@ -6,6 +6,7 @@ import { IoPerson, IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings, IoBagHa
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
 import { useSettings } from '../../../contexts/SettingsContext';
 import { useFeatureFlags } from '../../../contexts/FeatureFlagsContext';
+import MarqueeText from '../../common/MarqueeText';
 import { useScrollContainer } from '../../../contexts/ScrollContainerContext';
 import {
   Colors, Font, Weight, Gap, Radius, Border, Layout, ZIndex,
@@ -75,7 +76,7 @@ export default function PinnedSidebar({ player, onDeselect, onSelectPlayer }: Pi
           <div style={s.playerRow}>
             <Link to="/statistics" style={s.playerLink}>
               <span style={s.linkIcon}><IoPerson size={20} /></span>
-              {player.displayName}
+              <MarqueeText as="p" text={player.displayName} style={s.playerName} />
             </Link>
             <button style={s.deselectBtn} onClick={onDeselect}>
               {t('common.deselect')}
@@ -161,6 +162,12 @@ function useStyles() {
       playerLink: {
         ...link,
         flex: 1,
+        minWidth: 0,
+        overflow: Overflow.hidden,
+      } as CSSProperties,
+      playerName: {
+        flex: 1,
+        minWidth: 0,
       } as CSSProperties,
       selectPlayerBtn: {
         ...link,

@@ -6,6 +6,7 @@ import { IoPerson, IoMusicalNotes, IoSparkles, IoStatsChart, IoSettings, IoBagHa
 import type { TrackedPlayer } from '../../../hooks/data/useTrackedPlayer';
 import { useSettings } from '../../../contexts/SettingsContext';
 import { useFeatureFlags } from '../../../contexts/FeatureFlagsContext';
+import MarqueeText from '../../common/MarqueeText';
 import { sidebarStyles as s } from './sidebarStyles';
 
 const SIDEBAR_DURATION = 250;
@@ -115,7 +116,7 @@ export default function Sidebar({ player, open, onClose, onDeselect, onSelectPla
             <div style={s.sidebarPlayerRow}>
               <Link to="/statistics" onClick={onClose} style={s.playerLink}>
                 <span style={s.sidebarLinkIcon}><IoPerson size={20} /></span>
-                {player.displayName}
+                <MarqueeText as="p" text={player.displayName} style={s.playerName} />
               </Link>
               <button style={s.deselectBtn} onClick={onDeselect}>
                 {t('common.deselect')}

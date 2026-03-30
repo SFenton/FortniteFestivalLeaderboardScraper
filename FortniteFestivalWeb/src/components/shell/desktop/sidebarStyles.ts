@@ -53,7 +53,8 @@ export const sidebarStyles = {
   } as CSSProperties,
   sidebarLinkIcon: { ...flexRow, flexShrink: 0, width: 20, justifyContent: Justify.center } as CSSProperties,
   sidebarPlayerRow: { display: Display.flex, alignItems: Align.center } as CSSProperties,
-  playerLink: { ...sidebarLink, flex: 1 } as CSSProperties,
+  playerLink: { ...sidebarLink, flex: 1, minWidth: 0, overflow: 'hidden' } as CSSProperties,
+  playerName: { flex: 1, minWidth: 0 } as CSSProperties,
   deselectBtn: { ...btnDanger, padding: `${Gap.sm}px ${Gap.xl}px`, fontSize: Font.sm, fontWeight: Weight.semibold, whiteSpace: 'nowrap', marginRight: Gap.section } as CSSProperties,
   selectPlayerBtn: { ...sidebarLink, background: CssValue.none, cursor: Cursor.pointer } as CSSProperties,
 } as const;
