@@ -145,9 +145,9 @@ export default function FullRankingsPage() {
               instrument={instrument}
               size={InstrumentHeaderSize.MD}
               label={`${serverInstrumentLabel(instrument)} ${t('rankings.title')}`}
+              subtitle={data ? t('rankings.totalRanked', { count: data.totalAccounts, formattedCount: data.totalAccounts.toLocaleString() }) : undefined}
             />
           }
-          subtitle={data ? t('rankings.totalRanked', { count: data.totalAccounts, formattedCount: data.totalAccounts.toLocaleString() }) : undefined}
           actions={
             !isMobileChrome && settings.enableExperimentalRanks ? (
               <ActionPill

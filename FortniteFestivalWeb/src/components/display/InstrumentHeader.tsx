@@ -2,13 +2,14 @@
 import { memo, useMemo } from 'react';
 import { InstrumentHeaderSize } from '@festival/core';
 import { serverInstrumentLabel as instrumentLabel, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
-import { InstrumentSize, IconSize, Gap, Font, Weight, Colors, Display, Align } from '@festival/theme';
+import { InstrumentSize, IconSize, Gap, Font, Weight, Colors, Display, Align, flexColumn } from '@festival/theme';
 import { InstrumentIcon } from './InstrumentIcons';
 
 export interface InstrumentHeaderProps {
   instrument: InstrumentKey;
   size: InstrumentHeaderSize;
   label?: string;
+  subtitle?: string;
   className?: string;
   style?: React.CSSProperties;
   iconOnly?: boolean;
@@ -18,6 +19,7 @@ const InstrumentHeader = memo(function InstrumentHeader({
   instrument,
   size,
   label,
+  subtitle,
   className,
   style,
   iconOnly,
@@ -27,9 +29,16 @@ const InstrumentHeader = memo(function InstrumentHeader({
     <div className={className} style={{ ...s.header, ...style }}>
       <InstrumentIcon instrument={instrument} size={s.iconSize} />
       {!iconOnly && (
-        <span style={s.label}>
-          {label ?? instrumentLabel(instrument)}
-        </span>
+        subtitle ? (
+          <div style={s.titleCol}>
+            <span style={s.label}>{label ?? instrumentLabel(instrument)}</span>
+            <span style={s.subtitle}>{subtitle}</span>
+          </div>
+        ) : (
+          <span style={s.label}>
+            {label ?? instrumentLabel(instrument)}
+          </span>
+        )
       )}
     </div>
   );
@@ -53,10 +62,19 @@ function useStyles(size: InstrumentHeaderSize) {
         alignItems: Align.center,
         gap: config.gap,
       },
+      titleCol: {
+        ...flexColumn,
+        justifyContent: Align.center,
+        height: config.icon,
+      } as React.CSSProperties,
       label: {
         fontSize: config.fontSize,
         fontWeight: config.fontWeight,
         color: config.color,
+      },
+      subtitle: {
+        fontSize: Font.sm,
+        color: Colors.textSecondary,
       },
     };
   }, [size]);
