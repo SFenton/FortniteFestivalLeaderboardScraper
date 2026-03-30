@@ -20,7 +20,17 @@ services:
       - POSTGRES_DB=fstservice
       - POSTGRES_USER=fst
       - POSTGRES_PASSWORD=${PG_PASSWORD:?Set PG_PASSWORD in .env}
-    shm_size: 256mb
+    shm_size: 512mb
+    command:
+      - "postgres"
+      - "-c" 
+      - "shared_buffers=2GB"
+      - "-c"
+      - "work_mem=64MB"
+      - "-c"
+      - "maintenance_work_mem=512MB"
+      - "-c"
+      - "effective_cache_size=4GB"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U fst -d fstservice"]
       interval: 10s
@@ -30,7 +40,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 4G
 
   fstservice:
     image: ghcr.io/sfenton/fstservice:latest
