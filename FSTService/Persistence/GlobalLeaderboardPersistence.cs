@@ -410,19 +410,50 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     {
         if (accountIds.Count == 0 || _instrumentDbs.Count == 0) return;
 
+        _log.LogInformation(
+            "Pre-warming rankings cache for {UserCount} user(s) across {InstrumentCount} instrument(s)...",
+            accountIds.Count, _instrumentDbs.Count);
+
         var instruments = _instrumentDbs.Keys.ToList();
-        foreach (var instrument in instruments)
+        for (int i = 0; i < instruments.Count; i++)
         {
+            var instrument = instruments[i];
             var db = _instrumentDbs[instrument];
-            foreach (var accountId in accountIds)
-            {
-                db.GetPlayerRankings(accountId);
-            }
+            db.PreWarmRankingsBatch(accountIds);
+            _log.LogDebug("Pre-warmed rankings for {Instrument} ({N}/{Total}).",
+                instrument, i + 1, instruments.Count);
         }
 
         _log.LogInformation(
             "Pre-warmed rankings cache for {UserCount} registered user(s) across {InstrumentCount} instrument(s).",
             accountIds.Count, instruments.Count);
+    }
+
+    /// <summary>
+    /// Async wrapper that runs <see cref="PreWarmRankingsCache"/> on a thread-pool thread
+    /// with a timeout. If the timeout expires, pre-warming is cancelled and the caller
+    /// continues — the cache will self-populate on first API requests instead.
+    /// </summary>
+    public async Task PreWarmRankingsCacheAsync(
+        IReadOnlyCollection<string> accountIds,
+        TimeSpan timeout,
+        CancellationToken ct = default)
+    {
+        if (accountIds.Count == 0 || _instrumentDbs.Count == 0) return;
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(timeout);
+
+        try
+        {
+            await Task.Run(() => PreWarmRankingsCache(accountIds), cts.Token);
+        }
+        catch (OperationCanceledException) when (cts.Token.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            _log.LogWarning(
+                "Rankings cache pre-warm timed out after {Timeout}. Cache will populate on demand.",
+                timeout);
+        }
     }
 
     /// <summary>

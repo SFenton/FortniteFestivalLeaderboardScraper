@@ -714,6 +714,52 @@ public sealed class InstrumentDatabase : IDisposable
     }
 
     /// <summary>
+    /// Pre-warm the rankings cache for multiple accounts using a single shared connection.
+    /// This avoids the overhead of opening/closing a connection per account.
+    /// </summary>
+    internal void PreWarmRankingsBatch(IReadOnlyCollection<string> accountIds)
+    {
+        if (accountIds.Count == 0) return;
+
+        using var conn = OpenConnection();
+        foreach (var accountId in accountIds)
+        {
+            var cacheKey = $"{accountId}\0";
+            if (_rankingsCache.TryGetValue(cacheKey, out var cached) && cached.Expiry > DateTime.UtcNow)
+                continue;
+
+            using var cmd = conn.CreateCommand();
+            cmd.CommandTimeout = 30;
+            cmd.CommandText = @"
+                WITH player_songs AS (
+                    SELECT SongId FROM LeaderboardEntries
+                    WHERE AccountId = @accountId
+                ),
+                ranked AS (
+                    SELECT le.AccountId, le.SongId,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY le.SongId
+                               ORDER BY le.Score DESC, COALESCE(le.EndTime, le.FirstSeenAt) ASC
+                           ) AS Rank
+                    FROM LeaderboardEntries le
+                    WHERE le.SongId IN (SELECT SongId FROM player_songs)
+                )
+                SELECT SongId, Rank FROM ranked
+                WHERE AccountId = @accountId;";
+            cmd.Parameters.AddWithValue("@accountId", accountId);
+
+            var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                result[reader.GetString(0)] = reader.GetInt32(1);
+            }
+
+            _rankingsCache[cacheKey] = (result, DateTime.UtcNow + RankingsCacheTtl);
+        }
+    }
+
+    /// <summary>
     /// Like <see cref="GetPlayerRankings"/> but excludes entries with scores above
     /// the per-song max-score threshold. This re-ranks the player among only valid entries.
     /// Returns songId → rank (1-based). Songs where the player's own score exceeds

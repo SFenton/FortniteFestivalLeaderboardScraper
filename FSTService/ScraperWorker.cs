@@ -112,13 +112,16 @@ public sealed class ScraperWorker : BackgroundService
         _log.LogInformation("Song catalog loaded. {SongCount} songs available for API.",
             _festivalService.Songs.Count);
 
-        // Pre-warm the rankings cache for registered users so that the first
-        // API requests after startup hit the in-memory cache.
+        // Pre-warm the rankings cache for registered users in the background so
+        // that the scrape loop starts immediately. The cache TTL is 5 min, so the
+        // worst case for API requests is a single on-demand CTE query. A 2-minute
+        // timeout prevents unbounded blocking on large user counts.
         if (_persistence.GetInstrumentKeys().Count > 0)
         {
             var registeredIds = _persistence.Meta.GetRegisteredAccountIds();
             if (registeredIds.Count > 0)
-                _persistence.PreWarmRankingsCache(registeredIds);
+                _ = _persistence.PreWarmRankingsCacheAsync(
+                    registeredIds, TimeSpan.FromMinutes(2), stoppingToken);
         }
 
         // --api-only mode: skip all background work, let the API serve requests
