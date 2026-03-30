@@ -116,7 +116,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _scraper, _persistence, _progress,
             Substitute.For<ILogger<FirstSeenSeasonCalculator>>());
 
-        _festivalService = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        _festivalService = CreateServiceWithSongs(("test-song-1", "Test Song", "Test Artist"));
 
         _lifetime = Substitute.For<IHostApplicationLifetime>();
         _log = Substitute.For<ILogger<ScraperWorker>>();
@@ -173,9 +173,10 @@ public abstract class ScraperWorkerTestBase : IDisposable
             Substitute.For<ILogger<PostScrapeOrchestrator>>());
 
         var backfillOrchestrator = new BackfillOrchestrator(
-            _backfiller, _backfillQueue, _historyReconstructor,
+            _backfillQueue, _historyReconstructor,
             _personalDbBuilder, rivalsOrchestrator, notifications, _persistence,
             _tokenManager, _progress, options,
+            serviceProvider, _pool,
             Substitute.For<ILogger<BackfillOrchestrator>>());
 
         var shopMetaDb = new FSTService.Persistence.MetaDatabase(
@@ -222,10 +223,13 @@ public abstract class ScraperWorkerTestBase : IDisposable
         var notifications = new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>());
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, new Api.ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
+        var serviceProvider = Substitute.For<IServiceProvider>();
+        serviceProvider.GetService(typeof(SongProcessingMachine)).Returns(_machine);
         return new BackfillOrchestrator(
-            _backfiller, _backfillQueue, _historyReconstructor,
+            _backfillQueue, _historyReconstructor,
             _personalDbBuilder, rivalsOrchestrator, notifications, _persistence,
             _tokenManager, _progress, options,
+            serviceProvider, _pool,
             Substitute.For<ILogger<BackfillOrchestrator>>());
     }
 

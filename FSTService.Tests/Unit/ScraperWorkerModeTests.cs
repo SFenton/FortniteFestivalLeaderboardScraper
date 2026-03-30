@@ -146,9 +146,11 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
 
         await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
 
-        await _backfiller.DidNotReceive().BackfillAccountAsync(
-            Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>());
+        await _machine.DidNotReceive().RunAsync(
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
+            Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
+            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -163,10 +165,12 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
 
         await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
 
-        // Should not have called backfiller
-        await _backfiller.DidNotReceive().BackfillAccountAsync(
-            Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>());
+        // Should not have called machine
+        await _machine.DidNotReceive().RunAsync(
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
+            Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
+            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -178,27 +182,45 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             .Returns(Task.FromResult<string?>("token"));
         _tokenManager.AccountId.Returns("callerAcct");
 
-        _backfiller.BackfillAccountAsync(
-            Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(5));
+        var orchestrator = CreateBackfillOrchestrator();
 
-        _personalDbBuilder.RebuildForAccounts(
-            Arg.Any<IReadOnlySet<string>>(), Arg.Any<MetaDatabase>())
-            .Returns(1);
+        await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
+
+        // Machine should have been called with the queued account
+        await _machine.Received(1).RunAsync(
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Is<IReadOnlyList<UserWorkItem>>(u => u.Count == 1 && u[0].AccountId == "acct1"),
+            Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
+            "token", "callerAcct", Arg.Any<SharedDopPool>(),
+            false, Arg.Any<int>(), true, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunBackfillPhase_WithToken_CallsMachineAndRunsCompletionActions()
+    {
+        _backfillQueue.Enqueue(new BackfillRequest("acct1"));
+
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<string?>("token"));
+        _tokenManager.AccountId.Returns("callerAcct");
 
         var orchestrator = CreateBackfillOrchestrator();
 
         await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
 
-        await _backfiller.Received(1).BackfillAccountAsync(
-            "acct1", _festivalService, "token", "callerAcct", Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>());
+        // Machine called, then per-user completion actions (personal DB rebuild, etc.)
+        await _machine.Received(1).RunAsync(
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
+            Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
+            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+        // Personal DB rebuild happens for all users after machine run (not conditionally)
         _personalDbBuilder.Received(1).RebuildForAccounts(
             Arg.Any<IReadOnlySet<string>>(), Arg.Any<MetaDatabase>());
     }
 
     [Fact]
-    public async Task RunBackfillPhase_BackfillReturnsZero_SkipsPersonalDbRebuild()
+    public async Task RunBackfillPhase_MachineThrows_DoesNotPropagate()
     {
         _backfillQueue.Enqueue(new BackfillRequest("acct1"));
 
@@ -206,47 +228,17 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             .Returns(Task.FromResult<string?>("token"));
         _tokenManager.AccountId.Returns("callerAcct");
 
-        _backfiller.BackfillAccountAsync(
-            Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(0));
+        _machine.RunAsync(
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
+            Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
+            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("machine failure"));
 
         var orchestrator = CreateBackfillOrchestrator();
 
+        // Should not throw — machine errors are caught
         await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
-
-        _personalDbBuilder.DidNotReceive().RebuildForAccounts(
-            Arg.Any<IReadOnlySet<string>>(), Arg.Any<MetaDatabase>());
-    }
-
-    [Fact]
-    public async Task RunBackfillPhase_BackfillThrows_ContinuesWithOtherAccounts()
-    {
-        _backfillQueue.Enqueue(new BackfillRequest("acct1"));
-        _backfillQueue.Enqueue(new BackfillRequest("acct2"));
-
-        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<string?>("token"));
-        _tokenManager.AccountId.Returns("callerAcct");
-
-        _backfiller.BackfillAccountAsync(
-            "acct1", Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>())
-            .ThrowsAsync(new InvalidOperationException("failure"));
-        _backfiller.BackfillAccountAsync(
-            "acct2", Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(3));
-
-        var orchestrator = CreateBackfillOrchestrator();
-
-        // Should not throw — errors are caught per-account
-        await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
-
-        // Both accounts attempted
-        await _backfiller.Received(2).BackfillAccountAsync(
-            Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -258,18 +250,13 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             .Returns(Task.FromResult<string?>("token"));
         _tokenManager.AccountId.Returns("callerAcct");
 
-        _backfiller.BackfillAccountAsync(
-            Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(1));
-
         _personalDbBuilder.RebuildForAccounts(
             Arg.Any<IReadOnlySet<string>>(), Arg.Any<MetaDatabase>())
             .Throws(new IOException("disk full"));
 
         var orchestrator = CreateBackfillOrchestrator();
 
-        // Should not throw
+        // Should not throw — post-completion errors are caught per-user
         await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
     }
 
@@ -281,7 +268,7 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
     public async Task RunHistoryReconPhase_NoRegisteredUsers_ReturnsEarly()
     {
         var orchestrator = CreateBackfillOrchestrator();
-        await orchestrator.RunHistoryReconAsync(CancellationToken.None);
+        await orchestrator.RunHistoryReconAsync(_festivalService, CancellationToken.None);
 
         await _historyReconstructor.DidNotReceive().DiscoverSeasonWindowsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());

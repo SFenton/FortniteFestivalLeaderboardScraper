@@ -91,17 +91,16 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             .Returns(Task.FromResult<string?>("token"));
         _tokenManager.AccountId.Returns("callerAcct");
 
-        _backfiller.BackfillAccountAsync(
-            Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(0));
-
         var orchestrator = CreateBackfillOrchestrator();
         await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
 
-        await _backfiller.Received(2).BackfillAccountAsync(
-            Arg.Any<string>(), Arg.Any<FestivalService>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), ct: Arg.Any<CancellationToken>());
+        // Machine should have been called with both accounts merged
+        await _machine.Received(1).RunAsync(
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Is<IReadOnlyList<UserWorkItem>>(u => u.Count == 2),
+            Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
+            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -114,7 +113,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         _metaDb.RegisterUser("dev1", "acct1");
 
         var orchestrator = CreateBackfillOrchestrator();
-        await orchestrator.RunHistoryReconAsync(CancellationToken.None);
+        await orchestrator.RunHistoryReconAsync(_festivalService, CancellationToken.None);
 
         await _historyReconstructor.DidNotReceive().DiscoverSeasonWindowsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
@@ -132,7 +131,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             .Returns(Task.FromResult<string?>(null));
 
         var orchestrator = CreateBackfillOrchestrator();
-        await orchestrator.RunHistoryReconAsync(CancellationToken.None);
+        await orchestrator.RunHistoryReconAsync(_festivalService, CancellationToken.None);
 
         await _historyReconstructor.DidNotReceive().DiscoverSeasonWindowsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
@@ -158,26 +157,17 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<IReadOnlyList<SeasonWindowInfo>>(windows));
 
-        _historyReconstructor.ReconstructAccountAsync(
-            Arg.Any<string>(), Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
-            Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), Arg.Any<int>(),
-            Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult(10));
-
-        _personalDbBuilder.RebuildForAccounts(
-            Arg.Any<IReadOnlySet<string>>(), Arg.Any<MetaDatabase>())
-            .Returns(1);
-
         var orchestrator = CreateBackfillOrchestrator();
-        await orchestrator.RunHistoryReconAsync(CancellationToken.None);
+        await orchestrator.RunHistoryReconAsync(_festivalService, CancellationToken.None);
 
-        await _historyReconstructor.Received(1).ReconstructAccountAsync(
-            "acct1", windows, "token", "callerAcct",
-            Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), Arg.Any<int>(),
-            Arg.Any<CancellationToken>());
-        _personalDbBuilder.Received(1).RebuildForAccounts(
-            Arg.Any<IReadOnlySet<string>>(), Arg.Any<MetaDatabase>());
+        // Machine should have been called with the user needing history recon
+        await _machine.Received(1).RunAsync(
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Is<IReadOnlyList<UserWorkItem>>(u => u.Count == 1 && u[0].AccountId == "acct1"
+                && u[0].Purposes.HasFlag(WorkPurpose.HistoryRecon)),
+            Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
+            "token", "callerAcct", Arg.Any<SharedDopPool>(),
+            false, Arg.Any<int>(), true, Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -197,7 +187,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             .Returns(Task.FromResult<IReadOnlyList<SeasonWindowInfo>>(new List<SeasonWindowInfo>()));
 
         var orchestrator = CreateBackfillOrchestrator();
-        await orchestrator.RunHistoryReconAsync(CancellationToken.None);
+        await orchestrator.RunHistoryReconAsync(_festivalService, CancellationToken.None);
 
         await _historyReconstructor.DidNotReceive().ReconstructAccountAsync(
             Arg.Any<string>(), Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
@@ -223,11 +213,11 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             .ThrowsAsync(new HttpRequestException("network error"));
 
         var orchestrator = CreateBackfillOrchestrator();
-        await orchestrator.RunHistoryReconAsync(CancellationToken.None);
+        await orchestrator.RunHistoryReconAsync(_festivalService, CancellationToken.None);
     }
 
     [Fact]
-    public async Task RunHistoryReconPhase_ReconThrows_ContinuesAndFails()
+    public async Task RunHistoryReconPhase_MachineThrows_DoesNotPropagate()
     {
         _metaDb.RegisterUser("dev1", "acct1");
         _metaDb.EnqueueBackfill("acct1", 10);
@@ -247,19 +237,17 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<IReadOnlyList<SeasonWindowInfo>>(windows));
 
-        _historyReconstructor.ReconstructAccountAsync(
-            Arg.Any<string>(), Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
-            Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(), Arg.Any<int>(),
-            Arg.Any<CancellationToken>())
-            .ThrowsAsync(new InvalidOperationException("recon error"));
+        _machine.RunAsync(
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
+            Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
+            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("machine error"));
 
         var orchestrator = CreateBackfillOrchestrator();
-        await orchestrator.RunHistoryReconAsync(CancellationToken.None);
 
-        var status = _metaDb.GetHistoryReconStatus("acct1");
-        Assert.NotNull(status);
-        Assert.Equal("error", status!.Status);
+        // Should not propagate — machine errors are caught
+        await orchestrator.RunHistoryReconAsync(_festivalService, CancellationToken.None);
     }
 
     [Fact]
@@ -278,7 +266,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         _tokenManager.AccountId.Returns("callerAcct");
 
         var orchestrator = CreateBackfillOrchestrator();
-        await orchestrator.RunHistoryReconAsync(CancellationToken.None);
+        await orchestrator.RunHistoryReconAsync(_festivalService, CancellationToken.None);
 
         await _historyReconstructor.DidNotReceive().DiscoverSeasonWindowsAsync(
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>());

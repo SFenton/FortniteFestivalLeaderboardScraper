@@ -8,13 +8,11 @@ using Microsoft.Extensions.Options;
 namespace FSTService.Scraping;
 
 /// <summary>
-/// Orchestrates backfill and history reconstruction phases.
-/// Extracted from <see cref="ScraperWorker"/> to isolate the per-user
-/// enrichment lifecycle from the global scrape loop.
+/// Orchestrates backfill and history reconstruction phases using the
+/// <see cref="SongProcessingMachine"/> for batched song-parallel V2 API calls.
 /// </summary>
 public sealed class BackfillOrchestrator
 {
-    private readonly ScoreBackfiller _backfiller;
     private readonly BackfillQueue _backfillQueue;
     private readonly HistoryReconstructor _historyReconstructor;
     private readonly PersonalDbBuilder _personalDbBuilder;
@@ -24,10 +22,11 @@ public sealed class BackfillOrchestrator
     private readonly TokenManager _tokenManager;
     private readonly ScrapeProgressTracker _progress;
     private readonly IOptions<ScraperOptions> _options;
+    private readonly IServiceProvider _serviceProvider;
+    private readonly SharedDopPool _pool;
     private readonly ILogger<BackfillOrchestrator> _log;
 
     public BackfillOrchestrator(
-        ScoreBackfiller backfiller,
         BackfillQueue backfillQueue,
         HistoryReconstructor historyReconstructor,
         PersonalDbBuilder personalDbBuilder,
@@ -37,9 +36,10 @@ public sealed class BackfillOrchestrator
         TokenManager tokenManager,
         ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
+        IServiceProvider serviceProvider,
+        SharedDopPool pool,
         ILogger<BackfillOrchestrator> log)
     {
-        _backfiller = backfiller;
         _backfillQueue = backfillQueue;
         _historyReconstructor = historyReconstructor;
         _personalDbBuilder = personalDbBuilder;
@@ -49,12 +49,16 @@ public sealed class BackfillOrchestrator
         _tokenManager = tokenManager;
         _progress = progress;
         _options = options;
+        _serviceProvider = serviceProvider;
+        _pool = pool;
         _log = log;
     }
 
     /// <summary>
     /// Run backfills for any queued accounts (from login/registration) and
     /// also resume any in-progress backfills that were interrupted.
+    /// Uses the <see cref="SongProcessingMachine"/> for batched V2 lookups
+    /// instead of per-user sequential API calls.
     /// </summary>
     public async Task RunBackfillAsync(FestivalService service, CancellationToken ct)
     {
@@ -67,8 +71,7 @@ public sealed class BackfillOrchestrator
 
         if (accountIds.Count == 0) return;
 
-        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.BackfillingScores);
-        _progress.BeginPhaseProgress(totalItems: 0, totalAccounts: accountIds.Count);
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
 
         var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
         if (accessToken is null)
@@ -79,55 +82,118 @@ public sealed class BackfillOrchestrator
         }
 
         var callerAccountId = _tokenManager.AccountId!;
-        var dop = _options.Value.PageConcurrency;
-        int initialDop = Math.Max(1, dop / 2);
-        using var limiter = new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: dop, _log);
-        _progress.SetAdaptiveLimiter(limiter);
 
+        // Discover season windows for history reconstruction
+        IReadOnlyList<Persistence.SeasonWindowInfo> seasonWindows;
+        try
+        {
+            seasonWindows = await _historyReconstructor.DiscoverSeasonWindowsAsync(
+                accessToken, callerAccountId, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Season window discovery failed. Using empty season list.");
+            seasonWindows = [];
+        }
+
+        var allSeasons = seasonWindows.Select(w => w.SeasonNumber).ToHashSet();
+
+        // Get all charted song IDs
+        var chartedSongIds = service.Songs
+            .Where(s => s.track?.su is not null)
+            .Select(s => s.track.su!)
+            .ToList();
+
+        if (chartedSongIds.Count == 0)
+        {
+            _log.LogWarning("No charted songs available for backfill.");
+            return;
+        }
+
+        // Build user work list — combine backfill + history recon
+        var users = new List<UserWorkItem>();
         foreach (var accountId in accountIds)
         {
-            ct.ThrowIfCancellationRequested();
-            try
+            var alreadyChecked = _persistence.Meta.GetCheckedBackfillPairs(accountId);
+            var totalPairs = chartedSongIds.Count * GlobalLeaderboardScraper.AllInstruments.Count;
+            _persistence.Meta.EnqueueBackfill(accountId, totalPairs);
+            _persistence.Meta.StartBackfill(accountId);
+
+            users.Add(new UserWorkItem
             {
-                var found = await _backfiller.BackfillAccountAsync(
-                    accountId, service, accessToken, callerAccountId,
-                    limiter, _options.Value.PageConcurrency, ct);
+                AccountId = accountId,
+                Purposes = WorkPurpose.Backfill | WorkPurpose.HistoryRecon,
+                AllTimeNeeded = true,
+                SeasonsNeeded = new HashSet<int>(allSeasons),
+                AlreadyChecked = alreadyChecked,
+            });
+        }
 
-                if (found > 0)
+        _log.LogInformation(
+            "Backfill via SongProcessingMachine: {Users} users, {Songs} songs, {Seasons} seasons.",
+            users.Count, chartedSongIds.Count, allSeasons.Count);
+
+        try
+        {
+            var machine = _serviceProvider.GetRequiredService<SongProcessingMachine>();
+            var result = await machine.RunAsync(
+                chartedSongIds, users, seasonWindows,
+                accessToken, callerAccountId,
+                _pool, isHighPriority: false,
+                _options.Value.LookupBatchSize, reportProgress: true, ct);
+
+            _log.LogInformation(
+                "Backfill complete: {Updated} entries, {Sessions} sessions, {ApiCalls} API calls for {Users} users.",
+                result.EntriesUpdated, result.SessionsInserted, result.ApiCalls, result.UsersProcessed);
+
+            // Per-user completion actions
+            foreach (var user in users)
+            {
+                try
                 {
-                    try
-                    {
-                        // Compute rivals now that we have full score data
-                        _rivalsOrchestrator.ComputeForUser(accountId);
+                    _persistence.Meta.CompleteBackfill(user.AccountId);
+                    _rivalsOrchestrator.ComputeForUser(user.AccountId);
+                    _personalDbBuilder.RebuildForAccounts(
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { user.AccountId },
+                        _persistence.Meta);
+                    _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
+                    _ = _notifications.NotifyPersonalDbReadyAsync(user.AccountId);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Post-backfill actions failed for {AccountId}.", user.AccountId);
+                }
 
-                        _personalDbBuilder.RebuildForAccounts(
-                            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { accountId },
-                            _persistence.Meta);
+                // History recon completion
+                try
+                {
+                    var reconStatus = _persistence.Meta.GetHistoryReconStatus(user.AccountId);
+                    if (reconStatus is null)
+                        _persistence.Meta.EnqueueHistoryRecon(user.AccountId, 0);
 
-                        await _notifications.NotifyBackfillCompleteAsync(accountId);
-                        await _notifications.NotifyPersonalDbReadyAsync(accountId);
-                    }
-                    catch (Exception ex)
-                    {
-                        _log.LogWarning(ex, "Personal DB rebuild after backfill failed for {AccountId}.", accountId);
-                    }
+                    _persistence.Meta.CompleteHistoryRecon(user.AccountId);
+                    _ = _notifications.NotifyHistoryReconCompleteAsync(user.AccountId);
+                    _ = _notifications.NotifyPersonalDbReadyAsync(user.AccountId);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Post-history-recon actions failed for {AccountId}.", user.AccountId);
                 }
             }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                _log.LogError(ex, "Backfill failed for {AccountId}. Will retry next pass.", accountId);
-            }
-
-            _progress.ReportPhaseAccountComplete();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Backfill via SongProcessingMachine failed. Will retry next pass.");
         }
     }
 
     /// <summary>
     /// Run history reconstruction for registered users whose backfill is complete
     /// but whose history hasn't been reconstructed yet.
+    /// Uses the <see cref="SongProcessingMachine"/> for batched seasonal queries.
     /// </summary>
-    public async Task RunHistoryReconAsync(CancellationToken ct)
+    public async Task RunHistoryReconAsync(FestivalService service, CancellationToken ct)
     {
         var registeredIds = _persistence.Meta.GetRegisteredAccountIds();
         if (registeredIds.Count == 0) return;
@@ -146,8 +212,7 @@ public sealed class BackfillOrchestrator
 
         if (accountsToReconstruct.Count == 0) return;
 
-        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ReconstructingHistory);
-        _progress.BeginPhaseProgress(totalItems: 0, totalAccounts: accountsToReconstruct.Count);
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
 
         var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
         if (accessToken is null)
@@ -176,56 +241,71 @@ public sealed class BackfillOrchestrator
             return;
         }
 
-        var dop = _options.Value.PageConcurrency;
-        int initialDop = Math.Max(1, dop / 2);
-        int maxDop = dop;
-        using var sharedLimiter = new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: maxDop, _log);
-        _progress.SetAdaptiveLimiter(sharedLimiter);
+        var allSeasons = seasonWindows.Select(w => w.SeasonNumber).ToHashSet();
+
+        var chartedSongIds = service.Songs
+            .Where(s => s.track?.su is not null)
+            .Select(s => s.track.su!)
+            .ToList();
+
+        if (chartedSongIds.Count == 0) return;
+
+        var users = new List<UserWorkItem>();
+        foreach (var accountId in accountsToReconstruct)
+        {
+            var alreadyProcessed = _persistence.Meta.GetProcessedHistoryReconPairs(accountId);
+            users.Add(new UserWorkItem
+            {
+                AccountId = accountId,
+                Purposes = WorkPurpose.HistoryRecon,
+                AllTimeNeeded = false,
+                SeasonsNeeded = new HashSet<int>(allSeasons),
+                AlreadyChecked = alreadyProcessed,
+            });
+        }
 
         _log.LogInformation(
-            "Reconstructing history for {Count} account(s) in parallel with shared limiter (initial DOP={InitialDop}, max={MaxDop}).",
-            accountsToReconstruct.Count, initialDop, maxDop);
+            "History recon via SongProcessingMachine: {Users} users, {Songs} songs, {Seasons} seasons.",
+            users.Count, chartedSongIds.Count, allSeasons.Count);
 
-        var userTasks = accountsToReconstruct.Select(accountId => Task.Run(async () =>
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            try
-            {
-                var entries = await _historyReconstructor.ReconstructAccountAsync(
-                    accountId, seasonWindows, accessToken, callerAccountId,
-                    sharedLimiter, dop, ct);
+            var machine = _serviceProvider.GetRequiredService<SongProcessingMachine>();
+            var result = await machine.RunAsync(
+                chartedSongIds, users, seasonWindows,
+                accessToken, callerAccountId,
+                _pool, isHighPriority: false,
+                _options.Value.LookupBatchSize, reportProgress: true, ct);
 
-                if (entries > 0)
+            _log.LogInformation(
+                "History recon complete: {Sessions} sessions inserted, {ApiCalls} API calls for {Users} users.",
+                result.SessionsInserted, result.ApiCalls, result.UsersProcessed);
+
+            foreach (var user in users)
+            {
+                try
                 {
-                    _log.LogInformation(
-                        "History reconstruction for {AccountId}: {Entries} score history entries created.",
-                        accountId, entries);
+                    var reconStatus = _persistence.Meta.GetHistoryReconStatus(user.AccountId);
+                    if (reconStatus is null)
+                        _persistence.Meta.EnqueueHistoryRecon(user.AccountId, 0);
 
-                    try
-                    {
-                        _personalDbBuilder.RebuildForAccounts(
-                            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { accountId },
-                            _persistence.Meta);
-
-                        await _notifications.NotifyHistoryReconCompleteAsync(accountId);
-                        await _notifications.NotifyPersonalDbReadyAsync(accountId);
-                    }
-                    catch (Exception ex)
-                    {
-                        _log.LogWarning(ex, "Personal DB rebuild after history recon failed for {AccountId}.", accountId);
-                    }
+                    _persistence.Meta.CompleteHistoryRecon(user.AccountId);
+                    _personalDbBuilder.RebuildForAccounts(
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { user.AccountId },
+                        _persistence.Meta);
+                    _ = _notifications.NotifyHistoryReconCompleteAsync(user.AccountId);
+                    _ = _notifications.NotifyPersonalDbReadyAsync(user.AccountId);
                 }
-
-                _progress.ReportPhaseAccountComplete();
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Post-history-recon actions failed for {AccountId}.", user.AccountId);
+                }
             }
-            catch (OperationCanceledException) { /* propagated via WhenAll */ }
-            catch (Exception ex)
-            {
-                _log.LogError(ex, "History reconstruction failed for {AccountId}. Will retry next pass.", accountId);
-                _persistence.Meta.FailHistoryRecon(accountId, ex.Message);
-            }
-        }, ct)).ToList();
-
-        await Task.WhenAll(userTasks);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "History recon via SongProcessingMachine failed. Will retry next pass.");
+        }
     }
 }
