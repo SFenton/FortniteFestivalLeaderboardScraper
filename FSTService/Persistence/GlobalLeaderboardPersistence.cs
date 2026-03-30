@@ -478,6 +478,87 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>
+    /// Like <see cref="GetPlayerRankings"/> but filters out entries above per-song max-score thresholds.
+    /// <paramref name="maxScoresByInstrument"/> maps instrument DB name → (songId → threshold).
+    /// </summary>
+    public Dictionary<(string SongId, string Instrument), int> GetPlayerRankingsFiltered(
+        string accountId,
+        Dictionary<string, Dictionary<string, int>> maxScoresByInstrument,
+        string? songId = null,
+        HashSet<string>? instruments = null)
+    {
+        var kvps = instruments is null
+            ? _instrumentDbs.ToArray()
+            : _instrumentDbs.Where(kv => instruments.Contains(kv.Key)).ToArray();
+
+        var perInstrument = new Dictionary<string, int>[kvps.Length];
+        var instrumentKeys = new string[kvps.Length];
+        Parallel.For(0, kvps.Length, i =>
+        {
+            var inst = kvps[i].Key;
+            instrumentKeys[i] = inst;
+            if (maxScoresByInstrument.TryGetValue(inst, out var thresholds) && thresholds.Count > 0)
+                perInstrument[i] = kvps[i].Value.GetPlayerRankingsFiltered(accountId, thresholds, songId);
+            else
+                perInstrument[i] = kvps[i].Value.GetPlayerRankings(accountId, songId);
+        });
+
+        var result = new Dictionary<(string, string), int>();
+        for (int i = 0; i < kvps.Length; i++)
+        {
+            var instrument = instrumentKeys[i];
+            foreach (var (sid, rank) in perInstrument[i])
+                result[(sid, instrument)] = rank;
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Compute the rank a specific score would have, filtered by a max-score threshold.
+    /// Returns 0 if the instrument is unknown.
+    /// </summary>
+    public int GetRankForScore(string instrument, string songId, int score, int? maxScore = null)
+    {
+        if (!_instrumentDbs.TryGetValue(instrument, out var db))
+            return 0;
+        return db.GetRankForScore(songId, score, maxScore);
+    }
+
+    /// <summary>
+    /// Count valid (below-threshold) entries per song for each instrument.
+    /// <paramref name="maxScoresByInstrument"/> maps instrument DB name → (songId → threshold).
+    /// </summary>
+    public Dictionary<(string SongId, string Instrument), int> GetFilteredPopulation(
+        Dictionary<string, Dictionary<string, int>> maxScoresByInstrument,
+        HashSet<string>? instruments = null)
+    {
+        var kvps = instruments is null
+            ? _instrumentDbs.ToArray()
+            : _instrumentDbs.Where(kv => instruments.Contains(kv.Key)).ToArray();
+
+        var perInstrument = new Dictionary<string, int>[kvps.Length];
+        var instrumentKeys = new string[kvps.Length];
+        Parallel.For(0, kvps.Length, i =>
+        {
+            var inst = kvps[i].Key;
+            instrumentKeys[i] = inst;
+            if (maxScoresByInstrument.TryGetValue(inst, out var thresholds) && thresholds.Count > 0)
+                perInstrument[i] = kvps[i].Value.GetFilteredEntryCounts(thresholds);
+            else
+                perInstrument[i] = kvps[i].Value.GetAllSongCounts();
+        });
+
+        var result = new Dictionary<(string, string), int>();
+        for (int i = 0; i < kvps.Length; i++)
+        {
+            var instrument = instrumentKeys[i];
+            foreach (var (sid, count) in perInstrument[i])
+                result[(sid, instrument)] = count;
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Get the leaderboard for a specific song + instrument.
     /// </summary>
     public List<LeaderboardEntryDto>? GetLeaderboard(string songId, string instrument, int? top = null, int offset = 0)

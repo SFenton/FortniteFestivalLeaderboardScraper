@@ -7,7 +7,7 @@
  * columns (e.g. date strings in score history). Exactly one should be given.
  */
 import { memo, useMemo } from 'react';
-import { Align, Colors, Display, Font, FontVariant, Gap, Justify, Layout, TextAlign, Weight, flexRow, truncate } from '@festival/theme';
+import { Align, Colors, Display, Font, FontVariant, Gap, Justify, Layout, StarSize, TextAlign, Weight, flexRow, truncate } from '@festival/theme';
 import { useFeatureFlags } from '../../../../contexts/FeatureFlagsContext';
 import SeasonPill from '../../../../components/songs/metadata/SeasonPill';
 import ScorePill from '../../../../components/songs/metadata/ScorePill';
@@ -40,6 +40,8 @@ export interface LeaderboardEntryProps {
   showStars?: boolean;
   /** Width string for the score column (e.g. '6ch'). */
   scoreWidth?: string;
+  /** Pixel width for the rank column. Computed from the longest rank in the list. */
+  rankWidth?: number;
 }
 
 export const LeaderboardEntry = memo(function LeaderboardEntry({
@@ -58,8 +60,9 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
   showAccuracy,
   showStars,
   scoreWidth,
+  rankWidth,
 }: LeaderboardEntryProps) {
-  const s = useStyles(isPlayer);
+  const s = useStyles(isPlayer, rankWidth);
   const { difficulty: difficultyEnabled } = useFeatureFlags();
 
   return (
@@ -69,8 +72,16 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
         : null}
       <span style={s.colName}>{label ?? displayName}</span>
       <span style={s.seasonScoreGroup}>
-        {difficultyEnabled && showDifficulty && difficulty != null && difficulty >= 0 && <DifficultyPill difficulty={difficulty} />}
-        {showSeason && season != null && <SeasonPill season={season} />}
+        {difficultyEnabled && showDifficulty && (
+          difficulty != null && difficulty >= 0
+            ? <DifficultyPill difficulty={difficulty} />
+            : <span style={s.hidden} aria-hidden="true"><DifficultyPill difficulty={0} /></span>
+        )}
+        {showSeason && (
+          season != null
+            ? <SeasonPill season={season} />
+            : <span style={s.hidden} aria-hidden="true"><SeasonPill season={0} /></span>
+        )}
         <ScorePill score={score} width={scoreWidth} />
       </span>
       {showAccuracy && (
@@ -89,10 +100,10 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
   );
 });
 
-function useStyles(isPlayer?: boolean) {
+function useStyles(isPlayer?: boolean, rankWidth?: number) {
   return useMemo(() => ({
     colRank: {
-      width: Layout.rankColumnWidth,
+      width: rankWidth ?? Layout.rankColumnWidth,
       flexShrink: 0,
       color: Colors.textPrimary,
       fontSize: Font.md,
@@ -120,9 +131,13 @@ function useStyles(isPlayer?: boolean) {
     },
     colStars: {
       flexShrink: 0,
+      width: StarSize.rowWidth,
       display: Display.inlineFlex,
       alignItems: Align.center,
       justifyContent: Justify.end,
     },
-  }), [isPlayer]);
+    hidden: {
+      visibility: 'hidden' as const,
+    },
+  }), [isPlayer, rankWidth]);
 }

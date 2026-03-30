@@ -61,6 +61,7 @@ export const SuggestionSongRow = React.memo(function SuggestionSongRow(props: {
   const isUnplayedAnyCategory = props.categoryKey === 'unplayed_any' || props.categoryKey.startsWith('unplayed_any_decade_');
   const isStarGainsCategory = props.categoryKey.startsWith('star_gains');
   const isPercentileCategory = props.categoryKey.startsWith('almost_elite') || props.categoryKey.startsWith('pct_push');
+  const isNearMaxCategory = props.categoryKey.startsWith('near_max_');
 
   const right = useMemo(() => {
     if (isUnfcCategory) return '';
@@ -76,7 +77,7 @@ export const SuggestionSongRow = React.memo(function SuggestionSongRow(props: {
 
   const showUnfcBadge = unfcPercent != null;
 
-  const rightInstrumentKey = (isFcTheseNextCategory || isNearFcRelaxedCategory || isGoldStarPushCategory || isFirstPlaysMixedCategory || isStarGainsCategory || isPercentileCategory) ? item.instrumentKey : undefined;
+  const rightInstrumentKey = (isFcTheseNextCategory || isNearFcRelaxedCategory || isGoldStarPushCategory || isFirstPlaysMixedCategory || isStarGainsCategory || isPercentileCategory || isNearMaxCategory) ? item.instrumentKey : undefined;
   const rightInstrumentKeyFinal = (rightInstrumentKey || (isSameNameNearFcCategory ? item.instrumentKey : undefined));
   const showRightInstrumentIcon = !!rightInstrumentKeyFinal;
 

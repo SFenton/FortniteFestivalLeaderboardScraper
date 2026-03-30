@@ -644,6 +644,59 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════
+    // History Recon Completion
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task RefreshRegisteredUsers_StuckHistoryRecon_CompletesIt()
+    {
+        // Simulate the bug: backfill is complete, history recon stuck at in_progress
+        _metaDb.RegisterUser("dev-hr", "acct-hr");
+        _metaDb.EnqueueBackfill("acct-hr", 10);
+        _metaDb.StartBackfill("acct-hr");
+        _metaDb.CompleteBackfill("acct-hr");
+        _metaDb.EnqueueHistoryRecon("acct-hr", 5);
+        _metaDb.StartHistoryRecon("acct-hr");
+        // Status is now "in_progress" — the bug leaves it here forever
+
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns("test-tok");
+        _tokenManager.AccountId.Returns("caller-1");
+
+        var ctx = CreateContext(registeredIds: new HashSet<string> { "acct-hr" });
+        await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
+
+        var status = _metaDb.GetHistoryReconStatus("acct-hr");
+        Assert.NotNull(status);
+        Assert.Equal("complete", status.Status);
+    }
+
+    [Fact]
+    public async Task RefreshRegisteredUsers_PendingBackfill_CompletesHistoryReconToo()
+    {
+        // Pending backfill user gets both Backfill | HistoryRecon purposes
+        _metaDb.RegisterUser("dev-combo", "acct-combo");
+        _metaDb.EnqueueBackfill("acct-combo", 10);
+
+        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
+            .Returns("test-tok");
+        _tokenManager.AccountId.Returns("caller-1");
+
+        var ctx = CreateContext(registeredIds: new HashSet<string> { "acct-combo" });
+        await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
+
+        // Backfill should be complete
+        var bfStatus = _metaDb.GetBackfillStatus("acct-combo");
+        Assert.NotNull(bfStatus);
+        Assert.Equal("complete", bfStatus.Status);
+
+        // History recon should also be complete (created and completed inline)
+        var hrStatus = _metaDb.GetHistoryReconStatus("acct-combo");
+        Assert.NotNull(hrStatus);
+        Assert.Equal("complete", hrStatus.Status);
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // NoOpHttpHandler (shared utility)
     // ═══════════════════════════════════════════════════════════
 

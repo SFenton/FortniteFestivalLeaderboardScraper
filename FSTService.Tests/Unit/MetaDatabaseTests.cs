@@ -1472,4 +1472,77 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal(5, above.Count);
         Assert.Equal(5, below.Count);
     }
+
+    // ═══ GetBestValidScores ═════════════════════════════════════
+
+    [Fact]
+    public void GetBestValidScores_returns_highest_valid_score()
+    {
+        // Insert multiple score history entries: 80k, 90k, and 110k (invalid)
+        Db.InsertScoreChange("song_1", "Solo_Guitar", "acct_1", null, 80_000, null, 3,
+            accuracy: 90, isFullCombo: false, stars: 5, scoreAchievedAt: "2025-01-01T00:00:00Z");
+        Db.InsertScoreChange("song_1", "Solo_Guitar", "acct_1", 80_000, 90_000, 3, 2,
+            accuracy: 95, isFullCombo: true, stars: 6, scoreAchievedAt: "2025-02-01T00:00:00Z");
+        Db.InsertScoreChange("song_1", "Solo_Guitar", "acct_1", 90_000, 110_000, 2, 1,
+            accuracy: 98, isFullCombo: true, stars: 6, scoreAchievedAt: "2025-03-01T00:00:00Z");
+
+        var thresholds = new Dictionary<(string, string), int>
+        {
+            [("song_1", "Solo_Guitar")] = 100_000, // 110k is invalid
+        };
+        var result = Db.GetBestValidScores("acct_1", thresholds);
+
+        Assert.Single(result);
+        var fallback = result[("song_1", "Solo_Guitar")];
+        Assert.Equal(90_000, fallback.Score);
+        Assert.Equal(95, fallback.Accuracy);
+        Assert.True(fallback.IsFullCombo);
+        Assert.Equal(6, fallback.Stars);
+    }
+
+    [Fact]
+    public void GetBestValidScores_returns_empty_when_no_valid_scores()
+    {
+        // Only one score, and it's invalid
+        Db.InsertScoreChange("song_1", "Solo_Guitar", "acct_1", null, 110_000, null, 1,
+            accuracy: 98, scoreAchievedAt: "2025-01-01T00:00:00Z");
+
+        var thresholds = new Dictionary<(string, string), int>
+        {
+            [("song_1", "Solo_Guitar")] = 100_000,
+        };
+        var result = Db.GetBestValidScores("acct_1", thresholds);
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void GetBestValidScores_returns_empty_for_empty_thresholds()
+    {
+        Db.InsertScoreChange("song_1", "Solo_Guitar", "acct_1", null, 90_000, null, 1,
+            scoreAchievedAt: "2025-01-01T00:00:00Z");
+
+        var result = Db.GetBestValidScores("acct_1", new Dictionary<(string, string), int>());
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void GetBestValidScores_handles_multiple_instruments()
+    {
+        Db.InsertScoreChange("song_1", "Solo_Guitar", "acct_1", null, 90_000, null, 1,
+            accuracy: 95, isFullCombo: true, stars: 6, scoreAchievedAt: "2025-01-01T00:00:00Z");
+        Db.InsertScoreChange("song_1", "Solo_Bass", "acct_1", null, 85_000, null, 2,
+            accuracy: 90, isFullCombo: false, stars: 5, scoreAchievedAt: "2025-01-01T00:00:00Z");
+
+        var thresholds = new Dictionary<(string, string), int>
+        {
+            [("song_1", "Solo_Guitar")] = 100_000,
+            [("song_1", "Solo_Bass")] = 100_000,
+        };
+        var result = Db.GetBestValidScores("acct_1", thresholds);
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal(90_000, result[("song_1", "Solo_Guitar")].Score);
+        Assert.Equal(85_000, result[("song_1", "Solo_Bass")].Score);
+    }
 }

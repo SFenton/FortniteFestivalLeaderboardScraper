@@ -9,7 +9,7 @@ vi.mock('../../src/api/client', () => ({
     getSyncStatus: vi.fn().mockResolvedValue({ accountId: 'acc-1', isTracked: false, backfill: null, historyRecon: null }),
     trackPlayer: vi.fn().mockResolvedValue({ accountId: 'acc-1', displayName: 'TestPlayer', trackingStarted: true }),
     searchAccounts: vi.fn(),
-    getSongs: vi.fn(),
+    getSongs: vi.fn().mockResolvedValue({ songs: [], season: 1 }),
   },
 }));
 
@@ -25,15 +25,21 @@ vi.mock('../../src/hooks/data/useSyncStatus', () => ({
 }));
 
 import { PlayerDataProvider, usePlayerData } from '../../src/contexts/PlayerDataContext';
+import { SettingsProvider } from '../../src/contexts/SettingsContext';
+import { FestivalProvider } from '../../src/contexts/FestivalContext';
 
 function createWrapper(accountId?: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return function Wrapper({ children }: { children: ReactNode }) {
     return (
       <QueryClientProvider client={qc}>
-        <PlayerDataProvider accountId={accountId}>
-          {children}
-        </PlayerDataProvider>
+        <SettingsProvider>
+          <FestivalProvider>
+            <PlayerDataProvider accountId={accountId}>
+              {children}
+            </PlayerDataProvider>
+          </FestivalProvider>
+        </SettingsProvider>
       </QueryClientProvider>
     );
   };

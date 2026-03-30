@@ -131,7 +131,7 @@ describe('useScoreFilter (enabled)', () => {
     expect(filtered[1]!.rank).toBe(2);
   });
 
-  it('filterPlayerScores removes invalid scores', async () => {
+  it('filterPlayerScores removes invalid scores without fallback', async () => {
     const { result } = renderHook(() => useScoreFilter(), { wrapper: TestWrapper });
     await act(async () => { await new Promise(r => setTimeout(r, 50)); });
     const scores = [
@@ -140,6 +140,40 @@ describe('useScoreFilter (enabled)', () => {
     ] as any[];
     const filtered = result.current.filterPlayerScores(scores);
     expect(filtered).toHaveLength(1);
+    expect(filtered[0]!.score).toBe(90000);
+  });
+
+  it('filterPlayerScores substitutes fallback values for invalid scores with validScore', async () => {
+    const { result } = renderHook(() => useScoreFilter(), { wrapper: TestWrapper });
+    await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+    const scores = [
+      { songId: 's1', instrument: 'solo_guitar', score: 90000, rank: 5, accuracy: 9800, isFullCombo: true, stars: 6, totalEntries: 1000 },
+      { songId: 's1', instrument: 'solo_guitar', score: 200000, rank: 1, accuracy: 10000, isFullCombo: true, stars: 6, totalEntries: 1000, validScore: 95000, validRank: 3, validAccuracy: 9500, validIsFullCombo: false, validStars: 5, validTotalEntries: 900 },
+    ] as any[];
+    const filtered = result.current.filterPlayerScores(scores);
+    expect(filtered).toHaveLength(2);
+    expect(filtered[1]!.score).toBe(95000);
+    expect(filtered[1]!.rank).toBe(3);
+    expect(filtered[1]!.accuracy).toBe(9500);
+    expect(filtered[1]!.isFullCombo).toBe(false);
+    expect(filtered[1]!.stars).toBe(5);
+    expect(filtered[1]!.totalEntries).toBe(900);
+  });
+
+  it('filterPlayerScores uses original values when fallback fields are null', async () => {
+    const { result } = renderHook(() => useScoreFilter(), { wrapper: TestWrapper });
+    await act(async () => { await new Promise(r => setTimeout(r, 50)); });
+    const scores = [
+      { songId: 's1', instrument: 'solo_guitar', score: 200000, rank: 1, accuracy: 10000, isFullCombo: true, stars: 6, totalEntries: 1000, validScore: 95000, validRank: null, validAccuracy: null, validIsFullCombo: null, validStars: null, validTotalEntries: null },
+    ] as any[];
+    const filtered = result.current.filterPlayerScores(scores);
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]!.score).toBe(95000);
+    expect(filtered[0]!.rank).toBe(0);
+    expect(filtered[0]!.accuracy).toBe(10000);
+    expect(filtered[0]!.isFullCombo).toBe(true);
+    expect(filtered[0]!.stars).toBe(6);
+    expect(filtered[0]!.totalEntries).toBe(1000);
   });
 
   it('filterHistory removes invalid entries', async () => {

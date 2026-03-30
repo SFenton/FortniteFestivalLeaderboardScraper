@@ -683,6 +683,149 @@ public sealed class InstrumentDatabase : IDisposable
     }
 
     /// <summary>
+    /// Like <see cref="GetPlayerRankings"/> but excludes entries with scores above
+    /// the per-song max-score threshold. This re-ranks the player among only valid entries.
+    /// Returns songId → rank (1-based). Songs where the player's own score exceeds
+    /// the threshold are omitted from the result.
+    /// </summary>
+    /// <param name="accountId">The account to rank.</param>
+    /// <param name="maxScores">Per-song score ceiling (e.g. CHOpt max × leeway). Null = no filter.</param>
+    /// <param name="songId">Optional song filter.</param>
+    public Dictionary<string, int> GetPlayerRankingsFiltered(string accountId,
+        Dictionary<string, int> maxScores, string? songId = null)
+    {
+        using var conn = OpenConnection();
+        var songFilter = songId is not null ? "AND le.SongId = @songId" : "";
+
+        // Per-song thresholds require a temp table (SQLite has no parameterised per-row values)
+        using var setupCmd = conn.CreateCommand();
+        setupCmd.CommandText = "CREATE TEMP TABLE IF NOT EXISTS _maxThresholds (SongId TEXT PRIMARY KEY, MaxScore INTEGER NOT NULL); DELETE FROM _maxThresholds;";
+        setupCmd.ExecuteNonQuery();
+
+        // Populate temp table
+        if (maxScores.Count > 0)
+        {
+            using var insertCmd = conn.CreateCommand();
+            insertCmd.CommandText = "INSERT INTO _maxThresholds (SongId, MaxScore) VALUES (@sid, @ms);";
+            var pSid = insertCmd.Parameters.Add("@sid", SqliteType.Text);
+            var pMs = insertCmd.Parameters.Add("@ms", SqliteType.Integer);
+            insertCmd.Prepare();
+            foreach (var (sid, ms) in maxScores)
+            {
+                pSid.Value = sid;
+                pMs.Value = ms;
+                insertCmd.ExecuteNonQuery();
+            }
+        }
+
+        // Now run the filtered ranking query
+        using var rankCmd = conn.CreateCommand();
+        rankCmd.CommandText = $@"
+            WITH player_songs AS (
+                SELECT SongId FROM LeaderboardEntries
+                WHERE AccountId = @accountId {songFilter}
+            ),
+            ranked AS (
+                SELECT le.AccountId, le.SongId,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY le.SongId
+                           ORDER BY le.Score DESC, COALESCE(le.EndTime, le.FirstSeenAt) ASC
+                       ) AS Rank
+                FROM LeaderboardEntries le
+                LEFT JOIN _maxThresholds mt ON mt.SongId = le.SongId
+                WHERE le.SongId IN (SELECT SongId FROM player_songs)
+                  AND le.Score <= COALESCE(mt.MaxScore, le.Score + 1)
+            )
+            SELECT SongId, Rank FROM ranked
+            WHERE AccountId = @accountId;";
+        rankCmd.Parameters.AddWithValue("@accountId", accountId);
+        if (songId is not null)
+            rankCmd.Parameters.AddWithValue("@songId", songId);
+
+        var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        using var reader = rankCmd.ExecuteReader();
+        while (reader.Read())
+        {
+            result[reader.GetString(0)] = reader.GetInt32(1);
+        }
+
+        // Clean up temp table data (table persists until connection closes, but data is cleared)
+        using var cleanCmd = conn.CreateCommand();
+        cleanCmd.CommandText = "DELETE FROM _maxThresholds;";
+        cleanCmd.ExecuteNonQuery();
+
+        return result;
+    }
+
+    /// <summary>
+    /// Compute the rank a specific score would have on a song's leaderboard,
+    /// optionally filtering out entries above a max-score threshold.
+    /// Returns 1-based rank (i.e. count of valid entries that beat this score, + 1).
+    /// </summary>
+    public int GetRankForScore(string songId, int score, int? maxScore = null)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = maxScore.HasValue
+            ? "SELECT COUNT(*) + 1 FROM LeaderboardEntries WHERE SongId = @songId AND Score > @score AND Score <= @maxScore;"
+            : "SELECT COUNT(*) + 1 FROM LeaderboardEntries WHERE SongId = @songId AND Score > @score;";
+        cmd.Parameters.AddWithValue("@songId", songId);
+        cmd.Parameters.AddWithValue("@score", score);
+        if (maxScore.HasValue)
+            cmd.Parameters.AddWithValue("@maxScore", maxScore.Value);
+
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
+    /// <summary>
+    /// Count the number of valid entries (score ≤ threshold) per song on this instrument.
+    /// Returns songId → count.
+    /// </summary>
+    public Dictionary<string, int> GetFilteredEntryCounts(Dictionary<string, int> maxScores)
+    {
+        using var conn = OpenConnection();
+
+        // Create and populate temp threshold table
+        using var createCmd = conn.CreateCommand();
+        createCmd.CommandText = "CREATE TEMP TABLE IF NOT EXISTS _maxThresholds (SongId TEXT PRIMARY KEY, MaxScore INTEGER NOT NULL); DELETE FROM _maxThresholds;";
+        createCmd.ExecuteNonQuery();
+
+        if (maxScores.Count > 0)
+        {
+            using var insertCmd = conn.CreateCommand();
+            insertCmd.CommandText = "INSERT INTO _maxThresholds (SongId, MaxScore) VALUES (@sid, @ms);";
+            var pSid = insertCmd.Parameters.Add("@sid", SqliteType.Text);
+            var pMs = insertCmd.Parameters.Add("@ms", SqliteType.Integer);
+            insertCmd.Prepare();
+            foreach (var (sid, ms) in maxScores)
+            {
+                pSid.Value = sid;
+                pMs.Value = ms;
+                insertCmd.ExecuteNonQuery();
+            }
+        }
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT le.SongId, COUNT(*)
+            FROM LeaderboardEntries le
+            LEFT JOIN _maxThresholds mt ON mt.SongId = le.SongId
+            WHERE le.Score <= COALESCE(mt.MaxScore, le.Score + 1)
+            GROUP BY le.SongId;";
+
+        var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            result[reader.GetString(0)] = reader.GetInt32(1);
+
+        using var cleanCmd = conn.CreateCommand();
+        cleanCmd.CommandText = "DELETE FROM _maxThresholds;";
+        cleanCmd.ExecuteNonQuery();
+
+        return result;
+    }
+
+    /// <summary>
     /// For each song where the given account has a score, return
     /// the pre-computed stored Rank and TotalEntries. Much faster than
     /// <see cref="GetPlayerRankings"/> but requires <see cref="RecomputeAllRanks"/>

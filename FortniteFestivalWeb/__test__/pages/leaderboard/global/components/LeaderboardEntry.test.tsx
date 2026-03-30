@@ -51,9 +51,12 @@ describe('LeaderboardEntry', () => {
     expect(container.innerHTML).toContain('8ch');
   });
 
-  it('renders with season null and showSeason true', () => {
-    render(<W><LeaderboardEntry rank={1} displayName="P1" score={100000} isPlayer={false} showSeason season={null} /></W>);
+  it('renders hidden season placeholder when season is null and showSeason true', () => {
+    const { container } = render(<W><LeaderboardEntry rank={1} displayName="P1" score={100000} isPlayer={false} showSeason season={null} /></W>);
     expect(screen.getByText('#1')).toBeTruthy();
+    const hidden = container.querySelector('[aria-hidden="true"]');
+    expect(hidden).toBeTruthy();
+    expect((hidden as HTMLElement).style.visibility).toBe('hidden');
   });
 
   it('renders with accuracy undefined (null fallback)', () => {
@@ -75,14 +78,18 @@ describe('LeaderboardEntry', () => {
     expect(screen.getByText('Jan 15')).toBeTruthy();
   });
 
-  it('shows dash for stars=0 with showStars', () => {
+  it('shows dash for stars=0 with showStars and fixed width', () => {
     const { container } = render(<W><LeaderboardEntry rank={1} displayName="P1" score={100000} showStars stars={0} /></W>);
     expect(screen.getByText('\u2014')).toBeTruthy();
+    const starsCol = screen.getByText('\u2014').closest('span')!;
+    expect(starsCol.style.width).toBe('132px');
   });
 
-  it('shows dash for stars=null with showStars', () => {
+  it('shows dash for stars=null with showStars and fixed width', () => {
     const { container } = render(<W><LeaderboardEntry rank={1} displayName="P1" score={100000} showStars stars={null} /></W>);
     expect(screen.getByText('\u2014')).toBeTruthy();
+    const starsCol = screen.getByText('\u2014').closest('span')!;
+    expect(starsCol.style.width).toBe('132px');
   });
 
   it('renders stars with isFullCombo false', () => {
@@ -90,10 +97,12 @@ describe('LeaderboardEntry', () => {
     expect(container.querySelectorAll('img').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('renders with showSeason true but season undefined', () => {
+  it('renders hidden season placeholder when showSeason true but season undefined', () => {
     const { container } = render(<W><LeaderboardEntry rank={1} displayName="P1" score={100000} showSeason /></W>);
-    // season is undefined → no SeasonPill rendered
     expect(container.textContent).toContain('#1');
+    const hidden = container.querySelector('[aria-hidden="true"]');
+    expect(hidden).toBeTruthy();
+    expect((hidden as HTMLElement).style.visibility).toBe('hidden');
   });
 
   it('renders with rank=0', () => {
@@ -111,20 +120,18 @@ describe('LeaderboardEntry', () => {
     expect(screen.queryByText('H')).toBeFalsy();
   });
 
-  it('hides difficulty pill when difficulty is null', () => {
-    render(<W><LeaderboardEntry rank={1} displayName="P1" score={100000} showDifficulty difficulty={null} /></W>);
-    expect(screen.queryByText('E')).toBeFalsy();
-    expect(screen.queryByText('M')).toBeFalsy();
-    expect(screen.queryByText('H')).toBeFalsy();
-    expect(screen.queryByText('X')).toBeFalsy();
+  it('renders hidden placeholder when difficulty is null', () => {
+    const { container } = render(<W><LeaderboardEntry rank={1} displayName="P1" score={100000} showDifficulty difficulty={null} /></W>);
+    const hidden = container.querySelector('[aria-hidden="true"]');
+    expect(hidden).toBeTruthy();
+    expect((hidden as HTMLElement).style.visibility).toBe('hidden');
   });
 
-  it('hides difficulty pill when difficulty is -1 (unset)', () => {
-    render(<W><LeaderboardEntry rank={1} displayName="P1" score={100000} showDifficulty difficulty={-1} /></W>);
-    expect(screen.queryByText('E')).toBeFalsy();
-    expect(screen.queryByText('M')).toBeFalsy();
-    expect(screen.queryByText('H')).toBeFalsy();
-    expect(screen.queryByText('X')).toBeFalsy();
+  it('renders hidden placeholder when difficulty is -1 (unset)', () => {
+    const { container } = render(<W><LeaderboardEntry rank={1} displayName="P1" score={100000} showDifficulty difficulty={-1} /></W>);
+    const hidden = container.querySelector('[aria-hidden="true"]');
+    expect(hidden).toBeTruthy();
+    expect((hidden as HTMLElement).style.visibility).toBe('hidden');
   });
 
   it('renders difficulty pill for each difficulty value including Easy', () => {
@@ -134,5 +141,17 @@ describe('LeaderboardEntry', () => {
       expect(screen.getByText(label)).toBeTruthy();
       unmount();
     });
+  });
+
+  it('applies custom rankWidth to the rank column', () => {
+    const { container } = render(<W><LeaderboardEntry rank={12345} displayName="P1" score={100000} rankWidth={100} /></W>);
+    const rankSpan = screen.getByText('#12,345');
+    expect(rankSpan.style.width).toBe('100px');
+  });
+
+  it('uses default rank column width when rankWidth is not provided', () => {
+    render(<W><LeaderboardEntry rank={1} displayName="P1" score={100000} /></W>);
+    const rankSpan = screen.getByText('#1');
+    expect(rankSpan.style.width).toBe('48px');
   });
 });

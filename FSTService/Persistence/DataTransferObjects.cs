@@ -48,6 +48,17 @@ public sealed class PlayerScoreDto
 }
 
 /// <summary>
+/// Best valid score from ScoreHistory for a player whose leaderboard entry exceeds the max-score threshold.
+/// </summary>
+public sealed class ValidScoreFallback
+{
+    public int Score { get; init; }
+    public int? Accuracy { get; init; }
+    public bool? IsFullCombo { get; init; }
+    public int? Stars { get; init; }
+}
+
+/// <summary>
 /// DTO for a score history entry.
 /// </summary>
 public sealed class ScoreHistoryEntry

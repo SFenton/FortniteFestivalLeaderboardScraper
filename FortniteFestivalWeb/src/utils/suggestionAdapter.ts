@@ -18,6 +18,14 @@ const SERVER_TO_CORE_INSTRUMENT: Record<ServerInstrumentKey, InstrumentKey> = {
 };
 
 export function serverSongToCore(s: ServerSong): CoreSong {
+  const maxScores: Partial<Record<InstrumentKey, number>> = {};
+  if (s.maxScores) {
+    for (const [serverKey, value] of Object.entries(s.maxScores) as [ServerInstrumentKey, number][]) {
+      const coreKey = SERVER_TO_CORE_INSTRUMENT[serverKey];
+      if (coreKey && typeof value === 'number') maxScores[coreKey] = value;
+    }
+  }
+  const hasMaxScores = Object.keys(maxScores).length > 0;
   return {
     _title: s.title,
     track: {
@@ -38,6 +46,7 @@ export function serverSongToCore(s: ServerSong): CoreSong {
           }
         : undefined,
     },
+    ...(hasMaxScores ? { maxScores } : undefined),
   };
 }
 

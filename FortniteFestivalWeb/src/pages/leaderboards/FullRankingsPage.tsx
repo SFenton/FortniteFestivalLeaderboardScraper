@@ -115,14 +115,16 @@ export default function FullRankingsPage() {
   const playerInPage = !!(player && entries.some(e => e.accountId === player.accountId));
   const hasPlayerFooter = !!playerRanking;
 
-  // Compute rank column width from the longest rank across all visible rows
+  // Compute rank column width from the longest rank across page entries (footer computes its own)
   const rankWidth = useMemo(() => {
     const allRanks = entries.map(e => getRankForMetric(e, metric));
-    if (playerRanking && !playerInPage) {
-      allRanks.push(getRankForMetric(playerRanking, metric));
-    }
     return computeRankWidth(allRanks);
-  }, [entries, playerRanking, playerInPage, metric]);
+  }, [entries, metric]);
+
+  const playerRankWidth = useMemo(() => {
+    if (!playerRanking) return undefined;
+    return computeRankWidth([getRankForMetric(playerRanking, metric)]);
+  }, [playerRanking, metric]);
 
   return (
     <Page
@@ -210,7 +212,7 @@ export default function FullRankingsPage() {
               ratingLabel={formatRating(getRatingForMetric(playerRanking, metric), metric)}
               songsLabel={`${playerRanking.songsPlayed} / ${playerRanking.totalChartedSongs}`}
               isPlayer
-              rankWidth={rankWidth}
+              rankWidth={playerRankWidth}
             />
           </Link>
         ) : undefined}

@@ -331,6 +331,29 @@ public sealed class PostScrapeOrchestrator
                     _log.LogWarning(ex, "Post-backfill actions failed for {AccountId}.", user.AccountId);
                 }
             }
+
+            foreach (var user in users.Where(u => u.Purposes.HasFlag(WorkPurpose.HistoryRecon)))
+            {
+                try
+                {
+                    var reconStatus = _persistence.Meta.GetHistoryReconStatus(user.AccountId);
+                    if (reconStatus?.Status == "complete") continue;
+
+                    if (reconStatus is null)
+                        _persistence.Meta.EnqueueHistoryRecon(user.AccountId, 0);
+
+                    _persistence.Meta.CompleteHistoryRecon(user.AccountId);
+                    _personalDbBuilder.RebuildForAccounts(
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { user.AccountId },
+                        _persistence.Meta);
+                    _ = _notifications.NotifyHistoryReconCompleteAsync(user.AccountId);
+                    _ = _notifications.NotifyPersonalDbReadyAsync(user.AccountId);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Post-history-recon actions failed for {AccountId}.", user.AccountId);
+                }
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

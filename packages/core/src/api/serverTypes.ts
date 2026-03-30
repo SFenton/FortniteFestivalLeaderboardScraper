@@ -138,6 +138,13 @@ export type PlayerScore = {
   difficulty?: number;
   endTime?: string;
   totalEntries?: number;
+  isValid?: boolean | null;
+  validScore?: number | null;
+  validRank?: number | null;
+  validAccuracy?: number | null;
+  validIsFullCombo?: boolean | null;
+  validStars?: number | null;
+  validTotalEntries?: number | null;
 };
 
 export type PlayerResponse = {

@@ -47,8 +47,10 @@ export const PlayerHistoryEntry = memo(function PlayerHistoryEntry({
     <>
       <span style={s.colName}>{date}</span>
       <span style={s.seasonScoreGroup}>
-        {showSeason && season != null && (
-          <SeasonPill season={season} />
+        {showSeason && (
+          season != null
+            ? <SeasonPill season={season} />
+            : <span style={s.hidden} aria-hidden="true"><SeasonPill season={0} /></span>
         )}
         <ScorePill score={score} width={scoreWidth} />
       </span>
@@ -82,6 +84,9 @@ function useStyles(isHighScore?: boolean) {
       fontSize: Font.lg,
       color: Colors.accentBlueBright,
       fontVariantNumeric: FontVariant.tabularNums,
+    },
+    hidden: {
+      visibility: 'hidden' as const,
     },
   }), [isHighScore]);
 }

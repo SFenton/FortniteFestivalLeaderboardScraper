@@ -922,6 +922,81 @@ public sealed class MetaDatabase : IDisposable
     }
 
     /// <summary>
+    /// For each (SongId, Instrument) where the given account has score history,
+    /// return the highest NewScore that is at or below the per-song threshold.
+    /// Used to find a player's best valid score when their current leaderboard
+    /// entry exceeds the CHOpt max.
+    /// </summary>
+    /// <param name="accountId">Account whose history to search.</param>
+    /// <param name="thresholds">Per (SongId, Instrument) score ceilings. Entries without a threshold are excluded.</param>
+    /// <returns>Map of (SongId, Instrument) → best valid score details. Only includes entries that have a valid score.</returns>
+    public Dictionary<(string SongId, string Instrument), ValidScoreFallback> GetBestValidScores(
+        string accountId, Dictionary<(string SongId, string Instrument), int> thresholds)
+    {
+        if (thresholds.Count == 0)
+            return new Dictionary<(string, string), ValidScoreFallback>();
+
+        using var conn = OpenConnection();
+
+        // Build temp table of thresholds
+        using var createCmd = conn.CreateCommand();
+        createCmd.CommandText = "CREATE TEMP TABLE IF NOT EXISTS _validThresholds (SongId TEXT NOT NULL, Instrument TEXT NOT NULL, MaxScore INTEGER NOT NULL, PRIMARY KEY (SongId, Instrument)); DELETE FROM _validThresholds;";
+        createCmd.ExecuteNonQuery();
+
+        using var insertCmd = conn.CreateCommand();
+        insertCmd.CommandText = "INSERT INTO _validThresholds (SongId, Instrument, MaxScore) VALUES (@sid, @inst, @ms);";
+        var pSid = insertCmd.Parameters.Add("@sid", SqliteType.Text);
+        var pInst = insertCmd.Parameters.Add("@inst", SqliteType.Text);
+        var pMs = insertCmd.Parameters.Add("@ms", SqliteType.Integer);
+        insertCmd.Prepare();
+        foreach (var ((sid, inst), ms) in thresholds)
+        {
+            pSid.Value = sid;
+            pInst.Value = inst;
+            pMs.Value = ms;
+            insertCmd.ExecuteNonQuery();
+        }
+
+        // Find best valid score per (SongId, Instrument) from ScoreHistory
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT sh.SongId, sh.Instrument, sh.NewScore, sh.Accuracy, sh.IsFullCombo, sh.Stars
+            FROM ScoreHistory sh
+            JOIN _validThresholds vt ON vt.SongId = sh.SongId AND vt.Instrument = sh.Instrument
+            WHERE sh.AccountId = @accountId
+              AND sh.NewScore <= vt.MaxScore
+              AND sh.NewScore = (
+                  SELECT MAX(sh2.NewScore) FROM ScoreHistory sh2
+                  WHERE sh2.AccountId = @accountId
+                    AND sh2.SongId = sh.SongId AND sh2.Instrument = sh.Instrument
+                    AND sh2.NewScore <= vt.MaxScore
+              )
+            GROUP BY sh.SongId, sh.Instrument;
+            """;
+        cmd.Parameters.AddWithValue("@accountId", accountId);
+
+        var result = new Dictionary<(string, string), ValidScoreFallback>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var key = (reader.GetString(0), reader.GetString(1));
+            result[key] = new ValidScoreFallback
+            {
+                Score = reader.GetInt32(2),
+                Accuracy = reader.IsDBNull(3) ? null : reader.GetInt32(3),
+                IsFullCombo = reader.IsDBNull(4) ? null : reader.GetInt32(4) == 1,
+                Stars = reader.IsDBNull(5) ? null : reader.GetInt32(5),
+            };
+        }
+
+        using var cleanCmd = conn.CreateCommand();
+        cleanCmd.CommandText = "DELETE FROM _validThresholds;";
+        cleanCmd.ExecuteNonQuery();
+
+        return result;
+    }
+
+    /// <summary>
     /// Resolve a display name for an account ID, or null if unknown.
     /// </summary>
     public string? GetDisplayName(string accountId)

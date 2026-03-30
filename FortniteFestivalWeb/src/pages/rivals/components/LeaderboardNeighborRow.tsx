@@ -17,6 +17,8 @@ export interface LeaderboardNeighborRowProps {
   songsPlayed: number;
   accountId: string;
   isPlayer?: boolean;
+  /** Pixel width for the rank column. Computed from the longest rank in the section. */
+  rankWidth?: number;
   style?: CSSProperties;
   onAnimationEnd?: (e: AnimationEvent<HTMLElement>) => void;
 }
@@ -28,10 +30,11 @@ export const LeaderboardNeighborRow = memo(function LeaderboardNeighborRow({
   songsPlayed,
   accountId,
   isPlayer,
+  rankWidth,
   style,
   onAnimationEnd,
 }: LeaderboardNeighborRowProps) {
-  const s = useStyles(isPlayer);
+  const s = useStyles(isPlayer, rankWidth);
 
   return (
     <Link
@@ -47,7 +50,7 @@ export const LeaderboardNeighborRow = memo(function LeaderboardNeighborRow({
   );
 });
 
-function useStyles(isPlayer?: boolean) {
+function useStyles(isPlayer?: boolean, rankWidth?: number) {
   return useMemo(() => {
     const base: CSSProperties = {
       ...frostedCard,
@@ -68,7 +71,7 @@ function useStyles(isPlayer?: boolean) {
         ? { ...base, backgroundColor: Colors.purpleHighlight, border: border(Border.thin, Colors.purpleHighlightBorder) }
         : base,
       colRank: {
-        width: Layout.rankColumnWidth,
+        width: rankWidth ?? Layout.rankColumnWidth,
         flexShrink: 0,
         color: Colors.textPrimary,
         fontSize: Font.md,
@@ -98,5 +101,5 @@ function useStyles(isPlayer?: boolean) {
         minWidth: '5ch',
       } as CSSProperties,
     };
-  }, [isPlayer]);
+  }, [isPlayer, rankWidth]);
 }

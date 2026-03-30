@@ -61,7 +61,7 @@ function getRowLayout(categoryKey: string): RowLayout {
   if (k.startsWith('almost_elite') || k.startsWith('pct_push') || k.startsWith('pct_improve') || k.startsWith('same_pct') || k.startsWith('improve_rankings')) return 'percentile';
   if (k.startsWith('near_fc') || k.startsWith('almost_six_star') || k.startsWith('more_stars')
     || k.startsWith('first_plays_mixed') || k.startsWith('star_gains')
-    || k.startsWith('samename_nearfc_')) return 'singleInstrument';
+    || k.startsWith('samename_nearfc_') || k.startsWith('near_max_')) return 'singleInstrument';
   return 'instrumentChips';
 }
 

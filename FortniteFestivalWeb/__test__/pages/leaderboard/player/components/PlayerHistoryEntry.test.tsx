@@ -109,8 +109,8 @@ describe('PlayerHistoryEntry', () => {
     expect(container.textContent).toContain('100,000');
   });
 
-  it('hides season pill when season is null even with showSeason', () => {
-    render(
+  it('renders hidden season placeholder when season is null with showSeason', () => {
+    const { container } = render(
       <PlayerHistoryEntry
         date="2025-01-15"
         score={150000}
@@ -118,7 +118,9 @@ describe('PlayerHistoryEntry', () => {
         season={null}
       />,
     );
-    expect(screen.queryByTestId('season')).toBeNull();
+    const hidden = container.querySelector('[aria-hidden="true"]');
+    expect(hidden).toBeTruthy();
+    expect((hidden as HTMLElement).style.visibility).toBe('hidden');
   });
 
   it('renders accuracy cell with accuracy undefined (null fallback)', () => {

@@ -145,7 +145,7 @@ describe('PlayerPage', () => {
     renderPlayerPage('/player/test-player-1');
 
     await waitFor(() => {
-      expect(mockApi.getPlayer).toHaveBeenCalledWith('test-player-1');
+      expect(mockApi.getPlayer).toHaveBeenCalledWith('test-player-1', undefined, undefined, undefined);
     });
 
     await waitFor(() => {

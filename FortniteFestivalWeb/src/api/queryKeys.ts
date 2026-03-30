@@ -5,8 +5,8 @@
  */
 export const queryKeys = {
   songs: () => ['songs'] as const,
-  player: (accountId: string, songId?: string, instruments?: string[]) =>
-    ['player', accountId, { songId, instruments }] as const,
+  player: (accountId: string, songId?: string, instruments?: string[], leeway?: number) =>
+    ['player', accountId, { songId, instruments, leeway }] as const,
   playerHistory: (accountId: string, songId?: string, instrument?: string) =>
     ['playerHistory', accountId, { songId, instrument }] as const,
   syncStatus: (accountId: string) => ['syncStatus', accountId] as const,

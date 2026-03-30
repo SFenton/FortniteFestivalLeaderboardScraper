@@ -16,6 +16,7 @@ import type {
   CompositeNeighborhoodResponse,
 } from '@festival/core/api/serverTypes';
 import { LeaderboardNeighborRow } from './components/LeaderboardNeighborRow';
+import { computeRankWidth } from '../leaderboards/helpers/rankingHelpers';
 import { useRivalsSharedStyles } from './useRivalsSharedStyles';
 import { Routes } from '../../routes';
 import fx from '../../styles/effects.module.css';
@@ -142,6 +143,11 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
         if (!entry.data) return null;
         const previewAbove = entry.data.above.slice(-LEADERBOARD_PREVIEW);
         const previewBelow = entry.data.below.slice(0, LEADERBOARD_PREVIEW);
+        const sectionRankWidth = computeRankWidth([
+          ...previewAbove.map(n => n.totalScoreRank),
+          entry.data.self.totalScoreRank,
+          ...previewBelow.map(n => n.totalScoreRank),
+        ]);
         const navigateToRankings = () => navigate(Routes.fullRankings(entry.instrument));
         return (
           <div key={entry.instrument} style={shared.section}>
@@ -173,6 +179,7 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
                   score={n.totalScore}
                   songsPlayed={n.songsPlayed}
                   accountId={n.accountId}
+                  rankWidth={sectionRankWidth}
                   style={nextStagger()}
                   onAnimationEnd={clearAnim}
                 />
@@ -184,6 +191,7 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
                 songsPlayed={entry.data.self.songsPlayed}
                 accountId={entry.data.self.accountId}
                 isPlayer
+                rankWidth={sectionRankWidth}
                 style={nextStagger()}
                 onAnimationEnd={clearAnim}
               />
@@ -195,6 +203,7 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
                   score={n.totalScore}
                   songsPlayed={n.songsPlayed}
                   accountId={n.accountId}
+                  rankWidth={sectionRankWidth}
                   style={nextStagger()}
                   onAnimationEnd={clearAnim}
                 />
@@ -211,6 +220,11 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
       {composite && (() => {
         const previewAbove = composite.above.slice(-LEADERBOARD_PREVIEW);
         const previewBelow = composite.below.slice(0, LEADERBOARD_PREVIEW);
+        const compositeRankWidth = computeRankWidth([
+          ...previewAbove.map(n => n.compositeRank),
+          composite.self.compositeRank,
+          ...previewBelow.map(n => n.compositeRank),
+        ]);
         return (
         <div style={shared.section}>
           <div style={{ ...shared.sectionHeader, ...nextStagger() }} onAnimationEnd={clearAnim}>
@@ -228,6 +242,7 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
                 score={n.totalSongsPlayed}
                 songsPlayed={n.instrumentsPlayed}
                 accountId={n.accountId}
+                rankWidth={compositeRankWidth}
                 style={nextStagger()}
                 onAnimationEnd={clearAnim}
               />
@@ -239,6 +254,7 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
               songsPlayed={composite.self.instrumentsPlayed}
               accountId={composite.self.accountId}
               isPlayer
+              rankWidth={compositeRankWidth}
               style={nextStagger()}
               onAnimationEnd={clearAnim}
             />
@@ -250,6 +266,7 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
                 score={n.totalSongsPlayed}
                 songsPlayed={n.instrumentsPlayed}
                 accountId={n.accountId}
+                rankWidth={compositeRankWidth}
                 style={nextStagger()}
                 onAnimationEnd={clearAnim}
               />

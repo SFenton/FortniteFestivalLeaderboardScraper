@@ -148,4 +148,11 @@ describe('suggestionFilterConfig', () => {
   test('getCategoryInstrument returns null for unknown suffix', () => {
     expect(getCategoryInstrument('unfc_unknown')).toBeNull();
   });
+
+  test('getCategoryTypeId maps near_max variants', () => {
+    expect(getCategoryTypeId('near_max_5k')).toBe('NearMaxScore');
+    expect(getCategoryTypeId('near_max_10k')).toBe('NearMaxScore');
+    expect(getCategoryTypeId('near_max_15k')).toBe('NearMaxScore');
+    expect(getCategoryTypeId('near_max_5k_decade_00')).toBe('NearMaxScore');
+  });
 });

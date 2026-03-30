@@ -2268,6 +2268,115 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    // ─── Player leeway (valid score filtering) ──────────────────
+
+    [Fact]
+    public async Task Player_Leeway_ReturnsValidFields_WhenLeewayProvided()
+    {
+        const string songId = "playerLeewayTestSong";
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var pathStore = scope.ServiceProvider.GetRequiredService<PathDataStore>();
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+
+            EnsureSongRow(pathStore, songId);
+            pathStore.UpdateMaxScores(songId, new SongMaxScores { MaxLeadScore = 90_000 }, "hash_lw");
+
+            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            db.UpsertEntries(songId, [
+                new LeaderboardEntry { AccountId = "lw_valid",   Score = 85_000, Accuracy = 99, Stars = 6 },
+                new LeaderboardEntry { AccountId = "lw_invalid", Score = 200_000, Accuracy = 100, Stars = 6 },
+            ]);
+
+            // Seed score history so lw_invalid has a fallback valid score
+            metaDb.InsertScoreChange(songId, "Solo_Guitar", "lw_invalid", null, 80_000, null, 2,
+                accuracy: 95, isFullCombo: true, stars: 6, scoreAchievedAt: "2025-01-01T00:00:00Z");
+            metaDb.InsertScoreChange(songId, "Solo_Guitar", "lw_invalid", 80_000, 200_000, 2, 1,
+                accuracy: 100, isFullCombo: true, stars: 6, scoreAchievedAt: "2025-02-01T00:00:00Z");
+        }
+
+        // Without leeway: no validity fields
+        var plain = await _client.GetAsync($"/api/player/lw_valid?songId={songId}");
+        var plainJson = await plain.Content.ReadFromJsonAsync<JsonElement>();
+        var plainScores = plainJson.GetProperty("scores");
+        Assert.Equal(1, plainScores.GetArrayLength());
+        // isValid should not be present (null → omitted by default serialization)
+        // Actually with default STJ settings nulls may be omitted or present as null
+        var plainEntry = plainScores[0];
+        if (plainEntry.TryGetProperty("isValid", out var iv))
+            Assert.Equal(JsonValueKind.Null, iv.ValueKind);
+
+        // With leeway: valid player gets isValid=true, validScore=their score
+        var filtered = await _client.GetAsync($"/api/player/lw_valid?songId={songId}&leeway=5");
+        var filteredJson = await filtered.Content.ReadFromJsonAsync<JsonElement>();
+        var filteredScores = filteredJson.GetProperty("scores");
+        Assert.Equal(1, filteredScores.GetArrayLength());
+        var validEntry = filteredScores[0];
+        Assert.True(validEntry.GetProperty("isValid").GetBoolean());
+        Assert.Equal(85_000, validEntry.GetProperty("validScore").GetInt32());
+        Assert.True(validEntry.GetProperty("validRank").GetInt32() >= 1);
+    }
+
+    [Fact]
+    public async Task Player_Leeway_ReturnsFallbackForInvalidScore()
+    {
+        const string songId = "playerFallbackSong";
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var pathStore = scope.ServiceProvider.GetRequiredService<PathDataStore>();
+            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
+
+            EnsureSongRow(pathStore, songId);
+            pathStore.UpdateMaxScores(songId, new SongMaxScores { MaxLeadScore = 90_000 }, "hash_fb");
+
+            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            db.UpsertEntries(songId, [
+                new LeaderboardEntry { AccountId = "fb_cheater", Score = 200_000, Accuracy = 100, Stars = 6 },
+                new LeaderboardEntry { AccountId = "fb_legit",   Score = 85_000,  Accuracy = 99,  Stars = 6 },
+            ]);
+
+            // fb_cheater has a valid historical score of 80k
+            metaDb.InsertScoreChange(songId, "Solo_Guitar", "fb_cheater", null, 80_000, null, 2,
+                accuracy: 95, isFullCombo: true, stars: 5, scoreAchievedAt: "2025-01-01T00:00:00Z");
+        }
+
+        var response = await _client.GetAsync($"/api/player/fb_cheater?songId={songId}&leeway=5");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var scores = json.GetProperty("scores");
+        Assert.Equal(1, scores.GetArrayLength());
+
+        var entry = scores[0];
+        // Current stored score is the invalid one
+        Assert.Equal(200_000, entry.GetProperty("score").GetInt32());
+        // But isValid is false
+        Assert.False(entry.GetProperty("isValid").GetBoolean());
+        // Fallback to the valid historical score
+        Assert.Equal(80_000, entry.GetProperty("validScore").GetInt32());
+        Assert.Equal(95, entry.GetProperty("validAccuracy").GetInt32());
+        Assert.True(entry.GetProperty("validIsFullCombo").GetBoolean());
+        // Rank should be computed for the valid score against filtered leaderboard
+        Assert.True(entry.GetProperty("validRank").GetInt32() >= 1);
+    }
+
+    [Fact]
+    public async Task Player_Leeway_OmitsValidFieldsWhenNoLeeway()
+    {
+        var response = await _client.GetAsync("/api/player/testAcct1");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var scores = json.GetProperty("scores");
+        if (scores.GetArrayLength() > 0)
+        {
+            var first = scores[0];
+            // Without leeway, isValid should be null (omitted or explicitly null)
+            if (first.TryGetProperty("isValid", out var val))
+                Assert.Equal(JsonValueKind.Null, val.ValueKind);
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════
     // Additional Admin Endpoints — body coverage
     // ═══════════════════════════════════════════════════════════

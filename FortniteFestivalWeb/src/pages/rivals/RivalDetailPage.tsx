@@ -123,51 +123,56 @@ export default function RivalDetailPage() {
               {categories.length === 0 && (
                 <EmptyState fullPage title={t('rivals.detail.noSongs')} style={stagger(200)} onAnimationEnd={clearAnim} />
               )}
-              {categories.map((cat, catIdx) => {
-                const preview = cat.songs.slice(0, PREVIEW_COUNT);
-                const navigateToCategory = () =>
-                  navigate(Routes.rivalry(rivalId, cat.key), { state: { combo } });
-                return (
-                  <div key={cat.key} style={styles.section}>
-                    <div
-                      className={fx.sectionHeaderClickable}
-                      style={{ ...styles.sectionHeaderClickable, ...stagger(200 + catIdx * 150) }}
-                      onAnimationEnd={clearAnim}
-                      onClick={navigateToCategory}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={e => { if (e.key === 'Enter') navigateToCategory(); }}
-                    >
-                      <div style={styles.cardHeaderText}>
-                        <span style={styles.cardTitle}>
-                          {t(cat.titleKey)}
-                        </span>
-                        <span style={styles.cardDesc}>
-                          {t(cat.descriptionKey)}
-                        </span>
+              {(() => {
+                let runningDelay = 200;
+                return categories.map((cat) => {
+                  const preview = cat.songs.slice(0, PREVIEW_COUNT);
+                  const baseDelay = runningDelay;
+                  runningDelay += (1 + preview.length) * staggerInterval;
+                  const navigateToCategory = () =>
+                    navigate(Routes.rivalry(rivalId, cat.key), { state: { combo } });
+                  return (
+                    <div key={cat.key} style={styles.section}>
+                      <div
+                        className={fx.sectionHeaderClickable}
+                        style={{ ...styles.sectionHeaderClickable, ...stagger(baseDelay) }}
+                        onAnimationEnd={clearAnim}
+                        onClick={navigateToCategory}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={e => { if (e.key === 'Enter') navigateToCategory(); }}
+                      >
+                        <div style={styles.cardHeaderText}>
+                          <span style={styles.cardTitle}>
+                            {t(cat.titleKey)}
+                          </span>
+                          <span style={styles.cardDesc}>
+                            {t(cat.descriptionKey)}
+                          </span>
+                        </div>
+                        <span style={styles.seeAll}>{t('rivals.seeAll', 'See All')}</span>
+                        <IoChevronForward size={20} style={styles.chevron} />
                       </div>
-                      <span style={styles.seeAll}>{t('rivals.seeAll', 'See All')}</span>
-                      <IoChevronForward size={20} style={styles.chevron} />
+                      <div style={styles.songList}>
+                        {preview.map((song, songIdx) => (
+                          <RivalSongRow
+                            key={`${song.songId}-${song.instrument}`}
+                            song={song}
+                            albumArt={albumArtMap.get(song.songId)}
+                            year={yearMap.get(song.songId)}
+                            playerName={player?.displayName}
+                            rivalName={rivalName ?? undefined}
+                            onClick={() => navigate(Routes.songDetail(song.songId))}
+                            standalone
+                            style={stagger(baseDelay + (songIdx + 1) * staggerInterval)}
+                            onAnimationEnd={clearAnim}
+                          />
+                        ))}
+                      </div>
                     </div>
-                    <div style={styles.songList}>
-                      {preview.map((song, songIdx) => (
-                        <RivalSongRow
-                          key={`${song.songId}-${song.instrument}`}
-                          song={song}
-                          albumArt={albumArtMap.get(song.songId)}
-                          year={yearMap.get(song.songId)}
-                          playerName={player?.displayName}
-                          rivalName={rivalName ?? undefined}
-                          onClick={() => navigate(Routes.songDetail(song.songId))}
-                          standalone
-                          style={stagger(200 + catIdx * 150 + (songIdx + 1) * staggerInterval)}
-                          onAnimationEnd={clearAnim}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                });
+              })()}
             </div>
       )}
     </Page>

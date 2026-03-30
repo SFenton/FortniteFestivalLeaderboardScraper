@@ -58,11 +58,29 @@ export function useScoreFilter() {
     [thresholds, isScoreValid],
   );
 
-  /** Filter player scores and re-rank. */
+  /** Filter player scores: substitute server-provided fallback values for invalid
+   *  scores, only removing entries that are invalid AND have no fallback. */
   const filterPlayerScores = useCallback(
     (scores: PlayerScore[]): PlayerScore[] => {
       if (!thresholds) return scores;
-      return scores.filter(s => isScoreValid(s.songId, s.instrument, s.score));
+      const out: PlayerScore[] = [];
+      for (const s of scores) {
+        if (isScoreValid(s.songId, s.instrument, s.score)) {
+          out.push(s);
+        } else if (s.validScore != null) {
+          out.push({
+            ...s,
+            score: s.validScore,
+            rank: s.validRank ?? 0,
+            accuracy: s.validAccuracy ?? s.accuracy,
+            isFullCombo: s.validIsFullCombo ?? s.isFullCombo,
+            stars: s.validStars ?? s.stars,
+            totalEntries: s.validTotalEntries ?? s.totalEntries,
+          });
+        }
+        // else: invalid with no fallback — omit
+      }
+      return out;
     },
     [thresholds, isScoreValid],
   );

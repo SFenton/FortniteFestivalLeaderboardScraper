@@ -38,7 +38,7 @@ export const RankingEntry = memo(function RankingEntry({
   );
 });
 
-function useStyles(isPlayer?: boolean, rankWidth?: string) {
+function useStyles(isPlayer?: boolean, rankWidth?: number) {
   return useMemo(() => ({
     colRank: {
       width: rankWidth ?? Layout.rankColumnWidth,

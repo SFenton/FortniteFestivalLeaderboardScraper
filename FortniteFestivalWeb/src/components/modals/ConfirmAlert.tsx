@@ -1,5 +1,6 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 import { useMemo, useEffect, useLayoutEffect, useState, useCallback, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
   Colors, Font, Weight, Gap, Radius, ZIndex, LineHeight, Layout, Opacity,
@@ -62,7 +63,7 @@ export default function ConfirmAlert({
     return () => document.removeEventListener('keydown', handleKey);
   }, [handleNo]);
 
-  return (
+  return createPortal(
     /* v8 ignore start — animation ternaries */
     <div style={s.overlay} onClick={handleNo}>
       <div style={s.card} onClick={e => e.stopPropagation()}>
@@ -73,8 +74,9 @@ export default function ConfirmAlert({
           <button style={s.btnYes} onClick={handleYes}>{t('common.yes')}</button>
         </div>
       </div>
-    </div>
+    </div>,
     /* v8 ignore stop */
+    document.body,
   );
 }
 

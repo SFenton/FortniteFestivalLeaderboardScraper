@@ -1557,4 +1557,139 @@ describe('SuggestionGenerator', () => {
     expect(keys.some(k => k === 'almost_elite' || k.startsWith('almost_elite_'))).toBe(true);
     expect(keys.some(k => k === 'pct_push' || k.startsWith('pct_push_'))).toBe(true);
   });
+
+  // ─── Near max score tests ──────────────────────────────────
+
+  const mkSongWithMax = (id: string, title: string, artist: string, year: number, maxScores: Partial<Record<string, number>>): Song => ({
+    track: {su: id, tt: title, an: artist, ry: year, in: {}},
+    maxScores: maxScores as any,
+  });
+
+  /** Creates a ScoreTracker with only a score (low stars, no FC) to minimize other category matches. */
+  const mkMinimalScoreTracker = (score: number): ScoreTracker => {
+    const t = new ScoreTracker();
+    t.initialized = true;
+    t.maxScore = score;
+    t.numStars = 1;
+    t.percentHit = 100000; // 10%
+    t.isFullCombo = false;
+    t.refreshDerived();
+    return t;
+  };
+
+  /** Generate N near-max songs on guitar to ensure fresh candidates survive other strategies. */
+  const mkNearMaxBatch = (count: number, choptMax: number, playerScore: number): {songs: Song[]; scoresIndex: Record<string, LeaderboardData>} => {
+    const songs: Song[] = [];
+    const scoresIndex: Record<string, LeaderboardData> = {};
+    for (let i = 0; i < count; i++) {
+      const id = `nm${i}`;
+      songs.push(mkSongWithMax(id, `NM Song ${i}`, `NM Artist ${i}`, 2000 + (i % 10), {guitar: choptMax}));
+      scoresIndex[id] = {songId: id, guitar: mkMinimalScoreTracker(playerScore)};
+    }
+    return {songs, scoresIndex};
+  };
+
+  test('nearMaxScore 5k tier: includes songs within 5000 gap', () => {
+    // Use a very large batch so freshCount stays > 0 after other strategies consume some
+    const {songs, scoresIndex} = mkNearMaxBatch(200, 100000, 96000); // gap=4000
+    const gen = new SuggestionGenerator({seed: 42, disableSkipping: true, fixedDisplayCount: 5});
+    const out = gen.getNext(200, songs, scoresIndex);
+    const nearMax5k = out.find(c => c.key === 'near_max_5k');
+    expect(nearMax5k).toBeTruthy();
+    // All returned songs should be from the nm batch (gap=4000)
+    for (const s of nearMax5k!.songs) {
+      expect(s.songId).toMatch(/^nm/);
+    }
+  });
+
+  test('nearMaxScore tiers are exclusive', () => {
+    const s5k: Song[] = []; const i5k: Record<string, LeaderboardData> = {};
+    const s10k: Song[] = []; const i10k: Record<string, LeaderboardData> = {};
+    const s15k: Song[] = []; const i15k: Record<string, LeaderboardData> = {};
+    for (let i = 0; i < 80; i++) {
+      const id5 = `t5_${i}`;
+      s5k.push(mkSongWithMax(id5, `T5 ${i}`, `A5 ${i}`, 2000 + i % 10, {guitar: 100000}));
+      i5k[id5] = {songId: id5, guitar: mkMinimalScoreTracker(97000)}; // gap=3000
+      const id10 = `t10_${i}`;
+      s10k.push(mkSongWithMax(id10, `T10 ${i}`, `A10 ${i}`, 2000 + i % 10, {guitar: 100000}));
+      i10k[id10] = {songId: id10, guitar: mkMinimalScoreTracker(93000)}; // gap=7000
+      const id15 = `t15_${i}`;
+      s15k.push(mkSongWithMax(id15, `T15 ${i}`, `A15 ${i}`, 2000 + i % 10, {guitar: 100000}));
+      i15k[id15] = {songId: id15, guitar: mkMinimalScoreTracker(88000)}; // gap=12000
+    }
+    const songs = [...s5k, ...s10k, ...s15k];
+    const scoresIndex = {...i5k, ...i10k, ...i15k};
+
+    const gen = new SuggestionGenerator({seed: 42, disableSkipping: true, fixedDisplayCount: 5});
+    const out = gen.getNext(200, songs, scoresIndex);
+    const tier5k = out.find(c => c.key === 'near_max_5k');
+    const tier10k = out.find(c => c.key === 'near_max_10k');
+    const tier15k = out.find(c => c.key === 'near_max_15k');
+
+    // 5k tier songs should all be from s5k batch
+    if (tier5k) {
+      for (const s of tier5k.songs) expect(s.songId).toMatch(/^t5_/);
+    }
+    // 10k tier songs should all be from s10k batch
+    if (tier10k) {
+      for (const s of tier10k.songs) expect(s.songId).toMatch(/^t10_/);
+    }
+    // 15k tier songs should all be from s15k batch
+    if (tier15k) {
+      for (const s of tier15k.songs) expect(s.songId).toMatch(/^t15_/);
+    }
+  });
+
+  test('nearMaxScore skips songs without maxScores', () => {
+    const songs: Song[] = [
+      mkSong('a', 'Song A', 'Artist 1', 2000), // no maxScores
+      mkSong('b', 'Song B', 'Artist 2', 2001), // no maxScores
+    ];
+    const scoresIndex: Record<string, LeaderboardData> = {
+      a: {songId: 'a', guitar: mkMinimalScoreTracker(97000)},
+      b: {songId: 'b', guitar: mkMinimalScoreTracker(97000)},
+    };
+    const gen = new SuggestionGenerator({seed: 42, disableSkipping: true, fixedDisplayCount: 5});
+    const out = gen.getNext(200, songs, scoresIndex);
+    const nearMaxKeys = out.filter(c => c.key.startsWith('near_max_'));
+    expect(nearMaxKeys.length).toBe(0);
+  });
+
+  test('nearMaxScore sets instrumentKey on song items', () => {
+    const {songs, scoresIndex} = mkNearMaxBatch(200, 100000, 97000); // gap=3000, 5k tier
+    // Add bass trackers as well
+    for (const s of songs) {
+      s.maxScores = {...s.maxScores, bass: 80000} as any;
+      const board = scoresIndex[s.track.su]!;
+      board.bass = mkMinimalScoreTracker(76000); // bass gap=4000
+    }
+    const gen = new SuggestionGenerator({seed: 42, disableSkipping: true, fixedDisplayCount: 5});
+    const out = gen.getNext(200, songs, scoresIndex);
+    const nearMax5k = out.find(c => c.key === 'near_max_5k');
+    expect(nearMax5k).toBeTruthy();
+    for (const song of nearMax5k!.songs) {
+      expect(song.instrumentKey).toBeDefined();
+    }
+  });
+
+  test('nearMaxScore boundary: gap exactly 5000 is in 5k tier', () => {
+    const {songs, scoresIndex} = mkNearMaxBatch(200, 100000, 95000); // gap=5000 exactly
+    const gen = new SuggestionGenerator({seed: 42, disableSkipping: true, fixedDisplayCount: 5});
+    const out = gen.getNext(200, songs, scoresIndex);
+    const tier5k = out.find(c => c.key === 'near_max_5k');
+    expect(tier5k).toBeTruthy();
+    expect(tier5k!.songs.length).toBeGreaterThan(0);
+  });
+
+  test('nearMaxScore: score equal to max (gap=0) is not included', () => {
+    // All songs at gap=0 — no category should be emitted
+    const {songs, scoresIndex} = mkNearMaxBatch(5, 100000, 100000);
+    const gen = new SuggestionGenerator({seed: 42, disableSkipping: true, fixedDisplayCount: 5});
+    const out = gen.getNext(200, songs, scoresIndex);
+    const tier5k = out.find(c => c.key === 'near_max_5k');
+    if (tier5k) {
+      // If somehow emitted, no songs with gap=0 should appear
+      expect(tier5k.songs.length).toBe(0);
+    }
+  });
 });

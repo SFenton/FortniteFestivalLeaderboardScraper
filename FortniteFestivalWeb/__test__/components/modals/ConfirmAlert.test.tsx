@@ -55,17 +55,17 @@ describe('ConfirmAlert', () => {
 
   it('overlay click calls onNo', () => {
     const onNo = vi.fn();
-    const { container } = render(<ConfirmAlert {...defaultProps} onNo={onNo} />);
-    const overlay = container.firstElementChild as HTMLElement;
+    render(<ConfirmAlert {...defaultProps} onNo={onNo} />);
+    const overlay = document.body.lastElementChild as HTMLElement;
     fireEvent.click(overlay);
     expect(onNo).toHaveBeenCalled();
   });
 
   it('card click does not propagate to overlay', () => {
     const onNo = vi.fn();
-    const { container } = render(<ConfirmAlert {...defaultProps} onNo={onNo} />);
-    // Card is the second child inside the overlay
-    const overlay = container.firstElementChild as HTMLElement;
+    render(<ConfirmAlert {...defaultProps} onNo={onNo} />);
+    // Portal renders to document.body; card is the first child inside the overlay
+    const overlay = document.body.lastElementChild as HTMLElement;
     const card = overlay.firstElementChild as HTMLElement;
     fireEvent.click(card);
     expect(onNo).not.toHaveBeenCalled();
@@ -114,8 +114,8 @@ describe('ConfirmAlert', () => {
       vi.useFakeTimers();
       const onNo = vi.fn();
       const onExitComplete = vi.fn();
-      const { container } = render(<ConfirmAlert {...defaultProps} onNo={onNo} onExitComplete={onExitComplete} />);
-      const overlay = container.firstElementChild as HTMLElement;
+      render(<ConfirmAlert {...defaultProps} onNo={onNo} onExitComplete={onExitComplete} />);
+      const overlay = document.body.lastElementChild as HTMLElement;
       fireEvent.click(overlay);
       expect(onNo).not.toHaveBeenCalled();
       act(() => { vi.advanceTimersByTime(TRANSITION_MS); });

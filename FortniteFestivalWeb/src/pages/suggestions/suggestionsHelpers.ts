@@ -326,5 +326,12 @@ function resolveBaseKey(baseKey: string, _fullKey: string, params: Record<string
   }
   if (keyWithoutInstrument === 'improve_rankings' && hasInstrument) return 'improve_rankings_instrument';
 
+  // Near max score
+  if (baseKey.startsWith('near_max_')) {
+    // Extract tier from key: near_max_5k, near_max_10k, near_max_15k
+    const tier = baseKey.match(/near_max_(\d+k)/)?.[1];
+    if (tier) return hasDecade ? `near_max_${tier}_decade` : `near_max_${tier}`;
+  }
+
   return null;
 }

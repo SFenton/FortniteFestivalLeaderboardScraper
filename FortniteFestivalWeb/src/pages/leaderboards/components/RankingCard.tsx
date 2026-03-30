@@ -43,14 +43,16 @@ export default memo(function RankingCard({
 
   const playerInTop = !!(playerAccountId && entries.some(e => e.accountId === playerAccountId));
 
-  // Compute rank column width from the longest rank across all visible rows
+  // Compute rank column width from the longest rank across list entries (footer computes its own)
   const rankWidth = useMemo(() => {
     const allRanks = entries.map(e => getRankForMetric(e, metric));
-    if (playerRanking && !playerInTop) {
-      allRanks.push(getRankForMetric(playerRanking, metric));
-    }
     return computeRankWidth(allRanks);
-  }, [entries, playerRanking, playerInTop, metric]);
+  }, [entries, metric]);
+
+  const playerRankWidth = useMemo(() => {
+    if (!playerRanking) return undefined;
+    return computeRankWidth([getRankForMetric(playerRanking, metric)]);
+  }, [playerRanking, metric]);
 
   const hasPlayerFooter = !!(playerRanking && !playerInTop);
   const extraItems = hasPlayerFooter ? 3 : 2; // header + (player footer?) + button
@@ -135,7 +137,7 @@ export default memo(function RankingCard({
                 ratingLabel={formatRating(getRatingForMetric(playerRanking, metric), metric)}
                 songsLabel={`${playerRanking.songsPlayed} / ${playerRanking.totalChartedSongs}`}
                 isPlayer
-                rankWidth={rankWidth}
+                rankWidth={playerRankWidth}
               />
             </Link>
           );

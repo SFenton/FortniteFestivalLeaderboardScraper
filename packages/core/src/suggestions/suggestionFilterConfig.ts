@@ -43,6 +43,7 @@ export const SUGGESTION_TYPES = [
   {id: 'PercentilePush',    label: 'Percentile Push',    description: 'Close to the next percentile bracket.'},
   {id: 'Stale',             label: 'Stale Songs',        description: "Songs you haven't played in a while."},
   {id: 'PctImprove',        label: 'Percentile Improve', description: 'Songs with room for percentile improvement.'},
+  {id: 'NearMaxScore',      label: 'Near Max Score',     description: 'Songs close to the CHOpt theoretical max score.'},
   {id: 'SongRivals',        label: 'Song Rivals',        description: 'Suggestions based on per-song rivals.'},
   {id: 'LeaderboardRivals', label: 'Leaderboard Rivals', description: 'Suggestions based on ranking neighbors.'},
 ] as const;
@@ -134,6 +135,8 @@ export function getCategoryTypeId(categoryKey: string): SuggestionTypeId | null 
   if (key.startsWith('artist_unplayed_')) return 'ArtistDiscover';
   // Same name: samename_* (but not samename_nearfc which is handled above)
   if (key.startsWith('samename_')) return 'SameName';
+  // Near max score
+  if (key.startsWith('near_max_')) return 'NearMaxScore';
   return null;
 }
 

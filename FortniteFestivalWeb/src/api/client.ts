@@ -126,10 +126,11 @@ export const api = {
       `/api/leaderboard/${encodeURIComponent(songId)}/${encodeURIComponent(instrument)}?top=${top}&offset=${offset}${leeway != null ? `&leeway=${leeway}` : ''}`,
     ),
 
-  getPlayer: (accountId: string, songId?: string, instruments?: string[]) => {
+  getPlayer: (accountId: string, songId?: string, instruments?: string[], leeway?: number) => {
     const params = new URLSearchParams();
     if (songId) params.set('songId', songId);
     if (instruments?.length) params.set('instruments', instruments.join(','));
+    if (leeway != null) params.set('leeway', String(leeway));
     const qs = params.toString();
     return getWithETag<PlayerResponse>(
       `/api/player/${encodeURIComponent(accountId)}${qs ? `?${qs}` : ''}`,

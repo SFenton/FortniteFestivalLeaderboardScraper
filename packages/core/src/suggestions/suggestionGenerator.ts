@@ -418,7 +418,8 @@ export class SuggestionGenerator {
           baseKey === 'first_plays_mixed' ||
           baseKey === 'star_gains' ||
           baseKey === 'almost_elite' ||
-          baseKey === 'pct_push'
+          baseKey === 'pct_push' ||
+          baseKey.startsWith('near_max_')
             ? this.mapUniqueSongWithInstrument(p)
             : this.mapUniqueSong(p)
         )),
@@ -522,6 +523,13 @@ export class SuggestionGenerator {
         () => this.improveInstrumentRankings(ins),
         ...[2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50].map(b => () => this.percentileImproveInstrument(ins, b)),
       ]),
+      // ─── Near max score strategies ─────
+      () => this.nearMaxScore(0, 5000, '5k'),
+      () => this.nearMaxScoreDecade(0, 5000, '5k'),
+      () => this.nearMaxScore(5000, 10000, '10k'),
+      () => this.nearMaxScoreDecade(5000, 10000, '10k'),
+      () => this.nearMaxScore(10000, 15000, '15k'),
+      () => this.nearMaxScoreDecade(10000, 15000, '15k'),
       // ─── Rival strategies (no-op when rivalData is null) ─────
       () => this.songRivalBattleground(),
       () => this.songRivalNearFc(),
@@ -1540,6 +1548,89 @@ export class SuggestionGenerator {
       description: `A varied mix of ${instrumentLabel(instrument)} songs across different percentile brackets — all with room to grow.`,
       songs: final.map(p => this.mapUniqueSong(p)),
     }];
+  }
+
+  // ─── Near max score strategies ───────────────────────────────
+
+  /**
+   * Songs where the player's score is within a gap range of the CHOpt max score.
+   * Exclusive tiers: (0, 5000], (5000, 10000], (10000, 15000].
+   */
+  private nearMaxScore(minGap: number, maxGap: number, tierLabel: string): SuggestionCategory[] {
+    const pool: SongPair[] = [];
+    for (const s of this.songs) {
+      if (!s.maxScores) continue;
+      const board = this.scoresIndex[s.track.su];
+      pool.push(
+        ...this.eachTracker(s, board, (t, instrument) => {
+          const choptMax = s.maxScores?.[instrument];
+          if (choptMax == null || choptMax <= 0 || !t.initialized || t.maxScore <= 0) return false;
+          const gap = choptMax - t.maxScore;
+          return gap > minGap && gap <= maxGap;
+        }),
+      );
+    }
+    this.shuffleInPlace(pool);
+    const key = `near_max_${tierLabel.toLowerCase()}`;
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit(key, freshCount)) return [];
+    const take = this.getDisplayCount();
+    const final = this.selectNewFirst(key, pool, take);
+
+    const titles: Record<string, string> = {
+      '5k': 'Almost Perfect (Within 5k)',
+      '10k': 'Close to Max (Within 10k)',
+      '15k': 'Approaching Max (Within 15k)',
+    };
+    const descriptions: Record<string, string> = {
+      '5k': 'Scores within 5,000 of the theoretical max. You\'re almost there!',
+      '10k': 'Scores within 10,000 of the theoretical max. A great run could close the gap.',
+      '15k': 'Scores within 15,000 of the theoretical max. Keep pushing!',
+    };
+
+    return [{
+      key,
+      title: titles[tierLabel.toLowerCase()] ?? `Near Max Score (${tierLabel})`,
+      description: descriptions[tierLabel.toLowerCase()] ?? `Scores within ${tierLabel} of the CHOpt theoretical max.`,
+      songs: final.map(p => this.mapUniqueSongWithInstrument(p)),
+    }];
+  }
+
+  private nearMaxScoreDecade(minGap: number, maxGap: number, tierLabel: string): SuggestionCategory[] {
+    const pool: SongPair[] = [];
+    for (const s of this.songs) {
+      if (!s.maxScores) continue;
+      const board = this.scoresIndex[s.track.su];
+      pool.push(
+        ...this.eachTracker(s, board, (t, instrument) => {
+          const choptMax = s.maxScores?.[instrument];
+          if (choptMax == null || choptMax <= 0 || !t.initialized || t.maxScore <= 0) return false;
+          const gap = choptMax - t.maxScore;
+          return gap > minGap && gap <= maxGap;
+        }),
+      );
+    }
+    const key = `near_max_${tierLabel.toLowerCase()}`;
+    const freshCount = this.getFreshCount(pool);
+    if (!this.shouldEmit(`${key}_decade_wrap`, freshCount)) return [];
+
+    const titles: Record<string, string> = {
+      '5k': 'Almost Perfect (Within 5k)',
+      '10k': 'Close to Max (Within 10k)',
+      '15k': 'Approaching Max (Within 15k)',
+    };
+    const descriptions: Record<string, string> = {
+      '5k': 'Scores within 5,000 of the theoretical max. You\'re almost there!',
+      '10k': 'Scores within 10,000 of the theoretical max. A great run could close the gap.',
+      '15k': 'Scores within 15,000 of the theoretical max. Keep pushing!',
+    };
+
+    return this.buildDecadeVariant(
+      key,
+      titles[tierLabel.toLowerCase()] ?? `Near Max Score (${tierLabel})`,
+      descriptions[tierLabel.toLowerCase()] ?? `Scores within ${tierLabel} of the CHOpt theoretical max.`,
+      pool,
+    );
   }
 
   // ─── Rival strategies ────────────────────────────────────────

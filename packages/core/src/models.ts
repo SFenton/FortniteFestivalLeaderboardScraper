@@ -28,6 +28,8 @@ export type Song = {
   lastModified?: string; // ISO date
   isSelected?: boolean;
   imagePath?: string;
+  /** CHOpt theoretical max scores per instrument (from PathDataStore). */
+  maxScores?: Partial<Record<InstrumentKey, number>>;
 };
 
 export type V1TrackedStats = {

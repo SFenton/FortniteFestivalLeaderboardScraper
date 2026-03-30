@@ -194,7 +194,13 @@
     "song_rival_near_fc": { "title": "FC These to Beat {{rival}}!", "desc": "Almost FC songs where your rival also competes. Nail the combo to pull ahead." },
     "song_rival_stale": { "title": "Stale Songs Your Rivals Are Beating You On", "desc": "Songs you haven't touched in a while where rivals have pulled ahead." },
     "song_rival_star_gains": { "title": "Gain Stars & Beat {{rival}}", "desc": "Improving your star count on these would also overtake a rival." },
-    "song_rival_pct_push": { "title": "Climb Past {{rival}}", "desc": "A percentile push on these would also move you past a rival." }
+    "song_rival_pct_push": { "title": "Climb Past {{rival}}", "desc": "A percentile push on these would also move you past a rival." },
+    "near_max_5k": { "title": "Almost Perfect (Within 5k)", "desc": "Scores within 5,000 of the theoretical max. You're almost there!" },
+    "near_max_5k_decade": { "title": "Almost Perfect (Within 5k) ({{decade}})", "desc": "Scores within 5,000 of the theoretical max. Limited to {{decade}} songs." },
+    "near_max_10k": { "title": "Close to Max (Within 10k)", "desc": "Scores within 10,000 of the theoretical max. A great run could close the gap." },
+    "near_max_10k_decade": { "title": "Close to Max (Within 10k) ({{decade}})", "desc": "Scores within 10,000 of the theoretical max. Limited to {{decade}} songs." },
+    "near_max_15k": { "title": "Approaching Max (Within 15k)", "desc": "Scores within 15,000 of the theoretical max. Keep pushing!" },
+    "near_max_15k_decade": { "title": "Approaching Max (Within 15k) ({{decade}})", "desc": "Scores within 15,000 of the theoretical max. Limited to {{decade}} songs." }
   },
   "suggestionFilterType": {
     "NearFC": "Near FC",
@@ -219,6 +225,8 @@
     "StaleDesc": "Songs you haven't played in a while.",
     "PctImprove": "Percentile Improve",
     "PctImproveDesc": "Songs with room for percentile improvement.",
+    "NearMaxScore": "Near Max Score",
+    "NearMaxScoreDesc": "Songs close to the CHOpt theoretical max score.",
     "SongRivals": "Song Rivals",
     "SongRivalsDesc": "Suggestions based on per-song rivals.",
     "LeaderboardRivals": "Leaderboard Rivals",

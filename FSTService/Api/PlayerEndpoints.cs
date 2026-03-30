@@ -16,14 +16,16 @@ public static partial class ApiEndpoints
             string accountId,
             string? songId,
             string? instruments,
+            double? leeway,
             GlobalLeaderboardPersistence persistence,
             MetaDatabase metaDb,
+            PathDataStore pathStore,
             [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=120, stale-while-revalidate=300";
 
             // Build cache key from all parameters
-            var cacheKey = $"player:{accountId}:{songId}:{instruments}";
+            var cacheKey = $"player:{accountId}:{songId}:{instruments}:{leeway}";
 
             // ── Check cache ──────────────────────────────────────
             var cached = playerCache.Get(cacheKey);
@@ -47,8 +49,59 @@ public static partial class ApiEndpoints
 
             var scores = persistence.GetPlayerProfile(accountId, songId, instrumentFilter);
             var displayName = metaDb.GetDisplayName(accountId);
-            var rankings = persistence.GetPlayerRankings(accountId, songId, instrumentFilter);
-            var population = metaDb.GetAllLeaderboardPopulation();
+
+            // ── Build per-song max-score thresholds when leeway is provided ──
+            Dictionary<string, Dictionary<string, int>>? maxScoresByInstrument = null;
+            Dictionary<(string SongId, string Instrument), int>? flatThresholds = null;
+            if (leeway.HasValue)
+            {
+                var allMax = pathStore.GetAllMaxScores();
+                if (allMax.Count > 0)
+                {
+                    maxScoresByInstrument = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+                    flatThresholds = new Dictionary<(string, string), int>();
+                    foreach (var s in scores)
+                    {
+                        if (!allMax.TryGetValue(s.SongId, out var songMax)) continue;
+                        var raw = songMax.GetByInstrument(s.Instrument);
+                        if (!raw.HasValue) continue;
+                        var threshold = (int)(raw.Value * (1.0 + leeway.Value / 100.0));
+
+                        if (!maxScoresByInstrument.TryGetValue(s.Instrument, out var instDict))
+                        {
+                            instDict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                            maxScoresByInstrument[s.Instrument] = instDict;
+                        }
+                        instDict[s.SongId] = threshold;
+                        flatThresholds[(s.SongId, s.Instrument)] = threshold;
+                    }
+                }
+            }
+
+            var rankings = maxScoresByInstrument is not null
+                ? persistence.GetPlayerRankingsFiltered(accountId, maxScoresByInstrument, songId, instrumentFilter)
+                : persistence.GetPlayerRankings(accountId, songId, instrumentFilter);
+
+            var population = maxScoresByInstrument is not null
+                ? persistence.GetFilteredPopulation(maxScoresByInstrument, instrumentFilter)
+                : null;
+            var unfilteredPopulation = metaDb.GetAllLeaderboardPopulation();
+
+            // ── Find best valid scores for invalid entries (from ScoreHistory) ──
+            Dictionary<(string SongId, string Instrument), ValidScoreFallback>? validFallbacks = null;
+            if (flatThresholds is not null)
+            {
+                // Identify which scores are invalid
+                var invalidThresholds = new Dictionary<(string, string), int>();
+                foreach (var s in scores)
+                {
+                    var key = (s.SongId, s.Instrument);
+                    if (flatThresholds.TryGetValue(key, out var threshold) && s.Score > threshold)
+                        invalidThresholds[key] = threshold;
+                }
+                if (invalidThresholds.Count > 0)
+                    validFallbacks = metaDb.GetBestValidScores(accountId, invalidThresholds);
+            }
 
             var enriched = scores.Select(s =>
             {
@@ -56,7 +109,49 @@ public static partial class ApiEndpoints
                 var computedRank = rankings.GetValueOrDefault(key, 0);
                 // Priority: Epic ApiRank (authoritative) > computed rank (local DB) > stored rank
                 var rank = s.ApiRank > 0 ? s.ApiRank : (computedRank > 0 ? computedRank : s.Rank);
-                var totalEntries = population.TryGetValue(key, out var pop) && pop > 0 ? (int)pop : 0;
+                var totalEntries = unfilteredPopulation.TryGetValue(key, out var pop) && pop > 0 ? (int)pop : 0;
+
+                // ── Score validity (only when leeway is provided) ──
+                bool? isValid = null;
+                int? validScore = null;
+                int? validAccuracy = null;
+                bool? validIsFullCombo = null;
+                int? validStars = null;
+                int? validRank = null;
+                int? validTotalEntries = null;
+
+                if (flatThresholds is not null)
+                {
+                    var hasThreshold = flatThresholds.TryGetValue(key, out var threshold);
+                    var scoreIsValid = !hasThreshold || s.Score <= threshold;
+                    isValid = scoreIsValid;
+
+                    if (scoreIsValid)
+                    {
+                        // Score is valid — use filtered rank
+                        validScore = s.Score;
+                        validAccuracy = s.Accuracy;
+                        validIsFullCombo = s.IsFullCombo;
+                        validStars = s.Stars;
+                        validRank = computedRank > 0 ? computedRank : rank;
+                    }
+                    else if (validFallbacks is not null && validFallbacks.TryGetValue(key, out var fallback))
+                    {
+                        // Score is invalid but we have a valid historical score
+                        validScore = fallback.Score;
+                        validAccuracy = fallback.Accuracy;
+                        validIsFullCombo = fallback.IsFullCombo;
+                        validStars = fallback.Stars;
+                        // Compute what rank this valid score would have on the filtered leaderboard
+                        var maxForSong = flatThresholds.GetValueOrDefault(key, 0);
+                        validRank = persistence.GetRankForScore(s.Instrument, s.SongId, fallback.Score, maxForSong > 0 ? maxForSong : null);
+                    }
+                    // else: invalid with no fallback — validScore stays null
+
+                    if (population is not null)
+                        validTotalEntries = population.GetValueOrDefault(key, totalEntries);
+                }
+
                 return new
                 {
                     s.SongId,
@@ -71,6 +166,13 @@ public static partial class ApiEndpoints
                     Rank = rank,
                     s.EndTime,
                     TotalEntries = totalEntries,
+                    IsValid = isValid,
+                    ValidScore = validScore,
+                    ValidAccuracy = validAccuracy,
+                    ValidIsFullCombo = validIsFullCombo,
+                    ValidStars = validStars,
+                    ValidRank = validRank,
+                    ValidTotalEntries = validTotalEntries,
                 };
             }).ToList();
 
@@ -180,6 +282,13 @@ public static partial class ApiEndpoints
                     catch (Exception ex)
                     {
                         log.LogWarning(ex, "Track-triggered backfill for {AccountId} failed.", accountId);
+                        try
+                        {
+                            var hrStatus = metaDb.GetHistoryReconStatus(accountId);
+                            if (hrStatus is not null && hrStatus.Status is "pending" or "in_progress")
+                                metaDb.FailHistoryRecon(accountId, ex.Message);
+                        }
+                        catch { /* best-effort */ }
                     }
                 });
             }

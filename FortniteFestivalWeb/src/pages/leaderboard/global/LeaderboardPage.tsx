@@ -22,6 +22,7 @@ import { parseApiError } from '../../../utils/apiError';
 import { useIsMobile, useIsMobileChrome } from '../../../hooks/ui/useIsMobile';
 import { useScoreFilter } from '../../../hooks/data/useScoreFilter';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
+import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
 import Page, { PageBackground } from '../../Page';
 
 const PAGE_SIZE = 25;
@@ -74,6 +75,48 @@ export default function LeaderboardPage() {
   const [loading, setLoading] = useState(!hasCached);
   const [error, setError] = useState<string | null>(null);
   const { isScoreValid, leewayParam } = useScoreFilter();
+
+  // When the player's highest score is invalid but a valid fallback exists,
+  // fetch the per-song player data with leeway to get the resolved score.
+  const [resolvedPlayerScore, setResolvedPlayerScore] = useState<typeof playerScore>(null);
+  useEffect(() => {
+    if (!playerData || !songId || !leewayParam || !playerScore) {
+      setResolvedPlayerScore(null);
+      return;
+    }
+    // If the score is already valid, no need for a separate fetch
+    if (isScoreValid(songId, instKey, playerScore.score)) {
+      setResolvedPlayerScore(null);
+      return;
+    }
+    // Score is invalid — fetch with leeway to get valid fallback
+    let cancelled = false;
+    api.getPlayer(playerData.accountId, songId, undefined, leewayParam).then((res) => {
+      if (cancelled) return;
+      const s = res.scores.find(sc => sc.instrument === instKey);
+      if (s?.validScore != null) {
+        setResolvedPlayerScore({
+          ...s,
+          score: s.validScore,
+          rank: s.validRank ?? s.rank,
+          accuracy: s.isValid === false ? (s.validAccuracy ?? s.accuracy) : s.accuracy,
+          isFullCombo: s.isValid === false ? (s.validIsFullCombo ?? s.isFullCombo) : s.isFullCombo,
+          stars: s.isValid === false ? (s.validStars ?? s.stars) : s.stars,
+          totalEntries: s.validTotalEntries ?? s.totalEntries,
+        });
+      } else if (s && s.isValid == null) {
+        // Server doesn't support leeway on player endpoint yet — ignore, let client-side handle it
+        setResolvedPlayerScore(null);
+      } else {
+        setResolvedPlayerScore(null);
+      }
+    }).catch(() => { if (!cancelled) setResolvedPlayerScore(null); });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-run on key changes
+  }, [playerData?.accountId, songId, instKey, leewayParam]);
+
+  // Use resolved score (for invalid-but-has-fallback) or the raw score (if valid)
+  const effectivePlayerScore = resolvedPlayerScore ?? playerScore;
   const playerRowRef = useRef<HTMLAnchorElement | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [headerCollapsed, setHeaderCollapsed] = useState(isNarrow);
@@ -111,7 +154,8 @@ export default function LeaderboardPage() {
   }, []);
 
   const totalPages = Math.max(1, Math.ceil(localEntries / PAGE_SIZE));
-  const hasPlayerFooter = !!(playerScore && playerData && songId && isScoreValid(songId, instKey, playerScore.score));
+  const hasPlayerFooter = !!(effectivePlayerScore && playerData && songId
+    && (isScoreValid(songId, instKey, effectivePlayerScore.score) || resolvedPlayerScore));
 
   const fetchPage = useCallback(
     async (pageNum: number, mode: 'first' | 'paginate' = 'paginate') => {
@@ -250,6 +294,18 @@ export default function LeaderboardPage() {
     return `${maxLen}ch`;
   }, [entries]);
 
+  // Compute rank column width from the longest rank across page entries (footer computes its own)
+  const rankWidth = useMemo(() => {
+    const base = page * PAGE_SIZE;
+    const ranks = entries.map((e, i) => e.rank ?? base + i + 1);
+    return computeRankWidth(ranks);
+  }, [entries, page]);
+
+  const playerRankWidth = useMemo(() => {
+    if (!effectivePlayerScore?.rank) return undefined;
+    return computeRankWidth([effectivePlayerScore.rank]);
+  }, [effectivePlayerScore?.rank]);
+
   if (!songId || !instrument) {
     return <PageMessage>{t('leaderboard.notFound')}</PageMessage>;
   }
@@ -312,6 +368,7 @@ export default function LeaderboardPage() {
                     showAccuracy={showAccuracy}
                     showStars={showStars}
                     scoreWidth={scoreWidth}
+                    rankWidth={rankWidth}
                   />
                 )}
                 entryLinkTo={(e, isPlayer) => isPlayer ? '/statistics' : `/player/${e.accountId}`}
@@ -322,20 +379,21 @@ export default function LeaderboardPage() {
                   <div onClick={() => navigate('/statistics')} role="button" tabIndex={0}>
                     <div className={className} style={{ ...style, cursor: 'pointer' }}>
                       <LeaderboardEntry
-                        rank={playerScore!.rank}
+                        rank={effectivePlayerScore!.rank}
                         displayName={playerData!.displayName}
-                        score={playerScore!.score}
-                        season={playerScore!.season}
-                        accuracy={playerScore!.accuracy}
-                        isFullCombo={!!playerScore!.isFullCombo}
-                        stars={playerScore!.stars}
+                        score={effectivePlayerScore!.score}
+                        season={effectivePlayerScore!.season}
+                        accuracy={effectivePlayerScore!.accuracy}
+                        isFullCombo={!!effectivePlayerScore!.isFullCombo}
+                        stars={effectivePlayerScore!.stars}
                         isPlayer
-                        difficulty={playerScore!.difficulty}
+                        difficulty={effectivePlayerScore!.difficulty}
                         showDifficulty={showSeason}
                         showSeason={showSeason}
                         showAccuracy={showAccuracy}
                         showStars={showStars}
                         scoreWidth={scoreWidth}
+                        rankWidth={playerRankWidth}
                       />
                     </div>
                   </div>

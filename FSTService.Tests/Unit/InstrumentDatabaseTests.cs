@@ -1112,4 +1112,123 @@ public sealed class InstrumentDatabaseTests : IDisposable
         Assert.Equal(5, above.Count);
         Assert.Equal(5, below.Count);
     }
+
+    // ═══ GetPlayerRankingsFiltered ══════════════════════════════
+
+    [Fact]
+    public void GetPlayerRankingsFiltered_excludes_invalid_scores_above_threshold()
+    {
+        // Two players on song_1: cheater at 200k (invalid), legit at 90k
+        Db.UpsertEntries("song_1", [MakeEntry("cheater", 200_000), MakeEntry("legit", 90_000)]);
+
+        // Without filter: legit is rank 2
+        var unfiltered = Db.GetPlayerRankings("legit");
+        Assert.Equal(2, unfiltered["song_1"]);
+
+        // With filter: cheater's 200k exceeds threshold 100k → legit becomes rank 1
+        var maxScores = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) { ["song_1"] = 100_000 };
+        var filtered = Db.GetPlayerRankingsFiltered("legit", maxScores);
+        Assert.Equal(1, filtered["song_1"]);
+    }
+
+    [Fact]
+    public void GetPlayerRankingsFiltered_omits_players_own_invalid_score()
+    {
+        // Player has an invalid score
+        Db.UpsertEntries("song_1", [MakeEntry("cheater", 200_000), MakeEntry("legit", 90_000)]);
+
+        var maxScores = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) { ["song_1"] = 100_000 };
+        var filtered = Db.GetPlayerRankingsFiltered("cheater", maxScores);
+
+        // Cheater's score exceeds threshold → they're excluded from the ranking
+        Assert.False(filtered.ContainsKey("song_1"));
+    }
+
+    [Fact]
+    public void GetPlayerRankingsFiltered_no_threshold_for_song_includes_all()
+    {
+        Db.UpsertEntries("song_1", [MakeEntry("p1", 200_000), MakeEntry("p2", 90_000)]);
+
+        // Empty maxScores → no filtering, all entries included (COALESCE fallback)
+        var maxScores = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var filtered = Db.GetPlayerRankingsFiltered("p2", maxScores);
+        Assert.Equal(2, filtered["song_1"]);
+    }
+
+    [Fact]
+    public void GetPlayerRankingsFiltered_song_filter_works()
+    {
+        Db.UpsertEntries("song_1", [MakeEntry("p1", 200_000), MakeEntry("p2", 90_000)]);
+        Db.UpsertEntries("song_2", [MakeEntry("p2", 80_000)]);
+
+        var maxScores = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["song_1"] = 100_000,
+            ["song_2"] = 100_000,
+        };
+        var filtered = Db.GetPlayerRankingsFiltered("p2", maxScores, songId: "song_1");
+
+        Assert.Single(filtered);
+        Assert.Equal(1, filtered["song_1"]);
+    }
+
+    // ═══ GetRankForScore ════════════════════════════════════════
+
+    [Fact]
+    public void GetRankForScore_returns_rank_without_filter()
+    {
+        Db.UpsertEntries("song_1", [
+            MakeEntry("p1", 100_000),
+            MakeEntry("p2", 90_000),
+            MakeEntry("p3", 80_000),
+        ]);
+
+        // Score of 90k: 1 entry above → rank 2
+        Assert.Equal(2, Db.GetRankForScore("song_1", 90_000));
+        // Score of 100k: 0 entries above → rank 1
+        Assert.Equal(1, Db.GetRankForScore("song_1", 100_000));
+        // Score of 70k: 3 entries above → rank 4
+        Assert.Equal(4, Db.GetRankForScore("song_1", 70_000));
+    }
+
+    [Fact]
+    public void GetRankForScore_with_maxScore_excludes_invalid_entries()
+    {
+        Db.UpsertEntries("song_1", [
+            MakeEntry("cheater", 200_000),
+            MakeEntry("p1", 100_000),
+            MakeEntry("p2", 90_000),
+        ]);
+
+        // Without filter: 90k has 2 entries above it → rank 3
+        Assert.Equal(3, Db.GetRankForScore("song_1", 90_000));
+
+        // With filter (max 105k): cheater excluded → 90k has 1 entry above → rank 2
+        Assert.Equal(2, Db.GetRankForScore("song_1", 90_000, maxScore: 105_000));
+    }
+
+    // ═══ GetFilteredEntryCounts ═════════════════════════════════
+
+    [Fact]
+    public void GetFilteredEntryCounts_excludes_invalid_scores()
+    {
+        Db.UpsertEntries("song_1", [
+            MakeEntry("cheater", 200_000),
+            MakeEntry("p1", 100_000),
+            MakeEntry("p2", 90_000),
+        ]);
+        Db.UpsertEntries("song_2", [
+            MakeEntry("p1", 80_000),
+        ]);
+
+        var maxScores = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["song_1"] = 105_000,
+            ["song_2"] = 100_000,
+        };
+        var counts = Db.GetFilteredEntryCounts(maxScores);
+
+        Assert.Equal(2, counts["song_1"]); // cheater excluded
+        Assert.Equal(1, counts["song_2"]); // all valid
+    }
 }
