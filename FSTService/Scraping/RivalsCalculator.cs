@@ -87,19 +87,29 @@ public sealed class RivalsCalculator
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
             var userScores = db.GetPlayerScores(userId);
             if (userScores.Count < MinUserSongsPerInstrument)
+            {
+                _log.LogDebug("Rivals [{User}] {Instrument}: skipped — only {Count} songs (min {Min}).",
+                    userId, instrument, userScores.Count, MinUserSongsPerInstrument);
                 continue;
+            }
 
             var songCounts = db.GetAllSongCounts();
             var candidates = new Dictionary<string, RivalCandidate>(StringComparer.OrdinalIgnoreCase);
+            int songsSkippedUnranked = 0;
+            int songsSkippedSingle = 0;
+            int totalNeighborsFound = 0;
+            int songsScanned = 0;
 
             foreach (var entry in userScores)
             {
                 var effectiveRank = entry.ApiRank > 0 ? entry.ApiRank : entry.Rank;
-                if (effectiveRank <= 0) continue; // skip unranked
+                if (effectiveRank <= 0) { songsSkippedUnranked++; continue; } // skip unranked
                 if (!songCounts.TryGetValue(entry.SongId, out var entryCount) || entryCount <= 1)
-                    continue;
+                { songsSkippedSingle++; continue; }
 
+                songsScanned++;
                 var neighbors = db.GetNeighborhood(entry.SongId, effectiveRank, NeighborhoodRadius, userId);
+                totalNeighborsFound += neighbors.Count;
                 var logWeight = Math.Log2(entryCount);
 
                 foreach (var (neighborId, neighborRank, neighborScore) in neighbors)
@@ -131,6 +141,15 @@ public sealed class RivalsCalculator
                     });
                 }
             }
+
+            int qualifiedCandidates = candidates.Values.Count(c => c.Appearances >= MinSharedSongsPerInstrument);
+            _log.LogInformation(
+                "Rivals [{User}] {Instrument}: {Total} songs, {Scanned} scanned, " +
+                "{Unranked} skipped (unranked), {Single} skipped (single-entry), " +
+                "{Neighbors} neighbors found, {Candidates} unique candidates, {Qualified} qualified (>= {Min} appearances).",
+                userId, instrument, userScores.Count, songsScanned,
+                songsSkippedUnranked, songsSkippedSingle,
+                totalNeighborsFound, candidates.Count, qualifiedCandidates, MinSharedSongsPerInstrument);
 
             perInstrument[instrument] = new InstrumentRivalsData
             {
@@ -505,6 +524,145 @@ public sealed class RivalsCalculator
         public int UserSongCount { get; init; }
         public Dictionary<string, RivalCandidate> Candidates { get; init; } = new();
     }
+
+    // ─── Diagnostics ─────────────────────────────────────────────
+
+    /// <summary>
+    /// Produce per-instrument diagnostic information for a user, revealing
+    /// the funnel from songs → ranked songs → neighborhoods → qualified rivals.
+    /// Used by the diagnostics endpoint to identify why rivals may be empty.
+    /// </summary>
+    public RivalsDiagnostics GetDiagnostics(string userId)
+    {
+        var instrumentKeys = _persistence.GetInstrumentKeys();
+        var instruments = new List<InstrumentDiagnostics>();
+
+        foreach (var instrument in instrumentKeys)
+        {
+            var db = _persistence.GetOrCreateInstrumentDb(instrument);
+            var userScores = db.GetPlayerScores(userId);
+
+            if (userScores.Count == 0)
+                continue;
+
+            // Classify entries by rank state
+            int bothZero = 0, rankOnly = 0, apiRankOnly = 0, bothSet = 0, mismatchCount = 0;
+            var rankedEntries = new List<(PlayerScoreDto Entry, int EffectiveRank)>();
+
+            foreach (var entry in userScores)
+            {
+                bool hasRank = entry.Rank > 0;
+                bool hasApiRank = entry.ApiRank > 0;
+                if (!hasRank && !hasApiRank) bothZero++;
+                else if (hasRank && !hasApiRank) rankOnly++;
+                else if (!hasRank && hasApiRank) apiRankOnly++;
+                else
+                {
+                    bothSet++;
+                    if (entry.Rank != entry.ApiRank) mismatchCount++;
+                }
+
+                var effectiveRank = entry.ApiRank > 0 ? entry.ApiRank : entry.Rank;
+                if (effectiveRank > 0)
+                    rankedEntries.Add((entry, effectiveRank));
+            }
+
+            // Pick median entry by effectiveRank for a probe
+            NeighborhoodProbe? probe = null;
+            if (rankedEntries.Count > 0)
+            {
+                rankedEntries.Sort((a, b) => a.EffectiveRank.CompareTo(b.EffectiveRank));
+                var median = rankedEntries[rankedEntries.Count / 2];
+                var neighbors = db.GetNeighborhood(
+                    median.Entry.SongId, median.EffectiveRank, NeighborhoodRadius, userId);
+                probe = new NeighborhoodProbe
+                {
+                    SongId = median.Entry.SongId,
+                    EffectiveRank = median.EffectiveRank,
+                    Rank = median.Entry.Rank,
+                    ApiRank = median.Entry.ApiRank,
+                    RangeLo = Math.Max(1, median.EffectiveRank - NeighborhoodRadius),
+                    RangeHi = median.EffectiveRank + NeighborhoodRadius,
+                    NeighborsFound = neighbors.Count,
+                };
+            }
+
+            // Sample up to 5 entries showing Rank/ApiRank/Source
+            var sampleEntries = userScores
+                .Take(5)
+                .Select(e => new EntrySample
+                {
+                    SongId = e.SongId,
+                    Score = e.Score,
+                    Rank = e.Rank,
+                    ApiRank = e.ApiRank,
+                })
+                .ToList();
+
+            instruments.Add(new InstrumentDiagnostics
+            {
+                Instrument = instrument,
+                TotalSongs = userScores.Count,
+                MeetsMinimum = userScores.Count >= MinUserSongsPerInstrument,
+                RankedSongs = rankedEntries.Count,
+                BothZero = bothZero,
+                RankOnly = rankOnly,
+                ApiRankOnly = apiRankOnly,
+                BothSet = bothSet,
+                Mismatch = mismatchCount,
+                Probe = probe,
+                SampleEntries = sampleEntries,
+            });
+        }
+
+        return new RivalsDiagnostics { Instruments = instruments };
+    }
+}
+
+// ─── Diagnostic types ────────────────────────────────────────────
+
+public sealed class RivalsDiagnostics
+{
+    public IReadOnlyList<InstrumentDiagnostics> Instruments { get; init; } = Array.Empty<InstrumentDiagnostics>();
+}
+
+public sealed class InstrumentDiagnostics
+{
+    public string Instrument { get; init; } = "";
+    public int TotalSongs { get; init; }
+    public bool MeetsMinimum { get; init; }
+    public int RankedSongs { get; init; }
+    /// <summary>Entries with both Rank and ApiRank = 0.</summary>
+    public int BothZero { get; init; }
+    /// <summary>Entries with Rank > 0 but ApiRank = 0 (scrape-originated).</summary>
+    public int RankOnly { get; init; }
+    /// <summary>Entries with ApiRank > 0 but Rank = 0 (backfill-originated, not in scrape).</summary>
+    public int ApiRankOnly { get; init; }
+    /// <summary>Entries with both Rank > 0 and ApiRank > 0.</summary>
+    public int BothSet { get; init; }
+    /// <summary>Of BothSet entries, how many have Rank != ApiRank.</summary>
+    public int Mismatch { get; init; }
+    public NeighborhoodProbe? Probe { get; init; }
+    public IReadOnlyList<EntrySample> SampleEntries { get; init; } = Array.Empty<EntrySample>();
+}
+
+public sealed class NeighborhoodProbe
+{
+    public string SongId { get; init; } = "";
+    public int EffectiveRank { get; init; }
+    public int Rank { get; init; }
+    public int ApiRank { get; init; }
+    public int RangeLo { get; init; }
+    public int RangeHi { get; init; }
+    public int NeighborsFound { get; init; }
+}
+
+public sealed class EntrySample
+{
+    public string SongId { get; init; } = "";
+    public int Score { get; init; }
+    public int Rank { get; init; }
+    public int ApiRank { get; init; }
 }
 
 /// <summary>

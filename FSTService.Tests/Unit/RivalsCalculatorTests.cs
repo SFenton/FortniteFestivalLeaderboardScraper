@@ -64,6 +64,32 @@ public sealed class RivalsCalculatorTests : IDisposable
         db.RecomputeAllRanks();
     }
 
+    /// <summary>
+    /// Seed entries with explicit Source and ApiRank — for testing scenarios
+    /// where backfill entries diverge from scrape-ranked entries.
+    /// </summary>
+    private static void SeedEntriesEx(InstrumentDatabase db, string songId,
+        params (string AccountId, int Score, string Source, int ApiRank)[] entries)
+    {
+        var list = entries.Select(e => new LeaderboardEntry
+        {
+            AccountId = e.AccountId,
+            Score = e.Score,
+            Rank = e.Source == "scrape" ? 0 : 0, // let RecomputeAllRanks handle scrape; backfill stays 0
+            ApiRank = e.ApiRank,
+            Source = e.Source,
+            Accuracy = 95,
+            IsFullCombo = false,
+            Stars = 5,
+            Season = 3,
+            Percentile = 99.0,
+            EndTime = "2025-01-15T12:00:00Z",
+        }).ToList();
+
+        db.UpsertEntries(songId, list);
+        db.RecomputeAllRanks(); // only sets Rank for Source='scrape'
+    }
+
     // ═══ Scoring formula ═════════════════════════════════════════
 
     [Fact]
@@ -511,5 +537,183 @@ public sealed class RivalsCalculatorTests : IDisposable
         Assert.Single(gaps.YourExclusives);
         Assert.Equal("Solo_Bass", gaps.YourExclusives[0].Instrument);
         Assert.Equal("bass_user_only", gaps.YourExclusives[0].SongId);
+    }
+
+    // ═══ Diagnostics ═════════════════════════════════════════════
+
+    [Fact]
+    public void GetDiagnostics_returns_empty_instruments_when_user_has_no_scores()
+    {
+        var persistence = CreatePersistence();
+        _ = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        var calc = CreateCalculator(persistence);
+
+        var diag = calc.GetDiagnostics("nonexistent_user");
+        Assert.Empty(diag.Instruments);
+    }
+
+    [Fact]
+    public void GetDiagnostics_reports_rank_breakdown_for_scrape_entries()
+    {
+        var persistence = CreatePersistence();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        // Seed 12 scrape entries — RecomputeAllRanks will set Rank, ApiRank stays 0
+        for (int i = 0; i < 12; i++)
+        {
+            var entries = new List<(string, int)> { ("user1", 10000 - i * 100) };
+            for (int j = 0; j < 5; j++)
+                entries.Add(($"filler_{j}", 8000 - j * 100 - i * 10));
+            SeedEntries(db, $"song_{i}", entries.ToArray());
+        }
+
+        var calc = CreateCalculator(persistence);
+        var diag = calc.GetDiagnostics("user1");
+
+        Assert.Single(diag.Instruments);
+        var inst = diag.Instruments[0];
+        Assert.Equal("Solo_Guitar", inst.Instrument);
+        Assert.Equal(12, inst.TotalSongs);
+        Assert.True(inst.MeetsMinimum);
+        Assert.Equal(12, inst.RankedSongs);
+        // Scrape entries: Rank > 0, ApiRank = 0 → all should be "RankOnly"
+        Assert.Equal(12, inst.RankOnly);
+        Assert.Equal(0, inst.ApiRankOnly);
+        Assert.Equal(0, inst.BothZero);
+        Assert.Equal(0, inst.BothSet);
+    }
+
+    [Fact]
+    public void GetDiagnostics_reports_apiRankOnly_for_backfill_entries()
+    {
+        var persistence = CreatePersistence();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        // Seed 12 backfill entries — Rank stays 0 after RecomputeAllRanks, ApiRank is set
+        for (int i = 0; i < 12; i++)
+        {
+            SeedEntriesEx(db, $"song_{i}",
+                ("user1", 10000 - i * 100, "backfill", 500 + i));
+        }
+
+        var calc = CreateCalculator(persistence);
+        var diag = calc.GetDiagnostics("user1");
+
+        Assert.Single(diag.Instruments);
+        var inst = diag.Instruments[0];
+        Assert.Equal(12, inst.TotalSongs);
+        Assert.True(inst.MeetsMinimum);
+        Assert.Equal(12, inst.RankedSongs); // effectiveRank = ApiRank > 0
+        // Backfill: Rank = 0, ApiRank > 0 → all "ApiRankOnly"
+        Assert.Equal(0, inst.RankOnly);
+        Assert.Equal(12, inst.ApiRankOnly);
+        Assert.Equal(0, inst.BothZero);
+    }
+
+    [Fact]
+    public void GetDiagnostics_probe_returns_neighbor_count()
+    {
+        var persistence = CreatePersistence();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        // Seed 12 songs with user + filler. All scrape-based so Rank is set.
+        for (int i = 0; i < 12; i++)
+        {
+            var entries = new List<(string, int)> { ("user1", 10000 - i * 100) };
+            for (int j = 0; j < 10; j++)
+                entries.Add(($"filler_{j}", 10000 - i * 100 - (j + 1) * 50));
+            SeedEntries(db, $"song_{i}", entries.ToArray());
+        }
+
+        var calc = CreateCalculator(persistence);
+        var diag = calc.GetDiagnostics("user1");
+
+        var inst = diag.Instruments[0];
+        Assert.NotNull(inst.Probe);
+        Assert.True(inst.Probe!.NeighborsFound > 0,
+            "Probe should find neighbors for scrape entries with dense ranks");
+        Assert.True(inst.Probe.EffectiveRank > 0);
+    }
+
+    [Fact]
+    public void GetDiagnostics_probe_finds_zero_neighbors_for_backfill_only()
+    {
+        // This captures the suspected bug: backfill entries have ApiRank set but Rank = 0.
+        // GetNeighborhood queries Rank, so it won't find any neighbors for the user's
+        // ApiRank-based effectiveRank.
+        var persistence = CreatePersistence();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        // Seed user as backfill (ApiRank = 500, Rank = 0)
+        // Seed neighbors as scrape (Rank dense 1-10, ApiRank = 0)
+        for (int i = 0; i < 12; i++)
+        {
+            // Scrape entries: these will get dense Rank from RecomputeAllRanks
+            var scrapeEntries = new List<(string AccountId, int Score, string Source, int ApiRank)>();
+            for (int j = 0; j < 10; j++)
+                scrapeEntries.Add(($"filler_{j}", 8000 - j * 100 - i * 10, "scrape", 0));
+
+            // User is backfill: ApiRank = 500+i, Rank will stay 0
+            scrapeEntries.Add(("user1", 10000 - i * 100, "backfill", 500 + i));
+
+            SeedEntriesEx(db, $"song_{i}", scrapeEntries.ToArray());
+        }
+
+        var calc = CreateCalculator(persistence);
+        var diag = calc.GetDiagnostics("user1");
+
+        var inst = diag.Instruments[0];
+        Assert.NotNull(inst.Probe);
+        // The probe uses effectiveRank = ApiRank (e.g. 506 for median) but
+        // GetNeighborhood queries Rank column where filler entries are 1-10.
+        // So the probe will find 0 neighbors.
+        Assert.Equal(0, inst.Probe!.NeighborsFound);
+        Assert.True(inst.Probe.EffectiveRank >= 500,
+            "EffectiveRank should use ApiRank since Rank = 0");
+    }
+
+    [Fact]
+    public void GetDiagnostics_detects_mismatch_between_rank_and_apiRank()
+    {
+        var persistence = CreatePersistence();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        // Entry that is both scraped (gets Rank from RecomputeAllRanks) AND has ApiRank from backfill.
+        // Since the entry has Source='scrape', RecomputeAllRanks will set Rank.
+        // ApiRank is set explicitly to something different.
+        for (int i = 0; i < 12; i++)
+        {
+            var entries = new List<(string AccountId, int Score, string Source, int ApiRank)>
+            {
+                // User has scrape source so Rank will be set. ApiRank = 999 is different.
+                ("user1", 10000 - i * 100, "scrape", 999),
+            };
+            for (int j = 0; j < 5; j++)
+                entries.Add(($"filler_{j}", 8000 - j * 100 - i * 10, "scrape", 0));
+            SeedEntriesEx(db, $"song_{i}", entries.ToArray());
+        }
+
+        var calc = CreateCalculator(persistence);
+        var diag = calc.GetDiagnostics("user1");
+
+        var inst = diag.Instruments[0];
+        Assert.Equal(12, inst.BothSet); // both Rank and ApiRank > 0
+        Assert.True(inst.Mismatch > 0, "Rank and ApiRank should differ for user1");
+    }
+
+    [Fact]
+    public void GetDiagnostics_sample_entries_limited_to_5()
+    {
+        var persistence = CreatePersistence();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        for (int i = 0; i < 20; i++)
+            SeedEntries(db, $"song_{i}", ("user1", 10000 - i * 100), ("filler", 5000));
+
+        var calc = CreateCalculator(persistence);
+        var diag = calc.GetDiagnostics("user1");
+
+        Assert.Single(diag.Instruments);
+        Assert.Equal(5, diag.Instruments[0].SampleEntries.Count);
     }
 }

@@ -263,6 +263,69 @@ public static partial class ApiEndpoints
         .WithTags("Rivals")
         .RequireRateLimiting("public");
 
+        // ─── Diagnostics (admin only) ──────────────────────────────
+        // Registered before {combo} route to avoid "diagnostics" matching as combo value.
+
+        app.MapGet("/api/player/{accountId}/rivals/diagnostics", (
+            string accountId,
+            MetaDatabase metaDb,
+            RivalsCalculator rivalsCalculator) =>
+        {
+            var status = metaDb.GetRivalsStatus(accountId);
+            var combos = metaDb.GetRivalCombos(accountId);
+            var diagnostics = rivalsCalculator.GetDiagnostics(accountId);
+
+            return Results.Ok(new
+            {
+                accountId,
+                rivalsStatus = status is null ? null : new
+                {
+                    status.Status,
+                    status.CombosComputed,
+                    status.TotalCombosToCompute,
+                    status.RivalsFound,
+                    status.StartedAt,
+                    status.CompletedAt,
+                    status.ErrorMessage,
+                },
+                combosStored = combos.Select(c => new
+                {
+                    c.InstrumentCombo,
+                    c.AboveCount,
+                    c.BelowCount,
+                }).ToList(),
+                instruments = diagnostics.Instruments.Select(i => new
+                {
+                    i.Instrument,
+                    i.TotalSongs,
+                    i.MeetsMinimum,
+                    i.RankedSongs,
+                    rankBreakdown = new
+                    {
+                        i.BothZero,
+                        i.RankOnly,
+                        i.ApiRankOnly,
+                        i.BothSet,
+                        i.Mismatch,
+                    },
+                    probe = i.Probe is null ? null : new
+                    {
+                        i.Probe.SongId,
+                        i.Probe.EffectiveRank,
+                        i.Probe.Rank,
+                        i.Probe.ApiRank,
+                        i.Probe.RangeLo,
+                        i.Probe.RangeHi,
+                        i.Probe.NeighborsFound,
+                    },
+                    sampleEntries = i.SampleEntries,
+                }).ToList(),
+            });
+        })
+        .WithTags("Rivals")
+        .RequireRateLimiting("protected")
+        .RequireAuthorization();
+
         // ─── Rival list for a specific combo ───────────────────────
 
         app.MapGet("/api/player/{accountId}/rivals/{combo}", (
