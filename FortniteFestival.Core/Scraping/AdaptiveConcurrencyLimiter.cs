@@ -53,6 +53,16 @@ namespace FortniteFestival.Core.Scraping
         private const double ErrorThresholdHigh = 0.05; // 5% → decrease
         private const double ErrorThresholdLow = 0.01;  // 1% → increase
 
+        // ── Token-bucket rate limiter ──
+        private const int RateBucketIntervalMs = 50;  // refill every 50ms
+        private const int RateBucketTicksPerSecond = 1000 / RateBucketIntervalMs; // 20
+#pragma warning disable CS8632 // nullable annotations (net472 compat)
+        private readonly SemaphoreSlim? _rateBucket;
+        private readonly Timer? _rateBucketTimer;
+#pragma warning restore CS8632
+        private readonly int _tokensPerTick;
+        private readonly int _maxRequestsPerSecond;
+
         /// <summary>Current effective DOP.</summary>
         public int CurrentDop
         {
@@ -65,21 +75,50 @@ namespace FortniteFestival.Core.Scraping
         /// <summary>Approximate in-flight requests (acquired but not yet released slots).</summary>
         public int InFlight => Math.Max(0, CurrentDop - _semaphore.CurrentCount);
 
-        public AdaptiveConcurrencyLimiter(int initialDop, int minDop, int maxDop, ILogger log)
+        /// <summary>Configured max requests per second (0 = unlimited).</summary>
+        public int MaxRequestsPerSecond => _maxRequestsPerSecond;
+
+        public AdaptiveConcurrencyLimiter(int initialDop, int minDop, int maxDop, ILogger log,
+            int maxRequestsPerSecond = 0)
         {
             _minDop = Math.Max(1, minDop);
             _maxDop = Math.Max(_minDop, maxDop);
             _currentDop = Math.Clamp(initialDop, _minDop, _maxDop);
             _log = log;
+            _maxRequestsPerSecond = Math.Max(0, maxRequestsPerSecond);
 
             // Semaphore max is set to maxDop so we have headroom to Release() into.
             _semaphore = new SemaphoreSlim(_currentDop, _maxDop);
+
+            // ── Token-bucket rate limiter ──
+            if (_maxRequestsPerSecond > 0)
+            {
+                _tokensPerTick = Math.Max(1, _maxRequestsPerSecond / RateBucketTicksPerSecond);
+                _rateBucket = new SemaphoreSlim(_tokensPerTick, _tokensPerTick);
+                _rateBucketTimer = new Timer(RefillRateBucket, null, RateBucketIntervalMs, RateBucketIntervalMs);
+                _log.LogInformation(
+                    "Rate limiter active: {MaxRps} req/s ({TokensPerTick} tokens every {IntervalMs}ms)",
+                    _maxRequestsPerSecond, _tokensPerTick, RateBucketIntervalMs);
+            }
         }
 
-        /// <summary>Wait for a concurrency slot (same as SemaphoreSlim.WaitAsync).</summary>
-        public Task WaitAsync(CancellationToken ct)
+        /// <summary>Wait for a concurrency slot, then a rate-limiter token (if active).</summary>
+        public async Task WaitAsync(CancellationToken ct)
         {
-            return _semaphore.WaitAsync(ct);
+            await _semaphore.WaitAsync(ct);
+
+            if (_rateBucket != null)
+                await _rateBucket.WaitAsync(ct);
+        }
+
+        private void RefillRateBucket(object state)
+        {
+            if (_rateBucket == null) return;
+
+            // Release up to _tokensPerTick, but don't exceed the semaphore maximum.
+            int toRelease = Math.Min(_tokensPerTick, _tokensPerTick - _rateBucket.CurrentCount);
+            if (toRelease > 0)
+                _rateBucket.Release(toRelease);
         }
 
         /// <summary>Release a concurrency slot. If there is outstanding release debt
@@ -208,6 +247,8 @@ namespace FortniteFestival.Core.Scraping
 
         public void Dispose()
         {
+            _rateBucketTimer?.Dispose();
+            _rateBucket?.Dispose();
             _semaphore.Dispose();
         }
     }

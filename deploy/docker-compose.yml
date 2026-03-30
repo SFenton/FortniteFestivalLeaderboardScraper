@@ -34,6 +34,8 @@ services:
       - Scraper__PageConcurrency=${PAGE_CONCURRENCY:-10}
       # ── Songs scraped concurrently in sequential mode (default: 1) ──
       - Scraper__SongConcurrency=${SONG_CONCURRENCY:-1}
+      # ── Hard cap on API requests per second, 0 = unlimited (default: 0) ──
+      - Scraper__MaxRequestsPerSecond=${MAX_REQUESTS_PER_SECOND:-0}
       # ── Path generation (MIDI decryption key for CHOpt max score calculation) ──
       - Scraper__MidiEncryptionKey=${MIDI_ENCRYPTION_KEY:-}
       # ── Feature flags (default: all OFF in production) ──

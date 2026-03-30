@@ -466,6 +466,7 @@ public sealed class ScrapeProgressTracker
             BytesReceived = _bytesReceived,
             CurrentDop = _adaptiveLimiter?.CurrentDop,
             InFlight = _adaptiveLimiter?.InFlight,
+            MaxRequestsPerSecond = _adaptiveLimiter?.MaxRequestsPerSecond is > 0 ? _adaptiveLimiter.MaxRequestsPerSecond : null,
             RequestsPerSecond = elapsed.TotalSeconds > 0
                 ? Math.Round(_requestsMade / elapsed.TotalSeconds, 1) : null,
         };
@@ -547,6 +548,7 @@ public sealed class ScrapeProgressTracker
             EntriesUpdated = updated > 0 ? updated : null,
             CurrentDop = _adaptiveLimiter?.CurrentDop,
             InFlight = _adaptiveLimiter?.InFlight,
+            MaxRequestsPerSecond = _adaptiveLimiter?.MaxRequestsPerSecond is > 0 ? _adaptiveLimiter.MaxRequestsPerSecond : null,
             RequestsPerSecond = requests > 0 && elapsed.TotalSeconds > 0
                 ? Math.Round(requests / elapsed.TotalSeconds, 1) : null,
         };
@@ -650,6 +652,7 @@ public sealed class OperationSnapshot
     public long? BytesReceived { get; init; }
     public int? CurrentDop { get; init; }
     public int? InFlight { get; init; }
+    public int? MaxRequestsPerSecond { get; init; }
     public double? RequestsPerSecond { get; init; }
 
     // ── Name resolution-specific ──

@@ -107,7 +107,8 @@ public sealed class ScrapeOrchestrator
             maxPages: opts.MaxPagesPerLeaderboard,
             sequential: opts.SequentialScrape,
             pageConcurrency: opts.PageConcurrency,
-            songConcurrency: opts.SongConcurrency);
+            songConcurrency: opts.SongConcurrency,
+            maxRequestsPerSecond: opts.MaxRequestsPerSecond);
 
         // Wait for all per-instrument writers to drain
         await _persistence.DrainWritersAsync();

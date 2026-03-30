@@ -24,6 +24,13 @@ public sealed class ScraperOptions
     public int DegreeOfParallelism { get; set; } = 16;
 
     /// <summary>
+    /// Hard cap on requests per second across all phases. Implemented as a token
+    /// bucket inside the adaptive concurrency limiter. 0 = unlimited (default).
+    /// Set via <c>Scraper__MaxRequestsPerSecond</c> env var.
+    /// </summary>
+    public int MaxRequestsPerSecond { get; set; }
+
+    /// <summary>
     /// Which instruments to query.
     /// </summary>
     public bool QueryLead { get; set; } = true;

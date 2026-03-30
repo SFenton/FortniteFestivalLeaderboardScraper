@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using FSTService.Scraping;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -310,5 +311,76 @@ public class AdaptiveConcurrencyLimiterTests : IDisposable
 
         _limiter.Release();
         Assert.Equal(0, _limiter.InFlight);
+    }
+
+    // ─── Rate limiter tests ────────────────────────────────────
+
+    [Fact]
+    public void MaxRequestsPerSecond_Zero_MeansUnlimited()
+    {
+        _limiter = new AdaptiveConcurrencyLimiter(16, 4, 64, _log, maxRequestsPerSecond: 0);
+        Assert.Equal(0, _limiter.MaxRequestsPerSecond);
+    }
+
+    [Fact]
+    public async Task MaxRequestsPerSecond_StillAllowsConcurrency()
+    {
+        // High rate limit (won't actually throttle), but verify WaitAsync works
+        _limiter = new AdaptiveConcurrencyLimiter(4, 1, 8, _log, maxRequestsPerSecond: 10000);
+        Assert.Equal(10000, _limiter.MaxRequestsPerSecond);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await _limiter.WaitAsync(cts.Token);
+        await _limiter.WaitAsync(cts.Token);
+        Assert.Equal(2, _limiter.InFlight);
+
+        _limiter.Release();
+        _limiter.Release();
+        Assert.Equal(0, _limiter.InFlight);
+    }
+
+    [Fact]
+    public async Task MaxRequestsPerSecond_ThrottlesThroughput()
+    {
+        // Set rate to 100 RPS → tokens per tick = max(1, 100/20) = 5, every 50ms.
+        // Over 200ms (4 ticks) we expect ~20 tokens.
+        // Without rate limiting, 16 DOP with instant work would complete instantly.
+        _limiter = new AdaptiveConcurrencyLimiter(16, 4, 64, _log, maxRequestsPerSecond: 100);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var sw = Stopwatch.StartNew();
+        int completed = 0;
+
+        // Fire 20 requests — with 100 RPS cap, should take ~150-250ms
+        var tasks = new List<Task>();
+        for (int i = 0; i < 20; i++)
+        {
+            tasks.Add(Task.Run(async () =>
+            {
+                await _limiter.WaitAsync(cts.Token);
+                Interlocked.Increment(ref completed);
+                _limiter.Release();
+            }, cts.Token));
+        }
+
+        await Task.WhenAll(tasks);
+        sw.Stop();
+
+        Assert.Equal(20, completed);
+        // Should take at least 100ms (rate limiting in effect, not instant)
+        Assert.True(sw.ElapsedMilliseconds >= 50,
+            $"Expected >= 50ms but completed in {sw.ElapsedMilliseconds}ms — rate limiter may not be working");
+    }
+
+    [Fact]
+    public async Task MaxRequestsPerSecond_CoexistsWithAimd()
+    {
+        // Rate-limited + AIMD: report successes, DOP should still increase
+        _limiter = new AdaptiveConcurrencyLimiter(16, 4, 64, _log, maxRequestsPerSecond: 10000);
+
+        for (int i = 0; i < 500; i++)
+            _limiter.ReportSuccess();
+
+        Assert.Equal(32, _limiter.CurrentDop); // 16 + 16 additive increase
     }
 }

@@ -1166,15 +1166,17 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int maxPages = 0,
         bool sequential = false,
         int pageConcurrency = 10,
-        int songConcurrency = 1)
+        int songConcurrency = 1,
+        int maxRequestsPerSecond = 0)
     {
         if (sequential)
             return await ScrapeManySongsSequentialAsync(
-                requests, accessToken, accountId, onSongComplete, ct, maxPages, pageConcurrency, songConcurrency);
+                requests, accessToken, accountId, onSongComplete, ct, maxPages, pageConcurrency, songConcurrency,
+                maxRequestsPerSecond);
 
         using var limiter = new AdaptiveConcurrencyLimiter(
             maxConcurrency, minDop: 256, maxDop: maxConcurrency,
-            _log);
+            _log, maxRequestsPerSecond);
         _progress.SetAdaptiveLimiter(limiter);
         var results = new ConcurrentDictionary<string, List<GlobalLeaderboardResult>>();
 
@@ -1220,7 +1222,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         CancellationToken ct,
         int maxPages,
         int pageConcurrency,
-        int songConcurrency)
+        int songConcurrency,
+        int maxRequestsPerSecond = 0)
     {
         var results = new ConcurrentDictionary<string, List<GlobalLeaderboardResult>>();
         int effectiveSongConcurrency = Math.Max(1, songConcurrency);
@@ -1231,7 +1234,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             "Starting sequential scrape: {SongCount} songs ({SongDop} at a time, ~{MaxConcurrent} max concurrent requests, adaptive)",
             requests.Count, effectiveSongConcurrency, maxDop);
 
-        using var limiter = new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: maxDop, _log);
+        using var limiter = new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: maxDop, _log,
+            maxRequestsPerSecond);
         _progress.SetAdaptiveLimiter(limiter);
 
         using var songSemaphore = new SemaphoreSlim(effectiveSongConcurrency, effectiveSongConcurrency);
