@@ -133,6 +133,7 @@ public static class DataMigrator
         await using var writer = await pgConn.BeginBinaryImportAsync(copySql, ct);
 
         long count = 0;
+        var copySw = System.Diagnostics.Stopwatch.StartNew();
         while (await reader.ReadAsync(ct))
         {
             await writer.StartRowAsync(ct);
@@ -155,11 +156,12 @@ public static class DataMigrator
             count++;
 
             if (count % 1_000_000 == 0)
-                log.LogInformation("  LeaderboardEntries [{Instrument}]: {Count:N0} rows written...", instrument, count);
+                log.LogInformation("  LeaderboardEntries [{Instrument}]: {Count:N0} rows... ({Rate:N0} rows/sec)", instrument, count, count / copySw.Elapsed.TotalSeconds);
         }
 
         await writer.CompleteAsync(ct);
-        log.LogInformation("  LeaderboardEntries [{Instrument}]: {Count:N0} rows total via COPY.", instrument, count);
+        var finalRate = count > 0 ? count / copySw.Elapsed.TotalSeconds : 0;
+        log.LogInformation("  LeaderboardEntries [{Instrument}]: {Count:N0} rows total via COPY in {Elapsed:F1}s ({Rate:N0} rows/sec)", instrument, count, copySw.Elapsed.TotalSeconds, finalRate);
     }
 
     private static async Task MigrateTableAsync(string sqlitePath, NpgsqlDataSource pgDataSource,
@@ -179,6 +181,7 @@ public static class DataMigrator
         var insertSql = $"INSERT INTO {pgTable} ({string.Join(", ", pgCols)}) VALUES ({pgParams}) ON CONFLICT DO NOTHING";
 
         int count = 0;
+        var tableSw = System.Diagnostics.Stopwatch.StartNew();
         await using var tx = await pgConn.BeginTransactionAsync(ct);
         await using var insertCmd = new NpgsqlCommand(insertSql, pgConn, tx);
         for (int i = 0; i < pgCols.Length; i++)
@@ -191,10 +194,14 @@ public static class DataMigrator
                 insertCmd.Parameters[$"p{i}"].Value = reader.IsDBNull(i) ? DBNull.Value : reader.GetValue(i);
             await insertCmd.ExecuteNonQueryAsync(ct);
             count++;
+
+            if (count % 100_000 == 0)
+                log.LogInformation("  {PgTable}: {Count:N0} rows... ({Rate:N0} rows/sec)", pgTable, count, count / tableSw.Elapsed.TotalSeconds);
         }
 
         await tx.CommitAsync(ct);
-        log.LogInformation("Migrated {Count} rows: {SqliteTable} → {PgTable}", count, sqliteTable, pgTable);
+        var rate = count > 0 ? count / tableSw.Elapsed.TotalSeconds : 0;
+        log.LogInformation("  {SqliteTable} → {PgTable}: {Count:N0} rows in {Elapsed:F1}s ({Rate:N0} rows/sec)", sqliteTable, pgTable, count, tableSw.Elapsed.TotalSeconds, rate);
     }
 
     private static async Task MigrateInstrumentTableAsync(string sqlitePath, NpgsqlDataSource pgDataSource,
@@ -217,6 +224,7 @@ public static class DataMigrator
         var insertSql = $"INSERT INTO {pgTable} ({string.Join(", ", allPgCols)}) VALUES ({pgParams}) ON CONFLICT DO NOTHING";
 
         int count = 0;
+        var tableSw = System.Diagnostics.Stopwatch.StartNew();
         await using var tx = await pgConn.BeginTransactionAsync(ct);
         await using var insertCmd = new NpgsqlCommand(insertSql, pgConn, tx);
         insertCmd.Parameters.Add("p0", NpgsqlTypes.NpgsqlDbType.Text); // instrument
@@ -231,9 +239,13 @@ public static class DataMigrator
                 insertCmd.Parameters[$"p{i + 1}"].Value = reader.IsDBNull(i) ? DBNull.Value : reader.GetValue(i);
             await insertCmd.ExecuteNonQueryAsync(ct);
             count++;
+
+            if (count % 100_000 == 0)
+                log.LogInformation("  {Instrument}/{PgTable}: {Count:N0} rows... ({Rate:N0} rows/sec)", instrument, pgTable, count, count / tableSw.Elapsed.TotalSeconds);
         }
 
         await tx.CommitAsync(ct);
-        log.LogInformation("Migrated {Count} rows: {Instrument}/{SqliteTable} → {PgTable}", count, instrument, sqliteTable, pgTable);
+        var rate = count > 0 ? count / tableSw.Elapsed.TotalSeconds : 0;
+        log.LogInformation("  {Instrument}/{SqliteTable} → {PgTable}: {Count:N0} rows in {Elapsed:F1}s ({Rate:N0} rows/sec)", instrument, sqliteTable, pgTable, count, tableSw.Elapsed.TotalSeconds, rate);
     }
 }
