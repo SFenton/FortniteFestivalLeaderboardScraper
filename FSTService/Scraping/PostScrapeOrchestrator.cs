@@ -29,6 +29,7 @@ public sealed class PostScrapeOrchestrator
     private readonly NotificationService _notifications;
     private readonly TokenManager _tokenManager;
     private readonly ScrapeProgressTracker _progress;
+    private readonly PathDataStore _pathDataStore;
     private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<PostScrapeOrchestrator> _log;
 
@@ -46,6 +47,7 @@ public sealed class PostScrapeOrchestrator
         NotificationService notifications,
         TokenManager tokenManager,
         ScrapeProgressTracker progress,
+        PathDataStore pathDataStore,
         IOptions<ScraperOptions> options,
         ILogger<PostScrapeOrchestrator> log)
     {
@@ -62,6 +64,7 @@ public sealed class PostScrapeOrchestrator
         _notifications = notifications;
         _tokenManager = tokenManager;
         _progress = progress;
+        _pathDataStore = pathDataStore;
         _options = options;
         _log = log;
     }
@@ -399,7 +402,10 @@ public sealed class PostScrapeOrchestrator
 
     /// <summary>
     /// Prune excess entries from instrument DBs down to the configured max per song,
-    /// preserving registered users. Runs after rank recomputation so ranks are fresh.
+    /// preserving registered users. When CHOpt max scores are available, entries above
+    /// the over-threshold boundary are exempt from pruning so that deep-scraped valid
+    /// entries are not discarded along with exploited scores.
+    /// Runs after rank recomputation so ranks are fresh.
     /// </summary>
     internal void PruneExcessEntries(ScrapePassContext ctx)
     {
@@ -409,9 +415,37 @@ public sealed class PostScrapeOrchestrator
         var maxEntries = maxPages * 100;
         try
         {
-            var deleted = _persistence.PruneAllInstruments(maxEntries, ctx.RegisteredIds);
+            // Build per-instrument, per-song threshold maps from CHOpt max scores.
+            // Entries above the threshold are kept unconditionally; the maxEntries cap
+            // applies only to entries at or below the threshold.
+            var allMaxScores = _pathDataStore.GetAllMaxScores();
+            Dictionary<string, IReadOnlyDictionary<string, int>>? thresholds = null;
+
+            if (allMaxScores.Count > 0)
+            {
+                var multiplier = _options.Value.OverThresholdMultiplier;
+                thresholds = new Dictionary<string, IReadOnlyDictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var instrument in _persistence.GetInstrumentKeys())
+                {
+                    var songMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var (songId, maxScores) in allMaxScores)
+                    {
+                        var choptMax = maxScores.GetByInstrument(instrument);
+                        if (choptMax.HasValue)
+                            songMap[songId] = (int)(choptMax.Value * multiplier);
+                    }
+                    if (songMap.Count > 0)
+                        thresholds[instrument] = songMap;
+                }
+
+                if (thresholds.Count == 0)
+                    thresholds = null;
+            }
+
+            var deleted = _persistence.PruneAllInstruments(maxEntries, ctx.RegisteredIds, thresholds);
             if (deleted > 0)
-                _log.LogInformation("Pruned {Deleted:N0} excess entries (keeping top {Max:N0} per song + registered users).",
+                _log.LogInformation("Pruned {Deleted:N0} excess entries (keeping top {Max:N0} valid per song + registered users).",
                     deleted, maxEntries);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

@@ -169,7 +169,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _historyReconstructor,
             _pool,
             rivalsOrchestrator, rankingsCalculator, notifications,
-            _tokenManager, _progress, options,
+            _tokenManager, _progress, pathDataStore, options,
             Substitute.For<ILogger<PostScrapeOrchestrator>>());
 
         var backfillOrchestrator = new BackfillOrchestrator(

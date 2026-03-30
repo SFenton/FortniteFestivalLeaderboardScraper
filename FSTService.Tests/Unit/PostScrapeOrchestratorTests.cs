@@ -26,6 +26,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     private readonly SharedDopPool _pool;
     private readonly NotificationService _notifications;
     private readonly ScrapeProgressTracker _progress;
+    private readonly PathDataStore _pathDataStore;
     private readonly ILogger<PostScrapeOrchestrator> _log;
 
     private readonly PostScrapeOrchestrator _sut;
@@ -100,11 +101,12 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         _notifications = new NotificationService(Substitute.For<ILogger<NotificationService>>());
         _progress = new ScrapeProgressTracker();
+        _pathDataStore = new PathDataStore(Path.Combine(_tempDir, "core.db"));
         _log = Substitute.For<ILogger<PostScrapeOrchestrator>>();
 
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, new Api.ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
-        var rankingsCalculator = new RankingsCalculator(_persistence, _metaDb, new PathDataStore(Path.Combine(_tempDir, "core.db")), _progress, Substitute.For<ILogger<RankingsCalculator>>());
+        var rankingsCalculator = new RankingsCalculator(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
 
         _sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
@@ -113,7 +115,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             Substitute.For<HistoryReconstructor>(scraper, _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
             rivalsOrchestrator, rankingsCalculator, _notifications,
-            _tokenManager, _progress, Options.Create(new ScraperOptions()), _log);
+            _tokenManager, _progress, _pathDataStore, Options.Create(new ScraperOptions()), _log);
     }
 
     public void Dispose()
@@ -349,7 +351,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         var opts = Options.Create(new ScraperOptions { MaxPagesPerLeaderboard = 1 });
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new NotificationService(Substitute.For<ILogger<NotificationService>>()), _progress, new ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
-        var rankingsCalculator2 = new RankingsCalculator(_persistence, _metaDb, new PathDataStore(Path.Combine(_tempDir, "core.db")), _progress, Substitute.For<ILogger<RankingsCalculator>>());
+        var rankingsCalculator2 = new RankingsCalculator(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
             _personalDbBuilder, _refresher,
@@ -357,7 +359,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
             rivalsOrchestrator, rankingsCalculator2, _notifications,
-            _tokenManager, _progress, opts, _log);
+            _tokenManager, _progress, _pathDataStore, opts, _log);
 
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
         var entries = Enumerable.Range(0, 200).Select(i =>
@@ -406,7 +408,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         var opts = Options.Create(new ScraperOptions { MaxPagesPerLeaderboard = 0 });
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new NotificationService(Substitute.For<ILogger<NotificationService>>()), _progress, new ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
-        var rankingsCalculator3 = new RankingsCalculator(_persistence, _metaDb, new PathDataStore(Path.Combine(_tempDir, "core.db")), _progress, Substitute.For<ILogger<RankingsCalculator>>());
+        var rankingsCalculator3 = new RankingsCalculator(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
             _personalDbBuilder, _refresher,
@@ -414,7 +416,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
             rivalsOrchestrator, rankingsCalculator3, _notifications,
-            _tokenManager, _progress, opts, _log);
+            _tokenManager, _progress, _pathDataStore, opts, _log);
 
         var ctx = CreateContext();
         sut.PruneExcessEntries(ctx); // maxPages=0 → no-op
@@ -554,6 +556,105 @@ public class PostScrapeOrchestratorTests : IDisposable
         // Use max 10 pages = 1000 entries — but we only have 50, so no pruning
         var ctx = CreateContext();
         _sut.PruneExcessEntries(ctx);
+    }
+
+    [Fact]
+    public void PruneExcessEntries_WithDeepScrapeData_KeepsOverThresholdEntries()
+    {
+        // Simulate deep scrape scenario: many over-threshold (exploited) entries + valid entries.
+        // MaxPages=1 → maxEntries=100 per song for valid entries.
+        // CHOpt max = 1000, multiplier = 1.05 → threshold = 1050.
+        // Over-threshold entries (scores > 1050) should NOT be pruned.
+        var opts = Options.Create(new ScraperOptions { MaxPagesPerLeaderboard = 1, OverThresholdMultiplier = 1.05 });
+        var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
+        var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new NotificationService(Substitute.For<ILogger<NotificationService>>()), _progress, new ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
+        var rankingsCalculator = new RankingsCalculator(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
+
+        // Seed PathDataStore with CHOpt max score for song1
+        EnsureSongRow(_pathDataStore, "song1");
+        _pathDataStore.UpdateMaxScores("song1", new SongMaxScores { MaxLeadScore = 1000 }, "hash1");
+
+        var sut = new PostScrapeOrchestrator(
+            _persistence, _firstSeenCalculator, _nameResolver,
+            _personalDbBuilder, _refresher,
+            Substitute.For<IServiceProvider>(),
+            Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
+            _pool,
+            rivalsOrchestrator, rankingsCalculator, _notifications,
+            _tokenManager, _progress, _pathDataStore, opts, _log);
+
+        var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        // 150 over-threshold entries (scores 2000–510, all > 1050)
+        var overEntries = Enumerable.Range(0, 150).Select(i =>
+            new LeaderboardEntry
+            {
+                AccountId = $"exploiter_{i}", Score = 2000 - i * 10,
+                Accuracy = 95, Stars = 5, Season = 3,
+            }).ToList();
+
+        // 200 valid entries (scores 1050 down to 51)
+        var validEntries = Enumerable.Range(0, 200).Select(i =>
+            new LeaderboardEntry
+            {
+                AccountId = $"valid_{i}", Score = 1050 - i * 5,
+                Accuracy = 95, Stars = 5, Season = 3,
+            }).ToList();
+
+        db.UpsertEntries("song1", overEntries);
+        db.UpsertEntries("song1", validEntries);
+        Assert.Equal(350, db.GetLeaderboardCount("song1"));
+
+        var ctx = CreateContext();
+        sut.PruneExcessEntries(ctx);
+
+        // maxEntries=100 for valid entries, all 150 over-threshold kept
+        // Valid entries pruned from 200 to 100 → 100 deleted
+        var remaining = db.GetLeaderboardCount("song1");
+        Assert.Equal(250, remaining); // 150 over-threshold + 100 valid
+
+        // Highest over-threshold entry still present
+        var topExploiter = db.GetPlayerScores("exploiter_0", "song1");
+        Assert.Single(topExploiter);
+        Assert.Equal(2000, topExploiter[0].Score);
+
+        // Top valid entry still present
+        var topValid = db.GetPlayerScores("valid_0", "song1");
+        Assert.Single(topValid);
+
+        // Low valid entry should be pruned (rank 200, outside top 100)
+        var prunedValid = db.GetPlayerScores("valid_199", "song1");
+        Assert.Empty(prunedValid);
+    }
+
+    private static void EnsureSongRow(PathDataStore pathStore, string songId)
+    {
+        var connField = typeof(PathDataStore)
+            .GetField("_connectionString", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var connStr = (string)connField.GetValue(pathStore)!;
+
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection(connStr);
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS Songs (
+                SongId TEXT PRIMARY KEY,
+                Title TEXT,
+                MaxLeadScore INTEGER,
+                MaxBassScore INTEGER,
+                MaxDrumsScore INTEGER,
+                MaxVocalsScore INTEGER,
+                MaxProLeadScore INTEGER,
+                MaxProBassScore INTEGER,
+                DatFileHash TEXT,
+                SongLastModified TEXT,
+                PathsGeneratedAt TEXT,
+                CHOptVersion TEXT
+            );
+            INSERT OR IGNORE INTO Songs (SongId, Title) VALUES (@songId, 'Test Song');
+            """;
+        cmd.Parameters.AddWithValue("@songId", songId);
+        cmd.ExecuteNonQuery();
     }
 
     [Fact]

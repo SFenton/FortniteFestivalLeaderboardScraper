@@ -963,9 +963,14 @@ public sealed class InstrumentDatabase : IDisposable
     /// <summary>
     /// Prune entries for a song down to the top <paramref name="maxEntries"/> by score,
     /// while always preserving entries for accounts in <paramref name="preserveAccountIds"/>.
+    /// When <paramref name="overThresholdScore"/> is provided, entries with scores above
+    /// that threshold are exempt from pruning (over-threshold / exploited scores are kept
+    /// unconditionally) and the <paramref name="maxEntries"/> cap applies only to entries
+    /// at or below the threshold.
     /// Returns the number of rows deleted.
     /// </summary>
-    public int PruneExcessEntries(string songId, int maxEntries, IReadOnlySet<string> preserveAccountIds)
+    public int PruneExcessEntries(string songId, int maxEntries, IReadOnlySet<string> preserveAccountIds,
+        int? overThresholdScore = null)
     {
         lock (_writeLock)
         {
@@ -998,21 +1003,28 @@ public sealed class InstrumentDatabase : IDisposable
                 }
             }
 
+            // When a threshold is set, only prune entries at or below it (valid entries).
+            // Entries above the threshold (over-threshold / exploited) are never deleted.
+            // When no threshold is set, use int.MaxValue so all entries are prunable.
+            int threshold = overThresholdScore ?? int.MaxValue;
+
             using var deleteCmd = conn.CreateCommand();
             deleteCmd.Transaction = tx;
             deleteCmd.CommandText = """
                 DELETE FROM LeaderboardEntries
                 WHERE SongId = @songId
                   AND AccountId NOT IN (SELECT AccountId FROM _preserve)
+                  AND Score <= @threshold
                   AND rowid NOT IN (
                       SELECT rowid FROM LeaderboardEntries
-                      WHERE SongId = @songId
+                      WHERE SongId = @songId AND Score <= @threshold
                       ORDER BY Score DESC
                       LIMIT @maxEntries
                   );
                 """;
             deleteCmd.Parameters.AddWithValue("@songId", songId);
             deleteCmd.Parameters.AddWithValue("@maxEntries", maxEntries);
+            deleteCmd.Parameters.AddWithValue("@threshold", threshold);
             var deleted = deleteCmd.ExecuteNonQuery();
 
             tx.Commit();
@@ -1022,9 +1034,12 @@ public sealed class InstrumentDatabase : IDisposable
 
     /// <summary>
     /// Prune all songs on this instrument down to <paramref name="maxEntriesPerSong"/> each.
+    /// When <paramref name="songThresholds"/> is provided, entries above the per-song
+    /// threshold are exempt from pruning (see <see cref="PruneExcessEntries"/>).
     /// Returns total rows deleted across all songs.
     /// </summary>
-    public int PruneAllSongs(int maxEntriesPerSong, IReadOnlySet<string> preserveAccountIds)
+    public int PruneAllSongs(int maxEntriesPerSong, IReadOnlySet<string> preserveAccountIds,
+        IReadOnlyDictionary<string, int>? songThresholds = null)
     {
         if (maxEntriesPerSong <= 0) return 0;
 
@@ -1042,7 +1057,8 @@ public sealed class InstrumentDatabase : IDisposable
         int totalDeleted = 0;
         foreach (var songId in songIds)
         {
-            totalDeleted += PruneExcessEntries(songId, maxEntriesPerSong, preserveAccountIds);
+            int? threshold = songThresholds is not null && songThresholds.TryGetValue(songId, out var t) ? t : null;
+            totalDeleted += PruneExcessEntries(songId, maxEntriesPerSong, preserveAccountIds, threshold);
         }
 
         return totalDeleted;

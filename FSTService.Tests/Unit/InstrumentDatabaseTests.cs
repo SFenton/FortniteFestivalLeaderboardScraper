@@ -999,6 +999,72 @@ public sealed class InstrumentDatabaseTests : IDisposable
     }
 
     [Fact]
+    public void PruneExcessEntries_with_threshold_keeps_over_threshold_entries()
+    {
+        // 10 entries above threshold (scores 2000–1100), 10 at or below threshold (scores 1000–100)
+        var entries = Enumerable.Range(0, 20).Select(i =>
+            MakeEntry($"player_{i}", 2000 - i * 100)).ToList();
+        Db.UpsertEntries("song1", entries);
+
+        // Threshold = 1050: scores > 1050 are over-threshold (players 0–9 have 2000,1900..1100)
+        // Actually scores > 1050: 2000,1900,1800,1700,1600,1500,1400,1300,1200,1100 = 10 entries
+        // Scores <= 1050: 1000,900,800,700,600,500,400,300,200,100 = 10 entries
+        // Prune valid entries to top 5 → should delete 5 lowest valid entries
+        var deleted = Db.PruneExcessEntries("song1", 5, new HashSet<string>(), overThresholdScore: 1050);
+        Assert.Equal(5, deleted); // 10 valid - 5 kept = 5 deleted
+
+        // Total remaining: 10 over-threshold + 5 valid = 15
+        Assert.Equal(15, Db.GetLeaderboardCount("song1"));
+
+        // Highest over-threshold entry still present
+        var top = Db.GetPlayerScores("player_0", "song1");
+        Assert.Single(top);
+
+        // Lowest valid entry within top 5 valid (score 600) still present
+        var kept = Db.GetPlayerScores("player_14", "song1");
+        Assert.Single(kept);
+
+        // Entry outside top 5 valid (score 100) should be pruned
+        var pruned = Db.GetPlayerScores("player_19", "song1");
+        Assert.Empty(pruned);
+    }
+
+    [Fact]
+    public void PruneExcessEntries_with_threshold_preserves_registered_users()
+    {
+        var entries = Enumerable.Range(0, 20).Select(i =>
+            MakeEntry($"player_{i}", 2000 - i * 100)).ToList();
+        Db.UpsertEntries("song1", entries);
+
+        // Threshold = 1050, prune valid to top 5, but preserve player_19 (lowest valid score = 100)
+        var preserve = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "player_19" };
+        var deleted = Db.PruneExcessEntries("song1", 5, preserve, overThresholdScore: 1050);
+        Assert.Equal(4, deleted); // 10 valid - 5 kept - 1 preserved = 4 deleted
+
+        // player_19 should still exist despite being outside top 5 valid
+        var keptScores = Db.GetPlayerScores("player_19", "song1");
+        Assert.Single(keptScores);
+    }
+
+    [Fact]
+    public void PruneExcessEntries_null_threshold_matches_original_behavior()
+    {
+        // Same as the original test: no threshold → prune by top score overall
+        var entries = Enumerable.Range(0, 20).Select(i =>
+            MakeEntry($"player_{i}", 1000 - i * 10)).ToList();
+        Db.UpsertEntries("song1", entries);
+
+        var deleted = Db.PruneExcessEntries("song1", 5, new HashSet<string>(), overThresholdScore: null);
+        Assert.Equal(15, deleted);
+
+        var remaining = Db.GetPlayerScores("player_0", "song1");
+        Assert.Single(remaining);
+
+        var pruned = Db.GetPlayerScores("player_19", "song1");
+        Assert.Empty(pruned);
+    }
+
+    [Fact]
     public void PruneAllSongs_prunes_across_songs()
     {
         for (int s = 0; s < 3; s++)

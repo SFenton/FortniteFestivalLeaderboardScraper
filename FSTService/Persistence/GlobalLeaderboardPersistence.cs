@@ -648,16 +648,22 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// <summary>
     /// Prune all instrument DBs: for each song, keep only the top <paramref name="maxEntriesPerSong"/>
     /// entries (by score), plus any entries for accounts in <paramref name="preserveAccountIds"/>.
+    /// When <paramref name="thresholdsPerInstrument"/> is provided, entries above the per-song
+    /// threshold are exempt from pruning (over-threshold / exploited scores are kept unconditionally).
     /// Returns total rows deleted across all instruments.
     /// </summary>
-    public int PruneAllInstruments(int maxEntriesPerSong, IReadOnlySet<string> preserveAccountIds)
+    public int PruneAllInstruments(int maxEntriesPerSong, IReadOnlySet<string> preserveAccountIds,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, int>>? thresholdsPerInstrument = null)
     {
         if (maxEntriesPerSong <= 0) return 0;
 
         int totalDeleted = 0;
         foreach (var (instrument, db) in _instrumentDbs)
         {
-            var deleted = db.PruneAllSongs(maxEntriesPerSong, preserveAccountIds);
+            IReadOnlyDictionary<string, int>? songThresholds = null;
+            thresholdsPerInstrument?.TryGetValue(instrument, out songThresholds);
+
+            var deleted = db.PruneAllSongs(maxEntriesPerSong, preserveAccountIds, songThresholds);
             if (deleted > 0)
                 _log.LogInformation("Pruned {Deleted:N0} excess entries from {Instrument}.", deleted, instrument);
             totalDeleted += deleted;
