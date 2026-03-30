@@ -163,4 +163,10 @@ describe('FirstRunCarousel', () => {
     expect(screen.getByLabelText('Back one entry')).toBeDisabled();
     vi.useRealTimers();
   });
+
+  it('overlay has data-glow-scope to suppress light painting', () => {
+    render(<FirstRunCarousel slides={makeSlides(1)} onDismiss={vi.fn()} />);
+    const overlay = document.body.lastElementChild as HTMLElement;
+    expect(overlay.hasAttribute('data-glow-scope')).toBe(true);
+  });
 });

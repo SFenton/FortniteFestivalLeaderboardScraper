@@ -65,7 +65,7 @@ export default function ConfirmAlert({
 
   return createPortal(
     /* v8 ignore start — animation ternaries */
-    <div style={s.overlay} onClick={handleNo}>
+    <div style={s.overlay} onClick={handleNo} data-glow-scope="">
       <div style={s.card} onClick={e => e.stopPropagation()}>
         <div style={s.title}>{title}</div>
         <div style={s.message}>{message}</div>

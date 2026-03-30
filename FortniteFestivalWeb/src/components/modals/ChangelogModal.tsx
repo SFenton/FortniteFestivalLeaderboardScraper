@@ -47,7 +47,7 @@ export default function ChangelogModal({ onDismiss, onExitComplete }: { onDismis
   const handleScroll = useCallback(() => updateMask(), [updateMask]);
 
   return (
-    <div style={s.overlay} onClick={handleDismiss}>
+    <div style={s.overlay} onClick={handleDismiss} data-glow-scope="">
       <div style={s.card} onClick={e => e.stopPropagation()}>
         <div style={s.header}>
           <h2 style={s.title}>{t('changelog.title')} <span style={s.dot}>·</span> {APP_VERSION}</h2>

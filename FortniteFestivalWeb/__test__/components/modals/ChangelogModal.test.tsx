@@ -134,4 +134,10 @@ describe('ChangelogModal', () => {
       expect(onDismiss).toHaveBeenCalled();
     });
   });
+
+  it('overlay has data-glow-scope to suppress light painting', () => {
+    const { container } = render(<ChangelogModal onDismiss={vi.fn()} />);
+    const overlay = container.firstElementChild as HTMLElement;
+    expect(overlay.hasAttribute('data-glow-scope')).toBe(true);
+  });
 });

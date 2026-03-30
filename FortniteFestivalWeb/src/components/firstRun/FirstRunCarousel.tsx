@@ -155,6 +155,7 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
     <div
       style={{ ...S.overlay, opacity: overlayOpacity, transition: `opacity ${TRANSITION_MS}ms ease`, pointerEvents: animOut ? 'none' : undefined }}
       onClick={handleDismiss}
+      data-glow-scope=""
     >
       <div
         style={{ ...cardBase, ...cardStyle }}

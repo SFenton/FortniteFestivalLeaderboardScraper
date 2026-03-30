@@ -141,4 +141,10 @@ describe('ConfirmAlert', () => {
       expect(onNo).toHaveBeenCalled();
     });
   });
+
+  it('overlay has data-glow-scope to suppress light painting', () => {
+    render(<ConfirmAlert {...defaultProps} />);
+    const overlay = document.body.lastElementChild as HTMLElement;
+    expect(overlay.hasAttribute('data-glow-scope')).toBe(true);
+  });
 });

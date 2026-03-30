@@ -98,6 +98,7 @@ export default function ModalShell({
       <div
         style={{ ...css.overlay, transition: overlayTransition, opacity: animIn ? 1 : 0 }}
         onClick={onClose}
+        data-glow-scope=""
       />
       <div
         ref={panelRef}

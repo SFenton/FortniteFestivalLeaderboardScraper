@@ -47,7 +47,8 @@ export function useProximityGlow(enabled: boolean): void {
       rafId.current = requestAnimationFrame(() => {
         rafId.current = 0;
         const cards = root.querySelectorAll<HTMLElement>(FROSTED_SELECTOR);
-        const scope = root.querySelector<HTMLElement>(SCOPE_SELECTOR);
+        const scopes = root.querySelectorAll<HTMLElement>(SCOPE_SELECTOR);
+        const scope = scopes.length > 0 ? scopes[scopes.length - 1]! : null;
         const mx = e.clientX;
         const my = e.clientY;
         for (const card of cards) {

@@ -244,4 +244,15 @@ describe('ModalShell', () => {
     // After transition, should be unmounted
     expect(screen.queryByText('Content')).toBeNull();
   });
+
+  it('overlay has data-glow-scope to suppress light painting', () => {
+    render(
+      <ModalShell visible={true} title="Test" onClose={vi.fn()}>
+        <div>Content</div>
+      </ModalShell>,
+    );
+    const dialog = screen.getByRole('dialog');
+    const overlay = dialog.previousElementSibling as HTMLElement;
+    expect(overlay.hasAttribute('data-glow-scope')).toBe(true);
+  });
 });
