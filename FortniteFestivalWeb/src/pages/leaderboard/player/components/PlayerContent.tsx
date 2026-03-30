@@ -21,6 +21,7 @@ import { IS_IOS, IS_ANDROID, IS_PWA } from '@festival/ui-utils';
 import { useTrackedPlayer } from '../../../../hooks/data/useTrackedPlayer';
 import { useScoreFilter } from '../../../../hooks/data/useScoreFilter';
 import { usePlayerPageSelect } from '../../../../contexts/FabSearchContext';
+import { useSearchQuery } from '../../../../contexts/SearchQueryContext';
 import ConfirmAlert from '../../../../components/modals/ConfirmAlert';
 import FadeIn from '../../../../components/page/FadeIn';
 import PlayerSectionHeading from '../../../player/sections/PlayerSectionHeading';
@@ -116,16 +117,19 @@ export default function PlayerContent({
   }, [data.scores, settings]);
   const overallStats = useMemo(() => computeOverallStats(effectiveScores), [effectiveScores]);
 
+  const searchQuery = useSearchQuery();
+
   // Stable navigation helpers to reduce closure overhead in onClick handlers
   /* v8 ignore start — navigation helpers */
   const navigateToSongs = useCallback((settingsUpdater: (s: ReturnType<typeof loadSongSettings>) => ReturnType<typeof loadSongSettings>) => {
     withProfileSwitch(() => {
       const s = loadSongSettings();
       saveSongSettings(settingsUpdater(s));
+      searchQuery.setQuery('');
       navigate('/songs', { state: { backTo: location.pathname, restagger: true } });
     /* v8 ignore stop */
     });
-  }, [withProfileSwitch, navigate, location.pathname]);
+  }, [withProfileSwitch, navigate, location.pathname, searchQuery]);
 
   /* v8 ignore start — navigation helper */
   const navigateToSongDetail = useCallback((songId: string, instrument: InstrumentKey, opts?: { autoScroll?: boolean }) => {

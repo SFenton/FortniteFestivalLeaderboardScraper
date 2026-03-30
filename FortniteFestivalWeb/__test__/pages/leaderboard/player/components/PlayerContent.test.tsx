@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import React from 'react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { SettingsProvider } from '../../../../../src/contexts/SettingsContext';
 import { FestivalProvider } from '../../../../../src/contexts/FestivalContext';
 import { FabSearchProvider } from '../../../../../src/contexts/FabSearchContext';
-import { SearchQueryProvider } from '../../../../../src/contexts/SearchQueryContext';
+import { SearchQueryProvider, useSearchQuery } from '../../../../../src/contexts/SearchQueryContext';
 import { PlayerDataProvider } from '../../../../../src/contexts/PlayerDataContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { stubScrollTo, stubResizeObserver, stubElementDimensions } from '../../../../helpers/browserStubs';
@@ -162,5 +163,36 @@ describe('PlayerContent', () => {
       </Providers>,
     );
     await waitFor(() => { expect(screen.getByText('FCPlayer')).toBeDefined(); });
+  });
+
+  it('clears search query when navigating to songs via category card', async () => {
+    // Helper that seeds & reads the search query from context
+    function SearchSpy({ onMount }: { onMount: (setQuery: (q: string) => void) => void }) {
+      const { query, setQuery } = useSearchQuery();
+      React.useEffect(() => { onMount(setQuery); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+      return <span data-testid="search-query">{query}</span>;
+    }
+    let setQueryFn!: (q: string) => void;
+
+    const { getByTestId } = render(
+      <Providers accountId="p1">
+        <SearchSpy onMount={(fn) => { setQueryFn = fn; }} />
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} isTrackedPlayer={true} skipAnim />
+      </Providers>,
+    );
+
+    // Wait for render
+    await waitFor(() => { expect(screen.getByText('TestPlayer')).toBeDefined(); });
+
+    // Seed a non-empty search query
+    React.act(() => { setQueryFn('hello'); });
+    expect(getByTestId('search-query').textContent).toBe('hello');
+
+    // Click "Songs Played" stat card — triggers navigateToSongs
+    const songsPlayed = screen.getAllByText('Songs Played')[0];
+    fireEvent.click(songsPlayed);
+
+    // Search query should be cleared
+    await waitFor(() => { expect(getByTestId('search-query').textContent).toBe(''); });
   });
 });
