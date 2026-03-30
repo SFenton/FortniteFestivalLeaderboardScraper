@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -32,6 +33,11 @@ namespace FortniteFestival.Core.Scraping
         private int _windowFailures;
         private readonly object _evaluationLock = new object();
 
+        // ── Throughput tracking ──
+        private readonly Stopwatch _windowStopwatch = Stopwatch.StartNew();
+        private readonly Stopwatch _lifetimeStopwatch = Stopwatch.StartNew();
+        private long _totalRequests;
+
         /// <summary>
         /// Tracks tokens that should have been drained during a DOP decrease
         /// but couldn't be because they were held by in-flight tasks.
@@ -52,6 +58,12 @@ namespace FortniteFestival.Core.Scraping
         {
             get { return Volatile.Read(ref _currentDop); }
         }
+
+        /// <summary>Total requests (successes + failures) reported since construction.</summary>
+        public long TotalRequests => Volatile.Read(ref _totalRequests);
+
+        /// <summary>Approximate in-flight requests (acquired but not yet released slots).</summary>
+        public int InFlight => Math.Max(0, CurrentDop - _semaphore.CurrentCount);
 
         public AdaptiveConcurrencyLimiter(int initialDop, int minDop, int maxDop, ILogger log)
         {
@@ -89,6 +101,7 @@ namespace FortniteFestival.Core.Scraping
         /// <summary>Report a successful request. May trigger an evaluation.</summary>
         public void ReportSuccess()
         {
+            Interlocked.Increment(ref _totalRequests);
             Interlocked.Increment(ref _windowSuccesses);
             MaybeEvaluate();
         }
@@ -96,6 +109,7 @@ namespace FortniteFestival.Core.Scraping
         /// <summary>Report a failed/retried request. May trigger an evaluation.</summary>
         public void ReportFailure()
         {
+            Interlocked.Increment(ref _totalRequests);
             Interlocked.Increment(ref _windowFailures);
             MaybeEvaluate();
         }
@@ -113,30 +127,38 @@ namespace FortniteFestival.Core.Scraping
                 if (total < EvaluationWindow) return;
 
                 int failures = _windowFailures;
+                double windowSeconds = _windowStopwatch.Elapsed.TotalSeconds;
+                double windowRps = windowSeconds > 0 ? total / windowSeconds : 0;
+                double overallRps = _lifetimeStopwatch.Elapsed.TotalSeconds > 0
+                    ? Volatile.Read(ref _totalRequests) / _lifetimeStopwatch.Elapsed.TotalSeconds : 0;
+                int inFlight = Math.Max(0, _currentDop - _semaphore.CurrentCount);
+
                 _windowSuccesses = 0;
                 _windowFailures = 0;
+                _windowStopwatch.Restart();
 
                 double errorRate = (double)failures / total;
 
                 if (errorRate > ErrorThresholdHigh)
                 {
                     int newDop = Math.Max(_minDop, (int)(_currentDop * MultiplicativeDecrease));
-                    AdjustDop(newDop, errorRate);
+                    AdjustDop(newDop, errorRate, windowRps, overallRps, inFlight);
                 }
                 else if (errorRate < ErrorThresholdLow)
                 {
                     int newDop = Math.Min(_maxDop, _currentDop + AdditiveIncrease);
-                    AdjustDop(newDop, errorRate);
+                    AdjustDop(newDop, errorRate, windowRps, overallRps, inFlight);
                 }
                 else
                 {
-                    _log.LogDebug("Adaptive DOP: holding at {Dop} (error rate {ErrorRate:P1})",
-                        _currentDop, errorRate);
+                    _log.LogInformation(
+                        "Adaptive DOP: holding at {Dop} (error rate {ErrorRate:P1}, window RPS {WindowRps:N0}, overall RPS {OverallRps:N0}, in-flight ~{InFlight})",
+                        _currentDop, errorRate, windowRps, overallRps, inFlight);
                 }
             }
         }
 
-        private void AdjustDop(int newDop, double errorRate)
+        private void AdjustDop(int newDop, double errorRate, double windowRps = 0, double overallRps = 0, int inFlight = 0)
         {
             int delta = newDop - _currentDop;
             if (delta == 0) return;
@@ -178,8 +200,9 @@ namespace FortniteFestival.Core.Scraping
                 }
             }
 
-            _log.LogInformation("Adaptive DOP: {OldDop} → {NewDop} (error rate {ErrorRate:P1})",
-                _currentDop, newDop, errorRate);
+            _log.LogInformation(
+                "Adaptive DOP: {OldDop} → {NewDop} (error rate {ErrorRate:P1}, window RPS {WindowRps:N0}, overall RPS {OverallRps:N0}, in-flight ~{InFlight})",
+                _currentDop, newDop, errorRate, windowRps, overallRps, inFlight);
             _currentDop = newDop;
         }
 

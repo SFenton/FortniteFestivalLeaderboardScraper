@@ -279,4 +279,36 @@ public class AdaptiveConcurrencyLimiterTests : IDisposable
         await _limiter.WaitAsync(CancellationToken.None);
         _limiter.Release();
     }
+
+    [Fact]
+    public void TotalRequests_IncrementsOnSuccessAndFailure()
+    {
+        _limiter = new AdaptiveConcurrencyLimiter(16, 4, 64, _log);
+
+        Assert.Equal(0, _limiter.TotalRequests);
+
+        _limiter.ReportSuccess();
+        _limiter.ReportSuccess();
+        _limiter.ReportFailure();
+
+        Assert.Equal(3, _limiter.TotalRequests);
+    }
+
+    [Fact]
+    public async Task InFlight_ReflectsAcquiredSlots()
+    {
+        _limiter = new AdaptiveConcurrencyLimiter(16, 4, 64, _log);
+
+        Assert.Equal(0, _limiter.InFlight);
+
+        await _limiter.WaitAsync(CancellationToken.None);
+        await _limiter.WaitAsync(CancellationToken.None);
+        Assert.Equal(2, _limiter.InFlight);
+
+        _limiter.Release();
+        Assert.Equal(1, _limiter.InFlight);
+
+        _limiter.Release();
+        Assert.Equal(0, _limiter.InFlight);
+    }
 }

@@ -3,6 +3,7 @@ using FortniteFestival.Core.Services;
 using FSTService.Api;
 using FSTService.Auth;
 using FSTService.Persistence;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace FSTService.Scraping;
@@ -20,8 +21,9 @@ public sealed class PostScrapeOrchestrator
     private readonly AccountNameResolver _nameResolver;
     private readonly PersonalDbBuilder _personalDbBuilder;
     private readonly PostScrapeRefresher _refresher;
-    private readonly SongProcessingMachine _machine;
+    private readonly IServiceProvider _serviceProvider;
     private readonly HistoryReconstructor _historyReconstructor;
+    private readonly SharedDopPool _pool;
     private readonly RivalsOrchestrator _rivalsOrchestrator;
     private readonly RankingsCalculator _rankingsCalculator;
     private readonly NotificationService _notifications;
@@ -36,8 +38,9 @@ public sealed class PostScrapeOrchestrator
         AccountNameResolver nameResolver,
         PersonalDbBuilder personalDbBuilder,
         PostScrapeRefresher refresher,
-        SongProcessingMachine machine,
+        IServiceProvider serviceProvider,
         HistoryReconstructor historyReconstructor,
+        SharedDopPool pool,
         RivalsOrchestrator rivalsOrchestrator,
         RankingsCalculator rankingsCalculator,
         NotificationService notifications,
@@ -51,8 +54,9 @@ public sealed class PostScrapeOrchestrator
         _nameResolver = nameResolver;
         _personalDbBuilder = personalDbBuilder;
         _refresher = refresher;
-        _machine = machine;
+        _serviceProvider = serviceProvider;
         _historyReconstructor = historyReconstructor;
+        _pool = pool;
         _rivalsOrchestrator = rivalsOrchestrator;
         _rankingsCalculator = rankingsCalculator;
         _notifications = notifications;
@@ -73,15 +77,8 @@ public sealed class PostScrapeOrchestrator
 
         // Refresh registered users BEFORE rankings so that low scores (below the
         // global-scrape cutoff) are present in the instrument DBs when rankings
-        // are computed.  Without this, newly-refreshed entries would only appear
-        // in the next scrape pass's ranking calculation.
-        var refreshConcurrency = Math.Max(1, _options.Value.SongConcurrency)
-            * GlobalLeaderboardScraper.AllInstruments.Count
-            * Math.Max(1, _options.Value.PageConcurrency);
-        int initialDop = Math.Max(1, refreshConcurrency / 2);
-        using var limiter = new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: refreshConcurrency, _log);
-
-        await RefreshRegisteredUsersAsync(ctx, limiter, ct);
+        // are computed.  The SharedDopPool handles concurrency.
+        await RefreshRegisteredUsersAsync(ctx, ct);
         await ComputeRankingsAsync(service, ct);
         await RebuildPersonalDbsAsync(ctx, ct);
         await ComputeRivalsAsync(ctx, ct);
@@ -208,9 +205,10 @@ public sealed class PostScrapeOrchestrator
 
     /// <summary>
     /// Refresh stale/missing entries for registered users using the song processing machine.
-    /// Also enqueues backfill and history recon users into the same machine run.
+    /// Also processes pending backfill and history recon users in the same run.
+    /// All songs are processed in parallel, bounded by the shared DOP pool.
     /// </summary>
-    internal async Task RefreshRegisteredUsersAsync(ScrapePassContext ctx, AdaptiveConcurrencyLimiter limiter, CancellationToken ct)
+    internal async Task RefreshRegisteredUsersAsync(ScrapePassContext ctx, CancellationToken ct)
     {
         if (ctx.RegisteredIds.Count == 0)
             return;
@@ -219,8 +217,6 @@ public sealed class PostScrapeOrchestrator
 
         try
         {
-            var seenSet = new HashSet<(string AccountId, string SongId, string Instrument)>(
-                ctx.Aggregates.SeenRegisteredEntries);
             var chartedSongIds = ctx.ScrapeRequests.Select(r => r.SongId).ToList();
 
             var refreshToken = await _tokenManager.GetAccessTokenAsync(ct);
@@ -246,17 +242,19 @@ public sealed class PostScrapeOrchestrator
             }
 
             var currentSeason = _persistence.GetMaxSeasonAcrossInstruments() ?? 1;
+            var allSeasons = seasonWindows.Select(w => w.SeasonNumber).ToHashSet();
 
-            // ── Enqueue post-scrape users ────────────────────────
+            // ── Build user list ──────────────────────────────────
+            var users = new List<UserWorkItem>();
+
+            // Post-scrape users
             foreach (var accountId in ctx.RegisteredIds)
             {
-                // Skip users whose entries were already seen in the global scrape
-                // for every song/instrument — they don't need any refresh.
                 var seasonsNeeded = new HashSet<int>();
                 if (_options.Value.RefreshCurrentSeasonSessions)
                     seasonsNeeded.Add(currentSeason);
 
-                _machine.EnqueueUser(new UserWorkItem
+                users.Add(new UserWorkItem
                 {
                     AccountId = accountId,
                     Purposes = WorkPurpose.PostScrape,
@@ -265,13 +263,12 @@ public sealed class PostScrapeOrchestrator
                 });
             }
 
-            // ── Also enqueue pending backfill users ──────────────
+            // Pending backfill users
             var pendingBackfills = _persistence.Meta.GetPendingBackfills();
-            var allSeasons = seasonWindows.Select(w => w.SeasonNumber).ToHashSet();
             foreach (var bf in pendingBackfills)
             {
                 var alreadyChecked = _persistence.Meta.GetCheckedBackfillPairs(bf.AccountId);
-                _machine.EnqueueUser(new UserWorkItem
+                users.Add(new UserWorkItem
                 {
                     AccountId = bf.AccountId,
                     Purposes = WorkPurpose.Backfill | WorkPurpose.HistoryRecon,
@@ -281,7 +278,7 @@ public sealed class PostScrapeOrchestrator
                 });
             }
 
-            // ── Also enqueue pending history recon users ─────────
+            // Pending history recon users
             foreach (var accountId in ctx.RegisteredIds)
             {
                 var backfillStatus = _persistence.Meta.GetBackfillStatus(accountId);
@@ -290,12 +287,11 @@ public sealed class PostScrapeOrchestrator
                 var reconStatus = _persistence.Meta.GetHistoryReconStatus(accountId);
                 if (reconStatus?.Status == "complete") continue;
 
-                // Don't double-enqueue if already in pending backfills
                 if (pendingBackfills.Any(b => b.AccountId.Equals(accountId, StringComparison.OrdinalIgnoreCase)))
                     continue;
 
                 var alreadyProcessed = _persistence.Meta.GetProcessedHistoryReconPairs(accountId);
-                _machine.EnqueueUser(new UserWorkItem
+                users.Add(new UserWorkItem
                 {
                     AccountId = accountId,
                     Purposes = WorkPurpose.HistoryRecon,
@@ -305,81 +301,40 @@ public sealed class PostScrapeOrchestrator
                 });
             }
 
-            // ── Run the machine ──────────────────────────────────
-            var completionHandler = new PostScrapeCompletionHandler(
-                _persistence, _personalDbBuilder, _rivalsOrchestrator, _notifications, _log);
-
-            var result = await _machine.RunAsync(
-                chartedSongIds, seasonWindows,
+            // ── Run the machine (all songs in parallel) ──────────
+            var machine = _serviceProvider.GetRequiredService<SongProcessingMachine>();
+            var result = await machine.RunAsync(
+                chartedSongIds, users, seasonWindows,
                 refreshToken, callerAccountId,
-                limiter, _options.Value.LookupBatchSize,
-                completionHandler, ct);
+                _pool, isHighPriority: true,
+                _options.Value.LookupBatchSize, reportProgress: true, ct);
 
-            if (result.EntriesUpdated > 0)
+            if (result.EntriesUpdated > 0 || result.SessionsInserted > 0)
                 _log.LogInformation("Song machine updated {Entries} entries, {Sessions} sessions for {Users} users.",
                     result.EntriesUpdated, result.SessionsInserted, result.UsersProcessed);
+
+            // ── Handle per-user completion inline ────────────────
+            foreach (var user in users.Where(u => u.Purposes.HasFlag(WorkPurpose.Backfill)))
+            {
+                try
+                {
+                    _persistence.Meta.CompleteBackfill(user.AccountId);
+                    _rivalsOrchestrator.ComputeForUser(user.AccountId);
+                    _personalDbBuilder.RebuildForAccounts(
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { user.AccountId },
+                        _persistence.Meta);
+                    _ = _notifications.NotifyBackfillCompleteAsync(user.AccountId);
+                    _ = _notifications.NotifyPersonalDbReadyAsync(user.AccountId);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Post-backfill actions failed for {AccountId}.", user.AccountId);
+                }
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Song processing machine failed. Will retry next pass.");
-        }
-    }
-
-    /// <summary>
-    /// Handles completion events from the song processing machine during post-scrape.
-    /// Triggers personal DB rebuilds, rivals computation, and notifications.
-    /// </summary>
-    private sealed class PostScrapeCompletionHandler : IWorkCompletionHandler
-    {
-        private readonly GlobalLeaderboardPersistence _persistence;
-        private readonly PersonalDbBuilder _personalDbBuilder;
-        private readonly RivalsOrchestrator _rivalsOrchestrator;
-        private readonly NotificationService _notifications;
-        private readonly ILogger _log;
-
-        public PostScrapeCompletionHandler(
-            GlobalLeaderboardPersistence persistence,
-            PersonalDbBuilder personalDbBuilder,
-            RivalsOrchestrator rivalsOrchestrator,
-            NotificationService notifications,
-            ILogger log)
-        {
-            _persistence = persistence;
-            _personalDbBuilder = personalDbBuilder;
-            _rivalsOrchestrator = rivalsOrchestrator;
-            _notifications = notifications;
-            _log = log;
-        }
-
-        public void OnPostScrapeComplete(IReadOnlySet<string> accountIds)
-        {
-            _log.LogInformation("Post-scrape refresh complete for {Count} registered users.", accountIds.Count);
-        }
-
-        public void OnUserBackfillComplete(string accountId)
-        {
-            _persistence.Meta.CompleteBackfill(accountId);
-            _log.LogInformation("Backfill complete for {AccountId} (via song machine).", accountId);
-
-            try
-            {
-                _rivalsOrchestrator.ComputeForUser(accountId);
-                _personalDbBuilder.RebuildForAccounts(
-                    new HashSet<string>(StringComparer.OrdinalIgnoreCase) { accountId },
-                    _persistence.Meta);
-                // Fire-and-forget notifications (best effort)
-                _ = _notifications.NotifyBackfillCompleteAsync(accountId);
-                _ = _notifications.NotifyPersonalDbReadyAsync(accountId);
-            }
-            catch (Exception ex)
-            {
-                _log.LogWarning(ex, "Post-backfill actions failed for {AccountId}.", accountId);
-            }
-        }
-
-        public void OnMachineIdle()
-        {
-            _log.LogDebug("Song processing machine idle.");
         }
     }
 

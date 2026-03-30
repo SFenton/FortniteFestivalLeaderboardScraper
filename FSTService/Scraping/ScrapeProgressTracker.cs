@@ -465,6 +465,9 @@ public sealed class ScrapeProgressTracker
             Retries = _retriesMade,
             BytesReceived = _bytesReceived,
             CurrentDop = _adaptiveLimiter?.CurrentDop,
+            InFlight = _adaptiveLimiter?.InFlight,
+            RequestsPerSecond = elapsed.TotalSeconds > 0
+                ? Math.Round(_requestsMade / elapsed.TotalSeconds, 1) : null,
         };
     }
 
@@ -543,6 +546,9 @@ public sealed class ScrapeProgressTracker
             Retries = retries > 0 ? retries : null,
             EntriesUpdated = updated > 0 ? updated : null,
             CurrentDop = _adaptiveLimiter?.CurrentDop,
+            InFlight = _adaptiveLimiter?.InFlight,
+            RequestsPerSecond = requests > 0 && elapsed.TotalSeconds > 0
+                ? Math.Round(requests / elapsed.TotalSeconds, 1) : null,
         };
     }
 
@@ -643,6 +649,8 @@ public sealed class OperationSnapshot
     public int? Retries { get; init; }
     public long? BytesReceived { get; init; }
     public int? CurrentDop { get; init; }
+    public int? InFlight { get; init; }
+    public double? RequestsPerSecond { get; init; }
 
     // ── Name resolution-specific ──
     public ProgressCounter? Batches { get; init; }

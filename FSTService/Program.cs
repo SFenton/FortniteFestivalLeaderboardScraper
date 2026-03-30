@@ -174,6 +174,13 @@ builder.Services.AddSingleton<ScoreBackfiller>();
 builder.Services.AddSingleton<PostScrapeRefresher>();
 builder.Services.AddSingleton<BatchResultProcessor>();
 builder.Services.AddTransient<SongProcessingMachine>();
+builder.Services.AddSingleton<SharedDopPool>(sp =>
+{
+    var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
+    var log = sp.GetRequiredService<ILoggerFactory>().CreateLogger("SharedDopPool");
+    return new SharedDopPool(opts.MachineDop, opts.MachineMinDop, opts.MachineMaxDop,
+        opts.MachineLowPriorityPercent, log);
+});
 builder.Services.AddSingleton<FirstSeenSeasonCalculator>();
 builder.Services.AddSingleton<FSTService.Api.NotificationService>();
 builder.Services.AddSingleton<FSTService.Api.SongsCacheService>();

@@ -177,6 +177,13 @@ public sealed class ScraperOptions
     public int MachineMaxDop { get; set; } = 256;
 
     /// <summary>
+    /// Percentage of max DOP available to low-priority callers (backfill/registration).
+    /// High-priority callers (post-scrape) get access to the full DOP.
+    /// Default 20 = low-priority machines can use up to 20% of the pool.
+    /// </summary>
+    public int MachineLowPriorityPercent { get; set; } = 20;
+
+    /// <summary>
     /// Capacity of each per-instrument bounded channel in the persistence pipeline.
     /// Higher values allow more buffering between scraper and writer tasks; lower
     /// values apply earlier back-pressure. Default 32.

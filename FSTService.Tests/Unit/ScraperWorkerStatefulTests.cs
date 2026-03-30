@@ -351,10 +351,11 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
 
         await _machine.Received().RunAsync(
             Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<IReadOnlyList<UserWorkItem>>(),
             Arg.Any<IReadOnlyList<FSTService.Persistence.SeasonWindowInfo>>(),
             Arg.Any<string>(), Arg.Any<string>(),
-            Arg.Any<FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter>(),
-            Arg.Any<int>(), Arg.Any<IWorkCompletionHandler?>(), Arg.Any<CancellationToken>());
+            Arg.Any<SharedDopPool>(),
+            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
 
         _personalDbBuilder.Received().RebuildForAccounts(
             Arg.Any<HashSet<string>>(), Arg.Any<MetaDatabase>());

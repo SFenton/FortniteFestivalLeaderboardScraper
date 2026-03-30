@@ -31,6 +31,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
     protected readonly BackfillQueue _backfillQueue;
     protected readonly PostScrapeRefresher _refresher;
     protected readonly SongProcessingMachine _machine;
+    protected readonly SharedDopPool _pool;
     protected readonly HistoryReconstructor _historyReconstructor;
     protected readonly FirstSeenSeasonCalculator _firstSeenCalculator;
     protected readonly FestivalService _festivalService;
@@ -99,10 +100,13 @@ public abstract class ScraperWorkerTestBase : IDisposable
             new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>()),
             _persistence, _progress, Substitute.For<ILogger<SongProcessingMachine>>());
         _machine.RunAsync(
-            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<AdaptiveConcurrencyLimiter>(),
-            Arg.Any<int>(), Arg.Any<IWorkCompletionHandler?>(), Arg.Any<CancellationToken>())
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
+            Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
+            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(new SongProcessingMachine.MachineResult());
+
+        _pool = new SharedDopPool(16, minDop: 2, maxDop: 64, lowPriorityPercent: 20, Substitute.For<ILogger>());
 
         _historyReconstructor = Substitute.For<HistoryReconstructor>(
             _scraper, _persistence, new HttpClient(), _progress,
@@ -154,11 +158,16 @@ public abstract class ScraperWorkerTestBase : IDisposable
 
         var rankingsCalculator = new RankingsCalculator(_persistence, _persistence.Meta, pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
 
+        // ServiceProvider returns the mocked machine
+        var serviceProvider = Substitute.For<IServiceProvider>();
+        serviceProvider.GetService(typeof(SongProcessingMachine)).Returns(_machine);
+
         var postScrapeOrchestrator = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
             _personalDbBuilder, _refresher,
-            _machine,
+            serviceProvider,
             _historyReconstructor,
+            _pool,
             rivalsOrchestrator, rankingsCalculator, notifications,
             _tokenManager, _progress, options,
             Substitute.For<ILogger<PostScrapeOrchestrator>>());

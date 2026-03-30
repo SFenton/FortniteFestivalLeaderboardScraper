@@ -4,28 +4,14 @@ using FSTService.Persistence;
 namespace FSTService.Scraping;
 
 /// <summary>
-/// Callback interface for machine lifecycle events.
-/// </summary>
-public interface IWorkCompletionHandler
-{
-    /// <summary>All original post-scrape users have completed their first full pass.</summary>
-    void OnPostScrapeComplete(IReadOnlySet<string> accountIds);
-
-    /// <summary>A single user has completed all their required work (backfill + recon).</summary>
-    void OnUserBackfillComplete(string accountId);
-
-    /// <summary>The machine has no more work to do and is about to exit.</summary>
-    void OnMachineIdle();
-}
-
-/// <summary>
-/// A song-first batch processing machine that iterates through all songs,
+/// A song-parallel batch processing machine that fires all songs concurrently,
 /// batching registered users into V2 API calls to perform alltime lookups
-/// and seasonal session queries in a single unified pass.
+/// and seasonal session queries.
 ///
-/// Replaces the separate <see cref="PostScrapeRefresher"/>,
-/// <see cref="ScoreBackfiller"/>, and <see cref="HistoryReconstructor"/>
-/// with a single O(songs × instruments × seasons × ceil(users/batchSize)) system.
+/// Each instance is <b>discrete and single-use</b>: one caller (post-scrape,
+/// registration backfill, etc.) creates a machine, runs it, and discards it.
+/// All instances share a <see cref="SharedDopPool"/> that governs total
+/// concurrent API calls with priority-aware slot allocation.
 /// </summary>
 public class SongProcessingMachine
 {
@@ -34,21 +20,6 @@ public class SongProcessingMachine
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<SongProcessingMachine> _log;
-
-    /// <summary>Active roster of users being processed.</summary>
-    private readonly List<UserWorkItem> _roster = [];
-
-    /// <summary>Thread-safe queue for hot-adding users mid-run.</summary>
-    private readonly UserWorkQueue _hotAddQueue = new();
-
-    /// <summary>Thread-safe queue for hot-adding songs mid-run.</summary>
-    private readonly ConcurrentQueue<string> _hotAddSongQueue = new();
-
-    /// <summary>Current song index the machine is processing.</summary>
-    private int _currentSongIndex;
-
-    /// <summary>Songs processed so far in the current pass (for progress reporting).</summary>
-    private int _songsProcessed;
 
     public SongProcessingMachine(
         ILeaderboardQuerier scraper,
@@ -64,34 +35,36 @@ public class SongProcessingMachine
         _log = log;
     }
 
-    /// <summary>Enqueue a user for processing before the machine starts.</summary>
-    public void EnqueueUser(UserWorkItem item) => _roster.Add(item);
-
-    /// <summary>Hot-add a user while the machine is running. Thread-safe.</summary>
-    public void HotAddUser(UserWorkItem item) => _hotAddQueue.Enqueue(item);
-
-    /// <summary>Hot-add a new song while the machine is running. Thread-safe.</summary>
-    public void HotAddSong(string songId) => _hotAddSongQueue.Enqueue(songId);
-
-    /// <summary>Number of users pending in the hot-add queue (for progress).</summary>
-    public int HotAddQueueDepth => _hotAddQueue.Count;
-
     /// <summary>
-    /// Run the machine to completion. Iterates through all songs, processing all
-    /// users' work requirements via batched V2 API calls. Loops back for hot-added
-    /// users/songs until no work remains.
+    /// Run the machine to completion. Fires all songs in parallel, bounded only
+    /// by the shared DOP pool. Each song fans out 6 instruments in parallel,
+    /// each instrument performs alltime + seasonal batch lookups.
     /// </summary>
+    /// <param name="songIds">All charted song IDs to process.</param>
+    /// <param name="users">Users to process (all songs processed for all users).</param>
+    /// <param name="seasonWindows">Discovered season windows for seasonal queries.</param>
+    /// <param name="accessToken">Epic access token.</param>
+    /// <param name="callerAccountId">Caller's Epic account ID.</param>
+    /// <param name="pool">Shared DOP pool for slot acquisition.</param>
+    /// <param name="isHighPriority">True for post-scrape, false for backfill.</param>
+    /// <param name="batchSize">Max accounts per V2 batch call.</param>
+    /// <param name="reportProgress">Whether to report to ScrapeProgressTracker (only post-scrape machine should).</param>
+    /// <param name="ct">Cancellation token.</param>
     public virtual async Task<MachineResult> RunAsync(
         IReadOnlyList<string> songIds,
+        IReadOnlyList<UserWorkItem> users,
         IReadOnlyList<SeasonWindowInfo> seasonWindows,
         string accessToken,
         string callerAccountId,
-        AdaptiveConcurrencyLimiter limiter,
+        SharedDopPool pool,
+        bool isHighPriority = true,
         int batchSize = 500,
-        IWorkCompletionHandler? completionHandler = null,
+        bool reportProgress = true,
         CancellationToken ct = default)
     {
-        var songList = new List<string>(songIds);
+        if (songIds.Count == 0 || users.Count == 0)
+            return new MachineResult();
+
         var instruments = GlobalLeaderboardScraper.AllInstruments;
 
         // Build season prefix lookup
@@ -99,144 +72,71 @@ public class SongProcessingMachine
         foreach (var w in seasonWindows)
             seasonPrefixMap[w.SeasonNumber] = HistoryReconstructor.GetSeasonPrefix(w.SeasonNumber);
 
-        // Set total songs needed for each user
-        foreach (var user in _roster)
-            user.TotalSongsNeeded = songList.Count;
-
-        // Track which accounts started as post-scrape users
-        var postScrapeAccountIds = new HashSet<string>(
-            _roster.Where(u => u.Purposes.HasFlag(WorkPurpose.PostScrape)).Select(u => u.AccountId),
-            StringComparer.OrdinalIgnoreCase);
-
         int totalUpdated = 0;
         int totalSessions = 0;
         int totalApiCalls = 0;
-        bool postScrapeEmitted = false;
+        int songsCompleted = 0;
 
-        _progress.SetAdaptiveLimiter(limiter);
-        _progress.BeginPhaseProgress(songList.Count);
-        _progress.SetPhaseAccounts(_roster.Count);
-
-        // Early exit: no songs or no users with real work
-        if (songList.Count == 0 || _roster.Count == 0)
+        if (reportProgress)
         {
-            _progress.SetAdaptiveLimiter(null);
-            completionHandler?.OnMachineIdle();
-            return new MachineResult();
+            _progress.SetAdaptiveLimiter(pool.Limiter);
+            _progress.BeginPhaseProgress(songIds.Count);
+            _progress.SetPhaseAccounts(users.Count);
         }
 
         _log.LogInformation(
-            "SongProcessingMachine starting: {Songs} songs, {Users} users, batch size {BatchSize}, DOP={Dop}.",
-            songList.Count, _roster.Count, batchSize, limiter.CurrentDop);
+            "SongProcessingMachine starting: {Songs} songs, {Users} users, batch={BatchSize}, priority={Priority}, DOP={Dop}.",
+            songIds.Count, users.Count, batchSize, isHighPriority ? "high" : "low", pool.CurrentDop);
 
-        // ─── Main song loop ─────────────────────────────────────
-        bool hasMoreWork = true;
-        while (hasMoreWork)
+        // ─── Fire ALL songs in parallel ─────────────────────────
+        var songTasks = songIds.Select(async songId =>
         {
-            hasMoreWork = false;
+            ct.ThrowIfCancellationRequested();
 
-            for (_currentSongIndex = 0; _currentSongIndex < songList.Count; _currentSongIndex++)
-            {
-                ct.ThrowIfCancellationRequested();
+            var result = await ProcessSongAsync(
+                songId, instruments, users, seasonPrefixMap,
+                accessToken, callerAccountId, pool, isHighPriority, batchSize, ct);
 
-                // Drain hot-add queues
-                DrainHotAddQueues(songList);
+            Interlocked.Add(ref totalUpdated, result.EntriesUpdated);
+            Interlocked.Add(ref totalSessions, result.SessionsInserted);
+            Interlocked.Add(ref totalApiCalls, result.ApiCalls);
+            Interlocked.Increment(ref songsCompleted);
 
-                var songId = songList[_currentSongIndex];
-
-                // Determine which users need work at this song index
-                var activeUsers = _roster.Where(u => !u.IsComplete && u.NeedsWorkAtSongIndex(_currentSongIndex)).ToList();
-                if (activeUsers.Count == 0)
-                {
-                    Interlocked.Increment(ref _songsProcessed);
-                    _progress.ReportPhaseItemComplete();
-                    continue;
-                }
-
-                // ─── Process this song across all instruments ─────────
-                var songResult = await ProcessSongAsync(
-                    songId, instruments, activeUsers, seasonPrefixMap,
-                    accessToken, callerAccountId, limiter, batchSize, ct);
-
-                totalUpdated += songResult.EntriesUpdated;
-                totalSessions += songResult.SessionsInserted;
-                totalApiCalls += songResult.ApiCalls;
-
-                // Mark song complete for each active user
-                foreach (var user in activeUsers)
-                {
-                    if (!user.IsAlreadyChecked(songId, ""))
-                        Interlocked.Increment(ref user.CompletedSongCount);
-                }
-
-                Interlocked.Increment(ref _songsProcessed);
+            if (reportProgress)
                 _progress.ReportPhaseItemComplete();
+        }).ToList();
 
-                // Check for newly completed users
-                CheckCompletions(completionHandler);
-            }
+        await Task.WhenAll(songTasks);
 
-            // End of song list: emit post-scrape completion (first pass only)
-            if (!postScrapeEmitted && postScrapeAccountIds.Count > 0)
-            {
-                completionHandler?.OnPostScrapeComplete(postScrapeAccountIds);
-                postScrapeEmitted = true;
-            }
-
-            // Check if any hot-added users still need earlier songs (loop back)
-            DrainHotAddQueues(songList);
-            var incomplete = _roster.Where(u => !u.IsComplete).ToList();
-            if (incomplete.Count > 0)
-            {
-                // Reset song progress for a new pass over the song list
-                _songsProcessed = 0;
-                _progress.BeginPhaseProgress(songList.Count);
-                _progress.SetPhaseAccounts(incomplete.Count);
-
-                _log.LogInformation(
-                    "SongProcessingMachine looping back: {Users} users still need work.",
-                    incomplete.Count);
-
-                // For hot-added users, clear the starting index restriction
-                // so they are eligible for ALL songs on subsequent passes.
-                foreach (var user in incomplete)
-                {
-                    user.TotalSongsNeeded = songList.Count;
-                    user.StartingSongIndex = -1;
-                }
-
-                hasMoreWork = true;
-            }
-        }
-
-        _progress.SetAdaptiveLimiter(null);
-        completionHandler?.OnMachineIdle();
+        if (reportProgress)
+            _progress.SetAdaptiveLimiter(null);
 
         _log.LogInformation(
-            "SongProcessingMachine complete: {Updated} entries updated, {Sessions} sessions inserted, {ApiCalls} API calls.",
-            totalUpdated, totalSessions, totalApiCalls);
+            "SongProcessingMachine complete: {Updated} entries, {Sessions} sessions, {ApiCalls} API calls across {Songs} songs.",
+            totalUpdated, totalSessions, totalApiCalls, songIds.Count);
 
         return new MachineResult
         {
             EntriesUpdated = totalUpdated,
             SessionsInserted = totalSessions,
             ApiCalls = totalApiCalls,
-            UsersProcessed = _roster.Count(u => u.IsComplete),
+            UsersProcessed = users.Count,
         };
     }
 
     /// <summary>
-    /// Process one song across all instruments for all active users.
-    /// Fires parallel batch V2 calls per instrument, then per season.
+    /// Process one song across all instruments for all users.
+    /// Fires 6 instrument tasks in parallel.
     /// </summary>
     private async Task<SongStepResult> ProcessSongAsync(
         string songId,
         IReadOnlyList<string> instruments,
-        IReadOnlyList<UserWorkItem> activeUsers,
+        IReadOnlyList<UserWorkItem> users,
         IReadOnlyDictionary<int, string> seasonPrefixMap,
         string accessToken,
         string callerAccountId,
-        AdaptiveConcurrencyLimiter limiter,
+        SharedDopPool pool,
+        bool isHighPriority,
         int batchSize,
         CancellationToken ct)
     {
@@ -244,12 +144,11 @@ public class SongProcessingMachine
         int sessionsInserted = 0;
         int apiCalls = 0;
 
-        // Process all instruments in parallel (each instrument's work acquires limiter slots)
         var instrumentTasks = instruments.Select(async instrument =>
         {
             var result = await ProcessSongInstrumentAsync(
-                songId, instrument, activeUsers, seasonPrefixMap,
-                accessToken, callerAccountId, limiter, batchSize, ct);
+                songId, instrument, users, seasonPrefixMap,
+                accessToken, callerAccountId, pool, isHighPriority, batchSize, ct);
 
             Interlocked.Add(ref entriesUpdated, result.EntriesUpdated);
             Interlocked.Add(ref sessionsInserted, result.SessionsInserted);
@@ -267,17 +166,18 @@ public class SongProcessingMachine
     }
 
     /// <summary>
-    /// Process one song + one instrument for all active users.
-    /// Performs alltime batch lookup, then seasonal session lookups for each required season.
+    /// Process one song + one instrument for all users.
+    /// Performs alltime batch lookup, then seasonal session lookups per required season.
     /// </summary>
     private async Task<SongStepResult> ProcessSongInstrumentAsync(
         string songId,
         string instrument,
-        IReadOnlyList<UserWorkItem> activeUsers,
+        IReadOnlyList<UserWorkItem> users,
         IReadOnlyDictionary<int, string> seasonPrefixMap,
         string accessToken,
         string callerAccountId,
-        AdaptiveConcurrencyLimiter limiter,
+        SharedDopPool pool,
+        bool isHighPriority,
         int batchSize,
         CancellationToken ct)
     {
@@ -286,7 +186,7 @@ public class SongProcessingMachine
         int apiCalls = 0;
 
         // ─── Alltime lookups ──────────────────────────────────
-        var alltimeUsers = activeUsers
+        var alltimeUsers = users
             .Where(u => u.AllTimeNeeded && !u.IsAlreadyChecked(songId, instrument))
             .ToList();
 
@@ -299,7 +199,8 @@ public class SongProcessingMachine
                 var chunk = alltimeUsers.GetRange(offset, Math.Min(batchSize, alltimeUsers.Count - offset));
                 var targetIds = chunk.Select(u => u.AccountId).ToList();
 
-                await limiter.WaitAsync(ct);
+                if (isHighPriority) await pool.AcquireHighAsync(ct);
+                else await pool.AcquireLowAsync(ct);
                 try
                 {
                     _progress.ReportPhaseRequest();
@@ -310,11 +211,12 @@ public class SongProcessingMachine
                     {
                         entries = await _scraper.LookupMultipleAccountsAsync(
                             songId, instrument, targetIds,
-                            accessToken, callerAccountId, limiter, ct);
+                            accessToken, callerAccountId, pool.Limiter, ct);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         _log.LogDebug(ex, "Alltime batch failed for {Song}/{Instrument}.", songId, instrument);
+                        _progress.ReportPhaseRetry();
                         continue;
                     }
 
@@ -323,7 +225,6 @@ public class SongProcessingMachine
                     if (count > 0)
                         _progress.ReportPhaseEntryUpdated(count);
 
-                    // Mark backfill checked for each user in the chunk
                     foreach (var user in chunk)
                     {
                         if (user.Purposes.HasFlag(WorkPurpose.Backfill))
@@ -335,15 +236,15 @@ public class SongProcessingMachine
                 }
                 finally
                 {
-                    limiter.Release();
+                    if (isHighPriority) pool.ReleaseHigh();
+                    else pool.ReleaseLow();
                 }
             }
         }
 
         // ─── Seasonal session lookups ─────────────────────────
-        // Group users by which seasons they need, to avoid querying seasons no one needs.
         var seasonUserGroups = new Dictionary<int, List<UserWorkItem>>();
-        foreach (var user in activeUsers)
+        foreach (var user in users)
         {
             if (user.SeasonsNeeded.Count == 0) continue;
             if (user.IsAlreadyChecked(songId, instrument)) continue;
@@ -370,7 +271,8 @@ public class SongProcessingMachine
                 var chunk = seasonUsers.GetRange(offset, Math.Min(batchSize, seasonUsers.Count - offset));
                 var targetIds = chunk.Select(u => u.AccountId).ToList();
 
-                await limiter.WaitAsync(ct);
+                if (isHighPriority) await pool.AcquireHighAsync(ct);
+                else await pool.AcquireLowAsync(ct);
                 try
                 {
                     _progress.ReportPhaseRequest();
@@ -381,12 +283,13 @@ public class SongProcessingMachine
                     {
                         sessions = await _scraper.LookupMultipleAccountSessionsAsync(
                             songId, instrument, seasonPrefix, targetIds,
-                            accessToken, callerAccountId, limiter, ct);
+                            accessToken, callerAccountId, pool.Limiter, ct);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         _log.LogDebug(ex, "Seasonal batch failed for {Song}/{Instrument}/{Season}.",
                             songId, instrument, seasonPrefix);
+                        _progress.ReportPhaseRetry();
                         continue;
                     }
 
@@ -397,13 +300,14 @@ public class SongProcessingMachine
                 }
                 finally
                 {
-                    limiter.Release();
+                    if (isHighPriority) pool.ReleaseHigh();
+                    else pool.ReleaseLow();
                 }
             }
         }
 
         // Mark history recon processed for users doing that work
-        foreach (var user in activeUsers)
+        foreach (var user in users)
         {
             if (user.Purposes.HasFlag(WorkPurpose.HistoryRecon) && !user.IsAlreadyChecked(songId, instrument))
                 _resultProcessor.MarkHistoryReconProcessed(user.AccountId, songId, instrument);
@@ -435,55 +339,6 @@ public class SongProcessingMachine
         }
 
         return existing;
-    }
-
-    /// <summary>Drain hot-add queues and integrate new users/songs into the active roster.</summary>
-    private void DrainHotAddQueues(List<string> songList)
-    {
-        // Drain new users
-        var newUsers = _hotAddQueue.DrainAll();
-        foreach (var user in newUsers)
-        {
-            user.TotalSongsNeeded = songList.Count;
-            _roster.Add(user);
-            _log.LogInformation("Hot-added user {AccountId} at song index {Index}.",
-                user.AccountId, _currentSongIndex);
-        }
-        if (newUsers.Count > 0)
-            _progress.SetPhaseAccounts(_roster.Count);
-
-        // Drain new songs
-        while (_hotAddSongQueue.TryDequeue(out var newSongId))
-        {
-            if (!songList.Contains(newSongId))
-            {
-                songList.Add(newSongId);
-                // All users need this new song
-                foreach (var user in _roster)
-                    user.TotalSongsNeeded = songList.Count;
-
-                _progress.AddPhaseItems(1);
-                _log.LogInformation("Hot-added song {SongId}. Total songs now {Count}.", newSongId, songList.Count);
-            }
-        }
-    }
-
-    /// <summary>Check for users who have completed all their work and emit events.</summary>
-    private void CheckCompletions(IWorkCompletionHandler? handler)
-    {
-        if (handler is null) return;
-
-        foreach (var user in _roster)
-        {
-            if (!user.IsComplete) continue;
-
-            if (user.Purposes.HasFlag(WorkPurpose.Backfill))
-            {
-                handler.OnUserBackfillComplete(user.AccountId);
-                // Clear the flag so we don't emit again
-                user.Purposes &= ~WorkPurpose.Backfill;
-            }
-        }
     }
 
     /// <summary>Result of one complete machine run.</summary>

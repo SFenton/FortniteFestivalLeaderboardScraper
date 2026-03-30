@@ -23,10 +23,10 @@ public class PostScrapeOrchestratorTests : IDisposable
     private readonly PersonalDbBuilder _personalDbBuilder;
     private readonly PostScrapeRefresher _refresher;
     private readonly SongProcessingMachine _machine;
+    private readonly SharedDopPool _pool;
     private readonly NotificationService _notifications;
     private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<PostScrapeOrchestrator> _log;
-    private readonly AdaptiveConcurrencyLimiter _testLimiter;
 
     private readonly PostScrapeOrchestrator _sut;
 
@@ -86,10 +86,17 @@ public class PostScrapeOrchestratorTests : IDisposable
             scraper, new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>()),
             _persistence, new ScrapeProgressTracker(), Substitute.For<ILogger<SongProcessingMachine>>());
         _machine.RunAsync(
-            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<AdaptiveConcurrencyLimiter>(),
-            Arg.Any<int>(), Arg.Any<IWorkCompletionHandler?>(), Arg.Any<CancellationToken>())
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
+            Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
+            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(new SongProcessingMachine.MachineResult());
+
+        _pool = new SharedDopPool(16, minDop: 2, maxDop: 64, lowPriorityPercent: 20, Substitute.For<ILogger>());
+
+        // ServiceProvider returns the mocked machine
+        var serviceProvider = Substitute.For<IServiceProvider>();
+        serviceProvider.GetService(typeof(SongProcessingMachine)).Returns(_machine);
 
         _notifications = new NotificationService(Substitute.For<ILogger<NotificationService>>());
         _progress = new ScrapeProgressTracker();
@@ -102,16 +109,16 @@ public class PostScrapeOrchestratorTests : IDisposable
         _sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
             _personalDbBuilder, _refresher,
-            _machine,
+            serviceProvider,
             Substitute.For<HistoryReconstructor>(scraper, _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
+            _pool,
             rivalsOrchestrator, rankingsCalculator, _notifications,
             _tokenManager, _progress, Options.Create(new ScraperOptions()), _log);
-        _testLimiter = new AdaptiveConcurrencyLimiter(16, minDop: 2, maxDop: 64, Substitute.For<ILogger>());
     }
 
     public void Dispose()
     {
-        _testLimiter.Dispose();
+        _pool.Dispose();
         _persistence.Dispose();
         _metaDb.Dispose();
         try { Directory.Delete(_tempDir, true); } catch { }
@@ -194,7 +201,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     {
         var ctx = CreateContext();
 
-        await _sut.RefreshRegisteredUsersAsync(ctx, _testLimiter, CancellationToken.None);
+        await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
 
         await _refresher.DidNotReceiveWithAnyArgs()
             .RefreshAllAsync(default!, default!, default!, default!, default!, default!, default, default);
@@ -209,17 +216,19 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         var ctx = CreateContext(registeredIds: new HashSet<string> { "user-1" });
 
-        await _sut.RefreshRegisteredUsersAsync(ctx, _testLimiter, CancellationToken.None);
+        await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
 
         // Verify the song processing machine was invoked with the correct token
         await _machine.Received(1).RunAsync(
             Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<IReadOnlyList<UserWorkItem>>(),
             Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
             Arg.Is("test-access-token"),
             Arg.Is("caller-001"),
-            Arg.Any<AdaptiveConcurrencyLimiter>(),
+            Arg.Any<SharedDopPool>(),
+            Arg.Any<bool>(),
             Arg.Any<int>(),
-            Arg.Any<IWorkCompletionHandler?>(),
+            Arg.Any<bool>(),
             Arg.Any<CancellationToken>());
     }
 
@@ -231,7 +240,7 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         var ctx = CreateContext(registeredIds: new HashSet<string> { "user-1" });
 
-        await _sut.RefreshRegisteredUsersAsync(ctx, _testLimiter, CancellationToken.None);
+        await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
 
         await _refresher.DidNotReceiveWithAnyArgs()
             .RefreshAllAsync(default!, default!, default!, default!, default!, default!, default, default);
@@ -245,15 +254,16 @@ public class PostScrapeOrchestratorTests : IDisposable
         _tokenManager.AccountId.Returns("caller-001");
 
         _machine.RunAsync(
-            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
-            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<AdaptiveConcurrencyLimiter>(),
-            Arg.Any<int>(), Arg.Any<IWorkCompletionHandler?>(), Arg.Any<CancellationToken>())
+            Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
+            Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
+            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Throws(new InvalidOperationException("API error"));
 
         var ctx = CreateContext(registeredIds: new HashSet<string> { "user-1" });
 
         // Should not throw
-        await _sut.RefreshRegisteredUsersAsync(ctx, _testLimiter, CancellationToken.None);
+        await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -343,8 +353,9 @@ public class PostScrapeOrchestratorTests : IDisposable
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
             _personalDbBuilder, _refresher,
-            Substitute.For<SongProcessingMachine>(Substitute.For<ILeaderboardQuerier>(), new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>()), _persistence, new ScrapeProgressTracker(), Substitute.For<ILogger<SongProcessingMachine>>()),
+            Substitute.For<IServiceProvider>(),
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
+            _pool,
             rivalsOrchestrator, rankingsCalculator2, _notifications,
             _tokenManager, _progress, opts, _log);
 
@@ -399,8 +410,9 @@ public class PostScrapeOrchestratorTests : IDisposable
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
             _personalDbBuilder, _refresher,
-            Substitute.For<SongProcessingMachine>(Substitute.For<ILeaderboardQuerier>(), new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>()), _persistence, new ScrapeProgressTracker(), Substitute.For<ILogger<SongProcessingMachine>>()),
+            Substitute.For<IServiceProvider>(),
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
+            _pool,
             rivalsOrchestrator, rankingsCalculator3, _notifications,
             _tokenManager, _progress, opts, _log);
 
@@ -517,7 +529,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             .Returns("test-tok");
         _tokenManager.AccountId.Returns("caller-1");
 
-        await _sut.RefreshRegisteredUsersAsync(ctx, _testLimiter, CancellationToken.None);
+        await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
 
         // The progress phase should reflect RefreshingRegisteredUsers
         var progress = _progress.GetProgressResponse();
