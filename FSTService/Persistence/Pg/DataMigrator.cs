@@ -6,7 +6,7 @@ namespace FSTService.Persistence.Pg;
 
 /// <summary>
 /// One-time data migration from SQLite databases to PostgreSQL.
-/// Uses PostgreSQL COPY protocol for bulk loading large tables (100K+ rows/sec).
+/// All tables use PostgreSQL COPY binary protocol for maximum throughput (200K-500K rows/sec).
 /// Usage: run once after PG schema is created, before switching DatabaseProvider.
 /// </summary>
 public static class DataMigrator
@@ -16,39 +16,42 @@ public static class DataMigrator
         log.LogInformation("Starting SQLite → PostgreSQL data migration from {DataDir}", dataDir);
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        // 1. Meta database (small tables — row-by-row is fine)
+        // 1. Meta database
         var metaPath = Path.Combine(dataDir, "fst-meta.db");
         if (File.Exists(metaPath))
         {
-            await MigrateTableAsync(metaPath, pgDataSource, "AccountNames", "account_names",
+            var metaSize = new FileInfo(metaPath).Length / (1024.0 * 1024.0);
+            log.LogInformation("Migrating fst-meta.db ({FileSize:F0} MB)...", metaSize);
+
+            await CopyTableAsync(metaPath, pgDataSource, "AccountNames", "account_names",
                 new[] { "AccountId", "DisplayName", "LastResolved" },
                 new[] { "account_id", "display_name", "last_resolved" }, log, ct);
 
-            await MigrateTableAsync(metaPath, pgDataSource, "ScrapeLog", "scrape_log",
+            await CopyTableAsync(metaPath, pgDataSource, "ScrapeLog", "scrape_log",
                 new[] { "Id", "StartedAt", "CompletedAt", "SongsScraped", "TotalEntries", "TotalRequests", "TotalBytes" },
                 new[] { "id", "started_at", "completed_at", "songs_scraped", "total_entries", "total_requests", "total_bytes" }, log, ct);
 
-            await MigrateTableAsync(metaPath, pgDataSource, "ScoreHistory", "score_history",
+            await CopyTableAsync(metaPath, pgDataSource, "ScoreHistory", "score_history",
                 new[] { "Id", "SongId", "Instrument", "AccountId", "OldScore", "NewScore", "OldRank", "NewRank", "Accuracy", "IsFullCombo", "Stars", "Percentile", "Season", "ScoreAchievedAt", "SeasonRank", "AllTimeRank", "Difficulty", "ChangedAt" },
                 new[] { "id", "song_id", "instrument", "account_id", "old_score", "new_score", "old_rank", "new_rank", "accuracy", "is_full_combo", "stars", "percentile", "season", "score_achieved_at", "season_rank", "all_time_rank", "difficulty", "changed_at" }, log, ct);
 
-            await MigrateTableAsync(metaPath, pgDataSource, "RegisteredUsers", "registered_users",
+            await CopyTableAsync(metaPath, pgDataSource, "RegisteredUsers", "registered_users",
                 new[] { "DeviceId", "AccountId", "DisplayName", "Platform", "LastLoginAt", "RegisteredAt", "LastSyncAt" },
                 new[] { "device_id", "account_id", "display_name", "platform", "last_login_at", "registered_at", "last_sync_at" }, log, ct);
 
-            await MigrateTableAsync(metaPath, pgDataSource, "BackfillStatus", "backfill_status",
+            await CopyTableAsync(metaPath, pgDataSource, "BackfillStatus", "backfill_status",
                 new[] { "AccountId", "Status", "SongsChecked", "EntriesFound", "TotalSongsToCheck", "StartedAt", "CompletedAt", "LastResumedAt", "ErrorMessage" },
                 new[] { "account_id", "status", "songs_checked", "entries_found", "total_songs_to_check", "started_at", "completed_at", "last_resumed_at", "error_message" }, log, ct);
 
-            await MigrateTableAsync(metaPath, pgDataSource, "SeasonWindows", "season_windows",
+            await CopyTableAsync(metaPath, pgDataSource, "SeasonWindows", "season_windows",
                 new[] { "SeasonNumber", "EventId", "WindowId", "DiscoveredAt" },
                 new[] { "season_number", "event_id", "window_id", "discovered_at" }, log, ct);
 
-            await MigrateTableAsync(metaPath, pgDataSource, "SongFirstSeenSeason", "song_first_seen_season",
+            await CopyTableAsync(metaPath, pgDataSource, "SongFirstSeenSeason", "song_first_seen_season",
                 new[] { "SongId", "FirstSeenSeason", "MinObservedSeason", "EstimatedSeason", "ProbeResult", "CalculatedAt" },
                 new[] { "song_id", "first_seen_season", "min_observed_season", "estimated_season", "probe_result", "calculated_at" }, log, ct);
 
-            await MigrateTableAsync(metaPath, pgDataSource, "LeaderboardPopulation", "leaderboard_population",
+            await CopyTableAsync(metaPath, pgDataSource, "LeaderboardPopulation", "leaderboard_population",
                 new[] { "SongId", "Instrument", "TotalEntries", "UpdatedAt" },
                 new[] { "song_id", "instrument", "total_entries", "updated_at" }, log, ct);
 
@@ -59,7 +62,7 @@ public static class DataMigrator
         var songDbPath = Path.Combine(dataDir, "fst-service.db");
         if (File.Exists(songDbPath))
         {
-            await MigrateTableAsync(songDbPath, pgDataSource, "Songs", "songs",
+            await CopyTableAsync(songDbPath, pgDataSource, "Songs", "songs",
                 new[] { "SongId", "Title", "Artist", "ActiveDate", "LastModified", "ImagePath",
                         "LeadDiff", "BassDiff", "VocalsDiff", "DrumsDiff", "ProLeadDiff", "ProBassDiff",
                         "ReleaseYear", "Tempo", "PlasticGuitarDiff", "PlasticBassDiff", "PlasticDrumsDiff", "ProVocalsDiff" },
@@ -70,7 +73,7 @@ public static class DataMigrator
             log.LogInformation("Song catalog migration complete.");
         }
 
-        // 3. Instrument databases — use COPY protocol for large tables
+        // 3. Instrument databases — all via COPY protocol
         var instruments = new[] { "Solo_Guitar", "Solo_Bass", "Solo_Drums", "Solo_Vocals", "Solo_PeripheralGuitar", "Solo_PeripheralBass" };
         foreach (var instrument in instruments)
         {
@@ -81,17 +84,20 @@ public static class DataMigrator
             var fileSize = new FileInfo(instPath).Length / (1024.0 * 1024.0);
             log.LogInformation("Migrating {Instrument} ({FileSize:F0} MB)...", instrument, fileSize);
 
-            // LeaderboardEntries — COPY protocol (millions of rows)
-            await CopyInstrumentLeaderboardAsync(instPath, pgDataSource, instrument, log, ct);
+            await CopyTableAsync(instPath, pgDataSource, "LeaderboardEntries", "leaderboard_entries",
+                new[] { "SongId", "AccountId", "Score", "Accuracy", "IsFullCombo", "Stars", "Season", "Percentile", "Rank", "Source", "Difficulty", "ApiRank", "EndTime", "FirstSeenAt", "LastUpdatedAt" },
+                new[] { "song_id", "account_id", "score", "accuracy", "is_full_combo", "stars", "season", "percentile", "rank", "source", "difficulty", "api_rank", "end_time", "first_seen_at", "last_updated_at" },
+                log, ct, instrumentPrefix: instrument);
 
-            // SongStats + AccountRankings — small enough for row-by-row
-            await MigrateInstrumentTableAsync(instPath, pgDataSource, instrument, "SongStats", "song_stats",
+            await CopyTableAsync(instPath, pgDataSource, "SongStats", "song_stats",
                 new[] { "SongId", "EntryCount", "PreviousEntryCount", "LogWeight", "MaxScore", "ComputedAt" },
-                new[] { "song_id", "entry_count", "previous_entry_count", "log_weight", "max_score", "computed_at" }, log, ct);
+                new[] { "song_id", "entry_count", "previous_entry_count", "log_weight", "max_score", "computed_at" },
+                log, ct, instrumentPrefix: instrument);
 
-            await MigrateInstrumentTableAsync(instPath, pgDataSource, instrument, "AccountRankings", "account_rankings",
+            await CopyTableAsync(instPath, pgDataSource, "AccountRankings", "account_rankings",
                 new[] { "AccountId", "SongsPlayed", "TotalChartedSongs", "Coverage", "RawSkillRating", "AdjustedSkillRating", "AdjustedSkillRank", "WeightedRating", "WeightedRank", "FcRate", "FcRateRank", "TotalScore", "TotalScoreRank", "MaxScorePercent", "MaxScorePercentRank", "AvgAccuracy", "FullComboCount", "AvgStars", "BestRank", "AvgRank", "ComputedAt" },
-                new[] { "account_id", "songs_played", "total_charted_songs", "coverage", "raw_skill_rating", "adjusted_skill_rating", "adjusted_skill_rank", "weighted_rating", "weighted_rank", "fc_rate", "fc_rate_rank", "total_score", "total_score_rank", "max_score_percent", "max_score_percent_rank", "avg_accuracy", "full_combo_count", "avg_stars", "best_rank", "avg_rank", "computed_at" }, log, ct);
+                new[] { "account_id", "songs_played", "total_charted_songs", "coverage", "raw_skill_rating", "adjusted_skill_rating", "adjusted_skill_rank", "weighted_rating", "weighted_rank", "fc_rate", "fc_rate_rank", "total_score", "total_score_rank", "max_score_percent", "max_score_percent_rank", "avg_accuracy", "full_combo_count", "avg_stars", "best_rank", "avg_rank", "computed_at" },
+                log, ct, instrumentPrefix: instrument);
 
             log.LogInformation("Instrument {Instrument} complete in {Elapsed:F1}s.", instrument, instSw.Elapsed.TotalSeconds);
         }
@@ -100,152 +106,108 @@ public static class DataMigrator
     }
 
     /// <summary>
-    /// Bulk-copy LeaderboardEntries using PostgreSQL COPY protocol.
-    /// This is 10-100x faster than individual INSERTs for millions of rows.
+    /// Generic COPY-based table migration. Streams all rows from SQLite to PG via binary COPY.
+    /// When <paramref name="instrumentPrefix"/> is set, prepends an 'instrument' column to the PG table.
     /// </summary>
-    private static async Task CopyInstrumentLeaderboardAsync(string sqlitePath, NpgsqlDataSource pgDataSource,
-        string instrument, ILogger log, CancellationToken ct)
+    private static async Task CopyTableAsync(string sqlitePath, NpgsqlDataSource pgDataSource,
+        string sqliteTable, string pgTable, string[] sqliteCols, string[] pgCols,
+        ILogger log, CancellationToken ct, string? instrumentPrefix = null)
     {
-        var connStr = new SqliteConnectionStringBuilder { DataSource = sqlitePath, Mode = SqliteOpenMode.ReadOnly }.ToString();
-        await using var sqliteConn = new SqliteConnection(connStr);
-        await sqliteConn.OpenAsync(ct);
+        var label = instrumentPrefix is not null ? $"{instrumentPrefix}/{pgTable}" : pgTable;
 
-        // Check if rows already exist for this instrument (idempotent)
+        // Idempotent: skip if rows already exist
         await using var pgCheckConn = await pgDataSource.OpenConnectionAsync(ct);
-        await using (var checkCmd = new NpgsqlCommand("SELECT COUNT(*) FROM leaderboard_entries WHERE instrument = @i LIMIT 1", pgCheckConn))
+        await using (var checkCmd = pgCheckConn.CreateCommand())
         {
-            checkCmd.Parameters.AddWithValue("i", instrument);
-            var existing = (long)(await checkCmd.ExecuteScalarAsync(ct))!;
-            if (existing > 0)
+            if (instrumentPrefix is not null)
             {
-                log.LogInformation("  LeaderboardEntries for {Instrument}: {Existing} rows already exist, skipping.", instrument, existing);
+                checkCmd.CommandText = $"SELECT EXISTS (SELECT 1 FROM {pgTable} WHERE instrument = @i)";
+                checkCmd.Parameters.AddWithValue("i", instrumentPrefix);
+            }
+            else
+            {
+                checkCmd.CommandText = $"SELECT EXISTS (SELECT 1 FROM {pgTable})";
+            }
+            var exists = (bool)(await checkCmd.ExecuteScalarAsync(ct))!;
+            if (exists)
+            {
+                log.LogInformation("  {Label}: rows already exist, skipping.", label);
                 return;
             }
         }
 
-        await using var pgConn = await pgDataSource.OpenConnectionAsync(ct);
+        var connStr = new SqliteConnectionStringBuilder { DataSource = sqlitePath, Mode = SqliteOpenMode.ReadOnly }.ToString();
+        await using var sqliteConn = new SqliteConnection(connStr);
+        await sqliteConn.OpenAsync(ct);
 
-        var selectSql = "SELECT SongId, AccountId, Score, Accuracy, IsFullCombo, Stars, Season, Percentile, Rank, Source, Difficulty, ApiRank, EndTime, FirstSeenAt, LastUpdatedAt FROM LeaderboardEntries";
+        var selectSql = $"SELECT {string.Join(", ", sqliteCols)} FROM {sqliteTable}";
         await using var cmd = new SqliteCommand(selectSql, sqliteConn);
         await using var reader = await cmd.ExecuteReaderAsync(ct);
 
-        var copySql = "COPY leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, percentile, rank, source, difficulty, api_rank, end_time, first_seen_at, last_updated_at) FROM STDIN (FORMAT BINARY)";
+        // Build COPY statement — prepend instrument column if needed
+        var allPgCols = instrumentPrefix is not null ? pgCols.Prepend("instrument").ToArray() : pgCols;
+        var copySql = $"COPY {pgTable} ({string.Join(", ", allPgCols)}) FROM STDIN (FORMAT BINARY)";
+
+        await using var pgConn = await pgDataSource.OpenConnectionAsync(ct);
         await using var writer = await pgConn.BeginBinaryImportAsync(copySql, ct);
 
         long count = 0;
-        var copySw = System.Diagnostics.Stopwatch.StartNew();
+        var tableSw = System.Diagnostics.Stopwatch.StartNew();
+        int colCount = sqliteCols.Length;
+
         while (await reader.ReadAsync(ct))
         {
             await writer.StartRowAsync(ct);
-            await writer.WriteAsync(reader.GetString(0), NpgsqlDbType.Text, ct);       // song_id
-            await writer.WriteAsync(instrument, NpgsqlDbType.Text, ct);                 // instrument
-            await writer.WriteAsync(reader.GetString(1), NpgsqlDbType.Text, ct);       // account_id
-            await writer.WriteAsync(reader.GetInt32(2), NpgsqlDbType.Integer, ct);     // score
-            if (reader.IsDBNull(3)) await writer.WriteNullAsync(ct); else await writer.WriteAsync(reader.GetInt32(3), NpgsqlDbType.Integer, ct);   // accuracy
-            if (reader.IsDBNull(4)) await writer.WriteNullAsync(ct); else await writer.WriteAsync(reader.GetInt32(4) == 1, NpgsqlDbType.Boolean, ct); // is_full_combo
-            if (reader.IsDBNull(5)) await writer.WriteNullAsync(ct); else await writer.WriteAsync(reader.GetInt32(5), NpgsqlDbType.Integer, ct);   // stars
-            if (reader.IsDBNull(6)) await writer.WriteNullAsync(ct); else await writer.WriteAsync(reader.GetInt32(6), NpgsqlDbType.Integer, ct);   // season
-            if (reader.IsDBNull(7)) await writer.WriteNullAsync(ct); else await writer.WriteAsync(reader.GetDouble(7), NpgsqlDbType.Double, ct);  // percentile
-            if (reader.IsDBNull(8)) await writer.WriteNullAsync(ct); else await writer.WriteAsync(reader.GetInt32(8), NpgsqlDbType.Integer, ct);   // rank
-            await writer.WriteAsync(reader.IsDBNull(9) ? "scrape" : reader.GetString(9), NpgsqlDbType.Text, ct); // source
-            if (reader.IsDBNull(10)) await writer.WriteNullAsync(ct); else await writer.WriteAsync(reader.GetInt32(10), NpgsqlDbType.Integer, ct); // difficulty
-            if (reader.IsDBNull(11)) await writer.WriteNullAsync(ct); else await writer.WriteAsync(reader.GetInt32(11), NpgsqlDbType.Integer, ct); // api_rank
-            if (reader.IsDBNull(12)) await writer.WriteNullAsync(ct); else await writer.WriteAsync(reader.GetString(12), NpgsqlDbType.Text, ct);  // end_time
-            await writer.WriteAsync(reader.GetString(13), NpgsqlDbType.Text, ct);      // first_seen_at
-            await writer.WriteAsync(reader.GetString(14), NpgsqlDbType.Text, ct);      // last_updated_at
-            count++;
 
+            // Instrument column first (if applicable)
+            if (instrumentPrefix is not null)
+                await writer.WriteAsync(instrumentPrefix, NpgsqlDbType.Text, ct);
+
+            // All SQLite columns — write as text (PG will cast)
+            for (int i = 0; i < colCount; i++)
+            {
+                if (reader.IsDBNull(i))
+                {
+                    await writer.WriteNullAsync(ct);
+                }
+                else
+                {
+                    var value = reader.GetValue(i);
+                    switch (value)
+                    {
+                        case long l:
+                            await writer.WriteAsync(l, NpgsqlDbType.Bigint, ct);
+                            break;
+                        case int n:
+                            await writer.WriteAsync(n, NpgsqlDbType.Integer, ct);
+                            break;
+                        case double d:
+                            await writer.WriteAsync(d, NpgsqlDbType.Double, ct);
+                            break;
+                        case string s:
+                            await writer.WriteAsync(s, NpgsqlDbType.Text, ct);
+                            break;
+                        case byte[] b:
+                            await writer.WriteAsync(b, NpgsqlDbType.Bytea, ct);
+                            break;
+                        default:
+                            // Fallback: convert to string
+                            await writer.WriteAsync(value.ToString()!, NpgsqlDbType.Text, ct);
+                            break;
+                    }
+                }
+            }
+
+            count++;
             if (count % 1_000_000 == 0)
-                log.LogInformation("  LeaderboardEntries [{Instrument}]: {Count:N0} rows... ({Rate:N0} rows/sec)", instrument, count, count / copySw.Elapsed.TotalSeconds);
+            {
+                var rate = count / tableSw.Elapsed.TotalSeconds;
+                log.LogInformation("  {Label}: {Count:N0} rows... ({Rate:N0} rows/sec)", label, count, rate);
+            }
         }
 
         await writer.CompleteAsync(ct);
-        var finalRate = count > 0 ? count / copySw.Elapsed.TotalSeconds : 0;
-        log.LogInformation("  LeaderboardEntries [{Instrument}]: {Count:N0} rows total via COPY in {Elapsed:F1}s ({Rate:N0} rows/sec)", instrument, count, copySw.Elapsed.TotalSeconds, finalRate);
-    }
-
-    private static async Task MigrateTableAsync(string sqlitePath, NpgsqlDataSource pgDataSource,
-        string sqliteTable, string pgTable, string[] sqliteCols, string[] pgCols, ILogger log, CancellationToken ct)
-    {
-        var connStr = new SqliteConnectionStringBuilder { DataSource = sqlitePath, Mode = SqliteOpenMode.ReadOnly }.ToString();
-        await using var sqliteConn = new SqliteConnection(connStr);
-        await sqliteConn.OpenAsync(ct);
-
-        await using var pgConn = await pgDataSource.OpenConnectionAsync(ct);
-
-        var selectSql = $"SELECT {string.Join(", ", sqliteCols)} FROM {sqliteTable}";
-        await using var cmd = new SqliteCommand(selectSql, sqliteConn);
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-
-        var pgParams = string.Join(", ", pgCols.Select((_, i) => $"@p{i}"));
-        var insertSql = $"INSERT INTO {pgTable} ({string.Join(", ", pgCols)}) VALUES ({pgParams}) ON CONFLICT DO NOTHING";
-
-        int count = 0;
-        var tableSw = System.Diagnostics.Stopwatch.StartNew();
-        await using var tx = await pgConn.BeginTransactionAsync(ct);
-        await using var insertCmd = new NpgsqlCommand(insertSql, pgConn, tx);
-        for (int i = 0; i < pgCols.Length; i++)
-            insertCmd.Parameters.Add($"p{i}", NpgsqlTypes.NpgsqlDbType.Unknown);
-        await insertCmd.PrepareAsync(ct);
-
-        while (await reader.ReadAsync(ct))
-        {
-            for (int i = 0; i < pgCols.Length; i++)
-                insertCmd.Parameters[$"p{i}"].Value = reader.IsDBNull(i) ? DBNull.Value : reader.GetValue(i);
-            await insertCmd.ExecuteNonQueryAsync(ct);
-            count++;
-
-            if (count % 100_000 == 0)
-                log.LogInformation("  {PgTable}: {Count:N0} rows... ({Rate:N0} rows/sec)", pgTable, count, count / tableSw.Elapsed.TotalSeconds);
-        }
-
-        await tx.CommitAsync(ct);
-        var rate = count > 0 ? count / tableSw.Elapsed.TotalSeconds : 0;
-        log.LogInformation("  {SqliteTable} → {PgTable}: {Count:N0} rows in {Elapsed:F1}s ({Rate:N0} rows/sec)", sqliteTable, pgTable, count, tableSw.Elapsed.TotalSeconds, rate);
-    }
-
-    private static async Task MigrateInstrumentTableAsync(string sqlitePath, NpgsqlDataSource pgDataSource,
-        string instrument, string sqliteTable, string pgTable,
-        string[] sqliteCols, string[] pgCols, ILogger log, CancellationToken ct)
-    {
-        var connStr = new SqliteConnectionStringBuilder { DataSource = sqlitePath, Mode = SqliteOpenMode.ReadOnly }.ToString();
-        await using var sqliteConn = new SqliteConnection(connStr);
-        await sqliteConn.OpenAsync(ct);
-
-        await using var pgConn = await pgDataSource.OpenConnectionAsync(ct);
-
-        var selectSql = $"SELECT {string.Join(", ", sqliteCols)} FROM {sqliteTable}";
-        await using var cmd = new SqliteCommand(selectSql, sqliteConn);
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-
-        // Add instrument column for PG
-        var allPgCols = pgCols.Prepend("instrument").ToArray();
-        var pgParams = string.Join(", ", allPgCols.Select((_, i) => $"@p{i}"));
-        var insertSql = $"INSERT INTO {pgTable} ({string.Join(", ", allPgCols)}) VALUES ({pgParams}) ON CONFLICT DO NOTHING";
-
-        int count = 0;
-        var tableSw = System.Diagnostics.Stopwatch.StartNew();
-        await using var tx = await pgConn.BeginTransactionAsync(ct);
-        await using var insertCmd = new NpgsqlCommand(insertSql, pgConn, tx);
-        insertCmd.Parameters.Add("p0", NpgsqlTypes.NpgsqlDbType.Text); // instrument
-        for (int i = 0; i < pgCols.Length; i++)
-            insertCmd.Parameters.Add($"p{i + 1}", NpgsqlTypes.NpgsqlDbType.Unknown);
-        await insertCmd.PrepareAsync(ct);
-
-        while (await reader.ReadAsync(ct))
-        {
-            insertCmd.Parameters["p0"].Value = instrument;
-            for (int i = 0; i < pgCols.Length; i++)
-                insertCmd.Parameters[$"p{i + 1}"].Value = reader.IsDBNull(i) ? DBNull.Value : reader.GetValue(i);
-            await insertCmd.ExecuteNonQueryAsync(ct);
-            count++;
-
-            if (count % 100_000 == 0)
-                log.LogInformation("  {Instrument}/{PgTable}: {Count:N0} rows... ({Rate:N0} rows/sec)", instrument, pgTable, count, count / tableSw.Elapsed.TotalSeconds);
-        }
-
-        await tx.CommitAsync(ct);
-        var rate = count > 0 ? count / tableSw.Elapsed.TotalSeconds : 0;
-        log.LogInformation("  {Instrument}/{SqliteTable} → {PgTable}: {Count:N0} rows in {Elapsed:F1}s ({Rate:N0} rows/sec)", instrument, sqliteTable, pgTable, count, tableSw.Elapsed.TotalSeconds, rate);
+        var finalRate = count > 0 ? count / tableSw.Elapsed.TotalSeconds : 0;
+        log.LogInformation("  {Label}: {Count:N0} rows in {Elapsed:F1}s ({Rate:N0} rows/sec)", label, count, tableSw.Elapsed.TotalSeconds, finalRate);
     }
 }
