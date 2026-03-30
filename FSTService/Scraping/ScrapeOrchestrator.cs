@@ -16,6 +16,7 @@ public sealed class ScrapeOrchestrator
 {
     private readonly GlobalLeaderboardScraper _globalScraper;
     private readonly GlobalLeaderboardPersistence _persistence;
+    private readonly PathDataStore _pathDataStore;
     private readonly ScrapeProgressTracker _progress;
     private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<ScrapeOrchestrator> _log;
@@ -23,12 +24,14 @@ public sealed class ScrapeOrchestrator
     public ScrapeOrchestrator(
         GlobalLeaderboardScraper globalScraper,
         GlobalLeaderboardPersistence persistence,
+        PathDataStore pathDataStore,
         ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
         ILogger<ScrapeOrchestrator> log)
     {
         _globalScraper = globalScraper;
         _persistence = persistence;
+        _pathDataStore = pathDataStore;
         _progress = progress;
         _options = options;
         _log = log;
@@ -57,6 +60,7 @@ public sealed class ScrapeOrchestrator
 
         // Build scrape requests: one per song, all enabled instruments.
         var enabledInstruments = GetEnabledInstruments(opts);
+        var allMaxScores = _pathDataStore.GetAllMaxScores();
         var scrapeRequests = service.Songs
             .Where(s => s.track?.su is not null)
             .Select(song => new GlobalLeaderboardScraper.SongScrapeRequest
@@ -64,6 +68,7 @@ public sealed class ScrapeOrchestrator
                 SongId = song.track.su,
                 Instruments = enabledInstruments,
                 Label = song.track.tt,
+                MaxScores = allMaxScores.TryGetValue(song.track.su, out var ms) ? ms : null,
             })
             .ToList();
 
@@ -108,7 +113,9 @@ public sealed class ScrapeOrchestrator
             sequential: opts.SequentialScrape,
             pageConcurrency: opts.PageConcurrency,
             songConcurrency: opts.SongConcurrency,
-            maxRequestsPerSecond: opts.MaxRequestsPerSecond);
+            maxRequestsPerSecond: opts.MaxRequestsPerSecond,
+            overThresholdMultiplier: opts.OverThresholdMultiplier,
+            overThresholdExtraPages: opts.OverThresholdExtraPages);
 
         // Wait for all per-instrument writers to drain
         await _persistence.DrainWritersAsync();

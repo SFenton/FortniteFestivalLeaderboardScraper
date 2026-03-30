@@ -129,6 +129,21 @@ public sealed class ScraperOptions
     public int MaxPagesPerLeaderboard { get; set; } = 100;
 
     /// <summary>
+    /// When CHOpt max scores are available, any leaderboard whose top score exceeds
+    /// <c>CHOptMax × OverThresholdMultiplier</c> triggers a "deep scrape" wave 2 that
+    /// fetches additional pages beyond <see cref="MaxPagesPerLeaderboard"/>.
+    /// Default 1.05 = 5% above CHOpt's theoretical maximum.
+    /// </summary>
+    public double OverThresholdMultiplier { get; set; } = 1.05;
+
+    /// <summary>
+    /// Number of extra pages to fetch in deep-scrape wave 2, starting from
+    /// <see cref="MaxPagesPerLeaderboard"/>, up to the page containing the last
+    /// over-threshold entry plus this many pages (max 10,000 additional entries).
+    /// </summary>
+    public int OverThresholdExtraPages { get; set; } = 100;
+
+    /// <summary>
     /// When true, scrape songs one at a time instead of all in parallel.
     /// Instruments still run in parallel (~6), but page concurrency is controlled by <see cref="PageConcurrency"/>.
     /// </summary>

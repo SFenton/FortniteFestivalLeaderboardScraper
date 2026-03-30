@@ -948,7 +948,10 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         AdaptiveConcurrencyLimiter? limiter = null,
         CancellationToken ct = default,
         string? label = null,
-        int maxPages = 0)
+        int maxPages = 0,
+        int? choptMaxScore = null,
+        double overThresholdMultiplier = 1.05,
+        int overThresholdExtraPages = 100)
     {
         // ── Page 0: discover totalPages ──
         bool page0Acquired = false;
@@ -993,6 +996,23 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int reportedPages = totalPages;
         if (maxPages > 0 && totalPages > maxPages)
             totalPages = maxPages;
+
+        // ── Deep scrape detection: check if page 0's top score exceeds CHOpt threshold ──
+        bool deepScrapeTriggered = false;
+        int overThreshold = 0;
+        if (choptMaxScore.HasValue && page0.firstPage.Entries.Count > 0)
+        {
+            overThreshold = (int)(choptMaxScore.Value * overThresholdMultiplier);
+            int topScore = page0.firstPage.Entries.Max(e => e.Score);
+            if (topScore > overThreshold)
+            {
+                deepScrapeTriggered = true;
+                _log.LogInformation(
+                    "Deep scrape triggered for {Label} ({Song}/{Instrument}): top score {TopScore:N0} exceeds " +
+                    "1.05× CHOpt max {ChoptMax:N0} (threshold {Threshold:N0}).",
+                    label ?? songId, songId, instrument, topScore, choptMaxScore.Value, overThreshold);
+            }
+        }
 
         // Report capped page count for progress tracking (after clamp)
         _progress.ReportPage0(totalPages);
@@ -1083,6 +1103,114 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             await Task.WhenAll(tasks);
         }
 
+        // ── Wave 2: deep scrape extension ──
+        // If deep scrape was triggered, find the last over-threshold entry in
+        // wave 1 results and fetch additional pages beyond the normal cap.
+        if (deepScrapeTriggered && totalPages < reportedPages)
+        {
+            // Find the last page that contains an over-threshold entry
+            int lastOverThresholdPage = 0;
+            foreach (var (pageNum, pageEntries) in allEntries)
+            {
+                if (pageEntries.Any(e => e.Score > overThreshold))
+                    lastOverThresholdPage = Math.Max(lastOverThresholdPage, pageNum);
+            }
+
+            // Wave 2 range: from the end of wave 1 to lastOverThresholdPage + extraPages
+            int wave2Start = totalPages;
+            int wave2End = Math.Min(
+                Math.Max(lastOverThresholdPage + overThresholdExtraPages + 1, totalPages + overThresholdExtraPages),
+                reportedPages);
+
+            if (wave2End > wave2Start)
+            {
+                int wave2PageCount = wave2End - wave2Start;
+                _log.LogInformation(
+                    "Deep scrape wave 2 for {Label} ({Song}/{Instrument}): fetching pages {Start}–{End} " +
+                    "({PageCount} pages, last over-threshold entry on page {LastPage}).",
+                    label ?? songId, songId, instrument, wave2Start, wave2End - 1,
+                    wave2PageCount, lastOverThresholdPage);
+
+                int wave2Consecutive403s = 0;
+                int wave2BoundaryLogged = 0;
+                using var wave2Cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+                var wave2Tasks = new List<Task>(wave2PageCount);
+                for (int p = wave2Start; p < wave2End; p++)
+                {
+                    int pageNum = p;
+                    wave2Tasks.Add(FetchWave2PageAsync(pageNum));
+                }
+
+                async Task FetchWave2PageAsync(int pageNum)
+                {
+                    if (wave2Cts.IsCancellationRequested) return;
+                    bool acquired = false;
+                    try
+                    {
+                        if (limiter is not null)
+                        {
+                            await limiter.WaitAsync(wave2Cts.Token);
+                            acquired = true;
+                        }
+
+                        var (parsed, bodyLen, status) = await FetchPageAsync(
+                            songId, instrument, pageNum, accessToken, accountId, limiter, wave2Cts.Token);
+                        Interlocked.Increment(ref requestCount);
+                        Interlocked.Add(ref totalBytes, bodyLen);
+                        _progress.ReportPageFetched(bodyLen);
+
+                        if (parsed is not null)
+                        {
+                            allEntries[pageNum] = parsed.Entries;
+                            Interlocked.Exchange(ref wave2Consecutive403s, 0);
+                        }
+                        else if (status == FetchStatus.Forbidden)
+                        {
+                            var count = Interlocked.Increment(ref wave2Consecutive403s);
+                            if (count >= ForbiddenThreshold &&
+                                Interlocked.CompareExchange(ref wave2BoundaryLogged, 1, 0) == 0)
+                            {
+                                _log.LogInformation(
+                                    "Hit access boundary during deep scrape wave 2 for {Label} ({Song}/{Instrument}) at page {Page}.",
+                                    label ?? songId, songId, instrument, pageNum);
+                                try { wave2Cts.Cancel(); } catch { }
+                            }
+                            else if (!wave2Cts.IsCancellationRequested && count >= ForbiddenThreshold)
+                            {
+                                try { wave2Cts.Cancel(); } catch { }
+                            }
+                        }
+                    }
+                    catch (OperationCanceledException) when (wave2Cts.IsCancellationRequested && !ct.IsCancellationRequested)
+                    {
+                        // Cancelled due to access boundary — not an error
+                    }
+                    finally
+                    {
+                        if (acquired) limiter?.Release();
+                    }
+                }
+
+                await Task.WhenAll(wave2Tasks);
+
+                // Warn if over-threshold entries extend beyond wave 2
+                int wave2LastOverThreshold = 0;
+                for (int p = wave2Start; p < wave2End; p++)
+                {
+                    if (allEntries.TryGetValue(p, out var entries) && entries.Any(e => e.Score > overThreshold))
+                        wave2LastOverThreshold = p;
+                }
+                if (wave2LastOverThreshold >= wave2End - 1)
+                {
+                    _log.LogWarning(
+                        "Over-threshold entries may extend beyond deep scrape range for {Label} ({Song}/{Instrument}). " +
+                        "Last over-threshold entry found on page {Page} (wave 2 end = {Wave2End}).",
+                        label ?? songId, songId, instrument, wave2LastOverThreshold, wave2End - 1);
+                }
+            }
+        }
+
         // Reassemble entries in page order
         var ordered = allEntries
             .OrderBy(x => x.Key)
@@ -1118,7 +1246,10 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         AdaptiveConcurrencyLimiter? sharedLimiter = null,
         CancellationToken ct = default,
         string? label = null,
-        int maxPages = 0)
+        int maxPages = 0,
+        SongMaxScores? maxScores = null,
+        double overThresholdMultiplier = 1.05,
+        int overThresholdExtraPages = 100)
     {
         var instList = (instruments ?? AllInstruments).ToList();
         var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(
@@ -1128,7 +1259,10 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         // Launch all instruments in parallel
         var tasks = instList.Select(inst =>
         {
-            return ScrapeLeaderboardAsync(songId, inst, accessToken, accountId, limiter, ct, label, maxPages);
+            int? choptMax = maxScores?.GetByInstrument(inst);
+            return ScrapeLeaderboardAsync(songId, inst, accessToken, accountId, limiter, ct, label, maxPages,
+                choptMaxScore: choptMax, overThresholdMultiplier: overThresholdMultiplier,
+                overThresholdExtraPages: overThresholdExtraPages);
         }).ToList();
 
         var resultsArr = await Task.WhenAll(tasks);
@@ -1144,6 +1278,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         public required IReadOnlyList<string> Instruments { get; init; }
         /// <summary>Optional display label for logging (e.g. song title).</summary>
         public string? Label { get; init; }
+        /// <summary>Optional CHOpt max scores for this song, used to trigger deep scrape when entries exceed the theoretical max.</summary>
+        public SongMaxScores? MaxScores { get; init; }
     }
 
     /// <summary>
@@ -1167,12 +1303,14 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         bool sequential = false,
         int pageConcurrency = 10,
         int songConcurrency = 1,
-        int maxRequestsPerSecond = 0)
+        int maxRequestsPerSecond = 0,
+        double overThresholdMultiplier = 1.05,
+        int overThresholdExtraPages = 100)
     {
         if (sequential)
             return await ScrapeManySongsSequentialAsync(
                 requests, accessToken, accountId, onSongComplete, ct, maxPages, pageConcurrency, songConcurrency,
-                maxRequestsPerSecond);
+                maxRequestsPerSecond, overThresholdMultiplier, overThresholdExtraPages);
 
         using var limiter = new AdaptiveConcurrencyLimiter(
             maxConcurrency, minDop: 256, maxDop: maxConcurrency,
@@ -1191,7 +1329,10 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 sharedLimiter: limiter,
                 ct: ct,
                 label: req.Label,
-                maxPages: maxPages);
+                maxPages: maxPages,
+                maxScores: req.MaxScores,
+                overThresholdMultiplier: overThresholdMultiplier,
+                overThresholdExtraPages: overThresholdExtraPages);
 
             results[req.SongId] = songResults;
 
@@ -1223,7 +1364,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int maxPages,
         int pageConcurrency,
         int songConcurrency,
-        int maxRequestsPerSecond = 0)
+        int maxRequestsPerSecond = 0,
+        double overThresholdMultiplier = 1.05,
+        int overThresholdExtraPages = 100)
     {
         var results = new ConcurrentDictionary<string, List<GlobalLeaderboardResult>>();
         int effectiveSongConcurrency = Math.Max(1, songConcurrency);
@@ -1246,9 +1389,13 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             try
             {
                 var instTasks = req.Instruments.Select(inst =>
-                    ScrapeLeaderboardSequentialAsync(
-                        req.SongId, inst, accessToken, accountId, ct, req.Label, maxPages, limiter)
-                ).ToList();
+                {
+                    int? choptMax = req.MaxScores?.GetByInstrument(inst);
+                    return ScrapeLeaderboardSequentialAsync(
+                        req.SongId, inst, accessToken, accountId, ct, req.Label, maxPages, limiter,
+                        choptMaxScore: choptMax, overThresholdMultiplier: overThresholdMultiplier,
+                        overThresholdExtraPages: overThresholdExtraPages);
+                }).ToList();
 
                 var songResults = (await Task.WhenAll(instTasks)).ToList();
                 results[req.SongId] = songResults;
@@ -1282,7 +1429,10 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         CancellationToken ct,
         string? label = null,
         int maxPages = 0,
-        AdaptiveConcurrencyLimiter? limiter = null)
+        AdaptiveConcurrencyLimiter? limiter = null,
+        int? choptMaxScore = null,
+        double overThresholdMultiplier = 1.05,
+        int overThresholdExtraPages = 100)
     {
         // ── Page 0 ──
         var page0 = await FetchPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct);
