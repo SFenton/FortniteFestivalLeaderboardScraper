@@ -1391,6 +1391,7 @@ export class SuggestionGenerator {
   /** Songs where ALL played instruments are in the same percentile bucket (not Top 1%). */
   private samePercentileBucket(): SuggestionCategory[] {
     const pool: SongPair[] = [];
+    const songBucket = new Map<string, number>();
     for (const s of this.songs) {
       const board = this.scoresIndex[s.track.su];
       if (!board) continue;
@@ -1404,6 +1405,7 @@ export class SuggestionGenerator {
       }
       if (buckets.length >= 2 && buckets.every(b => b === buckets[0]) && buckets[0]! > 1) {
         pool.push({song: s, tracker: null});
+        songBucket.set(s.track.su, buckets[0]!);
       }
     }
     this.shuffleInPlace(pool);
@@ -1417,7 +1419,12 @@ export class SuggestionGenerator {
       key,
       title: 'Competitive Improvements',
       description: 'Songs where your percentile is the same across all instruments. An improvement on any instrument moves you up everywhere.',
-      songs: final.map(p => this.mapUniqueSong(p)),
+      songs: final.map(p => {
+        const item = this.mapUniqueSong(p);
+        const b = songBucket.get(p.song.track.su);
+        if (b != null) item.percentileDisplay = `Top ${b}%`;
+        return item;
+      }),
     }];
   }
 
@@ -1452,7 +1459,11 @@ export class SuggestionGenerator {
       key,
       title: `Break Into ${target}`,
       description: `Songs where all your instruments are ranked Top ${bucket}%. Improve any instrument to break the tie and climb to ${target}.`,
-      songs: final.map(p => this.mapUniqueSong(p)),
+      songs: final.map(p => {
+        const item = this.mapUniqueSong(p);
+        item.percentileDisplay = `Top ${bucket}%`;
+        return item;
+      }),
     }];
   }
 

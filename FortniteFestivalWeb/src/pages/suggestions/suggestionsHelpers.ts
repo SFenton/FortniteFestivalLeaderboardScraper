@@ -161,6 +161,9 @@ export function resolveCategoryI18n(
   // Extract artist from raw title for artist categories
   const artistName = extractArtistParam(baseKey, rawTitle);
 
+  // Extract song name from raw title for samename categories
+  const songName = extractSongNameParam(baseKey, rawTitle);
+
   // Extract instrument from key
   const instrument = extractInstrumentParam(baseKey);
 
@@ -169,6 +172,7 @@ export function resolveCategoryI18n(
   if (decade) params.decade = decade;
   if (rivalName) params.rival = rivalName;
   if (artistName) params.artist = artistName;
+  if (songName) params.name = songName;
   if (instrument) params.instrument = instrument;
 
   // Resolve base i18n key
@@ -223,6 +227,13 @@ function extractArtistParam(key: string, title: string): string | undefined {
     return title.replace(/^Discover\s+/, '');
   }
   return undefined;
+}
+
+function extractSongNameParam(key: string, title: string): string | undefined {
+  if (!key.startsWith('samename_')) return undefined;
+  // Title patterns: "Songs Named 'Happy'" or "Close to FC: 'Happy' Variants"
+  const m = /'([^']+)'/.exec(title);
+  return m?.[1];
 }
 
 function extractInstrumentParam(key: string): string | undefined {

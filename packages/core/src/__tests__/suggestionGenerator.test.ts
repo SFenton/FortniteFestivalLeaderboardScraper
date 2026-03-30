@@ -1692,4 +1692,83 @@ describe('SuggestionGenerator', () => {
       expect(tier5k.songs.length).toBe(0);
     }
   });
+
+  // ─── Same-percentile bucket percentileDisplay tests ────────
+
+  /** Creates a LeaderboardData with multiple instruments at the same rawPercentile. */
+  const mkMultiInstrumentScores = (
+    songId: string,
+    rawPercentile: number,
+    instruments: string[] = ['guitar', 'bass'],
+  ): LeaderboardData => {
+    const data: any = {songId};
+    for (const ins of instruments) {
+      const t = new ScoreTracker();
+      t.initialized = true;
+      t.percentHit = 950000;
+      t.numStars = 5;
+      t.rawPercentile = rawPercentile;
+      t.refreshDerived();
+      data[ins] = t;
+    }
+    return data;
+  };
+
+  test('samePercentileBucket sets percentileDisplay on song items', () => {
+    const rng = {nextInt: (n: number) => 0, nextDouble: () => 0};
+    const songs = Array.from({length: 20}, (_, i) =>
+      mkSong(`s${i}`, `Song ${i}`, `Artist ${i}`, 2001),
+    );
+    // rawPercentile 0.04 → top 4% → bucket 4
+    const scoresIndex: Record<string, LeaderboardData> = Object.fromEntries(
+      songs.map(s => [s.track.su, mkMultiInstrumentScores(s.track.su, 0.04)]),
+    );
+    const gen = new SuggestionGenerator({rng, disableSkipping: true, fixedDisplayCount: 5});
+    gen.setSource(songs, scoresIndex);
+    const out = (gen as any).samePercentileBucket.call(gen) as any[];
+    expect(out.length).toBe(1);
+    expect(out[0].key).toBe('same_pct_improve');
+    for (const song of out[0].songs) {
+      expect(song.percentileDisplay).toBe('Top 4%');
+    }
+  });
+
+  test('samePercentileBucketSpecific sets percentileDisplay matching the bucket', () => {
+    const rng = {nextInt: (n: number) => 0, nextDouble: () => 0};
+    const songs = Array.from({length: 20}, (_, i) =>
+      mkSong(`s${i}`, `Song ${i}`, `Artist ${i}`, 2001),
+    );
+    // rawPercentile 0.08 → top 8% → bucket 10
+    const scoresIndex: Record<string, LeaderboardData> = Object.fromEntries(
+      songs.map(s => [s.track.su, mkMultiInstrumentScores(s.track.su, 0.08)]),
+    );
+    const gen = new SuggestionGenerator({rng, disableSkipping: true, fixedDisplayCount: 5});
+    gen.setSource(songs, scoresIndex);
+    const out = (gen as any).samePercentileBucketSpecific.call(gen, 10) as any[];
+    expect(out.length).toBe(1);
+    expect(out[0].key).toBe('same_pct_10');
+    for (const song of out[0].songs) {
+      expect(song.percentileDisplay).toBe('Top 10%');
+    }
+  });
+
+  test('samePercentileBucket percentileDisplay appears via getNext pipeline', () => {
+    const songs = Array.from({length: 60}, (_, i) =>
+      mkSong(`s${i}`, `Song ${i}`, `Artist ${i % 30}`, 2001),
+    );
+    // rawPercentile 0.06 → top 6% → bucket 10 (all same, all > 1)
+    const scoresIndex: Record<string, LeaderboardData> = Object.fromEntries(
+      songs.map(s => [s.track.su, mkMultiInstrumentScores(s.track.su, 0.06, ['guitar', 'bass', 'drums'])]),
+    );
+    const gen = new SuggestionGenerator({seed: 42, disableSkipping: true, fixedDisplayCount: 5});
+    const out = gen.getNext(500, songs, scoresIndex);
+    const samePct = out.filter(c => c.key.startsWith('same_pct'));
+    expect(samePct.length).toBeGreaterThan(0);
+    for (const cat of samePct) {
+      for (const song of cat.songs) {
+        expect(song.percentileDisplay).toBeDefined();
+        expect(song.percentileDisplay).toMatch(/^Top \d+%$/);
+      }
+    }
+  });
 });
