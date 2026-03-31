@@ -17,6 +17,7 @@ public sealed class ScrapeOrchestrator
     private readonly GlobalLeaderboardScraper _globalScraper;
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly IPathDataStore _pathDataStore;
+    private readonly SharedDopPool _pool;
     private readonly ScrapeProgressTracker _progress;
     private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<ScrapeOrchestrator> _log;
@@ -25,6 +26,7 @@ public sealed class ScrapeOrchestrator
         GlobalLeaderboardScraper globalScraper,
         GlobalLeaderboardPersistence persistence,
         IPathDataStore IPathDataStore,
+        SharedDopPool pool,
         ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
         ILogger<ScrapeOrchestrator> log)
@@ -32,6 +34,7 @@ public sealed class ScrapeOrchestrator
         _globalScraper = globalScraper;
         _persistence = persistence;
         _pathDataStore = IPathDataStore;
+        _pool = pool;
         _progress = progress;
         _options = options;
         _log = log;
@@ -118,7 +121,8 @@ public sealed class ScrapeOrchestrator
             maxRequestsPerSecond: opts.MaxRequestsPerSecond,
             overThresholdMultiplier: opts.OverThresholdMultiplier,
             overThresholdExtraPages: opts.OverThresholdExtraPages,
-            validEntryTarget: opts.ValidEntryTarget);
+            validEntryTarget: opts.ValidEntryTarget,
+            sharedLimiter: _pool.Limiter);
 
         // Wait for all per-instrument writers to drain
         _progress.SetSubOperation("persisting_to_database");

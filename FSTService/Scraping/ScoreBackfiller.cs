@@ -46,7 +46,7 @@ public class ScoreBackfiller
         FestivalService festivalService,
         string accessToken,
         string callerAccountId,
-        AdaptiveConcurrencyLimiter limiter,
+        SharedDopPool pool,
         int maxConcurrency = 10,
         CancellationToken ct = default)
     {
@@ -103,21 +103,21 @@ public class ScoreBackfiller
 
         try
         {
-            _progress.SetAdaptiveLimiter(limiter);
+            _progress.SetAdaptiveLimiter(pool.Limiter);
 
             var tasks = workItems.Select(async item =>
             {
-                await limiter.WaitAsync(ct);
+                await pool.AcquireLowAsync(ct);
                 try
                 {
                     _progress.ReportPhaseRequest();
                     return await ProcessSingleLookupAsync(
                         accountId, item.SongId, item.Instrument,
-                        accessToken, callerAccountId, limiter, ct);
+                        accessToken, callerAccountId, pool.Limiter, ct);
                 }
                 finally
                 {
-                    limiter.Release();
+                    pool.ReleaseLow();
                     _progress.ReportPhaseItemComplete();
                 }
             }).ToList();

@@ -1430,16 +1430,21 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int maxRequestsPerSecond = 0,
         double overThresholdMultiplier = 1.05,
         int overThresholdExtraPages = 100,
-        int validEntryTarget = 0)
+        int validEntryTarget = 0,
+        AdaptiveConcurrencyLimiter? sharedLimiter = null)
     {
         if (sequential)
             return await ScrapeManySongsSequentialAsync(
                 requests, accessToken, accountId, onSongComplete, ct, maxPages, pageConcurrency, songConcurrency,
-                maxRequestsPerSecond, overThresholdMultiplier, overThresholdExtraPages, validEntryTarget);
+                maxRequestsPerSecond, overThresholdMultiplier, overThresholdExtraPages, validEntryTarget,
+                sharedLimiter);
 
-        using var limiter = new AdaptiveConcurrencyLimiter(
+        var ownsLimiter = sharedLimiter is null;
+        var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(
             maxConcurrency, minDop: 256, maxDop: maxConcurrency,
             _log, maxRequestsPerSecond);
+        try
+        {
         _progress.SetAdaptiveLimiter(limiter);
         var results = new ConcurrentDictionary<string, List<GlobalLeaderboardResult>>();
 
@@ -1474,6 +1479,11 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         _progress.SetAdaptiveLimiter(null);
 
         return new Dictionary<string, List<GlobalLeaderboardResult>>(results);
+        }
+        finally
+        {
+            if (ownsLimiter) limiter.Dispose();
+        }
     }
 
     /// <summary>
@@ -1493,7 +1503,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int maxRequestsPerSecond = 0,
         double overThresholdMultiplier = 1.05,
         int overThresholdExtraPages = 100,
-        int validEntryTarget = 0)
+        int validEntryTarget = 0,
+        AdaptiveConcurrencyLimiter? sharedLimiter = null)
     {
         var results = new ConcurrentDictionary<string, List<GlobalLeaderboardResult>>();
         int effectiveSongConcurrency = Math.Max(1, songConcurrency);
@@ -1504,8 +1515,11 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             "Starting sequential scrape: {SongCount} songs ({SongDop} at a time, ~{MaxConcurrent} max concurrent requests, adaptive)",
             requests.Count, effectiveSongConcurrency, maxDop);
 
-        using var limiter = new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: maxDop, _log,
+        var ownsLimiter = sharedLimiter is null;
+        var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(initialDop, minDop: 2, maxDop: maxDop, _log,
             maxRequestsPerSecond);
+        try
+        {
         _progress.SetAdaptiveLimiter(limiter);
 
         using var songSemaphore = new SemaphoreSlim(effectiveSongConcurrency, effectiveSongConcurrency);
@@ -1542,6 +1556,11 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         _progress.SetAdaptiveLimiter(null);
 
         return new Dictionary<string, List<GlobalLeaderboardResult>>(results);
+        }
+        finally
+        {
+            if (ownsLimiter) limiter.Dispose();
+        }
     }
 
     /// <summary>

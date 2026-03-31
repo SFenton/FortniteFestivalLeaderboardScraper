@@ -209,8 +209,9 @@ builder.Services.AddSingleton<SharedDopPool>(sp =>
 {
     var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
     var log = sp.GetRequiredService<ILoggerFactory>().CreateLogger("SharedDopPool");
-    return new SharedDopPool(opts.MachineDop, opts.MachineMinDop, opts.MachineMaxDop,
-        opts.MachineLowPriorityPercent, log, opts.MaxRequestsPerSecond);
+    int dop = opts.DegreeOfParallelism;
+    return new SharedDopPool(dop, minDop: Math.Max(2, dop / 2), maxDop: dop,
+        opts.LowPriorityPercent, log, opts.MaxRequestsPerSecond);
 });
 builder.Services.AddSingleton<FirstSeenSeasonCalculator>();
 builder.Services.AddSingleton<FSTService.Api.NotificationService>();

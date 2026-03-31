@@ -21,6 +21,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly ILogger<HistoryReconstructor> _log = Substitute.For<ILogger<HistoryReconstructor>>();
     private readonly AdaptiveConcurrencyLimiter _limiter;
+    private readonly SharedDopPool _pool;
 
     public HistoryReconstructorInstanceTests()
     {
@@ -33,11 +34,12 @@ public class HistoryReconstructorInstanceTests : IDisposable
         _persistence = new GlobalLeaderboardPersistence(_dataDir, _metaDb.Db, loggerFactory, persLog);
         _persistence.Initialize();
         _limiter = new AdaptiveConcurrencyLimiter(16, minDop: 2, maxDop: 64, Substitute.For<ILogger>());
+        _pool = new SharedDopPool(_limiter, lowPrioritySlots: 16);
     }
 
     public void Dispose()
     {
-        _limiter.Dispose();
+        _pool.Dispose();
         _persistence.Dispose();
         _metaDb.Dispose();
         try { Directory.Delete(_dataDir, true); } catch { }
@@ -150,7 +152,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         };
 
         var result = await recon.ReconstructAccountAsync(
-            "acct1", windows, "token", "caller", _limiter);
+            "acct1", windows, "token", "caller", _pool);
 
         Assert.Equal(0, result);
     }
@@ -173,7 +175,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         };
 
         var result = await recon.ReconstructAccountAsync(
-            "acct1", windows, "token", "caller", _limiter);
+            "acct1", windows, "token", "caller", _pool);
 
         Assert.Equal(0, result);
     }
@@ -219,7 +221,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         """);
 
         var result = await recon.ReconstructAccountAsync(
-            "acct1", windows, "token", "caller", _limiter);
+            "acct1", windows, "token", "caller", _pool);
 
         // All 3 entries should be part of the progression (1000 < 3000 < 5000)
         Assert.Equal(3, result);
@@ -269,7 +271,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         """);
 
         var result = await recon.ReconstructAccountAsync(
-            "acct1", windows, "token", "caller", _limiter);
+            "acct1", windows, "token", "caller", _pool);
 
         // All 3 sessions recorded (including the 2000 non-improvement)
         Assert.Equal(3, result);
@@ -306,7 +308,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         """);
 
         var result = await recon.ReconstructAccountAsync(
-            "acct1", windows, "token", "caller", _limiter);
+            "acct1", windows, "token", "caller", _pool);
 
         // Only season 2 entry exists (season 1 failed)
         Assert.Equal(1, result);
@@ -348,7 +350,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         """);
 
         var result = await recon.ReconstructAccountAsync(
-            "acct1", windows, "token", "caller", _limiter);
+            "acct1", windows, "token", "caller", _pool);
 
         // Both seasons found, both have increasing scores
         Assert.Equal(2, result);
@@ -379,7 +381,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         scraperHandler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
 
         var result = await recon.ReconstructAccountAsync(
-            "acct1", windows, "token", "caller", _limiter);
+            "acct1", windows, "token", "caller", _pool);
 
         Assert.Equal(0, result);
     }
@@ -430,7 +432,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         """);
 
         var result = await recon.ReconstructAccountAsync(
-            "acct1", windows, "token", "caller", _limiter);
+            "acct1", windows, "token", "caller", _pool);
 
         Assert.Equal(2, result);
         // Only 2 HTTP requests (songB's 2 seasons, songA skipped)
@@ -483,7 +485,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         """);
 
         var result = await recon.ReconstructAccountAsync(
-            "acct1", windows, "token", "caller", _limiter);
+            "acct1", windows, "token", "caller", _pool);
 
         // SongB contributes 2 entries (1000 → 3000), songA only has the non-failed season entry
         Assert.True(result >= 2, $"Expected at least 2 history entries but got {result}");
@@ -571,7 +573,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         """);
 
         var result = await recon.ReconstructAccountAsync(
-            "acct1", windows, "token", "caller", _limiter);
+            "acct1", windows, "token", "caller", _pool);
 
         // All 5 sessions show strictly increasing scores:
         // 100k → 250k → 400k → 500k → 600k
@@ -624,7 +626,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         """);
 
         var result = await recon.ReconstructAccountAsync(
-            "acct1", windows, "token", "caller", _limiter);
+            "acct1", windows, "token", "caller", _pool);
 
         // All 6 sessions recorded (including 150k non-improvement)
         Assert.Equal(6, result);
@@ -679,7 +681,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         """);
 
         var result = await recon.ReconstructAccountAsync(
-            "acct1", windows, "token", "caller", _limiter);
+            "acct1", windows, "token", "caller", _pool);
 
         // 3 entries: 3000 → 7000 → 10000
         Assert.Equal(3, result);
@@ -733,7 +735,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         """);
 
         var result = await recon.ReconstructAccountAsync(
-            "acct1", windows, "token", "caller", _limiter);
+            "acct1", windows, "token", "caller", _pool);
 
         Assert.Equal(3, result);
         Assert.Equal(3, scraperHandler.Requests.Count);
@@ -762,7 +764,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
 
         // No HTTP requests should be made — the song is skipped entirely
         var result = await recon.ReconstructAccountAsync(
-            "acct1", windows, "token", "caller", _limiter);
+            "acct1", windows, "token", "caller", _pool);
 
         Assert.Equal(0, result);
         Assert.Equal(0, scraperHandler.Requests.Count);

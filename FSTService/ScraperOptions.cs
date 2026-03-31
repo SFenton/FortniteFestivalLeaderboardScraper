@@ -210,30 +210,15 @@ public sealed class ScraperOptions
     /// </summary>
     public bool RefreshCurrentSeasonSessions { get; set; } = true;
 
-    // ─── Song Processing Machine ───────────────────────────
+    // ─── Shared DOP Pool ───────────────────────────────────
 
     /// <summary>
-    /// Initial degree of parallelism for the song processing machine.
-    /// Controls how many concurrent V2 batch API calls are in flight.
+    /// Percentage of <see cref="DegreeOfParallelism"/> available to low-priority
+    /// callers (API-triggered backfill, registration backfill).
+    /// High-priority callers (main scrape, post-scrape refresh) get the full DOP.
+    /// Default 20 = low-priority callers can use up to 20% of the pool.
     /// </summary>
-    public int MachineDop { get; set; } = 64;
-
-    /// <summary>
-    /// Minimum DOP the adaptive limiter can reduce to during machine operation.
-    /// </summary>
-    public int MachineMinDop { get; set; } = 2;
-
-    /// <summary>
-    /// Maximum DOP the adaptive limiter can increase to during machine operation.
-    /// </summary>
-    public int MachineMaxDop { get; set; } = 256;
-
-    /// <summary>
-    /// Percentage of max DOP available to low-priority callers (backfill/registration).
-    /// High-priority callers (post-scrape) get access to the full DOP.
-    /// Default 20 = low-priority machines can use up to 20% of the pool.
-    /// </summary>
-    public int MachineLowPriorityPercent { get; set; } = 20;
+    public int LowPriorityPercent { get; set; } = 20;
 
     /// <summary>
     /// Capacity of each per-instrument bounded channel in the persistence pipeline.

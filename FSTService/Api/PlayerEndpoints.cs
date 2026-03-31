@@ -224,7 +224,7 @@ public static partial class ApiEndpoints
             HistoryReconstructor historyReconstructor,
             NotificationService notifications,
             TokenManager tokenManager,
-            IOptions<ScraperOptions> scraperOptions,
+            SharedDopPool pool,
             ILoggerFactory loggerFactory,
             BackfillQueue backfillQueue) =>
         {
@@ -255,7 +255,6 @@ public static partial class ApiEndpoints
                     var log = loggerFactory.CreateLogger("FSTService.Api.TrackBackfill");
                     try
                     {
-                        var dop = scraperOptions.Value.PageConcurrency;
                         var accessToken = await tokenManager.GetAccessTokenAsync(CancellationToken.None);
                         if (accessToken is null)
                         {
@@ -267,13 +266,8 @@ public static partial class ApiEndpoints
                         if (festivalService.Songs.Count == 0)
                             await festivalService.InitializeAsync();
 
-                        int initialDop = Math.Max(1, dop / 2);
-                        using var limiter = new FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter(
-                            initialDop, minDop: 2, maxDop: dop,
-                            loggerFactory.CreateLogger("PlayerBackfillLimiter"));
-
                         await backfiller.BackfillAccountAsync(
-                            accountId, festivalService, accessToken, callerAccountId, limiter, dop, CancellationToken.None);
+                            accountId, festivalService, accessToken, callerAccountId, pool, ct: CancellationToken.None);
 
                         // Reconstruct score history
                         var reconStatus = metaDb.GetHistoryReconStatus(accountId);
@@ -284,8 +278,8 @@ public static partial class ApiEndpoints
                             if (seasonWindows.Count > 0)
                             {
                                 await historyReconstructor.ReconstructAccountAsync(
-                                    accountId, seasonWindows, accessToken, callerAccountId, limiter, dop,
-                                    CancellationToken.None);
+                                    accountId, seasonWindows, accessToken, callerAccountId, pool,
+                                    ct: CancellationToken.None);
                             }
                         }
 

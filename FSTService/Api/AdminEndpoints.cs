@@ -317,11 +317,9 @@ public static partial class ApiEndpoints
             FestivalService festivalService,
             TokenManager tokenManager,
             IMetaDatabase metaDb,
-            IOptions<ScraperOptions> scraperOptions,
-            ILoggerFactory loggerFactory,
+            SharedDopPool pool,
             CancellationToken ct) =>
         {
-            var dop = scraperOptions.Value.PageConcurrency;
             // Verify the account is registered
             var registeredIds = metaDb.GetRegisteredAccountIds();
             if (!registeredIds.Contains(accountId))
@@ -345,13 +343,8 @@ public static partial class ApiEndpoints
             }
 
             // ── Step 1: Backfill missing scores ──
-            int initialDop = Math.Max(1, dop / 2);
-            using var limiter = new FortniteFestival.Core.Scraping.AdaptiveConcurrencyLimiter(
-                initialDop, minDop: 2, maxDop: dop,
-                loggerFactory.CreateLogger("AdminBackfillLimiter"));
-
             var found = await backfiller.BackfillAccountAsync(
-                accountId, festivalService, accessToken, callerAccountId, limiter, dop, ct);
+                accountId, festivalService, accessToken, callerAccountId, pool, ct: ct);
 
             var status = metaDb.GetBackfillStatus(accountId);
 
@@ -366,7 +359,7 @@ public static partial class ApiEndpoints
                 if (seasonWindows.Count > 0)
                 {
                     historyEntries = await historyReconstructor.ReconstructAccountAsync(
-                        accountId, seasonWindows, accessToken, callerAccountId, limiter, dop, ct);
+                        accountId, seasonWindows, accessToken, callerAccountId, pool, ct: ct);
                 }
             }
 

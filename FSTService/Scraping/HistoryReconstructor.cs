@@ -304,7 +304,7 @@ public class HistoryReconstructor
         IReadOnlyList<SeasonWindowInfo> seasonWindows,
         string accessToken,
         string callerAccountId,
-        AdaptiveConcurrencyLimiter limiter,
+        SharedDopPool pool,
         int maxConcurrency = 10,
         CancellationToken ct = default)
     {
@@ -370,10 +370,10 @@ public class HistoryReconstructor
         int songsProcessed = alreadyProcessed.Count;
         int seasonsQueried = 0;
 
-        _progress.SetAdaptiveLimiter(limiter);
+        _progress.SetAdaptiveLimiter(pool.Limiter);
 
         // Process song/instrument pairs in parallel, throttled by adaptive limiter.
-        // Each inner season query acquires/releases the limiter, so concurrency is
+        // Each inner season query acquires/releases the pool, so concurrency is
         // controlled at the individual API call level (not the song level).
         var tasks = new List<Task>();
         foreach (var (songId, instrument, alltimeEntry) in reconstructable)
@@ -405,7 +405,7 @@ public class HistoryReconstructor
             {
                 var (entries, queries) = await ReconstructSongHistoryAsync(
                     accountId, songId, instrument, alltimeEntry,
-                    songMinSeason, seasonWindows, accessToken, callerAccountId, limiter, ct);
+                    songMinSeason, seasonWindows, accessToken, callerAccountId, pool, ct);
 
                 Interlocked.Add(ref totalHistoryEntries, entries);
                 Interlocked.Add(ref seasonsQueried, queries);
@@ -424,7 +424,7 @@ public class HistoryReconstructor
 
                     _log.LogDebug(
                         "History recon progress: {Processed}/{Total} songs, DOP={Dop}.",
-                        processed, reconstructable.Count, limiter.CurrentDop);
+                        processed, reconstructable.Count, pool.CurrentDop);
                 }
             }
             catch (OperationCanceledException) { throw; }
@@ -469,7 +469,7 @@ public class HistoryReconstructor
         IReadOnlyList<SeasonWindowInfo> seasonWindows,
         string accessToken,
         string callerAccountId,
-        AdaptiveConcurrencyLimiter limiter,
+        SharedDopPool pool,
         CancellationToken ct)
     {
         int maxSeason = alltimeEntry.Season;
@@ -497,19 +497,19 @@ public class HistoryReconstructor
             return (0, 0);
 
         // Query all seasons in parallel, collecting ALL sessions from each.
-        // Each season query acquires/releases the adaptive concurrency limiter.
+        // Each season query acquires/releases the shared DOP pool (low priority).
         var allSessions = new ConcurrentDictionary<int, List<SessionHistoryEntry>>();
         int queriesMade = 0;
 
         var tasks = seasonsToQuery.Select(async item =>
         {
             var (s, window) = item;
-            await limiter.WaitAsync(ct);
+            await pool.AcquireLowAsync(ct);
             try
             {
                 var sessions = await _scraper.LookupSeasonalSessionsAsync(
                     songId, instrument, window.WindowId,
-                    accountId, accessToken, callerAccountId, limiter, ct);
+                    accountId, accessToken, callerAccountId, pool.Limiter, ct);
                 Interlocked.Increment(ref queriesMade);
                 _progress.ReportPhaseRequest();
 
@@ -529,7 +529,7 @@ public class HistoryReconstructor
             }
             finally
             {
-                limiter.Release();
+                pool.ReleaseLow();
             }
         }).ToList();
 

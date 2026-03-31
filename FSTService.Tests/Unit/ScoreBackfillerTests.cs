@@ -22,6 +22,7 @@ public class ScoreBackfillerTests : IDisposable
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly ILogger<ScoreBackfiller> _log = Substitute.For<ILogger<ScoreBackfiller>>();
     private readonly AdaptiveConcurrencyLimiter _limiter;
+    private readonly SharedDopPool _pool;
 
     public ScoreBackfillerTests()
     {
@@ -34,11 +35,12 @@ public class ScoreBackfillerTests : IDisposable
         _persistence = new GlobalLeaderboardPersistence(_dataDir, _metaDb.Db, loggerFactory, persLog);
         _persistence.Initialize();
         _limiter = new AdaptiveConcurrencyLimiter(16, minDop: 2, maxDop: 64, Substitute.For<ILogger>());
+        _pool = new SharedDopPool(_limiter, lowPrioritySlots: 16);
     }
 
     public void Dispose()
     {
-        _limiter.Dispose();
+        _pool.Dispose();
         _persistence.Dispose();
         _metaDb.Dispose();
         try { Directory.Delete(_dataDir, true); } catch { }
@@ -81,7 +83,7 @@ public class ScoreBackfillerTests : IDisposable
         var (backfiller, handler) = CreateBackfiller();
         var service = CreateServiceWithSongs(Array.Empty<Song>());
 
-        var result = await backfiller.BackfillAccountAsync("acct1", service, "token", "caller", _limiter);
+        var result = await backfiller.BackfillAccountAsync("acct1", service, "token", "caller", _pool);
 
         // Total pairs = 0 songs * 6 instruments = 0 → immediate completion
         Assert.Equal(0, result);
@@ -124,7 +126,7 @@ public class ScoreBackfillerTests : IDisposable
         for (int i = 0; i < 5; i++)
             handler.EnqueueJsonOk(emptyJson);
 
-        var result = await backfiller.BackfillAccountAsync("acct1", service, "token", "caller", _limiter);
+        var result = await backfiller.BackfillAccountAsync("acct1", service, "token", "caller", _pool);
 
         Assert.Equal(1, result);
 
@@ -159,7 +161,7 @@ public class ScoreBackfillerTests : IDisposable
             _metaDb.Db.MarkBackfillSongChecked("acct1", "songA", instrument, entryFound: false);
         _metaDb.Db.UpdateBackfillProgress("acct1", 6, 0);
 
-        var result = await backfiller.BackfillAccountAsync("acct1", service, "token", "caller", _limiter);
+        var result = await backfiller.BackfillAccountAsync("acct1", service, "token", "caller", _pool);
 
         Assert.Equal(0, result);
         // No HTTP requests should have been made
@@ -190,7 +192,7 @@ public class ScoreBackfillerTests : IDisposable
         for (int i = 0; i < 5; i++)
             handler.EnqueueJsonOk("""{"page":0,"totalPages":0,"entries":[]}""");
 
-        var result = await backfiller.BackfillAccountAsync("acct1", service, "token", "caller", _limiter);
+        var result = await backfiller.BackfillAccountAsync("acct1", service, "token", "caller", _pool);
 
         Assert.Equal(0, result);
         // Only 5 HTTP requests (skipped guitar)
@@ -217,7 +219,7 @@ public class ScoreBackfillerTests : IDisposable
         _metaDb.Db.StartBackfill("acct1");
 
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
-            backfiller.BackfillAccountAsync("acct1", service, "token", "caller", _limiter));
+            backfiller.BackfillAccountAsync("acct1", service, "token", "caller", _pool));
     }
 
     // ─── Backfill API error → caught internally, continues ──
@@ -237,7 +239,7 @@ public class ScoreBackfillerTests : IDisposable
         for (int i = 0; i < 6; i++)
             handler.EnqueueException(new InvalidOperationException("Unexpected"));
 
-        var result = await backfiller.BackfillAccountAsync("acct1", service, "token", "caller", _limiter);
+        var result = await backfiller.BackfillAccountAsync("acct1", service, "token", "caller", _pool);
 
         Assert.Equal(0, result);
     }
@@ -259,7 +261,7 @@ public class ScoreBackfillerTests : IDisposable
         for (int i = 0; i < 6; i++)
             handler.EnqueueJsonResponse(HttpStatusCode.Forbidden, """{"errorCode":"forbidden"}""");
 
-        var result = await backfiller.BackfillAccountAsync("acct1", service, "token", "caller", _limiter);
+        var result = await backfiller.BackfillAccountAsync("acct1", service, "token", "caller", _pool);
 
         Assert.Equal(0, result);
         Assert.Equal(6, handler.Requests.Count);
