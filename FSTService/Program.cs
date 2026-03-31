@@ -173,6 +173,17 @@ builder.Services.AddSingleton<MetaDatabase>(sp =>
 });
 builder.Services.AddSingleton<IMetaDatabase>(sp => sp.GetRequiredService<MetaDatabase>());
 
+builder.Services.AddSingleton<PathDataStore>(sp =>
+{
+    var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
+    var dbPath = Path.GetFullPath(opts.DatabasePath);
+    return new PathDataStore(dbPath);
+});
+builder.Services.AddSingleton<IPathDataStore>(sp => sp.GetRequiredService<PathDataStore>());
+} // end SQLite/PG switch
+
+// ─── Shared services (registered for both SQLite and PostgreSQL) ────
+
 builder.Services.AddSingleton<GlobalLeaderboardPersistence>(sp =>
 {
     var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
@@ -240,15 +251,6 @@ builder.Services.AddHttpClient<HistoryReconstructor>()
     });
 
 // ─── Path Generation ────────────────────────────────────────
-
-builder.Services.AddSingleton<PathDataStore>(sp =>
-{
-    var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
-    var dbPath = Path.GetFullPath(opts.DatabasePath);
-    return new PathDataStore(dbPath);
-});
-builder.Services.AddSingleton<IPathDataStore>(sp => sp.GetRequiredService<PathDataStore>());
-} // end SQLite registrations
 
 builder.Services.AddHttpClient<PathGenerator>()
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
