@@ -15,6 +15,15 @@ public static class PgDatabaseInitializer
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = Schema;
         await cmd.ExecuteNonQueryAsync(ct);
+
+        // Reset SERIAL sequences to max(id)+1 — needed after COPY migration inserts explicit IDs
+        await using var seqCmd = conn.CreateCommand();
+        seqCmd.CommandText = """
+            SELECT setval(pg_get_serial_sequence('scrape_log', 'id'), COALESCE((SELECT MAX(id) FROM scrape_log), 0) + 1, false);
+            SELECT setval(pg_get_serial_sequence('score_history', 'id'), COALESCE((SELECT MAX(id) FROM score_history), 0) + 1, false);
+            SELECT setval(pg_get_serial_sequence('user_sessions', 'id'), COALESCE((SELECT MAX(id) FROM user_sessions), 0) + 1, false);
+            """;
+        await seqCmd.ExecuteNonQueryAsync(ct);
     }
 
     // ── Complete DDL ──────────────────────────────────────────────────────
