@@ -102,7 +102,10 @@ public sealed class RivalsCalculator
 
             foreach (var entry in userScores)
             {
-                var effectiveRank = entry.ApiRank > 0 ? entry.ApiRank : entry.Rank;
+                // Prefer dense Rank (set by RecomputeAllRanks for scrape entries) because
+                // GetNeighborhood queries the Rank column. ApiRank is the global Epic rank
+                // which can be 100K+ and won't match any dense-ranked entries in the DB.
+                var effectiveRank = entry.Rank > 0 ? entry.Rank : entry.ApiRank;
                 if (effectiveRank <= 0) { songsSkippedUnranked++; continue; } // skip unranked
                 if (!songCounts.TryGetValue(entry.SongId, out var entryCount) || entryCount <= 1)
                 { songsSkippedSingle++; continue; }
@@ -562,7 +565,8 @@ public sealed class RivalsCalculator
                     if (entry.Rank != entry.ApiRank) mismatchCount++;
                 }
 
-                var effectiveRank = entry.ApiRank > 0 ? entry.ApiRank : entry.Rank;
+                // Match ComputeRivals: prefer dense Rank over global ApiRank
+                var effectiveRank = entry.Rank > 0 ? entry.Rank : entry.ApiRank;
                 if (effectiveRank > 0)
                     rankedEntries.Add((entry, effectiveRank));
             }

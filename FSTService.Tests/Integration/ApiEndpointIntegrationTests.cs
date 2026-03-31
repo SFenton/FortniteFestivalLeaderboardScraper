@@ -2647,6 +2647,18 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         };
         metaDb.ReplaceRivalsData("diag_acct", rivals, Array.Empty<RivalSongSampleRow>());
 
+        // Seed instrument data so GetDiagnostics finds entries for the account
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var persistence = scope.ServiceProvider.GetRequiredService<GlobalLeaderboardPersistence>();
+            var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+            db.UpsertEntries("diag_song", new List<LeaderboardEntry>
+            {
+                new() { AccountId = "diag_acct", Score = 10000, Accuracy = 95, Stars = 5 },
+                new() { AccountId = "filler1",   Score = 9000,  Accuracy = 90, Stars = 4 },
+            });
+        }
+
         var response = await _authedClient.GetAsync("/api/player/diag_acct/rivals/diagnostics");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();

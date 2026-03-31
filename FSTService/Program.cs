@@ -195,7 +195,8 @@ builder.Services.AddSingleton<GlobalLeaderboardPersistence>(sp =>
         Path.GetFullPath(opts.DataDirectory),
         sp.GetRequiredService<IMetaDatabase>(),
         sp.GetRequiredService<ILoggerFactory>(),
-        sp.GetRequiredService<ILogger<GlobalLeaderboardPersistence>>());
+        sp.GetRequiredService<ILogger<GlobalLeaderboardPersistence>>(),
+        sp.GetService<NpgsqlDataSource>());
 });
 
 builder.Services.AddSingleton<BackfillQueue>();
@@ -279,13 +280,22 @@ builder.Services.AddHttpClient<PathGenerator>()
 // Core FestivalService — song catalog sync. Shared with API for /api/songs.
 builder.Services.AddSingleton<FestivalService>(sp =>
 {
-    var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
-    var dbPath = Path.GetFullPath(opts.DatabasePath);
-    var dbDir = Path.GetDirectoryName(dbPath);
-    if (!string.IsNullOrEmpty(dbDir) && !Directory.Exists(dbDir))
-        Directory.CreateDirectory(dbDir);
+    IFestivalPersistence persistence;
+    var pgDs = sp.GetService<NpgsqlDataSource>();
+    if (pgDs is not null)
+    {
+        persistence = new FSTService.Persistence.Pg.PgFestivalPersistence(pgDs);
+    }
+    else
+    {
+        var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
+        var dbPath = Path.GetFullPath(opts.DatabasePath);
+        var dbDir = Path.GetDirectoryName(dbPath);
+        if (!string.IsNullOrEmpty(dbDir) && !Directory.Exists(dbDir))
+            Directory.CreateDirectory(dbDir);
+        persistence = new SqlitePersistence(dbPath);
+    }
 
-    var persistence = new SqlitePersistence(dbPath);
     var service = new FestivalService(persistence);
     var log = sp.GetRequiredService<ILogger<FestivalService>>();
     service.Log += msg => log.LogInformation("[Core] {Message}", msg);

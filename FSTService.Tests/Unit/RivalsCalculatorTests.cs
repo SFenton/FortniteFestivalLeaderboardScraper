@@ -356,6 +356,49 @@ public sealed class RivalsCalculatorTests : IDisposable
     // ═══ Multi-instrument combo ═════════════════════════════════
 
     [Fact]
+    public void ComputeRivals_uses_dense_rank_not_apiRank_for_neighborhood()
+    {
+        // Reproduces the production bug: user has scrape entries with
+        // dense Rank ~1-10 but high ApiRank ~100K. Old code used ApiRank
+        // as effectiveRank, so GetNeighborhood scanned Rank 99950-100050
+        // and found nothing. Fixed code uses dense Rank.
+        var persistence = CreatePersistence();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        // Step 1: Seed 15 songs with scrape entries (user + fillers).
+        // RecomputeAllRanks gives dense Rank (1 = highest score).
+        for (int i = 0; i < 15; i++)
+        {
+            var entries = new List<(string, int)>
+            {
+                ("user1", 10000 - i * 100),
+                ("rival1", 10000 - i * 100 - 5),
+            };
+            for (int j = 0; j < 20; j++)
+                entries.Add(($"filler_{j}", 10000 - i * 100 - 200 - j * 50));
+            SeedEntries(db, $"song_{i}", entries.ToArray());
+        }
+
+        // Step 2: Simulate backfill setting ApiRank to a high global value.
+        // UPSERT preserves Source='scrape' and existing Rank.
+        for (int i = 0; i < 15; i++)
+        {
+            SeedEntriesEx(db, $"song_{i}",
+                ("user1", 10000 - i * 100, "backfill", 100000 + i));
+        }
+
+        var calc = CreateCalculator(persistence);
+        var result = calc.ComputeRivals("user1");
+
+        // With the fix, effectiveRank uses dense Rank (~1) instead of
+        // ApiRank (~100K), so neighbors are found and rivals produced.
+        Assert.NotEmpty(result.Rivals);
+        var guitarComboId = ComboIds.FromInstruments(["Solo_Guitar"]);
+        var guitarRivals = result.Rivals.Where(r => r.InstrumentCombo == guitarComboId).ToList();
+        Assert.Contains(guitarRivals, r => r.RivalAccountId == "rival1");
+    }
+
+    [Fact]
     public void ComputeRivals_generates_multi_instrument_combos()
     {
         var persistence = CreatePersistence();
@@ -638,9 +681,12 @@ public sealed class RivalsCalculatorTests : IDisposable
     [Fact]
     public void GetDiagnostics_probe_finds_zero_neighbors_for_backfill_only()
     {
-        // This captures the suspected bug: backfill entries have ApiRank set but Rank = 0.
-        // GetNeighborhood queries Rank, so it won't find any neighbors for the user's
-        // ApiRank-based effectiveRank.
+        // backfill entries have ApiRank set but Rank = 0.
+        // effectiveRank falls back to ApiRank when Rank = 0.
+        // GetNeighborhood queries the Rank column, so if the only entries
+        // in the DB are scrape-based with dense Rank 1-10, the probe at
+        // ApiRank ~500 finds nothing — this is expected for pure-backfill
+        // entries with no scrape coverage.
         var persistence = CreatePersistence();
         var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
 
@@ -664,12 +710,51 @@ public sealed class RivalsCalculatorTests : IDisposable
 
         var inst = diag.Instruments[0];
         Assert.NotNull(inst.Probe);
-        // The probe uses effectiveRank = ApiRank (e.g. 506 for median) but
-        // GetNeighborhood queries Rank column where filler entries are 1-10.
-        // So the probe will find 0 neighbors.
+        // effectiveRank = ApiRank (fallback since Rank = 0).
+        // Probe scans Rank ~500 range but entries have dense Rank 1-10 → 0 neighbors.
         Assert.Equal(0, inst.Probe!.NeighborsFound);
         Assert.True(inst.Probe.EffectiveRank >= 500,
             "EffectiveRank should use ApiRank since Rank = 0");
+    }
+
+    [Fact]
+    public void GetDiagnostics_probe_uses_dense_rank_over_apiRank_when_both_set()
+    {
+        // Production scenario: entries are scraped (get dense Rank from
+        // RecomputeAllRanks) AND backfilled (get high global ApiRank).
+        // The effectiveRank should prefer the dense Rank so the
+        // neighborhood probe finds scrape-population neighbors.
+        var persistence = CreatePersistence();
+        var db = persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        for (int i = 0; i < 12; i++)
+        {
+            // Scrape entries first (gets dense Rank from RecomputeAllRanks)
+            var entries = new List<(string, int)> { ("user1", 10000 - i * 100) };
+            for (int j = 0; j < 10; j++)
+                entries.Add(($"filler_{j}", 10000 - i * 100 - (j + 1) * 50));
+            SeedEntries(db, $"song_{i}", entries.ToArray());
+        }
+
+        // Now simulate backfill setting ApiRank to a high global value.
+        // UPSERT preserves the Source='scrape' and existing Rank, but adds ApiRank.
+        for (int i = 0; i < 12; i++)
+        {
+            SeedEntriesEx(db, $"song_{i}",
+                ("user1", 10000 - i * 100, "backfill", 161000 + i));
+        }
+
+        var calc = CreateCalculator(persistence);
+        var diag = calc.GetDiagnostics("user1");
+
+        var inst = diag.Instruments[0];
+        Assert.NotNull(inst.Probe);
+        // effectiveRank uses dense Rank (not ApiRank=161K) → probe
+        // finds neighbors in the scrape population.
+        Assert.True(inst.Probe!.NeighborsFound > 0,
+            "Probe should find neighbors when using dense Rank instead of high ApiRank");
+        Assert.True(inst.Probe.EffectiveRank < 100,
+            "EffectiveRank should be the dense Rank, not the 161K+ ApiRank");
     }
 
     [Fact]
