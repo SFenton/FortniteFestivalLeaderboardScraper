@@ -406,12 +406,13 @@ public static partial class ApiEndpoints
         .RequireRateLimiting("protected");
 
         // ── Backfill max scores from SQLite → PG ────────────────────────
-        app.MapPost("/api/admin/backfill-max-scores", (
+        app.MapPost("/api/admin/backfill-max-scores", async (
             IPathDataStore pathStore,
             SongsCacheService songsCache,
             ScrapeTimePrecomputer precomputer,
             IOptions<ScraperOptions> scraperOptions,
-            ILoggerFactory loggerFactory) =>
+            ILoggerFactory loggerFactory,
+            CancellationToken ct) =>
         {
             var log = loggerFactory.CreateLogger("AdminEndpoints");
 
@@ -437,10 +438,13 @@ public static partial class ApiEndpoints
             }
 
             songsCache.Invalidate();
-            precomputer.InvalidateAll();
-            log.LogInformation("Backfilled max scores for {Count} songs from SQLite → active store.", updated);
 
-            return Results.Ok(new { message = $"Backfilled max scores for {updated} songs.", updated });
+            // Re-run precomputation so player responses include minLeeway + validScores
+            log.LogInformation("Backfilled max scores for {Count} songs. Running precomputation...", updated);
+            await precomputer.PrecomputeAllAsync(ct);
+            log.LogInformation("Precomputation complete after max-score backfill.");
+
+            return Results.Ok(new { message = $"Backfilled max scores for {updated} songs and recomputed player data.", updated });
         })
         .WithTags("Admin")
         .RequireAuthorization()
