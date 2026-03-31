@@ -1,5 +1,6 @@
 using FSTService.Scraping;
 using Npgsql;
+using NpgsqlTypes;
 
 namespace FSTService.Persistence.Pg;
 
@@ -15,6 +16,9 @@ public sealed class PgInstrumentDatabase : IInstrumentDatabase
     private readonly ILogger<PgInstrumentDatabase> _log;
     public string Instrument { get; }
 
+    /// <summary>Below this entry count, use the prepared-statement loop. Above, use COPY + merge.</summary>
+    internal const int BulkThreshold = 50;
+
     public PgInstrumentDatabase(string instrument, NpgsqlDataSource dataSource, ILogger<PgInstrumentDatabase> log)
     {
         Instrument = instrument;
@@ -29,15 +33,101 @@ public sealed class PgInstrumentDatabase : IInstrumentDatabase
     public int UpsertEntries(string songId, IReadOnlyList<LeaderboardEntry> entries)
     {
         if (entries.Count == 0) return 0;
+        return entries.Count > BulkThreshold
+            ? UpsertEntriesBulk(songId, entries)
+            : UpsertEntriesLoop(songId, entries);
+    }
+
+    /// <summary>
+    /// COPY binary into an unlogged temp table, then INSERT … SELECT … ON CONFLICT
+    /// to merge into the real table in a single statement. 10-50x faster than the
+    /// loop path for large batches.
+    /// </summary>
+    private int UpsertEntriesBulk(string songId, IReadOnlyList<LeaderboardEntry> entries)
+    {
+        var now = DateTime.UtcNow;
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+
+        // 1. Create unlogged temp table (dropped at transaction end)
+        using (var c = conn.CreateCommand())
+        {
+            c.Transaction = tx;
+            c.CommandText =
+                "CREATE TEMP TABLE _le_staging (" +
+                "song_id TEXT, instrument TEXT, account_id TEXT, score INTEGER, accuracy INTEGER, " +
+                "is_full_combo BOOLEAN, stars INTEGER, season INTEGER, difficulty INTEGER, " +
+                "percentile DOUBLE PRECISION, rank INTEGER, end_time TEXT, api_rank INTEGER, " +
+                "source TEXT, ts TIMESTAMPTZ" +
+                ") ON COMMIT DROP";
+            c.ExecuteNonQuery();
+        }
+
+        // 2. COPY binary into staging
+        using (var writer = conn.BeginBinaryImport(
+            "COPY _le_staging (song_id, instrument, account_id, score, accuracy, is_full_combo, " +
+            "stars, season, difficulty, percentile, rank, end_time, api_rank, source, ts) FROM STDIN (FORMAT BINARY)"))
+        {
+            foreach (var e in entries)
+            {
+                writer.StartRow();
+                writer.Write(songId, NpgsqlDbType.Text);
+                writer.Write(Instrument, NpgsqlDbType.Text);
+                writer.Write(e.AccountId, NpgsqlDbType.Text);
+                writer.Write(e.Score, NpgsqlDbType.Integer);
+                writer.Write(e.Accuracy, NpgsqlDbType.Integer);
+                writer.Write(e.IsFullCombo, NpgsqlDbType.Boolean);
+                writer.Write(e.Stars, NpgsqlDbType.Integer);
+                writer.Write(e.Season, NpgsqlDbType.Integer);
+                writer.Write(e.Difficulty, NpgsqlDbType.Integer);
+                writer.Write(e.Percentile, NpgsqlDbType.Double);
+                writer.Write(e.Rank, NpgsqlDbType.Integer);
+                if (e.EndTime is not null) writer.Write(e.EndTime, NpgsqlDbType.Text);
+                else writer.WriteNull();
+                if (e.ApiRank > 0) writer.Write(e.ApiRank, NpgsqlDbType.Integer);
+                else writer.WriteNull();
+                writer.Write(e.Source ?? "scrape", NpgsqlDbType.Text);
+                writer.Write(now, NpgsqlDbType.TimestampTz);
+            }
+            writer.Complete();
+        }
+
+        // 3. Merge from staging into real table
+        int affected;
+        using (var c = conn.CreateCommand())
+        {
+            c.Transaction = tx;
+            c.CommandText =
+                "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, first_seen_at, last_updated_at) " +
+                "SELECT song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, ts, ts FROM _le_staging " +
+                "ON CONFLICT(song_id, instrument, account_id) DO UPDATE SET " +
+                "score = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.score ELSE leaderboard_entries.score END, " +
+                "accuracy = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.accuracy ELSE leaderboard_entries.accuracy END, " +
+                "is_full_combo = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.is_full_combo ELSE leaderboard_entries.is_full_combo END, " +
+                "stars = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.stars ELSE leaderboard_entries.stars END, " +
+                "season = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.season ELSE leaderboard_entries.season END, " +
+                "difficulty = CASE WHEN EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0 THEN EXCLUDED.difficulty WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.difficulty ELSE leaderboard_entries.difficulty END, " +
+                "percentile = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.percentile WHEN EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0 THEN EXCLUDED.percentile ELSE leaderboard_entries.percentile END, " +
+                "rank = CASE WHEN EXCLUDED.rank > 0 THEN EXCLUDED.rank ELSE leaderboard_entries.rank END, " +
+                "api_rank = CASE WHEN EXCLUDED.api_rank > 0 THEN EXCLUDED.api_rank ELSE leaderboard_entries.api_rank END, " +
+                "source = CASE WHEN leaderboard_entries.source = 'scrape' THEN 'scrape' WHEN EXCLUDED.source = 'scrape' THEN 'scrape' WHEN leaderboard_entries.source = 'backfill' THEN 'backfill' WHEN EXCLUDED.source = 'backfill' THEN 'backfill' ELSE EXCLUDED.source END, " +
+                "end_time = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.end_time ELSE leaderboard_entries.end_time END, " +
+                "last_updated_at = EXCLUDED.last_updated_at";
+            affected = c.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+        return affected;
+    }
+
+    /// <summary>Prepared-statement loop for small batches (&le; <see cref="BulkThreshold"/>).</summary>
+    private int UpsertEntriesLoop(string songId, IReadOnlyList<LeaderboardEntry> entries)
+    {
         var now = DateTime.UtcNow;
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        // PostgreSQL does not support WHERE on ON CONFLICT DO UPDATE.
-        // The filtering logic is moved into CASE expressions in the SET clause,
-        // with a WHERE TRUE to always execute the UPDATE when a conflict exists.
-        // The CASE expressions replicate the original SQLite WHERE conditions.
         cmd.CommandText =
             "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, first_seen_at, last_updated_at) " +
             "VALUES (@songId, @instrument, @accountId, @score, @accuracy, @fc, @stars, @season, @difficulty, @pct, @rank, @endTime, @apiRank, @source, @now, @now) " +

@@ -240,7 +240,11 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
         // Persist account IDs to meta DB so the name resolver can
         // pick them up independently (survives crashes, enables --resolve-only).
-        _metaDb.InsertAccountIds(result.Entries.Select(e => e.AccountId));
+        // When running pipelined (writers active), defer to bulk flush after drain.
+        if (_aggregates is not null)
+            _aggregates.AddDeferredAccountIds(result.Entries.Select(e => e.AccountId));
+        else
+            _metaDb.InsertAccountIds(result.Entries.Select(e => e.AccountId));
 
         return new PersistResult
         {
@@ -279,6 +283,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         private readonly ConcurrentHashSet _changedAccountIds = new();
         private readonly ConcurrentDictionary<(string AccountId, string SongId, string Instrument), byte>
             _seenRegisteredEntries = new();
+        private readonly ConcurrentDictionary<string, byte> _deferredAccountIds = new(StringComparer.OrdinalIgnoreCase);
 
         public int TotalEntries => _totalEntries;
         public int TotalChanges => _totalChanges;
@@ -293,10 +298,19 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         public IReadOnlyCollection<(string AccountId, string SongId, string Instrument)>
             SeenRegisteredEntries => _seenRegisteredEntries.Keys.ToArray();
 
+        /// <summary>Account IDs accumulated during scrape for bulk flush after drain.</summary>
+        public ICollection<string> DeferredAccountIds => _deferredAccountIds.Keys;
+
         public void AddEntries(int count) => Interlocked.Add(ref _totalEntries, count);
         public void AddChanges(int count) => Interlocked.Add(ref _totalChanges, count);
         public void IncrementSongsWithData() => Interlocked.Increment(ref _songsWithData);
         public void AddChangedAccountIds(IEnumerable<string> ids) => _changedAccountIds.AddRange(ids);
+
+        /// <summary>Accumulate account IDs for a deferred bulk write after drain.</summary>
+        public void AddDeferredAccountIds(IEnumerable<string> ids)
+        {
+            foreach (var id in ids) _deferredAccountIds.TryAdd(id, 0);
+        }
 
         /// <summary>Record which registered user entries were seen in this pass.</summary>
         public void AddSeenRegisteredEntries(IEnumerable<(string, string, string)> entries)
@@ -421,6 +435,21 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         _log.LogInformation("All per-instrument writers drained.");
         _channels = null;
         _writerTasks = null;
+    }
+
+    /// <summary>
+    /// Flush deferred account IDs accumulated during pipelined persistence.
+    /// Call once after <see cref="DrainWritersAsync"/>.
+    /// </summary>
+    public int FlushDeferredAccountIds()
+    {
+        if (_aggregates is null) return 0;
+        var ids = _aggregates.DeferredAccountIds;
+        if (ids.Count == 0) return 0;
+
+        var inserted = _metaDb.InsertAccountIds(ids);
+        _log.LogInformation("Flushed {Inserted}/{Total} deferred account IDs to meta DB.", inserted, ids.Count);
+        return inserted;
     }
 
     /// <summary>

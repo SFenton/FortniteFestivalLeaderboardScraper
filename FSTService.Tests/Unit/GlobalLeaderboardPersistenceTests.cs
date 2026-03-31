@@ -674,4 +674,85 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         // Should not throw even with no data written
         glp.CheckpointAll();
     }
+
+    // ═══ Deferred Account IDs ═══════════════════════════════════
+
+    [Fact]
+    public void PipelineAggregates_deferred_account_ids_accumulates_and_deduplicates()
+    {
+        var agg = new GlobalLeaderboardPersistence.PipelineAggregates();
+
+        agg.AddDeferredAccountIds(["acct_1", "acct_2", "acct_3"]);
+        agg.AddDeferredAccountIds(["acct_2", "acct_3", "acct_4"]);
+
+        Assert.Equal(4, agg.DeferredAccountIds.Count);
+    }
+
+    [Fact]
+    public void PipelineAggregates_deferred_account_ids_thread_safe()
+    {
+        var agg = new GlobalLeaderboardPersistence.PipelineAggregates();
+
+        Parallel.For(0, 1000, i =>
+        {
+            agg.AddDeferredAccountIds([$"acct_{i % 100}"]);
+        });
+
+        Assert.Equal(100, agg.DeferredAccountIds.Count);
+    }
+
+    [Fact]
+    public async Task PersistResult_defers_account_ids_when_writers_active()
+    {
+        using var glp = CreatePersistence();
+        var agg = glp.StartWriters();
+
+        await glp.EnqueueResultAsync(
+            MakeResult("song_1", "Solo_Guitar", ("acct_1", 100_000), ("acct_2", 90_000)),
+            registeredAccountIds: null);
+
+        await glp.DrainWritersAsync();
+
+        // Account IDs should be accumulated in aggregates, not written yet
+        Assert.True(agg.DeferredAccountIds.Count >= 2);
+        Assert.Contains("acct_1", agg.DeferredAccountIds);
+        Assert.Contains("acct_2", agg.DeferredAccountIds);
+    }
+
+    [Fact]
+    public async Task FlushDeferredAccountIds_writes_to_meta_db()
+    {
+        using var glp = CreatePersistence();
+        var agg = glp.StartWriters();
+
+        await glp.EnqueueResultAsync(
+            MakeResult("song_1", "Solo_Guitar", ("acct_flush_1", 100_000), ("acct_flush_2", 90_000)),
+            registeredAccountIds: null);
+
+        await glp.DrainWritersAsync();
+
+        // Before flush — account IDs should be in deferred set
+        Assert.True(agg.DeferredAccountIds.Count >= 2);
+
+        // Flush
+        var inserted = glp.FlushDeferredAccountIds();
+
+        // After flush — account IDs should be in meta DB
+        var unresolved = _metaFixture.Db.GetUnresolvedAccountIds();
+        Assert.Contains("acct_flush_1", unresolved);
+        Assert.Contains("acct_flush_2", unresolved);
+        Assert.True(inserted >= 2);
+    }
+
+    [Fact]
+    public void PersistResult_writes_account_ids_immediately_without_writers()
+    {
+        using var glp = CreatePersistence();
+
+        // PersistResult without StartWriters — should write immediately
+        glp.PersistResult(MakeResult("song_1", "Solo_Guitar", ("acct_direct", 100_000)));
+
+        var unresolved = _metaFixture.Db.GetUnresolvedAccountIds();
+        Assert.Contains("acct_direct", unresolved);
+    }
 }

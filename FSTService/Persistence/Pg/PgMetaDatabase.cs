@@ -1,4 +1,5 @@
 using Npgsql;
+using NpgsqlTypes;
 
 namespace FSTService.Persistence.Pg;
 
@@ -120,6 +121,74 @@ public sealed class PgMetaDatabase : IMetaDatabase
         var now = DateTime.UtcNow;
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
+
+        // Use COPY + merge for larger batches
+        if (changes.Count > 20)
+        {
+            using (var c = conn.CreateCommand())
+            {
+                c.Transaction = tx;
+                c.CommandText =
+                    "CREATE TEMP TABLE _sh_staging (" +
+                    "song_id TEXT, instrument TEXT, account_id TEXT, old_score INTEGER, new_score INTEGER, " +
+                    "old_rank INTEGER, new_rank INTEGER, accuracy INTEGER, is_full_combo BOOLEAN, " +
+                    "stars INTEGER, percentile DOUBLE PRECISION, season INTEGER, " +
+                    "score_achieved_at TIMESTAMPTZ, season_rank INTEGER, all_time_rank INTEGER, " +
+                    "difficulty INTEGER, changed_at TIMESTAMPTZ" +
+                    ") ON COMMIT DROP";
+                c.ExecuteNonQuery();
+            }
+
+            using (var writer = conn.BeginBinaryImport(
+                "COPY _sh_staging (song_id, instrument, account_id, old_score, new_score, old_rank, new_rank, " +
+                "accuracy, is_full_combo, stars, percentile, season, score_achieved_at, season_rank, " +
+                "all_time_rank, difficulty, changed_at) FROM STDIN (FORMAT BINARY)"))
+            {
+                foreach (var c in changes)
+                {
+                    writer.StartRow();
+                    writer.Write(c.SongId, NpgsqlDbType.Text);
+                    writer.Write(c.Instrument, NpgsqlDbType.Text);
+                    writer.Write(c.AccountId, NpgsqlDbType.Text);
+                    WriteNullableInt(writer, c.OldScore);
+                    writer.Write(c.NewScore, NpgsqlDbType.Integer);
+                    WriteNullableInt(writer, c.OldRank);
+                    writer.Write(c.NewRank, NpgsqlDbType.Integer);
+                    WriteNullableInt(writer, c.Accuracy);
+                    if (c.IsFullCombo.HasValue) writer.Write(c.IsFullCombo.Value, NpgsqlDbType.Boolean);
+                    else writer.WriteNull();
+                    WriteNullableInt(writer, c.Stars);
+                    if (c.Percentile.HasValue) writer.Write(c.Percentile.Value, NpgsqlDbType.Double);
+                    else writer.WriteNull();
+                    WriteNullableInt(writer, c.Season);
+                    if (c.ScoreAchievedAt is not null) writer.Write(ParseUtc(c.ScoreAchievedAt), NpgsqlDbType.TimestampTz);
+                    else writer.WriteNull();
+                    WriteNullableInt(writer, c.SeasonRank);
+                    WriteNullableInt(writer, c.AllTimeRank);
+                    WriteNullableInt(writer, c.Difficulty);
+                    writer.Write(now, NpgsqlDbType.TimestampTz);
+                }
+                writer.Complete();
+            }
+
+            int inserted;
+            using (var c = conn.CreateCommand())
+            {
+                c.Transaction = tx;
+                c.CommandText =
+                    "INSERT INTO score_history (song_id, instrument, account_id, old_score, new_score, old_rank, new_rank, accuracy, is_full_combo, stars, percentile, season, score_achieved_at, season_rank, all_time_rank, difficulty, changed_at) " +
+                    "SELECT song_id, instrument, account_id, old_score, new_score, old_rank, new_rank, accuracy, is_full_combo, stars, percentile, season, score_achieved_at, season_rank, all_time_rank, difficulty, changed_at FROM _sh_staging " +
+                    "ON CONFLICT(account_id, song_id, instrument, new_score, score_achieved_at) DO UPDATE SET " +
+                    "season_rank = COALESCE(EXCLUDED.season_rank, score_history.season_rank), all_time_rank = COALESCE(EXCLUDED.all_time_rank, score_history.all_time_rank), " +
+                    "old_score = COALESCE(EXCLUDED.old_score, score_history.old_score), old_rank = COALESCE(EXCLUDED.old_rank, score_history.old_rank), " +
+                    "difficulty = COALESCE(EXCLUDED.difficulty, score_history.difficulty), changed_at = EXCLUDED.changed_at";
+                inserted = c.ExecuteNonQuery();
+            }
+            tx.Commit();
+            return inserted;
+        }
+
+        // Small batch: prepared-statement loop
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText =
@@ -129,25 +198,25 @@ public sealed class PgMetaDatabase : IMetaDatabase
             "season_rank = COALESCE(EXCLUDED.season_rank, score_history.season_rank), all_time_rank = COALESCE(EXCLUDED.all_time_rank, score_history.all_time_rank), " +
             "old_score = COALESCE(EXCLUDED.old_score, score_history.old_score), old_rank = COALESCE(EXCLUDED.old_rank, score_history.old_rank), " +
             "difficulty = COALESCE(EXCLUDED.difficulty, score_history.difficulty), changed_at = EXCLUDED.changed_at";
-        var pSongId = cmd.Parameters.Add("songId", NpgsqlTypes.NpgsqlDbType.Text);
-        var pInstrument = cmd.Parameters.Add("instrument", NpgsqlTypes.NpgsqlDbType.Text);
-        var pAccountId = cmd.Parameters.Add("accountId", NpgsqlTypes.NpgsqlDbType.Text);
-        var pOldScore = cmd.Parameters.Add("oldScore", NpgsqlTypes.NpgsqlDbType.Integer);
-        var pNewScore = cmd.Parameters.Add("newScore", NpgsqlTypes.NpgsqlDbType.Integer);
-        var pOldRank = cmd.Parameters.Add("oldRank", NpgsqlTypes.NpgsqlDbType.Integer);
-        var pNewRank = cmd.Parameters.Add("newRank", NpgsqlTypes.NpgsqlDbType.Integer);
-        var pAccuracy = cmd.Parameters.Add("accuracy", NpgsqlTypes.NpgsqlDbType.Integer);
-        var pFc = cmd.Parameters.Add("fc", NpgsqlTypes.NpgsqlDbType.Boolean);
-        var pStars = cmd.Parameters.Add("stars", NpgsqlTypes.NpgsqlDbType.Integer);
-        var pPercentile = cmd.Parameters.Add("percentile", NpgsqlTypes.NpgsqlDbType.Double);
-        var pSeason = cmd.Parameters.Add("season", NpgsqlTypes.NpgsqlDbType.Integer);
-        var pScoreAchievedAt = cmd.Parameters.Add("scoreAchievedAt", NpgsqlTypes.NpgsqlDbType.TimestampTz);
-        var pSeasonRank = cmd.Parameters.Add("seasonRank", NpgsqlTypes.NpgsqlDbType.Integer);
-        var pAllTimeRank = cmd.Parameters.Add("allTimeRank", NpgsqlTypes.NpgsqlDbType.Integer);
-        var pDifficulty = cmd.Parameters.Add("difficulty", NpgsqlTypes.NpgsqlDbType.Integer);
-        var pNow = cmd.Parameters.Add("now", NpgsqlTypes.NpgsqlDbType.TimestampTz);
+        var pSongId = cmd.Parameters.Add("songId", NpgsqlDbType.Text);
+        var pInstrument = cmd.Parameters.Add("instrument", NpgsqlDbType.Text);
+        var pAccountId = cmd.Parameters.Add("accountId", NpgsqlDbType.Text);
+        var pOldScore = cmd.Parameters.Add("oldScore", NpgsqlDbType.Integer);
+        var pNewScore = cmd.Parameters.Add("newScore", NpgsqlDbType.Integer);
+        var pOldRank = cmd.Parameters.Add("oldRank", NpgsqlDbType.Integer);
+        var pNewRank = cmd.Parameters.Add("newRank", NpgsqlDbType.Integer);
+        var pAccuracy = cmd.Parameters.Add("accuracy", NpgsqlDbType.Integer);
+        var pFc = cmd.Parameters.Add("fc", NpgsqlDbType.Boolean);
+        var pStars = cmd.Parameters.Add("stars", NpgsqlDbType.Integer);
+        var pPercentile = cmd.Parameters.Add("percentile", NpgsqlDbType.Double);
+        var pSeason = cmd.Parameters.Add("season", NpgsqlDbType.Integer);
+        var pScoreAchievedAt = cmd.Parameters.Add("scoreAchievedAt", NpgsqlDbType.TimestampTz);
+        var pSeasonRank = cmd.Parameters.Add("seasonRank", NpgsqlDbType.Integer);
+        var pAllTimeRank = cmd.Parameters.Add("allTimeRank", NpgsqlDbType.Integer);
+        var pDifficulty = cmd.Parameters.Add("difficulty", NpgsqlDbType.Integer);
+        var pNow = cmd.Parameters.Add("now", NpgsqlDbType.TimestampTz);
         cmd.Prepare();
-        int inserted = 0;
+        int loopInserted = 0;
         foreach (var c in changes)
         {
             pSongId.Value = c.SongId; pInstrument.Value = c.Instrument; pAccountId.Value = c.AccountId;
@@ -165,10 +234,10 @@ public sealed class PgMetaDatabase : IMetaDatabase
             pAllTimeRank.Value = c.AllTimeRank.HasValue ? c.AllTimeRank.Value : DBNull.Value;
             pDifficulty.Value = c.Difficulty.HasValue ? c.Difficulty.Value : DBNull.Value;
             pNow.Value = now;
-            inserted += cmd.ExecuteNonQuery();
+            loopInserted += cmd.ExecuteNonQuery();
         }
         tx.Commit();
-        return inserted;
+        return loopInserted;
     }
 
     public List<ScoreHistoryEntry> GetScoreHistory(string accountId, int limit = 100, string? songId = null, string? instrument = null)
@@ -268,16 +337,52 @@ public sealed class PgMetaDatabase : IMetaDatabase
 
     public int InsertAccountIds(IEnumerable<string> accountIds)
     {
+        var idList = accountIds as IList<string> ?? accountIds.ToList();
+        if (idList.Count == 0) return 0;
+
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
+
+        // COPY + merge for larger batches
+        if (idList.Count > 50)
+        {
+            using (var c = conn.CreateCommand())
+            {
+                c.Transaction = tx;
+                c.CommandText = "CREATE TEMP TABLE _acct_staging (account_id TEXT) ON COMMIT DROP";
+                c.ExecuteNonQuery();
+            }
+
+            using (var writer = conn.BeginBinaryImport("COPY _acct_staging (account_id) FROM STDIN (FORMAT BINARY)"))
+            {
+                foreach (var id in idList)
+                {
+                    writer.StartRow();
+                    writer.Write(id, NpgsqlDbType.Text);
+                }
+                writer.Complete();
+            }
+
+            int inserted;
+            using (var c = conn.CreateCommand())
+            {
+                c.Transaction = tx;
+                c.CommandText = "INSERT INTO account_names (account_id) SELECT account_id FROM _acct_staging ON CONFLICT DO NOTHING";
+                inserted = c.ExecuteNonQuery();
+            }
+            tx.Commit();
+            return inserted;
+        }
+
+        // Small batch: prepared-statement loop
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = "INSERT INTO account_names (account_id) VALUES (@id) ON CONFLICT DO NOTHING";
-        var pId = cmd.Parameters.Add("id", NpgsqlTypes.NpgsqlDbType.Text); cmd.Prepare();
-        int inserted = 0;
-        foreach (var id in accountIds) { pId.Value = id; inserted += cmd.ExecuteNonQuery(); }
+        var pId = cmd.Parameters.Add("id", NpgsqlDbType.Text); cmd.Prepare();
+        int loopInserted = 0;
+        foreach (var id in idList) { pId.Value = id; loopInserted += cmd.ExecuteNonQuery(); }
         tx.Commit();
-        return inserted;
+        return loopInserted;
     }
 
     public List<string> GetUnresolvedAccountIds() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id FROM account_names WHERE last_resolved IS NULL"; var ids = new List<string>(); using var r = cmd.ExecuteReader(); while (r.Read()) ids.Add(r.GetString(0)); return ids; }
@@ -541,6 +646,13 @@ public sealed class PgMetaDatabase : IMetaDatabase
 
     /// <summary>Parse an ISO 8601 string to UTC DateTime (required by Npgsql for TIMESTAMPTZ).</summary>
     private static DateTime ParseUtc(string s) => DateTime.Parse(s, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal);
+
+    /// <summary>Write a nullable int to a binary importer, or NULL if absent.</summary>
+    private static void WriteNullableInt(NpgsqlBinaryImporter writer, int? value)
+    {
+        if (value.HasValue) writer.Write(value.Value, NpgsqlDbType.Integer);
+        else writer.WriteNull();
+    }
 
     public void Dispose() { }
 }

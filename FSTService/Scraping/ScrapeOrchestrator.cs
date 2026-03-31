@@ -128,6 +128,9 @@ public sealed class ScrapeOrchestrator
         _progress.SetSubOperation("persisting_to_database");
         await _persistence.DrainWritersAsync();
 
+        // Flush deferred account IDs accumulated during pipelined writes
+        _persistence.FlushDeferredAccountIds();
+
         // Checkpoint all WAL files after the heavy write phase to keep them small
         // and prevent auto-checkpoints from firing during API reads.
         _progress.SetSubOperation("checkpointing");
