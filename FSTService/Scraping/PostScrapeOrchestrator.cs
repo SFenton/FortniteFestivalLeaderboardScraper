@@ -497,6 +497,7 @@ public sealed class PostScrapeOrchestrator
         var metaDb = _persistence.Meta;
         var instrumentKeys = _persistence.GetInstrumentKeys();
         int totalSongs = _persistence.GetTotalSongCount();
+        var population = metaDb.GetAllLeaderboardPopulation();
         int computed = 0;
 
         await Parallel.ForEachAsync(accountIds,
@@ -505,7 +506,7 @@ public sealed class PostScrapeOrchestrator
             {
                 try
                 {
-                    ComputeAndStorePlayerStats(accountId, allMaxScores, instrumentKeys, totalSongs, metaDb);
+                    ComputeAndStorePlayerStats(accountId, allMaxScores, instrumentKeys, totalSongs, population, metaDb);
                     Interlocked.Increment(ref computed);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -525,6 +526,7 @@ public sealed class PostScrapeOrchestrator
         Dictionary<string, SongMaxScores> allMaxScores,
         IReadOnlyList<string> instrumentKeys,
         int totalSongs,
+        Dictionary<(string SongId, string Instrument), long> population,
         IMetaDatabase metaDb)
     {
         var allScores = _persistence.GetPlayerProfile(accountId);
@@ -564,7 +566,7 @@ public sealed class PostScrapeOrchestrator
             var scores = byInstrument.GetValueOrDefault(inst);
             if (scores is null || scores.Count == 0) continue;
 
-            var tiers = PlayerStatsCalculator.ComputeTiers(scores, allMaxScores, inst, totalSongs, fallbacks);
+            var tiers = PlayerStatsCalculator.ComputeTiers(scores, allMaxScores, inst, totalSongs, population, fallbacks);
             perInstrumentTiers[inst] = tiers;
 
             rows.Add(new PlayerStatsTiersRow

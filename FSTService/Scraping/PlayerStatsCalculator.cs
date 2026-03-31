@@ -27,6 +27,7 @@ public sealed class PlayerStatsCalculator
         Dictionary<string, SongMaxScores> maxScores,
         string instrument,
         int totalSongs,
+        Dictionary<(string SongId, string Instrument), long> population,
         Dictionary<(string SongId, string Instrument), List<ValidScoreFallback>>? fallbacks = null)
     {
         if (scores.Count == 0)
@@ -44,6 +45,8 @@ public sealed class PlayerStatsCalculator
                     minLeeway = Math.Round(((double)s.Score / max.Value - 1.0) * 100.0, 6);
             }
 
+            var totalEntries = population.GetValueOrDefault((s.SongId, instrument), 0);
+
             ValidScoreFallback? fallback = null;
             if (minLeeway.HasValue && fallbacks is not null)
             {
@@ -58,6 +61,7 @@ public sealed class PlayerStatsCalculator
                 Score = s,
                 MinLeeway = minLeeway,
                 Fallback = fallback,
+                TotalEntries = totalEntries,
             });
         }
 
@@ -130,7 +134,7 @@ public sealed class PlayerStatsCalculator
                     IsFullCombo = c.Score.IsFullCombo,
                     Stars = c.Score.Stars,
                     Rank = EffectiveRank(c.Score),
-                    TotalEntries = 0, // Populated by rank refresh
+                    TotalEntries = c.TotalEntries,
                     Percentile = c.Score.Percentile,
                 });
             }
@@ -374,6 +378,7 @@ public sealed class PlayerStatsCalculator
         public required PlayerScoreDto Score { get; init; }
         public double? MinLeeway { get; init; }
         public ValidScoreFallback? Fallback { get; init; }
+        public long TotalEntries { get; init; }
     }
 
     private sealed class EffectiveScore
@@ -384,7 +389,7 @@ public sealed class PlayerStatsCalculator
         public bool IsFullCombo { get; init; }
         public int Stars { get; init; }
         public int Rank { get; init; }
-        public int TotalEntries { get; init; }
+        public long TotalEntries { get; init; }
         public double Percentile { get; init; }
     }
 }

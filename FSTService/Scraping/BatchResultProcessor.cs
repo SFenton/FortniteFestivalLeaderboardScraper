@@ -28,6 +28,7 @@ public class BatchResultProcessor
     /// Process alltime batch lookup results for one song/instrument.
     /// For each returned entry: detect changes vs existing data, upsert the
     /// instrument DB, insert ScoreHistory, and raise the population floor.
+    /// Batches all DB writes to reduce lock contention.
     /// </summary>
     /// <returns>Number of entries inserted or updated.</returns>
     public int ProcessAlltimeResults(
@@ -39,7 +40,11 @@ public class BatchResultProcessor
         if (entries.Count == 0) return 0;
 
         var instrumentDb = _persistence.GetOrCreateInstrumentDb(instrument);
-        int updated = 0;
+
+        // ── Collect score changes and prepare entries for batch upsert ──
+        var scoreChanges = new List<ScoreChangeRecord>();
+        var entriesToUpsert = new List<LeaderboardEntry>();
+        long maxRank = 0;
 
         foreach (var entry in entries)
         {
@@ -50,42 +55,57 @@ public class BatchResultProcessor
                 var existing = instrumentDb.GetEntry(songId, entry.AccountId);
                 if (existing is not null && existing.Score != entry.Score)
                 {
-                    _metaDb.InsertScoreChange(
-                        songId, instrument, entry.AccountId,
-                        existing.Score, entry.Score, existing.Rank, entry.Rank,
-                        entry.Accuracy, entry.IsFullCombo, entry.Stars,
-                        entry.Percentile, entry.Season, entry.EndTime,
-                        allTimeRank: entry.Rank, difficulty: entry.Difficulty);
+                    scoreChanges.Add(new ScoreChangeRecord
+                    {
+                        SongId = songId, Instrument = instrument, AccountId = entry.AccountId,
+                        OldScore = existing.Score, NewScore = entry.Score,
+                        OldRank = existing.Rank, NewRank = entry.Rank,
+                        Accuracy = entry.Accuracy, IsFullCombo = entry.IsFullCombo,
+                        Stars = entry.Stars, Percentile = entry.Percentile,
+                        Season = entry.Season, ScoreAchievedAt = entry.EndTime,
+                        AllTimeRank = entry.Rank, Difficulty = entry.Difficulty,
+                    });
                 }
             }
             else
             {
-                // New entry discovered via backfill or post-scrape
-                _metaDb.InsertScoreChange(
-                    songId, instrument, entry.AccountId,
-                    null, entry.Score, null, entry.Rank,
-                    entry.Accuracy, entry.IsFullCombo, entry.Stars,
-                    entry.Percentile, entry.Season, entry.EndTime,
-                    allTimeRank: entry.Rank, difficulty: entry.Difficulty);
+                scoreChanges.Add(new ScoreChangeRecord
+                {
+                    SongId = songId, Instrument = instrument, AccountId = entry.AccountId,
+                    OldScore = null, NewScore = entry.Score,
+                    OldRank = null, NewRank = entry.Rank,
+                    Accuracy = entry.Accuracy, IsFullCombo = entry.IsFullCombo,
+                    Stars = entry.Stars, Percentile = entry.Percentile,
+                    Season = entry.Season, ScoreAchievedAt = entry.EndTime,
+                    AllTimeRank = entry.Rank, Difficulty = entry.Difficulty,
+                });
             }
 
             entry.ApiRank = entry.Rank;
             entry.Source = "backfill";
-            instrumentDb.UpsertEntries(songId, [entry]);
+            entriesToUpsert.Add(entry);
 
-            if (entry.Rank > 0)
-                _metaDb.RaiseLeaderboardPopulationFloor(songId, instrument, entry.Rank);
-
-            updated++;
+            if (entry.Rank > maxRank)
+                maxRank = entry.Rank;
         }
 
-        return updated;
+        // ── Batch writes: 1 lock acquisition each instead of N ──
+        if (scoreChanges.Count > 0)
+            _metaDb.InsertScoreChanges(scoreChanges);
+
+        instrumentDb.UpsertEntries(songId, entriesToUpsert);
+
+        if (maxRank > 0)
+            _metaDb.RaiseLeaderboardPopulationFloor(songId, instrument, maxRank);
+
+        return entriesToUpsert.Count;
     }
 
     /// <summary>
     /// Process seasonal session results for one song/instrument.
     /// Inserts each session into ScoreHistory (deduplication handled by the
     /// unique index via ON CONFLICT / COALESCE).
+    /// Batches all DB writes to reduce lock contention.
     /// </summary>
     /// <returns>Number of session history entries inserted.</returns>
     public int ProcessSeasonalSessions(
@@ -97,25 +117,32 @@ public class BatchResultProcessor
         if (sessions.Count == 0) return 0;
 
         var instrumentDb = _persistence.GetOrCreateInstrumentDb(instrument);
-        int inserted = 0;
+
+        // ── Collect score changes for batch insert ──
+        var scoreChanges = new List<ScoreChangeRecord>(sessions.Count);
 
         foreach (var session in sessions)
         {
             var existing = instrumentDb.GetEntry(songId, session.AccountId);
             int? oldScore = existing?.Score;
 
-            _metaDb.InsertScoreChange(
-                songId, instrument, session.AccountId,
-                oldScore, session.Score,
-                existing?.Rank, session.Rank,
-                session.Accuracy, session.IsFullCombo, session.Stars,
-                session.Percentile, season, session.EndTime,
-                seasonRank: session.Rank, difficulty: session.Difficulty);
-
-            inserted++;
+            scoreChanges.Add(new ScoreChangeRecord
+            {
+                SongId = songId, Instrument = instrument, AccountId = session.AccountId,
+                OldScore = oldScore, NewScore = session.Score,
+                OldRank = existing?.Rank, NewRank = session.Rank,
+                Accuracy = session.Accuracy, IsFullCombo = session.IsFullCombo,
+                Stars = session.Stars, Percentile = session.Percentile,
+                Season = season, ScoreAchievedAt = session.EndTime,
+                SeasonRank = session.Rank, Difficulty = session.Difficulty,
+            });
         }
 
-        return inserted;
+        // ── Single batch write ──
+        if (scoreChanges.Count > 0)
+            _metaDb.InsertScoreChanges(scoreChanges);
+
+        return scoreChanges.Count;
     }
 
     /// <summary>

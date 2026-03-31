@@ -199,6 +199,8 @@ public class SongProcessingMachine
                 var chunk = alltimeUsers.GetRange(offset, Math.Min(batchSize, alltimeUsers.Count - offset));
                 var targetIds = chunk.Select(u => u.AccountId).ToList();
 
+                // Acquire DOP slot only for the HTTP call, release immediately after
+                List<LeaderboardEntry> entries;
                 if (isHighPriority) await pool.AcquireHighAsync(ct);
                 else await pool.AcquireLowAsync(ct);
                 try
@@ -206,7 +208,6 @@ public class SongProcessingMachine
                     _progress.ReportPhaseRequest();
                     Interlocked.Increment(ref apiCalls);
 
-                    List<LeaderboardEntry> entries;
                     try
                     {
                         entries = await _scraper.LookupMultipleAccountsAsync(
@@ -219,25 +220,26 @@ public class SongProcessingMachine
                         _progress.ReportPhaseRetry();
                         continue;
                     }
-
-                    var count = _resultProcessor.ProcessAlltimeResults(songId, instrument, entries, existingSet);
-                    Interlocked.Add(ref entriesUpdated, count);
-                    if (count > 0)
-                        _progress.ReportPhaseEntryUpdated(count);
-
-                    foreach (var user in chunk)
-                    {
-                        if (user.Purposes.HasFlag(WorkPurpose.Backfill))
-                        {
-                            bool found = entries.Any(e => e.AccountId.Equals(user.AccountId, StringComparison.OrdinalIgnoreCase));
-                            _resultProcessor.MarkBackfillChecked(user.AccountId, songId, instrument, found);
-                        }
-                    }
                 }
                 finally
                 {
                     if (isHighPriority) pool.ReleaseHigh();
                     else pool.ReleaseLow();
+                }
+
+                // DB processing runs outside the DOP slot — no API concurrency needed
+                var count = _resultProcessor.ProcessAlltimeResults(songId, instrument, entries, existingSet);
+                Interlocked.Add(ref entriesUpdated, count);
+                if (count > 0)
+                    _progress.ReportPhaseEntryUpdated(count);
+
+                foreach (var user in chunk)
+                {
+                    if (user.Purposes.HasFlag(WorkPurpose.Backfill))
+                    {
+                        bool found = entries.Any(e => e.AccountId.Equals(user.AccountId, StringComparison.OrdinalIgnoreCase));
+                        _resultProcessor.MarkBackfillChecked(user.AccountId, songId, instrument, found);
+                    }
                 }
             }
         }
@@ -271,6 +273,8 @@ public class SongProcessingMachine
                 var chunk = seasonUsers.GetRange(offset, Math.Min(batchSize, seasonUsers.Count - offset));
                 var targetIds = chunk.Select(u => u.AccountId).ToList();
 
+                // Acquire DOP slot only for the HTTP call, release immediately after
+                List<SessionHistoryEntry> sessions;
                 if (isHighPriority) await pool.AcquireHighAsync(ct);
                 else await pool.AcquireLowAsync(ct);
                 try
@@ -278,7 +282,6 @@ public class SongProcessingMachine
                     _progress.ReportPhaseRequest();
                     Interlocked.Increment(ref apiCalls);
 
-                    List<SessionHistoryEntry> sessions;
                     try
                     {
                         sessions = await _scraper.LookupMultipleAccountSessionsAsync(
@@ -292,17 +295,18 @@ public class SongProcessingMachine
                         _progress.ReportPhaseRetry();
                         continue;
                     }
-
-                    var count = _resultProcessor.ProcessSeasonalSessions(songId, instrument, season, sessions);
-                    Interlocked.Add(ref sessionsInserted, count);
-                    if (count > 0)
-                        _progress.ReportPhaseEntryUpdated(count);
                 }
                 finally
                 {
                     if (isHighPriority) pool.ReleaseHigh();
                     else pool.ReleaseLow();
                 }
+
+                // DB processing runs outside the DOP slot
+                var count = _resultProcessor.ProcessSeasonalSessions(songId, instrument, season, sessions);
+                Interlocked.Add(ref sessionsInserted, count);
+                if (count > 0)
+                    _progress.ReportPhaseEntryUpdated(count);
             }
         }
 

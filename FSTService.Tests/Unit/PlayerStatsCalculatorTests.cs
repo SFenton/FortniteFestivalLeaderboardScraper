@@ -6,6 +6,7 @@ namespace FSTService.Tests.Unit;
 public class PlayerStatsCalculatorTests
 {
     private static readonly Dictionary<string, SongMaxScores> EmptyMaxScores = new();
+    private static readonly Dictionary<(string, string), long> EmptyPopulation = new();
 
     private static Dictionary<string, SongMaxScores> MakeMaxScores(params (string SongId, string Instrument, int Max)[] entries)
     {
@@ -38,7 +39,7 @@ public class PlayerStatsCalculatorTests
     [Fact]
     public void EmptyScores_ReturnsSingleBaseTier()
     {
-        var tiers = PlayerStatsCalculator.ComputeTiers([], EmptyMaxScores, "Solo_Guitar", 100);
+        var tiers = PlayerStatsCalculator.ComputeTiers([], EmptyMaxScores, "Solo_Guitar", 100, EmptyPopulation);
 
         Assert.Single(tiers);
         Assert.Null(tiers[0].MinLeeway);
@@ -57,7 +58,7 @@ public class PlayerStatsCalculatorTests
         };
         var maxScores = MakeMaxScores(("song1", "Solo_Guitar", 100000), ("song2", "Solo_Guitar", 100000), ("song3", "Solo_Guitar", 100000));
 
-        var tiers = PlayerStatsCalculator.ComputeTiers(scores, maxScores, "Solo_Guitar", 10);
+        var tiers = PlayerStatsCalculator.ComputeTiers(scores, maxScores, "Solo_Guitar", 10, EmptyPopulation);
 
         Assert.Single(tiers);
         var t = tiers[0];
@@ -82,7 +83,7 @@ public class PlayerStatsCalculatorTests
         };
         var maxScores = MakeMaxScores(("song1", "Solo_Guitar", 100000), ("song2", "Solo_Guitar", 100000));
 
-        var tiers = PlayerStatsCalculator.ComputeTiers(scores, maxScores, "Solo_Guitar", 10);
+        var tiers = PlayerStatsCalculator.ComputeTiers(scores, maxScores, "Solo_Guitar", 10, EmptyPopulation);
 
         Assert.Equal(2, tiers.Count);
 
@@ -113,7 +114,7 @@ public class PlayerStatsCalculatorTests
             ("song2", "Solo_Guitar", 100000),
             ("song3", "Solo_Guitar", 100000));
 
-        var tiers = PlayerStatsCalculator.ComputeTiers(scores, maxScores, "Solo_Guitar", 10);
+        var tiers = PlayerStatsCalculator.ComputeTiers(scores, maxScores, "Solo_Guitar", 10, EmptyPopulation);
 
         Assert.Equal(3, tiers.Count);
         Assert.Null(tiers[0].MinLeeway);
@@ -144,7 +145,7 @@ public class PlayerStatsCalculatorTests
             [("song2", "Solo_Guitar")] = [new ValidScoreFallback { Score = 95000, Accuracy = 8000, IsFullCombo = false, Stars = 5 }]
         };
 
-        var tiers = PlayerStatsCalculator.ComputeTiers(scores, maxScores, "Solo_Guitar", 10, fallbacks);
+        var tiers = PlayerStatsCalculator.ComputeTiers(scores, maxScores, "Solo_Guitar", 10, EmptyPopulation, fallbacks);
 
         Assert.Equal(2, tiers.Count);
 
@@ -165,7 +166,7 @@ public class PlayerStatsCalculatorTests
             Score("song1", 999999), // very high but no CHOpt max defined
         };
 
-        var tiers = PlayerStatsCalculator.ComputeTiers(scores, EmptyMaxScores, "Solo_Guitar", 10);
+        var tiers = PlayerStatsCalculator.ComputeTiers(scores, EmptyMaxScores, "Solo_Guitar", 10, EmptyPopulation);
 
         Assert.Single(tiers);
         Assert.Equal(1, tiers[0].SongsPlayed);
@@ -186,7 +187,7 @@ public class PlayerStatsCalculatorTests
             Score("s7", 100, stars: 1),
         };
 
-        var tiers = PlayerStatsCalculator.ComputeTiers(scores, EmptyMaxScores, "Solo_Guitar", 100);
+        var tiers = PlayerStatsCalculator.ComputeTiers(scores, EmptyMaxScores, "Solo_Guitar", 100, EmptyPopulation);
 
         var t = tiers[0];
         Assert.Equal(2, t.GoldStarCount);
@@ -208,7 +209,7 @@ public class PlayerStatsCalculatorTests
             Score("s4", 100, fc: false),
         };
 
-        var tiers = PlayerStatsCalculator.ComputeTiers(scores, EmptyMaxScores, "Solo_Guitar", 10);
+        var tiers = PlayerStatsCalculator.ComputeTiers(scores, EmptyMaxScores, "Solo_Guitar", 10, EmptyPopulation);
 
         Assert.Equal(2, tiers[0].FcCount);
         Assert.Equal(50.0, tiers[0].FcPercent);
@@ -223,7 +224,7 @@ public class PlayerStatsCalculatorTests
             Score("s2", 100),
         };
 
-        var tiers = PlayerStatsCalculator.ComputeTiers(scores, EmptyMaxScores, "Solo_Guitar", 200);
+        var tiers = PlayerStatsCalculator.ComputeTiers(scores, EmptyMaxScores, "Solo_Guitar", 200, EmptyPopulation);
 
         Assert.Equal(1.0, tiers[0].CompletionPercent);
     }
