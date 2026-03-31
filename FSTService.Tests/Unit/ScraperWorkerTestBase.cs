@@ -148,6 +148,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, new Api.ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
 
         var rankingsCalculator = new RankingsCalculator(_persistence, _persistence.Meta, pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
+        var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(_persistence, _persistence.Meta, options, Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
 
         // ServiceProvider returns the mocked machine
         var serviceProvider = Substitute.For<IServiceProvider>();
@@ -161,7 +162,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             serviceProvider,
             _historyReconstructor,
             _pool,
-            rivalsOrchestrator, rankingsCalculator, notifications,
+            rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, notifications,
             _tokenManager, _progress, pathDataStore, precomputer, options,
             Substitute.For<ILogger<PostScrapeOrchestrator>>());
 

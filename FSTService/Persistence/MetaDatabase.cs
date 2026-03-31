@@ -271,6 +271,42 @@ public sealed class MetaDatabase : IMetaDatabase
             CREATE INDEX IF NOT EXISTS IX_RivalSamples_Rival
                 ON RivalSongSamples (UserId, RivalAccountId, Instrument);
 
+            CREATE TABLE IF NOT EXISTS LeaderboardRivals (
+                UserId          TEXT    NOT NULL,
+                RivalAccountId  TEXT    NOT NULL,
+                Instrument      TEXT    NOT NULL,
+                RankMethod      TEXT    NOT NULL,
+                Direction       TEXT    NOT NULL,
+                UserRank        INTEGER NOT NULL,
+                RivalRank       INTEGER NOT NULL,
+                SharedSongCount INTEGER NOT NULL,
+                AheadCount      INTEGER NOT NULL,
+                BehindCount     INTEGER NOT NULL,
+                AvgSignedDelta  REAL    NOT NULL,
+                ComputedAt      TEXT    NOT NULL,
+                PRIMARY KEY (UserId, RivalAccountId, Instrument, RankMethod)
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_LeaderboardRivals_Lookup
+                ON LeaderboardRivals (UserId, Instrument, RankMethod, Direction);
+
+            CREATE TABLE IF NOT EXISTS LeaderboardRivalSongSamples (
+                UserId          TEXT    NOT NULL,
+                RivalAccountId  TEXT    NOT NULL,
+                Instrument      TEXT    NOT NULL,
+                RankMethod      TEXT    NOT NULL,
+                SongId          TEXT    NOT NULL,
+                UserRank        INTEGER NOT NULL,
+                RivalRank       INTEGER NOT NULL,
+                RankDelta       INTEGER NOT NULL,
+                UserScore       INTEGER,
+                RivalScore      INTEGER,
+                PRIMARY KEY (UserId, RivalAccountId, Instrument, RankMethod, SongId)
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_LeaderboardRivalSamples_Rival
+                ON LeaderboardRivalSongSamples (UserId, RivalAccountId, Instrument, RankMethod);
+
             CREATE TABLE IF NOT EXISTS ItemShopTracks (
                 SongId          TEXT    PRIMARY KEY,
                 ScrapedAt       TEXT    NOT NULL,
@@ -2979,9 +3015,204 @@ public sealed class MetaDatabase : IMetaDatabase
             DELETE FROM RivalSongSamples WHERE UserId = @id;
             DELETE FROM UserRivals WHERE UserId = @id;
             DELETE FROM RivalsStatus WHERE AccountId = @id;
+            DELETE FROM LeaderboardRivalSongSamples WHERE UserId = @id;
+            DELETE FROM LeaderboardRivals WHERE UserId = @id;
             """;
         cmd.Parameters.AddWithValue("@id", accountId);
         cmd.ExecuteNonQuery();
+    }
+
+    // ─── Leaderboard Rivals ────────────────────────────────────
+
+    /// <summary>
+    /// Replace all leaderboard rivals data for a user on a specific instrument.
+    /// Called per-instrument so that partial updates don't lose data from other instruments.
+    /// </summary>
+    public void ReplaceLeaderboardRivalsData(
+        string userId,
+        string instrument,
+        IReadOnlyList<LeaderboardRivalRow> rivals,
+        IReadOnlyList<LeaderboardRivalSongSampleRow> samples)
+    {
+        using var conn = OpenConnection();
+        using var txn = conn.BeginTransaction();
+
+        using (var del1 = conn.CreateCommand())
+        {
+            del1.CommandText = "DELETE FROM LeaderboardRivalSongSamples WHERE UserId = @uid AND Instrument = @inst;";
+            del1.Parameters.AddWithValue("@uid", userId);
+            del1.Parameters.AddWithValue("@inst", instrument);
+            del1.ExecuteNonQuery();
+        }
+        using (var del2 = conn.CreateCommand())
+        {
+            del2.CommandText = "DELETE FROM LeaderboardRivals WHERE UserId = @uid AND Instrument = @inst;";
+            del2.Parameters.AddWithValue("@uid", userId);
+            del2.Parameters.AddWithValue("@inst", instrument);
+            del2.ExecuteNonQuery();
+        }
+
+        if (rivals.Count > 0)
+        {
+            using var insertRival = conn.CreateCommand();
+            insertRival.CommandText = """
+                INSERT INTO LeaderboardRivals (UserId, RivalAccountId, Instrument, RankMethod, Direction,
+                                               UserRank, RivalRank, SharedSongCount, AheadCount, BehindCount,
+                                               AvgSignedDelta, ComputedAt)
+                VALUES (@uid, @rid, @inst, @rm, @dir, @ur, @rr, @songs, @ahead, @behind, @delta, @at);
+                """;
+            var pUid = insertRival.Parameters.Add("@uid", SqliteType.Text);
+            var pRid = insertRival.Parameters.Add("@rid", SqliteType.Text);
+            var pInst = insertRival.Parameters.Add("@inst", SqliteType.Text);
+            var pRm = insertRival.Parameters.Add("@rm", SqliteType.Text);
+            var pDir = insertRival.Parameters.Add("@dir", SqliteType.Text);
+            var pUr = insertRival.Parameters.Add("@ur", SqliteType.Integer);
+            var pRr = insertRival.Parameters.Add("@rr", SqliteType.Integer);
+            var pSongs = insertRival.Parameters.Add("@songs", SqliteType.Integer);
+            var pAhead = insertRival.Parameters.Add("@ahead", SqliteType.Integer);
+            var pBehind = insertRival.Parameters.Add("@behind", SqliteType.Integer);
+            var pDelta = insertRival.Parameters.Add("@delta", SqliteType.Real);
+            var pAt = insertRival.Parameters.Add("@at", SqliteType.Text);
+
+            foreach (var r in rivals)
+            {
+                pUid.Value = r.UserId;
+                pRid.Value = r.RivalAccountId;
+                pInst.Value = r.Instrument;
+                pRm.Value = r.RankMethod;
+                pDir.Value = r.Direction;
+                pUr.Value = r.UserRank;
+                pRr.Value = r.RivalRank;
+                pSongs.Value = r.SharedSongCount;
+                pAhead.Value = r.AheadCount;
+                pBehind.Value = r.BehindCount;
+                pDelta.Value = r.AvgSignedDelta;
+                pAt.Value = r.ComputedAt;
+                insertRival.ExecuteNonQuery();
+            }
+        }
+
+        if (samples.Count > 0)
+        {
+            using var insertSample = conn.CreateCommand();
+            insertSample.CommandText = """
+                INSERT INTO LeaderboardRivalSongSamples (UserId, RivalAccountId, Instrument, RankMethod,
+                                                         SongId, UserRank, RivalRank, RankDelta, UserScore, RivalScore)
+                VALUES (@uid, @rid, @inst, @rm, @sid, @ur, @rr, @rd, @us, @rs);
+                """;
+            var sUid = insertSample.Parameters.Add("@uid", SqliteType.Text);
+            var sRid = insertSample.Parameters.Add("@rid", SqliteType.Text);
+            var sInst = insertSample.Parameters.Add("@inst", SqliteType.Text);
+            var sRm = insertSample.Parameters.Add("@rm", SqliteType.Text);
+            var sSid = insertSample.Parameters.Add("@sid", SqliteType.Text);
+            var sUr = insertSample.Parameters.Add("@ur", SqliteType.Integer);
+            var sRr = insertSample.Parameters.Add("@rr", SqliteType.Integer);
+            var sRd = insertSample.Parameters.Add("@rd", SqliteType.Integer);
+            var sUs = insertSample.Parameters.Add("@us", SqliteType.Integer);
+            var sRs = insertSample.Parameters.Add("@rs", SqliteType.Integer);
+
+            foreach (var s in samples)
+            {
+                sUid.Value = s.UserId;
+                sRid.Value = s.RivalAccountId;
+                sInst.Value = s.Instrument;
+                sRm.Value = s.RankMethod;
+                sSid.Value = s.SongId;
+                sUr.Value = s.UserRank;
+                sRr.Value = s.RivalRank;
+                sRd.Value = s.RankDelta;
+                sUs.Value = (object?)s.UserScore ?? DBNull.Value;
+                sRs.Value = (object?)s.RivalScore ?? DBNull.Value;
+                insertSample.ExecuteNonQuery();
+            }
+        }
+
+        txn.Commit();
+    }
+
+    /// <summary>Get leaderboard rivals for a user, optionally filtered by instrument, rank method, and direction.</summary>
+    public List<LeaderboardRivalRow> GetLeaderboardRivals(
+        string userId, string? instrument = null, string? rankMethod = null, string? direction = null)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        var where = "UserId = @uid";
+        if (instrument is not null) where += " AND Instrument = @inst";
+        if (rankMethod is not null) where += " AND RankMethod = @rm";
+        if (direction is not null) where += " AND Direction = @dir";
+
+        cmd.CommandText = $"""
+            SELECT UserId, RivalAccountId, Instrument, RankMethod, Direction,
+                   UserRank, RivalRank, SharedSongCount, AheadCount, BehindCount,
+                   AvgSignedDelta, ComputedAt
+            FROM LeaderboardRivals WHERE {where}
+            ORDER BY SharedSongCount DESC;
+            """;
+        cmd.Parameters.AddWithValue("@uid", userId);
+        if (instrument is not null) cmd.Parameters.AddWithValue("@inst", instrument);
+        if (rankMethod is not null) cmd.Parameters.AddWithValue("@rm", rankMethod);
+        if (direction is not null) cmd.Parameters.AddWithValue("@dir", direction);
+
+        var list = new List<LeaderboardRivalRow>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new LeaderboardRivalRow
+            {
+                UserId = reader.GetString(0),
+                RivalAccountId = reader.GetString(1),
+                Instrument = reader.GetString(2),
+                RankMethod = reader.GetString(3),
+                Direction = reader.GetString(4),
+                UserRank = reader.GetInt32(5),
+                RivalRank = reader.GetInt32(6),
+                SharedSongCount = reader.GetInt32(7),
+                AheadCount = reader.GetInt32(8),
+                BehindCount = reader.GetInt32(9),
+                AvgSignedDelta = reader.GetDouble(10),
+                ComputedAt = reader.GetString(11),
+            });
+        }
+        return list;
+    }
+
+    /// <summary>Get leaderboard rival song samples for a specific user/rival/instrument/rankMethod.</summary>
+    public List<LeaderboardRivalSongSampleRow> GetLeaderboardRivalSongSamples(
+        string userId, string rivalAccountId, string instrument, string rankMethod)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT UserId, RivalAccountId, Instrument, RankMethod, SongId,
+                   UserRank, RivalRank, RankDelta, UserScore, RivalScore
+            FROM LeaderboardRivalSongSamples
+            WHERE UserId = @uid AND RivalAccountId = @rid AND Instrument = @inst AND RankMethod = @rm
+            ORDER BY ABS(RankDelta) ASC;
+            """;
+        cmd.Parameters.AddWithValue("@uid", userId);
+        cmd.Parameters.AddWithValue("@rid", rivalAccountId);
+        cmd.Parameters.AddWithValue("@inst", instrument);
+        cmd.Parameters.AddWithValue("@rm", rankMethod);
+
+        var list = new List<LeaderboardRivalSongSampleRow>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new LeaderboardRivalSongSampleRow
+            {
+                UserId = reader.GetString(0),
+                RivalAccountId = reader.GetString(1),
+                Instrument = reader.GetString(2),
+                RankMethod = reader.GetString(3),
+                SongId = reader.GetString(4),
+                UserRank = reader.GetInt32(5),
+                RivalRank = reader.GetInt32(6),
+                RankDelta = reader.GetInt32(7),
+                UserScore = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+                RivalScore = reader.IsDBNull(9) ? null : reader.GetInt32(9),
+            });
+        }
+        return list;
     }
 
     // ─── Item Shop ─────────────────────────────────────────────

@@ -22,6 +22,7 @@ import type {
   RankingMetric,
   LeaderboardNeighborhoodResponse,
   CompositeNeighborhoodResponse,
+  LeaderboardRivalsListResponse,
 } from '@festival/core/api/serverTypes';
 
 const BASE = '';
@@ -221,6 +222,16 @@ export const api = {
   getCompositeNeighborhood: (accountId: string, radius = 5) =>
     getWithETag<CompositeNeighborhoodResponse>(
       `/api/rankings/composite/${encodeURIComponent(accountId)}/neighborhood?radius=${radius}`,
+    ),
+
+  getLeaderboardRivals: (instrument: InstrumentKey, accountId: string, rankBy: RankingMetric = 'totalscore') =>
+    getWithETag<LeaderboardRivalsListResponse>(
+      `/api/player/${encodeURIComponent(accountId)}/leaderboard-rivals/${encodeURIComponent(instrument)}?rankBy=${encodeURIComponent(rankBy)}`,
+    ),
+
+  getLeaderboardRivalDetail: (instrument: InstrumentKey, accountId: string, rivalId: string, rankBy: RankingMetric = 'totalscore', sort = 'closest') =>
+    getWithETag<RivalDetailResponse>(
+      `/api/player/${encodeURIComponent(accountId)}/leaderboard-rivals/${encodeURIComponent(instrument)}/${encodeURIComponent(rivalId)}?rankBy=${encodeURIComponent(rankBy)}&sort=${encodeURIComponent(sort)}`,
     ),
 
   getRivalSuggestions: (accountId: string, combo?: string, limit = 5) => {

@@ -1621,4 +1621,80 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Single(bassResult);
         Assert.Equal(70_000, bassResult[("acct_1", "song_1")].Score);
     }
+
+    // ═══ Leaderboard Rivals ═════════════════════════════════════
+
+    [Fact]
+    public void ReplaceLeaderboardRivalsData_persists_and_reads_back()
+    {
+        var rivals = new List<Persistence.LeaderboardRivalRow>
+        {
+            new()
+            {
+                UserId = "u1", RivalAccountId = "r1", Instrument = "Solo_Guitar",
+                RankMethod = "totalscore", Direction = "above",
+                UserRank = 10, RivalRank = 8, SharedSongCount = 5,
+                AheadCount = 3, BehindCount = 2, AvgSignedDelta = -1.5,
+                ComputedAt = "2026-01-01T00:00:00Z",
+            },
+        };
+        var samples = new List<Persistence.LeaderboardRivalSongSampleRow>
+        {
+            new()
+            {
+                UserId = "u1", RivalAccountId = "r1", Instrument = "Solo_Guitar",
+                RankMethod = "totalscore", SongId = "s1",
+                UserRank = 10, RivalRank = 8, RankDelta = -2,
+                UserScore = 1000, RivalScore = 1100,
+            },
+        };
+
+        Db.ReplaceLeaderboardRivalsData("u1", "Solo_Guitar", rivals, samples);
+
+        var readRivals = Db.GetLeaderboardRivals("u1", "Solo_Guitar", "totalscore");
+        Assert.Single(readRivals);
+        Assert.Equal("r1", readRivals[0].RivalAccountId);
+        Assert.Equal(5, readRivals[0].SharedSongCount);
+
+        var readSamples = Db.GetLeaderboardRivalSongSamples("u1", "r1", "Solo_Guitar", "totalscore");
+        Assert.Single(readSamples);
+        Assert.Equal("s1", readSamples[0].SongId);
+        Assert.Equal(-2, readSamples[0].RankDelta);
+    }
+
+    [Fact]
+    public void ReplaceLeaderboardRivalsData_replaces_existing_data()
+    {
+        var initial = new List<Persistence.LeaderboardRivalRow>
+        {
+            new()
+            {
+                UserId = "u1", RivalAccountId = "old_rival", Instrument = "Solo_Guitar",
+                RankMethod = "totalscore", Direction = "below",
+                UserRank = 5, RivalRank = 7, SharedSongCount = 3,
+                AheadCount = 2, BehindCount = 1, AvgSignedDelta = 2.0,
+                ComputedAt = "2026-01-01T00:00:00Z",
+            },
+        };
+
+        Db.ReplaceLeaderboardRivalsData("u1", "Solo_Guitar", initial, []);
+
+        var updated = new List<Persistence.LeaderboardRivalRow>
+        {
+            new()
+            {
+                UserId = "u1", RivalAccountId = "new_rival", Instrument = "Solo_Guitar",
+                RankMethod = "totalscore", Direction = "above",
+                UserRank = 5, RivalRank = 3, SharedSongCount = 10,
+                AheadCount = 4, BehindCount = 6, AvgSignedDelta = -3.0,
+                ComputedAt = "2026-01-02T00:00:00Z",
+            },
+        };
+
+        Db.ReplaceLeaderboardRivalsData("u1", "Solo_Guitar", updated, []);
+
+        var readRivals = Db.GetLeaderboardRivals("u1", "Solo_Guitar");
+        Assert.Single(readRivals);
+        Assert.Equal("new_rival", readRivals[0].RivalAccountId);
+    }
 }

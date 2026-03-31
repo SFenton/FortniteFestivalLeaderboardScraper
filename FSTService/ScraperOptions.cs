@@ -241,4 +241,11 @@ public sealed class ScraperOptions
     /// values apply earlier back-pressure. Default 32.
     /// </summary>
     public int BoundedChannelCapacity { get; set; } = 32;
+
+    /// <summary>
+    /// Number of leaderboard neighbors above/below to include when computing
+    /// leaderboard rivals. Each neighbor is compared per-song against the user.
+    /// Default 10.
+    /// </summary>
+    public int LeaderboardRivalRadius { get; set; } = 10;
 }

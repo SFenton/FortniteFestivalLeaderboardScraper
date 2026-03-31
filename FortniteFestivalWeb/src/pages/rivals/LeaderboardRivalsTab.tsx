@@ -9,26 +9,22 @@ import EmptyState from '../../components/common/EmptyState';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
 import { InstrumentHeaderSize } from '@festival/core';
 import { IoChevronForward } from 'react-icons/io5';
-import { Gap, Font, Colors, flexColumn } from '@festival/theme';
-import { serverInstrumentLabel, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
-import type {
-  LeaderboardNeighborhoodResponse,
-  CompositeNeighborhoodResponse,
-} from '@festival/core/api/serverTypes';
-import { LeaderboardNeighborRow } from './components/LeaderboardNeighborRow';
-import { computeRankWidth } from '../leaderboards/helpers/rankingHelpers';
+import { Gap, flexColumn } from '@festival/theme';
+import { serverInstrumentLabel, type ServerInstrumentKey, type RankingMetric } from '@festival/core/api/serverTypes';
+import type { LeaderboardRivalsListResponse, LeaderboardRivalSummary } from '@festival/core/api/serverTypes';
+import RivalRow from './components/RivalRow';
 import { useRivalsSharedStyles } from './useRivalsSharedStyles';
 import { Routes } from '../../routes';
 import fx from '../../styles/effects.module.css';
 
 // Module-level cache for instant back-navigation
-let _cachedInstrumentNeighborhoods: InstrumentNeighborhood[] = [];
-let _cachedCompositeNeighborhood: CompositeNeighborhoodResponse | null = null;
+let _cachedInstrumentRivals: InstrumentLeaderboardRivals[] = [];
 let _cachedAccountId: string | null = null;
+let _cachedRankBy: string | null = null;
 
-type InstrumentNeighborhood = {
+type InstrumentLeaderboardRivals = {
   instrument: ServerInstrumentKey;
-  data: LeaderboardNeighborhoodResponse | null;
+  data: LeaderboardRivalsListResponse | null;
   loading: boolean;
   error: string | null;
 };
@@ -36,50 +32,48 @@ type InstrumentNeighborhood = {
 interface LeaderboardRivalsTabProps {
   accountId: string;
   shouldStagger: boolean;
+  rankBy: RankingMetric;
 }
 
-export default function LeaderboardRivalsTab({ accountId, shouldStagger }: LeaderboardRivalsTabProps) {
+export default function LeaderboardRivalsTab({ accountId, shouldStagger, rankBy }: LeaderboardRivalsTabProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { settings } = useSettings();
   const activeInstruments = visibleInstruments(settings);
-  const showComposite = activeInstruments.length >= 2;
 
-  const hasCached = accountId === _cachedAccountId && _cachedInstrumentNeighborhoods.length > 0;
+  const hasCached = accountId === _cachedAccountId
+    && rankBy === _cachedRankBy
+    && _cachedInstrumentRivals.length > 0;
 
-  const [neighborhoods, setNeighborhoods] = useState<InstrumentNeighborhood[]>(
-    hasCached ? _cachedInstrumentNeighborhoods : [],
+  const [instrumentRivals, setInstrumentRivals] = useState<InstrumentLeaderboardRivals[]>(
+    hasCached ? _cachedInstrumentRivals : [],
   );
-  const [composite, setComposite] = useState<CompositeNeighborhoodResponse | null>(
-    hasCached ? _cachedCompositeNeighborhood : null,
-  );
-  const [compositeLoading, setCompositeLoading] = useState(false);
 
-  // Fetch per-instrument neighborhoods
+  // Fetch per-instrument leaderboard rivals
   /* v8 ignore start — async data fetch */
   useEffect(() => {
     if (!accountId || hasCached) return;
     let cancelled = false;
 
-    const entries: InstrumentNeighborhood[] = activeInstruments.map(inst => ({
+    const entries: InstrumentLeaderboardRivals[] = activeInstruments.map(inst => ({
       instrument: inst,
       data: null,
       loading: true,
       error: null,
     }));
-    setNeighborhoods(entries);
+    setInstrumentRivals(entries);
 
     activeInstruments.forEach((inst, idx) => {
-      api.getLeaderboardNeighborhood(inst, accountId).then(res => {
+      api.getLeaderboardRivals(inst, accountId, rankBy).then(res => {
         if (cancelled) return;
-        setNeighborhoods(prev => {
+        setInstrumentRivals(prev => {
           const next = [...prev];
           next[idx] = { instrument: inst, data: res, loading: false, error: null };
           return next;
         });
       }).catch(err => {
         if (cancelled) return;
-        setNeighborhoods(prev => {
+        setInstrumentRivals(prev => {
           const next = [...prev];
           next[idx] = { instrument: inst, data: null, loading: false, error: err instanceof Error ? err.message : 'Error' };
           return next;
@@ -89,66 +83,54 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
 
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- activeInstruments derived from settings
-  }, [accountId, settings.showLead, settings.showBass, settings.showDrums, settings.showVocals, settings.showProLead, settings.showProBass]);
+  }, [accountId, rankBy, settings.showLead, settings.showBass, settings.showDrums, settings.showVocals, settings.showProLead, settings.showProBass]);
   /* v8 ignore stop */
 
-  // Fetch composite neighborhood
-  /* v8 ignore start — async data fetch */
-  useEffect(() => {
-    if (!accountId || !showComposite) {
-      setComposite(null);
-      setCompositeLoading(false);
-      return;
-    }
-    if (hasCached) return;
-    let cancelled = false;
-    setCompositeLoading(true);
-
-    api.getCompositeNeighborhood(accountId).then(res => {
-      if (!cancelled) { setComposite(res); setCompositeLoading(false); }
-    }).catch(() => {
-      if (!cancelled) setCompositeLoading(false);
-    });
-
-    return () => { cancelled = true; };
-  }, [accountId, showComposite]);
-  /* v8 ignore stop */
-
-  const allReady = neighborhoods.length > 0 && neighborhoods.every(n => !n.loading) && !compositeLoading;
+  const allReady = instrumentRivals.length > 0 && instrumentRivals.every(r => !r.loading);
 
   // Persist to module cache
   useEffect(() => {
     if (!allReady || !accountId) return;
     _cachedAccountId = accountId;
-    _cachedInstrumentNeighborhoods = neighborhoods;
-    _cachedCompositeNeighborhood = composite;
-  }, [allReady, accountId, neighborhoods, composite]);
+    _cachedRankBy = rankBy;
+    _cachedInstrumentRivals = instrumentRivals;
+  }, [allReady, accountId, rankBy, instrumentRivals]);
 
-  const { forDelay: stagger, next: nextStagger, clearAnim } = useStagger(shouldStagger);
+  const { next: nextStagger, clearAnim } = useStagger(shouldStagger);
   const shared = useRivalsSharedStyles();
 
-  const hasAnyData = neighborhoods.some(n => n.data) || composite;
+  const hasAnyRivals = instrumentRivals.some(r =>
+    r.data && (r.data.above.length > 0 || r.data.below.length > 0),
+  );
 
-  const LEADERBOARD_PREVIEW = 2;
+  const PREVIEW_COUNT = 3;
+
+  /* v8 ignore start -- render helpers */
+  const navigateToRival = (instrument: ServerInstrumentKey, rivalId: string, rivalName?: string | null) => {
+    navigate(Routes.rivalDetail(rivalId, rivalName ?? undefined), {
+      state: { source: 'leaderboard', instrument, rankBy, rivalName },
+    });
+  };
+  /* v8 ignore stop */
 
   /* v8 ignore start -- JSX render tree */
   return (
     <div style={{ ...flexColumn, gap: Gap.section }}>
-      {allReady && !hasAnyData && (
-        <EmptyState fullPage title={t('rivals.leaderboardEmpty')} style={stagger(200)} onAnimationEnd={clearAnim} />
+      {allReady && !hasAnyRivals && (
+        <EmptyState fullPage title={t('rivals.leaderboardEmpty')} style={nextStagger()} onAnimationEnd={clearAnim} />
       )}
 
-      {/* Per-instrument neighborhoods */}
-      {neighborhoods.map(entry => {
+      {instrumentRivals.map(entry => {
         if (!entry.data) return null;
-        const previewAbove = entry.data.above.slice(-LEADERBOARD_PREVIEW);
-        const previewBelow = entry.data.below.slice(0, LEADERBOARD_PREVIEW);
-        const sectionRankWidth = computeRankWidth([
-          ...previewAbove.map(n => n.totalScoreRank),
-          entry.data.self.totalScoreRank,
-          ...previewBelow.map(n => n.totalScoreRank),
-        ]);
+        const { above, below } = entry.data;
+        if (above.length === 0 && below.length === 0) return null;
+
+        const previewAbove = above.slice(0, PREVIEW_COUNT);
+        const previewBelow = below.slice(0, PREVIEW_COUNT);
+        const allPreview = [...previewAbove, ...previewBelow];
+
         const navigateToRankings = () => navigate(Routes.fullRankings(entry.instrument));
+
         return (
           <div key={entry.instrument} style={shared.section}>
             <div
@@ -165,45 +147,18 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
                 <span style={shared.cardTitle}>
                   {t('rivals.instrumentRivalsShort', { instrument: serverInstrumentLabel(entry.instrument) })}
                 </span>
-                <span style={styles.subtitle}>{t('rivals.leaderboardSubtitle')}</span>
               </div>
               <span style={shared.seeAll}>{t('rivals.seeAll', 'See All')}</span>
               <IoChevronForward size={20} style={shared.chevron} />
             </div>
-            <div style={styles.neighborhoodList}>
-              {previewAbove.map(n => (
-                <LeaderboardNeighborRow
-                  key={n.accountId}
-                  rank={n.totalScoreRank}
-                  displayName={n.displayName ?? 'Unknown Player'}
-                  score={n.totalScore}
-                  songsPlayed={n.songsPlayed}
-                  accountId={n.accountId}
-                  rankWidth={sectionRankWidth}
-                  style={nextStagger()}
-                  onAnimationEnd={clearAnim}
-                />
-              ))}
-              <LeaderboardNeighborRow
-                rank={entry.data.self.totalScoreRank}
-                displayName={entry.data.self.displayName ?? 'Unknown Player'}
-                score={entry.data.self.totalScore}
-                songsPlayed={entry.data.self.songsPlayed}
-                accountId={entry.data.self.accountId}
-                isPlayer
-                rankWidth={sectionRankWidth}
-                style={nextStagger()}
-                onAnimationEnd={clearAnim}
-              />
-              {previewBelow.map(n => (
-                <LeaderboardNeighborRow
-                  key={n.accountId}
-                  rank={n.totalScoreRank}
-                  displayName={n.displayName ?? 'Unknown Player'}
-                  score={n.totalScore}
-                  songsPlayed={n.songsPlayed}
-                  accountId={n.accountId}
-                  rankWidth={sectionRankWidth}
+            <div style={shared.rivalList}>
+              {allPreview.map((rival: LeaderboardRivalSummary) => (
+                <RivalRow
+                  key={rival.accountId}
+                  rival={rival}
+                  direction={previewAbove.includes(rival) ? 'above' : 'below'}
+                  leaderboardRank={rival.leaderboardRank}
+                  onClick={() => navigateToRival(entry.instrument, rival.accountId, rival.displayName)}
                   style={nextStagger()}
                   onAnimationEnd={clearAnim}
                 />
@@ -215,81 +170,7 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger }: Leade
           </div>
         );
       })}
-
-      {/* Composite neighborhood */}
-      {composite && (() => {
-        const previewAbove = composite.above.slice(-LEADERBOARD_PREVIEW);
-        const previewBelow = composite.below.slice(0, LEADERBOARD_PREVIEW);
-        const compositeRankWidth = computeRankWidth([
-          ...previewAbove.map(n => n.compositeRank),
-          composite.self.compositeRank,
-          ...previewBelow.map(n => n.compositeRank),
-        ]);
-        return (
-        <div style={shared.section}>
-          <div style={{ ...shared.sectionHeader, ...nextStagger() }} onAnimationEnd={clearAnim}>
-            <div style={shared.cardHeaderText}>
-              <span style={shared.cardTitle}>{t('rivals.leaderboardComposite')}</span>
-              <span style={styles.subtitle}>{t('rivals.leaderboardSubtitle')}</span>
-            </div>
-          </div>
-          <div style={styles.neighborhoodList}>
-            {previewAbove.map(n => (
-              <LeaderboardNeighborRow
-                key={n.accountId}
-                rank={n.compositeRank}
-                displayName={n.displayName ?? 'Unknown Player'}
-                score={n.totalSongsPlayed}
-                songsPlayed={n.instrumentsPlayed}
-                accountId={n.accountId}
-                rankWidth={compositeRankWidth}
-                style={nextStagger()}
-                onAnimationEnd={clearAnim}
-              />
-            ))}
-            <LeaderboardNeighborRow
-              rank={composite.self.compositeRank}
-              displayName={composite.self.displayName ?? 'Unknown Player'}
-              score={composite.self.totalSongsPlayed}
-              songsPlayed={composite.self.instrumentsPlayed}
-              accountId={composite.self.accountId}
-              isPlayer
-              rankWidth={compositeRankWidth}
-              style={nextStagger()}
-              onAnimationEnd={clearAnim}
-            />
-            {previewBelow.map(n => (
-              <LeaderboardNeighborRow
-                key={n.accountId}
-                rank={n.compositeRank}
-                displayName={n.displayName ?? 'Unknown Player'}
-                score={n.totalSongsPlayed}
-                songsPlayed={n.instrumentsPlayed}
-                accountId={n.accountId}
-                rankWidth={compositeRankWidth}
-                style={nextStagger()}
-                onAnimationEnd={clearAnim}
-              />
-            ))}
-            <div style={{ ...shared.viewAllButton, ...nextStagger() }} onAnimationEnd={clearAnim} onClick={() => navigate(Routes.leaderboards)}>
-              {t('rivals.viewAllRankings')}
-            </div>
-          </div>
-        </div>
-        );
-      })()}
     </div>
   );
   /* v8 ignore stop */
 }
-
-const styles = {
-  subtitle: {
-    fontSize: Font.xs,
-    color: Colors.textSecondary,
-  },
-  neighborhoodList: {
-    ...flexColumn,
-    gap: Gap.sm,
-  },
-} as const;

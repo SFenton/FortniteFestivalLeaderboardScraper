@@ -271,6 +271,46 @@ public sealed class SongGapEntry
     public int Rank { get; init; }
 }
 
+// ─── Leaderboard Rivals DTOs ────────────────────────────────
+
+/// <summary>
+/// A precomputed leaderboard rival — a player near the user on the global ranking
+/// for a given instrument and rank method, with per-song comparison aggregates.
+/// </summary>
+public sealed class LeaderboardRivalRow
+{
+    public string UserId { get; init; } = "";
+    public string RivalAccountId { get; init; } = "";
+    public string Instrument { get; init; } = "";
+    public string RankMethod { get; init; } = "";
+    public string Direction { get; init; } = "";
+    public int UserRank { get; init; }
+    public int RivalRank { get; init; }
+    public int SharedSongCount { get; init; }
+    public int AheadCount { get; init; }
+    public int BehindCount { get; init; }
+    public double AvgSignedDelta { get; init; }
+    public string ComputedAt { get; init; } = "";
+}
+
+/// <summary>
+/// Per-song comparison data for a leaderboard rival — same semantics as
+/// <see cref="RivalSongSampleRow"/> but keyed by rank method.
+/// </summary>
+public sealed class LeaderboardRivalSongSampleRow
+{
+    public string UserId { get; init; } = "";
+    public string RivalAccountId { get; init; } = "";
+    public string Instrument { get; init; } = "";
+    public string RankMethod { get; init; } = "";
+    public string SongId { get; init; } = "";
+    public int UserRank { get; init; }
+    public int RivalRank { get; init; }
+    public int RankDelta { get; init; }
+    public int? UserScore { get; init; }
+    public int? RivalScore { get; init; }
+}
+
 // ─── Rankings DTOs ──────────────────────────────────────────
 
 /// <summary>

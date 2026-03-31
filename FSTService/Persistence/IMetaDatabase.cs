@@ -129,6 +129,12 @@ public interface IMetaDatabase : IDisposable
     List<RivalSongSampleRow> GetRivalSongSamples(string userId, string rivalAccountId, string? instrument = null);
     Dictionary<string, List<RivalSongSampleRow>> GetAllRivalSongSamplesForUser(string userId);
 
+    // ── Leaderboard Rivals ───────────────────────────────────────
+    void ReplaceLeaderboardRivalsData(string userId, string instrument,
+        IReadOnlyList<LeaderboardRivalRow> rivals, IReadOnlyList<LeaderboardRivalSongSampleRow> samples);
+    List<LeaderboardRivalRow> GetLeaderboardRivals(string userId, string? instrument = null, string? rankMethod = null, string? direction = null);
+    List<LeaderboardRivalSongSampleRow> GetLeaderboardRivalSongSamples(string userId, string rivalAccountId, string instrument, string rankMethod);
+
     // ── Item shop ────────────────────────────────────────────────────
     void SaveItemShopTracks(IReadOnlySet<string> songIds, IReadOnlySet<string> leavingTomorrow, DateTime scrapedAt);
     (HashSet<string> InShop, HashSet<string> LeavingTomorrow) LoadItemShopTracks();

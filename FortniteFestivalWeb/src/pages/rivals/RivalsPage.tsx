@@ -12,11 +12,11 @@ import PageHeader from '../../components/common/PageHeader';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
-import { IoChevronForward, IoMusicalNotes, IoTrophy } from 'react-icons/io5';
+import { IoChevronForward, IoMusicalNotes, IoOptions, IoTrophy } from 'react-icons/io5';
 import { InstrumentHeaderSize } from '@festival/core';
 import { LoadPhase } from '@festival/core';
 import { Gap, Size, flexColumn } from '@festival/theme';
-import { serverInstrumentLabel, type RivalsListResponse, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import { serverInstrumentLabel, type RivalsListResponse, type ServerInstrumentKey, type RankingMetric } from '@festival/core/api/serverTypes';
 import type { RivalSummary } from '@festival/core/api/serverTypes';
 import { deriveComboFromSettings } from './helpers/comboUtils';
 import RivalRow from './components/RivalRow';
@@ -53,8 +53,16 @@ export default function RivalsPage() {
   const fabSearch = useFabSearch();
 
   const activeTab = (searchParams.get('tab') === 'leaderboard' ? 'leaderboard' : 'song') as 'song' | 'leaderboard';
+  const rankBy = (searchParams.get('rankBy') as RankingMetric) || 'totalscore';
   const setTab = useCallback((tab: 'song' | 'leaderboard') => {
-    setSearchParams(tab === 'song' ? {} : { tab }, { replace: true });
+    const params: Record<string, string> = {};
+    if (tab === 'leaderboard') { params.tab = 'leaderboard'; if (rankBy !== 'totalscore') params.rankBy = rankBy; }
+    setSearchParams(params, { replace: true });
+  }, [setSearchParams, rankBy]);
+  const setRankBy = useCallback((metric: RankingMetric) => {
+    const params: Record<string, string> = { tab: 'leaderboard' };
+    if (metric !== 'totalscore') params.rankBy = metric;
+    setSearchParams(params, { replace: true });
   }, [setSearchParams]);
 
   const toggleTab = useCallback(() => {
@@ -280,11 +288,25 @@ export default function RivalsPage() {
           <PageHeader
             title={activeTab === 'song' ? t('rivals.tabSong') : t('rivals.tabLeaderboard')}
             actions={phase === LoadPhase.ContentIn ? (
-              <ActionPill
-                icon={activeTab === 'song' ? <IoTrophy size={Size.iconAction} /> : <IoMusicalNotes size={Size.iconAction} />}
-                label={activeTab === 'song' ? t('rivals.tabLeaderboard') : t('rivals.tabSong')}
-                onClick={toggleTab}
-              />
+              <>
+                <ActionPill
+                  icon={activeTab === 'song' ? <IoTrophy size={Size.iconAction} /> : <IoMusicalNotes size={Size.iconAction} />}
+                  label={activeTab === 'song' ? t('rivals.tabLeaderboard') : t('rivals.tabSong')}
+                  onClick={toggleTab}
+                />
+                {activeTab === 'leaderboard' && settings.enableExperimentalRanks && (
+                  <ActionPill
+                    icon={<IoOptions size={Size.iconAction} />}
+                    label={t(`rankings.metric.${rankBy}`)}
+                    onClick={() => {
+                      const metrics: RankingMetric[] = ['totalscore', 'adjusted', 'weighted', 'fcrate', 'maxscore'];
+                      const idx = metrics.indexOf(rankBy);
+                      setRankBy(metrics[(idx + 1) % metrics.length]);
+                    }}
+                    active={rankBy !== 'totalscore'}
+                  />
+                )}
+              </>
             ) : undefined}
           />
         )
@@ -429,7 +451,7 @@ export default function RivalsPage() {
               })}
             </div>
               ) : (
-                <LeaderboardRivalsTab accountId={accountId} shouldStagger={shouldStagger} />
+                <LeaderboardRivalsTab accountId={accountId} shouldStagger={shouldStagger} rankBy={rankBy} />
               )}
             </>
       )}

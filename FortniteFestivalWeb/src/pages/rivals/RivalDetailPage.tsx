@@ -40,17 +40,25 @@ export default function RivalDetailPage() {
 
   /* v8 ignore start -- state derivation with null-coalescing */
   // Get combo from navigation state (passed from RivalsPage) or derive from settings
-  const comboFromState = (location.state as Record<string, unknown> | null)?.combo as string | undefined;
-  const rivalNameFromState = (location.state as Record<string, unknown> | null)?.rivalName as string | undefined;
+  const navState = location.state as Record<string, unknown> | null;
+  const comboFromState = navState?.combo as string | undefined;
+  const rivalNameFromState = navState?.rivalName as string | undefined;
   const rivalNameFromUrl = searchParams.get('name') ?? undefined;
   const derivedCombo = useMemo(() => deriveComboFromSettings(settings), [settings]);
   // Fallback: if no combo passed, try the first enabled instrument
   const fallbackInstrument = useMemo(() => getEnabledInstruments(settings)[0], [settings]);
   const combo = comboFromState ?? derivedCombo ?? fallbackInstrument;
+
+  // Leaderboard rival source: comes from navigation state set by LeaderboardRivalsTab
+  const source = (navState?.source as 'song' | 'leaderboard') ?? 'song';
+  const lbInstrument = navState?.instrument as string | undefined;
+  const lbRankBy = (navState?.rankBy as string) ?? 'totalscore';
   /* v8 ignore stop */
 
   /* v8 ignore start -- cache-based state initialization */
-  const cacheKey = `${accountId}:${rivalId}:${combo}`;
+  const cacheKey = source === 'leaderboard'
+    ? `lb:${accountId}:${rivalId}:${lbInstrument}:${lbRankBy}`
+    : `${accountId}:${rivalId}:${combo}`;
   const hasCachedData = cacheKey === _cachedDetailKey && _cachedDetailSongs.length > 0;
 
   const [songs_, setSongs] = useState<RivalSongComparison[]>(hasCachedData ? _cachedDetailSongs : []);
@@ -62,11 +70,15 @@ export default function RivalDetailPage() {
 
   /* v8 ignore start — async data fetch */
   useEffect(() => {
-    if (!accountId || !rivalId || !combo || hasCachedData) return;
+    if (!accountId || !rivalId || hasCachedData) return;
     let cancelled = false;
     setLoading(true);
 
-    api.getRivalDetail(accountId, combo, rivalId).then(res => {
+    const fetchPromise = source === 'leaderboard' && lbInstrument
+      ? api.getLeaderboardRivalDetail(lbInstrument as Parameters<typeof api.getLeaderboardRivalDetail>[0], accountId, rivalId, lbRankBy as Parameters<typeof api.getLeaderboardRivalDetail>[3])
+      : api.getRivalDetail(accountId, combo, rivalId);
+
+    fetchPromise.then(res => {
       if (cancelled) return;
       setSongs(res.songs);
       setRivalName(res.rival.displayName);
@@ -88,7 +100,7 @@ export default function RivalDetailPage() {
     });
 
     return () => { cancelled = true; };
-  }, [accountId, rivalId, combo]);
+  }, [accountId, rivalId, combo, source, lbInstrument, lbRankBy]);
   /* v8 ignore stop */
 
   const categories = useMemo(() => categorizeRivalSongs(songs_), [songs_]);

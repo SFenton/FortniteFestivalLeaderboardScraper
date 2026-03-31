@@ -1,19 +1,24 @@
 import { memo, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RivalSummary } from '@festival/core/api/serverTypes';
-import { Colors, Font, Weight, Gap, Radius, Display, Align, Justify, Position, Cursor, Overflow, WhiteSpace, Border, frostedCard, flexRow, truncate, padding, border } from '@festival/theme';
+import { Colors, Font, FontVariant, Weight, Gap, Radius, Display, Align, Justify, Position, Cursor, Overflow, WhiteSpace, Border, frostedCard, flexRow, truncate, padding, border } from '@festival/theme';
 import s from '../../../styles/rivals.module.css';
 
+/** Minimal shape shared by RivalSummary and LeaderboardRivalSummary. */
+type RivalLike = Pick<RivalSummary, 'displayName' | 'sharedSongCount' | 'aheadCount' | 'behindCount'>;
+
 interface RivalRowProps {
-  rival: RivalSummary;
+  rival: RivalLike;
   /** "above" = rival is ahead of you; "below" = you are ahead */
   direction: 'above' | 'below';
   onClick: () => void;
+  /** Optional leaderboard rank badge (e.g., "#410") shown left of name. */
+  leaderboardRank?: number;
   style?: React.CSSProperties;
   onAnimationEnd?: (e: React.AnimationEvent<HTMLElement>) => void;
 }
 
-const RivalRow = memo(function RivalRow({ rival, direction, onClick, style, onAnimationEnd }: RivalRowProps) {
+const RivalRow = memo(function RivalRow({ rival, direction, onClick, leaderboardRank, style, onAnimationEnd }: RivalRowProps) {
   const { t } = useTranslation();
   const name = rival.displayName ?? 'Unknown Player';
   const st = useRivalRowStyles();
@@ -31,7 +36,10 @@ const RivalRow = memo(function RivalRow({ rival, direction, onClick, style, onAn
       onAnimationEnd={onAnimationEnd}
     >
       <div style={st.content}>
-        <span style={st.name}>{name}</span>
+        <span style={st.name}>
+          {leaderboardRank != null && <span style={st.rankBadge}>#{leaderboardRank.toLocaleString()}</span>}
+          {name}
+        </span>
         <span style={st.shared}>{t('rivals.sharedSongs', { count: rival.sharedSongCount })}</span>
         <div style={st.pillRow}>
           <span style={st.pillAhead}>{rival.behindCount} {t('rivals.songsAhead', 'songs ahead')}</span>
@@ -115,6 +123,13 @@ function useRivalRowStyles() {
         backgroundColor: Colors.rivalRedBg,
         color: Colors.statusRed,
         borderColor: Colors.rivalRedBorder,
+      } as CSSProperties,
+      rankBadge: {
+        fontSize: Font.sm,
+        fontWeight: Weight.bold,
+        fontVariantNumeric: FontVariant.tabularNums,
+        color: Colors.accentBlueBright,
+        marginRight: Gap.sm,
       } as CSSProperties,
     };
   }, []);

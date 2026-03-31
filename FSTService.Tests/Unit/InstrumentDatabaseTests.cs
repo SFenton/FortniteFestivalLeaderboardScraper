@@ -1282,6 +1282,41 @@ public sealed class InstrumentDatabaseTests : IDisposable
         Assert.Equal(5, below.Count);
     }
 
+    [Fact]
+    public void GetAccountRankingNeighborhood_rankBy_adjusted_uses_adjusted_skill_rank()
+    {
+        // Seed 3 accounts with different total scores and skill ratings
+        // Their adjusted ranks will differ from total score ranks
+        var accounts = new (string, long, int)[]
+        {
+            ("a1", 5000, 1),
+            ("a2", 3000, 2),
+            ("a3", 1000, 3),
+        };
+        SeedAccountRankings(accounts);
+
+        var (above, self, below) = Db.GetAccountRankingNeighborhood("a2", radius: 2, rankBy: "adjusted");
+
+        Assert.NotNull(self);
+        Assert.Equal("a2", self.AccountId);
+    }
+
+    [Fact]
+    public void GetAccountRankingNeighborhood_invalid_rankBy_defaults_to_totalscore()
+    {
+        var accounts = new (string, long, int)[]
+        {
+            ("a1", 5000, 1),
+            ("a2", 3000, 2),
+        };
+        SeedAccountRankings(accounts);
+
+        var (above, self, below) = Db.GetAccountRankingNeighborhood("a2", radius: 2, rankBy: "invalid");
+
+        Assert.NotNull(self);
+        Assert.Equal("a2", self.AccountId);
+    }
+
     // ═══ GetPlayerRankingsFiltered ══════════════════════════════
 
     [Fact]

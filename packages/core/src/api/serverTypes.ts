@@ -350,6 +350,31 @@ export type RivalsListResponse = {
   below: RivalSummary[];
 };
 
+// ─── Leaderboard Rivals types ──────────────────────────────────
+
+/** A leaderboard rival — extends RivalSummary with rank context. */
+export type LeaderboardRivalSummary = {
+  accountId: string;
+  displayName: string | null;
+  sharedSongCount: number;
+  aheadCount: number;
+  behindCount: number;
+  avgSignedDelta: number;
+  /** The rival's rank on this instrument/method. */
+  leaderboardRank: number;
+  /** The logged-in user's rank for context. */
+  userLeaderboardRank: number;
+};
+
+/** Response from GET /api/player/{accountId}/leaderboard-rivals/{instrument}. */
+export type LeaderboardRivalsListResponse = {
+  instrument: string;
+  rankBy: string;
+  userRank: number | null;
+  above: LeaderboardRivalSummary[];
+  below: LeaderboardRivalSummary[];
+};
+
 // ─── Rankings types ────────────────────────────────────────────
 
 /** Ranking metric used for sorting. */

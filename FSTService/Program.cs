@@ -224,6 +224,9 @@ builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("RivalsC
     (_, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(5)));
 builder.Services.AddSingleton<RivalsCalculator>();
 builder.Services.AddSingleton<RivalsOrchestrator>();
+builder.Services.AddSingleton<LeaderboardRivalsCalculator>();
+builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("LeaderboardRivalsCache",
+    (_, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(5)));
 builder.Services.AddSingleton<RankingsCalculator>();
 builder.Services.AddSingleton<ScrapeOrchestrator>();
 builder.Services.AddSingleton<PostScrapeOrchestrator>();

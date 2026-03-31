@@ -1759,18 +1759,20 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     /// <summary>
     /// Returns the ±<paramref name="radius"/> accounts around <paramref name="accountId"/>
-    /// on the TotalScoreRank axis, split into above/self/below.
+    /// on the specified rank axis, split into above/self/below.
     /// </summary>
     public (List<AccountRankingDto> Above, AccountRankingDto? Self, List<AccountRankingDto> Below) GetAccountRankingNeighborhood(
-        string accountId, int radius = 5)
+        string accountId, int radius = 5, string rankBy = "totalscore")
     {
+        var rankColumn = MapRankColumn(rankBy);
+
         using var conn = OpenConnection();
 
         // 1. Look up the target account's rank
         int? selfRank;
         using (var lookup = conn.CreateCommand())
         {
-            lookup.CommandText = "SELECT TotalScoreRank FROM AccountRankings WHERE AccountId = @accountId;";
+            lookup.CommandText = $"SELECT {rankColumn} FROM AccountRankings WHERE AccountId = @accountId;";
             lookup.Parameters.AddWithValue("@accountId", accountId);
             var result = lookup.ExecuteScalar();
             selfRank = result is not null ? Convert.ToInt32(result) : null;
@@ -1781,7 +1783,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
         // 2. Fetch the neighborhood (self ± radius)
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        cmd.CommandText = $"""
             SELECT AccountId, SongsPlayed, TotalChartedSongs, Coverage,
                    RawSkillRating, AdjustedSkillRating, AdjustedSkillRank,
                    WeightedRating, WeightedRank,
@@ -1791,8 +1793,8 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                    AvgAccuracy, FullComboCount, AvgStars, BestRank, AvgRank,
                    ComputedAt
             FROM AccountRankings
-            WHERE TotalScoreRank BETWEEN @lo AND @hi
-            ORDER BY TotalScoreRank ASC;
+            WHERE {rankColumn} BETWEEN @lo AND @hi
+            ORDER BY {rankColumn} ASC;
             """;
         cmd.Parameters.AddWithValue("@lo", Math.Max(1, selfRank.Value - radius));
         cmd.Parameters.AddWithValue("@hi", selfRank.Value + radius);
@@ -1805,9 +1807,10 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         while (reader.Read())
         {
             var dto = ReadAccountRankingDto(reader, _instrument);
+            var dtoRank = GetRankValue(dto, rankBy);
             if (dto.AccountId == accountId)
                 self = dto;
-            else if (dto.TotalScoreRank < selfRank.Value)
+            else if (dtoRank < selfRank.Value)
                 above.Add(dto);
             else
                 below.Add(dto);
@@ -1815,6 +1818,34 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
         return (above, self, below);
     }
+
+    /// <summary>
+    /// Maps a rank method name to the corresponding SQL column in <c>AccountRankings</c>.
+    /// Uses a whitelist to prevent SQL injection.
+    /// </summary>
+    internal static string MapRankColumn(string rankBy) => rankBy.ToLowerInvariant() switch
+    {
+        "totalscore" => "TotalScoreRank",
+        "adjusted" => "AdjustedSkillRank",
+        "weighted" => "WeightedRank",
+        "fcrate" => "FcRateRank",
+        "maxscore" => "MaxScorePercentRank",
+        _ => "TotalScoreRank",
+    };
+
+    /// <summary>
+    /// Extracts the rank value from an <see cref="AccountRankingDto"/> for the given metric,
+    /// matching the column used by <see cref="MapRankColumn"/>.
+    /// </summary>
+    internal static int GetRankValue(AccountRankingDto dto, string rankBy) => rankBy.ToLowerInvariant() switch
+    {
+        "totalscore" => dto.TotalScoreRank,
+        "adjusted" => dto.AdjustedSkillRank,
+        "weighted" => dto.WeightedRank,
+        "fcrate" => dto.FcRateRank,
+        "maxscore" => dto.MaxScorePercentRank,
+        _ => dto.TotalScoreRank,
+    };
 
     private static AccountRankingDto ReadAccountRankingDto(SqliteDataReader reader, string instrument)
     {

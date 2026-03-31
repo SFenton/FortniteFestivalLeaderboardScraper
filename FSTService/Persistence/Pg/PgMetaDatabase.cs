@@ -453,6 +453,20 @@ public sealed class PgMetaDatabase : IMetaDatabase
     public List<RivalSongSampleRow> GetRivalSongSamples(string userId, string rivalAccountId, string? instrument = null) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); var where = "WHERE user_id = @uid AND rival_account_id = @rid"; cmd.Parameters.AddWithValue("uid", userId); cmd.Parameters.AddWithValue("rid", rivalAccountId); if (instrument is not null) { where += " AND instrument = @inst"; cmd.Parameters.AddWithValue("inst", instrument); } cmd.CommandText = $"SELECT user_id, rival_account_id, instrument, song_id, user_rank, rival_rank, rank_delta, user_score, rival_score FROM rival_song_samples {where} ORDER BY ABS(rank_delta) ASC"; return ReadRivalSamples(cmd); }
     public Dictionary<string, List<RivalSongSampleRow>> GetAllRivalSongSamplesForUser(string userId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT user_id, rival_account_id, instrument, song_id, user_rank, rival_rank, rank_delta, user_score, rival_score FROM rival_song_samples WHERE user_id = @uid ORDER BY rival_account_id, ABS(rank_delta) ASC"; cmd.Parameters.AddWithValue("uid", userId); var dict = new Dictionary<string, List<RivalSongSampleRow>>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) { var sample = ReadRivalSample(r); if (!dict.TryGetValue(sample.RivalAccountId, out var list)) { list = new(); dict[sample.RivalAccountId] = list; } list.Add(sample); } return dict; }
 
+    // ── Leaderboard Rivals ───────────────────────────────────────────
+
+    public void ReplaceLeaderboardRivalsData(string userId, string instrument,
+        IReadOnlyList<LeaderboardRivalRow> rivals, IReadOnlyList<LeaderboardRivalSongSampleRow> samples)
+    {
+        // PG leaderboard rivals tables not yet created — stub for interface compliance.
+    }
+
+    public List<LeaderboardRivalRow> GetLeaderboardRivals(string userId, string? instrument = null, string? rankMethod = null, string? direction = null)
+        => new();
+
+    public List<LeaderboardRivalSongSampleRow> GetLeaderboardRivalSongSamples(string userId, string rivalAccountId, string instrument, string rankMethod)
+        => new();
+
     // ── Item shop ────────────────────────────────────────────────────
 
     public void SaveItemShopTracks(IReadOnlySet<string> songIds, IReadOnlySet<string> leavingTomorrow, DateTime scrapedAt)

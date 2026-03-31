@@ -68,7 +68,7 @@ public interface IInstrumentDatabase : IDisposable
     int SnapshotRankHistory(int topN, IReadOnlySet<string>? additionalAccountIds = null, int retentionDays = 365);
     (List<AccountRankingDto> Entries, int TotalCount) GetAccountRankings(string rankBy = "adjusted", int page = 1, int pageSize = 50);
     AccountRankingDto? GetAccountRanking(string accountId);
-    (List<AccountRankingDto> Above, AccountRankingDto? Self, List<AccountRankingDto> Below) GetAccountRankingNeighborhood(string accountId, int radius = 5);
+    (List<AccountRankingDto> Above, AccountRankingDto? Self, List<AccountRankingDto> Below) GetAccountRankingNeighborhood(string accountId, int radius = 5, string rankBy = "totalscore");
     List<RankHistoryDto> GetRankHistory(string accountId, int days = 30);
     int GetRankedAccountCount();
     List<(string AccountId, double AdjustedSkillRating, int SongsPlayed, int AdjustedSkillRank)> GetAllRankingSummaries();

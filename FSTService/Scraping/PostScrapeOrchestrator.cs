@@ -25,6 +25,7 @@ public sealed class PostScrapeOrchestrator
     private readonly SharedDopPool _pool;
     private readonly RivalsOrchestrator _rivalsOrchestrator;
     private readonly RankingsCalculator _rankingsCalculator;
+    private readonly LeaderboardRivalsCalculator _leaderboardRivalsCalculator;
     private readonly NotificationService _notifications;
     private readonly TokenManager _tokenManager;
     private readonly ScrapeProgressTracker _progress;
@@ -43,6 +44,7 @@ public sealed class PostScrapeOrchestrator
         SharedDopPool pool,
         RivalsOrchestrator rivalsOrchestrator,
         RankingsCalculator rankingsCalculator,
+        LeaderboardRivalsCalculator leaderboardRivalsCalculator,
         NotificationService notifications,
         TokenManager tokenManager,
         ScrapeProgressTracker progress,
@@ -60,6 +62,7 @@ public sealed class PostScrapeOrchestrator
         _pool = pool;
         _rivalsOrchestrator = rivalsOrchestrator;
         _rankingsCalculator = rankingsCalculator;
+        _leaderboardRivalsCalculator = leaderboardRivalsCalculator;
         _notifications = notifications;
         _tokenManager = tokenManager;
         _progress = progress;
@@ -84,7 +87,12 @@ public sealed class PostScrapeOrchestrator
         await RefreshRegisteredUsersAsync(ctx, ct);
         await ComputeRankingsAsync(service, ct);
         await RebuildPersonalDbsAsync(ctx, ct);
-        await ComputeRivalsAsync(ctx, ct);
+
+        // Per-song rivals and leaderboard rivals have no shared write targets
+        // and both depend only on rankings, so they can run in parallel.
+        await Task.WhenAll(
+            ComputeRivalsAsync(ctx, ct),
+            ComputeLeaderboardRivalsAsync(ctx, ct));
 
         // ── Precompute API responses for registered players + top leaderboards ──
         await _precomputer.PrecomputeAllAsync(ct);
@@ -371,6 +379,43 @@ public sealed class PostScrapeOrchestrator
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Rivals computation failed. Will retry next pass.");
+        }
+    }
+
+    /// <summary>
+    /// Compute leaderboard rivals for registered users. Per instrument per rank method,
+    /// finds neighbors and compares shared songs.
+    /// </summary>
+    internal async Task ComputeLeaderboardRivalsAsync(ScrapePassContext ctx, CancellationToken ct)
+    {
+        if (ctx.RegisteredIds.Count == 0)
+            return;
+
+        try
+        {
+            _log.LogInformation("Computing leaderboard rivals for {Count} registered user(s).", ctx.RegisteredIds.Count);
+
+            var tasks = ctx.RegisteredIds.Select(accountId => Task.Run(() =>
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    var result = _leaderboardRivalsCalculator.ComputeForUser(accountId);
+                    _log.LogDebug(
+                        "Computed leaderboard rivals for {AccountId}: {Rivals} rival rows, {Samples} sample rows.",
+                        accountId, result.RivalCount, result.SampleCount);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.LogWarning(ex, "Leaderboard rivals computation failed for {AccountId}.", accountId);
+                }
+            }, ct)).ToList();
+
+            await Task.WhenAll(tasks);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Leaderboard rivals computation failed. Will retry next pass.");
         }
     }
 

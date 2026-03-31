@@ -98,6 +98,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), _progress, new Api.ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
         var rankingsCalculator = new RankingsCalculator(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
+        var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(_persistence, _metaDb, Options.Create(new ScraperOptions()), Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
 
         _sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
@@ -105,7 +106,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             serviceProvider,
             Substitute.For<HistoryReconstructor>(scraper, _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
-            rivalsOrchestrator, rankingsCalculator, _notifications,
+            rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
             _tokenManager, _progress, _pathDataStore,
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
             Options.Create(new ScraperOptions()), _log);
@@ -293,13 +294,14 @@ public class PostScrapeOrchestratorTests : IDisposable
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new NotificationService(Substitute.For<ILogger<NotificationService>>()), _progress, new ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
         var rankingsCalculator2 = new RankingsCalculator(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
+        var leaderboardRivalsCalculator2 = new LeaderboardRivalsCalculator(_persistence, _metaDb, Options.Create(opts.Value), Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
             _refresher,
             Substitute.For<IServiceProvider>(),
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
-            rivalsOrchestrator, rankingsCalculator2, _notifications,
+            rivalsOrchestrator, rankingsCalculator2, leaderboardRivalsCalculator2, _notifications,
             _tokenManager, _progress, _pathDataStore,
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
             opts, _log);
@@ -352,13 +354,14 @@ public class PostScrapeOrchestratorTests : IDisposable
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new NotificationService(Substitute.For<ILogger<NotificationService>>()), _progress, new ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
         var rankingsCalculator3 = new RankingsCalculator(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
+        var leaderboardRivalsCalculator3 = new LeaderboardRivalsCalculator(_persistence, _metaDb, Options.Create(opts.Value), Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
         var sut = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
             _refresher,
             Substitute.For<IServiceProvider>(),
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
-            rivalsOrchestrator, rankingsCalculator3, _notifications,
+            rivalsOrchestrator, rankingsCalculator3, leaderboardRivalsCalculator3, _notifications,
             _tokenManager, _progress, _pathDataStore,
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
             opts, _log);
@@ -514,6 +517,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new NotificationService(Substitute.For<ILogger<NotificationService>>()), _progress, new ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
         var rankingsCalculator = new RankingsCalculator(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
+        var leaderboardRivalsCalculator = new LeaderboardRivalsCalculator(_persistence, _metaDb, Options.Create(opts.Value), Substitute.For<ILogger<LeaderboardRivalsCalculator>>());
 
         // Seed PathDataStore with CHOpt max score for song1
         EnsureSongRow(_pathDataStore, "song1");
@@ -525,7 +529,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             Substitute.For<IServiceProvider>(),
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
-            rivalsOrchestrator, rankingsCalculator, _notifications,
+            rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
             _tokenManager, _progress, _pathDataStore,
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
             opts, _log);
