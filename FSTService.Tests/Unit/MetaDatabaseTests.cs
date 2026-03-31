@@ -922,6 +922,89 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Empty(removed);
     }
 
+    [Fact]
+    public void UnregisterAccount_cleans_up_player_stats()
+    {
+        Db.RegisterUser("dev1", "acct1");
+        Db.UpsertPlayerStats(new PlayerStatsDto
+        {
+            AccountId = "acct1", Instrument = "Solo_Guitar", SongsPlayed = 10,
+        });
+        Db.UpsertPlayerStats(new PlayerStatsDto
+        {
+            AccountId = "acct2", Instrument = "Solo_Guitar", SongsPlayed = 5,
+        });
+
+        Db.UnregisterAccount("acct1");
+
+        Assert.Empty(Db.GetPlayerStats("acct1"));
+        Assert.Single(Db.GetPlayerStats("acct2")); // acct2 unaffected
+    }
+
+    [Fact]
+    public void UnregisterAccount_cleans_up_backfill_and_history_recon()
+    {
+        Db.RegisterUser("dev1", "acct1");
+        Db.EnqueueBackfill("acct1", 50);
+        Db.MarkBackfillSongChecked("acct1", "song1", "Solo_Guitar", true);
+        Db.EnqueueHistoryRecon("acct1", 50);
+
+        // Seed for second account to verify isolation
+        Db.RegisterUser("dev2", "acct2");
+        Db.EnqueueBackfill("acct2", 30);
+        Db.EnqueueHistoryRecon("acct2", 30);
+
+        Db.UnregisterAccount("acct1");
+
+        Assert.Null(Db.GetBackfillStatus("acct1"));
+        Assert.Empty(Db.GetCheckedBackfillPairs("acct1"));
+        Assert.Null(Db.GetHistoryReconStatus("acct1"));
+
+        // acct2 unaffected
+        Assert.NotNull(Db.GetBackfillStatus("acct2"));
+        Assert.NotNull(Db.GetHistoryReconStatus("acct2"));
+    }
+
+    [Fact]
+    public void UnregisterUser_last_device_cascades_to_full_cleanup()
+    {
+        Db.RegisterUser("dev1", "acct1");
+        Db.UpsertPlayerStats(new PlayerStatsDto
+        {
+            AccountId = "acct1", Instrument = "Solo_Guitar", SongsPlayed = 10,
+        });
+        Db.EnqueueBackfill("acct1", 50);
+        Db.EnqueueHistoryRecon("acct1", 50);
+
+        var removed = Db.UnregisterUser("dev1", "acct1");
+        Assert.True(removed);
+
+        // All per-account data should be cleaned up
+        Assert.Empty(Db.GetPlayerStats("acct1"));
+        Assert.Null(Db.GetBackfillStatus("acct1"));
+        Assert.Null(Db.GetHistoryReconStatus("acct1"));
+    }
+
+    [Fact]
+    public void UnregisterUser_not_last_device_does_not_cascade()
+    {
+        Db.RegisterUser("dev1", "acct1");
+        Db.RegisterUser("dev2", "acct1");
+        Db.UpsertPlayerStats(new PlayerStatsDto
+        {
+            AccountId = "acct1", Instrument = "Solo_Guitar", SongsPlayed = 10,
+        });
+        Db.EnqueueBackfill("acct1", 50);
+
+        var removed = Db.UnregisterUser("dev1", "acct1");
+        Assert.True(removed);
+
+        // Per-account data should still exist (dev2 still registered)
+        Assert.Single(Db.GetPlayerStats("acct1"));
+        Assert.NotNull(Db.GetBackfillStatus("acct1"));
+        Assert.True(Db.IsDeviceRegistered("dev2"));
+    }
+
     // ═══ GetOrphanedRegisteredAccounts ══════════════════════════
 
     [Fact]

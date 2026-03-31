@@ -824,6 +824,7 @@ public sealed class MetaDatabase : IMetaDatabase
 
     /// <summary>
     /// Unregister a device + account pair. Returns true if a row was deleted.
+    /// If this was the last device for the account, also cleans up all per-account data.
     /// </summary>
     public bool UnregisterUser(string deviceId, string accountId)
     {
@@ -835,7 +836,20 @@ public sealed class MetaDatabase : IMetaDatabase
             """;
         cmd.Parameters.AddWithValue("@deviceId", deviceId);
         cmd.Parameters.AddWithValue("@accountId", accountId);
-        return cmd.ExecuteNonQuery() > 0;
+        var deleted = cmd.ExecuteNonQuery() > 0;
+
+        if (deleted)
+        {
+            // If no registrations remain for this account, clean up all per-account data.
+            using var countCmd = conn.CreateCommand();
+            countCmd.CommandText = "SELECT COUNT(*) FROM RegisteredUsers WHERE AccountId = @accountId;";
+            countCmd.Parameters.AddWithValue("@accountId", accountId);
+            var remaining = Convert.ToInt32(countCmd.ExecuteScalar());
+            if (remaining == 0)
+                CleanupAccountData(conn, accountId);
+        }
+
+        return deleted;
     }
 
     /// <summary>
@@ -866,8 +880,8 @@ public sealed class MetaDatabase : IMetaDatabase
         deleteCmd.Parameters.AddWithValue("@accountId", accountId);
         deleteCmd.ExecuteNonQuery();
 
-        // Clean up rivals data for this account.
-        CleanupRivalsData(conn, accountId);
+        // Clean up all per-account data (rivals, stats, backfill/recon tracking).
+        CleanupAccountData(conn, accountId);
 
         return deviceIds;
     }
@@ -3007,8 +3021,8 @@ public sealed class MetaDatabase : IMetaDatabase
         return result;
     }
 
-    /// <summary>Delete all rivals-related data for an account.</summary>
-    private static void CleanupRivalsData(SqliteConnection conn, string accountId)
+    /// <summary>Delete all per-account data: rivals, player stats, backfill/recon tracking.</summary>
+    private static void CleanupAccountData(SqliteConnection conn, string accountId)
     {
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
@@ -3017,6 +3031,11 @@ public sealed class MetaDatabase : IMetaDatabase
             DELETE FROM RivalsStatus WHERE AccountId = @id;
             DELETE FROM LeaderboardRivalSongSamples WHERE UserId = @id;
             DELETE FROM LeaderboardRivals WHERE UserId = @id;
+            DELETE FROM PlayerStats WHERE AccountId = @id;
+            DELETE FROM BackfillStatus WHERE AccountId = @id;
+            DELETE FROM BackfillProgress WHERE AccountId = @id;
+            DELETE FROM HistoryReconStatus WHERE AccountId = @id;
+            DELETE FROM HistoryReconProgress WHERE AccountId = @id;
             """;
         cmd.Parameters.AddWithValue("@id", accountId);
         cmd.ExecuteNonQuery();
