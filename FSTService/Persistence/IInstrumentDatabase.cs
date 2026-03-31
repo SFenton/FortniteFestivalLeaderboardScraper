@@ -71,6 +71,11 @@ public interface IInstrumentDatabase : IDisposable
     (List<AccountRankingDto> Above, AccountRankingDto? Self, List<AccountRankingDto> Below) GetAccountRankingNeighborhood(string accountId, int radius = 5);
     List<RankHistoryDto> GetRankHistory(string accountId, int days = 30);
     int GetRankedAccountCount();
+    List<(string AccountId, double AdjustedSkillRating, int SongsPlayed, int AdjustedSkillRank)> GetAllRankingSummaries();
+    List<(string AccountId, double AdjustedSkillRating, double WeightedRating, double FcRate, long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)> GetAllRankingSummariesFull();
+
+    // ── Cache pre-warming ────────────────────────────────────────────
+    void PreWarmRankingsBatch(IReadOnlyCollection<string> accountIds);
 
     // ── Maintenance ──────────────────────────────────────────────────
     void Checkpoint();

@@ -417,11 +417,15 @@ if (dbProvider.Equals("PostgreSQL", StringComparison.OrdinalIgnoreCase))
     if (scraperOpts2.PrecomputeOnly)
     {
         var precompLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Precompute");
-        precompLog.LogInformation("--precompute: initializing databases...");
 
-        // Wait for DB initialization
-        var dbInit = app.Services.GetRequiredService<DatabaseInitializer>();
-        await dbInit.WaitForReadyAsync(CancellationToken.None);
+        // Minimal init: open instrument DBs + load song catalog (skip Item Shop HTTP calls)
+        precompLog.LogInformation("--precompute: initializing databases...");
+        var persistence = app.Services.GetRequiredService<GlobalLeaderboardPersistence>();
+        persistence.Initialize();
+        var festivalService = app.Services.GetRequiredService<FestivalService>();
+        await festivalService.InitializeAsync();
+        precompLog.LogInformation("--precompute: {SongCount} songs loaded, DBs ready.",
+            festivalService.Songs.Count);
 
         precompLog.LogInformation("--precompute: running precomputation...");
         var precomputer = app.Services.GetRequiredService<ScrapeTimePrecomputer>();

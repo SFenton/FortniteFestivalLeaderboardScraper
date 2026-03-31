@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
+using FSTService.Persistence.Pg;
 using FSTService.Scraping;
+using Npgsql;
 
 namespace FSTService.Persistence;
 
@@ -22,23 +24,26 @@ namespace FSTService.Persistence;
 /// </summary>
 public sealed class GlobalLeaderboardPersistence : IDisposable
 {
-    private readonly Dictionary<string, InstrumentDatabase> _instrumentDbs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, IInstrumentDatabase> _instrumentDbs = new(StringComparer.OrdinalIgnoreCase);
     private readonly IMetaDatabase _metaDb;
     private readonly ILogger<GlobalLeaderboardPersistence> _log;
     private readonly ILoggerFactory _loggerFactory;
     private readonly string _dataDir;
+    private readonly NpgsqlDataSource? _pgDataSource;
 
     /// <summary>The meta database (ScrapeLog, ScoreHistory, etc.).</summary>
     public IMetaDatabase Meta => _metaDb;
 
     public GlobalLeaderboardPersistence(string dataDir, IMetaDatabase metaDb,
                                         ILoggerFactory loggerFactory,
-                                        ILogger<GlobalLeaderboardPersistence> log)
+                                        ILogger<GlobalLeaderboardPersistence> log,
+                                        NpgsqlDataSource? pgDataSource = null)
     {
         _dataDir = dataDir;
         _metaDb = metaDb;
         _loggerFactory = loggerFactory;
         _log = log;
+        _pgDataSource = pgDataSource;
 
         if (!Directory.Exists(dataDir))
             Directory.CreateDirectory(dataDir);
@@ -52,28 +57,47 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     {
         _metaDb.EnsureSchema();
 
-        // Initialize all 6 instrument DBs in parallel (each has its own file, zero contention)
         var instruments = GlobalLeaderboardScraper.AllInstruments;
-        var dbs = new InstrumentDatabase[instruments.Count];
-        Parallel.For(0, instruments.Count, i =>
+
+        if (_pgDataSource is not null)
         {
-            var instrument = instruments[i];
-            var dbPath = Path.Combine(_dataDir, $"fst-{instrument}.db");
-            var db = new InstrumentDatabase(
-                instrument, dbPath,
-                _loggerFactory.CreateLogger<InstrumentDatabase>());
-            db.EnsureSchema();
-            dbs[i] = db;
-            _log.LogDebug("Opened instrument DB: {Instrument} \u2192 {Path}", instrument, dbPath);
-        });
+            // PostgreSQL mode: one shared table, partitioned by instrument
+            foreach (var instrument in instruments)
+            {
+                var db = new PgInstrumentDatabase(
+                    instrument, _pgDataSource,
+                    _loggerFactory.CreateLogger<PgInstrumentDatabase>());
+                _instrumentDbs[instrument] = db;
+                _log.LogDebug("Opened PG instrument DB: {Instrument}", instrument);
+            }
 
-        // Add to dictionary after parallel init completes (single-threaded)
-        foreach (var db in dbs)
-            _instrumentDbs[db.Instrument] = db;
+            _log.LogInformation("GlobalLeaderboardPersistence initialized (PostgreSQL). " +
+                                "{InstrumentCount} instruments.",
+                                _instrumentDbs.Count);
+        }
+        else
+        {
+            // SQLite mode: one file per instrument
+            var dbs = new IInstrumentDatabase[instruments.Count];
+            Parallel.For(0, instruments.Count, i =>
+            {
+                var instrument = instruments[i];
+                var dbPath = Path.Combine(_dataDir, $"fst-{instrument}.db");
+                var db = new InstrumentDatabase(
+                    instrument, dbPath,
+                    _loggerFactory.CreateLogger<InstrumentDatabase>());
+                db.EnsureSchema();
+                dbs[i] = db;
+                _log.LogDebug("Opened instrument DB: {Instrument} \u2192 {Path}", instrument, dbPath);
+            });
 
-        _log.LogInformation("GlobalLeaderboardPersistence initialized. " +
-                            "{InstrumentCount} instrument DBs in {DataDir}",
-                            _instrumentDbs.Count, _dataDir);
+            foreach (var db in dbs)
+                _instrumentDbs[db.Instrument] = db;
+
+            _log.LogInformation("GlobalLeaderboardPersistence initialized (SQLite). " +
+                                "{InstrumentCount} instrument DBs in {DataDir}",
+                                _instrumentDbs.Count, _dataDir);
+        }
     }
 
     /// <summary>
@@ -97,23 +121,33 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>
-    /// Get (or create on first access) the <see cref="InstrumentDatabase"/>
+    /// Get (or create on first access) the <see cref="IInstrumentDatabase"/>
     /// for a given instrument key (e.g. "Solo_Guitar").
     /// New instruments added in the future are automatically handled.
     /// </summary>
-    public InstrumentDatabase GetOrCreateInstrumentDb(string instrument)
+    public IInstrumentDatabase GetOrCreateInstrumentDb(string instrument)
     {
         if (_instrumentDbs.TryGetValue(instrument, out var db))
             return db;
 
-        var dbPath = Path.Combine(_dataDir, $"fst-{instrument}.db");
-        db = new InstrumentDatabase(
-            instrument, dbPath,
-            _loggerFactory.CreateLogger<InstrumentDatabase>());
-        db.EnsureSchema();
-        _instrumentDbs[instrument] = db;
+        if (_pgDataSource is not null)
+        {
+            db = new PgInstrumentDatabase(
+                instrument, _pgDataSource,
+                _loggerFactory.CreateLogger<PgInstrumentDatabase>());
+        }
+        else
+        {
+            var dbPath = Path.Combine(_dataDir, $"fst-{instrument}.db");
+            var sqliteDb = new InstrumentDatabase(
+                instrument, dbPath,
+                _loggerFactory.CreateLogger<InstrumentDatabase>());
+            sqliteDb.EnsureSchema();
+            db = sqliteDb;
+            _log.LogDebug("Opened instrument DB: {Instrument} → {Path}", instrument, dbPath);
+        }
 
-        _log.LogDebug("Opened instrument DB: {Instrument} → {Path}", instrument, dbPath);
+        _instrumentDbs[instrument] = db;
         return db;
     }
 

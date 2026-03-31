@@ -41,7 +41,7 @@ public sealed class RivalsCalculatorTests : IDisposable
         return new RivalsCalculator(persistence, NullLogger<RivalsCalculator>.Instance);
     }
 
-    private static void SeedEntries(InstrumentDatabase db, string songId,
+    private static void SeedEntries(IInstrumentDatabase db, string songId,
         params (string AccountId, int Score)[] entries)
     {
         var result = new GlobalLeaderboardResult
@@ -68,7 +68,7 @@ public sealed class RivalsCalculatorTests : IDisposable
     /// Seed entries with explicit Source and ApiRank — for testing scenarios
     /// where backfill entries diverge from scrape-ranked entries.
     /// </summary>
-    private static void SeedEntriesEx(InstrumentDatabase db, string songId,
+    private static void SeedEntriesEx(IInstrumentDatabase db, string songId,
         params (string AccountId, int Score, string Source, int ApiRank)[] entries)
     {
         var list = entries.Select(e => new LeaderboardEntry

@@ -717,7 +717,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     /// Pre-warm the rankings cache for multiple accounts using a single shared connection.
     /// This avoids the overhead of opening/closing a connection per account.
     /// </summary>
-    internal void PreWarmRankingsBatch(IReadOnlyCollection<string> accountIds)
+    public void PreWarmRankingsBatch(IReadOnlyCollection<string> accountIds)
     {
         if (accountIds.Count == 0) return;
 
@@ -1660,7 +1660,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     /// Get all account rankings as a lightweight list (for composite computation).
     /// Returns (AccountId, AdjustedSkillRating, SongsPlayed, AdjustedSkillRank).
     /// </summary>
-    internal List<(string AccountId, double AdjustedSkillRating, int SongsPlayed, int AdjustedSkillRank)> GetAllRankingSummaries()
+    public List<(string AccountId, double AdjustedSkillRating, int SongsPlayed, int AdjustedSkillRank)> GetAllRankingSummaries()
     {
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
@@ -1679,7 +1679,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     /// Get all account rankings with full metric data (for combo computation).
     /// Returns all 5 metric values plus SongsPlayed and FullComboCount per account.
     /// </summary>
-    internal List<(string AccountId, double AdjustedSkillRating, double WeightedRating, double FcRate,
+    public List<(string AccountId, double AdjustedSkillRating, double WeightedRating, double FcRate,
         long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)> GetAllRankingSummariesFull()
     {
         using var conn = OpenConnection();
