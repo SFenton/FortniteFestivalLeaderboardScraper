@@ -278,14 +278,17 @@ public sealed class PgMetaDatabase : IMetaDatabase
     {
         if (thresholds.Count == 0) return new();
         using var conn = _ds.OpenConnection();
-        using (var c = conn.CreateCommand()) { c.CommandText = "CREATE TEMP TABLE _valid_thresholds (song_id TEXT, instrument TEXT, max_score INTEGER) ON COMMIT DROP"; c.ExecuteNonQuery(); }
-        using (var c = conn.CreateCommand()) { c.CommandText = "INSERT INTO _valid_thresholds VALUES (@s, @i, @m)"; var ps = c.Parameters.Add("s", NpgsqlTypes.NpgsqlDbType.Text); var pi = c.Parameters.Add("i", NpgsqlTypes.NpgsqlDbType.Text); var pm = c.Parameters.Add("m", NpgsqlTypes.NpgsqlDbType.Integer); c.Prepare(); foreach (var ((s, i), m) in thresholds) { ps.Value = s; pi.Value = i; pm.Value = m; c.ExecuteNonQuery(); } }
+        using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "CREATE TEMP TABLE _valid_thresholds (song_id TEXT, instrument TEXT, max_score INTEGER) ON COMMIT DROP"; c.ExecuteNonQuery(); }
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "INSERT INTO _valid_thresholds VALUES (@s, @i, @m)"; var ps = c.Parameters.Add("s", NpgsqlTypes.NpgsqlDbType.Text); var pi = c.Parameters.Add("i", NpgsqlTypes.NpgsqlDbType.Text); var pm = c.Parameters.Add("m", NpgsqlTypes.NpgsqlDbType.Integer); c.Prepare(); foreach (var ((s, i), m) in thresholds) { ps.Value = s; pi.Value = i; pm.Value = m; c.ExecuteNonQuery(); } }
         using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
         cmd.CommandText = "SELECT sh.song_id, sh.instrument, sh.new_score, sh.accuracy, sh.is_full_combo, sh.stars FROM score_history sh JOIN _valid_thresholds vt ON vt.song_id = sh.song_id AND vt.instrument = sh.instrument WHERE sh.account_id = @accountId AND sh.new_score <= vt.max_score AND sh.new_score = (SELECT MAX(sh2.new_score) FROM score_history sh2 WHERE sh2.account_id = @accountId AND sh2.song_id = sh.song_id AND sh2.instrument = sh.instrument AND sh2.new_score <= vt.max_score) GROUP BY sh.song_id, sh.instrument, sh.new_score, sh.accuracy, sh.is_full_combo, sh.stars";
         cmd.Parameters.AddWithValue("accountId", accountId);
         var result = new Dictionary<(string, string), ValidScoreFallback>();
         using var r = cmd.ExecuteReader();
         while (r.Read()) result[(r.GetString(0), r.GetString(1))] = new ValidScoreFallback { Score = r.GetInt32(2), Accuracy = r.IsDBNull(3) ? null : r.GetInt32(3), IsFullCombo = r.IsDBNull(4) ? null : r.GetBoolean(4), Stars = r.IsDBNull(5) ? null : r.GetInt32(5) };
+        tx.Commit();
         return result;
     }
 
@@ -293,14 +296,17 @@ public sealed class PgMetaDatabase : IMetaDatabase
     {
         if (entries.Count == 0) return new();
         using var conn = _ds.OpenConnection();
-        using (var c = conn.CreateCommand()) { c.CommandText = "CREATE TEMP TABLE _bulk_thresholds (account_id TEXT, song_id TEXT, max_score INTEGER) ON COMMIT DROP"; c.ExecuteNonQuery(); }
-        using (var c = conn.CreateCommand()) { c.CommandText = "INSERT INTO _bulk_thresholds VALUES (@a, @s, @m)"; var pa = c.Parameters.Add("a", NpgsqlTypes.NpgsqlDbType.Text); var ps = c.Parameters.Add("s", NpgsqlTypes.NpgsqlDbType.Text); var pm = c.Parameters.Add("m", NpgsqlTypes.NpgsqlDbType.Integer); c.Prepare(); foreach (var ((a, s), m) in entries) { pa.Value = a; ps.Value = s; pm.Value = m; c.ExecuteNonQuery(); } }
+        using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "CREATE TEMP TABLE _bulk_thresholds (account_id TEXT, song_id TEXT, max_score INTEGER) ON COMMIT DROP"; c.ExecuteNonQuery(); }
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "INSERT INTO _bulk_thresholds VALUES (@a, @s, @m)"; var pa = c.Parameters.Add("a", NpgsqlTypes.NpgsqlDbType.Text); var ps = c.Parameters.Add("s", NpgsqlTypes.NpgsqlDbType.Text); var pm = c.Parameters.Add("m", NpgsqlTypes.NpgsqlDbType.Integer); c.Prepare(); foreach (var ((a, s), m) in entries) { pa.Value = a; ps.Value = s; pm.Value = m; c.ExecuteNonQuery(); } }
         using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
         cmd.CommandText = "SELECT sh.account_id, sh.song_id, sh.new_score, sh.accuracy, sh.is_full_combo, sh.stars FROM score_history sh JOIN _bulk_thresholds bt ON bt.account_id = sh.account_id AND bt.song_id = sh.song_id WHERE sh.instrument = @instrument AND sh.new_score <= bt.max_score AND sh.new_score = (SELECT MAX(sh2.new_score) FROM score_history sh2 WHERE sh2.account_id = sh.account_id AND sh2.song_id = sh.song_id AND sh2.instrument = @instrument AND sh2.new_score <= bt.max_score) GROUP BY sh.account_id, sh.song_id, sh.new_score, sh.accuracy, sh.is_full_combo, sh.stars";
         cmd.Parameters.AddWithValue("instrument", instrument);
         var result = new Dictionary<(string, string), ValidScoreFallback>();
         using var r = cmd.ExecuteReader();
         while (r.Read()) result[(r.GetString(0), r.GetString(1))] = new ValidScoreFallback { Score = r.GetInt32(2), Accuracy = r.IsDBNull(3) ? null : r.GetInt32(3), IsFullCombo = r.IsDBNull(4) ? null : r.GetBoolean(4), Stars = r.IsDBNull(5) ? null : r.GetInt32(5) };
+        tx.Commit();
         return result;
     }
 
@@ -309,9 +315,11 @@ public sealed class PgMetaDatabase : IMetaDatabase
     {
         if (maxThresholds.Count == 0) return new();
         using var conn = _ds.OpenConnection();
-        using (var c = conn.CreateCommand()) { c.CommandText = "CREATE TEMP TABLE _tier_thresholds (song_id TEXT, instrument TEXT, max_score INTEGER, PRIMARY KEY (song_id, instrument)) ON COMMIT DROP"; c.ExecuteNonQuery(); }
+        using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "CREATE TEMP TABLE _tier_thresholds (song_id TEXT, instrument TEXT, max_score INTEGER, PRIMARY KEY (song_id, instrument)) ON COMMIT DROP"; c.ExecuteNonQuery(); }
         using (var c = conn.CreateCommand())
         {
+            c.Transaction = tx;
             c.CommandText = "INSERT INTO _tier_thresholds VALUES (@s, @i, @m)";
             var ps = c.Parameters.Add("s", NpgsqlTypes.NpgsqlDbType.Text);
             var pi = c.Parameters.Add("i", NpgsqlTypes.NpgsqlDbType.Text);
@@ -320,6 +328,7 @@ public sealed class PgMetaDatabase : IMetaDatabase
             foreach (var ((s, i), m) in maxThresholds) { ps.Value = s; pi.Value = i; pm.Value = m; c.ExecuteNonQuery(); }
         }
         using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
         cmd.CommandText = "SELECT sh.song_id, sh.instrument, sh.new_score, MAX(sh.accuracy), MAX(CASE WHEN sh.is_full_combo THEN 1 ELSE 0 END)::BOOLEAN, MAX(sh.stars) FROM score_history sh JOIN _tier_thresholds tt ON tt.song_id = sh.song_id AND tt.instrument = sh.instrument WHERE sh.account_id = @accountId AND sh.new_score <= tt.max_score GROUP BY sh.song_id, sh.instrument, sh.new_score ORDER BY sh.song_id, sh.instrument, sh.new_score DESC";
         cmd.Parameters.AddWithValue("accountId", accountId);
         var result = new Dictionary<(string, string), List<ValidScoreFallback>>();
@@ -330,6 +339,7 @@ public sealed class PgMetaDatabase : IMetaDatabase
             if (!result.TryGetValue(key, out var list)) { list = new List<ValidScoreFallback>(); result[key] = list; }
             list.Add(new ValidScoreFallback { Score = r.GetInt32(2), Accuracy = r.IsDBNull(3) ? null : r.GetInt32(3), IsFullCombo = r.IsDBNull(4) ? null : r.GetBoolean(4), Stars = r.IsDBNull(5) ? null : r.GetInt32(5) });
         }
+        tx.Commit();
         return result;
     }
 
