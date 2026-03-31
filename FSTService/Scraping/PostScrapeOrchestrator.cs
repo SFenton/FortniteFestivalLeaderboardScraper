@@ -87,7 +87,6 @@ public sealed class PostScrapeOrchestrator
         // are computed.  The SharedDopPool handles concurrency.
         await RefreshRegisteredUsersAsync(ctx, ct);
         await ComputeRankingsAsync(service, ct);
-        await RebuildPersonalDbsAsync(ctx, ct);
 
         // Per-song rivals and leaderboard rivals have no shared write targets
         // and both depend only on rankings, so they can run in parallel.
@@ -100,9 +99,6 @@ public sealed class PostScrapeOrchestrator
         await _precomputer.PrecomputeAllAsync(ct);
 
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Finalizing);
-
-        _progress.SetSubOperation("cleaning_up_sessions");
-        CleanupSessions();
 
         // Checkpoint all WAL files after post-scrape writes (enrichment, refresh,
         // rankings) to keep them small for subsequent API reads.
@@ -197,15 +193,6 @@ public sealed class PostScrapeOrchestrator
         {
             _log.LogWarning(ex, "Rankings computation failed. Will retry next pass.");
         }
-    }
-
-    /// <summary>
-    /// Rebuild personal DBs for registered users whose scores changed during the scrape.
-    /// </summary>
-    internal Task RebuildPersonalDbsAsync(ScrapePassContext ctx, CancellationToken ct)
-    {
-        // Personal DB rebuild is deprecated (mobile sync removed).
-        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -480,34 +467,6 @@ public sealed class PostScrapeOrchestrator
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Entry pruning failed. Will retry next pass.");
-        }
-    }
-
-    /// <summary>
-    /// Clean up expired auth sessions and auto-unregister orphaned accounts.
-    /// </summary>
-    internal void CleanupSessions()
-    {
-        try
-        {
-            var cleaned = _persistence.Meta.CleanupExpiredSessions(DateTime.UtcNow.AddDays(-7));
-            if (cleaned > 0)
-                _log.LogInformation("Cleaned up {Count} expired/revoked auth session(s).", cleaned);
-
-            var orphaned = _persistence.Meta.GetOrphanedRegisteredAccounts();
-            foreach (var orphanedAccountId in orphaned)
-            {
-                var deviceIds = _persistence.Meta.UnregisterAccount(orphanedAccountId);
-
-                var displayName = _persistence.Meta.GetDisplayName(orphanedAccountId);
-                _log.LogInformation(
-                    "Auto-unregistered {DisplayName} ({AccountId}) — all sessions expired ({DeviceCount} device(s) removed).",
-                    displayName ?? orphanedAccountId, orphanedAccountId, deviceIds.Count);
-            }
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogWarning(ex, "Auth session cleanup failed. Will retry next pass.");
         }
     }
 }

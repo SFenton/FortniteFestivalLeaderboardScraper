@@ -36,11 +36,9 @@ A self-hosted ASP.NET Core application that runs as both an HTTP API server and 
 4. Global leaderboard scrape (pipelined writes to sharded DBs)
 5. FirstSeenSeason calculation
 6. Account name resolution (Epic API)
-7. Personal DB rebuild (for changed accounts)
-8. Post-scrape refresh (registered users' stale entries)
-9. Backfill missing scores (LookupAccountAsync for below-60K scores)
-10. History reconstruction (seasonal leaderboard walks)
-11. Expired session cleanup
+7. Post-scrape refresh (registered users' stale entries)
+8. Backfill missing scores (LookupAccountAsync for below-60K scores)
+9. History reconstruction (seasonal leaderboard walks)
 
 ### Key Source Layout
 
@@ -52,20 +50,15 @@ FSTService/
   Api/
     ApiEndpoints.cs       — All HTTP route mappings (public + protected)
     ApiKeyAuth.cs         — X-API-Key header auth handler + ApiSettings
-    AuthEndpoints.cs      — User auth routes (login, refresh, logout)
-    BearerTokenAuthHandler.cs — JWT Bearer validation
     PathTraversalGuardMiddleware.cs — Security middleware
   Auth/
     EpicAuthService.cs    — Epic Games OAuth (device auth, device code, token refresh)
     TokenManager.cs       — Manages Epic access token lifecycle
-    JwtTokenService.cs    — Issues/validates JWT tokens for mobile users
-    UserAuthService.cs    — User registration, login, session management
     FileDeviceAuthStore.cs — Persists Epic device credentials to disk
   Persistence/
     MetaDatabase.cs       — Central SQLite metadata DB (fst-meta.db)
     InstrumentDatabase.cs — Per-instrument sharded SQLite DBs (fst-{instrument}.db)
     GlobalLeaderboardPersistence.cs — Pipelined writes to instrument DBs + change detection
-    PersonalDbBuilder.cs  — Builds per-user/device SQLite DBs for mobile sync
     DataTransferObjects.cs — DTOs (ScoreHistoryEntry, etc.)
   Scraping/
     GlobalLeaderboardScraper.cs    — Fetches leaderboard data from Epic API
@@ -108,15 +101,14 @@ All databases are SQLite, stored under `FSTService/data/`.
 
 ### Meta Database (`fst-meta.db`)
 
-Central metadata store managed by `MetaDatabase.cs`. Contains 11 tables:
+Central metadata store managed by `MetaDatabase.cs`. Contains 10 tables:
 
 | Table | Purpose |
 |---|---|
 | `ScrapeLog` | Tracks each scrape run (start/end time, counts) |
 | `ScoreHistory` | Per-user score change history (song, instrument, old/new score, timestamp, accuracy, FC, stars, SeasonRank, AllTimeRank) |
 | `AccountNames` | Maps Epic account IDs → display names |
-| `RegisteredUsers` | Users registered for personal tracking |
-| `UserSessions` | JWT auth sessions (refresh tokens, device IDs, platform) |
+| `RegisteredUsers` | Users registered for tracking (backfill, history reconstruction) |
 | `BackfillStatus` | Per-user backfill state machine |
 | `BackfillProgress` | Detailed backfill progress per song/instrument |
 | `HistoryReconStatus` | Per-user history reconstruction state |
@@ -137,10 +129,6 @@ One SQLite DB per instrument, managed by `InstrumentDatabase.cs`. Contains `Lead
 Instruments: `Solo_Guitar`, `Solo_Bass`, `Solo_Drums`, `Solo_Vocals`, `Pro_Guitar`, `Pro_Bass`.
 
 **Concurrency**: `InstrumentDatabase.UpsertEntries` uses a `_writeLock` to prevent nested SQLite transactions during parallel backfill operations.
-
-### Personal Databases (`data/personal/{accountId}/{deviceId}.db`)
-
-Per-user/device SQLite databases built by `PersonalDbBuilder.cs` for mobile app sync. Contains copies of relevant data from the global databases (songs, scores, score history).
 
 ### Core Song Database (`fst-service.db`)
 
@@ -180,7 +168,6 @@ The GitHub Actions workflow lives at `.github/workflows/publish-image.yml` and r
 
 **Authentication schemes**:
 - `X-API-Key` header — for admin/protected endpoints (key in `appsettings.json`)
-- `Authorization: Bearer {jwt}` — for user-specific endpoints
 
 **Key endpoints** (see `ApiEndpoints.cs` for full list):
 - `GET /healthz` — health check (public)
@@ -188,9 +175,6 @@ The GitHub Actions workflow lives at `.github/workflows/publish-image.yml` and r
 - `GET /api/songs` — song catalog (public)
 - `POST /api/register` — register a user for tracking (API key)
 - `POST /api/backfill/{accountId}` — trigger score backfill (API key)
-- `GET /api/personal/{accountId}/{deviceId}` — download personal DB (Bearer)
-- `POST /api/auth/login` — user login (public, rate-limited)
-- `POST /api/auth/refresh` — refresh JWT (public, rate-limited)
 
 **Rate limiting**: Fixed-window rate limiters per endpoint category (public: 60/min, auth: 10/min, protected: 30/min, global: 200/min).
 

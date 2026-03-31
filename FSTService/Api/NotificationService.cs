@@ -154,14 +154,6 @@ public sealed class NotificationService
     }
 
     /// <summary>
-    /// Notify an account that their personal DB has been rebuilt and is ready for download.
-    /// </summary>
-    public Task NotifyPersonalDbReadyAsync(string accountId)
-    {
-        return NotifyAccountAsync(accountId, new { type = "personal_db_ready" });
-    }
-
-    /// <summary>
     /// Notify an account that backfill has completed.
     /// </summary>
     public Task NotifyBackfillCompleteAsync(string accountId)

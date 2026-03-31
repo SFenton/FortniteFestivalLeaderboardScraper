@@ -171,45 +171,6 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Empty(removed);
     }
 
-    [Fact]
-    public void GetOrphanedRegisteredAccounts_finds_accounts_with_expired_sessions()
-    {
-        // Register two accounts and give them sessions
-        Db.RegisterOrUpdateUser("dev_1", "acct_1", "Player1", null);
-        Db.RegisterOrUpdateUser("dev_2", "acct_2", "Player2", null);
-
-        // acct_1's session is expired, acct_2's is active
-        Db.InsertAccountNames([("acct_1", "Player1"), ("acct_2", "Player2")]);
-        Db.InsertSession("Player1", "dev_1", "hash_1", null, DateTime.UtcNow.AddDays(-5)); // expired
-        Db.InsertSession("Player2", "dev_2", "hash_2", null, DateTime.UtcNow.AddDays(30)); // active
-
-        var orphaned = Db.GetOrphanedRegisteredAccounts();
-        Assert.Single(orphaned);
-        Assert.Equal("acct_1", orphaned[0]);
-    }
-
-    [Fact]
-    public void GetOrphanedRegisteredAccounts_excludes_accounts_that_never_had_sessions()
-    {
-        // Register an account but never create a session for it
-        Db.RegisterOrUpdateUser("dev_1", "acct_1", "Player1", null);
-        Db.InsertAccountNames([("acct_1", "Player1")]);
-
-        var orphaned = Db.GetOrphanedRegisteredAccounts();
-        Assert.Empty(orphaned);
-    }
-
-    [Fact]
-    public void GetOrphanedRegisteredAccounts_returns_empty_when_all_sessions_active()
-    {
-        Db.RegisterOrUpdateUser("dev_1", "acct_1", "Player1", null);
-        Db.InsertAccountNames([("acct_1", "Player1")]);
-        Db.InsertSession("Player1", "dev_1", "hash_1", null, DateTime.UtcNow.AddDays(30));
-
-        var orphaned = Db.GetOrphanedRegisteredAccounts();
-        Assert.Empty(orphaned);
-    }
-
     // ═══ ScoreHistory ═══════════════════════════════════════════
 
     [Fact]
@@ -349,57 +310,6 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Single(history);
         Assert.Equal(5, history[0].SeasonRank);   // preserved from first insert
         Assert.Equal(42, history[0].AllTimeRank);  // merged from batch
-    }
-
-    // ═══ UserSessions ═══════════════════════════════════════════
-
-    [Fact]
-    public void InsertSession_and_GetActiveSession_roundtrip()
-    {
-        var sessionId = Db.InsertSession("player1", "dev_1", "hash_abc", "iOS",
-            DateTime.UtcNow.AddDays(30));
-        Assert.True(sessionId > 0);
-
-        var session = Db.GetActiveSession("hash_abc");
-        Assert.NotNull(session);
-        Assert.Equal("player1", session.Username);
-        Assert.Equal("dev_1", session.DeviceId);
-    }
-
-    [Fact]
-    public void RevokeSession_makes_it_inactive()
-    {
-        Db.InsertSession("player1", "dev_1", "hash_abc", null, DateTime.UtcNow.AddDays(30));
-        Db.RevokeSession("hash_abc");
-
-        var session = Db.GetActiveSession("hash_abc");
-        Assert.Null(session);
-    }
-
-    [Fact]
-    public void RevokeAllSessions_revokes_all_for_user()
-    {
-        Db.InsertSession("player1", "dev_1", "hash_1", null, DateTime.UtcNow.AddDays(30));
-        Db.InsertSession("player1", "dev_2", "hash_2", null, DateTime.UtcNow.AddDays(30));
-        Db.InsertSession("other", "dev_3", "hash_3", null, DateTime.UtcNow.AddDays(30));
-
-        Db.RevokeAllSessions("player1");
-
-        Assert.Null(Db.GetActiveSession("hash_1"));
-        Assert.Null(Db.GetActiveSession("hash_2"));
-        Assert.NotNull(Db.GetActiveSession("hash_3"));
-    }
-
-    [Fact]
-    public void CleanupExpiredSessions_removes_old_sessions()
-    {
-        Db.InsertSession("player1", "dev_1", "hash_old", null, DateTime.UtcNow.AddDays(-10));
-        Db.InsertSession("player1", "dev_1", "hash_new", null, DateTime.UtcNow.AddDays(30));
-
-        var cleaned = Db.CleanupExpiredSessions(DateTime.UtcNow);
-        Assert.Equal(1, cleaned);
-        Assert.Null(Db.GetActiveSession("hash_old"));
-        Assert.NotNull(Db.GetActiveSession("hash_new"));
     }
 
     // ═══ BackfillStatus ═════════════════════════════════════════
@@ -841,25 +751,6 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.False(removed);
     }
 
-    // ═══ GetDeviceAccountMappings ═══════════════════════════════
-
-    [Fact]
-    public void GetDeviceAccountMappings_returns_empty_initially()
-    {
-        Assert.Empty(Db.GetDeviceAccountMappings());
-    }
-
-    [Fact]
-    public void GetDeviceAccountMappings_returns_registered_pairs()
-    {
-        Db.RegisterUser("dev1", "acct1");
-        Db.RegisterUser("dev2", "acct2");
-        var mappings = Db.GetDeviceAccountMappings();
-        Assert.Equal(2, mappings.Count);
-        Assert.Contains(mappings, m => m.DeviceId == "dev1" && m.AccountId == "acct1");
-        Assert.Contains(mappings, m => m.DeviceId == "dev2" && m.AccountId == "acct2");
-    }
-
     // ═══ GetAccountForDevice ════════════════════════════════════
 
     [Fact]
@@ -1003,17 +894,6 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Single(Db.GetPlayerStats("acct1"));
         Assert.NotNull(Db.GetBackfillStatus("acct1"));
         Assert.True(Db.IsDeviceRegistered("dev2"));
-    }
-
-    // ═══ GetOrphanedRegisteredAccounts ══════════════════════════
-
-    [Fact]
-    public void GetOrphanedRegisteredAccounts_returns_empty_when_no_sessions()
-    {
-        Db.RegisterUser("dev1", "acct1");
-        // No sessions at all → not orphaned (safety guard requires at least 1 session)
-        var orphans = Db.GetOrphanedRegisteredAccounts();
-        Assert.Empty(orphans);
     }
 
     // ═══ Constructor / Directory Creation ═══════════════════════

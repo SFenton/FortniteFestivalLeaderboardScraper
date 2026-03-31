@@ -109,21 +109,6 @@ public sealed class MetaDatabase : IMetaDatabase
 
             CREATE INDEX IF NOT EXISTS IX_Reg_Account ON RegisteredUsers (AccountId);
 
-            CREATE TABLE IF NOT EXISTS UserSessions (
-                Id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                Username         TEXT    NOT NULL,
-                DeviceId         TEXT    NOT NULL,
-                RefreshTokenHash TEXT    NOT NULL UNIQUE,
-                Platform         TEXT,
-                IssuedAt         TEXT    NOT NULL,
-                ExpiresAt        TEXT    NOT NULL,
-                LastRefreshedAt  TEXT,
-                RevokedAt        TEXT
-            );
-
-            CREATE INDEX IF NOT EXISTS IX_Sessions_Username ON UserSessions (Username);
-            CREATE INDEX IF NOT EXISTS IX_Sessions_Token    ON UserSessions (RefreshTokenHash) WHERE RevokedAt IS NULL;
-
             CREATE TABLE IF NOT EXISTS BackfillStatus (
                 AccountId         TEXT    PRIMARY KEY,
                 Status            TEXT    NOT NULL DEFAULT 'pending',
@@ -887,40 +872,6 @@ public sealed class MetaDatabase : IMetaDatabase
     }
 
     /// <summary>
-    /// Find registered accounts that have no active (non-revoked, non-expired) sessions.
-    /// These accounts' refresh tokens have all expired — they're no longer using the app.
-    /// Only returns accounts that previously had at least one session (safety guard).
-    /// </summary>
-    public List<string> GetOrphanedRegisteredAccounts()
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT DISTINCT ru.AccountId
-            FROM RegisteredUsers ru
-            JOIN AccountNames an ON an.AccountId = ru.AccountId
-            WHERE NOT EXISTS (
-                SELECT 1 FROM UserSessions us
-                WHERE us.Username = an.DisplayName
-                  AND us.RevokedAt IS NULL
-                  AND us.ExpiresAt > @now
-            )
-            AND EXISTS (
-                SELECT 1 FROM UserSessions us
-                WHERE us.Username = an.DisplayName
-            );
-            """;
-        cmd.Parameters.AddWithValue("@now", now);
-
-        var accounts = new List<string>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-            accounts.Add(reader.GetString(0));
-        return accounts;
-    }
-
-    /// <summary>
     /// Get score history for an account, newest first.
     /// </summary>
     public List<ScoreHistoryEntry> GetScoreHistory(string accountId, int limit = 100, string? songId = null, string? instrument = null)
@@ -1282,23 +1233,6 @@ public sealed class MetaDatabase : IMetaDatabase
     }
 
     /// <summary>
-    /// Get all (DeviceId, AccountId) pairs from RegisteredUsers.
-    /// Used by PersonalDbBuilder to determine which devices to rebuild.
-    /// </summary>
-    public List<(string DeviceId, string AccountId)> GetDeviceAccountMappings()
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT DeviceId, AccountId FROM RegisteredUsers;";
-
-        var mappings = new List<(string, string)>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-            mappings.Add((reader.GetString(0), reader.GetString(1)));
-        return mappings;
-    }
-
-    /// <summary>
     /// Get the AccountId registered for a specific device, or null if not registered.
     /// If multiple accounts are registered for a device, returns the most recent.
     /// </summary>
@@ -1345,117 +1279,6 @@ public sealed class MetaDatabase : IMetaDatabase
         cmd.CommandText = "SELECT COUNT(*) FROM RegisteredUsers WHERE DeviceId = @deviceId;";
         cmd.Parameters.AddWithValue("@deviceId", deviceId);
         return (long)(cmd.ExecuteScalar() ?? 0) > 0;
-    }
-
-    // ─── UserSessions ───────────────────────────────────────────
-
-    /// <summary>
-    /// Insert a new session. Returns the auto-generated session ID.
-    /// </summary>
-    public long InsertSession(string username, string deviceId, string refreshTokenHash,
-                              string? platform, DateTime expiresAt)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO UserSessions (Username, DeviceId, RefreshTokenHash, Platform, IssuedAt, ExpiresAt)
-            VALUES (@username, @deviceId, @hash, @platform, @now, @expiresAt);
-            SELECT last_insert_rowid();
-            """;
-        cmd.Parameters.AddWithValue("@username", username);
-        cmd.Parameters.AddWithValue("@deviceId", deviceId);
-        cmd.Parameters.AddWithValue("@hash", refreshTokenHash);
-        cmd.Parameters.AddWithValue("@platform", (object?)platform ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@now", now);
-        cmd.Parameters.AddWithValue("@expiresAt", expiresAt.ToString("o"));
-        return (long)(cmd.ExecuteScalar() ?? 0);
-    }
-
-    /// <summary>
-    /// Find an active (non-revoked, non-expired) session by refresh token hash.
-    /// </summary>
-    public UserSessionInfo? GetActiveSession(string refreshTokenHash)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT Id, Username, DeviceId, Platform, IssuedAt, ExpiresAt
-            FROM UserSessions
-            WHERE RefreshTokenHash = @hash
-              AND RevokedAt IS NULL
-              AND ExpiresAt > @now
-            LIMIT 1;
-            """;
-        cmd.Parameters.AddWithValue("@hash", refreshTokenHash);
-        cmd.Parameters.AddWithValue("@now", now);
-
-        using var reader = cmd.ExecuteReader();
-        if (!reader.Read()) return null;
-
-        return new UserSessionInfo
-        {
-            Id       = reader.GetInt64(0),
-            Username = reader.GetString(1),
-            DeviceId = reader.GetString(2),
-            Platform = reader.IsDBNull(3) ? null : reader.GetString(3),
-            IssuedAt = DateTime.Parse(reader.GetString(4), null, System.Globalization.DateTimeStyles.RoundtripKind),
-            ExpiresAt = DateTime.Parse(reader.GetString(5), null, System.Globalization.DateTimeStyles.RoundtripKind),
-        };
-    }
-
-    /// <summary>
-    /// Revoke a session by its refresh token hash.
-    /// </summary>
-    public void RevokeSession(string refreshTokenHash)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE UserSessions
-            SET RevokedAt = @now
-            WHERE RefreshTokenHash = @hash AND RevokedAt IS NULL;
-            """;
-        cmd.Parameters.AddWithValue("@hash", refreshTokenHash);
-        cmd.Parameters.AddWithValue("@now", now);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Revoke all sessions for a username (e.g., "sign out everywhere").
-    /// </summary>
-    public void RevokeAllSessions(string username)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE UserSessions
-            SET RevokedAt = @now
-            WHERE Username = @username AND RevokedAt IS NULL;
-            """;
-        cmd.Parameters.AddWithValue("@username", username);
-        cmd.Parameters.AddWithValue("@now", now);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Delete expired and revoked sessions older than a cutoff (cleanup).
-    /// Returns the number of rows deleted.
-    /// </summary>
-    public int CleanupExpiredSessions(DateTime cutoff)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            DELETE FROM UserSessions
-            WHERE (RevokedAt IS NOT NULL AND RevokedAt < @cutoff)
-               OR (ExpiresAt < @cutoff);
-            """;
-        cmd.Parameters.AddWithValue("@cutoff", cutoff.ToString("o"));
-        return cmd.ExecuteNonQuery();
     }
 
     // ─── Backfill Tracking ──────────────────────────────────────

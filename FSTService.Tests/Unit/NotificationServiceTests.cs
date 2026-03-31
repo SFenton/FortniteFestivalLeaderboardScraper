@@ -152,24 +152,6 @@ public sealed class NotificationServiceTests
     // ─── Convenience methods ────────────────────────────────────
 
     [Fact]
-    public async Task NotifyPersonalDbReadyAsync_SendsCorrectType()
-    {
-        var svc = CreateService();
-        var ws = Substitute.For<WebSocket>();
-        ws.State.Returns(WebSocketState.Open);
-
-        svc.AddConnection("acct1", "dev1", ws);
-
-        await svc.NotifyPersonalDbReadyAsync("acct1");
-
-        await ws.Received(1).SendAsync(
-            Arg.Is<ArraySegment<byte>>(seg =>
-                Encoding.UTF8.GetString(seg.Array!, seg.Offset, seg.Count).Contains("personal_db_ready")),
-            WebSocketMessageType.Text, true,
-            Arg.Any<CancellationToken>());
-    }
-
-    [Fact]
     public async Task NotifyBackfillCompleteAsync_SendsCorrectType()
     {
         var svc = CreateService();

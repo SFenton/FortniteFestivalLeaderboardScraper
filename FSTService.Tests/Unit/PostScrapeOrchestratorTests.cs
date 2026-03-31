@@ -211,24 +211,6 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════
-    // CleanupSessions
-    // ═══════════════════════════════════════════════════════════
-
-    [Fact]
-    public void CleanupSessions_CleansExpiredSessions()
-    {
-        // Pre-seed a session that is expired (older than 7 days)
-        _metaDb.InsertSession("acct-1", "device-1", "refresh-tok", "Windows", DateTime.UtcNow.AddDays(-30));
-
-        _sut.CleanupSessions();
-
-        // The expired session should be cleaned. Verify no exception and
-        // the orphaned account auto-unregisters (acct-1 was never registered,
-        // so GetOrphanedRegisteredAccounts should return nothing to unregister).
-        // The key verification is that CleanupSessions runs without throwing.
-    }
-
-    // ═══════════════════════════════════════════════════════════
     // ResolveNamesAsync
     // ═══════════════════════════════════════════════════════════
 
@@ -380,51 +362,6 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public void CleanupSessions_WithOrphanedAccount_CleansThem()
-    {
-        // Register a user with a session that's long expired
-        _metaDb.RegisterUser("orphan-device", "orphan-acct");
-        _metaDb.InsertSession("orphan-acct", "orphan-device", "refresh-old", "Windows", DateTime.UtcNow.AddDays(-60));
-
-        // Run cleanup — should clean expired sessions and possibly auto-unregister
-        _sut.CleanupSessions();
-        // No crash = pass
-    }
-
-    [Fact]
-    public void CleanupSessions_NoSessionsToClean_NoError()
-    {
-        // Clean state — nothing to clean
-        _sut.CleanupSessions();
-    }
-
-    [Fact]
-    public void CleanupSessions_OrphanedAccount_AutoUnregistered()
-    {
-        // Register a user with an account name mapping
-        _metaDb.RegisterUser("dev-orphan", "acct-orphan");
-        _metaDb.InsertAccountNames([("acct-orphan", "OrphanUser")]);
-
-        // Create two sessions: one very old (will be cleaned) and one recently expired
-        // (survives cleanup but is past ExpiresAt, making the account "orphaned")
-        _metaDb.InsertSession("OrphanUser", "dev-orphan", "old-tok",
-            "Windows", DateTime.UtcNow.AddDays(-30));
-        _metaDb.InsertSession("OrphanUser", "dev-orphan", "recent-tok",
-            "Windows", DateTime.UtcNow.AddDays(-1)); // Expired 1 day ago, but within 7-day cleanup window
-
-        // Verify user is registered before cleanup
-        var regBefore = _metaDb.GetRegisteredAccountIds();
-        Assert.Contains("acct-orphan", regBefore);
-
-        _sut.CleanupSessions();
-
-        // After cleanup: old session deleted, recent expired session survives →
-        // account has sessions but none active → orphaned → auto-unregistered
-        var regAfter = _metaDb.GetRegisteredAccountIds();
-        Assert.DoesNotContain("acct-orphan", regAfter);
-    }
-
-    [Fact]
     public async Task ComputeRankingsAsync_WithInstruments_SetsPhase()
     {
         // Seed one instrument DB with data so rankings can compute
@@ -443,23 +380,6 @@ public class PostScrapeOrchestratorTests : IDisposable
         await _sut.ComputeRankingsAsync(service, CancellationToken.None);
 
         Assert.Equal(ScrapeProgressTracker.ScrapePhase.ComputingRankings, _progress.Phase);
-    }
-
-    [Fact]
-    public async Task RebuildPersonalDbsAsync_WithChangedAccounts_SetsPhaseAndRebuilds()
-    {
-        // Register a user so PersonalDbBuilder has something to rebuild
-        _metaDb.RegisterUser("dev-rebuild", "acct-rebuild");
-
-        var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
-        aggregates.AddChangedAccountIds(new[] { "acct-rebuild" });
-
-        var ctx = CreateContext(aggregates: aggregates);
-
-        await _sut.RebuildPersonalDbsAsync(ctx, CancellationToken.None);
-
-        // Phase should have been set
-        // The mock PersonalDbBuilder.RebuildForAccounts returns 0 by default
     }
 
     [Fact]

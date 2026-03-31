@@ -625,22 +625,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
-    // ─── Sync endpoints ─────────────────────────────────────────
-
-    [Fact]
-    public async Task ApiSyncVersion_NotRegistered_Returns404()
-    {
-        var response = await _authedClient.GetAsync("/api/sync/unknownDevice/version");
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task ApiSync_NotRegistered_Returns404()
-    {
-        var response = await _authedClient.GetAsync("/api/sync/unknownDevice");
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-    }
-
 
     // ─── Diagnostic endpoints ───────────────────────────────────
 
@@ -687,70 +671,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
-
-    // ─── Sync endpoints ─────────────────────────────────────────
-
-    [Fact]
-    public async Task SyncVersion_RegisteredDevice_ReturnsVersion()
-    {
-        // Seed display name so register endpoint can resolve username → accountId
-        using (var scope = _factory.Services.CreateScope())
-        {
-            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
-            metaDb.InsertAccountNames(new[] { ("syncAcct", (string?)"SyncUser") });
-        }
-
-        // Register a device first
-        var regContent = JsonContent.Create(new { deviceId = "syncDev", username = "SyncUser" });
-        await _authedClient.PostAsync("/api/register", regContent);
-
-        var response = await _authedClient.GetAsync("/api/sync/syncDev/version");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("syncDev", json.GetProperty("deviceId").GetString());
-    }
-
-    [Fact]
-    public async Task SyncVersion_UnknownDevice_Returns404()
-    {
-        var response = await _authedClient.GetAsync("/api/sync/unknownDev123/version");
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Sync_RegisteredDevice_ReturnsDbOrBuildsOnDemand()
-    {
-        // Seed display name so register endpoint can resolve username → accountId
-        using (var scope = _factory.Services.CreateScope())
-        {
-            var metaDb = scope.ServiceProvider.GetRequiredService<MetaDatabase>();
-            metaDb.InsertAccountNames(new[] { ("dlAcct", (string?)"DlUser") });
-        }
-
-        // Register a device
-        var regContent = JsonContent.Create(new { deviceId = "dlDev", username = "DlUser" });
-        await _authedClient.PostAsync("/api/register", regContent);
-
-        var response = await _authedClient.GetAsync("/api/sync/dlDev");
-        // Returns file (200) or 503 if build fails, or potentially a built-on-demand DB
-        Assert.True(
-            response.StatusCode == HttpStatusCode.OK ||
-            response.StatusCode == HttpStatusCode.ServiceUnavailable,
-            $"Unexpected: {response.StatusCode}");
-
-        // If OK, verify content type
-        if (response.StatusCode == HttpStatusCode.OK)
-        {
-            Assert.Equal("application/x-sqlite3", response.Content.Headers.ContentType?.MediaType);
-        }
-    }
-
-    [Fact]
-    public async Task Sync_UnregisteredDevice_Returns404()
-    {
-        var response = await _authedClient.GetAsync("/api/sync/unknownSync/version");
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-    }
 
     // ─── Backfill status (with data) ────────────────────────────
 
@@ -2411,24 +2331,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     // ═══════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task Sync_Version_RequiresAuth()
-    {
-        var response = await _client.GetAsync("/api/sync/unknown_device/version");
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Sync_Download_RequiresAuth()
-    {
-        var response = await _client.GetAsync("/api/sync/unknown_device");
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // Diag Endpoints
-    // ═══════════════════════════════════════════════════════════
-
-    [Fact]
     public async Task Diag_Events_Returns_WhenPublic()
     {
         // Diag endpoints are public — should return OK or some status (not 401)
@@ -2448,24 +2350,6 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     {
         var response = await _client.GetAsync("/api/diag/leaderboard?song=testSong1&instrument=Solo_Guitar&version=v2");
         Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
-    // ═══════════════════════════════════════════════════════════
-    // Sync Endpoints — auth checks
-    // ═══════════════════════════════════════════════════════════
-
-    [Fact]
-    public async Task Sync_Version_WithAuth_ReturnsNotFound()
-    {
-        var response = await _authedClient.GetAsync("/api/sync/nonexistent_device/version");
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Sync_Download_WithAuth_ReturnsNotFound()
-    {
-        var response = await _authedClient.GetAsync("/api/sync/nonexistent_device");
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     // ═══════════════════════════════════════════════════════════════

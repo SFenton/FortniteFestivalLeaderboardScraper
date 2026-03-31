@@ -50,21 +50,12 @@ public interface IMetaDatabase : IDisposable
     bool RegisterUser(string deviceId, string accountId);
     bool UnregisterUser(string deviceId, string accountId);
     List<string> UnregisterAccount(string accountId);
-    List<string> GetOrphanedRegisteredAccounts();
     bool RegisterOrUpdateUser(string deviceId, string accountId, string? displayName, string? platform);
     string? GetAccountIdForUsername(string username);
     RegisteredUserInfo? GetRegistrationInfo(string username, string deviceId);
-    List<(string DeviceId, string AccountId)> GetDeviceAccountMappings();
     string? GetAccountForDevice(string deviceId);
     void UpdateLastSync(string deviceId, string accountId);
     bool IsDeviceRegistered(string deviceId);
-
-    // ── User sessions ────────────────────────────────────────────────
-    long InsertSession(string username, string deviceId, string refreshTokenHash, string? platform, DateTime expiresAt);
-    UserSessionInfo? GetActiveSession(string refreshTokenHash);
-    void RevokeSession(string refreshTokenHash);
-    void RevokeAllSessions(string username);
-    int CleanupExpiredSessions(DateTime cutoff);
 
     // ── Backfill ─────────────────────────────────────────────────────
     void EnqueueBackfill(string accountId, int totalSongsToCheck);

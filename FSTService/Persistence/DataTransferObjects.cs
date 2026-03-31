@@ -91,19 +91,6 @@ public sealed class ScoreHistoryEntry
 }
 
 /// <summary>
-/// DTO for an active user session from the UserSessions table.
-/// </summary>
-public sealed class UserSessionInfo
-{
-    public long Id { get; init; }
-    public string Username { get; init; } = "";
-    public string DeviceId { get; init; } = "";
-    public string? Platform { get; init; }
-    public DateTime IssuedAt { get; init; }
-    public DateTime ExpiresAt { get; init; }
-}
-
-/// <summary>
 /// DTO for registered user information.
 /// </summary>
 public sealed class RegisteredUserInfo

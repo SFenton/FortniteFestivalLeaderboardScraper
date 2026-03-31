@@ -170,7 +170,6 @@ public sealed class BackfillOrchestrator
 
                     _persistence.Meta.CompleteHistoryRecon(user.AccountId);
                     _ = _notifications.NotifyHistoryReconCompleteAsync(user.AccountId);
-                    _ = _notifications.NotifyPersonalDbReadyAsync(user.AccountId);
                 }
                 catch (Exception ex)
                 {
