@@ -1182,6 +1182,32 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         };
     }
 
+    // ─── Threshold band queries (for precomputation) ──────────────
+
+    public List<int> GetScoresInBand(string songId, int lowerBound, int upperBound)
+    {
+        var conn = GetPersistentConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Score FROM LeaderboardEntries WHERE SongId = @songId AND Score > @lo AND Score <= @hi ORDER BY Score ASC";
+        cmd.Parameters.AddWithValue("@songId", songId);
+        cmd.Parameters.AddWithValue("@lo", lowerBound);
+        cmd.Parameters.AddWithValue("@hi", upperBound);
+        var list = new List<int>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) list.Add(r.GetInt32(0));
+        return list;
+    }
+
+    public int GetPopulationAtOrBelow(string songId, int threshold)
+    {
+        var conn = GetPersistentConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM LeaderboardEntries WHERE SongId = @songId AND Score <= @threshold";
+        cmd.Parameters.AddWithValue("@songId", songId);
+        cmd.Parameters.AddWithValue("@threshold", threshold);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
     // ─── Rankings computation ───────────────────────────────────
 
     /// <summary>

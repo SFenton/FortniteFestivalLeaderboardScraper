@@ -106,7 +106,9 @@ public class PostScrapeOrchestratorTests : IDisposable
             Substitute.For<HistoryReconstructor>(scraper, _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
             rivalsOrchestrator, rankingsCalculator, _notifications,
-            _tokenManager, _progress, _pathDataStore, Options.Create(new ScraperOptions()), _log);
+            _tokenManager, _progress, _pathDataStore,
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
+            Options.Create(new ScraperOptions()), _log);
     }
 
     public void Dispose()
@@ -298,7 +300,9 @@ public class PostScrapeOrchestratorTests : IDisposable
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
             rivalsOrchestrator, rankingsCalculator2, _notifications,
-            _tokenManager, _progress, _pathDataStore, opts, _log);
+            _tokenManager, _progress, _pathDataStore,
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
+            opts, _log);
 
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
         var entries = Enumerable.Range(0, 200).Select(i =>
@@ -355,7 +359,9 @@ public class PostScrapeOrchestratorTests : IDisposable
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
             rivalsOrchestrator, rankingsCalculator3, _notifications,
-            _tokenManager, _progress, _pathDataStore, opts, _log);
+            _tokenManager, _progress, _pathDataStore,
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
+            opts, _log);
 
         var ctx = CreateContext();
         sut.PruneExcessEntries(ctx); // maxPages=0 → no-op
@@ -520,7 +526,9 @@ public class PostScrapeOrchestratorTests : IDisposable
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
             rivalsOrchestrator, rankingsCalculator, _notifications,
-            _tokenManager, _progress, _pathDataStore, opts, _log);
+            _tokenManager, _progress, _pathDataStore,
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
+            opts, _log);
 
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
 

@@ -36,6 +36,7 @@ public sealed class ScraperWorker : BackgroundService
     private readonly SongsCacheService _songsCache;
     private readonly ResponseCacheService _playerCache;
     private readonly ResponseCacheService _leaderboardAllCache;
+    private readonly ScrapeTimePrecomputer _precomputer;
     private readonly ScrapeProgressTracker _progress;
     private readonly IOptions<ScraperOptions> _options;
     private readonly IHostApplicationLifetime _lifetime;
@@ -58,6 +59,7 @@ public sealed class ScraperWorker : BackgroundService
         SongsCacheService songsCache,
         [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache,
         [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService leaderboardAllCache,
+        ScrapeTimePrecomputer precomputer,
         ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
         IHostApplicationLifetime lifetime,
@@ -76,6 +78,7 @@ public sealed class ScraperWorker : BackgroundService
         _songsCache = songsCache;
         _playerCache = playerCache;
         _leaderboardAllCache = leaderboardAllCache;
+        _precomputer = precomputer;
         _progress = progress;
         _options = options;
         _lifetime = lifetime;
@@ -348,6 +351,10 @@ public sealed class ScraperWorker : BackgroundService
         CancellationToken ct)
     {
         _log.LogInformation("Starting scrape pass...");
+
+        // Invalidate precomputed responses at scrape start so mid-scrape requests
+        // fall through to live computation until precomputation runs post-scrape.
+        _precomputer.InvalidateAll();
 
         var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
         if (accessToken is null)

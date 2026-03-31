@@ -1084,6 +1084,73 @@ public sealed class MetaDatabase : IMetaDatabase
     }
 
     /// <summary>
+    /// Returns ALL distinct historical scores per (songId, instrument) for a given account
+    /// that are at or below the specified threshold, with accuracy/fc/stars.
+    /// Ordered by score descending within each key. Used for precomputing validity tiers.
+    /// </summary>
+    public Dictionary<(string SongId, string Instrument), List<ValidScoreFallback>> GetAllValidScoreTiers(
+        string accountId, Dictionary<(string SongId, string Instrument), int> maxThresholds)
+    {
+        if (maxThresholds.Count == 0)
+            return new Dictionary<(string, string), List<ValidScoreFallback>>();
+
+        using var conn = OpenConnection();
+
+        using var createCmd = conn.CreateCommand();
+        createCmd.CommandText = "CREATE TEMP TABLE IF NOT EXISTS _tierThresholds (SongId TEXT NOT NULL, Instrument TEXT NOT NULL, MaxScore INTEGER NOT NULL, PRIMARY KEY (SongId, Instrument)); DELETE FROM _tierThresholds;";
+        createCmd.ExecuteNonQuery();
+
+        using var insertCmd = conn.CreateCommand();
+        insertCmd.CommandText = "INSERT INTO _tierThresholds (SongId, Instrument, MaxScore) VALUES (@sid, @inst, @ms);";
+        var pSid = insertCmd.Parameters.Add("@sid", SqliteType.Text);
+        var pInst = insertCmd.Parameters.Add("@inst", SqliteType.Text);
+        var pMs = insertCmd.Parameters.Add("@ms", SqliteType.Integer);
+        insertCmd.Prepare();
+        foreach (var ((sid, inst), ms) in maxThresholds)
+        {
+            pSid.Value = sid; pInst.Value = inst; pMs.Value = ms;
+            insertCmd.ExecuteNonQuery();
+        }
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT sh.SongId, sh.Instrument, sh.NewScore,
+                   MAX(sh.Accuracy) AS Accuracy, MAX(sh.IsFullCombo) AS IsFullCombo, MAX(sh.Stars) AS Stars
+            FROM ScoreHistory sh
+            JOIN _tierThresholds tt ON tt.SongId = sh.SongId AND tt.Instrument = sh.Instrument
+            WHERE sh.AccountId = @accountId AND sh.NewScore <= tt.MaxScore
+            GROUP BY sh.SongId, sh.Instrument, sh.NewScore
+            ORDER BY sh.SongId, sh.Instrument, sh.NewScore DESC;
+            """;
+        cmd.Parameters.AddWithValue("@accountId", accountId);
+
+        var result = new Dictionary<(string, string), List<ValidScoreFallback>>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var key = (reader.GetString(0), reader.GetString(1));
+            if (!result.TryGetValue(key, out var list))
+            {
+                list = new List<ValidScoreFallback>();
+                result[key] = list;
+            }
+            list.Add(new ValidScoreFallback
+            {
+                Score = reader.GetInt32(2),
+                Accuracy = reader.IsDBNull(3) ? null : reader.GetInt32(3),
+                IsFullCombo = reader.IsDBNull(4) ? null : reader.GetInt32(4) == 1,
+                Stars = reader.IsDBNull(5) ? null : reader.GetInt32(5),
+            });
+        }
+
+        using var cleanCmd = conn.CreateCommand();
+        cleanCmd.CommandText = "DELETE FROM _tierThresholds;";
+        cleanCmd.ExecuteNonQuery();
+
+        return result;
+    }
+
+    /// <summary>
     /// Resolve a display name for an account ID, or null if unknown.
     /// </summary>
     public string? GetDisplayName(string accountId)

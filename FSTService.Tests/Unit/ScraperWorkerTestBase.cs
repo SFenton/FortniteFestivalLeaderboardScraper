@@ -153,6 +153,8 @@ public abstract class ScraperWorkerTestBase : IDisposable
         var serviceProvider = Substitute.For<IServiceProvider>();
         serviceProvider.GetService(typeof(SongProcessingMachine)).Returns(_machine);
 
+        var precomputer = new ScrapeTimePrecomputer(_persistence, _persistence.Meta, pathDataStore, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions());
+
         var postScrapeOrchestrator = new PostScrapeOrchestrator(
             _persistence, _firstSeenCalculator, _nameResolver,
             _refresher,
@@ -160,7 +162,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _historyReconstructor,
             _pool,
             rivalsOrchestrator, rankingsCalculator, notifications,
-            _tokenManager, _progress, pathDataStore, options,
+            _tokenManager, _progress, pathDataStore, precomputer, options,
             Substitute.For<ILogger<PostScrapeOrchestrator>>());
 
         var backfillOrchestrator = new BackfillOrchestrator(
@@ -200,6 +202,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             new Api.SongsCacheService(),
             new Api.ResponseCacheService(TimeSpan.FromMinutes(2)),
             new Api.ResponseCacheService(TimeSpan.FromMinutes(5)),
+            precomputer,
             _progress, options, _lifetime, _log);
     }
 

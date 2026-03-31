@@ -29,6 +29,7 @@ public sealed class PostScrapeOrchestrator
     private readonly TokenManager _tokenManager;
     private readonly ScrapeProgressTracker _progress;
     private readonly IPathDataStore _pathDataStore;
+    private readonly ScrapeTimePrecomputer _precomputer;
     private readonly IOptions<ScraperOptions> _options;
     private readonly ILogger<PostScrapeOrchestrator> _log;
 
@@ -46,6 +47,7 @@ public sealed class PostScrapeOrchestrator
         TokenManager tokenManager,
         ScrapeProgressTracker progress,
         IPathDataStore IPathDataStore,
+        ScrapeTimePrecomputer precomputer,
         IOptions<ScraperOptions> options,
         ILogger<PostScrapeOrchestrator> log)
     {
@@ -62,6 +64,7 @@ public sealed class PostScrapeOrchestrator
         _tokenManager = tokenManager;
         _progress = progress;
         _pathDataStore = IPathDataStore;
+        _precomputer = precomputer;
         _options = options;
         _log = log;
     }
@@ -82,6 +85,10 @@ public sealed class PostScrapeOrchestrator
         await ComputeRankingsAsync(service, ct);
         await RebuildPersonalDbsAsync(ctx, ct);
         await ComputeRivalsAsync(ctx, ct);
+
+        // ── Precompute API responses for registered players + top leaderboards ──
+        await _precomputer.PrecomputeAllAsync(ct);
+
         CleanupSessions();
 
         // Checkpoint all WAL files after post-scrape writes (enrichment, refresh,

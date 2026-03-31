@@ -20,12 +20,31 @@ public static partial class ApiEndpoints
             GlobalLeaderboardPersistence persistence,
             IMetaDatabase metaDb,
             IPathDataStore pathStore,
+            ScrapeTimePrecomputer precomputer,
             [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=120, stale-while-revalidate=300";
 
             // Build cache key from all parameters
             var cacheKey = $"player:{accountId}:{songId}:{instruments}:{leeway}";
+
+            // ── Check precomputed store (covers all leeway values in one response) ──
+            if (songId is null && instruments is null)
+            {
+                var precomputedKey = $"player:{accountId}:::";
+                var precomputed = precomputer.TryGet(precomputedKey);
+                if (precomputed is not null)
+                {
+                    var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                    if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
+                    {
+                        httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                        return Results.StatusCode(304);
+                    }
+                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                    return Results.Bytes(precomputed.Value.Json, "application/json");
+                }
+            }
 
             // ── Check cache ──────────────────────────────────────
             var cached = playerCache.Get(cacheKey);

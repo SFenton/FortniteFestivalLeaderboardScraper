@@ -251,6 +251,34 @@ public sealed class PgInstrumentDatabase : IInstrumentDatabase
         return total;
     }
 
+    // ── Threshold band queries (for precomputation) ────────────────
+
+    public List<int> GetScoresInBand(string songId, int lowerBound, int upperBound)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT score FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND score > @lo AND score <= @hi ORDER BY score ASC";
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("lo", lowerBound);
+        cmd.Parameters.AddWithValue("hi", upperBound);
+        var list = new List<int>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) list.Add(r.GetInt32(0));
+        return list;
+    }
+
+    public int GetPopulationAtOrBelow(string songId, int threshold)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND score <= @threshold";
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("threshold", threshold);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
     // ── Song stats ───────────────────────────────────────────────────
 
     public int ComputeSongStats(Dictionary<string, int?>? maxScoresByInstrument = null, Dictionary<string, long>? realPopulation = null)

@@ -17,7 +17,7 @@ public static partial class ApiEndpoints
 
     public static void MapSongEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/songs", (HttpContext httpContext, FestivalService service, IPathDataStore pathStore, IMetaDatabase metaDb, ItemShopService shopService, SongsCacheService songsCache) =>
+        app.MapGet("/api/songs", (HttpContext httpContext, FestivalService service, IPathDataStore pathStore, IMetaDatabase metaDb, ItemShopService shopService, SongsCacheService songsCache, ScrapeTimePrecomputer precomputer) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
 
@@ -42,12 +42,27 @@ public static partial class ApiEndpoints
             var currentSeason = metaDb.GetCurrentSeason();
             var inShop = shopService.InShopSongIds;
             var leavingTomorrow = shopService.LeavingTomorrowSongIds;
+            var popTiers = precomputer.GetPopulationTiers();
             var songs = service.Songs
                 .Where(s => s.track?.su is not null)
                 .Select(s =>
                 {
                     maxScoresMap.TryGetValue(s.track.su, out var ms);
                     var isInShop = inShop.Contains(s.track.su);
+
+                    // Build population tiers per instrument (if precomputed)
+                    Dictionary<string, PopulationTierData>? songPopTiers = null;
+                    if (popTiers is not null)
+                    {
+                        songPopTiers = new Dictionary<string, PopulationTierData>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var inst in new[] { "Solo_Guitar", "Solo_Bass", "Solo_Drums", "Solo_Vocals", "Solo_PeripheralGuitar", "Solo_PeripheralBass" })
+                        {
+                            if (popTiers.TryGetValue((s.track.su, inst), out var pt))
+                                songPopTiers[inst] = pt;
+                        }
+                        if (songPopTiers.Count == 0) songPopTiers = null;
+                    }
+
                     return new
                     {
                         songId     = s.track.su,
@@ -76,6 +91,7 @@ public static partial class ApiEndpoints
                             Solo_PeripheralGuitar = ms.MaxProLeadScore,
                             Solo_PeripheralBass   = ms.MaxProBassScore,
                         },
+                        populationTiers = songPopTiers,
                         pathsGeneratedAt = ms?.GeneratedAt,
                         shopUrl = isInShop
                             ? ShopUrlHelper.ComputeShopUrl(s.track.su, s.track.tt)

@@ -46,6 +46,18 @@ public interface IInstrumentDatabase : IDisposable
     int PruneExcessEntries(string songId, int maxEntries, IReadOnlySet<string> preserveAccountIds, int? overThresholdScore = null);
     int PruneAllSongs(int maxEntriesPerSong, IReadOnlySet<string> preserveAccountIds, IReadOnlyDictionary<string, int>? songThresholds = null);
 
+    // ── Threshold band queries (for precomputation) ────────────────
+    /// <summary>
+    /// Returns all distinct scores in the [lowerBound, upperBound] band for a given song, sorted ascending.
+    /// Used for population tier and rank tier precomputation.
+    /// </summary>
+    List<int> GetScoresInBand(string songId, int lowerBound, int upperBound);
+
+    /// <summary>
+    /// Returns the count of entries with score &lt;= <paramref name="threshold"/> for a given song.
+    /// </summary>
+    int GetPopulationAtOrBelow(string songId, int threshold);
+
     // ── Song stats ───────────────────────────────────────────────────
     int ComputeSongStats(Dictionary<string, int?>? maxScoresByInstrument = null, Dictionary<string, long>? realPopulation = null);
     List<(string AccountId, string SongId)> GetOverThresholdEntries();

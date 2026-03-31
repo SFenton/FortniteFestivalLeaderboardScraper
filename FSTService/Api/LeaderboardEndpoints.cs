@@ -77,13 +77,30 @@ public static partial class ApiEndpoints
             GlobalLeaderboardPersistence persistence,
             IMetaDatabase metaDb,
             IPathDataStore pathStore,
+            ScrapeTimePrecomputer precomputer,
             [FromKeyedServices("LeaderboardAllCache")] ResponseCacheService lbCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
 
+            // ── Check precomputed store ──────────────────────────
+            var cacheKey = $"lb:{songId}:{top ?? 10}:{leeway}";
+            var precomputed = precomputer.TryGet(cacheKey);
+            if (precomputed is not null)
+            {
+                var reqETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                if (!string.IsNullOrEmpty(reqETag) && reqETag == precomputed.Value.ETag)
+                {
+                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                    return Results.StatusCode(304);
+                }
+                httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                return Results.Bytes(precomputed.Value.Json, "application/json");
+            }
+
             // ── Check cache ──────────────────────────────────────
-            var cacheKey = $"lb:{songId}:{top}:{leeway}";
-            var cached = lbCache.Get(cacheKey);
+            // Re-key to match legacy format for non-precomputed variants
+            var legacyCacheKey = $"lb:{songId}:{top}:{leeway}";
+            var cached = lbCache.Get(legacyCacheKey);
             if (cached is not null)
             {
                 var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
@@ -174,7 +191,7 @@ public static partial class ApiEndpoints
                 .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
                 .Value.SerializerOptions;
             var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
-            var etag = lbCache.Set(cacheKey, jsonBytes);
+            var etag = lbCache.Set(legacyCacheKey, jsonBytes);
 
             httpContext.Response.Headers.ETag = etag;
             return Results.Bytes(jsonBytes, "application/json");

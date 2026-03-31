@@ -569,6 +569,36 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>
+    /// Read the stored Rank column for every song a player has, across all instruments.
+    /// Uses the pre-computed rank from <see cref="RecomputeAllRanks"/> — no live CTE.
+    /// Returns (SongId, Instrument) → (Rank, Total).
+    /// </summary>
+    public Dictionary<(string SongId, string Instrument), (int Rank, int Total)> GetPlayerStoredRankings(
+        string accountId, string? songId = null, HashSet<string>? instruments = null)
+    {
+        var kvps = instruments is null
+            ? _instrumentDbs.ToArray()
+            : _instrumentDbs.Where(kv => instruments.Contains(kv.Key)).ToArray();
+
+        var perInstrument = new Dictionary<string, (int, int)>[kvps.Length];
+        var instrumentKeys = new string[kvps.Length];
+        Parallel.For(0, kvps.Length, i =>
+        {
+            instrumentKeys[i] = kvps[i].Key;
+            perInstrument[i] = kvps[i].Value.GetPlayerStoredRankings(accountId, songId);
+        });
+
+        var result = new Dictionary<(string, string), (int Rank, int Total)>();
+        for (int i = 0; i < kvps.Length; i++)
+        {
+            var instrument = instrumentKeys[i];
+            foreach (var (sid, rankTotal) in perInstrument[i])
+                result[(sid, instrument)] = rankTotal;
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Compute the rank a specific score would have, filtered by a max-score threshold.
     /// Returns 0 if the instrument is unknown.
     /// </summary>

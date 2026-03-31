@@ -27,6 +27,14 @@ public interface IMetaDatabase : IDisposable
     Dictionary<(string AccountId, string SongId), ValidScoreFallback> GetBulkBestValidScores(
         string instrument, Dictionary<(string AccountId, string SongId), int> entries);
 
+    /// <summary>
+    /// Returns ALL distinct historical scores per (songId, instrument) for a given account
+    /// that are at or below the specified threshold, ordered by score descending.
+    /// Used for precomputing validity tiers.
+    /// </summary>
+    Dictionary<(string SongId, string Instrument), List<ValidScoreFallback>> GetAllValidScoreTiers(
+        string accountId, Dictionary<(string SongId, string Instrument), int> maxThresholds);
+
     // ── Account names ────────────────────────────────────────────────
     int InsertAccountIds(IEnumerable<string> accountIds);
     List<string> GetUnresolvedAccountIds();

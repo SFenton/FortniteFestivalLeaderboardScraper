@@ -223,6 +223,17 @@ builder.Services.AddSingleton<RankingsCalculator>();
 builder.Services.AddSingleton<ScrapeOrchestrator>();
 builder.Services.AddSingleton<PostScrapeOrchestrator>();
 builder.Services.AddSingleton<BackfillOrchestrator>();
+builder.Services.AddSingleton<ScrapeTimePrecomputer>(sp =>
+{
+    var jsonOpts = sp.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+        .Value.SerializerOptions;
+    return new ScrapeTimePrecomputer(
+        sp.GetRequiredService<GlobalLeaderboardPersistence>(),
+        sp.GetRequiredService<IMetaDatabase>(),
+        sp.GetRequiredService<IPathDataStore>(),
+        sp.GetRequiredService<ILogger<ScrapeTimePrecomputer>>(),
+        jsonOpts);
+});
 
 builder.Services.AddHttpClient<ItemShopService>()
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
