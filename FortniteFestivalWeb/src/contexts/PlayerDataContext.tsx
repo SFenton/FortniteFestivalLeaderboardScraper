@@ -10,7 +10,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { queryKeys } from '../api/queryKeys';
 import { useSyncStatus, type SyncPhase } from '../hooks/data/useSyncStatus';
-import { useScoreFilter } from '../hooks/data/useScoreFilter';
 import type { PlayerResponse } from '@festival/core/api/serverTypes';
 
 type PlayerDataContextValue = {
@@ -34,11 +33,10 @@ export function PlayerDataProvider({
   children: ReactNode;
 }) {
   const qc = useQueryClient();
-  const { leewayParam } = useScoreFilter();
 
   const { data, isLoading, error } = useQuery({
-    queryKey: queryKeys.player(accountId ?? '', undefined, undefined, leewayParam),
-    queryFn: () => api.getPlayer(accountId!, undefined, undefined, leewayParam),
+    queryKey: queryKeys.player(accountId ?? ''),
+    queryFn: () => api.getPlayer(accountId!),
     enabled: !!accountId,
   });
 

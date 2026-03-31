@@ -248,8 +248,11 @@ function AppShell() {
       clearSongDetailCache();
       clearLeaderboardCache();
       clearPlayerPageCache();
-      // Also invalidate React Query caches so data is refetched with new filter params
-      queryClient.invalidateQueries();
+      // Invalidate leaderboard queries (server-side filtering required).
+      // Player queries are NOT invalidated — the precomputed response includes
+      // minLeeway + validScores, so the client handles all leeway values locally.
+      queryClient.invalidateQueries({ queryKey: ['leaderboard'] });
+      queryClient.invalidateQueries({ queryKey: ['allLeaderboards'] });
       /* v8 ignore stop */
     }
   }, [settings.filterInvalidScores, settings.filterInvalidScoresLeeway]);

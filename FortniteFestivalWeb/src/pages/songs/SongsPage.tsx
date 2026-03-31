@@ -161,7 +161,7 @@ export default function SongsPage() {
   const { isShopHighlighted, isLeavingTomorrow, isShopVisible } = useShopState();
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!playerData, shopHighlightEnabled: isShopVisible && !appSettings.disableShopHighlighting }), [playerData, isShopVisible, appSettings.disableShopHighlighting]);
 
-  const { isScoreValid, enabled: scoreFilterEnabled } = useScoreFilter();
+  const { isScoreValid, enabled: scoreFilterEnabled, leeway: userLeeway, getFilteredRank, getFilteredTotal } = useScoreFilter();
 
   // Apply invalid-score substitution/dropping (same logic as filterPlayerScores but
   // also builds an invalidity map for the UI indicator, and exempts instruments where
@@ -179,15 +179,39 @@ export default function SongsPage() {
 
     for (const s of playerData.scores) {
       const inst = s.instrument as InstrumentKey;
-      if (!isScoreValid(s.songId, inst, s.score)) {
+      const scoreInvalid = s.minLeeway != null ? s.minLeeway > userLeeway : !isScoreValid(s.songId, inst, s.score);
+      if (scoreInvalid) {
         // When overThreshold filter is active, pass through raw score but mark as over-threshold
         if (overThreshold[inst]) {
           scores.push(s);
           let byInst = invalids.get(s.songId);
           if (!byInst) { byInst = new Map(); invalids.set(s.songId, byInst); }
           byInst.set(inst, 'over-threshold');
+        } else if (s.validScores && s.validScores.length > 0) {
+          // New path: find best fallback from validScores where minLeeway <= userLeeway
+          const fallback = s.validScores.find(v => v.minLeeway <= userLeeway);
+          if (fallback) {
+            const filteredRank = getFilteredRank(fallback.rankTiers);
+            const filteredTotal = getFilteredTotal(s.songId, inst, s.totalEntries);
+            scores.push({
+              ...s,
+              score: fallback.score,
+              accuracy: fallback.accuracy ?? s.accuracy,
+              isFullCombo: fallback.fc ?? s.isFullCombo,
+              stars: fallback.stars ?? s.stars,
+              rank: filteredRank ?? s.rank,
+              totalEntries: filteredTotal ?? s.totalEntries,
+            });
+            let byInst = invalids.get(s.songId);
+            if (!byInst) { byInst = new Map(); invalids.set(s.songId, byInst); }
+            byInst.set(inst, 'fallback');
+          } else {
+            let byInst = invalids.get(s.songId);
+            if (!byInst) { byInst = new Map(); invalids.set(s.songId, byInst); }
+            byInst.set(inst, 'no-fallback');
+          }
         } else if (s.validScore != null) {
-          // Substitute with fallback values
+          // Legacy path: substitute with server-provided fallback values
           scores.push({
             ...s,
             score: s.validScore,
@@ -211,7 +235,7 @@ export default function SongsPage() {
       }
     }
     return { effectiveScores: scores, invalidScoreMap: invalids };
-  }, [playerData, scoreFilterEnabled, isScoreValid, settings.filters.overThreshold]);
+  }, [playerData, scoreFilterEnabled, isScoreValid, userLeeway, getFilteredRank, getFilteredTotal, settings.filters.overThreshold]);
   /* v8 ignore stop */
 
   // Build lookup: songId → PlayerScore for the selected instrument

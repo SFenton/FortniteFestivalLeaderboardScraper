@@ -5,7 +5,6 @@ import { useParams, useNavigationType } from 'react-router-dom';
 import { useFestival } from '../../contexts/FestivalContext';
 import { usePlayerData } from '../../contexts/PlayerDataContext';
 import { useSyncStatus } from '../../hooks/data/useSyncStatus';
-import { useScoreFilter } from '../../hooks/data/useScoreFilter';
 import { api } from '../../api/client';
 import ArcSpinner from '../../components/common/ArcSpinner';
 import EmptyState from '../../components/common/EmptyState';
@@ -50,12 +49,10 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: true }), []);
   const firstRun = useFirstRun('statistics', firstRunGateCtx);
 
-  const { leewayParam } = useScoreFilter();
-
   // Local state for when viewing an arbitrary player via URL -- use React Query
   const { data: queryData, isLoading: queryLoading, error: queryError } = useQuery({
-    queryKey: queryKeys.player(accountId ?? '', undefined, undefined, leewayParam),
-    queryFn: () => api.getPlayer(accountId!, undefined, undefined, leewayParam),
+    queryKey: queryKeys.player(accountId ?? ''),
+    queryFn: () => api.getPlayer(accountId!),
     enabled: !!accountId && !isTrackedPlayer,
   });
   const qc = useQueryClient();

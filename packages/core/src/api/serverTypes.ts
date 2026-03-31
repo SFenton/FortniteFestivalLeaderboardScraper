@@ -63,6 +63,8 @@ export type ServerSong = {
   genres?: string[];
   difficulty?: SongDifficulty;
   maxScores?: Partial<Record<ServerInstrumentKey, number>>;
+  /** Population tiers per instrument for client-side filtered-total computation. */
+  populationTiers?: Partial<Record<ServerInstrumentKey, PopulationTierData>> | null;
   shopUrl?: string;
   leavingTomorrow?: boolean;
 };
@@ -138,6 +140,11 @@ export type PlayerScore = {
   difficulty?: number;
   endTime?: string;
   totalEntries?: number;
+  /** Minimum leeway (%) at which this score is considered valid. Null if no max-score data. */
+  minLeeway?: number | null;
+  /** Historical valid scores sorted by score DESC, each with its own minLeeway + rankTiers. */
+  validScores?: ValidScoreVariant[] | null;
+  // Legacy fields (kept for backward compat with live-fallback path)
   isValid?: boolean | null;
   validScore?: number | null;
   validRank?: number | null;
@@ -145,6 +152,38 @@ export type PlayerScore = {
   validIsFullCombo?: boolean | null;
   validStars?: number | null;
   validTotalEntries?: number | null;
+};
+
+/** A historical valid score with metadata for client-side leeway filtering. */
+export type ValidScoreVariant = {
+  score: number;
+  accuracy?: number | null;
+  fc?: boolean | null;
+  stars?: number | null;
+  /** Minimum leeway (%) at which this fallback score is considered valid. */
+  minLeeway: number;
+  /** Rank changepoints: at each leeway threshold, what rank this score would have. */
+  rankTiers?: RankTier[] | null;
+};
+
+/** A single changepoint in a fallback score's rank curve. */
+export type RankTier = {
+  leeway: number;
+  rank: number;
+};
+
+/** Population tier data for a single (songId, instrument) pair. */
+export type PopulationTierData = {
+  /** Count of entries always below the threshold band (score ≤ 0.95 × maxScore). */
+  baseCount: number;
+  /** Changepoints where the filtered total increments as leeway increases. */
+  tiers: PopulationTier[];
+};
+
+/** A single changepoint in the population tier curve. */
+export type PopulationTier = {
+  leeway: number;
+  total: number;
 };
 
 export type PlayerResponse = {

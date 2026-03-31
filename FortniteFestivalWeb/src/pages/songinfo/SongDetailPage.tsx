@@ -114,7 +114,7 @@ export default function SongDetailPage() {
     }
     if (!hasCachedPlayer) setPlayerScoresReady(false);
     let cancelled = false;
-    api.getPlayer(player.accountId, songId, undefined, leewayParam).then((res) => {
+    api.getPlayer(player.accountId, songId).then((res) => {
       if (!cancelled) setPlayerScores(res.scores);
     }).catch(() => {
       if (!cancelled) setPlayerScores([]);
@@ -206,16 +206,8 @@ export default function SongDetailPage() {
   }, [songId, scoreHistory, filterScoreHistory, songs]);
 
   const filteredPlayerScores = useMemo(() => {
-    if (leewayParam == null) return filterPlayerScores(playerScores);
-    // If the server returned valid-score data, use it; otherwise fall back to client-side filtering
-    const hasServerData = playerScores.some(s => s.isValid != null);
-    if (!hasServerData) return filterPlayerScores(playerScores);
-    return playerScores
-      .filter(s => s.validScore != null)
-      .map(s => (s.isValid === false
-        ? { ...s, score: s.validScore!, accuracy: s.validAccuracy ?? s.accuracy, isFullCombo: s.validIsFullCombo ?? s.isFullCombo, stars: s.validStars ?? s.stars, rank: s.validRank ?? s.rank, totalEntries: s.validTotalEntries ?? s.totalEntries }
-        : { ...s, rank: s.validRank ?? s.rank, totalEntries: s.validTotalEntries ?? s.totalEntries }));
-  }, [playerScores, filterPlayerScores, leewayParam]);
+    return filterPlayerScores(playerScores);
+  }, [playerScores, filterPlayerScores]);
 
   const allErrored = activeInstruments.length > 0
     && activeInstruments.every((k) => instrumentData[k].error && !instrumentData[k].loading);

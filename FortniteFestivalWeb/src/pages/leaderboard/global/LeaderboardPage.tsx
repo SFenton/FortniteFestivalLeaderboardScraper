@@ -74,46 +74,47 @@ export default function LeaderboardPage() {
   const [page, setPage] = useState(hasCached ? cached.page : 0);
   const [loading, setLoading] = useState(!hasCached);
   const [error, setError] = useState<string | null>(null);
-  const { isScoreValid, leewayParam } = useScoreFilter();
+  const { isScoreValid, leewayParam, leeway: userLeeway, getFilteredRank, getFilteredTotal } = useScoreFilter();
 
   // When the player's highest score is invalid but a valid fallback exists,
-  // fetch the per-song player data with leeway to get the resolved score.
-  const [resolvedPlayerScore, setResolvedPlayerScore] = useState<typeof playerScore>(null);
-  useEffect(() => {
-    if (!playerData || !songId || !leewayParam || !playerScore) {
-      setResolvedPlayerScore(null);
-      return;
-    }
-    // If the score is already valid, no need for a separate fetch
-    if (isScoreValid(songId, instKey, playerScore.score)) {
-      setResolvedPlayerScore(null);
-      return;
-    }
-    // Score is invalid — fetch with leeway to get valid fallback
-    let cancelled = false;
-    api.getPlayer(playerData.accountId, songId, undefined, leewayParam).then((res) => {
-      if (cancelled) return;
-      const s = res.scores.find(sc => sc.instrument === instKey);
-      if (s?.validScore != null) {
-        setResolvedPlayerScore({
-          ...s,
-          score: s.validScore,
-          rank: s.validRank ?? s.rank,
-          accuracy: s.isValid === false ? (s.validAccuracy ?? s.accuracy) : s.accuracy,
-          isFullCombo: s.isValid === false ? (s.validIsFullCombo ?? s.isFullCombo) : s.isFullCombo,
-          stars: s.isValid === false ? (s.validStars ?? s.stars) : s.stars,
-          totalEntries: s.validTotalEntries ?? s.totalEntries,
-        });
-      } else if (s && s.isValid == null) {
-        // Server doesn't support leeway on player endpoint yet — ignore, let client-side handle it
-        setResolvedPlayerScore(null);
-      } else {
-        setResolvedPlayerScore(null);
+  // resolve it client-side from the precomputed validScores array.
+  const resolvedPlayerScore = useMemo(() => {
+    if (!playerScore || !songId || !leewayParam) return null;
+    if (isScoreValid(songId, instKey, playerScore.score)) return null;
+
+    // New path: use validScores from precomputed data
+    if (playerScore.validScores && playerScore.validScores.length > 0) {
+      const fallback = playerScore.validScores.find(v => v.minLeeway <= userLeeway);
+      if (fallback) {
+        const filteredRank = getFilteredRank(fallback.rankTiers);
+        const filteredTotal = getFilteredTotal(songId, instKey, playerScore.totalEntries);
+        return {
+          ...playerScore,
+          score: fallback.score,
+          accuracy: fallback.accuracy ?? playerScore.accuracy,
+          isFullCombo: fallback.fc ?? playerScore.isFullCombo,
+          stars: fallback.stars ?? playerScore.stars,
+          rank: filteredRank ?? playerScore.rank,
+          totalEntries: filteredTotal ?? playerScore.totalEntries,
+        };
       }
-    }).catch(() => { if (!cancelled) setResolvedPlayerScore(null); });
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-run on key changes
-  }, [playerData?.accountId, songId, instKey, leewayParam]);
+      return null;
+    }
+
+    // Legacy path: use server-provided validScore fields
+    if (playerScore.validScore != null) {
+      return {
+        ...playerScore,
+        score: playerScore.validScore,
+        rank: playerScore.validRank ?? playerScore.rank,
+        accuracy: playerScore.validAccuracy ?? playerScore.accuracy,
+        isFullCombo: playerScore.validIsFullCombo ?? playerScore.isFullCombo,
+        stars: playerScore.validStars ?? playerScore.stars,
+        totalEntries: playerScore.validTotalEntries ?? playerScore.totalEntries,
+      };
+    }
+    return null;
+  }, [playerScore, songId, instKey, leewayParam, userLeeway, isScoreValid, getFilteredRank, getFilteredTotal]);
 
   // Use resolved score (for invalid-but-has-fallback) or the raw score (if valid)
   const effectivePlayerScore = resolvedPlayerScore ?? playerScore;
