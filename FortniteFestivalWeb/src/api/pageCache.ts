@@ -5,7 +5,7 @@
  * restore scroll position and skip stagger animations.
  */
 
-import type { ServerInstrumentKey as InstrumentKey, LeaderboardEntry, PlayerScore, ServerScoreHistoryEntry as ScoreHistoryEntry } from '@festival/core/api/serverTypes';
+import type { ServerInstrumentKey as InstrumentKey, LeaderboardEntry, ServerScoreHistoryEntry as ScoreHistoryEntry } from '@festival/core/api/serverTypes';
 
 /* ── SongDetailPage cache ── */
 
@@ -17,7 +17,6 @@ export type InstrumentData = {
 
 export type SongDetailCache = {
   instrumentData: Record<InstrumentKey, InstrumentData>;
-  playerScores: PlayerScore[];
   scoreHistory: ScoreHistoryEntry[];
   accountId: string | undefined;
   scrollTop: number;

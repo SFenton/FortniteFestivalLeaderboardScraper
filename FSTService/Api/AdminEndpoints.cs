@@ -404,5 +404,46 @@ public static partial class ApiEndpoints
         .WithTags("Leaderboard")
         .RequireAuthorization()
         .RequireRateLimiting("protected");
+
+        // ── Backfill max scores from SQLite → PG ────────────────────────
+        app.MapPost("/api/admin/backfill-max-scores", (
+            IPathDataStore pathStore,
+            SongsCacheService songsCache,
+            ScrapeTimePrecomputer precomputer,
+            IOptions<ScraperOptions> scraperOptions,
+            ILoggerFactory loggerFactory) =>
+        {
+            var log = loggerFactory.CreateLogger("AdminEndpoints");
+
+            // Read max scores from SQLite fst-service.db (always on disk)
+            var opts = scraperOptions.Value;
+            var sqliteDbPath = Path.GetFullPath(opts.DatabasePath);
+            if (!File.Exists(sqliteDbPath))
+                return Results.Problem($"SQLite song DB not found at {sqliteDbPath}.");
+
+            var sqliteStore = new PathDataStore(sqliteDbPath);
+            var sqliteMaxScores = sqliteStore.GetAllMaxScores();
+            if (sqliteMaxScores.Count == 0)
+                return Results.Ok(new { message = "No max scores found in SQLite DB.", updated = 0 });
+
+            // Write each to the active IPathDataStore (PG in PG mode, SQLite otherwise)
+            var pathState = sqliteStore.GetPathGenerationState();
+            var updated = 0;
+            foreach (var (songId, scores) in sqliteMaxScores)
+            {
+                pathState.TryGetValue(songId, out var state);
+                pathStore.UpdateMaxScores(songId, scores, state.Hash ?? "", state.LastModified);
+                updated++;
+            }
+
+            songsCache.Invalidate();
+            precomputer.InvalidateAll();
+            log.LogInformation("Backfilled max scores for {Count} songs from SQLite → active store.", updated);
+
+            return Results.Ok(new { message = $"Backfilled max scores for {updated} songs.", updated });
+        })
+        .WithTags("Admin")
+        .RequireAuthorization()
+        .RequireRateLimiting("protected");
     }
 }

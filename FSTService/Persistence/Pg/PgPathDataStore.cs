@@ -1,4 +1,5 @@
 using FSTService.Persistence;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 
 namespace FSTService.Scraping;
@@ -11,6 +12,7 @@ namespace FSTService.Scraping;
 public sealed class PgPathDataStore : IPathDataStore
 {
     private readonly NpgsqlDataSource _ds;
+    private readonly ILogger<PgPathDataStore>? _log;
 
     // ── In-memory cache for max scores (rarely changes) ──
     private Dictionary<string, SongMaxScores>? _maxScoresCache;
@@ -18,9 +20,10 @@ public sealed class PgPathDataStore : IPathDataStore
     private readonly object _maxScoresCacheLock = new();
     private static readonly TimeSpan MaxScoresCacheTtl = TimeSpan.FromMinutes(5);
 
-    public PgPathDataStore(NpgsqlDataSource dataSource)
+    public PgPathDataStore(NpgsqlDataSource dataSource, ILogger<PgPathDataStore>? log = null)
     {
         _ds = dataSource;
+        _log = log;
     }
 
     public Dictionary<string, (string Hash, string? LastModified)> GetPathGenerationState()
@@ -112,7 +115,9 @@ public sealed class PgPathDataStore : IPathDataStore
         cmd.Parameters.AddWithValue("songLastMod", (object?)songLastModified ?? DBNull.Value);
         cmd.Parameters.AddWithValue("genAt", DateTime.UtcNow);
         cmd.Parameters.AddWithValue("choptVer", (object?)scores.CHOptVersion ?? DBNull.Value);
-        cmd.ExecuteNonQuery();
+        var affected = cmd.ExecuteNonQuery();
+        if (affected == 0)
+            _log?.LogWarning("UpdateMaxScores: 0 rows affected for song {SongId}. Song may not exist in PG songs table.", songId);
 
         lock (_maxScoresCacheLock)
         {

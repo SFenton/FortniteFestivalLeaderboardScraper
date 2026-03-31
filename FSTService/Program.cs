@@ -164,7 +164,8 @@ if (dbProvider.Equals("PostgreSQL", StringComparison.OrdinalIgnoreCase))
             sp.GetRequiredService<ILogger<FSTService.Persistence.Pg.PgMetaDatabase>>()));
 
     builder.Services.AddSingleton<IPathDataStore>(sp =>
-        new FSTService.Scraping.PgPathDataStore(sp.GetRequiredService<NpgsqlDataSource>()));
+        new FSTService.Scraping.PgPathDataStore(sp.GetRequiredService<NpgsqlDataSource>(),
+            sp.GetRequiredService<ILogger<FSTService.Scraping.PgPathDataStore>>()));
 }
 else
 {

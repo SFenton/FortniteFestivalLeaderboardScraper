@@ -16,6 +16,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
 
@@ -3008,6 +3009,65 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         Assert.True(
             response.StatusCode == HttpStatusCode.OK ||
             (int)response.StatusCode == 502);
+    }
+
+    // ─── POST /api/admin/backfill-max-scores ────────────────────
+
+    [Fact]
+    public async Task BackfillMaxScores_WritesMaxScoresToActiveStore()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var pathStore = scope.ServiceProvider.GetRequiredService<PathDataStore>();
+
+        // Ensure Songs table exists in the SQLite core.db (PathDataStore target)
+        var opts = scope.ServiceProvider.GetRequiredService<IOptions<ScraperOptions>>().Value;
+        var coreDbPath = Path.GetFullPath(opts.DatabasePath);
+        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={coreDbPath}"))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                CREATE TABLE IF NOT EXISTS Songs (
+                    SongId TEXT PRIMARY KEY,
+                    Title TEXT,
+                    MaxLeadScore INTEGER, MaxBassScore INTEGER, MaxDrumsScore INTEGER,
+                    MaxVocalsScore INTEGER, MaxProLeadScore INTEGER, MaxProBassScore INTEGER,
+                    DatFileHash TEXT, SongLastModified TEXT, PathsGeneratedAt TEXT, CHOptVersion TEXT
+                )
+                """;
+            cmd.ExecuteNonQuery();
+            cmd.CommandText = "INSERT OR IGNORE INTO Songs (SongId, Title) VALUES ('testSong1', 'Test')";
+            cmd.ExecuteNonQuery();
+        }
+
+        // Seed max scores into SQLite PathDataStore
+        var scores = new SongMaxScores
+        {
+            MaxLeadScore = 100000,
+            MaxBassScore = 80000,
+            MaxDrumsScore = 120000,
+            MaxVocalsScore = 70000,
+        };
+        pathStore.UpdateMaxScores("testSong1", scores, "hash123", "2026-01-01");
+
+        // Call the backfill endpoint
+        var response = await _authedClient.PostAsync("/api/admin/backfill-max-scores", null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.True(json.GetProperty("updated").GetInt32() >= 1);
+
+        // Verify the IPathDataStore now has the scores
+        var allMax = scope.ServiceProvider.GetRequiredService<IPathDataStore>().GetAllMaxScores();
+        Assert.True(allMax.ContainsKey("testSong1"));
+        Assert.Equal(100000, allMax["testSong1"].MaxLeadScore);
+    }
+
+    [Fact]
+    public async Task BackfillMaxScores_RequiresAuth()
+    {
+        var response = await _client.PostAsync("/api/admin/backfill-max-scores", null);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     // ═══════════════════════════════════════════════════════════════

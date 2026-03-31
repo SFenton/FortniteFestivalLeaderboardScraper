@@ -161,13 +161,18 @@ describe('SongDetailPage', () => {
     });
   });
 
-  it('fetches player data when tracked player exists', async () => {
+  it('fetches player data from context (not per-song API call) when tracked player exists', async () => {
     localStorage.setItem('fst:trackedPlayer', JSON.stringify({ accountId: 'test-player-1', displayName: 'TestPlayer' }));
     renderSongDetail('/songs/song-1', 'test-player-1');
     await waitFor(() => {
-      expect(mockApi.getPlayer).toHaveBeenCalled();
+      // Player data loaded via PlayerDataContext (full profile, no songId filter)
+      expect(mockApi.getPlayer).toHaveBeenCalledWith('test-player-1');
       expect(mockApi.getPlayerHistory).toHaveBeenCalled();
     });
+    // Verify NO per-song getPlayer call was made (songId should NOT be passed)
+    for (const call of mockApi.getPlayer.mock.calls) {
+      expect(call.length).toBeLessThanOrEqual(1); // only accountId, no songId
+    }
   });
 
   it('does not fetch player data when no tracked player', async () => {

@@ -64,10 +64,14 @@ public static class DataMigrator
             await CopyTableAsync(songDbPath, pgDataSource, "Songs", "songs",
                 new[] { "SongId", "Title", "Artist", "ActiveDate", "LastModified", "ImagePath",
                         "LeadDiff", "BassDiff", "VocalsDiff", "DrumsDiff", "ProLeadDiff", "ProBassDiff",
-                        "ReleaseYear", "Tempo", "PlasticGuitarDiff", "PlasticBassDiff", "PlasticDrumsDiff", "ProVocalsDiff" },
+                        "ReleaseYear", "Tempo", "PlasticGuitarDiff", "PlasticBassDiff", "PlasticDrumsDiff", "ProVocalsDiff",
+                        "MaxLeadScore", "MaxBassScore", "MaxDrumsScore", "MaxVocalsScore", "MaxProLeadScore", "MaxProBassScore",
+                        "DatFileHash", "SongLastModified", "PathsGeneratedAt", "CHOptVersion" },
                 new[] { "song_id", "title", "artist", "active_date", "last_modified", "image_path",
                         "lead_diff", "bass_diff", "vocals_diff", "drums_diff", "pro_lead_diff", "pro_bass_diff",
-                        "release_year", "tempo", "plastic_guitar_diff", "plastic_bass_diff", "plastic_drums_diff", "pro_vocals_diff" }, log, ct);
+                        "release_year", "tempo", "plastic_guitar_diff", "plastic_bass_diff", "plastic_drums_diff", "pro_vocals_diff",
+                        "max_lead_score", "max_bass_score", "max_drums_score", "max_vocals_score", "max_pro_lead_score", "max_pro_bass_score",
+                        "dat_file_hash", "song_last_modified", "paths_generated_at", "chopt_version" }, log, ct);
 
             log.LogInformation("Song catalog migration complete.");
         }

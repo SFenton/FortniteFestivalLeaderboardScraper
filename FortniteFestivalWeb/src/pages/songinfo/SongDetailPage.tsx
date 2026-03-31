@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useParams, useSearchParams, useNavigationType, useLocation } from 'react-router-dom';
 import { useFestival } from '../../contexts/FestivalContext';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
+import { usePlayerData } from '../../contexts/PlayerDataContext';
 import { api } from '../../api/client';
 import {
   INSTRUMENT_KEYS,
@@ -69,15 +70,20 @@ export default function SongDetailPage() {
   const [pathsOpen, setPathsOpen] = useState(false);
   const { isShopVisible, isShopHighlighted, isLeavingTomorrow, getShopUrl } = useShopState();
 
+  // Player scores from precomputed context (already has minLeeway + validScores + rankTiers)
+  const { playerData } = usePlayerData();
+  const playerScores = useMemo(() => {
+    if (!playerData || !songId) return [];
+    return playerData.scores.filter(s => s.songId === songId);
+  }, [playerData, songId]);
+
   const navType = useNavigationType();
   const location = useLocation();
   const cached = songId ? songDetailCache.get(songId) : undefined;
-  const hasCachedPlayer = cached && cached.accountId === player?.accountId;
+  const hasCachedScoreHistory = cached && cached.accountId === player?.accountId;
 
-  const [playerScores, setPlayerScores] = useState<PlayerScore[]>(hasCachedPlayer ? cached.playerScores : []);
-  const [playerScoresReady, setPlayerScoresReady] = useState(!!hasCachedPlayer);
-  const [scoreHistory, setScoreHistory] = useState<ScoreHistoryEntry[]>(hasCachedPlayer ? cached.scoreHistory : []);
-  const [scoreHistoryReady, setScoreHistoryReady] = useState(!!hasCachedPlayer);
+  const [scoreHistory, setScoreHistory] = useState<ScoreHistoryEntry[]>(hasCachedScoreHistory ? cached.scoreHistory : []);
+  const [scoreHistoryReady, setScoreHistoryReady] = useState(!!hasCachedScoreHistory);
   const [instrumentData, setInstrumentData] = useState<Record<InstrumentKey, InstrumentData>>(
     () => cached
       ? cached.instrumentData
@@ -89,8 +95,8 @@ export default function SongDetailPage() {
   // Track whether the component mounted with cached data so effects can skip the initial fetch.
   // After the first render cycle, clear the flag so future prop changes (e.g. player swap) refetch.
   // This must be declared AFTER the fetch effects so it runs last in the effect order.
-  // The cache is only fully valid when player-specific data also matches (or no player is selected).
-  const mountedWithCacheRef = useRef(!!cached && (!player || !!hasCachedPlayer));
+  // The cache is only fully valid when player-specific score history also matches (or no player is selected).
+  const mountedWithCacheRef = useRef(!!cached && (!player || !!hasCachedScoreHistory));
 
   /* v8 ignore start — FAB registration callback */
   // Register openPaths for the FAB
@@ -104,27 +110,6 @@ export default function SongDetailPage() {
   const showShop = isShopVisible && !!shopUrl;
 
   /* v8 ignore start — async data fetch effects with cancellation */
-  // Fetch player scores
-  useEffect(() => {
-    if (mountedWithCacheRef.current) return;
-    if (!player || !songId) {
-      setPlayerScores([]);
-      setPlayerScoresReady(true);
-      return;
-    }
-    if (!hasCachedPlayer) setPlayerScoresReady(false);
-    let cancelled = false;
-    api.getPlayer(player.accountId, songId).then((res) => {
-      if (!cancelled) setPlayerScores(res.scores);
-    }).catch(() => {
-      if (!cancelled) setPlayerScores([]);
-    }).finally(() => {
-      if (!cancelled) setPlayerScoresReady(true);
-    });
-    return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- hasCachedPlayer checked via ref
-  }, [player, songId]);
-
   // Fetch score history
   useEffect(() => {
     if (mountedWithCacheRef.current) return;
@@ -133,7 +118,7 @@ export default function SongDetailPage() {
       setScoreHistoryReady(true);
       return;
     }
-    if (!hasCachedPlayer) setScoreHistoryReady(false);
+    if (!hasCachedScoreHistory) setScoreHistoryReady(false);
     let cancelled = false;
     api.getPlayerHistory(player.accountId, songId).then((res) => {
       if (!cancelled) setScoreHistory(res.history);
@@ -143,7 +128,7 @@ export default function SongDetailPage() {
       if (!cancelled) setScoreHistoryReady(true);
     });
     return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- hasCachedPlayer checked via ref
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- hasCachedScoreHistory checked via ref
   }, [player, songId]);
 
   // Fetch all instrument leaderboards in a single request
@@ -189,7 +174,7 @@ export default function SongDetailPage() {
   useEffect(() => { mountedWithCacheRef.current = false; }, []);
 
   // No player means no player-specific data to wait for
-  const playerDataReady = !player || (playerScoresReady && scoreHistoryReady);
+  const playerDataReady = !player || scoreHistoryReady;
   const instrumentsReady = activeInstruments.every((k) => !instrumentData[k].loading);
   const allReady = playerDataReady && instrumentsReady;
 
@@ -231,7 +216,7 @@ export default function SongDetailPage() {
 
   // Transition: spinner fade-out → staggered content fade-in
   // phase: 'loading' | 'spinnerOut' | 'contentIn'
-  const allCached = !!cached && (!player || hasCachedPlayer);
+  const allCached = !!cached && (!player || hasCachedScoreHistory);
   // Skip animations when all data is already cached (return visit, layout remount, etc.).
   // Frozen at mount time — the cache getting written mid-lifecycle should not flip this.
   const skipAnimRef = useRef(allCached);
@@ -280,12 +265,11 @@ export default function SongDetailPage() {
     if (!songId || !allReady) return;
     songDetailCache.set(songId, {
       instrumentData,
-      playerScores,
       scoreHistory,
       accountId: player?.accountId,
       scrollTop: scrollContainerRef.current?.scrollTop ?? 0,
     });
-  }, [allReady, songId, instrumentData, playerScores, scoreHistory, player?.accountId]);
+  }, [allReady, songId, instrumentData, scoreHistory, player?.accountId]);
   /* v8 ignore stop */
 
   // Restore scroll position when returning from cache (not on fresh PUSH navigations)
