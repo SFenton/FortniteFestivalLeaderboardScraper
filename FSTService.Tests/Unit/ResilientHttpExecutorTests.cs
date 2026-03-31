@@ -282,19 +282,21 @@ public sealed class ResilientHttpExecutorTests
     }
 
     [Fact]
-    public async Task SendAsync_Cdn403_ExhaustsRetries_ReturnsResponse()
+    public async Task SendAsync_Cdn403_RetriesBeyondSchedule_EventuallyRecovers()
     {
         var handler = new MockHttpMessageHandler();
         var executor = CreateExecutorWithZeroCdnDelay(handler);
 
-        // 10 CDN blocks (1 initial + 9 retries = 10 total, all exhausted)
-        for (int i = 0; i < 10; i++)
+        // 15 CDN blocks (1 initial + 14 retries — well past the 9-element schedule)
+        // then a success. The executor should keep retrying at 60 s (zero in test) indefinitely.
+        for (int i = 0; i < 15; i++)
             handler.EnqueueHtml403();
+        handler.EnqueueJsonOk("""{"result":"recovered"}""");
 
-        var response = await executor.SendAsync(() => MakeRequest(), label: "cdn-exhaust-test");
+        var response = await executor.SendAsync(() => MakeRequest(), label: "cdn-beyond-schedule-test");
 
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-        Assert.Equal(10, handler.Requests.Count);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(16, handler.Requests.Count); // 1 initial + 14 CDN retries + 1 success
     }
 
     [Fact]

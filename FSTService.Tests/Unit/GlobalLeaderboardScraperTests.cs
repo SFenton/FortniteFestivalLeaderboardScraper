@@ -547,12 +547,13 @@ public class GlobalLeaderboardScraperTests
     {
         var (scraper, handler) = CreateScraper();
 
-        // All attempts throw → should exhaust retries and propagate
+        // All attempts throw → executor exhausts retries → FetchPageAsync returns OtherFailure
         for (int i = 0; i <= 3; i++)
             handler.EnqueueException(new HttpRequestException("Connection refused"));
 
-        await Assert.ThrowsAsync<HttpRequestException>(() =>
-            scraper.ScrapeLeaderboardAsync("song1", "Solo_Guitar", "token", "acct"));
+        var result = await scraper.ScrapeLeaderboardAsync("song1", "Solo_Guitar", "token", "acct");
+
+        Assert.Empty(result.Entries);
     }
 
     // ─── ParseAllSessionsFromEntry ─────────────────────
@@ -871,8 +872,8 @@ public class GlobalLeaderboardScraperTests
         // Pages 1-9: each JSON 403 triggers one retry (attempt 0 → 5s backoff → attempt 1),
         // consuming 2 queued responses per page. With DOP=2, cancellation after the
         // ForbiddenThreshold (3 consecutive 403s) may not propagate before additional
-        // pages acquire the semaphore, so enqueue enough for all 9 pages × 2 attempts.
-        for (int i = 0; i < 18; i++)
+        // pages acquire the semaphore, so enqueue generously to avoid race-related exhaustion.
+        for (int i = 0; i < 36; i++)
             handler.EnqueueError(HttpStatusCode.Forbidden, """{"errorCode":"forbidden"}""");
 
         // Use a limiter with a small max so any over-release would trigger SemaphoreFullException

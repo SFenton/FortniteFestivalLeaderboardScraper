@@ -696,7 +696,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
     /// <summary>
     /// Fetch and parse a single leaderboard page with automatic retry on
-    /// transient failures (429, 5xx, network errors, timeouts).
+    /// transient failures (429, 5xx, network errors, timeouts) and CDN blocks.
+    /// Delegates all retry/CDN logic to <see cref="ResilientHttpExecutor"/>.
     /// Thread-safe (no shared mutable state).
     /// </summary>
     private async Task<(ParsedPage? Page, int BodyLength, FetchStatus Status)> FetchPageAsync(
@@ -711,226 +712,81 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         var url = $"{EventsBase}/api/v1/leaderboards/FNFestival/alltime_{songId}_{instrument}" +
                   $"/alltime/{accountId}?page={page}&rank=0&appId=Fortnite&showLiveSessions=false";
 
-        for (int attempt = 0; attempt <= MaxRetries; attempt++)
+        var label = $"{songId}/{instrument}/page({page})";
+
+        HttpRequestMessage CreateRequest()
         {
-            if (attempt > 0)
-            {
-                // Escalating backoff: 500ms, 1s, 2s, 5s
-                var backoffMs = attempt switch
-                {
-                    1 => 500,
-                    2 => 1000,
-                    3 => 2000,
-                    _ => 5000,
-                };
-                await Task.Delay(backoffMs, ct);
-            }
+            var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            return req;
+        }
+
+        // Outer loop: allows one retry on JSON 403 (Epic access boundary can be transient)
+        for (int fetchAttempt = 0; fetchAttempt <= 1; fetchAttempt++)
+        {
+            if (fetchAttempt > 0)
+                await Task.Delay(TimeSpan.FromSeconds(5), ct);
 
             HttpResponseMessage res;
             try
             {
-                var req = new HttpRequestMessage(HttpMethod.Get, url);
-                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-                res = await _http.SendAsync(req, ct);
+                res = await _executor.SendAsync(CreateRequest, limiter, label, MaxRetries, ct);
             }
-            catch (HttpRequestException ex) when (attempt < MaxRetries)
+            catch (HttpRequestException ex)
             {
-                _log.LogWarning("HTTP error for {Song}/{Instrument} page {Page} (attempt {Attempt}): {Error}",
-                    songId, instrument, page, attempt + 1, ex.Message);
+                _log.LogWarning("HTTP error for {Song}/{Instrument} page {Page}: {Error}",
+                    songId, instrument, page, ex.Message);
                 _progress.ReportRetry();
-                limiter?.ReportFailure();
-                continue;
-            }
-            catch (TaskCanceledException) when (!ct.IsCancellationRequested && attempt < MaxRetries)
-            {
-                _log.LogWarning("Timeout for {Song}/{Instrument} page {Page} (attempt {Attempt})",
-                    songId, instrument, page, attempt + 1);
-                _progress.ReportRetry();
-                limiter?.ReportFailure();
-                continue;
-            }
-
-            if (res.IsSuccessStatusCode)
-            {
-                await using var stream = await res.Content.ReadAsStreamAsync(ct);
-                var contentLength = (int)(res.Content.Headers.ContentLength ?? 0);
-                var parsed = await ParsePageAsync(stream, ct);
-
-                if (parsed is not null)
-                {
-                    limiter?.ReportSuccess();
-                    return (parsed, contentLength > 0 ? contentLength : parsed.EstimatedBytes, FetchStatus.Success);
-                }
-
-                // Parse failure on a 200 — read body for diagnostics
-                string parseBody = "";
-                try
-                {
-                    // Stream already consumed; re-request to peek at body
-                    // (stream is not seekable, so we can't rewind)
-                    parseBody = $"ContentLength={contentLength}, ContentType={res.Content.Headers.ContentType}";
-                }
-                catch { }
-
-                if (attempt < MaxRetries)
-                {
-                    _log.LogWarning("Parse failure for {Song}/{Instrument} page {Page} (attempt {Attempt}): {Detail}",
-                        songId, instrument, page, attempt + 1, parseBody);
-                    _progress.ReportRetry();
-                    limiter?.ReportFailure();
-                    continue;
-                }
-
-                _log.LogWarning("Failed to parse {Song}/{Instrument} page {Page} after {Attempts} attempts: {Detail}",
-                    songId, instrument, page, MaxRetries + 1, parseBody);
                 return (null, 0, FetchStatus.OtherFailure);
             }
 
-            var statusCode = (int)res.StatusCode;
-            bool retryable = statusCode == 429 || statusCode >= 500;
-
-            // Read a snippet of the error response body for diagnostics
-            string errorBody = "";
-            try
+            using (res)
             {
-                var body = await res.Content.ReadAsStringAsync(ct);
-                errorBody = body.Length > 200 ? body[..200] : body;
-            }
-            catch { }
-
-            // 403: distinguish CDN block (HTML body) from Epic boundary (JSON/empty body)
-            if (statusCode == 403)
-            {
-                bool isCdnBlock = errorBody.Length > 0 && !errorBody.TrimStart().StartsWith('{');
-
-                if (isCdnBlock)
+                if (res.IsSuccessStatusCode)
                 {
-                    // CDN block — retry with escalating backoff (unlimited, exits on cancel or success)
-                    _progress.ReportRetry();
-                    limiter?.ReportFailure();
-                    res.Dispose();
+                    await using var stream = await res.Content.ReadAsStreamAsync(ct);
+                    var contentLength = (int)(res.Content.Headers.ContentLength ?? 0);
+                    var parsed = await ParsePageAsync(stream, ct);
 
-                    var cdnDelays = new[] { 500, 1000, 2000, 5000, 10000, 15000, 30000, 45000, 60000 };
-                    for (int cdnAttempt = 0; ; cdnAttempt++)
+                    if (parsed is not null)
+                        return (parsed, contentLength > 0 ? contentLength : parsed.EstimatedBytes, FetchStatus.Success);
+
+                    _log.LogWarning("Failed to parse {Song}/{Instrument} page {Page}: ContentLength={CL}, ContentType={CT}",
+                        songId, instrument, page, contentLength, res.Content.Headers.ContentType);
+                    return (null, 0, FetchStatus.OtherFailure);
+                }
+
+                var statusCode = (int)res.StatusCode;
+
+                if (statusCode == 403)
+                {
+                    // JSON 403 from executor (CDN 403s are already retried infinitely).
+                    // Give it one more try with 5 s backoff before returning Forbidden.
+                    if (fetchAttempt == 0)
                     {
-                        var delayMs = cdnAttempt < cdnDelays.Length ? cdnDelays[cdnAttempt] : 60000;
-                        await Task.Delay(delayMs, ct);
-
-                        HttpResponseMessage cdnRes;
-                        try
-                        {
-                            var cdnReq = new HttpRequestMessage(HttpMethod.Get, url);
-                            cdnReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-                            cdnRes = await _http.SendAsync(cdnReq, ct);
-                        }
-                        catch (HttpRequestException)
-                        {
-                            _progress.ReportRetry();
-                            limiter?.ReportFailure();
-                            continue;
-                        }
-                        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
-                        {
-                            _progress.ReportRetry();
-                            limiter?.ReportFailure();
-                            continue;
-                        }
-
-                        if (cdnRes.IsSuccessStatusCode)
-                        {
-                            await using var cdnStream = await cdnRes.Content.ReadAsStreamAsync(ct);
-                            var cdnContentLength = (int)(cdnRes.Content.Headers.ContentLength ?? 0);
-                            var cdnParsed = await ParsePageAsync(cdnStream, ct);
-                            if (cdnParsed is not null)
-                            {
-                                limiter?.ReportSuccess();
-                                return (cdnParsed, cdnContentLength > 0 ? cdnContentLength : cdnParsed.EstimatedBytes, FetchStatus.Success);
-                            }
-                        }
-
-                        var cdnStatus = (int)cdnRes.StatusCode;
-                        if (cdnStatus == 403)
-                        {
-                            string cdnBody = "";
-                            try { cdnBody = await cdnRes.Content.ReadAsStringAsync(ct); } catch { }
-                            bool stillCdn = cdnBody.Length > 0 && !cdnBody.TrimStart().StartsWith('{');
-                            cdnRes.Dispose();
-
-                            if (stillCdn)
-                            {
-                                // Still CDN blocked — continue loop
-                                _progress.ReportRetry();
-                                limiter?.ReportFailure();
-                                continue;
-                            }
-
-                            // JSON/empty 403 — real Epic boundary, stop retrying
-                            return (null, 0, FetchStatus.Forbidden);
-                        }
-
-                        // Different status — CDN is clear, let normal handling deal with it
-                        cdnRes.Dispose();
-                        break;
+                        _progress.ReportRetry();
+                        continue;
                     }
 
-                    // Fell through CDN loop via non-403 status — restart main retry loop
-                    continue;
+                    return (null, 0, FetchStatus.Forbidden);
                 }
 
-                // JSON/empty 403: Epic access boundary
-                if (attempt == 0)
+                // Non-retryable / exhausted retries
+                string errorBody = "";
+                try
                 {
-                    // One more try with 5s backoff before returning Forbidden
-                    _progress.ReportRetry();
-                    limiter?.ReportFailure();
-                    res.Dispose();
-                    await Task.Delay(TimeSpan.FromSeconds(5), ct);
-                    continue;
+                    var body = await res.Content.ReadAsStringAsync(ct);
+                    errorBody = body.Length > 200 ? body[..200] : body;
                 }
+                catch { }
 
-                limiter?.ReportFailure();
-                res.Dispose();
-                return (null, 0, FetchStatus.Forbidden);
-            }
-
-            if (retryable && attempt < MaxRetries)
-            {
-                // Honor Retry-After header on 429
-                if (statusCode == 429 && res.Headers.RetryAfter?.Delta is TimeSpan retryAfter)
-                {
-                    _log.LogWarning("Rate-limited on {Song}/{Instrument} page {Page}, waiting {Delay:F1}s: {Body}",
-                        songId, instrument, page, retryAfter.TotalSeconds, errorBody);
-                    _progress.ReportRetry();
-                    limiter?.ReportFailure();
-                    res.Dispose();
-                    await Task.Delay(retryAfter, ct);
-                    continue;
-                }
-
-                _log.LogWarning("{StatusCode} for {Song}/{Instrument} page {Page} (attempt {Attempt}): {Body}",
-                    statusCode, songId, instrument, page, attempt + 1, errorBody);
-                _progress.ReportRetry();
-                limiter?.ReportFailure();
-                res.Dispose();
-                continue;
-            }
-
-            var failStatus = statusCode == 403 ? FetchStatus.Forbidden : FetchStatus.OtherFailure;
-
-            // Only log non-403 failures — 403s are expected at Epic's access boundary
-            // and handled in bulk by the caller via consecutive-403 detection.
-            if (failStatus != FetchStatus.Forbidden)
-            {
                 _log.LogWarning("Leaderboard request failed for {Song}/{Instrument} page {Page}: {StatusCode} {Body}",
                     songId, instrument, page, statusCode, errorBody);
+                return (null, 0, FetchStatus.OtherFailure);
             }
-
-            limiter?.ReportFailure();
-            res.Dispose();
-            return (null, 0, failStatus);
         }
 
-        return (null, 0, FetchStatus.OtherFailure);
+        return (null, 0, FetchStatus.Forbidden);
     }
 
     // ─── Single instrument (parallel pages) ─────────
