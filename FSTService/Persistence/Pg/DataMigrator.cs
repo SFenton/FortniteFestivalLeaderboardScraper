@@ -1,6 +1,5 @@
 using Microsoft.Data.Sqlite;
 using Npgsql;
-using NpgsqlTypes;
 
 namespace FSTService.Persistence.Pg;
 
@@ -145,11 +144,12 @@ public static class DataMigrator
         await using var reader = await cmd.ExecuteReaderAsync(ct);
 
         // Build COPY statement — prepend instrument column if needed
+        // Use TEXT format so PG handles type coercion (e.g. ISO 8601 strings → TIMESTAMPTZ)
         var allPgCols = instrumentPrefix is not null ? pgCols.Prepend("instrument").ToArray() : pgCols;
-        var copySql = $"COPY {pgTable} ({string.Join(", ", allPgCols)}) FROM STDIN (FORMAT BINARY)";
+        var copySql = $"COPY {pgTable} ({string.Join(", ", allPgCols)}) FROM STDIN WITH (FORMAT TEXT, NULL '\\N')";
 
         await using var pgConn = await pgDataSource.OpenConnectionAsync(ct);
-        await using var writer = await pgConn.BeginBinaryImportAsync(copySql, ct);
+        await using var writer = await pgConn.BeginTextImportAsync(copySql, ct);
 
         long count = 0;
         var tableSw = System.Diagnostics.Stopwatch.StartNew();
@@ -157,48 +157,25 @@ public static class DataMigrator
 
         while (await reader.ReadAsync(ct))
         {
-            await writer.StartRowAsync(ct);
+            var sb = new System.Text.StringBuilder(256);
 
             // Instrument column first (if applicable)
             if (instrumentPrefix is not null)
-                await writer.WriteAsync(instrumentPrefix, NpgsqlDbType.Text, ct);
+                sb.Append(Escape(instrumentPrefix)).Append('\t');
 
-            // All SQLite columns — write as text (PG will cast)
+            // All SQLite columns — text format, tab-separated, \N for NULL
             for (int i = 0; i < colCount; i++)
             {
+                if (i > 0) sb.Append('\t');
                 if (reader.IsDBNull(i))
-                {
-                    await writer.WriteNullAsync(ct);
-                }
+                    sb.Append("\\N");
                 else
-                {
-                    var value = reader.GetValue(i);
-                    switch (value)
-                    {
-                        case long l:
-                            await writer.WriteAsync(l, NpgsqlDbType.Bigint, ct);
-                            break;
-                        case int n:
-                            await writer.WriteAsync(n, NpgsqlDbType.Integer, ct);
-                            break;
-                        case double d:
-                            await writer.WriteAsync(d, NpgsqlDbType.Double, ct);
-                            break;
-                        case string s:
-                            await writer.WriteAsync(s, NpgsqlDbType.Text, ct);
-                            break;
-                        case byte[] b:
-                            await writer.WriteAsync(b, NpgsqlDbType.Bytea, ct);
-                            break;
-                        default:
-                            // Fallback: convert to string
-                            await writer.WriteAsync(value.ToString()!, NpgsqlDbType.Text, ct);
-                            break;
-                    }
-                }
+                    sb.Append(Escape(reader.GetValue(i).ToString()!));
             }
 
+            await writer.WriteLineAsync(sb.ToString());
             count++;
+
             if (count % 1_000_000 == 0)
             {
                 var rate = count / tableSw.Elapsed.TotalSeconds;
@@ -206,8 +183,20 @@ public static class DataMigrator
             }
         }
 
-        await writer.CompleteAsync(ct);
+        writer.Close(); // signals COPY completion
         var finalRate = count > 0 ? count / tableSw.Elapsed.TotalSeconds : 0;
         log.LogInformation("  {Label}: {Count:N0} rows in {Elapsed:F1}s ({Rate:N0} rows/sec)", label, count, tableSw.Elapsed.TotalSeconds, finalRate);
+    }
+
+    /// <summary>Escape special characters for COPY TEXT format (backslash, tab, newline, carriage return).</summary>
+    private static string Escape(string value)
+    {
+        if (value.IndexOfAny(['\\', '\t', '\n', '\r']) < 0)
+            return value;
+        return value
+            .Replace("\\", "\\\\")
+            .Replace("\t", "\\t")
+            .Replace("\n", "\\n")
+            .Replace("\r", "\\r");
     }
 }
