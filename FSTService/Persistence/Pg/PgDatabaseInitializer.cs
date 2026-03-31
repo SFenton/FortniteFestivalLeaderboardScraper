@@ -58,7 +58,7 @@ public static class PgDatabaseInitializer
         );
 
         -- =====================================================================
-        -- LEADERBOARD ENTRIES (consolidated from 6 × fst-{instrument}.db)
+        -- LEADERBOARD ENTRIES (partitioned by instrument)
         -- =====================================================================
 
         CREATE TABLE IF NOT EXISTS leaderboard_entries (
@@ -79,7 +79,14 @@ public static class PgDatabaseInitializer
             first_seen_at  TIMESTAMPTZ NOT NULL,
             last_updated_at TIMESTAMPTZ NOT NULL,
             PRIMARY KEY (song_id, instrument, account_id)
-        );
+        ) PARTITION BY LIST (instrument);
+
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_solo_guitar    PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_Guitar');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_solo_bass      PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_Bass');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_solo_drums     PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_Drums');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_solo_vocals    PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_Vocals');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_pro_guitar     PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_PeripheralGuitar');
+        CREATE TABLE IF NOT EXISTS leaderboard_entries_pro_bass       PARTITION OF leaderboard_entries FOR VALUES IN ('Solo_PeripheralBass');
 
         CREATE INDEX IF NOT EXISTS ix_le_song_score
             ON leaderboard_entries (song_id, instrument, score DESC);
@@ -93,7 +100,7 @@ public static class PgDatabaseInitializer
             ON leaderboard_entries (song_id, instrument, rank);
 
         -- =====================================================================
-        -- SONG STATS (consolidated from 6 × instrument DBs)
+        -- SONG STATS (partitioned by instrument)
         -- =====================================================================
 
         CREATE TABLE IF NOT EXISTS song_stats (
@@ -105,10 +112,17 @@ public static class PgDatabaseInitializer
             max_score            INTEGER,
             computed_at          TIMESTAMPTZ NOT NULL,
             PRIMARY KEY (song_id, instrument)
-        );
+        ) PARTITION BY LIST (instrument);
+
+        CREATE TABLE IF NOT EXISTS song_stats_solo_guitar    PARTITION OF song_stats FOR VALUES IN ('Solo_Guitar');
+        CREATE TABLE IF NOT EXISTS song_stats_solo_bass      PARTITION OF song_stats FOR VALUES IN ('Solo_Bass');
+        CREATE TABLE IF NOT EXISTS song_stats_solo_drums     PARTITION OF song_stats FOR VALUES IN ('Solo_Drums');
+        CREATE TABLE IF NOT EXISTS song_stats_solo_vocals    PARTITION OF song_stats FOR VALUES IN ('Solo_Vocals');
+        CREATE TABLE IF NOT EXISTS song_stats_pro_guitar     PARTITION OF song_stats FOR VALUES IN ('Solo_PeripheralGuitar');
+        CREATE TABLE IF NOT EXISTS song_stats_pro_bass       PARTITION OF song_stats FOR VALUES IN ('Solo_PeripheralBass');
 
         -- =====================================================================
-        -- ACCOUNT RANKINGS (consolidated from 6 × instrument DBs)
+        -- ACCOUNT RANKINGS (partitioned by instrument)
         -- =====================================================================
 
         CREATE TABLE IF NOT EXISTS account_rankings (
@@ -135,7 +149,14 @@ public static class PgDatabaseInitializer
             avg_rank                REAL    NOT NULL,
             computed_at             TIMESTAMPTZ NOT NULL,
             PRIMARY KEY (account_id, instrument)
-        );
+        ) PARTITION BY LIST (instrument);
+
+        CREATE TABLE IF NOT EXISTS account_rankings_solo_guitar    PARTITION OF account_rankings FOR VALUES IN ('Solo_Guitar');
+        CREATE TABLE IF NOT EXISTS account_rankings_solo_bass      PARTITION OF account_rankings FOR VALUES IN ('Solo_Bass');
+        CREATE TABLE IF NOT EXISTS account_rankings_solo_drums     PARTITION OF account_rankings FOR VALUES IN ('Solo_Drums');
+        CREATE TABLE IF NOT EXISTS account_rankings_solo_vocals    PARTITION OF account_rankings FOR VALUES IN ('Solo_Vocals');
+        CREATE TABLE IF NOT EXISTS account_rankings_pro_guitar     PARTITION OF account_rankings FOR VALUES IN ('Solo_PeripheralGuitar');
+        CREATE TABLE IF NOT EXISTS account_rankings_pro_bass       PARTITION OF account_rankings FOR VALUES IN ('Solo_PeripheralBass');
 
         CREATE UNIQUE INDEX IF NOT EXISTS ix_ar_skill
             ON account_rankings (instrument, adjusted_skill_rank);
@@ -149,7 +170,7 @@ public static class PgDatabaseInitializer
             ON account_rankings (instrument, max_score_percent_rank);
 
         -- =====================================================================
-        -- RANK HISTORY (consolidated from 6 × instrument DBs)
+        -- RANK HISTORY (partitioned by instrument)
         -- =====================================================================
 
         CREATE TABLE IF NOT EXISTS rank_history (
@@ -170,10 +191,17 @@ public static class PgDatabaseInitializer
             coverage                REAL,
             full_combo_count        INTEGER,
             PRIMARY KEY (account_id, instrument, snapshot_date)
-        );
+        ) PARTITION BY LIST (instrument);
+
+        CREATE TABLE IF NOT EXISTS rank_history_solo_guitar    PARTITION OF rank_history FOR VALUES IN ('Solo_Guitar');
+        CREATE TABLE IF NOT EXISTS rank_history_solo_bass      PARTITION OF rank_history FOR VALUES IN ('Solo_Bass');
+        CREATE TABLE IF NOT EXISTS rank_history_solo_drums     PARTITION OF rank_history FOR VALUES IN ('Solo_Drums');
+        CREATE TABLE IF NOT EXISTS rank_history_solo_vocals    PARTITION OF rank_history FOR VALUES IN ('Solo_Vocals');
+        CREATE TABLE IF NOT EXISTS rank_history_pro_guitar     PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralGuitar');
+        CREATE TABLE IF NOT EXISTS rank_history_pro_bass       PARTITION OF rank_history FOR VALUES IN ('Solo_PeripheralBass');
 
         -- =====================================================================
-        -- VALID SCORE OVERRIDES (consolidated from 6 × instrument DBs)
+        -- VALID SCORE OVERRIDES (partitioned by instrument)
         -- =====================================================================
 
         CREATE TABLE IF NOT EXISTS valid_score_overrides (
@@ -185,7 +213,14 @@ public static class PgDatabaseInitializer
             is_full_combo BOOLEAN,
             stars        INTEGER,
             PRIMARY KEY (song_id, instrument, account_id)
-        );
+        ) PARTITION BY LIST (instrument);
+
+        CREATE TABLE IF NOT EXISTS valid_score_overrides_solo_guitar    PARTITION OF valid_score_overrides FOR VALUES IN ('Solo_Guitar');
+        CREATE TABLE IF NOT EXISTS valid_score_overrides_solo_bass      PARTITION OF valid_score_overrides FOR VALUES IN ('Solo_Bass');
+        CREATE TABLE IF NOT EXISTS valid_score_overrides_solo_drums     PARTITION OF valid_score_overrides FOR VALUES IN ('Solo_Drums');
+        CREATE TABLE IF NOT EXISTS valid_score_overrides_solo_vocals    PARTITION OF valid_score_overrides FOR VALUES IN ('Solo_Vocals');
+        CREATE TABLE IF NOT EXISTS valid_score_overrides_pro_guitar     PARTITION OF valid_score_overrides FOR VALUES IN ('Solo_PeripheralGuitar');
+        CREATE TABLE IF NOT EXISTS valid_score_overrides_pro_bass       PARTITION OF valid_score_overrides FOR VALUES IN ('Solo_PeripheralBass');
 
         -- =====================================================================
         -- SCRAPE LOG (from fst-meta.db)

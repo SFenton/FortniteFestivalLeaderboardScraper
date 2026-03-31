@@ -285,7 +285,7 @@ public sealed class PgInstrumentDatabase : IInstrumentDatabase
     public void PopulateValidScoreOverrides(IReadOnlyList<(string SongId, string AccountId, int Score, int? Accuracy, bool? IsFullCombo, int? Stars)> overrides)
     {
         using var conn = _ds.OpenConnection(); using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "DELETE FROM valid_score_overrides WHERE instrument = @instrument"; c.Parameters.AddWithValue("instrument", Instrument); c.ExecuteNonQuery(); }
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; var pName = GetPartitionName("valid_score_overrides"); c.CommandText = $"TRUNCATE {pName}"; c.ExecuteNonQuery(); }
         if (overrides.Count > 0) { using var c = conn.CreateCommand(); c.Transaction = tx; c.CommandText = "INSERT INTO valid_score_overrides (song_id, instrument, account_id, score, accuracy, is_full_combo, stars) VALUES (@songId, @instrument, @accountId, @score, @accuracy, @fc, @stars)"; var pSong = c.Parameters.Add("songId", NpgsqlTypes.NpgsqlDbType.Text); c.Parameters.AddWithValue("instrument", Instrument); var pAcct = c.Parameters.Add("accountId", NpgsqlTypes.NpgsqlDbType.Text); var pScore = c.Parameters.Add("score", NpgsqlTypes.NpgsqlDbType.Integer); var pAcc = c.Parameters.Add("accuracy", NpgsqlTypes.NpgsqlDbType.Integer); var pFc = c.Parameters.Add("fc", NpgsqlTypes.NpgsqlDbType.Boolean); var pStars = c.Parameters.Add("stars", NpgsqlTypes.NpgsqlDbType.Integer); c.Prepare(); foreach (var o in overrides) { pSong.Value = o.SongId; pAcct.Value = o.AccountId; pScore.Value = o.Score; pAcc.Value = (object?)o.Accuracy ?? DBNull.Value; pFc.Value = (object?)o.IsFullCombo ?? DBNull.Value; pStars.Value = (object?)o.Stars ?? DBNull.Value; c.ExecuteNonQuery(); } }
         tx.Commit();
     }
@@ -295,7 +295,8 @@ public sealed class PgInstrumentDatabase : IInstrumentDatabase
     public int ComputeAccountRankings(int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5)
     {
         using var conn = _ds.OpenConnection(); using var tx = conn.BeginTransaction();
-        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "DELETE FROM account_rankings WHERE instrument = @instrument"; c.Parameters.AddWithValue("instrument", Instrument); c.ExecuteNonQuery(); }
+        // TRUNCATE the partition directly — instant, no dead tuples, no vacuum needed
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = $"TRUNCATE {GetPartitionName("account_rankings")}"; c.ExecuteNonQuery(); }
         using var cmd = conn.CreateCommand(); cmd.Transaction = tx;
         cmd.CommandText =
             "WITH ValidEntries AS (" +
@@ -351,6 +352,18 @@ public sealed class PgInstrumentDatabase : IInstrumentDatabase
     private PlayerScoreDto ReadPlayerScore(NpgsqlDataReader r) => new() { SongId = r.GetString(0), Instrument = Instrument, Score = r.GetInt32(1), Accuracy = r.IsDBNull(2) ? 0 : r.GetInt32(2), IsFullCombo = !r.IsDBNull(3) && r.GetBoolean(3), Stars = r.IsDBNull(4) ? 0 : r.GetInt32(4), Season = r.IsDBNull(5) ? 0 : r.GetInt32(5), Difficulty = r.IsDBNull(6) ? 0 : r.GetInt32(6), Percentile = r.IsDBNull(7) ? 0 : r.GetDouble(7), EndTime = r.IsDBNull(8) ? null : r.GetString(8), Rank = r.IsDBNull(9) ? 0 : r.GetInt32(9), ApiRank = r.IsDBNull(10) ? 0 : r.GetInt32(10) };
     private static AccountRankingDto ReadAccountRanking(NpgsqlDataReader r) => new() { AccountId = r.GetString(0), SongsPlayed = r.GetInt32(1), TotalChartedSongs = r.GetInt32(2), Coverage = r.GetDouble(3), RawSkillRating = r.GetDouble(4), AdjustedSkillRating = r.GetDouble(5), AdjustedSkillRank = r.GetInt32(6), WeightedRating = r.GetDouble(7), WeightedRank = r.GetInt32(8), FcRate = r.GetDouble(9), FcRateRank = r.GetInt32(10), TotalScore = r.GetInt64(11), TotalScoreRank = r.GetInt32(12), MaxScorePercent = r.GetDouble(13), MaxScorePercentRank = r.GetInt32(14), AvgAccuracy = r.GetDouble(15), FullComboCount = r.GetInt32(16), AvgStars = r.GetDouble(17), BestRank = r.GetInt32(18), AvgRank = r.GetDouble(19), ComputedAt = r.GetDateTime(20).ToString("o") };
     private static (string Column, string Direction) RankByColumn(string rankBy) => rankBy switch { "weighted" => ("weighted_rank", "ASC"), "fcrate" => ("fc_rate_rank", "ASC"), "totalscore" => ("total_score_rank", "ASC"), "maxscore" => ("max_score_percent_rank", "ASC"), _ => ("adjusted_skill_rank", "ASC") };
+
+    /// <summary>Maps instrument name to the partition table name for TRUNCATE operations.</summary>
+    private string GetPartitionName(string parentTable) => Instrument switch
+    {
+        "Solo_Guitar" => $"{parentTable}_solo_guitar",
+        "Solo_Bass" => $"{parentTable}_solo_bass",
+        "Solo_Drums" => $"{parentTable}_solo_drums",
+        "Solo_Vocals" => $"{parentTable}_solo_vocals",
+        "Solo_PeripheralGuitar" => $"{parentTable}_pro_guitar",
+        "Solo_PeripheralBass" => $"{parentTable}_pro_bass",
+        _ => throw new ArgumentException($"Unknown instrument: {Instrument}"),
+    };
 
     public void Dispose() { }
 }
