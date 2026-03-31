@@ -277,4 +277,26 @@ describe('PlayerSearchBar — animated dropdown', () => {
     const backdrop = container.querySelector('[style*="position: fixed"]');
     expect(backdrop).not.toBeNull();
   });
+
+  it('dropdown animates closed when a result is clicked', async () => {
+    mockSearch.mockResolvedValue({ results: [{ accountId: 'a1', displayName: 'P' }] });
+    const onSelect = vi.fn();
+    const { container } = render(
+      React.createElement(PlayerSearchBar, { onSelect }),
+    );
+    const input = container.querySelector('input')!;
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: 'Test' } });
+    await act(async () => { vi.advanceTimersByTime(300); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    // Dropdown is open with a result
+    expect(getDropdown(container)!.style.opacity).toBe('1');
+
+    // Click the result → dropdown transitions to closed state
+    const button = container.querySelector('button')!;
+    fireEvent.click(button);
+    expect(getDropdown(container)!.style.opacity).toBe('0');
+    expect(onSelect).toHaveBeenCalledWith({ accountId: 'a1', displayName: 'P' });
+  });
 });

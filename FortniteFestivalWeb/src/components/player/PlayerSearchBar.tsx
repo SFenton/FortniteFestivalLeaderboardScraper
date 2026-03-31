@@ -50,7 +50,7 @@ export default function PlayerSearchBar({
   const { t } = useTranslation();
   const [focused, setFocused] = useState(false);
   const handleSelect = useCallback(
-    (r: AccountSearchResult) => onSelect(r),
+    (r: AccountSearchResult) => { setFocused(false); onSelect(r); },
     [onSelect],
   );
 
