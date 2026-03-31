@@ -178,4 +178,37 @@ describe('SongInfoHeader', () => {
     const iconWrap = container.querySelector('img[alt="Solo_Guitar"]');
     expect(iconWrap).toBeTruthy();
   });
+
+  it('calls onTitleClick when title area is clicked', () => {
+    const handler = vi.fn();
+    render(
+      <TestProviders>
+        <SongInfoHeader song={baseSong as any} songId="s1" collapsed={false} onTitleClick={handler} />
+      </TestProviders>,
+    );
+    const titleEl = screen.getByText('TestSong');
+    // Click the role="link" ancestor wrapping the title
+    titleEl.closest('[role="link"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('title area has cursor pointer when onTitleClick is provided', () => {
+    const { container } = render(
+      <TestProviders>
+        <SongInfoHeader song={baseSong as any} songId="s1" collapsed={false} onTitleClick={() => {}} />
+      </TestProviders>,
+    );
+    const linkEl = container.querySelector('[role="link"]') as HTMLElement;
+    expect(linkEl).toBeTruthy();
+    expect(linkEl.style.cursor).toBe('pointer');
+  });
+
+  it('title area is not clickable when onTitleClick is omitted', () => {
+    const { container } = render(
+      <TestProviders>
+        <SongInfoHeader song={baseSong as any} songId="s1" collapsed={false} />
+      </TestProviders>,
+    );
+    expect(container.querySelector('[role="link"]')).toBeNull();
+  });
 });

@@ -22,6 +22,7 @@ import { parseApiError } from '../../../utils/apiError';
 import { useIsMobile, useIsMobileChrome } from '../../../hooks/ui/useIsMobile';
 import { useScoreFilter } from '../../../hooks/data/useScoreFilter';
 import { useMediaQuery } from '../../../hooks/ui/useMediaQuery';
+import { useNavigateToSongDetail } from '../../../hooks/navigation/useNavigateToSongDetail';
 import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
 import Page, { PageBackground } from '../../Page';
 
@@ -44,6 +45,7 @@ export default function LeaderboardPage() {
 
   const song = songs.find((s) => s.songId === songId);
   const instKey = instrument as InstrumentKey;
+  const goToSongDetail = useNavigateToSongDetail(songId);
 
   const cacheKey = `${songId}:${instKey}`;
   const cached = leaderboardCache.get(cacheKey);
@@ -337,6 +339,7 @@ export default function LeaderboardPage() {
             instrument={instKey}
             animate={!isNarrow}
             hideBackground
+            onTitleClick={goToSongDetail}
           />
         </div>
       }

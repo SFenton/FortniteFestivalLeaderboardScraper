@@ -50,6 +50,8 @@ export interface SongInfoHeaderProps {
   hideBackground?: boolean;
   /** Extra inline styles on the outer PageHeader wrapper. */
   style?: CSSProperties;
+  /** When set, the title area (album art + song/artist) becomes clickable. */
+  onTitleClick?: () => void;
 }
 
 export default function SongInfoHeader({
@@ -65,6 +67,7 @@ export default function SongInfoHeader({
   shopLeavingTomorrow,
   hideBackground,
   style: extraStyle,
+  onTitleClick,
 }: SongInfoHeaderProps) {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
@@ -85,7 +88,11 @@ export default function SongInfoHeader({
           ...extraStyle,
         } as React.CSSProperties}
         title={
-          <div style={s.headerLeft}>
+          <div
+            style={onTitleClick ? { ...s.headerLeft, cursor: Cursor.pointer } : s.headerLeft}
+            onClick={onTitleClick}
+            {...(onTitleClick ? { role: 'link', tabIndex: 0 } : undefined)}
+          >
             {song?.albumArt ? (
               <img src={song.albumArt} alt="" className={s.artClassName} style={s.headerArt} />
             ) : (

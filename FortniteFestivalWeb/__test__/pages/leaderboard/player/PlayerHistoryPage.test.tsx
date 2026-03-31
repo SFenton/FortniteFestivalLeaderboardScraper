@@ -430,3 +430,19 @@ describe('PlayerHistoryPage — coverage: empty instrument filter', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Coverage: header title click navigates to song detail
+// ---------------------------------------------------------------------------
+
+describe('PlayerHistoryPage — header title click', () => {
+  it('renders a clickable title area linking to song detail', async () => {
+    renderHistory();
+    await waitFor(() => {
+      expect(screen.getByText('Test Song One')).toBeDefined();
+    });
+    const linkEl = document.querySelector('[role="link"]');
+    expect(linkEl).toBeTruthy();
+    expect((linkEl as HTMLElement).style.cursor).toBe('pointer');
+  });
+});

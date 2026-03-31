@@ -568,3 +568,19 @@ describe('LeaderboardPage — coverage: localEntries fallback', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Coverage: header title click navigates to song detail
+// ---------------------------------------------------------------------------
+
+describe('LeaderboardPage — header title click', () => {
+  it('renders a clickable title area linking to song detail', async () => {
+    renderLeaderboard();
+    await waitFor(() => {
+      expect(screen.getByText('Test Song One')).toBeDefined();
+    });
+    const linkEl = document.querySelector('[role="link"]');
+    expect(linkEl).toBeTruthy();
+    expect((linkEl as HTMLElement).style.cursor).toBe('pointer');
+  });
+});

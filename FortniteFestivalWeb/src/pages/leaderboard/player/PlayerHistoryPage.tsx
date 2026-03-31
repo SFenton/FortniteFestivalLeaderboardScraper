@@ -16,6 +16,7 @@ import {
   type ServerScoreHistoryEntry as ScoreHistoryEntry,
 } from '@festival/core/api/serverTypes';
 import SongInfoHeader from '../../../components/songs/headers/SongInfoHeader';
+import { useNavigateToSongDetail } from '../../../hooks/navigation/useNavigateToSongDetail';
 import { LeaderboardEntry } from '../global/components/LeaderboardEntry';
 import PlayerScoreSortModal from './modals/PlayerScoreSortModal';
 import type { PlayerScoreSortMode, PlayerScoreSortDraft } from './modals/PlayerScoreSortModal';
@@ -52,6 +53,7 @@ export default function PlayerHistoryPage() {
 
   const song = songs.find((s) => s.songId === songId);
   const instKey = instrument as InstrumentKey;
+  const goToSongDetail = useNavigateToSongDetail(songId);
 
   const showAccuracy = useMediaQuery(QUERY_SHOW_ACCURACY);
   const showSeason = useMediaQuery(QUERY_SHOW_SEASON);
@@ -206,6 +208,7 @@ export default function PlayerHistoryPage() {
             instrument={instKey}
             animate={!hasFab}
             hideBackground
+            onTitleClick={goToSongDetail}
             /* v8 ignore start — platform-conditional sort button */
             actions={!hasFab && !IS_IOS && !IS_ANDROID && !IS_PWA ? (
               <ActionPill
