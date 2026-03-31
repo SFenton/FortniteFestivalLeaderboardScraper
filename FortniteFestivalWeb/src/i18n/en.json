@@ -544,8 +544,8 @@
         "description": "Scroll down to load an endless rotation of personalized suggestions."
       },
       "demo": {
-        "unfcTitle": "Finish the Guitar FCs",
-        "unfcDesc": "Play these songs again on Guitar and grab an FC!",
+        "unfcTitle": "Finish the Lead FCs",
+        "unfcDesc": "Play these songs again on Lead and grab an FC!",
         "pctPushTitle": "Percentile Push: Bass",
         "pctPushDesc": "Replay these Bass songs to jump to the next percentile bracket.",
         "staleTitle": "Play Vocals This Season",

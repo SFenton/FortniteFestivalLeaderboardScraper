@@ -80,12 +80,12 @@ function wrap(ui: React.ReactElement) {
 describe('CategoryCardDemo', () => {
   it('renders the first category card title', () => {
     wrap(<CategoryCardDemo />);
-    expect(screen.getByText('Finish the Guitar FCs')).toBeTruthy();
+    expect(screen.getByText('Finish the Lead FCs')).toBeTruthy();
   });
 
   it('renders the first category card description', () => {
     wrap(<CategoryCardDemo />);
-    expect(screen.getByText('Play these songs again on Guitar and grab an FC!')).toBeTruthy();
+    expect(screen.getByText('Play these songs again on Lead and grab an FC!')).toBeTruthy();
   });
 
   it('renders song rows from demo data', () => {
@@ -106,14 +106,14 @@ describe('CategoryCardDemo', () => {
     mockSlideHeight = 0;
     wrap(<CategoryCardDemo />);
     // h=0 → maxSongs = MAX_DEMO_SONGS (5)
-    expect(screen.getByText('Finish the Guitar FCs')).toBeTruthy();
+    expect(screen.getByText('Finish the Lead FCs')).toBeTruthy();
   });
 
   it('handles very small height (1 song minimum)', () => {
     mockSlideHeight = 100;
     // (100-96)/52 = 0.07 → max(1, floor) = 1
     wrap(<CategoryCardDemo />);
-    expect(screen.getByText('Finish the Guitar FCs')).toBeTruthy();
+    expect(screen.getByText('Finish the Lead FCs')).toBeTruthy();
   });
 });
 
@@ -168,7 +168,7 @@ describe('GlobalFilterDemo', () => {
 describe('InfiniteScrollDemo', () => {
   it('renders category cards from templates', () => {
     wrap(<InfiniteScrollDemo />);
-    expect(screen.getByText('Finish the Guitar FCs')).toBeTruthy();
+    expect(screen.getByText('Finish the Lead FCs')).toBeTruthy();
     expect(screen.getByText('Percentile Push: Bass')).toBeTruthy();
   });
 

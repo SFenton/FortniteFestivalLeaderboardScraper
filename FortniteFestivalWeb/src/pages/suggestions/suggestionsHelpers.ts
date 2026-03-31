@@ -7,6 +7,7 @@ import { globalKeyFor, getCategoryTypeId, getCategoryInstrument, perInstrumentKe
 import type { AppSettings } from '../../contexts/SettingsContext';
 import type { SuggestionCategory } from '@festival/core/suggestions/types';
 import { estimateVisibleCount } from '@festival/ui-utils';
+import i18next from 'i18next';
 
 export const FILTER_STORAGE_KEY = 'fst-suggestions-filter';
 
@@ -186,9 +187,9 @@ export function resolveCategoryI18n(
   };
 }
 
-const INSTRUMENT_LABELS: Record<string, string> = {
-  guitar: 'Guitar', bass: 'Bass', drums: 'Drums', vocals: 'Vocals',
-  pro_guitar: 'Pro Guitar', pro_bass: 'Pro Bass',
+const INSTRUMENT_I18N_KEYS: Record<string, string> = {
+  guitar: 'instruments.lead', bass: 'instruments.bass', drums: 'instruments.drums', vocals: 'instruments.vocals',
+  pro_guitar: 'instruments.proLead', pro_bass: 'instruments.proBass',
 };
 
 const INSTRUMENT_KEYS = ['pro_guitar', 'pro_bass', 'guitar', 'bass', 'drums', 'vocals'] as const;
@@ -238,7 +239,8 @@ function extractSongNameParam(key: string, title: string): string | undefined {
 
 function extractInstrumentParam(key: string): string | undefined {
   for (const ins of INSTRUMENT_KEYS) {
-    if (key.endsWith(`_${ins}`)) return INSTRUMENT_LABELS[ins];
+    const i18nKey = INSTRUMENT_I18N_KEYS[ins];
+    if (key.endsWith(`_${ins}`) && i18nKey) return i18next.t(i18nKey);
   }
   return undefined;
 }

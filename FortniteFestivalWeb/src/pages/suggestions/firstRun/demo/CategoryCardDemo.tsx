@@ -3,6 +3,7 @@
  * every 5 seconds with a fade-out/in transition. Uses real songs from the catalog.
  */
 import { useState, useEffect, useMemo, useRef, useCallback, type CSSProperties } from 'react';
+import { useTranslation } from 'react-i18next';
 import type { SuggestionCategory, SuggestionSongItem } from '@festival/core/suggestions/types';
 import { CategoryCard } from '../../components/CategoryCard';
 import { useFestival } from '../../../../contexts/FestivalContext';
@@ -16,38 +17,39 @@ const MAX_DEMO_SONGS = 5;
 
 type CardTemplate = {
   key: string;
-  title: string;
-  description: string;
+  titleKey: string;
+  descKey: string;
   songMeta: (i: number) => Partial<SuggestionSongItem>;
 };
 
 const TEMPLATES: CardTemplate[] = [
   {
-    key: 'unfc_guitar', title: 'Finish the Guitar FCs',
-    description: 'Play these songs again on Guitar and grab an FC!',
+    key: 'unfc_guitar', titleKey: 'firstRun.suggestions.demo.unfcTitle',
+    descKey: 'firstRun.suggestions.demo.unfcDesc',
     songMeta: (i) => ({ percent: 100 - i * 2, instrumentKey: 'guitar' as const }),
   },
   {
-    key: 'pct_push_bass', title: 'Percentile Push: Bass',
-    description: 'Replay these Bass songs to jump to the next percentile bracket.',
+    key: 'pct_push_bass', titleKey: 'firstRun.suggestions.demo.pctPushTitle',
+    descKey: 'firstRun.suggestions.demo.pctPushDesc',
     /* v8 ignore next -- songMeta only called when timer rotates to this template */
     songMeta: (i) => ({ percentileDisplay: `Top ${3 + i}%`, instrumentKey: 'bass' as const }),
   },
   {
-    key: 'near_fc_any', title: 'FC These Next!',
-    description: 'If you can get gold stars, you can FC it!',
+    key: 'near_fc_any', titleKey: 'firstRun.suggestions.demo.nearFcTitle',
+    descKey: 'firstRun.suggestions.demo.nearFcDesc',
     /* v8 ignore next -- songMeta only called when timer rotates to this template */
     songMeta: (i) => ({ instrumentKey: (['guitar', 'bass', 'drums', 'vocals'] as const)[i % 4] }),
   },
   {
-    key: 'unplayed_drums', title: 'New on Drums',
-    description: "Songs you haven't played on Drums yet.",
+    key: 'unplayed_drums', titleKey: 'firstRun.suggestions.demo.unplayedTitle',
+    descKey: 'firstRun.suggestions.demo.unplayedDesc',
     /* v8 ignore next -- songMeta only called when timer rotates to this template */
     songMeta: () => ({ instrumentKey: 'drums' as const }),
   },
 ];
 
 export default function CategoryCardDemo() {
+  const { t } = useTranslation();
   const h = useSlideHeight();
   const { state: { songs: apiSongs } } = useFestival();
   const [templateIdx, setTemplateIdx] = useState(0);
@@ -108,12 +110,12 @@ export default function CategoryCardDemo() {
     }
     const cat: SuggestionCategory = {
       key: tmpl.key,
-      title: tmpl.title,
-      description: tmpl.description,
+      title: t(tmpl.titleKey),
+      description: t(tmpl.descKey),
       songs: demoSongs,
     };
     return { category: cat, albumArtMap: artMap };
-  }, [apiSongs, maxSongs, templateIdx]);
+  }, [apiSongs, maxSongs, templateIdx, t]);
 
   const emptyScores = useMemo(() => ({}), []);
   const s = useStyles(visible);
