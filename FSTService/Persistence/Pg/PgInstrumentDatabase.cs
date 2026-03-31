@@ -99,7 +99,8 @@ public sealed class PgInstrumentDatabase : IInstrumentDatabase
             c.Transaction = tx;
             c.CommandText =
                 "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, first_seen_at, last_updated_at) " +
-                "SELECT song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, ts, ts FROM _le_staging " +
+                "SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, ts, ts FROM _le_staging " +
+                "ORDER BY song_id, instrument, account_id, score DESC " +
                 "ON CONFLICT(song_id, instrument, account_id) DO UPDATE SET " +
                 "score = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.score ELSE leaderboard_entries.score END, " +
                 "accuracy = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.accuracy ELSE leaderboard_entries.accuracy END, " +
