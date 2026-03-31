@@ -127,6 +127,17 @@ public sealed class ScraperWorker : BackgroundService
                     registeredIds, TimeSpan.FromMinutes(2), stoppingToken);
         }
 
+        // Load precomputed API responses from disk (if available from --precompute).
+        // This makes the first requests after launch instant for registered players.
+        {
+            var precomputeDir = Path.Combine(Path.GetFullPath(opts.DataDirectory), ScrapeTimePrecomputer.PrecomputedSubdir);
+            if (await _precomputer.LoadFromDiskAsync(precomputeDir, stoppingToken))
+            {
+                _log.LogInformation("Loaded {Count} precomputed responses from disk.", _precomputer.Count);
+                _songsCache.Invalidate(); // Rebuild with population tiers
+            }
+        }
+
         // --api-only mode: skip all background work, let the API serve requests
         if (opts.ApiOnly)
         {
@@ -384,6 +395,18 @@ public sealed class ScraperWorker : BackgroundService
         // so explicit RunBackfillAsync/RunHistoryReconAsync are no longer needed
         // in the normal scrape pass.
         await _postScrapeOrchestrator.RunAsync(result.Context, service, ct);
+
+        // Persist precomputed responses to disk so the next service restart
+        // serves instant API responses from the first request.
+        try
+        {
+            var precomputeDir = Path.Combine(Path.GetFullPath(_options.Value.DataDirectory), ScrapeTimePrecomputer.PrecomputedSubdir);
+            await _precomputer.SaveToDiskAsync(precomputeDir, ct);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to persist precomputed data to disk (non-fatal).");
+        }
 
         _songsCache.Invalidate();
         _playerCache.InvalidateAll();

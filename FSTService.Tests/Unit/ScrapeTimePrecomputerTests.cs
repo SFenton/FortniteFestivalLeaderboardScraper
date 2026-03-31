@@ -253,6 +253,51 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         Assert.True(firstTier.TryGetProperty("rank", out _));
     }
 
+    [Fact]
+    public async Task SaveAndLoad_RoundTrips_Correctly()
+    {
+        RegisterUser("user1");
+        SeedSong("s1", "Solo_Guitar", 100000,
+            ("user1", 95000), ("p2", 90000));
+
+        await _sut.PrecomputeAllAsync(CancellationToken.None);
+
+        var precomputeDir = Path.Combine(_tempDir, "precomputed");
+        await _sut.SaveToDiskAsync(precomputeDir);
+
+        // Verify files were created
+        Assert.True(File.Exists(Path.Combine(precomputeDir, "responses.json.gz")));
+        Assert.True(File.Exists(Path.Combine(precomputeDir, "population-tiers.json.gz")));
+
+        // Create a fresh precomputer and load
+        var sut2 = new ScrapeTimePrecomputer(
+            _persistence, _metaDb, _pathDataStore,
+            Substitute.For<ILogger<ScrapeTimePrecomputer>>(),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.Equal(0, sut2.Count);
+        var loaded = await sut2.LoadFromDiskAsync(precomputeDir);
+        Assert.True(loaded);
+        Assert.True(sut2.Count > 0);
+
+        // Verify the player response round-trips
+        var original = _sut.TryGet("player:user1:::");
+        var restored = sut2.TryGet("player:user1:::");
+        Assert.NotNull(original);
+        Assert.NotNull(restored);
+        Assert.Equal(original.Value.ETag, restored.Value.ETag);
+
+        // Verify population tiers round-trip
+        Assert.NotNull(sut2.GetPopulationTiers());
+    }
+
+    [Fact]
+    public async Task LoadFromDisk_MissingDirectory_ReturnsFalse()
+    {
+        var loaded = await _sut.LoadFromDiskAsync(Path.Combine(_tempDir, "nonexistent"));
+        Assert.False(loaded);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────
 
     private static SongMaxScores CreateMaxScores(string instrument, int maxScore)

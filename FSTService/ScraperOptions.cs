@@ -105,6 +105,13 @@ public sealed class ScraperOptions
     /// </summary>
     public bool MigrateToPg { get; set; }
 
+    /// <summary>
+    /// When true, precompute player and leaderboard API responses to disk and exit.
+    /// The service loads these on next startup for instant responses from the first request.
+    /// Set via <c>--precompute</c> CLI argument.
+    /// </summary>
+    public bool PrecomputeOnly { get; set; }
+
     // ─── Path Generation ───────────────────────────────────────
 
     /// <summary>

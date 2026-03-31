@@ -98,6 +98,10 @@ builder.Services.PostConfigure<ScraperOptions>(opts =>
         {
             opts.MigrateToPg = true;
         }
+        else if (args[i].Equals("--precompute", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.PrecomputeOnly = true;
+        }
     }
 });
 
@@ -403,6 +407,32 @@ if (dbProvider.Equals("PostgreSQL", StringComparison.OrdinalIgnoreCase))
         var dataDir = Path.GetFullPath(scraperOpts.DataDirectory);
         await FSTService.Persistence.Pg.DataMigrator.MigrateAsync(dataDir, pgDs, migLog);
         migLog.LogInformation("Migration complete. Exiting.");
+        return;
+    }
+}
+
+// One-shot precompute: --precompute
+{
+    var scraperOpts2 = app.Services.GetRequiredService<IOptions<ScraperOptions>>().Value;
+    if (scraperOpts2.PrecomputeOnly)
+    {
+        var precompLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Precompute");
+        precompLog.LogInformation("--precompute: initializing databases...");
+
+        // Wait for DB initialization
+        var dbInit = app.Services.GetRequiredService<DatabaseInitializer>();
+        await dbInit.WaitForReadyAsync(CancellationToken.None);
+
+        precompLog.LogInformation("--precompute: running precomputation...");
+        var precomputer = app.Services.GetRequiredService<ScrapeTimePrecomputer>();
+        await precomputer.PrecomputeAllAsync(CancellationToken.None);
+
+        var dataDir = Path.GetFullPath(scraperOpts2.DataDirectory);
+        var precomputeDir = Path.Combine(dataDir, ScrapeTimePrecomputer.PrecomputedSubdir);
+        await precomputer.SaveToDiskAsync(precomputeDir, CancellationToken.None);
+
+        precompLog.LogInformation("--precompute: saved {Count} responses to {Dir}. Exiting.",
+            precomputer.Count, precomputeDir);
         return;
     }
 }
