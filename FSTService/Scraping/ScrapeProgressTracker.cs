@@ -444,12 +444,12 @@ public sealed class ScrapeProgressTracker
         else
             bestEstimateTotalPages = cached > 0 ? cached : totalLb;
 
-        double progressPercent = bestEstimateTotalPages > 0
-            ? Math.Min(100.0, (double)fetched / bestEstimateTotalPages * 100.0)
+        double progressPercent = totalLb > 0
+            ? Math.Min(100.0, (double)completedLb / totalLb * 100.0)
             : 0;
 
         TimeSpan? estimatedRemaining = null;
-        if (fetched > 0 && progressPercent is > 0 and < 100)
+        if (completedLb > 0 && progressPercent is > 0 and < 100)
         {
             var totalEstimatedTime = elapsed / (progressPercent / 100.0);
             estimatedRemaining = totalEstimatedTime - elapsed;

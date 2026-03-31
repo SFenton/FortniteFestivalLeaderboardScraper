@@ -161,10 +161,9 @@ public class ScrapeProgressTrackerTests
     [Fact]
     public void ScrapingSnapshot_ProgressPercent_Calculated()
     {
-        _tracker.BeginPass(1, 1, 0);
-        _tracker.ReportPage0(10);
-        _tracker.ReportPageFetched(100); // 1 fetched
-        _tracker.ReportPageFetched(100); // 2 fetched
+        _tracker.BeginPass(10, 5, 0);
+        _tracker.ReportLeaderboardComplete("Solo_Guitar");
+        _tracker.ReportLeaderboardComplete("Solo_Guitar");
 
         var progress = _tracker.GetProgressResponse();
         // 2/10 = 20%
@@ -172,15 +171,33 @@ public class ScrapeProgressTrackerTests
     }
 
     [Fact]
-    public void ScrapingSnapshot_ProgressPercent_CappedAt100()
+    public void ScrapingSnapshot_ProgressPercent_100_WhenAllLeaderboardsComplete()
     {
-        _tracker.BeginPass(1, 1, 0);
-        _tracker.ReportPage0(1);
-        _tracker.ReportPageFetched(100); // 1 fetched
-        _tracker.ReportPageFetched(100); // 2 fetched (more than total)
+        _tracker.BeginPass(2, 1, 0);
+        _tracker.ReportLeaderboardComplete("Solo_Guitar");
+        _tracker.ReportLeaderboardComplete("Solo_Bass");
 
         var progress = _tracker.GetProgressResponse();
         Assert.Equal(100.0, progress.Current?.ProgressPercent);
+    }
+
+    [Fact]
+    public void ScrapingSnapshot_ProgressPercent_NotInflatedByExtraPages()
+    {
+        // Deep scrape can fetch more pages than estimated — progress should
+        // reflect leaderboard completion, not page count.
+        _tracker.BeginPass(2, 1, 0);
+        _tracker.ReportPage0(5);
+        _tracker.ReportPageFetched(100);
+        _tracker.ReportPageFetched(100);
+        _tracker.ReportPageFetched(100);
+        _tracker.ReportPageFetched(100);
+        _tracker.ReportPageFetched(100);
+        _tracker.ReportPageFetched(100); // 6 fetched > 5 estimated
+        _tracker.ReportLeaderboardComplete("Solo_Guitar"); // only 1 of 2 done
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal(50.0, progress.Current?.ProgressPercent);
     }
 
     // ─── Name resolution ────────────────────────────────
