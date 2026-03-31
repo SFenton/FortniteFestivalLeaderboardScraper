@@ -306,7 +306,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
             Arg.Any<CancellationToken>(),
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
-            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>())
+            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>())
             .Returns(async callInfo =>
             {
                 var onSongComplete = callInfo.ArgAt<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(4);
@@ -361,7 +361,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
             Arg.Any<CancellationToken>(),
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
-            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>())
+            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>())
             .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>()));
 
         _nameResolver.ResolveNewAccountsAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
@@ -410,7 +410,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
             Arg.Any<CancellationToken>(),
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
-            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>())
+            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>())
             .Returns(async callInfo =>
             {
                 var cb = callInfo.ArgAt<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(4);
@@ -451,7 +451,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
             Arg.Any<CancellationToken>(),
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
-            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>())
+            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>())
             .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>()));
 
         _nameResolver.ResolveNewAccountsAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
@@ -489,7 +489,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<Func<string, List<GlobalLeaderboardResult>, ValueTask>?>(),
             Arg.Any<CancellationToken>(),
             Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<int>(),
-            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>())
+            Arg.Any<int>(), Arg.Any<double>(), Arg.Any<int>(), Arg.Any<int>(), Arg.Any<AdaptiveConcurrencyLimiter?>(), Arg.Any<bool>())
             .Returns(Task.FromResult(new Dictionary<string, List<GlobalLeaderboardResult>>()));
 
         _nameResolver.ResolveNewAccountsAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())

@@ -700,7 +700,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     /// Delegates all retry/CDN logic to <see cref="ResilientHttpExecutor"/>.
     /// Thread-safe (no shared mutable state).
     /// </summary>
-    private async Task<(ParsedPage? Page, int BodyLength, FetchStatus Status)> FetchPageAsync(
+    internal async Task<(ParsedPage? Page, int BodyLength, FetchStatus Status)> FetchPageAsync(
         string songId,
         string instrument,
         int page,
@@ -808,7 +808,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int? choptMaxScore = null,
         double overThresholdMultiplier = 1.05,
         int overThresholdExtraPages = 100,
-        int validEntryTarget = 0)
+        int validEntryTarget = 0,
+        bool deferDeepScrape = false)
     {
         // ── Page 0: discover totalPages ──
         bool page0Acquired = false;
@@ -968,15 +969,56 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
         // ── Wave 2: deep scrape extension ──
         // If deep scrape was triggered, fetch additional pages beyond the normal cap.
-        // When validEntryTarget > 0: fetch in batches until enough valid entries are found.
-        // When validEntryTarget == 0 (legacy): fetch a fixed OverThresholdExtraPages block.
+        // When deferDeepScrape is true and target-driven mode is active, skip wave 2
+        // and return metadata so a DeepScrapeCoordinator can run it breadth-first.
+        // When validEntryTarget == 0 (legacy): fetch a fixed OverThresholdExtraPages block inline.
         if (deepScrapeTriggered && totalPages < reportedPages)
         {
             int wave2Start = totalPages;
 
+            if (deferDeepScrape && validEntryTarget > 0)
+            {
+                // ── Deferred mode: return metadata for coordinated deep scrape ──
+                int validCount = allEntries.Values.Sum(page => page.Count(e => e.Score <= validCutoff));
+                _log.LogInformation(
+                    "Deferring deep scrape for {Label} ({Song}/{Instrument}): " +
+                    "{ValidCount:N0} valid entries from wave 1, wave 2 starts at page {Wave2Start} (of {ReportedPages:N0} reported).",
+                    label ?? songId, songId, instrument, validCount, wave2Start, reportedPages);
+
+                var wave1Ordered = allEntries
+                    .OrderBy(x => x.Key)
+                    .SelectMany(x => x.Value)
+                    .ToList();
+
+                _progress.ReportLeaderboardComplete(instrument);
+
+                return new GlobalLeaderboardResult
+                {
+                    SongId = songId,
+                    Instrument = instrument,
+                    Entries = wave1Ordered,
+                    TotalPages = totalPages,
+                    ReportedTotalPages = reportedPages,
+                    PagesScraped = allEntries.Count,
+                    Requests = requestCount,
+                    BytesReceived = totalBytes,
+                    DeferredDeepScrape = new DeepScrapeMetadata
+                    {
+                        SongId = songId,
+                        Instrument = instrument,
+                        Label = label,
+                        ValidCutoff = validCutoff,
+                        Wave2Start = wave2Start,
+                        ReportedPages = reportedPages,
+                        InitialValidCount = validCount,
+                        Wave1Entries = allEntries,
+                    },
+                };
+            }
+
             if (validEntryTarget > 0)
             {
-                // ── Target-driven mode: fetch in batches until valid entry target is met ──
+                // ── Target-driven mode (inline): fetch in batches until valid entry target is met ──
                 // Valid entries are those at or below raw CHOpt max (validCutoff), not the trigger threshold.
                 int validCount = allEntries.Values.Sum(page => page.Count(e => e.Score <= validCutoff));
                 int nextPage = wave2Start;
@@ -1228,7 +1270,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         SongMaxScores? maxScores = null,
         double overThresholdMultiplier = 1.05,
         int overThresholdExtraPages = 100,
-        int validEntryTarget = 0)
+        int validEntryTarget = 0,
+        bool deferDeepScrape = false)
     {
         var instList = (instruments ?? AllInstruments).ToList();
         var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(
@@ -1242,11 +1285,35 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             return ScrapeLeaderboardAsync(songId, inst, accessToken, accountId, limiter, ct, label, maxPages,
                 choptMaxScore: choptMax, overThresholdMultiplier: overThresholdMultiplier,
                 overThresholdExtraPages: overThresholdExtraPages,
-                validEntryTarget: validEntryTarget);
+                validEntryTarget: validEntryTarget,
+                deferDeepScrape: deferDeepScrape);
         }).ToList();
 
         var resultsArr = await Task.WhenAll(tasks);
-        return resultsArr.ToList();
+        var resultsList = resultsArr.ToList();
+
+        // Run coordinated deep scrape for any deferred instruments
+        if (deferDeepScrape && validEntryTarget > 0)
+        {
+            var deferredMetadata = resultsList
+                .Where(r => r.DeferredDeepScrape is not null)
+                .Select(r => r.DeferredDeepScrape!)
+                .ToList();
+
+            if (deferredMetadata.Count > 0)
+            {
+                var coordinator = new DeepScrapeCoordinator(this, _progress, _log);
+                var deepJobs = DeepScrapeCoordinator.BuildJobs(deferredMetadata, validEntryTarget);
+
+                await coordinator.RunAsync(
+                    deepJobs, limiter, accessToken, accountId,
+                    seedBatch: overThresholdExtraPages,
+                    onJobComplete: null,
+                    ct);
+            }
+        }
+
+        return resultsList;
     }
 
     /// <summary>
@@ -1287,7 +1354,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         double overThresholdMultiplier = 1.05,
         int overThresholdExtraPages = 100,
         int validEntryTarget = 0,
-        AdaptiveConcurrencyLimiter? sharedLimiter = null)
+        AdaptiveConcurrencyLimiter? sharedLimiter = null,
+        bool deferDeepScrape = false)
     {
         if (sequential)
             return await ScrapeManySongsSequentialAsync(
@@ -1319,7 +1387,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 maxScores: req.MaxScores,
                 overThresholdMultiplier: overThresholdMultiplier,
                 overThresholdExtraPages: overThresholdExtraPages,
-                validEntryTarget: validEntryTarget);
+                validEntryTarget: validEntryTarget,
+                deferDeepScrape: deferDeepScrape);
 
             results[req.SongId] = songResults;
 
@@ -1332,6 +1401,45 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         }).ToList();
 
         await Task.WhenAll(tasks);
+
+        // ── Phase 2: Coordinated deep scrape ──
+        // Collect deferred deep scrape metadata from wave 1 results.
+        // Run them breadth-first through the coordinator so lowest pages
+        // across all combos are fetched first, keeping the DOP saturated.
+        if (deferDeepScrape && validEntryTarget > 0)
+        {
+            var deferredMetadata = results.Values
+                .SelectMany(songResults => songResults)
+                .Where(r => r.DeferredDeepScrape is not null)
+                .Select(r => r.DeferredDeepScrape!)
+                .ToList();
+
+            if (deferredMetadata.Count > 0)
+            {
+                _log.LogInformation(
+                    "Starting coordinated deep scrape: {Count} combos deferred from wave 1.",
+                    deferredMetadata.Count);
+
+                _progress.SetSubOperation("deep_scraping");
+
+                var coordinator = new DeepScrapeCoordinator(this, _progress, _log);
+                var deepJobs = DeepScrapeCoordinator.BuildJobs(deferredMetadata, validEntryTarget);
+
+                var deepResults = await coordinator.RunAsync(
+                    deepJobs, limiter, accessToken, accountId,
+                    seedBatch: overThresholdExtraPages,
+                    onJobComplete: async deepResult =>
+                    {
+                        if (deepResult.Entries.Count == 0) return;
+
+                        // Fire callback with deep scrape results for persistence (upsert handles merges)
+                        if (onSongComplete is not null)
+                            await onSongComplete(deepResult.SongId, [deepResult]);
+                    },
+                    ct);
+            }
+        }
+
         _progress.SetAdaptiveLimiter(null);
 
         return new Dictionary<string, List<GlobalLeaderboardResult>>(results);
@@ -1597,7 +1705,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         }
     }
 
-    private sealed class ParsedPage
+    internal sealed class ParsedPage
     {
         public int Page { get; init; }
         public int TotalPages { get; init; }
@@ -1745,6 +1853,27 @@ public sealed class SessionHistoryEntry
 }
 
 /// <summary>
+/// Metadata needed to run a deferred deep scrape for one song+instrument.
+/// Populated when <c>deferDeepScrape</c> is true and the leaderboard triggers deep scraping.
+/// </summary>
+public sealed class DeepScrapeMetadata
+{
+    public required string SongId { get; init; }
+    public required string Instrument { get; init; }
+    public string? Label { get; init; }
+    /// <summary>Raw CHOpt max score — entries above this are over-threshold.</summary>
+    public required int ValidCutoff { get; init; }
+    /// <summary>First page number for wave 2 (= clamped totalPages from wave 1).</summary>
+    public required int Wave2Start { get; init; }
+    /// <summary>Total pages reported by Epic's API (unclamped).</summary>
+    public required int ReportedPages { get; init; }
+    /// <summary>Valid entries (≤ ValidCutoff) already captured in wave 1.</summary>
+    public required int InitialValidCount { get; init; }
+    /// <summary>Wave 1 entries keyed by page number, needed for merging with deep scrape results.</summary>
+    public required ConcurrentDictionary<int, List<LeaderboardEntry>> Wave1Entries { get; init; }
+}
+
+/// <summary>
 /// Result of scraping one song+instrument leaderboard.
 /// </summary>
 public sealed class GlobalLeaderboardResult
@@ -1758,4 +1887,9 @@ public sealed class GlobalLeaderboardResult
     public int PagesScraped { get; init; }
     public int Requests { get; init; }
     public long BytesReceived { get; init; }
+    /// <summary>
+    /// When non-null, deep scraping was triggered but deferred for coordinated execution.
+    /// The coordinator should use this metadata to run wave 2 breadth-first across all deferred combos.
+    /// </summary>
+    public DeepScrapeMetadata? DeferredDeepScrape { get; init; }
 }

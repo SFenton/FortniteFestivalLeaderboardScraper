@@ -439,4 +439,89 @@ public class DeepScrapeTests
         Assert.Equal(6, result.Entries.Count);
         Assert.Equal(5, result.PagesScraped);
     }
+
+    // ─── Deferred deep scrape: returns metadata, no wave 2 pages fetched ──
+
+    [Fact]
+    public async Task DeferDeepScrape_ReturnsMetadata_NoWave2()
+    {
+        var (scraper, handler) = CreateScraper();
+
+        // CHOpt max = 1000, threshold = 1050. Top score 1100 → deep scrape triggered.
+        // With deferDeepScrape=true, wave 2 should NOT run.
+        handler.EnqueueJsonOk(MakePage(0, 10, ("p1", 1100), ("p2", 900)));
+        handler.EnqueueJsonOk(MakePage(1, 10, ("p3", 800)));
+        // No additional pages should be fetched
+
+        var result = await scraper.ScrapeLeaderboardAsync(
+            "song1", "Solo_Guitar", "token", "acct",
+            maxPages: 2,
+            choptMaxScore: 1000,
+            overThresholdMultiplier: 1.05,
+            overThresholdExtraPages: 3,
+            validEntryTarget: 5,
+            deferDeepScrape: true);
+
+        // Only wave 1 entries
+        Assert.Equal(3, result.Entries.Count);
+        Assert.Equal(2, result.PagesScraped);
+
+        // Metadata should be populated
+        Assert.NotNull(result.DeferredDeepScrape);
+        Assert.Equal("song1", result.DeferredDeepScrape.SongId);
+        Assert.Equal("Solo_Guitar", result.DeferredDeepScrape.Instrument);
+        Assert.Equal(1000, result.DeferredDeepScrape.ValidCutoff);
+        Assert.Equal(2, result.DeferredDeepScrape.Wave2Start);
+        Assert.Equal(10, result.DeferredDeepScrape.ReportedPages);
+        Assert.Equal(2, result.DeferredDeepScrape.InitialValidCount); // p2=900, p3=800
+        Assert.NotNull(result.DeferredDeepScrape.Wave1Entries);
+        Assert.Equal(2, result.DeferredDeepScrape.Wave1Entries.Count); // pages 0 and 1
+    }
+
+    [Fact]
+    public async Task DeferDeepScrape_NoTrigger_NullMetadata()
+    {
+        var (scraper, handler) = CreateScraper();
+
+        // Top score under threshold → no deep scrape → DeferredDeepScrape should be null.
+        handler.EnqueueJsonOk(MakePage(0, 2, ("p1", 900)));
+        handler.EnqueueJsonOk(MakePage(1, 2, ("p2", 800)));
+
+        var result = await scraper.ScrapeLeaderboardAsync(
+            "song1", "Solo_Guitar", "token", "acct",
+            maxPages: 100,
+            choptMaxScore: 1000,
+            deferDeepScrape: true);
+
+        Assert.Equal(2, result.Entries.Count);
+        Assert.Null(result.DeferredDeepScrape);
+    }
+
+    [Fact]
+    public async Task DeferDeepScrape_LegacyMode_StillRunsInline()
+    {
+        var (scraper, handler) = CreateScraper();
+
+        // validEntryTarget=0 (legacy) + deferDeepScrape=true → should NOT defer,
+        // because deferring only applies to target-driven mode.
+        handler.EnqueueJsonOk(MakePage(0, 5, ("p1", 1100), ("p2", 900)));
+        handler.EnqueueJsonOk(MakePage(1, 5, ("p3", 800)));
+        handler.EnqueueJsonOk(MakePage(2, 5, ("p4", 700)));
+        handler.EnqueueJsonOk(MakePage(3, 5, ("p5", 600)));
+        handler.EnqueueJsonOk(MakePage(4, 5, ("p6", 500)));
+
+        var result = await scraper.ScrapeLeaderboardAsync(
+            "song1", "Solo_Guitar", "token", "acct",
+            maxPages: 2,
+            choptMaxScore: 1000,
+            overThresholdMultiplier: 1.05,
+            overThresholdExtraPages: 3,
+            validEntryTarget: 0,
+            deferDeepScrape: true);
+
+        // Legacy mode runs inline → all entries present
+        Assert.Equal(6, result.Entries.Count);
+        Assert.Equal(5, result.PagesScraped);
+        Assert.Null(result.DeferredDeepScrape);
+    }
 }
