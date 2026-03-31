@@ -95,6 +95,11 @@ public interface IMetaDatabase : IDisposable
     void UpsertPlayerStats(PlayerStatsDto stats);
     List<PlayerStatsDto> GetPlayerStats(string accountId);
 
+    // ── Player stats tiers (leeway breakpoint system) ────────────────
+    void UpsertPlayerStatsTiers(string accountId, string instrument, string tiersJson);
+    void UpsertPlayerStatsTiersBatch(IReadOnlyList<PlayerStatsTiersRow> rows);
+    List<PlayerStatsTiersRow> GetPlayerStatsTiers(string accountId);
+
     // ── First seen season ────────────────────────────────────────────
     HashSet<string> GetSongsWithFirstSeenSeason();
     int? GetFirstSeenSeason(string songId);

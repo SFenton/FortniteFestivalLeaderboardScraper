@@ -207,6 +207,14 @@ public sealed class MetaDatabase : IMetaDatabase
                 PRIMARY KEY (AccountId, Instrument)
             );
 
+            CREATE TABLE IF NOT EXISTS PlayerStatsTiers (
+                AccountId  TEXT NOT NULL,
+                Instrument TEXT NOT NULL,
+                TiersJson  TEXT NOT NULL DEFAULT '[]',
+                UpdatedAt  TEXT NOT NULL,
+                PRIMARY KEY (AccountId, Instrument)
+            );
+
             CREATE TABLE IF NOT EXISTS DataVersion (
                 Key     TEXT PRIMARY KEY,
                 Version INTEGER NOT NULL
@@ -2013,6 +2021,85 @@ public sealed class MetaDatabase : IMetaDatabase
                 PercentileDist = reader.IsDBNull(8) ? null : reader.GetString(8),
                 AvgPercentile = reader.IsDBNull(9) ? null : reader.GetString(9),
                 OverallPercentile = reader.IsDBNull(10) ? null : reader.GetString(10),
+            });
+        }
+        return list;
+    }
+
+    // ── Player stats tiers ───────────────────────────────────────
+
+    public void UpsertPlayerStatsTiers(string accountId, string instrument, string tiersJson)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        lock (_writeLock)
+        {
+            using var conn = OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO PlayerStatsTiers (AccountId, Instrument, TiersJson, UpdatedAt)
+                VALUES (@accountId, @instrument, @tiers, @now)
+                ON CONFLICT(AccountId, Instrument) DO UPDATE SET
+                    TiersJson = excluded.TiersJson,
+                    UpdatedAt = excluded.UpdatedAt;
+                """;
+            cmd.Parameters.AddWithValue("@accountId", accountId);
+            cmd.Parameters.AddWithValue("@instrument", instrument);
+            cmd.Parameters.AddWithValue("@tiers", tiersJson);
+            cmd.Parameters.AddWithValue("@now", now);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    public void UpsertPlayerStatsTiersBatch(IReadOnlyList<PlayerStatsTiersRow> rows)
+    {
+        if (rows.Count == 0) return;
+        var now = DateTime.UtcNow.ToString("o");
+        lock (_writeLock)
+        {
+            using var conn = OpenConnection();
+            using var tx = conn.BeginTransaction();
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO PlayerStatsTiers (AccountId, Instrument, TiersJson, UpdatedAt)
+                VALUES (@accountId, @instrument, @tiers, @now)
+                ON CONFLICT(AccountId, Instrument) DO UPDATE SET
+                    TiersJson = excluded.TiersJson,
+                    UpdatedAt = excluded.UpdatedAt;
+                """;
+            var pAcct = cmd.Parameters.Add("@accountId", SqliteType.Text);
+            var pInst = cmd.Parameters.Add("@instrument", SqliteType.Text);
+            var pTiers = cmd.Parameters.Add("@tiers", SqliteType.Text);
+            var pNow = cmd.Parameters.Add("@now", SqliteType.Text);
+            cmd.Prepare();
+            foreach (var r in rows)
+            {
+                pAcct.Value = r.AccountId;
+                pInst.Value = r.Instrument;
+                pTiers.Value = r.TiersJson;
+                pNow.Value = now;
+                cmd.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+    }
+
+    public List<PlayerStatsTiersRow> GetPlayerStatsTiers(string accountId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Instrument, TiersJson, UpdatedAt FROM PlayerStatsTiers WHERE AccountId = @accountId";
+        cmd.Parameters.AddWithValue("@accountId", accountId);
+        var list = new List<PlayerStatsTiersRow>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new PlayerStatsTiersRow
+            {
+                AccountId = accountId,
+                Instrument = reader.GetString(0),
+                TiersJson = reader.GetString(1),
+                UpdatedAt = reader.GetString(2),
             });
         }
         return list;

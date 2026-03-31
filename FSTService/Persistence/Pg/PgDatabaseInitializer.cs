@@ -477,6 +477,19 @@ public static class PgDatabaseInitializer
         );
 
         -- =====================================================================
+        -- PLAYER STATS TIERS (leeway breakpoint system)
+        -- =====================================================================
+
+        CREATE TABLE IF NOT EXISTS player_stats_tiers (
+            account_id TEXT        NOT NULL,
+            instrument TEXT        NOT NULL,
+            tiers_json JSONB       NOT NULL DEFAULT '[]'::jsonb,
+            updated_at TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (account_id, instrument)
+        );
+        CREATE INDEX IF NOT EXISTS ix_pst_account ON player_stats_tiers (account_id);
+
+        -- =====================================================================
         -- DATA VERSION (from fst-meta.db)
         -- =====================================================================
 

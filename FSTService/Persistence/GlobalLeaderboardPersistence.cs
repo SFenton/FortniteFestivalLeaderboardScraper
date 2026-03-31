@@ -770,6 +770,20 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         => _instrumentDbs.Keys.ToList();
 
     /// <summary>
+    /// Get the total number of distinct songs across all instrument DBs.
+    /// </summary>
+    public int GetTotalSongCount()
+    {
+        var songIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var db in _instrumentDbs.Values)
+        {
+            foreach (var songId in db.GetAllSongCounts().Keys)
+                songIds.Add(songId);
+        }
+        return songIds.Count;
+    }
+
+    /// <summary>
     /// Prune all instrument DBs: for each song, keep only the top <paramref name="maxEntriesPerSong"/>
     /// entries (by score), plus any entries for accounts in <paramref name="preserveAccountIds"/>.
     /// When <paramref name="thresholdsPerInstrument"/> is provided, entries above the per-song

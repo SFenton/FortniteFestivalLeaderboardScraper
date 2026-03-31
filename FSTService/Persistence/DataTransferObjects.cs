@@ -167,6 +167,73 @@ public sealed class PlayerStatsDto
 }
 
 /// <summary>
+/// A single leeway breakpoint tier with fully precomputed statistics.
+/// Each tier represents a complete stats snapshot at a specific leeway threshold.
+/// The frontend picks the matching tier: <c>tiers.findLast(t =&gt; t.MinLeeway == null || t.MinLeeway &lt;= userLeeway)</c>.
+/// </summary>
+public sealed class PlayerStatsTier
+{
+    /// <summary>
+    /// Minimum leeway percentage required for this tier's score set to be active.
+    /// Null means the base tier (only scores at or below CHOpt max).
+    /// </summary>
+    public double? MinLeeway { get; set; }
+
+    // ── Score-dependent aggregates ────────────────────────────
+    public int SongsPlayed { get; set; }
+    public int OverThresholdCount { get; set; }
+    public int FcCount { get; set; }
+    public double FcPercent { get; set; }
+    public int GoldStarCount { get; set; }
+    public int FiveStarCount { get; set; }
+    public int FourStarCount { get; set; }
+    public int ThreeStarCount { get; set; }
+    public int TwoStarCount { get; set; }
+    public int OneStarCount { get; set; }
+    public double AvgAccuracy { get; set; }
+    public int BestAccuracy { get; set; }
+    public double AverageStars { get; set; }
+    public double AvgScore { get; set; }
+    public long TotalScore { get; set; }
+    public double CompletionPercent { get; set; }
+
+    // ── Rank-dependent aggregates ─────────────────────────────
+    public int BestRank { get; set; }
+    public string? BestRankSongId { get; set; }
+    /// <summary>JSON-encoded percentile distribution: {"1":5,"5":12,...}.</summary>
+    public string? PercentileDist { get; set; }
+    public string? AvgPercentile { get; set; }
+    public string? OverallPercentile { get; set; }
+    /// <summary>Top 5 songs by percentile: [{songId, percentile}].</summary>
+    public string? TopSongs { get; set; }
+    /// <summary>Bottom 5 songs by percentile: [{songId, percentile}].</summary>
+    public string? BottomSongs { get; set; }
+
+    // ── Overall-only field ────────────────────────────────────
+    /// <summary>Instrument of the best rank (only set on the "Overall" instrument row).</summary>
+    public string? BestRankInstrument { get; set; }
+}
+
+/// <summary>
+/// Stored per (account_id, instrument): the JSONB-serialized array of <see cref="PlayerStatsTier"/>.
+/// </summary>
+public sealed class PlayerStatsTiersRow
+{
+    public string AccountId { get; init; } = "";
+    public string Instrument { get; init; } = "";
+    /// <summary>JSON-serialized array of <see cref="PlayerStatsTier"/> ordered by MinLeeway ascending (null first).</summary>
+    public string TiersJson { get; init; } = "[]";
+    public string UpdatedAt { get; init; } = "";
+}
+
+/// <summary>Song reference in top/bottom song lists within a stats tier.</summary>
+public sealed class StatsSongRef
+{
+    public string SongId { get; set; } = "";
+    public double Percentile { get; set; }
+}
+
+/// <summary>
 /// DTO for batch-inserting score changes via <see cref="MetaDatabase.InsertScoreChanges"/>.
 /// </summary>
 public sealed class ScoreChangeRecord

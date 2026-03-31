@@ -98,6 +98,10 @@ public sealed class PostScrapeOrchestrator
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Precomputing);
         await _precomputer.PrecomputeAllAsync(ct);
 
+        // ── Compute player stats tiers for changed accounts ──
+        _progress.SetSubOperation("player_stats_tiers");
+        await ComputePlayerStatsTiersAsync(ctx, ct);
+
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Finalizing);
 
         // Checkpoint all WAL files after post-scrape writes (enrichment, refresh,
@@ -468,5 +472,123 @@ public sealed class PostScrapeOrchestrator
         {
             _log.LogWarning(ex, "Entry pruning failed. Will retry next pass.");
         }
+    }
+
+    /// <summary>
+    /// Compute leeway-tiered player stats for accounts whose scores changed in this scrape.
+    /// Pass 2 of the two-pass incremental strategy — score-dependent aggregates only.
+    /// (Pass 1 — rank refresh for all accounts — is future work.)
+    /// </summary>
+    internal async Task ComputePlayerStatsTiersAsync(ScrapePassContext ctx, CancellationToken ct)
+    {
+        var changedIds = ctx.Aggregates.ChangedAccountIds;
+        // Also include registered users (their stats should always be fresh)
+        var accountIds = new HashSet<string>(changedIds, StringComparer.OrdinalIgnoreCase);
+        foreach (var id in ctx.RegisteredIds)
+            accountIds.Add(id);
+
+        if (accountIds.Count == 0) return;
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        _log.LogInformation("Computing player stats tiers for {Count:N0} accounts ({Changed:N0} changed + {Registered:N0} registered).",
+            accountIds.Count, changedIds.Count, ctx.RegisteredIds.Count);
+
+        var allMaxScores = _pathDataStore.GetAllMaxScores();
+        var metaDb = _persistence.Meta;
+        var instrumentKeys = _persistence.GetInstrumentKeys();
+        int totalSongs = _persistence.GetTotalSongCount();
+        int computed = 0;
+
+        await Parallel.ForEachAsync(accountIds,
+            new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = ct },
+            (accountId, innerCt) =>
+            {
+                try
+                {
+                    ComputeAndStorePlayerStats(accountId, allMaxScores, instrumentKeys, totalSongs, metaDb);
+                    Interlocked.Increment(ref computed);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.LogWarning(ex, "Stats tier computation failed for {AccountId}.", accountId);
+                }
+                return ValueTask.CompletedTask;
+            });
+
+        sw.Stop();
+        _log.LogInformation("Computed player stats tiers for {Computed:N0}/{Total:N0} accounts in {Elapsed:F1}s.",
+            computed, accountIds.Count, sw.Elapsed.TotalSeconds);
+    }
+
+    private void ComputeAndStorePlayerStats(
+        string accountId,
+        Dictionary<string, SongMaxScores> allMaxScores,
+        IReadOnlyList<string> instrumentKeys,
+        int totalSongs,
+        IMetaDatabase metaDb)
+    {
+        var allScores = _persistence.GetPlayerProfile(accountId);
+        if (allScores.Count == 0) return;
+
+        // Group scores by instrument
+        var byInstrument = new Dictionary<string, List<PlayerScoreDto>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var s in allScores)
+        {
+            if (!byInstrument.TryGetValue(s.Instrument, out var list))
+            {
+                list = new List<PlayerScoreDto>();
+                byInstrument[s.Instrument] = list;
+            }
+            list.Add(s);
+        }
+
+        // Get fallbacks for registered users (score_history)
+        // For non-registered accounts, fallbacks will be null → scores are excluded instead
+        Dictionary<(string SongId, string Instrument), List<ValidScoreFallback>>? fallbacks = null;
+        var maxThresholds = new Dictionary<(string SongId, string Instrument), int>();
+        foreach (var s in allScores)
+        {
+            if (!allMaxScores.TryGetValue(s.SongId, out var ms)) continue;
+            var max = ms.GetByInstrument(s.Instrument);
+            if (max.HasValue && max.Value > 0 && s.Score > max.Value)
+                maxThresholds[(s.SongId, s.Instrument)] = (int)(max.Value * 1.05);
+        }
+        if (maxThresholds.Count > 0)
+            fallbacks = metaDb.GetAllValidScoreTiers(accountId, maxThresholds);
+
+        var rows = new List<PlayerStatsTiersRow>();
+        var perInstrumentTiers = new Dictionary<string, List<PlayerStatsTier>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var inst in instrumentKeys)
+        {
+            var scores = byInstrument.GetValueOrDefault(inst);
+            if (scores is null || scores.Count == 0) continue;
+
+            var tiers = PlayerStatsCalculator.ComputeTiers(scores, allMaxScores, inst, totalSongs, fallbacks);
+            perInstrumentTiers[inst] = tiers;
+
+            rows.Add(new PlayerStatsTiersRow
+            {
+                AccountId = accountId,
+                Instrument = inst,
+                TiersJson = System.Text.Json.JsonSerializer.Serialize(tiers,
+                    new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase }),
+            });
+        }
+
+        // Compute "Overall" tier
+        if (perInstrumentTiers.Count > 0)
+        {
+            var overallTiers = PlayerStatsCalculator.ComputeOverallTiers(perInstrumentTiers, totalSongs);
+            rows.Add(new PlayerStatsTiersRow
+            {
+                AccountId = accountId,
+                Instrument = "Overall",
+                TiersJson = System.Text.Json.JsonSerializer.Serialize(overallTiers,
+                    new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase }),
+            });
+        }
+
+        metaDb.UpsertPlayerStatsTiersBatch(rows);
     }
 }

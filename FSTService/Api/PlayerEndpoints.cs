@@ -363,9 +363,29 @@ public static partial class ApiEndpoints
         app.MapGet("/api/player/{accountId}/stats", (
             HttpContext httpContext,
             string accountId,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            GlobalLeaderboardPersistence persistence) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
+
+            // Return tiered stats if available, else fall back to legacy flat stats
+            var tierRows = metaDb.GetPlayerStatsTiers(accountId);
+            if (tierRows.Count > 0)
+            {
+                int totalSongs = persistence.GetTotalSongCount();
+                return Results.Ok(new
+                {
+                    accountId,
+                    totalSongs,
+                    instruments = tierRows.Select(r => new
+                    {
+                        instrument = r.Instrument,
+                        tiers = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(r.TiersJson),
+                    }).ToList(),
+                });
+            }
+
+            // Legacy fallback (PlayerStats table — rarely populated)
             var stats = metaDb.GetPlayerStats(accountId);
             if (stats.Count == 0)
                 return Results.Ok(new { accountId, stats = Array.Empty<object>() });
