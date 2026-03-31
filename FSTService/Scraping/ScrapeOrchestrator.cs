@@ -129,7 +129,14 @@ public sealed class ScrapeOrchestrator
         await _persistence.DrainWritersAsync();
 
         // Flush deferred account IDs accumulated during pipelined writes
-        _persistence.FlushDeferredAccountIds();
+        try
+        {
+            _persistence.FlushDeferredAccountIds();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Deferred account ID flush failed. IDs will be re-encountered next pass.");
+        }
 
         // Checkpoint all WAL files after the heavy write phase to keep them small
         // and prevent auto-checkpoints from firing during API reads.

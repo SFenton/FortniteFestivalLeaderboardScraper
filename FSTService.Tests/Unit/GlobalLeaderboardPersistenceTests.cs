@@ -3,6 +3,7 @@ using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using NSubstitute;
 
 namespace FSTService.Tests.Unit;
 
@@ -754,5 +755,33 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
 
         var unresolved = _metaFixture.Db.GetUnresolvedAccountIds();
         Assert.Contains("acct_direct", unresolved);
+    }
+
+    [Fact]
+    public async Task FlushDeferredAccountIds_catches_database_exception_and_returns_zero()
+    {
+        // Arrange: mock IMetaDatabase that throws on InsertAccountIds
+        var mockMeta = Substitute.For<IMetaDatabase>();
+        mockMeta.When(m => m.InsertAccountIds(Arg.Any<IEnumerable<string>>()))
+                .Do(_ => throw new InvalidOperationException("Simulated DB timeout"));
+
+        using var glp = new GlobalLeaderboardPersistence(
+            _dataDir, mockMeta, new NullLoggerFactory(),
+            NullLogger<GlobalLeaderboardPersistence>.Instance);
+        glp.Initialize();
+        var agg = glp.StartWriters();
+
+        await glp.EnqueueResultAsync(
+            MakeResult("song_1", "Solo_Guitar", ("acct_err_1", 100_000)),
+            registeredAccountIds: null);
+        await glp.DrainWritersAsync();
+
+        Assert.True(agg.DeferredAccountIds.Count >= 1);
+
+        // Act: flush should catch the exception and return 0
+        var inserted = glp.FlushDeferredAccountIds();
+
+        // Assert: no exception thrown, returns 0
+        Assert.Equal(0, inserted);
     }
 }

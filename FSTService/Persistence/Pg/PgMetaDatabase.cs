@@ -175,6 +175,7 @@ public sealed class PgMetaDatabase : IMetaDatabase
             using (var c = conn.CreateCommand())
             {
                 c.Transaction = tx;
+                c.CommandTimeout = 120;
                 c.CommandText =
                     "INSERT INTO score_history (song_id, instrument, account_id, old_score, new_score, old_rank, new_rank, accuracy, is_full_combo, stars, percentile, season, score_achieved_at, season_rank, all_time_rank, difficulty, changed_at) " +
                     "SELECT song_id, instrument, account_id, old_score, new_score, old_rank, new_rank, accuracy, is_full_combo, stars, percentile, season, score_achieved_at, season_rank, all_time_rank, difficulty, changed_at FROM _sh_staging " +
@@ -383,6 +384,7 @@ public sealed class PgMetaDatabase : IMetaDatabase
             using (var c = conn.CreateCommand())
             {
                 c.Transaction = tx;
+                c.CommandTimeout = 120;
                 c.CommandText = "INSERT INTO account_names (account_id) SELECT account_id FROM _acct_staging ON CONFLICT DO NOTHING";
                 inserted = c.ExecuteNonQuery();
             }

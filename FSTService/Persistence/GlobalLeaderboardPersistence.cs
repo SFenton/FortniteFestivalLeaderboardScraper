@@ -447,9 +447,17 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         var ids = _aggregates.DeferredAccountIds;
         if (ids.Count == 0) return 0;
 
-        var inserted = _metaDb.InsertAccountIds(ids);
-        _log.LogInformation("Flushed {Inserted}/{Total} deferred account IDs to meta DB.", inserted, ids.Count);
-        return inserted;
+        try
+        {
+            var inserted = _metaDb.InsertAccountIds(ids);
+            _log.LogInformation("Flushed {Inserted}/{Total} deferred account IDs to meta DB.", inserted, ids.Count);
+            return inserted;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogWarning(ex, "Failed to flush {Count} deferred account IDs. They will be re-encountered next scrape pass.", ids.Count);
+            return 0;
+        }
     }
 
     /// <summary>
