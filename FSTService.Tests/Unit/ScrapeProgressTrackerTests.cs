@@ -658,4 +658,139 @@ public class ScrapeProgressTrackerTests
         var progress = _tracker.GetProgressResponse();
         Assert.Equal(32, progress.Current?.CurrentDop);
     }
+
+    // ─── SubOperation tracking ──────────────────────────
+
+    [Fact]
+    public void SubOperation_DefaultIsNull()
+    {
+        var snapshot = new OperationSnapshot();
+        Assert.Null(snapshot.SubOperation);
+    }
+
+    [Fact]
+    public void SetSubOperation_AppearsInScrapingSnapshot()
+    {
+        _tracker.BeginPass(1, 1, 0);
+        _tracker.SetSubOperation("fetching_leaderboards");
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal("fetching_leaderboards", progress.Current?.SubOperation);
+    }
+
+    [Fact]
+    public void SetSubOperation_AppearsInGenericPhaseSnapshot()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRankings);
+        _tracker.SetSubOperation("per_instrument_rankings");
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal("per_instrument_rankings", progress.Current?.SubOperation);
+    }
+
+    [Fact]
+    public void SetSubOperation_AppearsInNameResolutionSnapshot()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.ResolvingNames);
+        _tracker.BeginNameResolution(5, 500);
+        _tracker.SetSubOperation("resolving_batch");
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal("resolving_batch", progress.Current?.SubOperation);
+    }
+
+    [Fact]
+    public void SetSubOperation_AppearsInPostScrapeEnrichmentSnapshot()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.PostScrapeEnrichment);
+        _tracker.SetSubOperation("enriching_parallel");
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal("enriching_parallel", progress.Current?.SubOperation);
+    }
+
+    [Fact]
+    public void SetPhase_ClearsSubOperation()
+    {
+        _tracker.BeginPass(1, 1, 0);
+        _tracker.SetSubOperation("fetching_leaderboards");
+
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRankings);
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Null(progress.Current?.SubOperation);
+    }
+
+    [Fact]
+    public void EndPass_ClearsSubOperation()
+    {
+        _tracker.BeginPass(1, 1, 0);
+        _tracker.SetSubOperation("fetching_leaderboards");
+
+        _tracker.EndPass();
+
+        // After EndPass the phase is Idle, so Current is null — verify the
+        // completed snapshot captured the sub-operation and that current is clean
+        var progress = _tracker.GetProgressResponse();
+        Assert.Null(progress.Current);
+        Assert.Single(progress.CompletedOperations);
+        Assert.Equal("fetching_leaderboards", progress.CompletedOperations[0].SubOperation);
+    }
+
+    [Fact]
+    public void SetSubOperation_Null_ClearsValue()
+    {
+        _tracker.BeginPass(1, 1, 0);
+        _tracker.SetSubOperation("fetching_leaderboards");
+        _tracker.SetSubOperation(null);
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Null(progress.Current?.SubOperation);
+    }
+
+    // ─── New phases: Precomputing + Finalizing ──────────
+
+    [Fact]
+    public void Precomputing_Phase_ReturnsSnapshot()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.Precomputing);
+        _tracker.SetSubOperation("population_tiers");
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal("Precomputing", progress.Current?.Operation);
+        Assert.Equal("population_tiers", progress.Current?.SubOperation);
+    }
+
+    [Fact]
+    public void Finalizing_Phase_ReturnsSnapshot()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.Finalizing);
+        _tracker.SetSubOperation("cleaning_up_sessions");
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Equal("Finalizing", progress.Current?.Operation);
+        Assert.Equal("cleaning_up_sessions", progress.Current?.SubOperation);
+    }
+
+    [Fact]
+    public void SubOperation_PreservedInCompletedOperationSnapshot()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
+        _tracker.SetSubOperation("processing_songs");
+
+        // Transition to next phase — snapshot should preserve the sub-operation
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRankings);
+
+        var progress = _tracker.GetProgressResponse();
+        var songMachineOp = progress.CompletedOperations
+            .FirstOrDefault(o => o.Operation == "SongMachine");
+        Assert.NotNull(songMachineOp);
+        Assert.Equal("processing_songs", songMachineOp!.SubOperation);
+    }
 }

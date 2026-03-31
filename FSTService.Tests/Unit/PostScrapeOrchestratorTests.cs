@@ -108,7 +108,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             _pool,
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
             _tokenManager, _progress, _pathDataStore,
-            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
             Options.Create(new ScraperOptions()), _log);
     }
 
@@ -303,7 +303,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             _pool,
             rivalsOrchestrator, rankingsCalculator2, leaderboardRivalsCalculator2, _notifications,
             _tokenManager, _progress, _pathDataStore,
-            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
             opts, _log);
 
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
@@ -363,7 +363,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             _pool,
             rivalsOrchestrator, rankingsCalculator3, leaderboardRivalsCalculator3, _notifications,
             _tokenManager, _progress, _pathDataStore,
-            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
             opts, _log);
 
         var ctx = CreateContext();
@@ -531,7 +531,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             _pool,
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
             _tokenManager, _progress, _pathDataStore,
-            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
             opts, _log);
 
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");

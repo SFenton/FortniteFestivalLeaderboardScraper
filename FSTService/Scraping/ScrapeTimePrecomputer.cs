@@ -16,6 +16,7 @@ public sealed class ScrapeTimePrecomputer
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly IMetaDatabase _metaDb;
     private readonly IPathDataStore _pathStore;
+    private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<ScrapeTimePrecomputer> _log;
     private readonly JsonSerializerOptions _jsonOpts;
 
@@ -31,12 +32,14 @@ public sealed class ScrapeTimePrecomputer
         GlobalLeaderboardPersistence persistence,
         IMetaDatabase metaDb,
         IPathDataStore pathStore,
+        ScrapeProgressTracker progress,
         ILogger<ScrapeTimePrecomputer> log,
         JsonSerializerOptions jsonOpts)
     {
         _persistence = persistence;
         _metaDb = metaDb;
         _pathStore = pathStore;
+        _progress = progress;
         _log = log;
         _jsonOpts = jsonOpts;
     }
@@ -75,17 +78,20 @@ public sealed class ScrapeTimePrecomputer
         var instrumentKeys = _persistence.GetInstrumentKeys();
 
         // ── Phase 1: Population tiers ────────────────────────────
+        _progress.SetSubOperation("population_tiers");
         var tiers = ComputePopulationTiers(allMaxScores, instrumentKeys);
         _populationTiers = tiers;
         _log.LogInformation("Precomputed population tiers for {Count} (song, instrument) pairs in {Elapsed}ms.",
             tiers.Count, sw.ElapsedMilliseconds);
 
         // ── Phase 2: Player profiles (parallel) ─────────────────
+        _progress.SetSubOperation("player_profiles");
         var bandScoresCache = BuildBandScoresCache(allMaxScores, instrumentKeys);
         await PrecomputePlayersAsync(registeredIds, allMaxScores, unfilteredPopulation,
             tiers, bandScoresCache, ct);
 
         // ── Phase 3: Leaderboard-all pages ──────────────────────
+        _progress.SetSubOperation("leaderboard_pages");
         PrecomputeLeaderboardAll(allMaxScores, unfilteredPopulation, instrumentKeys);
 
         sw.Stop();

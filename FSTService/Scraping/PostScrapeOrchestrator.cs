@@ -79,6 +79,7 @@ public sealed class PostScrapeOrchestrator
     public async Task RunAsync(ScrapePassContext ctx, FestivalService service, CancellationToken ct)
     {
         await RunEnrichmentAsync(ctx, service, ct);
+        _progress.SetSubOperation("pruning_excess_entries");
         PruneExcessEntries(ctx);
 
         // Refresh registered users BEFORE rankings so that low scores (below the
@@ -95,16 +96,22 @@ public sealed class PostScrapeOrchestrator
             ComputeLeaderboardRivalsAsync(ctx, ct));
 
         // ── Precompute API responses for registered players + top leaderboards ──
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Precomputing);
         await _precomputer.PrecomputeAllAsync(ct);
 
+        _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Finalizing);
+
+        _progress.SetSubOperation("cleaning_up_sessions");
         CleanupSessions();
 
         // Checkpoint all WAL files after post-scrape writes (enrichment, refresh,
         // rankings) to keep them small for subsequent API reads.
+        _progress.SetSubOperation("final_checkpoint");
         _persistence.CheckpointAll();
 
         // Pre-warm the rankings cache for registered users so that the first API
         // request after a scrape pass is a cache hit rather than an expensive CTE query.
+        _progress.SetSubOperation("pre_warming_cache");
         _persistence.PreWarmRankingsCache(ctx.RegisteredIds);
     }
 
@@ -115,6 +122,7 @@ public sealed class PostScrapeOrchestrator
     internal async Task RunEnrichmentAsync(ScrapePassContext ctx, FestivalService service, CancellationToken ct)
     {
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.PostScrapeEnrichment);
+        _progress.SetSubOperation("enriching_parallel");
 
         var rankTask = Task.Run(() =>
         {
@@ -226,6 +234,7 @@ public sealed class PostScrapeOrchestrator
             var callerAccountId = _tokenManager.AccountId!;
 
             // Discover season windows for history recon
+            _progress.SetSubOperation("discovering_season_windows");
             IReadOnlyList<Persistence.SeasonWindowInfo> seasonWindows;
             try
             {
@@ -299,6 +308,7 @@ public sealed class PostScrapeOrchestrator
             }
 
             // ── Run the machine (all songs in parallel) ──────────
+            _progress.SetSubOperation("processing_songs");
             var machine = _serviceProvider.GetRequiredService<SongProcessingMachine>();
             var result = await machine.RunAsync(
                 chartedSongIds, users, seasonWindows,
@@ -311,6 +321,7 @@ public sealed class PostScrapeOrchestrator
                     result.EntriesUpdated, result.SessionsInserted, result.UsersProcessed);
 
             // ── Handle per-user completion inline ────────────────
+            _progress.SetSubOperation("completing_user_actions");
             foreach (var user in users.Where(u => u.Purposes.HasFlag(WorkPurpose.Backfill)))
             {
                 try

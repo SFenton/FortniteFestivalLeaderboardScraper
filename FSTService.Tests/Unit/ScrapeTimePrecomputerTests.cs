@@ -34,6 +34,7 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
 
         _sut = new ScrapeTimePrecomputer(
             _persistence, _metaDb, _pathDataStore,
+            new ScrapeProgressTracker(),
             Substitute.For<ILogger<ScrapeTimePrecomputer>>(),
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
     }
@@ -272,6 +273,7 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         // Create a fresh precomputer and load
         var sut2 = new ScrapeTimePrecomputer(
             _persistence, _metaDb, _pathDataStore,
+            new ScrapeProgressTracker(),
             Substitute.For<ILogger<ScrapeTimePrecomputer>>(),
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
 

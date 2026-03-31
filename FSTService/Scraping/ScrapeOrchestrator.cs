@@ -91,6 +91,8 @@ public sealed class ScrapeOrchestrator
         int totalRequests = 0;
         long totalBytes = 0;
 
+        _progress.SetSubOperation("fetching_leaderboards");
+
         var allResults = await _globalScraper.ScrapeManySongsAsync(
             scrapeRequests, accessToken, callerAccountId, opts.DegreeOfParallelism,
             onSongComplete: async (songId, results) =>
@@ -119,10 +121,12 @@ public sealed class ScrapeOrchestrator
             validEntryTarget: opts.ValidEntryTarget);
 
         // Wait for all per-instrument writers to drain
+        _progress.SetSubOperation("persisting_to_database");
         await _persistence.DrainWritersAsync();
 
         // Checkpoint all WAL files after the heavy write phase to keep them small
         // and prevent auto-checkpoints from firing during API reads.
+        _progress.SetSubOperation("checkpointing");
         _persistence.CheckpointAll();
 
         sw.Stop();
@@ -146,6 +150,7 @@ public sealed class ScrapeOrchestrator
             _log.LogInformation("  {Instrument}: {Count:N0} entries", instrument, count);
 
         // ── Update leaderboard population from Epic's reported totalPages ──
+        _progress.SetSubOperation("updating_population");
         var populationItems = new List<(string SongId, string Instrument, long TotalEntries)>();
         foreach (var (_, results) in allResults)
             foreach (var r in results)

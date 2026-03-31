@@ -31,6 +31,8 @@ public sealed class ScrapeProgressTracker
         BackfillingScores,
         ReconstructingHistory,
         SongMachine,
+        Precomputing,
+        Finalizing,
     }
 
     private volatile ScrapePhase _phase = ScrapePhase.Idle;
@@ -89,6 +91,14 @@ public sealed class ScrapeProgressTracker
 
     /// <summary>Register the active limiter so the snapshot can report current DOP.</summary>
     public void SetAdaptiveLimiter(AdaptiveConcurrencyLimiter? limiter) { _adaptiveLimiter = limiter; Interlocked.Increment(ref _changeSequence); }
+
+    // ─── Sub-operation tracking ──────────────────────────────
+
+    /// <summary>Stable snake_case ID describing the current sub-step within a phase (e.g. "fetching_leaderboards").</summary>
+    private volatile string? _subOperation;
+
+    /// <summary>Set the current sub-operation within the active phase. Pass null to clear.</summary>
+    public void SetSubOperation(string? id) { _subOperation = id; Interlocked.Increment(ref _changeSequence); }
 
     // ─── Timing ─────────────────────────────────────────────
 
@@ -254,6 +264,7 @@ public sealed class ScrapeProgressTracker
             _completedOperations.Add(currentOp);
 
         ResetGenericCounters();
+        _subOperation = null;
         _phaseStartedAtUtc = DateTime.UtcNow;
         _phaseStopwatch.Restart();
         _phase = phase;
@@ -270,6 +281,7 @@ public sealed class ScrapeProgressTracker
 
         _passStopwatch.Stop();
         _phaseStopwatch.Stop();
+        _subOperation = null;
         _phase = ScrapePhase.Idle;
         Interlocked.Increment(ref _changeSequence);
     }
@@ -396,6 +408,7 @@ public sealed class ScrapeProgressTracker
             ScrapePhase.Initializing => new OperationSnapshot
             {
                 Operation = "Initializing",
+                SubOperation = _subOperation,
                 StartedAtUtc = _phaseStartedAtUtc,
                 ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 1),
             },
@@ -406,6 +419,8 @@ public sealed class ScrapeProgressTracker
             ScrapePhase.CalculatingFirstSeen or
             ScrapePhase.ComputingRankings or
             ScrapePhase.ComputingRivals or
+            ScrapePhase.Precomputing or
+            ScrapePhase.Finalizing or
             ScrapePhase.SongMachine => BuildGenericPhaseSnapshot(phase.ToString(), elapsed),
             ScrapePhase.PostScrapeEnrichment => BuildPostScrapeEnrichmentSnapshot(elapsed),
             _ => null,
@@ -445,6 +460,7 @@ public sealed class ScrapeProgressTracker
         return new OperationSnapshot
         {
             Operation = "Scraping",
+            SubOperation = _subOperation,
             StartedAtUtc = _phaseStartedAtUtc,
             ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 1),
             EstimatedRemainingSeconds = estimatedRemaining.HasValue
@@ -497,6 +513,7 @@ public sealed class ScrapeProgressTracker
             EstimatedRemainingSeconds = estimatedRemaining.HasValue
                 ? Math.Round(estimatedRemaining.Value.TotalSeconds, 0) : null,
             ProgressPercent = Math.Round(progressPercent, 1),
+            SubOperation = _subOperation,
             Batches = new ProgressCounter { Completed = completed, Total = total },
             AccountsResolved = _nameResResolved,
             FailedBatches = _nameResFailed,
@@ -536,6 +553,7 @@ public sealed class ScrapeProgressTracker
         return new OperationSnapshot
         {
             Operation = operation,
+            SubOperation = _subOperation,
             StartedAtUtc = _phaseStartedAtUtc,
             ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 1),
             EstimatedRemainingSeconds = estimatedRemaining.HasValue
@@ -563,6 +581,7 @@ public sealed class ScrapeProgressTracker
         return new OperationSnapshot
         {
             Operation = "PostScrapeEnrichment",
+            SubOperation = _subOperation,
             StartedAtUtc = _phaseStartedAtUtc,
             ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 1),
             Batches = total > 0 ? new ProgressCounter { Completed = completed, Total = total } : null,
@@ -641,6 +660,9 @@ public sealed class OperationSnapshot
     public double ElapsedSeconds { get; init; }
     public double? EstimatedRemainingSeconds { get; init; }
     public double? ProgressPercent { get; init; }
+
+    /// <summary>Stable snake_case ID for the current sub-step within the operation (e.g. "fetching_leaderboards"). Null when not applicable.</summary>
+    public string? SubOperation { get; init; }
 
     // ── Scraping-specific ──
     public ProgressCounter? Songs { get; init; }

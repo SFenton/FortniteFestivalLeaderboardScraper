@@ -67,6 +67,7 @@ public sealed class RivalsOrchestrator
 
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRivals);
         _progress.BeginPhaseProgress(totalItems: 0, totalAccounts: toCompute.Count);
+        _progress.SetSubOperation("per_song_rivals");
         _log.LogInformation("Computing rivals for {Count} registered user(s).", toCompute.Count);
 
         var tasks = toCompute.Select(accountId => Task.Run(() =>

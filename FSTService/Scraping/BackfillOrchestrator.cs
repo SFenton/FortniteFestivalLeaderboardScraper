@@ -81,6 +81,7 @@ public sealed class BackfillOrchestrator
         var callerAccountId = _tokenManager.AccountId!;
 
         // Discover season windows for history reconstruction
+        _progress.SetSubOperation("discovering_season_windows");
         IReadOnlyList<Persistence.SeasonWindowInfo> seasonWindows;
         try
         {
@@ -108,6 +109,7 @@ public sealed class BackfillOrchestrator
         }
 
         // Build user work list — combine backfill + history recon
+        _progress.SetSubOperation("building_work_list");
         var users = new List<UserWorkItem>();
         foreach (var accountId in accountIds)
         {
@@ -132,6 +134,7 @@ public sealed class BackfillOrchestrator
 
         try
         {
+            _progress.SetSubOperation("processing_songs");
             var machine = _serviceProvider.GetRequiredService<SongProcessingMachine>();
             var result = await machine.RunAsync(
                 chartedSongIds, users, seasonWindows,
@@ -144,6 +147,7 @@ public sealed class BackfillOrchestrator
                 result.EntriesUpdated, result.SessionsInserted, result.ApiCalls, result.UsersProcessed);
 
             // Per-user completion actions
+            _progress.SetSubOperation("completing_user_actions");
             foreach (var user in users)
             {
                 try
@@ -216,6 +220,7 @@ public sealed class BackfillOrchestrator
 
         var callerAccountId = _tokenManager.AccountId!;
 
+        _progress.SetSubOperation("discovering_season_windows");
         IReadOnlyList<Persistence.SeasonWindowInfo> seasonWindows;
         try
         {
@@ -243,6 +248,7 @@ public sealed class BackfillOrchestrator
 
         if (chartedSongIds.Count == 0) return;
 
+        _progress.SetSubOperation("building_work_list");
         var users = new List<UserWorkItem>();
         foreach (var accountId in accountsToReconstruct)
         {
@@ -263,6 +269,7 @@ public sealed class BackfillOrchestrator
 
         try
         {
+            _progress.SetSubOperation("processing_songs");
             var machine = _serviceProvider.GetRequiredService<SongProcessingMachine>();
             var result = await machine.RunAsync(
                 chartedSongIds, users, seasonWindows,
@@ -274,6 +281,7 @@ public sealed class BackfillOrchestrator
                 "History recon complete: {Sessions} sessions inserted, {ApiCalls} API calls for {Users} users.",
                 result.SessionsInserted, result.ApiCalls, result.UsersProcessed);
 
+            _progress.SetSubOperation("completing_user_actions");
             foreach (var user in users)
             {
                 try

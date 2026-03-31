@@ -240,6 +240,7 @@ builder.Services.AddSingleton<ScrapeTimePrecomputer>(sp =>
         sp.GetRequiredService<GlobalLeaderboardPersistence>(),
         sp.GetRequiredService<IMetaDatabase>(),
         sp.GetRequiredService<IPathDataStore>(),
+        sp.GetRequiredService<ScrapeProgressTracker>(),
         sp.GetRequiredService<ILogger<ScrapeTimePrecomputer>>(),
         jsonOpts);
 });
