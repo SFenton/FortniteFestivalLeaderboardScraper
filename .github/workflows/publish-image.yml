@@ -37,6 +37,9 @@ jobs:
       github.event_name == 'push' &&
       !contains(github.event.head_commit.message, '[version-bump]')
 
+    outputs:
+      bumped: ${{ steps.commit.outputs.bumped }}
+
     permissions:
       contents: write
 
@@ -178,15 +181,18 @@ jobs:
           echo "Updated THEME_VERSION in @festival/core to $NEW_VERSION"
 
       - name: Commit version bumps
+        id: commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
           if git diff --cached --quiet; then
             echo "No version changes to commit"
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
           else
             git commit -m "chore: auto version bump [version-bump]"
             git push
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
           fi
 
   test:
@@ -298,10 +304,13 @@ jobs:
   #       run: yarn vitest run --coverage
 
   build-and-push-service:
-    needs: [version-bump]
-    # Run even when version-bump is skipped (workflow_dispatch, version-bump commits),
-    # but only on push or manual trigger (not PRs)
-    if: ${{ !failure() && !cancelled() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    needs: [version-bump, test]
+    # Run even when version-bump/test is skipped, but only on push or manual trigger (not PRs).
+    # Skip when version-bump pushed a new commit — the triggered Run 2 will build instead.
+    if: >-
+      ${{ !failure() && !cancelled()
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && needs.version-bump.outputs.bumped != 'true' }}
     runs-on: ubuntu-latest
 
     permissions:
@@ -338,10 +347,13 @@ jobs:
           labels: ${{ steps.meta-fst.outputs.labels }}
 
   build-and-push-web:
-    needs: [version-bump]
-    # Run even when version-bump is skipped (workflow_dispatch, version-bump commits),
-    # but only on push or manual trigger (not PRs)
-    if: ${{ !failure() && !cancelled() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    needs: [version-bump, test]
+    # Run even when version-bump/test is skipped, but only on push or manual trigger (not PRs).
+    # Skip when version-bump pushed a new commit — the triggered Run 2 will build instead.
+    if: >-
+      ${{ !failure() && !cancelled()
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && needs.version-bump.outputs.bumped != 'true' }}
     runs-on: ubuntu-latest
 
     permissions:
