@@ -287,6 +287,7 @@ public sealed class ScraperWorker : BackgroundService
                     _log.LogInformation("Song catalog refresh: {NewCount} new song(s) discovered ({Total} total).",
                         after - before, after);
                     _songsCache.Invalidate();
+                    _persistence.InvalidateTotalSongCount();
                 }
                 else
                     _log.LogDebug("Song catalog refresh: {Total} songs in catalog (no changes).", after);
@@ -376,6 +377,7 @@ public sealed class ScraperWorker : BackgroundService
 
         // Re-sync the song catalog in case new songs appeared
         await service.SyncSongsAsync();
+        _persistence.InvalidateTotalSongCount();
 
         // Fire-and-forget path generation (runs in parallel with the scrape)
         var pathGenTask = TryGeneratePathsAsync(service, force: false, ct);

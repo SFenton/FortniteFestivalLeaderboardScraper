@@ -777,19 +777,32 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     public IReadOnlyList<string> GetInstrumentKeys()
         => _instrumentDbs.Keys.ToList();
 
+    private int? _cachedTotalSongCount;
+
     /// <summary>
     /// Get the total number of distinct songs across all instrument DBs.
+    /// Result is cached until <see cref="InvalidateTotalSongCount"/> is called.
     /// </summary>
     public int GetTotalSongCount()
     {
+        if (_cachedTotalSongCount is { } cached)
+            return cached;
+
         var songIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var db in _instrumentDbs.Values)
         {
             foreach (var songId in db.GetAllSongCounts().Keys)
                 songIds.Add(songId);
         }
+        _cachedTotalSongCount = songIds.Count;
         return songIds.Count;
     }
+
+    /// <summary>
+    /// Invalidates the cached total song count so it is recomputed on next access.
+    /// Call this when the song catalog changes (spark tracks sync).
+    /// </summary>
+    public void InvalidateTotalSongCount() => _cachedTotalSongCount = null;
 
     /// <summary>
     /// Prune all instrument DBs: for each song, keep only the top <paramref name="maxEntriesPerSong"/>

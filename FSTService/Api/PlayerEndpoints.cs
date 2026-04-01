@@ -364,16 +364,31 @@ public static partial class ApiEndpoints
             HttpContext httpContext,
             string accountId,
             IMetaDatabase metaDb,
-            GlobalLeaderboardPersistence persistence) =>
+            GlobalLeaderboardPersistence persistence,
+            [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
+
+            var cacheKey = $"playerstats:{accountId}";
+            var cached = playerCache.Get(cacheKey);
+            if (cached is not null)
+            {
+                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
+                {
+                    httpContext.Response.Headers.ETag = cached.Value.ETag;
+                    return Results.StatusCode(304);
+                }
+                httpContext.Response.Headers.ETag = cached.Value.ETag;
+                return Results.Bytes(cached.Value.Json, "application/json");
+            }
 
             // Return tiered stats if available, else fall back to legacy flat stats
             var tierRows = metaDb.GetPlayerStatsTiers(accountId);
             if (tierRows.Count > 0)
             {
                 int totalSongs = persistence.GetTotalSongCount();
-                return Results.Ok(new
+                var payload = new
                 {
                     accountId,
                     totalSongs,
@@ -382,7 +397,14 @@ public static partial class ApiEndpoints
                         instrument = r.Instrument,
                         tiers = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(r.TiersJson),
                     }).ToList(),
-                });
+                };
+                var jsonOpts = httpContext.RequestServices
+                    .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+                    .Value.SerializerOptions;
+                var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+                var etag = playerCache.Set(cacheKey, jsonBytes);
+                httpContext.Response.Headers.ETag = etag;
+                return Results.Bytes(jsonBytes, "application/json");
             }
 
             // Legacy fallback (PlayerStats table — rarely populated)
