@@ -304,8 +304,8 @@ jobs:
   #       run: yarn vitest run --coverage
 
   build-and-push-service:
-    needs: [version-bump, test]
-    # Run even when version-bump/test is skipped, but only on push or manual trigger (not PRs).
+    needs: [version-bump]
+    # Run even when version-bump is skipped, but only on push or manual trigger (not PRs).
     # Skip when version-bump pushed a new commit — the triggered Run 2 will build instead.
     if: >-
       ${{ !failure() && !cancelled()
@@ -347,8 +347,8 @@ jobs:
           labels: ${{ steps.meta-fst.outputs.labels }}
 
   build-and-push-web:
-    needs: [version-bump, test]
-    # Run even when version-bump/test is skipped, but only on push or manual trigger (not PRs).
+    needs: [version-bump]
+    # Run even when version-bump is skipped, but only on push or manual trigger (not PRs).
     # Skip when version-bump pushed a new commit — the triggered Run 2 will build instead.
     if: >-
       ${{ !failure() && !cancelled()
