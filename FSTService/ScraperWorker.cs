@@ -123,7 +123,7 @@ public sealed class ScraperWorker : BackgroundService
         {
             var registeredIds = _persistence.Meta.GetRegisteredAccountIds();
             if (registeredIds.Count > 0)
-                _ = _persistence.PreWarmRankingsCacheAsync(
+                await _persistence.PreWarmRankingsCacheAsync(
                     registeredIds, TimeSpan.FromMinutes(2), stoppingToken);
         }
 
@@ -364,9 +364,10 @@ public sealed class ScraperWorker : BackgroundService
     {
         _log.LogInformation("Starting scrape pass...");
 
-        // Invalidate precomputed responses at scrape start so mid-scrape requests
-        // fall through to live computation until precomputation runs post-scrape.
-        _precomputer.InvalidateAll();
+        // Stale precomputed data (from last scrape) is served during the scrape pass.
+        // PrecomputeAllAsync at post-scrape overwrites entries atomically, so we don't
+        // need to invalidate here. This avoids an 8+ second cold-start penalty for the
+        // first API request when the service restarts mid-scrape.
 
         var accessToken = await _tokenManager.GetAccessTokenAsync(ct);
         if (accessToken is null)

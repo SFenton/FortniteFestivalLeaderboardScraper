@@ -133,6 +133,10 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         // ── Rankings tables (SongStats, AccountRankings, RankHistory) ──
         EnsureRankingsTables(conn);
 
+        // Eagerly open the persistent connection so first API reads don't
+        // pay connection + PRAGMA overhead (~100ms per instrument DB).
+        GetPersistentConnection();
+
         _log.LogDebug("Schema ensured for instrument DB: {Instrument}", _instrument);
     }
 
