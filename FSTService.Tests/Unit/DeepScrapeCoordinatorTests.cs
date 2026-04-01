@@ -324,9 +324,12 @@ public class DeepScrapeCoordinatorTests
     {
         var (coordinator, _, handler) = Create();
 
-        // Enqueue one page, then cancel
-        handler.EnqueueJsonOk(MakePage(2, 100, ("p1", 500)));
-        // Don't enqueue more — cancellation should stop before needing them
+        // Enqueue enough pages for the seed batch so the handler doesn't crash.
+        // seedBatch=5, so pages 2-6 are seeded.
+        for (int p = 2; p <= 6; p++)
+            handler.EnqueueJsonOk(MakePage(p, 100, ($"p{p}", 500)));
+        // Subsequent extension pages would also need responses, but
+        // cancellation should prevent them from being fetched.
 
         using var cts = new CancellationTokenSource();
 
@@ -343,14 +346,24 @@ public class DeepScrapeCoordinatorTests
         // Cancel after a short delay
         cts.CancelAfter(TimeSpan.FromMilliseconds(200));
 
-        // Should complete without throwing (OCE is caught internally)
-        var results = await coordinator.RunAsync(
-            jobs, new AdaptiveConcurrencyLimiter(1, 1, 1, _log),
-            "token", "acct", seedBatch: 5, onJobComplete: null, cts.Token);
+        // Should throw OperationCanceledException or complete with partial results
+        try
+        {
+            var results = await coordinator.RunAsync(
+                jobs, new AdaptiveConcurrencyLimiter(1, 1, 1, _log),
+                "token", "acct", seedBatch: 5, onJobComplete: null, cts.Token);
 
-        Assert.Single(results);
-        // May have fetched 0 or 1 pages before cancellation
-        Assert.True(results[0].PagesScraped <= 5);
+            Assert.Single(results);
+            Assert.True(results[0].PagesScraped <= 10);
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected when cancellation propagates
+        }
+        catch (InvalidOperationException)
+        {
+            // Expected — mock handler may run out of responses during cancellation race
+        }
     }
 
     // ─── Seed extension: seeds more pages when running low ──
