@@ -36,7 +36,9 @@ FROM mcr.microsoft.com/dotnet/aspnet:9.0-noble AS runtime
 WORKDIR /app
 
 # Install runtime dependencies for CHOpt (Qt6 GUI app that generates path images)
+# curl is needed by the docker-compose healthcheck.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
     libpng16-16t64 libglx0 libopengl0 libegl1 libfontconfig1 \
     libglib2.0-0t64 libxkbcommon0 libgl1 libfreetype6 libdbus-1-3 \
     && rm -rf /var/lib/apt/lists/*
