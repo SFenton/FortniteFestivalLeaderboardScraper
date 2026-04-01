@@ -483,7 +483,8 @@ app.UseAuthorization();
 // Serve static files (wwwroot/) and fall back to index.html for non-API routes,
 // but only when the web app has been embedded (e.g. single-container deployment).
 var webRootPath = app.Environment.WebRootPath ?? Path.Combine(AppContext.BaseDirectory, "wwwroot");
-if (File.Exists(Path.Combine(webRootPath, "index.html")))
+var hasEmbeddedWebApp = File.Exists(Path.Combine(webRootPath, "index.html"));
+if (hasEmbeddedWebApp)
 {
     app.UseDefaultFiles();
     app.UseStaticFiles();
@@ -492,7 +493,7 @@ if (File.Exists(Path.Combine(webRootPath, "index.html")))
 // Map API endpoints
 app.MapApiEndpoints();
 
-if (File.Exists(Path.Combine(webRootPath, "index.html")))
+if (hasEmbeddedWebApp)
 {
     app.MapStaticAssets();
 
