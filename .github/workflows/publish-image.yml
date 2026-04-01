@@ -305,12 +305,13 @@ jobs:
 
   build-and-push-service:
     needs: [version-bump]
-    # Run even when version-bump is skipped, but only on push or manual trigger (not PRs).
-    # Skip when version-bump pushed a new commit — the triggered Run 2 will build instead.
-    if: >-
-      ${{ !failure() && !cancelled()
+    # Run on push/dispatch when version-bump either didn't run or didn't push a new commit.
+    # When version-bump IS skipped (e.g. [version-bump] commit triggers Run 2), this still runs.
+    if: |-
+      always()
+      && !failure() && !cancelled()
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-      && needs.version-bump.outputs.bumped != 'true' }}
+      && needs.version-bump.outputs.bumped != 'true'
     runs-on: ubuntu-latest
 
     permissions:
@@ -348,12 +349,13 @@ jobs:
 
   build-and-push-web:
     needs: [version-bump]
-    # Run even when version-bump is skipped, but only on push or manual trigger (not PRs).
-    # Skip when version-bump pushed a new commit — the triggered Run 2 will build instead.
-    if: >-
-      ${{ !failure() && !cancelled()
+    # Run on push/dispatch when version-bump either didn't run or didn't push a new commit.
+    # When version-bump IS skipped (e.g. [version-bump] commit triggers Run 2), this still runs.
+    if: |-
+      always()
+      && !failure() && !cancelled()
       && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-      && needs.version-bump.outputs.bumped != 'true' }}
+      && needs.version-bump.outputs.bumped != 'true'
     runs-on: ubuntu-latest
 
     permissions:
