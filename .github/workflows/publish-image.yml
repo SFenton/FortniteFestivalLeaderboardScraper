@@ -297,7 +297,7 @@ jobs:
   #       working-directory: FortniteFestivalWeb
   #       run: yarn vitest run --coverage
 
-  build-and-push:
+  build-and-push-service:
     needs: [version-bump]
     # Run even when version-bump is skipped (workflow_dispatch, version-bump commits),
     # but only on push or manual trigger (not PRs)
@@ -328,15 +328,6 @@ jobs:
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Extract FestivalWeb metadata
-        id: meta-web
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.WEB_IMAGE_NAME }}
-          tags: |
-            type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
-
       - name: Build and push FSTService
         uses: docker/build-push-action@v6
         with:
@@ -345,6 +336,37 @@ jobs:
           push: true
           tags: ${{ steps.meta-fst.outputs.tags }}
           labels: ${{ steps.meta-fst.outputs.labels }}
+
+  build-and-push-web:
+    needs: [version-bump]
+    # Run even when version-bump is skipped (workflow_dispatch, version-bump commits),
+    # but only on push or manual trigger (not PRs)
+    if: ${{ !failure() && !cancelled() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract FestivalWeb metadata
+        id: meta-web
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.WEB_IMAGE_NAME }}
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push FestivalWeb
         uses: docker/build-push-action@v6
