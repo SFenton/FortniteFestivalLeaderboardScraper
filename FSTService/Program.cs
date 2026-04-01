@@ -480,16 +480,26 @@ app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Serve static files (wwwroot/) and fall back to index.html for non-API routes
-app.UseDefaultFiles();
-app.UseStaticFiles();
+// Serve static files (wwwroot/) and fall back to index.html for non-API routes,
+// but only when the web app has been embedded (e.g. single-container deployment).
+var webRootPath = app.Environment.WebRootPath ?? Path.Combine(AppContext.BaseDirectory, "wwwroot");
+var hasEmbeddedWebApp = File.Exists(Path.Combine(webRootPath, "index.html"));
+if (hasEmbeddedWebApp)
+{
+    app.UseDefaultFiles();
+    app.UseStaticFiles();
+}
 
 // Map API endpoints
 app.MapApiEndpoints();
-app.MapStaticAssets();
 
-// Fallback: serve index.html for any non-API GET request (SPA support)
-app.MapFallbackToFile("index.html");
+if (hasEmbeddedWebApp)
+{
+    app.MapStaticAssets();
+
+    // Fallback: serve index.html for any non-API GET request (SPA support)
+    app.MapFallbackToFile("index.html");
+}
 
 app.Run();
 

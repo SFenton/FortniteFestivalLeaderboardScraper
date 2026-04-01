@@ -16,9 +16,10 @@
 .gitattributes
 .gitignore
 
-# ── Projects not needed for the FSTService build ─────────────
+# ── Projects not needed for Docker builds ─────────────────────
 FortniteFestival.LeaderboardScraper.MAUI/
 FortniteFestivalRN/
+FSTService.Tests/
 docs/
 
 # ── Data / credentials (never bake into an image) ───────────
