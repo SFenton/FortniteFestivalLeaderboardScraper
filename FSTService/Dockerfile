@@ -1,18 +1,4 @@
-# ── Stage 1: Build React web app ──────────────────────────────
-FROM node:20-slim AS webapp
-WORKDIR /src
-COPY packages/core/ packages/core/
-COPY packages/theme/ packages/theme/
-COPY packages/ui-utils/ packages/ui-utils/
-COPY FortniteFestivalWeb/package.json FortniteFestivalWeb/yarn.lock FortniteFestivalWeb/
-WORKDIR /src/FortniteFestivalWeb
-# Use node-modules linker in Docker (local dev uses PnP with global cache)
-RUN corepack enable && echo 'nodeLinker: node-modules' > .yarnrc.yml && yarn install
-COPY FortniteFestivalWeb/ .
-# Overwrite .yarnrc.yml again after COPY brings in project files
-RUN echo 'nodeLinker: node-modules' > .yarnrc.yml && yarn vite build --outDir /webapp-dist
-
-# ── Stage 2: Build .NET service ──────────────────────────────
+# ── Stage 1: Build .NET service ──────────────────────────────
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 
@@ -25,12 +11,9 @@ RUN dotnet restore FSTService/FSTService.csproj
 COPY FortniteFestival.Core/ FortniteFestival.Core/
 COPY FSTService/ FSTService/
 
-# Copy built React app into wwwroot/app BEFORE publish so the static assets manifest includes them
-COPY --from=webapp /webapp-dist/ FSTService/wwwroot/
-
 RUN dotnet publish FSTService/FSTService.csproj -c Release --no-restore -o /app
 
-# ── Stage 3: Runtime ─────────────────────────────────────────
+# ── Stage 2: Runtime ─────────────────────────────────────────
 # Noble (Ubuntu 24.04) provides glibc 2.39+ and libstdc++ 3.4.32 required by CHOpt.
 FROM mcr.microsoft.com/dotnet/aspnet:9.0-noble AS runtime
 WORKDIR /app

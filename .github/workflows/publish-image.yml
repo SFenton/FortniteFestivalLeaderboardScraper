@@ -27,6 +27,7 @@ on:
 env:
   REGISTRY: ghcr.io
   FST_IMAGE_NAME: ${{ github.repository_owner }}/fstservice
+  WEB_IMAGE_NAME: ${{ github.repository_owner }}/fstfestivalweb
 
 jobs:
   version-bump:
@@ -327,6 +328,15 @@ jobs:
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Extract FestivalWeb metadata
+        id: meta-web
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.WEB_IMAGE_NAME }}
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
       - name: Build and push FSTService
         uses: docker/build-push-action@v6
         with:
@@ -335,3 +345,12 @@ jobs:
           push: true
           tags: ${{ steps.meta-fst.outputs.tags }}
           labels: ${{ steps.meta-fst.outputs.labels }}
+
+      - name: Build and push FestivalWeb
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: FortniteFestivalWeb/Dockerfile
+          push: true
+          tags: ${{ steps.meta-web.outputs.tags }}
+          labels: ${{ steps.meta-web.outputs.labels }}
