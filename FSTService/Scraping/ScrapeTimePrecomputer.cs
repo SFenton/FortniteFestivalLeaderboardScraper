@@ -94,9 +94,32 @@ public sealed class ScrapeTimePrecomputer
         _progress.SetSubOperation("leaderboard_pages");
         PrecomputeLeaderboardAll(allMaxScores, unfilteredPopulation, instrumentKeys);
 
+        // ── Cleanup: evict player entries for unregistered accounts ─
+        var registeredSet = new HashSet<string>(registeredIds, StringComparer.OrdinalIgnoreCase);
+        var removed = 0;
+        foreach (var key in _store.Keys)
+        {
+            if (key.StartsWith("player:", StringComparison.Ordinal)
+                && !registeredSet.Contains(ExtractAccountId(key)))
+            {
+                _store.TryRemove(key, out _);
+                removed++;
+            }
+        }
+        if (removed > 0)
+            _log.LogInformation("Evicted {Count} stale precomputed player entries.", removed);
+
         sw.Stop();
         _log.LogInformation("Scrape-time precomputation complete: {PlayerCount} players, {LbCount} leaderboard-all pages in {Elapsed}s.",
             registeredIds.Count, _store.Count - registeredIds.Count, sw.Elapsed.TotalSeconds);
+    }
+
+    private static string ExtractAccountId(string cacheKey)
+    {
+        // "player:{accountId}:::" → extract accountId
+        if (!cacheKey.StartsWith("player:", StringComparison.Ordinal)) return string.Empty;
+        var end = cacheKey.IndexOf(':', 7);
+        return end < 0 ? cacheKey[7..] : cacheKey[7..end];
     }
 
     /// <summary>

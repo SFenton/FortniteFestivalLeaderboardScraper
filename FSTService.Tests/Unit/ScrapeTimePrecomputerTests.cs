@@ -222,6 +222,27 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
     }
 
     [Fact]
+    public async Task PrecomputeAllAsync_EvictsUnregisteredPlayerEntries()
+    {
+        RegisterUser("user1");
+        RegisterUser("user2");
+        SeedSong("s1", "Solo_Guitar", 100000,
+            ("user1", 95000), ("user2", 88000));
+
+        await _sut.PrecomputeAllAsync(CancellationToken.None);
+        Assert.NotNull(_sut.TryGet("player:user1:::"));
+        Assert.NotNull(_sut.TryGet("player:user2:::"));
+
+        // Unregister user2 between scrapes
+        _metaDb.UnregisterUser("web-tracker", "user2");
+
+        // Re-precompute — user2's entry should be evicted
+        await _sut.PrecomputeAllAsync(CancellationToken.None);
+        Assert.NotNull(_sut.TryGet("player:user1:::"));
+        Assert.Null(_sut.TryGet("player:user2:::"));
+    }
+
+    [Fact]
     public async Task PrecomputeAllAsync_RankTiers_IncludesChangepoints()
     {
         RegisterUser("user1");
