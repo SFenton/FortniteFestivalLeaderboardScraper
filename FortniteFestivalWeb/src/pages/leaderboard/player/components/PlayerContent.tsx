@@ -5,6 +5,10 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import {
   computeOverallStats,
   groupByInstrument,
+  findStatsTier,
+  getInstrumentTiers,
+  tierToInstrumentStats,
+  computeInstrumentStats,
 } from '../../../player/helpers/playerStats';
 import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, type ServerInstrumentKey as InstrumentKey, type PlayerResponse, type ServerSong as Song } from '@festival/core/api/serverTypes';
 import { Gap, Layout, Radius, frostedCard, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
@@ -22,6 +26,9 @@ import { useTrackedPlayer } from '../../../../hooks/data/useTrackedPlayer';
 import { useScoreFilter } from '../../../../hooks/data/useScoreFilter';
 import { usePlayerPageSelect } from '../../../../contexts/FabSearchContext';
 import { useSearchQuery } from '../../../../contexts/SearchQueryContext';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../../../../api/client';
+import { queryKeys } from '../../../../api/queryKeys';
 import ConfirmAlert from '../../../../components/modals/ConfirmAlert';
 import FadeIn from '../../../../components/page/FadeIn';
 import PlayerSectionHeading from '../../../player/sections/PlayerSectionHeading';
@@ -58,8 +65,15 @@ export default function PlayerContent({
   const navigate = useNavigate();
   const { player: trackedPlayer, setPlayer } = useTrackedPlayer();
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
-  const { filterPlayerScores, isScoreValid, enabled: filterInvalidScores } = useScoreFilter();
+  const { filterPlayerScores, isScoreValid, enabled: filterInvalidScores, leeway } = useScoreFilter();
   const { registerPlayerPageSelect } = usePlayerPageSelect();
+
+  // Fetch pre-computed tiered stats from backend
+  const { data: statsData } = useQuery({
+    queryKey: queryKeys.playerStats(data.accountId),
+    queryFn: () => api.getPlayerStats(data.accountId),
+    staleTime: 5 * 60_000,
+  });
 
   // Register FAB "Select as Profile" action
   useEffect(() => {
@@ -116,6 +130,9 @@ export default function PlayerContent({
     return groupByInstrument(visible);
   }, [data.scores, settings]);
   const overallStats = useMemo(() => computeOverallStats(effectiveScores), [effectiveScores]);
+
+  // Effective leeway for tier selection: when filtering disabled, pick the last (all-inclusive) tier
+  const effectiveLeeway = filterInvalidScores ? leeway : Infinity;
 
   const searchQuery = useSearchQuery();
 
@@ -180,8 +197,18 @@ export default function PlayerContent({
   for (const inst of visibleKeys) {
     const scores = byInstrument.get(inst);
     if (!scores || scores.length === 0) continue;
-    const raw = rawByInstrument.get(inst);
-    items.push(...buildInstrumentStatsItems(t, inst, scores, songs.length, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle, isScoreValid, filterInvalidScores, raw));
+
+    // Prefer pre-computed tiered stats from backend; fall back to client-side computation
+    const instTiers = statsData ? getInstrumentTiers(statsData.instruments, inst) : undefined;
+    const tier = instTiers ? findStatsTier(instTiers, effectiveLeeway) : undefined;
+    const stats = tier ? tierToInstrumentStats(tier) : computeInstrumentStats(scores, songs.length);
+    const overThreshold = tier
+      ? (filterInvalidScores ? tier.overThresholdCount : undefined)
+      : (filterInvalidScores && isScoreValid
+        ? (rawByInstrument.get(inst) ?? scores).filter(s => s.score > 0 && !isScoreValid(s.songId, inst, s.score)).length
+        : undefined);
+
+    items.push(...buildInstrumentStatsItems(t, inst, stats, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle, overThreshold));
   }
 
   // --- Top Songs heading ---

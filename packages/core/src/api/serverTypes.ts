@@ -300,24 +300,44 @@ export type AllLeaderboardsResponse = {
   }[];
 };
 
-/** Pre-computed player stats for one instrument (or "Overall"). */
-export type PlayerStatEntry = {
-  instrument: string;
+/** A single leeway breakpoint tier with pre-computed statistics. */
+export type PlayerStatsTier = {
+  minLeeway: number | null;
   songsPlayed: number;
-  fullComboCount: number;
+  overThresholdCount: number;
+  fcCount: number;
+  fcPercent: number;
   goldStarCount: number;
+  fiveStarCount: number;
+  fourStarCount: number;
+  threeStarCount: number;
+  twoStarCount: number;
+  oneStarCount: number;
   avgAccuracy: number;
-  bestRank: number;
-  bestRankSongId?: string;
+  bestAccuracy: number;
+  averageStars: number;
+  avgScore: number;
   totalScore: number;
-  percentileDist?: string;
-  avgPercentile?: string;
-  overallPercentile?: string;
+  completionPercent: number;
+  bestRank: number;
+  bestRankSongId?: string | null;
+  percentileDist?: string | null;
+  avgPercentile?: string | null;
+  overallPercentile?: string | null;
+  topSongs?: string | null;
+  bottomSongs?: string | null;
+  bestRankInstrument?: string | null;
+};
+
+export type PlayerStatsInstrument = {
+  instrument: string;
+  tiers: PlayerStatsTier[];
 };
 
 export type PlayerStatsResponse = {
   accountId: string;
-  stats: PlayerStatEntry[];
+  totalSongs: number;
+  instruments: PlayerStatsInstrument[];
 };
 
 // ─── Rivals types ──────────────────────────────────────────────

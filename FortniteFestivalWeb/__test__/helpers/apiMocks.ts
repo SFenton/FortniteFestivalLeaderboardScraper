@@ -135,9 +135,28 @@ export const MOCK_PLAYER_HISTORY_RESPONSE: PlayerHistoryResponse = {
 
 export const MOCK_PLAYER_STATS_RESPONSE: PlayerStatsResponse = {
   accountId: 'test-player-1',
-  stats: [
-    { instrument: 'Solo_Guitar', songsPlayed: 10, fullComboCount: 2, goldStarCount: 5, avgAccuracy: 96.5, bestRank: 1, totalScore: 1200000 },
-    { instrument: 'Overall', songsPlayed: 25, fullComboCount: 3, goldStarCount: 10, avgAccuracy: 94.2, bestRank: 1, totalScore: 3000000 },
+  totalSongs: 200,
+  instruments: [
+    {
+      instrument: 'Solo_Guitar',
+      tiers: [{
+        minLeeway: null, songsPlayed: 10, overThresholdCount: 0,
+        fcCount: 2, fcPercent: 20, goldStarCount: 5, fiveStarCount: 3, fourStarCount: 2,
+        threeStarCount: 0, twoStarCount: 0, oneStarCount: 0,
+        avgAccuracy: 9650, bestAccuracy: 10000, averageStars: 5.2, avgScore: 120000,
+        totalScore: 1200000, completionPercent: 5, bestRank: 1,
+      }],
+    },
+    {
+      instrument: 'Overall',
+      tiers: [{
+        minLeeway: null, songsPlayed: 25, overThresholdCount: 0,
+        fcCount: 3, fcPercent: 12, goldStarCount: 10, fiveStarCount: 8, fourStarCount: 5,
+        threeStarCount: 2, twoStarCount: 0, oneStarCount: 0,
+        avgAccuracy: 9420, bestAccuracy: 10000, averageStars: 4.8, avgScore: 120000,
+        totalScore: 3000000, completionPercent: 12.5, bestRank: 1, bestRankInstrument: 'Solo_Guitar',
+      }],
+    },
   ],
 };
 

@@ -3,7 +3,7 @@
  * Extracted for readability and potential reuse.
  */
 import { formatPercentileBucket, accuracyColor } from '@festival/core';
-import type { PlayerScore, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import type { PlayerScore, ServerInstrumentKey as InstrumentKey, PlayerStatsTier, PlayerStatsInstrument } from '@festival/core/api/serverTypes';
 
 export { accuracyColor };
 
@@ -128,4 +128,56 @@ export function formatClamped2(val: number): string {
   if (fixed.endsWith('00')) return fixed.slice(0, -3);
   if (fixed.endsWith('0')) return fixed.slice(0, -1);
   return fixed;
+}
+
+/** Select the tier matching a leeway value (last tier where minLeeway ≤ leeway). */
+export function findStatsTier(tiers: PlayerStatsTier[] | undefined, leeway: number): PlayerStatsTier | undefined {
+  if (!tiers || tiers.length === 0) return undefined;
+  let result: PlayerStatsTier | undefined;
+  for (const t of tiers) {
+    if (t.minLeeway === null || t.minLeeway <= leeway) result = t;
+    else break;
+  }
+  return result;
+}
+
+/** Get the tiers array for a specific instrument from the stats response. */
+export function getInstrumentTiers(instruments: PlayerStatsInstrument[], inst: string): PlayerStatsTier[] | undefined {
+  return instruments.find(i => i.instrument === inst)?.tiers;
+}
+
+/** Convert a backend PlayerStatsTier to the InstrumentStats shape used by section builders. */
+export function tierToInstrumentStats(tier: PlayerStatsTier): InstrumentStats {
+  const percentileBuckets: { pct: number; count: number }[] = [];
+  if (tier.percentileDist) {
+    try {
+      const dist = JSON.parse(tier.percentileDist) as Record<string, number>;
+      for (const [pctStr, count] of Object.entries(dist)) {
+        if (count > 0) percentileBuckets.push({ pct: Number(pctStr), count });
+      }
+      percentileBuckets.sort((a, b) => a.pct - b.pct);
+    } catch { /* ignore parse errors */ }
+  }
+
+  return {
+    songsPlayed: tier.songsPlayed,
+    completionPercent: tier.completionPercent.toFixed(1),
+    fcCount: tier.fcCount,
+    fcPercent: tier.fcPercent.toFixed(1),
+    goldStarCount: tier.goldStarCount,
+    fiveStarCount: tier.fiveStarCount,
+    fourStarCount: tier.fourStarCount,
+    threeStarCount: tier.threeStarCount,
+    twoStarCount: tier.twoStarCount,
+    oneStarCount: tier.oneStarCount,
+    averageStars: tier.averageStars,
+    avgAccuracy: tier.avgAccuracy,
+    bestAccuracy: tier.bestAccuracy,
+    avgScore: tier.avgScore,
+    bestRank: tier.bestRank,
+    bestRankSongId: tier.bestRankSongId ?? null,
+    overallPercentile: tier.overallPercentile ?? '—',
+    avgPercentile: tier.avgPercentile ?? '—',
+    percentileBuckets,
+  };
 }

@@ -5,9 +5,8 @@
 import { ACCURACY_SCALE } from '@festival/core';
 import { InstrumentHeaderSize } from '@festival/core';
 import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
-import type { PlayerScore } from '@festival/core/api/serverTypes';
 import { Colors, Gap, Overflow, Radius, frostedCardSurface } from '@festival/theme';
-import { computeInstrumentStats, formatClamped, formatClamped2, accuracyColor } from '../helpers/playerStats';
+import { type InstrumentStats, formatClamped, formatClamped2, accuracyColor } from '../helpers/playerStats';
 import StatBox from '../../../components/player/StatBox';
 import { cleanFilters, buildStarFilter, buildPercentileFilter } from '../helpers/playerFilterHelpers';
 import { instCardHeaderStyle } from './PlayerSectionHeading';
@@ -54,22 +53,16 @@ export function pctGold(v: string): string | undefined {
 export function buildInstrumentStatsItems(
   t: (key: string, opts?: Record<string, unknown>) => string,
   inst: InstrumentKey,
-  scores: PlayerScore[],
-  totalSongs: number,
+  stats: InstrumentStats,
   _displayName: string,
   navigateToSongs: NavigateToSongs,
   navigateToSongDetail: NavigateToSongDetail,
   cardStyle: React.CSSProperties,
-  isScoreValid?: (songId: string, instrument: InstrumentKey | string, score: number) => boolean,
-  filterInvalidScores?: boolean,
-  /** Unfiltered scores for this instrument — used to count over-threshold entries
-   *  (the main `scores` array has already been stripped by filterPlayerScores). */
-  rawScores?: PlayerScore[],
+  overThresholdCount?: number,
 ): PlayerItem[] {
-  if (scores.length === 0) return [];
+  if (stats.songsPlayed === 0) return [];
 
   const items: PlayerItem[] = [];
-  const stats = computeInstrumentStats(scores, totalSongs);
 
   // Instrument header
   items.push({
@@ -88,7 +81,7 @@ export function buildInstrumentStatsItems(
   const cards: { label: string; value: React.ReactNode; color?: string; onClick?: () => void }[] = [];
 
   if (stats.songsPlayed > 0) {
-    cards.push({ label: t('player.songsPlayed'), value: stats.songsPlayed.toLocaleString(), color: stats.songsPlayed >= totalSongs ? Colors.statusGreen : undefined, onClick: () => {
+    cards.push({ label: t('player.songsPlayed'), value: stats.songsPlayed.toLocaleString(), color: parseFloat(stats.completionPercent) >= 100 ? Colors.statusGreen : undefined, onClick: () => {
       navigateToSongs(instSongsPlayedUpdater(inst));
     } });
   }
@@ -98,15 +91,11 @@ export function buildInstrumentStatsItems(
     } });
   }
 
-  // Scores over CHOpt threshold card (only when filterInvalidScores is enabled)
-  if (filterInvalidScores && isScoreValid) {
-    const source = rawScores ?? scores;
-    const overCount = source.filter(s => s.score > 0 && !isScoreValid(s.songId, inst, s.score)).length;
-    if (overCount > 0) {
-      cards.push({ label: t('player.overThreshold'), value: overCount.toLocaleString(), color: Colors.statusRed, onClick: () => {
-        navigateToSongs(instOverThresholdUpdater(inst));
-      } });
-    }
+  // Scores over CHOpt threshold card
+  if (overThresholdCount != null && overThresholdCount > 0) {
+    cards.push({ label: t('player.overThreshold'), value: overThresholdCount.toLocaleString(), color: Colors.statusRed, onClick: () => {
+      navigateToSongs(instOverThresholdUpdater(inst));
+    } });
   }
 
   // Star count cards

@@ -7,6 +7,7 @@ import { type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Radius, frostedCard, Gap } from '@festival/theme';
 import { buildInstrumentStatsItems } from '../../sections/InstrumentStatsSection';
+import { computeInstrumentStats } from '../../helpers/playerStats';
 import type { PlayerScore } from '@festival/core/api/serverTypes';
 import FadeIn from '../../../../components/page/FadeIn';
 import { useSlideHeight } from '../../../../firstRun/SlideHeightContext';
@@ -43,7 +44,7 @@ export default function InstrumentBreakdownDemo() {
   const isMobile = useIsMobileChrome();
 
   const items = buildInstrumentStatsItems(
-    t, 'Solo_Guitar', DEMO_SCORES, TOTAL_SONGS, 'Player', NOOP, NOOP, cardStyle,
+    t, 'Solo_Guitar', computeInstrumentStats(DEMO_SCORES, TOTAL_SONGS), 'Player', NOOP, NOOP, cardStyle,
   );
 
   const headerItem = items[0];

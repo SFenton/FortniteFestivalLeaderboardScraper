@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+﻿import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent } from '@testing-library/react';
 import { ACCURACY_SCALE } from '@festival/core';
 import type { ServerInstrumentKey as InstrumentKey, PlayerScore } from '@festival/core/api/serverTypes';
+import { computeInstrumentStats } from '../../../../src/pages/player/helpers/playerStats';
 import {
   buildInstrumentStatsItems,
   instSongsPlayedUpdater,
@@ -31,7 +32,7 @@ vi.mock('../../../../src/components/display/InstrumentHeader', () => ({
   default: ({ instrument }: any) => <div data-testid="inst-header">{instrument}</div>,
 }));
 vi.mock('../../../../src/components/songs/metadata/GoldStars', () => ({
-  default: () => <span data-testid="gold-stars">★★★★★★</span>,
+  default: () => <span data-testid="gold-stars">â˜…â˜…â˜…â˜…â˜…â˜…</span>,
 }));
 
 const t = (key: string) => key;
@@ -55,9 +56,14 @@ describe('pctGold', () => {
   it('returns undefined for empty string', () => expect(pctGold('')).toBeUndefined());
 });
 
+/** Build items from raw scores (mirrors the old API for test convenience). */
+function buildItems(scores: PlayerScore[], totalSongs: number, ...rest: Parameters<typeof buildInstrumentStatsItems> extends [any, any, any, ...infer R] ? R : never) {
+  return buildInstrumentStatsItems(t, inst, computeInstrumentStats(scores, totalSongs), ...rest);
+}
+
 describe('buildInstrumentStatsItems', () => {
   it('returns empty array for empty scores', () => {
-    const items = buildInstrumentStatsItems(t, inst, [], 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    const items = buildItems([], 100, 'Player', navigateToSongs, navigateToSongDetail, {});
     expect(items.length).toBe(0);
   });
 
@@ -67,28 +73,28 @@ describe('buildInstrumentStatsItems', () => {
       makeScore({ songId: 's2', stars: 5, isFullCombo: false }),
       makeScore({ songId: 's3', stars: 4 }),
     ];
-    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    const items = buildItems(scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
     // Should include header + stat cards + percentile table
     expect(items.length).toBeGreaterThan(5);
   });
 
   it('includes songs played card when songsPlayed > 0', () => {
     const scores = [makeScore()];
-    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    const items = buildItems(scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
     const spItem = items.find(i => i.key.includes('card'));
     expect(spItem).toBeDefined();
   });
 
   it('includes FC card when fcCount > 0', () => {
     const scores = [makeScore({ isFullCombo: true })];
-    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    const items = buildItems(scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
     expect(items.length).toBeGreaterThan(3);
   });
 
   it('songs played onClick calls navigateToSongs', () => {
     navigateToSongs.mockClear();
     const scores = [makeScore()];
-    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    const items = buildItems(scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
     // Find a card with an onClick
     const cardItem = items.find(i => i.key.includes('card-0'));
     if (cardItem) {
@@ -100,7 +106,7 @@ describe('buildInstrumentStatsItems', () => {
 
   it('percentile table renders when buckets exist', () => {
     const scores = [makeScore({ rank: 1, totalEntries: 100 })];
-    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    const items = buildItems(scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
     const tableItem = items.find(i => i.key.includes('pct-table'));
     expect(tableItem).toBeDefined();
   });
@@ -108,7 +114,7 @@ describe('buildInstrumentStatsItems', () => {
   it('percentile row onClick calls navigateToSongs', () => {
     navigateToSongs.mockClear();
     const scores = [makeScore({ rank: 1, totalEntries: 100 })];
-    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    const items = buildItems(scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
     const tableItem = items.find(i => i.key.includes('pct-table'));
     if (tableItem) {
       const { container } = render(<>{tableItem.node}</>);
@@ -121,7 +127,7 @@ describe('buildInstrumentStatsItems', () => {
   it('bestRank onClick calls navigateToSongDetail', () => {
     navigateToSongDetail.mockClear();
     const scores = [makeScore({ rank: 1, totalEntries: 100 })];
-    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    const items = buildItems(scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
     for (const item of items) {
       if (!item.key.includes('card')) continue;
       const { container } = render(<>{item.node}</>);
@@ -136,37 +142,37 @@ describe('buildInstrumentStatsItems', () => {
 
   it('skips FC card when fcCount is 0', () => {
     const scores = [makeScore({ isFullCombo: false, stars: 0, rank: 0, totalEntries: 0 })];
-    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    const items = buildItems(scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
     expect(items.length).toBeGreaterThan(0);
   });
 
   it('renders gold accuracy color when perfect', () => {
     const scores = [makeScore({ accuracy: 100 * ACCURACY_SCALE, isFullCombo: true, stars: 6 })];
-    const items = buildInstrumentStatsItems(t, inst, scores, 1, 'Player', navigateToSongs, navigateToSongDetail, {});
+    const items = buildItems(scores, 1, 'Player', navigateToSongs, navigateToSongDetail, {});
     expect(items.length).toBeGreaterThan(3);
   });
 
   it('renders golden stars when averageStars is 6', () => {
     const scores = [makeScore({ stars: 6, isFullCombo: true })];
-    const items = buildInstrumentStatsItems(t, inst, scores, 1, 'Player', navigateToSongs, navigateToSongDetail, {});
+    const items = buildItems(scores, 1, 'Player', navigateToSongs, navigateToSongDetail, {});
     expect(items.length).toBeGreaterThan(3);
   });
 
   it('renders dash for zero accuracy', () => {
     const scores = [makeScore({ accuracy: 0 })];
-    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    const items = buildItems(scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
     expect(items.length).toBeGreaterThan(0);
   });
 
   it('renders dash for zero bestRank', () => {
     const scores = [makeScore({ rank: 0, totalEntries: 0 })];
-    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    const items = buildItems(scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
     expect(items.length).toBeGreaterThan(0);
   });
 
   it('renders green when all songs played', () => {
     const scores = [makeScore()];
-    const items = buildInstrumentStatsItems(t, inst, scores, 1, 'Player', navigateToSongs, navigateToSongDetail, {});
+    const items = buildItems(scores, 1, 'Player', navigateToSongs, navigateToSongDetail, {});
     expect(items.length).toBeGreaterThan(0);
   });
 
@@ -179,7 +185,7 @@ describe('buildInstrumentStatsItems', () => {
       makeScore({ songId: 's5', stars: 2 }),
       makeScore({ songId: 's6', stars: 1 }),
     ];
-    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    const items = buildItems(scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
     // Should have header + songs played + FC + 6 star cards + accuracy + avg stars + bestRank + percentile + avgPercentile + pctTable
     expect(items.length).toBeGreaterThan(10);
   });
@@ -187,7 +193,7 @@ describe('buildInstrumentStatsItems', () => {
   it('star card onClick calls navigateToSongs', () => {
     navigateToSongs.mockClear();
     const scores = [makeScore({ stars: 6 })];
-    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    const items = buildItems(scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
     // Find a gold stars card (should be card-2 after songsPlayed=0, fcs=0)
     for (const item of items) {
       if (!item.key.includes('card')) continue;
@@ -204,7 +210,7 @@ describe('buildInstrumentStatsItems', () => {
   it('percentile onClick calls navigateToSongs', () => {
     navigateToSongs.mockClear();
     const scores = [makeScore({ rank: 1, totalEntries: 100 })];
-    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    const items = buildItems(scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
     for (const item of items) {
       if (!item.key.includes('card')) continue;
       const { container } = render(<>{item.node}</>);
@@ -220,11 +226,11 @@ describe('buildInstrumentStatsItems', () => {
   it('avgPercentile (songsPlayed) onClick calls navigateToSongs', () => {
     navigateToSongs.mockClear();
     const scores = [makeScore({ rank: 1, totalEntries: 100 })];
-    const items = buildInstrumentStatsItems(t, inst, scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
+    const items = buildItems(scores, 100, 'Player', navigateToSongs, navigateToSongDetail, {});
     for (const item of items) {
       if (!item.key.includes('card')) continue;
       const { container } = render(<>{item.node}</>);
-      // The avgPercentile card also uses "player.songsPlayed" label—find the second one
+      // The avgPercentile card also uses "player.songsPlayed" labelâ€”find the second one
       const els = container.querySelectorAll('[data-testid*="player.songsPlayed"]');
       if (els.length > 0) {
         fireEvent.click(els[els.length - 1]!);
