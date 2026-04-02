@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 
 namespace FSTService.Scraping;
@@ -108,6 +109,7 @@ public sealed class DeepScrapeCoordinator
             jobs.Count, seedBatch);
 
         var results = new GlobalLeaderboardResult?[jobs.Count];
+        var callbackTasks = new ConcurrentBag<Task>();
 
         // Initialize per-job state
         for (int i = 0; i < jobs.Count; i++)
@@ -194,10 +196,10 @@ public sealed class DeepScrapeCoordinator
                 BytesReceived = job.BytesReceived,
             };
 
-            // Fire callback asynchronously
+            // Fire callback asynchronously — tracked so we await before returning
             if (onJobComplete is not null)
             {
-                _ = Task.Run(async () =>
+                callbackTasks.Add(Task.Run(async () =>
                 {
                     try { await onJobComplete(results[jobIndex]!); }
                     catch (Exception ex)
@@ -205,7 +207,7 @@ public sealed class DeepScrapeCoordinator
                         _log.LogWarning(ex, "onJobComplete callback failed for {Song}/{Instrument}.",
                             job.SongId, job.Instrument);
                     }
-                });
+                }));
             }
         }
 
@@ -311,6 +313,11 @@ public sealed class DeepScrapeCoordinator
                 }
             }
         }
+
+        // Wait for all job-completion callbacks to finish before returning,
+        // so callers (e.g. ScrapeOrchestrator) can safely close channels.
+        if (!callbackTasks.IsEmpty)
+            await Task.WhenAll(callbackTasks);
 
         // Dispose per-job CTS
         foreach (var job in jobs)

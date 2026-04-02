@@ -150,7 +150,7 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
-            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -170,7 +170,7 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
-            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -192,7 +192,7 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Is<IReadOnlyList<UserWorkItem>>(u => u.Count == 1 && u[0].AccountId == "acct1"),
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             "token", "callerAcct", Arg.Any<SharedDopPool>(),
-            false, Arg.Any<int>(), true, Arg.Any<CancellationToken>());
+            false, Arg.Any<int>(), true, Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -213,7 +213,7 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
-            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -229,7 +229,7 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
-            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("machine failure"));
 
         var orchestrator = CreateBackfillOrchestrator();

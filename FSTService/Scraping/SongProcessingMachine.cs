@@ -49,6 +49,7 @@ public class SongProcessingMachine
     /// <param name="isHighPriority">True for post-scrape, false for backfill.</param>
     /// <param name="batchSize">Max accounts per V2 batch call.</param>
     /// <param name="reportProgress">Whether to report to ScrapeProgressTracker (only post-scrape machine should).</param>
+    /// <param name="maxConcurrentSongs">Max songs processed concurrently. 0 = unlimited.</param>
     /// <param name="ct">Cancellation token.</param>
     public virtual async Task<MachineResult> RunAsync(
         IReadOnlyList<string> songIds,
@@ -60,6 +61,7 @@ public class SongProcessingMachine
         bool isHighPriority = true,
         int batchSize = 500,
         bool reportProgress = true,
+        int maxConcurrentSongs = 0,
         CancellationToken ct = default)
     {
         if (songIds.Count == 0 || users.Count == 0)
@@ -85,14 +87,28 @@ public class SongProcessingMachine
         }
 
         _log.LogInformation(
-            "SongProcessingMachine starting: {Songs} songs, {Users} users, batch={BatchSize}, priority={Priority}, DOP={Dop}.",
-            songIds.Count, users.Count, batchSize, isHighPriority ? "high" : "low", pool.CurrentDop);
+            "SongProcessingMachine starting: {Songs} songs, {Users} users, batch={BatchSize}, priority={Priority}, DOP={Dop}, songConcurrency={SongConcurrency}.",
+            songIds.Count, users.Count, batchSize, isHighPriority ? "high" : "low", pool.CurrentDop,
+            maxConcurrentSongs > 0 ? maxConcurrentSongs : songIds.Count);
 
+        // Gate song-level parallelism to avoid saturating the DOP pool with
+        // heavy V2 POST requests, which can trigger CDN blocks.
+        SemaphoreSlim? songGate = maxConcurrentSongs > 0
+            ? new SemaphoreSlim(maxConcurrentSongs, maxConcurrentSongs)
+            : null;
+
+        try
+        {
         // ─── Fire ALL songs in parallel ─────────────────────────
         var songTasks = songIds.Select(async songId =>
         {
             ct.ThrowIfCancellationRequested();
 
+            if (songGate is not null)
+                await songGate.WaitAsync(ct);
+
+            try
+            {
             var result = await ProcessSongAsync(
                 songId, instruments, users, seasonPrefixMap,
                 accessToken, callerAccountId, pool, isHighPriority, batchSize, ct);
@@ -104,9 +120,19 @@ public class SongProcessingMachine
 
             if (reportProgress)
                 _progress.ReportPhaseItemComplete();
+            }
+            finally
+            {
+                songGate?.Release();
+            }
         }).ToList();
 
         await Task.WhenAll(songTasks);
+        }
+        finally
+        {
+            songGate?.Dispose();
+        }
 
         if (reportProgress)
             _progress.SetAdaptiveLimiter(null);

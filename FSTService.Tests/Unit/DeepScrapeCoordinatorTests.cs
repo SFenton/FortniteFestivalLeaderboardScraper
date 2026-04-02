@@ -252,9 +252,7 @@ public class DeepScrapeCoordinatorTests
             },
             CancellationToken.None);
 
-        // Give callback a moment to fire (it runs on a background task)
-        await Task.Delay(100);
-
+        // Callbacks are now awaited before RunAsync returns — no delay needed.
         Assert.Single(callbackResults);
         Assert.Equal("song1", callbackResults.First().SongId);
     }
@@ -437,5 +435,50 @@ public class DeepScrapeCoordinatorTests
         // All 3 pages fetched, but only 1 valid
         Assert.True(results[0].PagesScraped >= 3);
         Assert.True(results[0].Entries.Count >= 3);
+    }
+
+    // ─── Callbacks complete before RunAsync returns ──
+
+    [Fact]
+    public async Task OnJobComplete_CallbacksCompleteBeforeReturn()
+    {
+        var (coordinator, _, handler) = Create();
+
+        handler.EnqueueJsonOk(MakePage(2, 10, ("p1", 500)));
+        handler.EnqueueJsonOk(MakePage(2, 10, ("p2", 600)));
+
+        var callbackCompleted = new ConcurrentBag<string>();
+
+        var jobs = new List<DeepScrapeJob>
+        {
+            new()
+            {
+                SongId = "song1", Instrument = "Solo_Guitar",
+                ValidCutoff = 1000, ValidEntryTarget = 1,
+                ReportedPages = 10, Wave2Start = 2, ValidCount = 0,
+            },
+            new()
+            {
+                SongId = "song2", Instrument = "Solo_Bass",
+                ValidCutoff = 1000, ValidEntryTarget = 1,
+                ReportedPages = 10, Wave2Start = 2, ValidCount = 0,
+            },
+        };
+
+        var results = await coordinator.RunAsync(
+            jobs, new AdaptiveConcurrencyLimiter(4, 1, 4, _log),
+            "token", "acct", seedBatch: 5,
+            onJobComplete: async result =>
+            {
+                // Simulate slow persistence
+                await Task.Delay(200);
+                callbackCompleted.Add(result.SongId);
+            },
+            CancellationToken.None);
+
+        // All callbacks must have completed before RunAsync returned
+        Assert.Equal(2, callbackCompleted.Count);
+        Assert.Contains("song1", callbackCompleted);
+        Assert.Contains("song2", callbackCompleted);
     }
 }

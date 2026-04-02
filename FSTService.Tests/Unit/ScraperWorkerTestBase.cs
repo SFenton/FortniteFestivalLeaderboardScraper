@@ -94,7 +94,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
             Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
-            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(new SongProcessingMachine.MachineResult());
 
         _pool = new SharedDopPool(16, minDop: 2, maxDop: 64, lowPriorityPercent: 20, Substitute.For<ILogger>());

@@ -203,6 +203,17 @@ public sealed class ScraperOptions
     public int LookupBatchSize { get; set; } = 500;
 
     /// <summary>
+    /// Maximum number of songs processed concurrently inside the
+    /// <see cref="FSTService.Scraping.SongProcessingMachine"/>. Each song fans out
+    /// into 6 parallel instrument tasks, so total concurrent API calls ≈ this × 6.
+    /// Prevents CDN blocks that occur when the full scrape DOP is used for heavy
+    /// V2 POST batch lookups.
+    /// Default 32 → ~192 concurrent V2 requests.
+    /// Configurable via <c>Scraper__SongMachineDop</c> env var.
+    /// </summary>
+    public int SongMachineDop { get; set; } = 32;
+
+    /// <summary>
     /// When true, the post-scrape refresh also queries the current season for each
     /// registered user to capture sub-optimal sessions (plays that didn't beat the
     /// all-time best) for the score history chart.

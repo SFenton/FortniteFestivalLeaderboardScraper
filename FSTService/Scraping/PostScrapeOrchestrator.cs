@@ -305,7 +305,8 @@ public sealed class PostScrapeOrchestrator
                 chartedSongIds, users, seasonWindows,
                 refreshToken, callerAccountId,
                 _pool, isHighPriority: true,
-                _options.Value.LookupBatchSize, reportProgress: true, ct);
+                _options.Value.LookupBatchSize, reportProgress: true,
+                maxConcurrentSongs: _options.Value.SongMachineDop, ct: ct);
 
             if (result.EntriesUpdated > 0 || result.SessionsInserted > 0)
                 _log.LogInformation("Song machine updated {Entries} entries, {Sessions} sessions for {Users} users.",

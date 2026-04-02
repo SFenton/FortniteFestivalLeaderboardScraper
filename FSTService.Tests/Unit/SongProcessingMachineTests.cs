@@ -292,4 +292,71 @@ public class SongProcessingMachineTests : IDisposable
 
         Assert.Equal(1, result.UsersProcessed);
     }
+
+    // ─── Song-level concurrency cap ─────────────────────────
+
+    [Fact]
+    public async Task RunAsync_MaxConcurrentSongs_LimitsConcurrency()
+    {
+        int peakConcurrency = 0;
+        int currentConcurrency = 0;
+
+        _scraper.LookupMultipleAccountsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>())
+            .Returns(async callInfo =>
+            {
+                var c = Interlocked.Increment(ref currentConcurrency);
+                // Track peak
+                int oldPeak;
+                do { oldPeak = Volatile.Read(ref peakConcurrency); }
+                while (c > oldPeak && Interlocked.CompareExchange(ref peakConcurrency, c, oldPeak) != oldPeak);
+
+                await Task.Delay(50, callInfo.ArgAt<CancellationToken>(6));
+                Interlocked.Decrement(ref currentConcurrency);
+
+                return new List<LeaderboardEntry>();
+            });
+
+        var machine = CreateMachine();
+        var users = new[] { new UserWorkItem { AccountId = "user1", Purposes = WorkPurpose.Backfill, AllTimeNeeded = true } };
+
+        // 10 songs, maxConcurrentSongs=2. Each song has 6 instruments, so max concurrent calls = 2 × 6 = 12.
+        var songIds = Enumerable.Range(0, 10).Select(i => $"song{i}").ToList();
+
+        var result = await machine.RunAsync(
+            songIds, users, TestSeasonWindows,
+            "token", "caller", _pool, isHighPriority: true,
+            batchSize: 500, reportProgress: false,
+            maxConcurrentSongs: 2, ct: CancellationToken.None);
+
+        // With 2 concurrent songs × 6 instruments = 12 max concurrent calls.
+        // Without the cap it would be 10 × 6 = 60.
+        Assert.True(peakConcurrency <= 12,
+            $"Peak concurrency was {peakConcurrency}, expected ≤ 12 (2 songs × 6 instruments)");
+        Assert.Equal(1, result.UsersProcessed);
+    }
+
+    [Fact]
+    public async Task RunAsync_MaxConcurrentSongsZero_NoLimit()
+    {
+        _scraper.LookupMultipleAccountsAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<AdaptiveConcurrencyLimiter?>(),
+            Arg.Any<CancellationToken>())
+            .Returns(new List<LeaderboardEntry>());
+
+        var machine = CreateMachine();
+        var users = new[] { new UserWorkItem { AccountId = "user1", Purposes = WorkPurpose.Backfill, AllTimeNeeded = true } };
+
+        // maxConcurrentSongs=0 → no semaphore created, all songs run freely
+        var result = await machine.RunAsync(
+            ["song1", "song2", "song3"], users, TestSeasonWindows,
+            "token", "caller", _pool, isHighPriority: true,
+            batchSize: 500, reportProgress: false,
+            maxConcurrentSongs: 0, ct: CancellationToken.None);
+
+        Assert.Equal(1, result.UsersProcessed);
+    }
 }

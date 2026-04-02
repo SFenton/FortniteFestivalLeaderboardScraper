@@ -140,7 +140,8 @@ public sealed class BackfillOrchestrator
                 chartedSongIds, users, seasonWindows,
                 accessToken, callerAccountId,
                 _pool, isHighPriority: false,
-                _options.Value.LookupBatchSize, reportProgress: true, ct);
+                _options.Value.LookupBatchSize, reportProgress: true,
+                maxConcurrentSongs: _options.Value.SongMachineDop, ct: ct);
 
             _log.LogInformation(
                 "Backfill complete: {Updated} entries, {Sessions} sessions, {ApiCalls} API calls for {Users} users.",
@@ -274,7 +275,8 @@ public sealed class BackfillOrchestrator
                 chartedSongIds, users, seasonWindows,
                 accessToken, callerAccountId,
                 _pool, isHighPriority: false,
-                _options.Value.LookupBatchSize, reportProgress: true, ct);
+                _options.Value.LookupBatchSize, reportProgress: true,
+                maxConcurrentSongs: _options.Value.SongMachineDop, ct: ct);
 
             _log.LogInformation(
                 "History recon complete: {Sessions} sessions inserted, {ApiCalls} API calls for {Users} users.",

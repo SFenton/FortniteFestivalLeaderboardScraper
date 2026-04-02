@@ -100,7 +100,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Is<IReadOnlyList<UserWorkItem>>(u => u.Count == 2),
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
-            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -167,7 +167,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
                 && u[0].Purposes.HasFlag(WorkPurpose.HistoryRecon)),
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             "token", "callerAcct", Arg.Any<SharedDopPool>(),
-            false, Arg.Any<int>(), true, Arg.Any<CancellationToken>());
+            false, Arg.Any<int>(), true, Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -241,7 +241,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
             Arg.Any<IReadOnlyList<SeasonWindowInfo>>(),
             Arg.Any<string>(), Arg.Any<string>(), Arg.Any<SharedDopPool>(),
-            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .ThrowsAsync(new InvalidOperationException("machine error"));
 
         var orchestrator = CreateBackfillOrchestrator();
@@ -341,7 +341,7 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Arg.Any<IReadOnlyList<FSTService.Persistence.SeasonWindowInfo>>(),
             Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<SharedDopPool>(),
-            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
+            Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
