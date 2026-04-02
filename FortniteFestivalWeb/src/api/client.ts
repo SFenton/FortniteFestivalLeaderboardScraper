@@ -13,6 +13,8 @@ import type {
   RivalsListResponse,
   RivalDetailResponse,
   RivalSuggestionsResponse,
+  RivalsAllResponse,
+  ShopResponse,
   RankingsPageResponse,
   AccountRankingDto,
   CompositePageResponse,
@@ -121,6 +123,8 @@ export const api = {
     saveSongsCache(data, res.headers.get('etag'));
     return data;
   },
+
+  getShop: () => getWithETag<ShopResponse>('/api/shop'),
 
   getLeaderboard: (songId: string, instrument: InstrumentKey, top = 100, offset = 0, leeway?: number) =>
     get<LeaderboardResponse>(
@@ -242,4 +246,9 @@ export const api = {
       `/api/player/${encodeURIComponent(accountId)}/rivals/suggestions?${params}`,
     );
   },
+
+  getRivalsAll: (accountId: string) =>
+    getWithETag<RivalsAllResponse>(
+      `/api/player/${encodeURIComponent(accountId)}/rivals/all`,
+    ),
 };

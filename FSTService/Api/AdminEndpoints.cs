@@ -147,8 +147,22 @@ public static partial class ApiEndpoints
 
         // ─── FirstSeenSeason endpoints ────────────────────
 
-        app.MapGet("/api/firstseen", (IMetaDatabase metaDb) =>
+        app.MapGet("/api/firstseen", (HttpContext httpContext, IMetaDatabase metaDb, ScrapeTimePrecomputer precomputer) =>
         {
+            // ── Check precomputed store ──
+            var precomputed = precomputer.TryGet("firstseen");
+            if (precomputed is not null)
+            {
+                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
+                {
+                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                    return Results.StatusCode(304);
+                }
+                httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                return Results.Bytes(precomputed.Value.Json, "application/json");
+            }
+
             var all = metaDb.GetAllFirstSeenSeasons();
             var songs = all.Select(kvp => new
             {
@@ -403,7 +417,10 @@ public static partial class ApiEndpoints
             IPathDataStore pathStore,
             SongsCacheService songsCache,
             ScrapeTimePrecomputer precomputer,
+            FortniteFestival.Core.Services.FestivalService festivalService,
+            IMetaDatabase metaDb,
             IOptions<ScraperOptions> scraperOptions,
+            IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
         {
@@ -430,7 +447,7 @@ public static partial class ApiEndpoints
                 updated++;
             }
 
-            songsCache.Invalidate();
+            songsCache.Prime(festivalService, pathStore, metaDb, precomputer, jsonOptions.Value.SerializerOptions);
 
             // Re-run precomputation so player responses include minLeeway + validScores
             log.LogInformation("Backfilled max scores for {Count} songs. Running precomputation...", updated);

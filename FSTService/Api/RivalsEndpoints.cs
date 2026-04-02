@@ -17,9 +17,25 @@ public static partial class ApiEndpoints
             HttpContext httpContext,
             string accountId,
             IMetaDatabase metaDb,
+            ScrapeTimePrecomputer precomputer,
             [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
+
+            // ── Check precomputed store first ──
+            var precomputedKey = $"rivals-overview:{accountId}";
+            var precomputed = precomputer.TryGet(precomputedKey);
+            if (precomputed is not null)
+            {
+                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
+                {
+                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                    return Results.StatusCode(304);
+                }
+                httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                return Results.Bytes(precomputed.Value.Json, "application/json");
+            }
 
             var cacheKey = $"overview:{accountId}";
             var cached = rivalsCache.Get(cacheKey);
@@ -204,9 +220,25 @@ public static partial class ApiEndpoints
             HttpContext httpContext,
             string accountId,
             IMetaDatabase metaDb,
+            ScrapeTimePrecomputer precomputer,
             [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
+
+            // ── Check precomputed store first ──
+            var precomputedKey = $"rivals-all:{accountId}";
+            var precomputedResult = precomputer.TryGet(precomputedKey);
+            if (precomputedResult is not null)
+            {
+                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputedResult.Value.ETag)
+                {
+                    httpContext.Response.Headers.ETag = precomputedResult.Value.ETag;
+                    return Results.StatusCode(304);
+                }
+                httpContext.Response.Headers.ETag = precomputedResult.Value.ETag;
+                return Results.Bytes(precomputedResult.Value.Json, "application/json");
+            }
 
             var cacheKey = $"all:{accountId}";
             var cached = rivalsCache.Get(cacheKey);

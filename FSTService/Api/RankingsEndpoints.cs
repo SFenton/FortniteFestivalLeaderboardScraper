@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FSTService.Persistence;
+using FSTService.Scraping;
 using Microsoft.Extensions.Options;
 
 namespace FSTService.Api;
@@ -17,14 +18,34 @@ public static partial class ApiEndpoints
             int? page,
             int? pageSize,
             GlobalLeaderboardPersistence persistence,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            ScrapeTimePrecomputer precomputer) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
+
+            var effectivePage = page ?? 1;
+            var effectivePageSize = Math.Clamp(pageSize ?? 50, 1, 200);
+            var metric = rankBy ?? "adjusted";
+
+            // ── Check precomputed store for page 1 with default size ──
+            if (effectivePage == 1 && effectivePageSize == 50)
+            {
+                var precomputed = precomputer.TryGet($"rankings:{instrument}:{metric}:1:50");
+                if (precomputed is not null)
+                {
+                    var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                    if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
+                    {
+                        httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                        return Results.StatusCode(304);
+                    }
+                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                    return Results.Bytes(precomputed.Value.Json, "application/json");
+                }
+            }
+
             var db = persistence.GetOrCreateInstrumentDb(instrument);
-            var (entries, total) = db.GetAccountRankings(
-                rankBy ?? "adjusted",
-                page ?? 1,
-                Math.Clamp(pageSize ?? 50, 1, 200));
+            var (entries, total) = db.GetAccountRankings(metric, effectivePage, effectivePageSize);
 
             // Bulk resolve display names (single DB call)
             var names = metaDb.GetDisplayNames(entries.Select(e => e.AccountId));
@@ -58,9 +79,9 @@ public static partial class ApiEndpoints
             return Results.Ok(new
             {
                 instrument,
-                rankBy = rankBy ?? "adjusted",
-                page = page ?? 1,
-                pageSize = Math.Clamp(pageSize ?? 50, 1, 200),
+                rankBy = metric,
+                page = effectivePage,
+                pageSize = effectivePageSize,
                 totalAccounts = total,
                 entries = enriched,
             });
@@ -139,12 +160,33 @@ public static partial class ApiEndpoints
             HttpContext httpContext,
             int? page,
             int? pageSize,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            ScrapeTimePrecomputer precomputer) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
-            var (entries, total) = metaDb.GetCompositeRankings(
-                page ?? 1,
-                Math.Clamp(pageSize ?? 50, 1, 200));
+
+            var effectivePage = page ?? 1;
+            var effectivePageSize = Math.Clamp(pageSize ?? 50, 1, 200);
+
+            // ── Check precomputed store for page 1 default size ──
+            if (effectivePage == 1 && effectivePageSize == 50)
+            {
+                // Composite rankings are metric-agnostic; use adjusted as canonical key
+                var precomputed = precomputer.TryGet("rankings:composite:adjusted:1:50");
+                if (precomputed is not null)
+                {
+                    var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                    if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
+                    {
+                        httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                        return Results.StatusCode(304);
+                    }
+                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                    return Results.Bytes(precomputed.Value.Json, "application/json");
+                }
+            }
+
+            var (entries, total) = metaDb.GetCompositeRankings(effectivePage, effectivePageSize);
 
             var names = metaDb.GetDisplayNames(entries.Select(e => e.AccountId));
 
@@ -170,8 +212,8 @@ public static partial class ApiEndpoints
 
             return Results.Ok(new
             {
-                page = page ?? 1,
-                pageSize = Math.Clamp(pageSize ?? 50, 1, 200),
+                page = effectivePage,
+                pageSize = effectivePageSize,
                 totalAccounts = total,
                 entries = enriched,
             });
@@ -316,11 +358,30 @@ public static partial class ApiEndpoints
             int? radius,
             GlobalLeaderboardPersistence persistence,
             IMetaDatabase metaDb,
+            ScrapeTimePrecomputer precomputer,
             [FromKeyedServices("NeighborhoodCache")] ResponseCacheService cache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
 
             var effectiveRadius = Math.Clamp(radius ?? 5, 1, 25);
+
+            // ── Check precomputed store for default radius ──
+            if (effectiveRadius == 5)
+            {
+                var precomputedResult = precomputer.TryGet($"neighborhood:{instrument}:{accountId}:5");
+                if (precomputedResult is not null)
+                {
+                    var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                    if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputedResult.Value.ETag)
+                    {
+                        httpContext.Response.Headers.ETag = precomputedResult.Value.ETag;
+                        return Results.StatusCode(304);
+                    }
+                    httpContext.Response.Headers.ETag = precomputedResult.Value.ETag;
+                    return Results.Bytes(precomputedResult.Value.Json, "application/json");
+                }
+            }
+
             var cacheKey = $"neighborhood:{instrument}:{accountId}:{effectiveRadius}";
 
             var cached = cache.Get(cacheKey);
@@ -389,11 +450,30 @@ public static partial class ApiEndpoints
             string accountId,
             int? radius,
             IMetaDatabase metaDb,
+            ScrapeTimePrecomputer precomputer,
             [FromKeyedServices("NeighborhoodCache")] ResponseCacheService cache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
 
             var effectiveRadius = Math.Clamp(radius ?? 5, 1, 25);
+
+            // ── Check precomputed store for default radius ──
+            if (effectiveRadius == 5)
+            {
+                var precomputedResult = precomputer.TryGet($"neighborhood:composite:{accountId}:5");
+                if (precomputedResult is not null)
+                {
+                    var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                    if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputedResult.Value.ETag)
+                    {
+                        httpContext.Response.Headers.ETag = precomputedResult.Value.ETag;
+                        return Results.StatusCode(304);
+                    }
+                    httpContext.Response.Headers.ETag = precomputedResult.Value.ETag;
+                    return Results.Bytes(precomputedResult.Value.Json, "application/json");
+                }
+            }
+
             var cacheKey = $"neighborhood:composite:{accountId}:{effectiveRadius}";
 
             var cached = cache.Get(cacheKey);
@@ -457,11 +537,30 @@ public static partial class ApiEndpoints
             string? rankBy,
             int? pageSize,
             GlobalLeaderboardPersistence persistence,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            ScrapeTimePrecomputer precomputer) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
             var metric = rankBy ?? "adjusted";
             var effectivePageSize = Math.Clamp(pageSize ?? 10, 1, 50);
+
+            // ── Check precomputed store for default size ──
+            if (effectivePageSize == 10)
+            {
+                var precomputed = precomputer.TryGet($"rankings:overview:{metric}:10");
+                if (precomputed is not null)
+                {
+                    var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                    if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
+                    {
+                        httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                        return Results.StatusCode(304);
+                    }
+                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                    return Results.Bytes(precomputed.Value.Json, "application/json");
+                }
+            }
+
             var instrumentKeys = persistence.GetInstrumentKeys();
 
             var allAccountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

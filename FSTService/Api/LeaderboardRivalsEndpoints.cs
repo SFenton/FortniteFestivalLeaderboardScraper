@@ -19,6 +19,7 @@ public static partial class ApiEndpoints
             string? rankBy,
             IMetaDatabase metaDb,
             GlobalLeaderboardPersistence persistence,
+            ScrapeTimePrecomputer precomputer,
             [FromKeyedServices("LeaderboardRivalsCache")] ResponseCacheService cache) =>
         {
             var effectiveRankBy = rankBy ?? "totalscore";
@@ -28,6 +29,23 @@ public static partial class ApiEndpoints
                 effectiveRankBy = "totalscore"; // fallback unknown values
 
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
+
+            // ── Check precomputed store for default sort ──
+            if (effectiveRankBy == "totalscore")
+            {
+                var precomputed = precomputer.TryGet($"lb-rivals:{accountId}:{instrument}:totalscore");
+                if (precomputed is not null)
+                {
+                    var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                    if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
+                    {
+                        httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                        return Results.StatusCode(304);
+                    }
+                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                    return Results.Bytes(precomputed.Value.Json, "application/json");
+                }
+            }
 
             var cacheKey = $"lb-rivals:{accountId}:{instrument}:{effectiveRankBy}";
             var cached = cache.Get(cacheKey);

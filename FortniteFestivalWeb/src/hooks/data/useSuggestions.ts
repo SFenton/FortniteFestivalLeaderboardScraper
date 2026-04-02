@@ -5,7 +5,7 @@ import type { Song as CoreSong, LeaderboardData } from '@festival/core/models';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { api } from '../../api/client';
-import { buildRivalDataIndex } from '../../utils/suggestionAdapter';
+import { buildRivalDataIndexFromRivalsAll } from '../../utils/suggestionAdapter';
 import { deriveComboFromSettings } from '../../pages/rivals/helpers/comboUtils';
 import { useSettings } from '../../contexts/SettingsContext';
 
@@ -103,10 +103,10 @@ export function useSuggestions(
     let cancelled = false;
     const combo = deriveComboFromSettings(settings) ?? undefined;
 
-    api.getRivalSuggestions(accountId, combo, 5)
+    api.getRivalsAll(accountId)
       .then((response) => {
         if (cancelled || !generatorRef.current) return;
-        const index = buildRivalDataIndex(response);
+        const index = buildRivalDataIndexFromRivalsAll(response, combo, 5);
         generatorRef.current.setRivalData(index);
         rivalDataInjectedRef.current = true;
       })

@@ -614,14 +614,14 @@ public class ItemShopServiceTests
     }
 
     [Fact]
-    public void SongsCacheService_CanBeSet()
+    public void ShopCacheService_CanBeSet()
     {
         var handler = new MockHttpMessageHandler();
         var metaFixture = new InMemoryMetaDatabase();
         var service = CreateService(handler, metaFixture.Db);
 
-        var songsCache = new SongsCacheService();
-        service.SetSongsCacheService(songsCache);
+        var shopCache = new ShopCacheService();
+        service.SetShopCacheService(shopCache);
         // No crash
     }
 }

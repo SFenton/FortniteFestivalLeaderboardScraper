@@ -28,11 +28,11 @@ vi.mock('../../../src/contexts/ScrollContainerContext', () => ({
 }));
 
 vi.mock('../../../src/api/client', () => ({
-  api: { getRivalSuggestions: vi.fn().mockResolvedValue({ rivals: [] }) },
+  api: { getRivalsAll: vi.fn().mockResolvedValue({ accountId: 'acc1', songs: [], combos: [] }) },
 }));
 
 vi.mock('../../../src/utils/suggestionAdapter', () => ({
-  buildRivalDataIndex: vi.fn().mockReturnValue({ songRivals: [], byRival: new Map(), closestRivalBySong: new Map(), topRivalBySong: new Map() }),
+  buildRivalDataIndexFromRivalsAll: vi.fn().mockReturnValue({ songRivals: [], byRival: new Map(), closestRivalBySong: new Map(), topRivalBySong: new Map() }),
 }));
 
 vi.mock('../../../src/pages/rivals/helpers/comboUtils', () => ({

@@ -41,6 +41,8 @@ const mockApi = vi.hoisted(() => {
     searchAccounts: fn().mockResolvedValue({ results: [] }),
     trackPlayer: fn().mockResolvedValue({ accountId: 'test-player-1', displayName: 'TestPlayer', trackingStarted: false, backfillStatus: 'none' }),
     getRivalSuggestions: fn().mockResolvedValue({ accountId: 'test-player-1', combo: '', computedAt: null, rivals: [] }),
+    getRivalsAll: fn().mockResolvedValue({ accountId: 'test-player-1', songs: [], combos: [] }),
+    getShop: fn().mockResolvedValue({ songs: [] }),
     getVersions: fn().mockResolvedValue({ songs: '1' }),
     getShopSnapshot: fn().mockResolvedValue({ songIds: [] }),
   };

@@ -5,7 +5,7 @@
 import { ScoreTracker } from '@festival/core/models';
 import type { Song as CoreSong, LeaderboardData } from '@festival/core/models';
 import type { InstrumentKey } from '@festival/core/instruments';
-import type { ServerSong, PlayerScore, ServerInstrumentKey, RivalSuggestionsResponse } from '@festival/core/api/serverTypes';
+import type { ServerSong, PlayerScore, ServerInstrumentKey, RivalSuggestionsResponse, RivalsAllResponse } from '@festival/core/api/serverTypes';
 import type { RivalDataIndex, RivalInfo, RivalSongMatch } from '@festival/core/suggestions/types';
 
 const SERVER_TO_CORE_INSTRUMENT: Record<ServerInstrumentKey, InstrumentKey> = {
@@ -146,6 +146,118 @@ export function buildRivalDataIndex(response: RivalSuggestionsResponse): RivalDa
   return {
     songRivals,
     leaderboardRivals: [], // Populated when neighborhood data is merged
+    allRivals: [...songRivals],
+    byRival,
+    closestRivalBySong,
+    leaderboardRivalIndex: new Map(),
+  };
+}
+
+/**
+ * Builds a RivalDataIndex from the precomputed /rivals/all response (with indexed song samples).
+ * Expands the integer song index back to full songIds.
+ * When combo is provided, only entries from that combo are included.
+ * Top N rivals per direction (default 5).
+ */
+export function buildRivalDataIndexFromRivalsAll(
+  response: RivalsAllResponse,
+  combo?: string,
+  limit = 5,
+): RivalDataIndex {
+  const songRivals: RivalInfo[] = [];
+  const byRival = new Map<string, RivalSongMatch[]>();
+  const closestRivalBySong = new Map<string, RivalSongMatch>();
+
+  // Determine which combos to include
+  const comboData = combo
+    ? response.combos.filter(c => c.combo === combo)
+    : response.combos;
+
+  // Collect all rivals across selected combos, dedup, take top N per direction
+  const seenAbove = new Map<string, RivalInfo>();
+  const seenBelow = new Map<string, RivalInfo>();
+
+  for (const c of comboData) {
+    for (const r of c.above) {
+      if (!seenAbove.has(r.accountId)) {
+        seenAbove.set(r.accountId, {
+          accountId: r.accountId,
+          displayName: r.displayName ?? 'Unknown',
+          direction: 'above',
+          source: 'song',
+          sharedSongCount: r.sharedSongCount,
+          aheadCount: r.aheadCount,
+          behindCount: r.behindCount,
+        });
+      }
+    }
+    for (const r of c.below) {
+      if (!seenBelow.has(r.accountId)) {
+        seenBelow.set(r.accountId, {
+          accountId: r.accountId,
+          displayName: r.displayName ?? 'Unknown',
+          direction: 'below',
+          source: 'song',
+          sharedSongCount: r.sharedSongCount,
+          aheadCount: r.aheadCount,
+          behindCount: r.behindCount,
+        });
+      }
+    }
+  }
+
+  const topAbove = [...seenAbove.values()].slice(0, limit);
+  const topBelow = [...seenBelow.values()].slice(0, limit);
+  const allRivals = [...topAbove, ...topBelow];
+  const rivalSet = new Set(allRivals.map(r => r.accountId));
+
+  songRivals.push(...allRivals);
+
+  // Build song matches from samples
+  for (const c of comboData) {
+    for (const group of [c.above, c.below]) {
+      for (const r of group) {
+        if (!rivalSet.has(r.accountId)) continue;
+        const info = seenAbove.get(r.accountId) ?? seenBelow.get(r.accountId)!;
+        const matches: RivalSongMatch[] = [];
+        for (const s of r.samples) {
+          const songId = response.songs[s.s];
+          if (!songId) continue;
+          const coreInstrument = SERVER_TO_CORE_INSTRUMENT[s.i as ServerInstrumentKey];
+          if (!coreInstrument) continue;
+
+          const match: RivalSongMatch = {
+            rival: info,
+            songId,
+            instrument: coreInstrument,
+            userRank: s.ur,
+            rivalRank: s.rr,
+            rankDelta: s.ur - s.rr,
+            userScore: s.us,
+            rivalScore: s.rs,
+          };
+          matches.push(match);
+
+          const key = `${songId}:${coreInstrument}`;
+          const existing = closestRivalBySong.get(key);
+          if (!existing || Math.abs(match.rankDelta) < Math.abs(existing.rankDelta)) {
+            closestRivalBySong.set(key, match);
+          }
+        }
+        // Merge matches (same rival may appear in multiple combos)
+        const existing = byRival.get(r.accountId);
+        if (existing) {
+          existing.push(...matches);
+        } else {
+          byRival.set(r.accountId, matches);
+        }
+      }
+    }
+  }
+
+  return {
+    songRivals,
+    leaderboardRivals: [],
     allRivals: [...songRivals],
     byRival,
     closestRivalBySong,

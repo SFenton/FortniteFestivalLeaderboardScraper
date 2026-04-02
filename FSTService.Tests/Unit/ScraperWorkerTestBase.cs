@@ -204,7 +204,9 @@ public abstract class ScraperWorkerTestBase : IDisposable
             new Api.ResponseCacheService(TimeSpan.FromMinutes(2)),
             new Api.ResponseCacheService(TimeSpan.FromMinutes(5)),
             precomputer,
-            _progress, options, _lifetime, _log);
+            _progress, options,
+            Options.Create(new Microsoft.AspNetCore.Http.Json.JsonOptions()),
+            _lifetime, _log);
     }
 
     protected BackfillOrchestrator CreateBackfillOrchestrator(ScraperOptions? opts = null)

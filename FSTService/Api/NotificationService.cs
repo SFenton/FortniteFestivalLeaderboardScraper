@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using FortniteFestival.Core.Services;
 using FSTService.Scraping;
 
 namespace FSTService.Api;
@@ -18,6 +19,7 @@ public sealed class NotificationService
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, WebSocket>> _connections = new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<NotificationService> _log;
     private IShopProvider? _shopProvider;
+    private FestivalService? _festivalService;
 
     public NotificationService(ILogger<NotificationService> log)
     {
@@ -29,6 +31,11 @@ public sealed class NotificationService
     /// Called during startup to break the circular dependency.
     /// </summary>
     public void SetShopProvider(IShopProvider provider) => _shopProvider = provider;
+
+    /// <summary>
+    /// Set the festival service for enriching shop snapshots with song metadata.
+    /// </summary>
+    public void SetFestivalService(FestivalService service) => _festivalService = service;
 
     /// <summary>
     /// Register a WebSocket connection for the given account+device pair.
@@ -131,23 +138,24 @@ public sealed class NotificationService
     }
 
     /// <summary>
-    /// Broadcast that the item shop has changed. Sends added/removed songId deltas.
+    /// Broadcast that the item shop has changed. Sends enriched added song objects and removed songId strings.
     /// </summary>
     public Task NotifyShopChangedAsync(
-        IReadOnlyCollection<string> added,
+        IReadOnlyCollection<object> addedEnriched,
         IReadOnlyCollection<string> removed,
         int total,
         IReadOnlyCollection<string> leavingTomorrow)
     {
-        return BroadcastAllAsync(new { type = "shop_changed", added, removed, total, leavingTomorrow });
+        return BroadcastAllAsync(new { type = "shop_changed", added = addedEnriched, removed, total, leavingTomorrow });
     }
 
     /// <summary>
     /// Send the current shop snapshot to a single WebSocket (used on reconnect).
+    /// Sends enriched song objects so the client can render the shop page without /api/songs.
     /// </summary>
-    public async Task SendShopSnapshotAsync(WebSocket ws, IReadOnlyCollection<string> songIds, IReadOnlyCollection<string> leavingTomorrow)
+    public async Task SendShopSnapshotAsync(WebSocket ws, IReadOnlyCollection<object> enrichedSongs, IReadOnlyCollection<string> leavingTomorrow)
     {
-        var json = JsonSerializer.Serialize(new { type = "shop_snapshot", songIds, total = songIds.Count, leavingTomorrow });
+        var json = JsonSerializer.Serialize(new { type = "shop_snapshot", songs = enrichedSongs, total = enrichedSongs.Count, leavingTomorrow });
         var bytes = Encoding.UTF8.GetBytes(json);
         if (ws.State == WebSocketState.Open)
             await ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None);
@@ -185,13 +193,15 @@ public sealed class NotificationService
         AddConnection(accountId, deviceId, ws);
 
         // Send current shop snapshot so the client is immediately up-to-date
-        if (_shopProvider is not null)
+        if (_shopProvider is not null && _festivalService is not null)
         {
             try
             {
                 var shopIds = _shopProvider.InShopSongIds;
                 var leavingIds = _shopProvider.LeavingTomorrowSongIds;
-                await SendShopSnapshotAsync(ws, shopIds.ToArray(), leavingIds.ToArray());
+                var enrichedSongs = ShopCacheService.BuildEnrichedSongList(
+                    shopIds, leavingIds, _festivalService);
+                await SendShopSnapshotAsync(ws, enrichedSongs, leavingIds.ToArray());
             }
             catch (Exception ex)
             {

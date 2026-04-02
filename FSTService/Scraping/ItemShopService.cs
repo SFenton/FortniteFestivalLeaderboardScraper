@@ -36,7 +36,8 @@ public sealed partial class ItemShopService : IShopProvider
     private readonly IMetaDatabase _metaDb;
     private readonly ILogger<ItemShopService> _log;
     private NotificationService? _notifications;
-    private FSTService.Api.SongsCacheService? _songsCache;
+    private FSTService.Api.ShopCacheService? _shopCache;
+    private System.Text.Json.JsonSerializerOptions? _jsonOpts;
 
     private HashSet<string> _inShopSongIds = new();
     private HashSet<string> _leavingTomorrowSongIds = new();
@@ -80,7 +81,8 @@ public sealed partial class ItemShopService : IShopProvider
     /// Called during startup to break the circular dependency.
     /// </summary>
     public void SetNotificationService(NotificationService notifications) => _notifications = notifications;
-    public void SetSongsCacheService(FSTService.Api.SongsCacheService songsCache) => _songsCache = songsCache;
+    public void SetShopCacheService(FSTService.Api.ShopCacheService shopCache) => _shopCache = shopCache;
+    public void SetJsonSerializerOptions(System.Text.Json.JsonSerializerOptions jsonOpts) => _jsonOpts = jsonOpts;
 
     // ─── Initialization ─────────────────────────────────────────
 
@@ -209,15 +211,17 @@ public sealed partial class ItemShopService : IShopProvider
         // Persist to DB
         _metaDb.SaveItemShopTracks(matched, leavingTomorrow, now);
 
-        // Invalidate songs cache so /api/songs picks up shop changes
-        _songsCache?.Invalidate();
+        // Prime the shop cache so /api/shop serves instantly
+        PrimeShopCache(matched, leavingTomorrow);
 
         // Broadcast shop change to all connected WebSocket clients
         if (_notifications is not null && (added.Count > 0 || removed.Count > 0 || leavingChanged))
         {
             try
             {
-                await _notifications.NotifyShopChangedAsync(added, removed, matched.Count, leavingTomorrow);
+                var addedEnriched = FSTService.Api.ShopCacheService.BuildEnrichedSongList(
+                    added, leavingTomorrow, _festivalService);
+                await _notifications.NotifyShopChangedAsync(addedEnriched, removed, matched.Count, leavingTomorrow);
                 _log.LogInformation(
                     "Shop change broadcast: {Added} added, {Removed} removed, leaving changed: {LeavingChanged}.",
                     added.Count, removed.Count, leavingChanged);
@@ -501,7 +505,7 @@ public sealed partial class ItemShopService : IShopProvider
             if (!leavingTomorrow.SetEquals(previousLeaving))
             {
                 _metaDb.SaveItemShopTracks(currentIds, leavingTomorrow, DateTime.UtcNow);
-                _songsCache?.Invalidate();
+                PrimeShopCache(currentIds, leavingTomorrow);
 
                 if (_notifications is not null)
                 {
@@ -513,6 +517,21 @@ public sealed partial class ItemShopService : IShopProvider
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Failed to recompute leaving-tomorrow set at midnight.");
+        }
+    }
+
+    // ─── Shop Cache Priming ────────────────────────────────────
+
+    private void PrimeShopCache(IReadOnlySet<string> inShop, IReadOnlySet<string> leaving)
+    {
+        if (_shopCache is null || _jsonOpts is null) return;
+        try
+        {
+            _shopCache.Prime(inShop, leaving, _festivalService, _jsonOpts);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to prime shop cache.");
         }
     }
 

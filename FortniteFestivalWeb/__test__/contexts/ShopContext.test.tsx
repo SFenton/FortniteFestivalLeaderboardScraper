@@ -1,28 +1,37 @@
 /**
  * Tests for ShopContext and useShopState.
  *
- * ShopContext wraps useShopWebSocket and provides shopSongIds, shopSongs,
- * getShopUrl, connected. useShopState layers settings on top.
+ * ShopContext fetches /api/shop, wraps useShopWebSocket, and provides
+ * shopSongIds, shopSongs (ShopSong[]), getShopUrl, connected.
+ * useShopState layers settings on top.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
+import type { ShopSong } from '@festival/core/api/serverTypes';
 
-// Mock useShopWebSocket before importing ShopContext
+// Mock shop songs map for WS
+const mockShopSongsMap = vi.hoisted(() => new Map<string, ShopSong>([
+  ['song-1', { songId: 'song-1', title: 'Song One', artist: 'Artist 1', shopUrl: 'https://shop/1' }],
+  ['song-3', { songId: 'song-3', title: 'Song Three', artist: 'Artist 3', shopUrl: 'https://shop/3' }],
+]));
+
 const mockShopState = vi.hoisted(() => ({
   shopSongIds: new Set(['song-1', 'song-3']) as ReadonlySet<string>,
+  shopSongsMap: mockShopSongsMap as ReadonlyMap<string, ShopSong>,
   connected: true,
+  leavingTomorrowIds: null as ReadonlySet<string> | null,
 }));
 
 vi.mock('../../src/hooks/data/useShopWebSocket', () => ({
   useShopWebSocket: () => mockShopState,
 }));
 
-// Mock FestivalContext
+// Mock FestivalContext (songs no longer have shopUrl)
 const mockSongs = vi.hoisted(() => [
-  { songId: 'song-1', title: 'Song One', shopUrl: 'https://shop/1' },
-  { songId: 'song-2', title: 'Song Two' },
-  { songId: 'song-3', title: 'Song Three', shopUrl: 'https://shop/3' },
+  { songId: 'song-1', title: 'Song One', artist: 'Artist 1', albumArt: 'art1.jpg' },
+  { songId: 'song-2', title: 'Song Two', artist: 'Artist 2' },
+  { songId: 'song-3', title: 'Song Three', artist: 'Artist 3', albumArt: 'art3.jpg' },
 ]);
 
 vi.mock('../../src/contexts/FestivalContext', () => ({
@@ -32,6 +41,18 @@ vi.mock('../../src/contexts/FestivalContext', () => ({
 // Mock FeatureFlagsContext (shop flag ON by default)
 vi.mock('../../src/contexts/FeatureFlagsContext', () => ({
   useFeatureFlags: () => ({ shop: true, rivals: true, compete: true, leaderboards: true }),
+}));
+
+// Mock api.getShop
+vi.mock('../../src/api/client', () => ({
+  api: {
+    getShop: vi.fn().mockResolvedValue({
+      songs: [
+        { songId: 'song-1', title: 'Song One', artist: 'Artist 1', shopUrl: 'https://shop/1' },
+        { songId: 'song-3', title: 'Song Three', artist: 'Artist 3', shopUrl: 'https://shop/3' },
+      ],
+    }),
+  },
 }));
 
 import { ShopProvider, useShop } from '../../src/contexts/ShopContext';
@@ -53,6 +74,7 @@ function fullWrapper({ children }: { children: ReactNode }) {
 beforeEach(() => {
   localStorage.clear();
   mockShopState.shopSongIds = new Set(['song-1', 'song-3']);
+  mockShopState.shopSongsMap = mockShopSongsMap;
   mockShopState.connected = true;
 });
 
@@ -68,20 +90,22 @@ describe('ShopContext', () => {
     expect(result.current.connected).toBe(true);
   });
 
-  it('provides getShopUrl for songs with shopUrl', () => {
+  it('provides getShopUrl for songs in the shop', () => {
     const { result } = renderHook(() => useShop(), { wrapper: shopWrapper });
+    // shopUrl comes from ShopSong via WS shopSongsMap
     expect(result.current.getShopUrl('song-1')).toBe('https://shop/1');
     expect(result.current.getShopUrl('song-2')).toBeUndefined();
   });
 
-  it('provides shopSongs filtered to shop IDs', () => {
+  it('provides shopSongs from WS enriched data', () => {
     const { result } = renderHook(() => useShop(), { wrapper: shopWrapper });
     expect(result.current.shopSongs.length).toBe(2);
     expect(result.current.shopSongs.map(s => s.songId)).toEqual(['song-1', 'song-3']);
   });
 
-  it('returns empty shopSongs when shopSongIds is null', () => {
+  it('returns empty shopSongs when shopSongsMap is null', () => {
     mockShopState.shopSongIds = null as unknown as ReadonlySet<string>;
+    mockShopState.shopSongsMap = null as unknown as ReadonlyMap<string, ShopSong>;
     const { result } = renderHook(() => useShop(), { wrapper: shopWrapper });
     expect(result.current.shopSongs).toEqual([]);
   });

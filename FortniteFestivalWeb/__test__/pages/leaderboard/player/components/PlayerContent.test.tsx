@@ -32,6 +32,8 @@ const mockApi = vi.hoisted(() => {
       { instrument: 'Solo_Guitar', songsPlayed: 10, fullComboCount: 2, goldStarCount: 5, avgAccuracy: 96.5, bestRank: 1, totalScore: 1200000 },
     ] }),
     trackPlayer: fn().mockResolvedValue({ accountId: 'p1', displayName: 'TestPlayer', trackingStarted: false, backfillStatus: '' }),
+    getRivalsAll: fn().mockResolvedValue({ accountId: 'p1', songs: [], combos: [] }),
+    getShop: fn().mockResolvedValue({ songs: [] }),
   };
 });
 vi.mock('../../../../../src/api/client', () => ({ api: mockApi }));

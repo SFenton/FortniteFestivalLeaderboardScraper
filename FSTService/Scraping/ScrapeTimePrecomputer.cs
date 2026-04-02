@@ -94,6 +94,22 @@ public sealed class ScrapeTimePrecomputer
         _progress.SetSubOperation("leaderboard_pages");
         PrecomputeLeaderboardAll(allMaxScores, unfilteredPopulation, instrumentKeys);
 
+        // ── Phase 4: Player sub-resources (stats, history, rivals, etc.) ──
+        _progress.SetSubOperation("player_sub_resources");
+        await PrecomputePlayerSubResourcesAsync(registeredIds, instrumentKeys, ct);
+
+        // ── Phase 5: Rankings pages (page 1 per instrument × metric) ──
+        _progress.SetSubOperation("rankings_pages");
+        PrecomputeRankingsPages(instrumentKeys);
+
+        // ── Phase 6: Neighborhoods (registered users) ────────────
+        _progress.SetSubOperation("neighborhoods");
+        PrecomputeNeighborhoods(registeredIds, instrumentKeys);
+
+        // ── Phase 7: Static data (firstseen) ────────────────────
+        _progress.SetSubOperation("static_data");
+        PrecomputeFirstSeen();
+
         // ── Cleanup: evict player entries for unregistered accounts ─
         var registeredSet = new HashSet<string>(registeredIds, StringComparer.OrdinalIgnoreCase);
         var removed = 0;
@@ -124,14 +140,25 @@ public sealed class ScrapeTimePrecomputer
 
     /// <summary>
     /// Precompute a single player (e.g., after /track registration between scrapes).
+    /// Covers profile + all sub-resources (stats, history, sync-status, rivals, lb-rivals).
     /// </summary>
     public void PrecomputeUser(string accountId)
     {
         var allMaxScores = _pathStore.GetAllMaxScores();
         var unfilteredPopulation = _metaDb.GetAllLeaderboardPopulation();
-        var tiers = _populationTiers ?? ComputePopulationTiers(allMaxScores, _persistence.GetInstrumentKeys());
-        var bandScoresCache = BuildBandScoresCache(allMaxScores, _persistence.GetInstrumentKeys());
+        var instrumentKeys = _persistence.GetInstrumentKeys();
+        var tiers = _populationTiers ?? ComputePopulationTiers(allMaxScores, instrumentKeys);
+        var bandScoresCache = BuildBandScoresCache(allMaxScores, instrumentKeys);
         PrecomputeSinglePlayer(accountId, allMaxScores, unfilteredPopulation, tiers, bandScoresCache);
+
+        // Sub-resources
+        var displayNames = _metaDb.GetDisplayNames(new[] { accountId });
+        PrecomputePlayerStats(accountId);
+        PrecomputePlayerHistory(accountId);
+        PrecomputePlayerSyncStatus(accountId);
+        PrecomputePlayerRivalsOverview(accountId);
+        PrecomputePlayerRivalsAll(accountId, displayNames);
+        PrecomputePlayerLeaderboardRivals(accountId, instrumentKeys, displayNames);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -565,6 +592,550 @@ public sealed class ScrapeTimePrecomputer
         var hash = SHA256.HashData(json);
         var etag = $"\"{Convert.ToBase64String(hash, 0, 16)}\"";
         _store[cacheKey] = new PrecomputedResponse(json, etag);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Phase 4: Player Sub-Resources (stats, history, sync-status, rivals, lb-rivals)
+    // ═══════════════════════════════════════════════════════════════
+
+    private async Task PrecomputePlayerSubResourcesAsync(
+        HashSet<string> registeredIds,
+        IReadOnlyList<string> instrumentKeys,
+        CancellationToken ct)
+    {
+        if (registeredIds.Count == 0) return;
+
+        var displayNames = _metaDb.GetDisplayNames(registeredIds);
+
+        await Parallel.ForEachAsync(registeredIds, new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = ct },
+            (accountId, _) =>
+            {
+                try
+                {
+                    PrecomputePlayerStats(accountId);
+                    PrecomputePlayerHistory(accountId);
+                    PrecomputePlayerSyncStatus(accountId);
+                    PrecomputePlayerRivalsOverview(accountId);
+                    PrecomputePlayerRivalsAll(accountId, displayNames);
+                    PrecomputePlayerLeaderboardRivals(accountId, instrumentKeys, displayNames);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Failed to precompute sub-resources for {AccountId}", accountId);
+                }
+                return ValueTask.CompletedTask;
+            });
+    }
+
+    private void PrecomputePlayerStats(string accountId)
+    {
+        var tierRows = _metaDb.GetPlayerStatsTiers(accountId);
+        if (tierRows.Count == 0) return;
+
+        int totalSongs = _persistence.GetTotalSongCount();
+        var payload = new
+        {
+            accountId,
+            totalSongs,
+            instruments = tierRows.Select(r => new
+            {
+                instrument = r.Instrument,
+                tiers = JsonSerializer.Deserialize<JsonElement>(r.TiersJson),
+            }).ToList(),
+        };
+        var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
+        Store($"playerstats:{accountId}", jsonBytes);
+    }
+
+    private void PrecomputePlayerHistory(string accountId)
+    {
+        var history = _metaDb.GetScoreHistory(accountId, 50000);
+        var payload = new
+        {
+            accountId,
+            count = history.Count,
+            history,
+        };
+        var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
+        Store($"history:{accountId}", jsonBytes);
+    }
+
+    private void PrecomputePlayerSyncStatus(string accountId)
+    {
+        var backfill = _metaDb.GetBackfillStatus(accountId);
+        var historyRecon = _metaDb.GetHistoryReconStatus(accountId);
+        var rivals = _metaDb.GetRivalsStatus(accountId);
+
+        var payload = new
+        {
+            accountId,
+            isTracked = true,
+            backfill = backfill is null ? null : new
+            {
+                status = backfill.Status,
+                songsChecked = backfill.SongsChecked,
+                totalSongsToCheck = backfill.TotalSongsToCheck,
+                entriesFound = backfill.EntriesFound,
+                startedAt = backfill.StartedAt,
+                completedAt = backfill.CompletedAt,
+            },
+            historyRecon = historyRecon is null ? null : new
+            {
+                status = historyRecon.Status,
+                songsProcessed = historyRecon.SongsProcessed,
+                totalSongsToProcess = historyRecon.TotalSongsToProcess,
+                seasonsQueried = historyRecon.SeasonsQueried,
+                historyEntriesFound = historyRecon.HistoryEntriesFound,
+                startedAt = historyRecon.StartedAt,
+                completedAt = historyRecon.CompletedAt,
+            },
+            rivals = rivals is null ? null : new
+            {
+                status = rivals.Status,
+                combosComputed = rivals.CombosComputed,
+                totalCombosToCompute = rivals.TotalCombosToCompute,
+                rivalsFound = rivals.RivalsFound,
+                startedAt = rivals.StartedAt,
+                completedAt = rivals.CompletedAt,
+            },
+        };
+        var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
+        Store($"syncstatus:{accountId}", jsonBytes);
+    }
+
+    private void PrecomputePlayerRivalsOverview(string accountId)
+    {
+        var status = _metaDb.GetRivalsStatus(accountId);
+        var combos = _metaDb.GetRivalCombos(accountId);
+        if (combos.Count == 0) return;
+
+        var payload = new
+        {
+            accountId,
+            computedAt = status?.CompletedAt,
+            combos = combos.Select(c => new
+            {
+                combo = c.InstrumentCombo,
+                aboveCount = c.AboveCount,
+                belowCount = c.BelowCount,
+            }).ToList(),
+        };
+        var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
+        Store($"rivals-overview:{accountId}", jsonBytes);
+    }
+
+    private void PrecomputePlayerRivalsAll(string accountId, Dictionary<string, string> displayNames)
+    {
+        var combos = _metaDb.GetRivalCombos(accountId);
+        if (combos.Count == 0) return;
+
+        var allRivalIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var comboData = new Dictionary<string, (List<UserRivalRow> Above, List<UserRivalRow> Below)>();
+        foreach (var c in combos)
+        {
+            var above = _metaDb.GetUserRivals(accountId, c.InstrumentCombo, "above");
+            var below = _metaDb.GetUserRivals(accountId, c.InstrumentCombo, "below");
+            comboData[c.InstrumentCombo] = (above, below);
+            foreach (var r in above) allRivalIds.Add(r.RivalAccountId);
+            foreach (var r in below) allRivalIds.Add(r.RivalAccountId);
+        }
+
+        var rivalNames = _metaDb.GetDisplayNames(allRivalIds);
+        // Merge with provided display names
+        foreach (var kv in displayNames)
+            rivalNames.TryAdd(kv.Key, kv.Value);
+
+        // Bulk-fetch all song samples for this user (1 query instead of N×6)
+        var allSamples = _metaDb.GetAllRivalSongSamplesForUser(accountId);
+
+        // Build deduplicated song index
+        var songIndex = new List<string>();
+        var songIndexLookup = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        int GetOrAddSongIndex(string songId)
+        {
+            if (!songIndexLookup.TryGetValue(songId, out var idx))
+            {
+                idx = songIndex.Count;
+                songIndex.Add(songId);
+                songIndexLookup[songId] = idx;
+            }
+            return idx;
+        }
+
+        // Pre-index all song IDs from samples
+        foreach (var (_, samples) in allSamples)
+            foreach (var s in samples)
+                GetOrAddSongIndex(s.SongId);
+
+        object MapRivalWithSamples(UserRivalRow r)
+        {
+            var samples = allSamples.TryGetValue(r.RivalAccountId, out var list)
+                ? (object)list.Select(s => new
+                {
+                    s = GetOrAddSongIndex(s.SongId),
+                    i = s.Instrument,
+                    ur = s.UserRank,
+                    rr = s.RivalRank,
+                    us = s.UserScore,
+                    rs = s.RivalScore,
+                }).ToList()
+                : Array.Empty<object>();
+
+            return new
+            {
+                accountId = r.RivalAccountId,
+                displayName = rivalNames.GetValueOrDefault(r.RivalAccountId),
+                direction = r.Direction,
+                sharedSongCount = r.SharedSongCount,
+                aheadCount = r.AheadCount,
+                behindCount = r.BehindCount,
+                rivalScore = r.RivalScore,
+                samples,
+            };
+        }
+
+        var payload = new
+        {
+            accountId,
+            songs = songIndex,
+            combos = comboData.Select(kv => new
+            {
+                combo = kv.Key,
+                above = kv.Value.Above.Select(MapRivalWithSamples).ToList(),
+                below = kv.Value.Below.Select(MapRivalWithSamples).ToList(),
+            }).ToList(),
+        };
+        var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
+        Store($"rivals-all:{accountId}", jsonBytes);
+    }
+
+    private void PrecomputePlayerLeaderboardRivals(
+        string accountId,
+        IReadOnlyList<string> instrumentKeys,
+        Dictionary<string, string> displayNames)
+    {
+        foreach (var instrument in instrumentKeys)
+        {
+            var rivals = _metaDb.GetLeaderboardRivals(accountId, instrument, "totalscore");
+            if (rivals.Count == 0) continue;
+
+            var rivalNames = _metaDb.GetDisplayNames(rivals.Select(r => r.RivalAccountId));
+            foreach (var kv in displayNames)
+                rivalNames.TryAdd(kv.Key, kv.Value);
+
+            int? userRank = null;
+            var db = _persistence.GetOrCreateInstrumentDb(instrument);
+            {
+                var (_, self, _) = db.GetAccountRankingNeighborhood(accountId, 0, "totalscore");
+                if (self is not null)
+                    userRank = InstrumentDatabase.GetRankValue(self, "totalscore");
+            }
+
+            var above = rivals.Where(r => r.Direction == "above").Select(r => MapLbRival(r, rivalNames));
+            var below = rivals.Where(r => r.Direction == "below").Select(r => MapLbRival(r, rivalNames));
+
+            var payload = new
+            {
+                instrument,
+                rankBy = "totalscore",
+                userRank,
+                above = above.ToList(),
+                below = below.ToList(),
+            };
+            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
+            Store($"lb-rivals:{accountId}:{instrument}:totalscore", jsonBytes);
+        }
+    }
+
+    private static object MapRivalSummary(UserRivalRow r, Dictionary<string, string> names)
+    {
+        return new
+        {
+            accountId = r.RivalAccountId,
+            displayName = names.GetValueOrDefault(r.RivalAccountId),
+            direction = r.Direction,
+            sharedSongCount = r.SharedSongCount,
+            aheadCount = r.AheadCount,
+            behindCount = r.BehindCount,
+            rivalScore = r.RivalScore,
+        };
+    }
+
+    private static object MapLbRival(LeaderboardRivalRow r, Dictionary<string, string> names)
+    {
+        return new
+        {
+            accountId = r.RivalAccountId,
+            displayName = names.GetValueOrDefault(r.RivalAccountId),
+            sharedSongCount = r.SharedSongCount,
+            aheadCount = r.AheadCount,
+            behindCount = r.BehindCount,
+            avgSignedDelta = r.AvgSignedDelta,
+            leaderboardRank = r.RivalRank,
+            userLeaderboardRank = r.UserRank,
+        };
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Phase 5: Rankings Pages (page 1 for each instrument × metric)
+    // ═══════════════════════════════════════════════════════════════
+
+    private static readonly string[] RankingMetrics = ["adjusted", "weighted", "totalscore", "fcrate", "maxscorepercent"];
+
+    private void PrecomputeRankingsPages(IReadOnlyList<string> instrumentKeys)
+    {
+        // Per-instrument page 1
+        foreach (var instrument in instrumentKeys)
+        {
+            var db = _persistence.GetOrCreateInstrumentDb(instrument);
+            foreach (var metric in RankingMetrics)
+            {
+                var (entries, total) = db.GetAccountRankings(metric, 1, 50);
+                var entryList = entries.ToList();
+                var names = _metaDb.GetDisplayNames(entryList.Select(e => e.AccountId));
+                var enriched = entryList.Select(e => new
+                {
+                    e.AccountId,
+                    displayName = names.GetValueOrDefault(e.AccountId),
+                    e.SongsPlayed,
+                    e.TotalChartedSongs,
+                    e.Coverage,
+                    e.RawSkillRating,
+                    e.AdjustedSkillRating,
+                    e.AdjustedSkillRank,
+                    e.WeightedRating,
+                    e.WeightedRank,
+                    e.FcRate,
+                    e.FcRateRank,
+                    e.TotalScore,
+                    e.TotalScoreRank,
+                    e.MaxScorePercent,
+                    e.MaxScorePercentRank,
+                    e.AvgAccuracy,
+                    e.FullComboCount,
+                    e.AvgStars,
+                    e.BestRank,
+                    e.AvgRank,
+                    e.ComputedAt,
+                }).ToList();
+
+                var payload = new
+                {
+                    instrument,
+                    rankBy = metric,
+                    page = 1,
+                    pageSize = 50,
+                    totalAccounts = total,
+                    entries = enriched,
+                };
+                var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
+                Store($"rankings:{instrument}:{metric}:1:50", jsonBytes);
+            }
+        }
+
+        // Composite page 1
+        foreach (var metric in RankingMetrics)
+        {
+            // Composite only supports "adjusted" as metric — skip others
+            var (entries, total) = _metaDb.GetCompositeRankings(1, 50);
+            var names = _metaDb.GetDisplayNames(entries.Select(e => e.AccountId));
+            var enriched = entries.Select(e => new
+            {
+                e.AccountId,
+                displayName = names.GetValueOrDefault(e.AccountId),
+                e.InstrumentsPlayed,
+                e.TotalSongsPlayed,
+                e.CompositeRating,
+                e.CompositeRank,
+                instruments = new
+                {
+                    guitar = e.GuitarAdjustedSkill.HasValue ? new { skill = e.GuitarAdjustedSkill, rank = e.GuitarSkillRank } : null,
+                    bass = e.BassAdjustedSkill.HasValue ? new { skill = e.BassAdjustedSkill, rank = e.BassSkillRank } : null,
+                    drums = e.DrumsAdjustedSkill.HasValue ? new { skill = e.DrumsAdjustedSkill, rank = e.DrumsSkillRank } : null,
+                    vocals = e.VocalsAdjustedSkill.HasValue ? new { skill = e.VocalsAdjustedSkill, rank = e.VocalsSkillRank } : null,
+                    proGuitar = e.ProGuitarAdjustedSkill.HasValue ? new { skill = e.ProGuitarAdjustedSkill, rank = e.ProGuitarSkillRank } : null,
+                    proBass = e.ProBassAdjustedSkill.HasValue ? new { skill = e.ProBassAdjustedSkill, rank = e.ProBassSkillRank } : null,
+                },
+                e.ComputedAt,
+            }).ToList();
+
+            var payload = new
+            {
+                page = 1,
+                pageSize = 50,
+                totalAccounts = total,
+                entries = enriched,
+            };
+            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
+            Store($"rankings:composite:{metric}:1:50", jsonBytes);
+            break; // Composite rankings are metric-agnostic — one page covers all
+        }
+
+        // Overview (top N per instrument for each metric)
+        foreach (var metric in RankingMetrics)
+        {
+            var allAccountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var perInstrument = new Dictionary<string, (List<AccountRankingDto> Entries, int Total)>();
+            foreach (var instrument in instrumentKeys)
+            {
+                var db = _persistence.GetOrCreateInstrumentDb(instrument);
+                var (entries, total) = db.GetAccountRankings(metric, 1, 10);
+                var entryList = entries.ToList();
+                foreach (var e in entryList) allAccountIds.Add(e.AccountId);
+                perInstrument[instrument] = (entryList, total);
+            }
+
+            var names = _metaDb.GetDisplayNames(allAccountIds);
+            var result = new Dictionary<string, object>();
+            foreach (var (instrument, (entries, total)) in perInstrument)
+            {
+                result[instrument] = new
+                {
+                    totalAccounts = total,
+                    entries = entries.Select(e => new
+                    {
+                        e.AccountId,
+                        displayName = names.GetValueOrDefault(e.AccountId),
+                        e.AdjustedSkillRating,
+                        e.AdjustedSkillRank,
+                        e.WeightedRating,
+                        e.WeightedRank,
+                        e.FcRate,
+                        e.FcRateRank,
+                        e.TotalScore,
+                        e.TotalScoreRank,
+                        e.MaxScorePercent,
+                        e.MaxScorePercentRank,
+                        e.SongsPlayed,
+                        e.Coverage,
+                    }).ToList(),
+                };
+            }
+
+            var overviewPayload = new
+            {
+                rankBy = metric,
+                pageSize = 10,
+                instruments = result,
+            };
+            var overviewBytes = JsonSerializer.SerializeToUtf8Bytes(overviewPayload, _jsonOpts);
+            Store($"rankings:overview:{metric}:10", overviewBytes);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Phase 6: Neighborhoods (registered users × instruments)
+    // ═══════════════════════════════════════════════════════════════
+
+    private void PrecomputeNeighborhoods(
+        HashSet<string> registeredIds,
+        IReadOnlyList<string> instrumentKeys)
+    {
+        if (registeredIds.Count == 0) return;
+
+        foreach (var accountId in registeredIds)
+        {
+            // Per-instrument neighborhoods
+            foreach (var instrument in instrumentKeys)
+            {
+                try
+                {
+                    var db = _persistence.GetOrCreateInstrumentDb(instrument);
+                    var (above, self, below) = db.GetAccountRankingNeighborhood(accountId, 5);
+                    if (self is null) continue;
+
+                    var allIds = above.Select(e => e.AccountId)
+                        .Append(self.AccountId)
+                        .Concat(below.Select(e => e.AccountId));
+                    var names = _metaDb.GetDisplayNames(allIds);
+
+                    object Map(AccountRankingDto e) => new
+                    {
+                        e.AccountId,
+                        displayName = names.GetValueOrDefault(e.AccountId),
+                        e.TotalScore,
+                        e.TotalScoreRank,
+                        e.SongsPlayed,
+                        e.TotalChartedSongs,
+                        e.Coverage,
+                        e.AdjustedSkillRating,
+                        e.AdjustedSkillRank,
+                    };
+
+                    var payload = new
+                    {
+                        instrument,
+                        accountId,
+                        rank = self.TotalScoreRank,
+                        above = above.Select(Map).ToList(),
+                        self = Map(self),
+                        below = below.Select(Map).ToList(),
+                    };
+                    var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
+                    Store($"neighborhood:{instrument}:{accountId}:5", jsonBytes);
+                }
+                catch (Exception ex)
+                {
+                    _log.LogWarning(ex, "Failed to precompute neighborhood for {AccountId}/{Instrument}", accountId, instrument);
+                }
+            }
+
+            // Composite neighborhood
+            try
+            {
+                var (above, self, below) = _metaDb.GetCompositeRankingNeighborhood(accountId, 5);
+                if (self is null) continue;
+
+                var allIds = above.Select(e => e.AccountId)
+                    .Append(self.AccountId)
+                    .Concat(below.Select(e => e.AccountId));
+                var names = _metaDb.GetDisplayNames(allIds);
+
+                object Map(CompositeRankingDto e) => new
+                {
+                    e.AccountId,
+                    displayName = names.GetValueOrDefault(e.AccountId),
+                    e.CompositeRating,
+                    e.CompositeRank,
+                    e.InstrumentsPlayed,
+                    e.TotalSongsPlayed,
+                };
+
+                var compositePayload = new
+                {
+                    accountId,
+                    rank = self.CompositeRank,
+                    above = above.Select(Map).ToList(),
+                    self = Map(self),
+                    below = below.Select(Map).ToList(),
+                };
+                var compositeBytes = JsonSerializer.SerializeToUtf8Bytes(compositePayload, _jsonOpts);
+                Store($"neighborhood:composite:{accountId}:5", compositeBytes);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Failed to precompute composite neighborhood for {AccountId}", accountId);
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Phase 7: Static Data (firstseen)
+    // ═══════════════════════════════════════════════════════════════
+
+    private void PrecomputeFirstSeen()
+    {
+        var all = _metaDb.GetAllFirstSeenSeasons();
+        var songs = all.Select(kvp => new
+        {
+            songId = kvp.Key,
+            firstSeenSeason = kvp.Value.FirstSeenSeason,
+            estimatedSeason = kvp.Value.EstimatedSeason,
+        }).ToList();
+        var payload = new { count = songs.Count, songs };
+        var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
+        Store("firstseen", jsonBytes);
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -17,7 +17,7 @@ public static partial class ApiEndpoints
 
     public static void MapSongEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/songs", (HttpContext httpContext, FestivalService service, IPathDataStore pathStore, IMetaDatabase metaDb, ItemShopService shopService, SongsCacheService songsCache, ScrapeTimePrecomputer precomputer) =>
+        app.MapGet("/api/songs", (HttpContext httpContext, FestivalService service, IPathDataStore pathStore, IMetaDatabase metaDb, SongsCacheService songsCache, ScrapeTimePrecomputer precomputer) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
 
@@ -38,74 +38,10 @@ public static partial class ApiEndpoints
             }
 
             // ── Build response ───────────────────────────────────
-            var maxScoresMap = pathStore.GetAllMaxScores();
-            var currentSeason = metaDb.GetCurrentSeason();
-            var inShop = shopService.InShopSongIds;
-            var leavingTomorrow = shopService.LeavingTomorrowSongIds;
-            var popTiers = precomputer.GetPopulationTiers();
-            var songs = service.Songs
-                .Where(s => s.track?.su is not null)
-                .Select(s =>
-                {
-                    maxScoresMap.TryGetValue(s.track.su, out var ms);
-                    var isInShop = inShop.Contains(s.track.su);
-
-                    // Build population tiers per instrument (if precomputed)
-                    Dictionary<string, PopulationTierData>? songPopTiers = null;
-                    if (popTiers is not null)
-                    {
-                        songPopTiers = new Dictionary<string, PopulationTierData>(StringComparer.OrdinalIgnoreCase);
-                        foreach (var inst in new[] { "Solo_Guitar", "Solo_Bass", "Solo_Drums", "Solo_Vocals", "Solo_PeripheralGuitar", "Solo_PeripheralBass" })
-                        {
-                            if (popTiers.TryGetValue((s.track.su, inst), out var pt))
-                                songPopTiers[inst] = pt;
-                        }
-                        if (songPopTiers.Count == 0) songPopTiers = null;
-                    }
-
-                    return new
-                    {
-                        songId     = s.track.su,
-                        title      = s.track.tt,
-                        artist     = s.track.an,
-                        album      = s.track.ab,
-                        year       = s.track.ry,
-                        tempo      = s.track.mt,
-                        albumArt   = TrimAlbumArt(s.track.au),
-                        genres     = s.track.ge,
-                        difficulty = s.track.@in is null ? null : new
-                        {
-                            guitar     = s.track.@in.gr,
-                            bass       = s.track.@in.ba,
-                            vocals     = s.track.@in.vl,
-                            drums      = s.track.@in.ds,
-                            proGuitar  = s.track.@in.pg,
-                            proBass    = s.track.@in.pb,
-                        },
-                        maxScores = ms is null ? null : new
-                        {
-                            Solo_Guitar           = ms.MaxLeadScore,
-                            Solo_Bass             = ms.MaxBassScore,
-                            Solo_Drums            = ms.MaxDrumsScore,
-                            Solo_Vocals           = ms.MaxVocalsScore,
-                            Solo_PeripheralGuitar = ms.MaxProLeadScore,
-                            Solo_PeripheralBass   = ms.MaxProBassScore,
-                        },
-                        populationTiers = songPopTiers,
-                        pathsGeneratedAt = ms?.GeneratedAt,
-                        shopUrl = isInShop
-                            ? ShopUrlHelper.ComputeShopUrl(s.track.su, s.track.tt)
-                            : null,
-                        leavingTomorrow = isInShop && leavingTomorrow.Contains(s.track.su),
-                    };
-                })
-                .ToList();
-
-            var payload = new { count = songs.Count, currentSeason, songs };
             var jsonOpts = httpContext.RequestServices
                 .GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
                 .Value.SerializerOptions;
-            var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, jsonOpts);
+            var jsonBytes = SongsCacheService.BuildSongsJson(service, pathStore, metaDb, precomputer, jsonOpts);
             var etag = songsCache.Set(jsonBytes);
 
             httpContext.Response.Headers.ETag = etag;
@@ -113,6 +49,29 @@ public static partial class ApiEndpoints
             return Results.Bytes(jsonBytes, "application/json");
         })
         .WithTags("Songs")
+        .RequireRateLimiting("public");
+
+        // ── Item Shop (enriched song objects) ───────────────────
+        app.MapGet("/api/shop", (HttpContext httpContext, ShopCacheService shopCache) =>
+        {
+            httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
+
+            var cached = shopCache.Get();
+            if (cached is null)
+                return Results.Ok(new { count = 0, songs = Array.Empty<object>(), lastUpdated = (string?)null });
+
+            var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+            if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
+            {
+                httpContext.Response.Headers.ETag = cached.Value.ETag;
+                return Results.StatusCode(304);
+            }
+
+            httpContext.Response.Headers.ETag = cached.Value.ETag;
+            httpContext.Response.ContentType = "application/json; charset=utf-8";
+            return Results.Bytes(cached.Value.Json, "application/json");
+        })
+        .WithTags("Shop")
         .RequireRateLimiting("public");
 
         // ── Path images ─────────────────────────────────────────

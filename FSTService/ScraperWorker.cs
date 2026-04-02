@@ -41,6 +41,7 @@ public sealed class ScraperWorker : BackgroundService
     private readonly IOptions<ScraperOptions> _options;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly ILogger<ScraperWorker> _log;
+    private readonly System.Text.Json.JsonSerializerOptions _jsonOpts;
 
     /// <summary>Background song sync task — stored so we can observe failures.</summary>
     private Task? _backgroundSyncTask;
@@ -62,6 +63,7 @@ public sealed class ScraperWorker : BackgroundService
         ScrapeTimePrecomputer precomputer,
         ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
+        IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
         IHostApplicationLifetime lifetime,
         ILogger<ScraperWorker> log)
     {
@@ -81,6 +83,7 @@ public sealed class ScraperWorker : BackgroundService
         _precomputer = precomputer;
         _progress = progress;
         _options = options;
+        _jsonOpts = jsonOptions.Value.SerializerOptions;
         _lifetime = lifetime;
         _log = log;
     }
@@ -134,7 +137,7 @@ public sealed class ScraperWorker : BackgroundService
             if (await _precomputer.LoadFromDiskAsync(precomputeDir, stoppingToken))
             {
                 _log.LogInformation("Loaded {Count} precomputed responses from disk.", _precomputer.Count);
-                _songsCache.Invalidate(); // Rebuild with population tiers
+                PrimeSongsCache(); // Rebuild with population tiers
             }
         }
 
@@ -286,7 +289,7 @@ public sealed class ScraperWorker : BackgroundService
                 {
                     _log.LogInformation("Song catalog refresh: {NewCount} new song(s) discovered ({Total} total).",
                         after - before, after);
-                    _songsCache.Invalidate();
+                    PrimeSongsCache();
                     _persistence.InvalidateTotalSongCount();
                 }
                 else
@@ -411,7 +414,7 @@ public sealed class ScraperWorker : BackgroundService
             _log.LogWarning(ex, "Failed to persist precomputed data to disk (non-fatal).");
         }
 
-        _songsCache.Invalidate();
+        PrimeSongsCache();
         _playerCache.InvalidateAll();
         _leaderboardAllCache.InvalidateAll();
         _progress.EndPass();
@@ -479,13 +482,28 @@ public sealed class ScraperWorker : BackgroundService
                 _pathDataStore.UpdateMaxScores(result.SongId, scores, result.DatFileHash, songLastMod);
             }
 
-            _songsCache.Invalidate();
+            PrimeSongsCache();
             if (ownsProgress) _progress.EndPathGeneration();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _progress.EndPathGeneration();
             _log.LogWarning(ex, "Path generation failed. Scraping continues unaffected.");
+        }
+    }
+
+    // ─── Songs cache priming ────────────────────────────────────
+
+    private void PrimeSongsCache()
+    {
+        try
+        {
+            _songsCache.Prime(_festivalService, _pathDataStore, _persistence.Meta, _precomputer, _jsonOpts);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to prime songs cache; will rebuild on next request.");
+            _songsCache.Invalidate();
         }
     }
 

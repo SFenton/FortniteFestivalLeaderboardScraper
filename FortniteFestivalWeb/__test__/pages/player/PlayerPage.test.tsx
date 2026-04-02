@@ -62,6 +62,8 @@ const mockApi = vi.hoisted(() => {
     getAllLeaderboards: fn().mockResolvedValue({ songId: 'song-1', instruments: [] }),
     getPlayerHistory: fn().mockResolvedValue({ accountId: 'test-player-1', count: 0, history: [] }),
     searchAccounts: fn().mockResolvedValue({ results: [] }),
+    getRivalsAll: fn().mockResolvedValue({ accountId: 'test-player-1', songs: [], combos: [] }),
+    getShop: fn().mockResolvedValue({ songs: [] }),
   };
 });
 

@@ -8,6 +8,7 @@ import type {
   WsNotificationMessage,
   ShopChangedMessage,
   ShopSnapshotMessage,
+  ShopSong,
 } from '@festival/core/api/serverTypes';
 
 const RECONNECT_BASE_MS = 1_000;
@@ -25,6 +26,8 @@ export type ShopState = {
   shopSongIds: ReadonlySet<string> | null;
   /** Set of in-shop songIds whose offer expires tomorrow (UTC). */
   leavingTomorrowIds: ReadonlySet<string> | null;
+  /** Map of songId → ShopSong for enriched shop data from WS. */
+  shopSongsMap: ReadonlyMap<string, ShopSong> | null;
   /** Whether the WebSocket is currently connected. */
   connected: boolean;
 };
@@ -42,6 +45,7 @@ export function useShopWebSocket(
 ): ShopState {
   const [shopSongIds, setShopSongIds] = useState<ReadonlySet<string> | null>(initialShopIds);
   const [leavingTomorrowIds, setLeavingTomorrowIds] = useState<ReadonlySet<string> | null>(initialLeavingIds);
+  const [shopSongsMap, setShopSongsMap] = useState<ReadonlyMap<string, ShopSong> | null>(null);
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectDelay = useRef(RECONNECT_BASE_MS);
@@ -67,16 +71,31 @@ export function useShopWebSocket(
       switch (msg.type) {
         case 'shop_snapshot': {
           const snap = msg as ShopSnapshotMessage;
-          setShopSongIds(new Set(snap.songIds));
+          // snap.songs is now ShopSong[] (enriched objects)
+          const map = new Map<string, ShopSong>();
+          const ids = new Set<string>();
+          for (const s of snap.songs) {
+            map.set(s.songId, s);
+            ids.add(s.songId);
+          }
+          setShopSongsMap(map);
+          setShopSongIds(ids);
           setLeavingTomorrowIds(new Set(snap.leavingTomorrow ?? []));
           break;
         }
         case 'shop_changed': {
           const delta = msg as ShopChangedMessage;
+          // delta.added is now ShopSong[] (enriched), delta.removed is still string[]
+          setShopSongsMap(prev => {
+            const next = new Map(prev ?? []);
+            for (const id of delta.removed) next.delete(id);
+            for (const s of delta.added) next.set(s.songId, s);
+            return next;
+          });
           setShopSongIds(prev => {
             const next = new Set(prev ?? []);
             for (const id of delta.removed) next.delete(id);
-            for (const id of delta.added) next.add(id);
+            for (const s of delta.added) next.add(s.songId);
             return next;
           });
           setLeavingTomorrowIds(new Set(delta.leavingTomorrow ?? []));
@@ -131,6 +150,6 @@ export function useShopWebSocket(
     };
   }, [connect]);
 
-  return { shopSongIds, leavingTomorrowIds, connected };
+  return { shopSongIds, leavingTomorrowIds, shopSongsMap, connected };
 }
 /* v8 ignore stop */

@@ -315,9 +315,25 @@ public static partial class ApiEndpoints
         app.MapGet("/api/player/{accountId}/sync-status", (
             HttpContext httpContext,
             string accountId,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            ScrapeTimePrecomputer precomputer) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=5";
+
+            // ── Check precomputed store ──
+            var precomputed = precomputer.TryGet($"syncstatus:{accountId}");
+            if (precomputed is not null)
+            {
+                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
+                {
+                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                    return Results.StatusCode(304);
+                }
+                httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                return Results.Bytes(precomputed.Value.Json, "application/json");
+            }
+
             var backfill = metaDb.GetBackfillStatus(accountId);
             var historyRecon = metaDb.GetHistoryReconStatus(accountId);
             var rivals = metaDb.GetRivalsStatus(accountId);
@@ -365,11 +381,27 @@ public static partial class ApiEndpoints
             string accountId,
             IMetaDatabase metaDb,
             GlobalLeaderboardPersistence persistence,
+            ScrapeTimePrecomputer precomputer,
             [FromKeyedServices("PlayerCache")] ResponseCacheService playerCache) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
 
             var cacheKey = $"playerstats:{accountId}";
+
+            // ── Check precomputed store first ──
+            var precomputed = precomputer.TryGet(cacheKey);
+            if (precomputed is not null)
+            {
+                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
+                {
+                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                    return Results.StatusCode(304);
+                }
+                httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                return Results.Bytes(precomputed.Value.Json, "application/json");
+            }
+
             var cached = playerCache.Get(cacheKey);
             if (cached is not null)
             {
@@ -440,7 +472,8 @@ public static partial class ApiEndpoints
             int? limit,
             string? songId,
             string? instrument,
-            IMetaDatabase metaDb) =>
+            IMetaDatabase metaDb,
+            ScrapeTimePrecomputer precomputer) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=60";
             // Check if the account is a registered user
@@ -451,6 +484,23 @@ public static partial class ApiEndpoints
                 {
                     error = "Score history is only available for registered users."
                 });
+            }
+
+            // ── Check precomputed store for unfiltered requests ──
+            if (songId is null && instrument is null && (limit is null || limit >= 50000))
+            {
+                var precomputed = precomputer.TryGet($"history:{accountId}");
+                if (precomputed is not null)
+                {
+                    var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
+                    if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
+                    {
+                        httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                        return Results.StatusCode(304);
+                    }
+                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
+                    return Results.Bytes(precomputed.Value.Json, "application/json");
+                }
             }
 
             var history = metaDb.GetScoreHistory(accountId, limit ?? 50000, songId, instrument);

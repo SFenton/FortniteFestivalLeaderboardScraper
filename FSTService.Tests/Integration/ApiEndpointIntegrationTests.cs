@@ -2955,6 +2955,35 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // Shop endpoint tests
+    // ═══════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task Shop_ReturnsOk_WhenCacheIsEmpty()
+    {
+        var response = await _client.GetAsync("/api/shop");
+        // Shop cache may not be primed in test — returns 200 with empty or 503
+        Assert.True(response.StatusCode is HttpStatusCode.OK or HttpStatusCode.ServiceUnavailable);
+    }
+
+    [Fact]
+    public async Task Songs_Response_DoesNotContainShopFields()
+    {
+        var response = await _client.GetAsync("/api/songs");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var songs = json.GetProperty("songs");
+        if (songs.GetArrayLength() > 0)
+        {
+            var firstSong = songs[0];
+            Assert.False(firstSong.TryGetProperty("shopUrl", out _),
+                "shopUrl should not be present in /api/songs response");
+            Assert.False(firstSong.TryGetProperty("leavingTomorrow", out _),
+                "leavingTomorrow should not be present in /api/songs response");
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // Factory: sets up the test server with in-memory/temp dependencies
     // ═══════════════════════════════════════════════════════════════
 

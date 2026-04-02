@@ -216,6 +216,7 @@ builder.Services.AddSingleton<SharedDopPool>(sp =>
 builder.Services.AddSingleton<FirstSeenSeasonCalculator>();
 builder.Services.AddSingleton<FSTService.Api.NotificationService>();
 builder.Services.AddSingleton<FSTService.Api.SongsCacheService>();
+builder.Services.AddSingleton<FSTService.Api.ShopCacheService>();
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("PlayerCache",
     (_, _) => new FSTService.Api.ResponseCacheService(TimeSpan.FromMinutes(2)));
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("LeaderboardAllCache",
@@ -436,12 +437,12 @@ if (dbProvider.Equals("PostgreSQL", StringComparison.OrdinalIgnoreCase))
 
         // Minimal init: open instrument DBs + load song catalog (skip Item Shop HTTP calls)
         precompLog.LogInformation("--precompute: initializing databases...");
-        var persistence = app.Services.GetRequiredService<GlobalLeaderboardPersistence>();
-        persistence.Initialize();
-        var festivalService = app.Services.GetRequiredService<FestivalService>();
-        await festivalService.InitializeAsync();
+        var precompPersistence = app.Services.GetRequiredService<GlobalLeaderboardPersistence>();
+        precompPersistence.Initialize();
+        var precompFestivalService = app.Services.GetRequiredService<FestivalService>();
+        await precompFestivalService.InitializeAsync();
         precompLog.LogInformation("--precompute: {SongCount} songs loaded, DBs ready.",
-            festivalService.Songs.Count);
+            precompFestivalService.Songs.Count);
 
         precompLog.LogInformation("--precompute: running precomputation...");
         var precomputer = app.Services.GetRequiredService<ScrapeTimePrecomputer>();
@@ -466,9 +467,15 @@ app.UseResponseCompression();
 var shopService = app.Services.GetRequiredService<ItemShopService>();
 var notificationService = app.Services.GetRequiredService<NotificationService>();
 var songsCacheService = app.Services.GetRequiredService<SongsCacheService>();
+var shopCacheService = app.Services.GetRequiredService<ShopCacheService>();
+var festivalService = app.Services.GetRequiredService<FortniteFestival.Core.Services.FestivalService>();
+var jsonOpts = app.Services.GetRequiredService<IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions>>()
+    .Value.SerializerOptions;
 shopService.SetNotificationService(notificationService);
-shopService.SetSongsCacheService(songsCacheService);
+shopService.SetShopCacheService(shopCacheService);
+shopService.SetJsonSerializerOptions(jsonOpts);
 notificationService.SetShopProvider(shopService);
+notificationService.SetFestivalService(festivalService);
 
 app.UseCors();
 app.UseWebSockets();

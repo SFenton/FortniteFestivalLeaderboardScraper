@@ -120,6 +120,7 @@ function useStyles(animIn: boolean, animOut: boolean) {
       color: Colors.textSecondary,
       marginBottom: Gap.section,
       lineHeight: LineHeight.snug,
+      whiteSpace: 'pre-line' as const,
       opacity: Opacity.none,
       animation: animIn ? `fadeInUp ${TRANSITION_MS}ms ease-out 200ms forwards` : CssValue.none,
     } as CSSProperties,

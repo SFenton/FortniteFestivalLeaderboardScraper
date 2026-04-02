@@ -404,6 +404,10 @@ public sealed class NotificationServiceTests
         shopProvider.LeavingTomorrowSongIds.Returns(new HashSet<string> { "leaving_s1" });
         svc.SetShopProvider(shopProvider);
 
+        // FestivalService is needed to enrich shop snapshots — use a real one (empty songs is fine)
+        var festivalService = new FortniteFestival.Core.Services.FestivalService();
+        svc.SetFestivalService(festivalService);
+
         var ws = Substitute.For<WebSocket>();
         int callCount = 0;
         ws.State.Returns(_ => callCount < 1 ? WebSocketState.Open : WebSocketState.Closed);

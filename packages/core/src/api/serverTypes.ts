@@ -65,8 +65,22 @@ export type ServerSong = {
   maxScores?: Partial<Record<ServerInstrumentKey, number>>;
   /** Population tiers per instrument for client-side filtered-total computation. */
   populationTiers?: Partial<Record<ServerInstrumentKey, PopulationTierData>> | null;
-  shopUrl?: string;
+};
+
+/** Song as returned by the /api/shop endpoint (enriched with catalog metadata). */
+export type ShopSong = {
+  songId: string;
+  title: string;
+  artist: string;
+  year?: number;
+  albumArt?: string;
+  shopUrl: string;
   leavingTomorrow?: boolean;
+};
+
+export type ShopResponse = {
+  songs: ShopSong[];
+  lastUpdated?: string;
 };
 
 /** Minimal song shape for display purposes (album art required). */
@@ -82,7 +96,7 @@ export type SongsResponse = {
 
 export type ShopChangedMessage = {
   type: 'shop_changed';
-  added: string[];
+  added: ShopSong[];
   removed: string[];
   total: number;
   leavingTomorrow: string[];
@@ -90,7 +104,7 @@ export type ShopChangedMessage = {
 
 export type ShopSnapshotMessage = {
   type: 'shop_snapshot';
-  songIds: string[];
+  songs: ShopSong[];
   total: number;
   leavingTomorrow: string[];
 };
@@ -553,6 +567,49 @@ export type RivalSuggestionsResponse = {
   combo: string;
   computedAt: string | null;
   rivals: RivalSuggestionEntry[];
+};
+
+/** Song sample with indexed songId reference for rivals-all response. */
+export type RivalsAllSample = {
+  /** Index into the top-level songs[] array. */
+  s: number;
+  /** Instrument key (e.g. "Solo_Guitar"). */
+  i: string;
+  /** User rank on this song. */
+  ur: number;
+  /** Rival rank on this song. */
+  rr: number;
+  /** User score (null if unknown). */
+  us: number | null;
+  /** Rival score (null if unknown). */
+  rs: number | null;
+};
+
+/** Rival entry in the rivals-all response (includes song samples). */
+export type RivalsAllEntry = {
+  accountId: string;
+  displayName: string | null;
+  direction: string;
+  sharedSongCount: number;
+  aheadCount: number;
+  behindCount: number;
+  rivalScore: number;
+  samples: RivalsAllSample[];
+};
+
+/** Combo data in the rivals-all response. */
+export type RivalsAllCombo = {
+  combo: string;
+  above: RivalsAllEntry[];
+  below: RivalsAllEntry[];
+};
+
+/** Response from /api/player/{accountId}/rivals/all (precomputed, includes indexed song samples). */
+export type RivalsAllResponse = {
+  accountId: string;
+  /** Deduplicated song ID index. Samples reference these by integer index. */
+  songs: string[];
+  combos: RivalsAllCombo[];
 };
 
 /** Neighbor entry in a per-instrument leaderboard neighborhood. */
