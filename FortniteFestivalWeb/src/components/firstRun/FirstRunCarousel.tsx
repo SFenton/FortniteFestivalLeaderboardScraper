@@ -156,22 +156,24 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
       style={{ ...S.overlay, opacity: overlayOpacity, transition: `opacity ${TRANSITION_MS}ms ease`, pointerEvents: animOut ? 'none' : undefined }}
       onClick={handleDismiss}
       data-glow-scope=""
+      data-testid="fre-overlay"
     >
       <div
         style={{ ...cardBase, ...cardStyle }}
         onClick={e => e.stopPropagation()}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
+        data-testid="fre-card"
       >
         {/* Close button â€” own flex row so content never overlaps */}
         <div style={S.closeRow}>
-          <button style={S.closeBtn} onClick={handleDismiss} aria-label={t('common.close')}>
+          <button style={S.closeBtn} onClick={handleDismiss} aria-label={t('common.close')} data-testid="fre-close">
             <IoClose size={Size.iconFab} />
           </button>
         </div>
 
         {/* Slide content â€” ResizeObserver measures height, context provides it to children */}
-        <div ref={slideAreaRef} style={S.slideArea}>
+        <div ref={slideAreaRef} style={S.slideArea} data-testid="fre-slide-area">
           <SlideHeightContext.Provider value={slideHeight}>
             <div key={slideKey} style={fading ? { ...S.slideContent, ...S.fadeOut } : S.slideContent}>
               {entranceDone && slide.render()}
@@ -188,6 +190,7 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
                 key={`title-${slideKey}`}
                 style={S.slideTitle}
                 delay={titleDelay}
+                data-testid="fre-title"
               >
                 {t(slide.title)}
               </FadeIn>
@@ -196,6 +199,7 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
                 key={`desc-${slideKey}`}
                 style={S.slideDescription}
                 delay={descDelay}
+                data-testid="fre-description"
               >
                 {t(slide.description)}
               </FadeIn>
@@ -210,11 +214,12 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
             onClick={goBack}
             disabled={isFirst}
             aria-label={t('aria.backOneEntry')}
+            data-testid="fre-prev"
           >
             <IoChevronBack size={Size.iconFab} />
           </button>
 
-          <div style={S.dotsWrap}>
+          <div style={S.dotsWrap} data-testid="fre-dots">
             {slides.map((_, i) => (
               <button
                 key={i}
@@ -230,6 +235,7 @@ export default function FirstRunCarousel({ slides, onDismiss, onExitComplete }: 
             onClick={goForward}
             disabled={isLast}
             aria-label={t('aria.forwardOneEntry')}
+            data-testid="fre-next"
           >
             <IoChevronForward size={Size.iconFab} />
           </button>

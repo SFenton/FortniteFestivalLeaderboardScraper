@@ -43,7 +43,13 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
   });
 
   const flags = useMemo<FeatureFlags>(() => {
-    if (isDev) return ALL_ON;
+    if (isDev) {
+      try {
+        const raw = localStorage.getItem('fst:featureFlagOverrides');
+        if (raw) return { ...ALL_ON, ...JSON.parse(raw) as Partial<FeatureFlags> };
+      } catch { /* ignore malformed JSON */ }
+      return ALL_ON;
+    }
     return data ?? ALL_OFF;
   }, [isDev, data]);
 

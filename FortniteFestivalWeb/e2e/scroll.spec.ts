@@ -1,5 +1,15 @@
 import { test, expect } from '@playwright/test';
 
+// Scroll tests are designed for desktop viewports only
+test.beforeEach(async ({ page }, testInfo) => {
+  if (testInfo.project.name !== 'desktop') {
+    test.skip();
+  }
+  // Disable FRE so the carousel doesn't interfere with scroll tests
+  await page.goto('/');
+  await page.evaluate(() => localStorage.setItem('fst:featureFlagOverrides', JSON.stringify({ firstRun: false })));
+});
+
 async function dismissOverlays(page: any) {
   for (let attempt = 0; attempt < 5; attempt++) {
     const xBtn = page.locator('button svg, [role="button"] svg').first();
