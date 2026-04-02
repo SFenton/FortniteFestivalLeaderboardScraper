@@ -33,7 +33,7 @@ export const RankingEntry = memo(function RankingEntry({
       <span style={s.colRank}>#{rank.toLocaleString()}</span>
       <span style={s.colName}>{displayName}</span>
       {songsLabel && <span style={s.colSongs}>{songsLabel}</span>}
-      <span style={s.colRating}>{ratingLabel}</span>
+      {ratingLabel && <span style={s.colRating}>{ratingLabel}</span>}
     </>
   );
 });

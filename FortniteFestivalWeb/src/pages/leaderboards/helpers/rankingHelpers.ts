@@ -28,7 +28,7 @@ export function formatRating(value: number, metric: RankingMetric): string {
   switch (metric) {
     case 'adjusted':
     case 'weighted':
-      return `${(value * 100).toFixed(1)}%`;
+      return '';
     case 'fcrate':
     case 'maxscore':
       return `${(value * 100).toFixed(1)}%`;

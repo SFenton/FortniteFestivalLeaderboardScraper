@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeRankWidth } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
+import { computeRankWidth, formatRating } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
 import { Layout } from '@festival/theme';
 
 describe('computeRankWidth', () => {
@@ -29,5 +29,27 @@ describe('computeRankWidth', () => {
     const small = computeRankWidth([1]);
     const large = computeRankWidth([1, 999999]);
     expect(large).toBeGreaterThan(small);
+  });
+});
+
+describe('formatRating', () => {
+  it('returns empty string for adjusted metric', () => {
+    expect(formatRating(0.038, 'adjusted')).toBe('');
+  });
+
+  it('returns empty string for weighted metric', () => {
+    expect(formatRating(0.042, 'weighted')).toBe('');
+  });
+
+  it('formats fcrate as percentage', () => {
+    expect(formatRating(0.653, 'fcrate')).toBe('65.3%');
+  });
+
+  it('formats maxscore as percentage', () => {
+    expect(formatRating(0.941, 'maxscore')).toBe('94.1%');
+  });
+
+  it('formats totalscore with locale separators', () => {
+    expect(formatRating(1250000, 'totalscore')).toBe((1250000).toLocaleString());
   });
 });

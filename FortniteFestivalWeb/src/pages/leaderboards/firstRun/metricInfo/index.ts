@@ -45,20 +45,20 @@ const adjustedSlides: FirstRunSlideDef[] = [
         {
           label: 'After 5 songs',
           entries: [
-            { rank: 52, displayName: 'FretPhenom', ratingLabel: '47.1%' },
-            { rank: 53, displayName: 'NeonPick', ratingLabel: '47.0%' },
-            { rank: 54, displayName: 'You', ratingLabel: '46.3%', isPlayer: true },
-            { rank: 55, displayName: 'DrumSurge', ratingLabel: '46.1%' },
+            { rank: 52, displayName: 'FretPhenom' },
+            { rank: 53, displayName: 'NeonPick' },
+            { rank: 54, displayName: 'You', isPlayer: true },
+            { rank: 55, displayName: 'DrumSurge' },
           ],
           highlight: 'Still near average — unproven',
         },
         {
           label: 'After 100 songs',
           entries: [
-            { rank: 7, displayName: 'BeatLegend', ratingLabel: '5.2%' },
-            { rank: 8, displayName: 'TopClutch', ratingLabel: '5.0%' },
-            { rank: 9, displayName: 'You', ratingLabel: '4.8%', isPlayer: true },
-            { rank: 10, displayName: 'ComboKing', ratingLabel: '4.6%' },
+            { rank: 7, displayName: 'BeatLegend' },
+            { rank: 8, displayName: 'TopClutch' },
+            { rank: 9, displayName: 'You', isPlayer: true },
+            { rank: 10, displayName: 'ComboKing' },
           ],
           highlight: 'True skill shines through',
         },
@@ -138,18 +138,18 @@ const weightedSlides: FirstRunSlideDef[] = [
         {
           label: 'After 5 songs',
           entries: [
-            { rank: 38, displayName: 'StageKnight', ratingLabel: '44.8%' },
-            { rank: 39, displayName: 'You', ratingLabel: '44.1%', isPlayer: true },
-            { rank: 40, displayName: 'RhythmEdge', ratingLabel: '43.5%' },
+            { rank: 38, displayName: 'StageKnight' },
+            { rank: 39, displayName: 'You', isPlayer: true },
+            { rank: 40, displayName: 'RhythmEdge' },
           ],
           highlight: 'Still near average',
         },
         {
           label: 'After 100 songs',
           entries: [
-            { rank: 4, displayName: 'GoldStreak', ratingLabel: '4.2%' },
-            { rank: 5, displayName: 'NoteHunter', ratingLabel: '4.0%' },
-            { rank: 6, displayName: 'You', ratingLabel: '3.9%', isPlayer: true },
+            { rank: 4, displayName: 'GoldStreak' },
+            { rank: 5, displayName: 'NoteHunter' },
+            { rank: 6, displayName: 'You', isPlayer: true },
           ],
           highlight: 'True skill shines through',
         },

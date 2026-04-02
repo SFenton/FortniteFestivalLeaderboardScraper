@@ -20,7 +20,7 @@ import {
 
 export interface RankCardData {
   label: string;
-  entries: { rank: number; displayName: string; ratingLabel: string; isPlayer?: boolean }[];
+  entries: { rank: number; displayName: string; ratingLabel?: string; isPlayer?: boolean }[];
   highlight?: string;
 }
 
@@ -136,7 +136,7 @@ export default function MetricInfoSlide({ paragraphs, formulas, cards, callout, 
                 <div style={s.cardLabel}>{card.label}</div>
                 {trimmed.map(e => (
                   <div key={e.rank} style={e.isPlayer ? s.rowPlayer : s.row}>
-                    <RankingEntry rank={e.rank} displayName={e.displayName} ratingLabel={e.ratingLabel} isPlayer={e.isPlayer} />
+                    <RankingEntry rank={e.rank} displayName={e.displayName} ratingLabel={e.ratingLabel ?? ''} isPlayer={e.isPlayer} />
                   </div>
                 ))}
                 {card.highlight && <div style={s.cardHighlight}>{card.highlight}</div>}
