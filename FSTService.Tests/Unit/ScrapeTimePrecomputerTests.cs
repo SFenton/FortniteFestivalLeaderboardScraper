@@ -124,7 +124,7 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
 
         var json = JsonDocument.Parse(result.Value.Json);
         var score = json.RootElement.GetProperty("scores")[0];
-        Assert.Equal(50, score.GetProperty("ml").GetInt32());
+        Assert.Equal(5.0, score.GetProperty("ml").GetDouble());
     }
 
     [Fact]
@@ -151,7 +151,7 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
 
         var fallback = validScores[0];
         Assert.Equal(99000, fallback.GetProperty("sc").GetInt32());
-        Assert.True(fallback.GetProperty("ml").GetInt32() <= 0);
+        Assert.True(fallback.GetProperty("ml").GetDouble() <= 0);
     }
 
     [Fact]

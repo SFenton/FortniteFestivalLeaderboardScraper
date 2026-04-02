@@ -193,14 +193,14 @@ public sealed class ScrapeTimePrecomputer
             var baseCount = db.GetPopulationAtOrBelow(songId, lowerBound);
             var bandScores = db.GetScoresInBand(songId, lowerBound, upperBound);
 
-            // Build changepoints: each score maps to a leeway value (int × 10)
+            // Build changepoints: each score maps to a leeway percentage
             var tiers = new List<PopulationTier>();
             int cumulative = baseCount;
-            int prevLeeway = int.MinValue;
+            double prevLeeway = double.NegativeInfinity;
             foreach (var score in bandScores)
             {
                 cumulative++;
-                int leeway = (int)Math.Round(((double)score / maxScore - 1.0) * 1000.0);
+                double leeway = Math.Round(((double)score / maxScore - 1.0) * 100.0, 1);
                 // Only emit a new tier when leeway actually changes
                 if (leeway > prevLeeway)
                 {
@@ -336,7 +336,7 @@ public sealed class ScrapeTimePrecomputer
             {
                 var max = songMax.GetByInstrument(s.Instrument);
                 if (max.HasValue && max.Value > 0)
-                    minLeeway = (int)Math.Round(((double)s.Score / max.Value - 1.0) * 1000.0);
+                    minLeeway = Math.Round(((double)s.Score / max.Value - 1.0) * 100.0, 1);
             }
 
             // Build validScores with rankTiers for this entry
@@ -354,7 +354,7 @@ public sealed class ScrapeTimePrecomputer
                         // Skip the current score (it's already the primary entry)
                         if (fb.Score == s.Score) continue;
 
-                        var fbLeeway = (int)Math.Round(((double)fb.Score / maxVal.Value - 1.0) * 1000.0);
+                        var fbLeeway = Math.Round(((double)fb.Score / maxVal.Value - 1.0) * 100.0, 1);
                         var rankTiers = ComputeRankTiers(fb.Score, maxVal.Value, bandScores, key, s.Instrument);
 
                         validScores.Add(new PrecomputedValidScore
@@ -442,18 +442,18 @@ public sealed class ScrapeTimePrecomputer
 
         var tiers = new List<RankTier>();
         int cumAboveFallback = alwaysAbove;
-        int prevLeeway = int.MinValue;
+        double prevLeeway = double.NegativeInfinity;
         int prevRank = -1;
 
-        // At leeway = -50 (i.e. -5.0%, everything below 0.95*max), rank is alwaysAbove + 1
+        // At leeway = -5.0 (i.e. -5.0%, everything below 0.95*max), rank is alwaysAbove + 1
         int baseRankForTier = alwaysAbove + 1;
-        tiers.Add(new RankTier { Leeway = -50, Rank = baseRankForTier });
+        tiers.Add(new RankTier { Leeway = -5.0, Rank = baseRankForTier });
         prevRank = baseRankForTier;
-        prevLeeway = -50;
+        prevLeeway = -5.0;
 
         foreach (var score in bandScores)
         {
-            int leeway = (int)Math.Round(((double)score / maxScore - 1.0) * 1000.0);
+            double leeway = Math.Round(((double)score / maxScore - 1.0) * 100.0, 1);
             if (score > fallbackScore)
             {
                 cumAboveFallback++;
@@ -1305,16 +1305,16 @@ public sealed class PopulationTierData
     [JsonPropertyName("t")] public List<PopulationTier> Tiers { get; init; } = new();
 }
 
-/// <summary>A single changepoint in the population tier curve. Leeway is stored as int × 10 (e.g. -50 = -5.0%).</summary>
+/// <summary>A single changepoint in the population tier curve. Leeway is a percentage (e.g. -5.0 = 5% below max).</summary>
 public sealed record PopulationTier
 {
-    [JsonPropertyName("l")] public int Leeway { get; init; }
+    [JsonPropertyName("l")] public double Leeway { get; init; }
     [JsonPropertyName("t")] public int Total { get; init; }
 }
 
-/// <summary>A single changepoint in a fallback score's rank curve. Leeway is stored as int × 10 (e.g. -50 = -5.0%).</summary>
+/// <summary>A single changepoint in a fallback score's rank curve. Leeway is a percentage (e.g. -5.0 = 5% below max).</summary>
 public sealed record RankTier
 {
-    [JsonPropertyName("l")] public int Leeway { get; init; }
+    [JsonPropertyName("l")] public double Leeway { get; init; }
     [JsonPropertyName("r")] public int Rank { get; init; }
 }

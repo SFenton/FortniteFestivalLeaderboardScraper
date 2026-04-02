@@ -740,7 +740,7 @@ type WireSongsResponse = Omit<SongsResponse, 'songs'> & { songs: WireSong[] };
 // ─── Transform: player ───────────────────────────────────────
 
 function expandRankTier(w: WireRankTier): RankTier {
-  return { leeway: w.l / 10, rank: w.r };
+  return { leeway: w.l, rank: w.r };
 }
 
 function expandValidScore(w: WireValidScore): ValidScoreVariant {
@@ -749,7 +749,7 @@ function expandValidScore(w: WireValidScore): ValidScoreVariant {
     accuracy: w.acc != null ? w.acc * 1000 : w.acc,
     fc: w.fc,
     stars: w.st,
-    minLeeway: w.ml / 10,
+    minLeeway: w.ml,
     rankTiers: w.rt?.map(expandRankTier),
   };
 }
@@ -768,7 +768,7 @@ function expandPlayerScore(w: WirePlayerScore): PlayerScore {
     rank: w.rk,
     endTime: w.et,
     totalEntries: w.te,
-    minLeeway: w.ml != null ? w.ml / 10 : w.ml,
+    minLeeway: w.ml,
     validScores: w.vs?.map(expandValidScore),
     // Legacy fallback fields (pass through, scaling accuracy)
     isValid: w.isValid,
@@ -794,7 +794,7 @@ export function expandWirePlayerResponse(wire: WirePlayerResponse): PlayerRespon
 // ─── Transform: songs (population tiers only) ────────────────
 
 function expandPopulationTier(w: WirePopulationTier): PopulationTier {
-  return { leeway: w.l / 10, total: w.t };
+  return { leeway: w.l, total: w.t };
 }
 
 function expandPopulationTierData(w: WirePopulationTierData): PopulationTierData {
