@@ -42,7 +42,7 @@ public sealed class PlayerStatsCalculator
             {
                 var max = ms.GetByInstrument(instrument);
                 if (max.HasValue && max.Value > 0 && s.Score > max.Value)
-                    minLeeway = Math.Round(((double)s.Score / max.Value - 1.0) * 100.0, 6);
+                    minLeeway = Math.Round(((double)s.Score / max.Value - 1.0) * 100.0, 1);
             }
 
             var totalEntries = population.GetValueOrDefault((s.SongId, instrument), 0);
@@ -235,8 +235,8 @@ public sealed class PlayerStatsCalculator
         tier.ThreeStarCount = threeStars;
         tier.TwoStarCount = twoStars;
         tier.OneStarCount = oneStars;
-        tier.AvgAccuracy = accCount > 0 ? accSum / accCount : 0;
-        tier.BestAccuracy = bestAcc;
+        tier.AvgAccuracy = accCount > 0 ? (int)(accSum / accCount / 1000) : 0;
+        tier.BestAccuracy = bestAcc / 1000;
         tier.AverageStars = starsCount > 0 ? Math.Round(starsSum / starsCount, 2) : 0;
         tier.AvgScore = scores.Count > 0 ? Math.Round((double)totalScore / scores.Count, 2) : 0;
         tier.TotalScore = totalScore;
@@ -247,36 +247,30 @@ public sealed class PlayerStatsCalculator
         // Percentile distribution
         if (percentileValues.Count > 0)
         {
-            var dist = new Dictionary<int, int>();
-            foreach (var bucket in PercentileBuckets) dist[bucket] = 0;
-
+            var distArray = new int[PercentileBuckets.Length];
             foreach (var (_, pct) in percentileValues)
             {
-                foreach (var bucket in PercentileBuckets)
+                for (int i = 0; i < PercentileBuckets.Length; i++)
                 {
-                    if (pct <= bucket) { dist[bucket]++; break; }
+                    if (pct <= PercentileBuckets[i]) { distArray[i]++; break; }
                 }
             }
-            tier.PercentileDist = JsonSerializer.Serialize(dist);
+            tier.PercentileDist = distArray;
 
             // Average percentile (played songs only)
             double avgPct = percentileValues.Average(p => p.Pct);
-            tier.AvgPercentile = FormatPercentileBucket(avgPct);
+            tier.AvgPercentile = PercentileBucketIndex(avgPct);
 
             // Overall percentile (unplayed = 100%)
             int unplayed = totalSongs - scores.Count;
             double totalPct = percentileValues.Sum(p => p.Pct / 100.0) + unplayed;
             double overallPct = totalSongs > 0 ? totalPct / totalSongs * 100.0 : 100;
-            tier.OverallPercentile = FormatPercentileBucket(overallPct);
+            tier.OverallPercentile = PercentileBucketIndex(overallPct);
 
-            // Top/bottom 5 songs
+            // Top/bottom 5 songs grouped by percentile
             var sorted = percentileValues.OrderBy(p => p.Pct).ToList();
-            tier.TopSongs = JsonSerializer.Serialize(
-                sorted.Take(5).Select(p => new StatsSongRef { SongId = p.SongId, Percentile = Math.Round(p.Pct, 1) }),
-                JsonOpts);
-            tier.BottomSongs = JsonSerializer.Serialize(
-                sorted.TakeLast(5).Reverse().Select(p => new StatsSongRef { SongId = p.SongId, Percentile = Math.Round(p.Pct, 1) }),
-                JsonOpts);
+            tier.TopSongs = SerializeGroupedSongs(sorted.Take(5));
+            tier.BottomSongs = SerializeGroupedSongs(sorted.TakeLast(5).Reverse());
         }
 
         return tier;
@@ -341,9 +335,11 @@ public sealed class PlayerStatsCalculator
 
         overall.BestRank = bestRank;
         overall.BestRankSongId = bestRankSongId;
-        overall.BestRankInstrument = bestRankInstrument;
+        overall.BestRankInstrument = bestRankInstrument is not null
+            ? ComboIds.FromInstruments(new[] { bestRankInstrument })
+            : null;
 
-        // Weighted averages
+        // Weighted averages (AvgAccuracy is already ÷1000 in per-instrument tiers)
         double accWeightedSum = 0; int accTotalCount = 0;
         double starsWeightedSum = 0; int starsTotalCount = 0;
         foreach (var (_, t) in matchingTiers)
@@ -351,7 +347,7 @@ public sealed class PlayerStatsCalculator
             if (t.AvgAccuracy > 0) { accWeightedSum += t.AvgAccuracy * t.SongsPlayed; accTotalCount += t.SongsPlayed; }
             if (t.AverageStars > 0) { starsWeightedSum += t.AverageStars * t.SongsPlayed; starsTotalCount += t.SongsPlayed; }
         }
-        overall.AvgAccuracy = accTotalCount > 0 ? accWeightedSum / accTotalCount : 0;
+        overall.AvgAccuracy = accTotalCount > 0 ? (int)(accWeightedSum / accTotalCount) : 0;
         overall.BestAccuracy = matchingTiers.Max(m => m.Tier.BestAccuracy);
         overall.AverageStars = starsTotalCount > 0 ? Math.Round(starsWeightedSum / starsTotalCount, 2) : 0;
         overall.AvgScore = totalScoresCount > 0 ? Math.Round((double)overall.TotalScore / totalScoresCount, 2) : 0;
@@ -371,6 +367,44 @@ public sealed class PlayerStatsCalculator
             if (pct <= bucket) return $"Top {bucket}%";
         }
         return "Top 100%";
+    }
+
+    /// <summary>Returns the index into PercentileBuckets for a given percentile value, or null.</summary>
+    internal static int? PercentileBucketIndex(double pct)
+    {
+        for (int i = 0; i < PercentileBuckets.Length; i++)
+        {
+            if (pct <= PercentileBuckets[i]) return i;
+        }
+        return PercentileBuckets.Length - 1; // 100%
+    }
+
+    /// <summary>Serialize songs grouped by rounded percentile: [{"p":0,"s":["id1","id2"]}].</summary>
+    private static string SerializeGroupedSongs(IEnumerable<(string SongId, double Pct)> songs)
+    {
+        var groups = new List<object>();
+        double currentPct = double.MinValue;
+        List<string>? currentIds = null;
+
+        foreach (var (songId, pct) in songs)
+        {
+            var rounded = Math.Round(pct, 1);
+            if (currentIds is null || rounded != currentPct)
+            {
+                if (currentIds is not null)
+                    groups.Add(new { p = currentPct, s = currentIds });
+                currentPct = rounded;
+                currentIds = new List<string> { songId };
+            }
+            else
+            {
+                currentIds.Add(songId);
+            }
+        }
+        if (currentIds is not null)
+            groups.Add(new { p = currentPct, s = currentIds });
+
+        return JsonSerializer.Serialize(groups);
     }
 
     private sealed class ClassifiedScore

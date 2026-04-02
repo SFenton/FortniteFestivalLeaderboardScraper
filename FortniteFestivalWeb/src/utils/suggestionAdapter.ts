@@ -56,7 +56,7 @@ function buildTracker(ps: PlayerScore): ScoreTracker {
   t.maxScore = ps.score;
   t.numStars = ps.stars ?? 0;
   t.isFullCombo = ps.isFullCombo ?? false;
-  t.percentHit = ps.accuracy ?? 0; // already in ×10 000 form from API
+  t.percentHit = ps.accuracy ?? 0; // already in raw form from API (0-1,000,000)
   t.rank = ps.rank;
   t.totalEntries = ps.totalEntries ?? 0;
   t.seasonAchieved = ps.season ?? 0;

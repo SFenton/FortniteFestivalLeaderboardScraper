@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace FSTService.Persistence;
 
 /// <summary>
@@ -166,41 +168,45 @@ public sealed class PlayerStatsTier
     /// Minimum leeway percentage required for this tier's score set to be active.
     /// Null means the base tier (only scores at or below CHOpt max).
     /// </summary>
-    public double? MinLeeway { get; set; }
+    [JsonPropertyName("ml")] public double? MinLeeway { get; set; }
 
     // ── Score-dependent aggregates ────────────────────────────
-    public int SongsPlayed { get; set; }
-    public int OverThresholdCount { get; set; }
-    public int FcCount { get; set; }
-    public double FcPercent { get; set; }
-    public int GoldStarCount { get; set; }
-    public int FiveStarCount { get; set; }
-    public int FourStarCount { get; set; }
-    public int ThreeStarCount { get; set; }
-    public int TwoStarCount { get; set; }
-    public int OneStarCount { get; set; }
-    public double AvgAccuracy { get; set; }
-    public int BestAccuracy { get; set; }
-    public double AverageStars { get; set; }
-    public double AvgScore { get; set; }
-    public long TotalScore { get; set; }
-    public double CompletionPercent { get; set; }
+    [JsonPropertyName("sp")] public int SongsPlayed { get; set; }
+    [JsonPropertyName("otc")] public int OverThresholdCount { get; set; }
+    [JsonPropertyName("fcc")] public int FcCount { get; set; }
+    [JsonPropertyName("fcp")] public double FcPercent { get; set; }
+    [JsonPropertyName("s6")] public int GoldStarCount { get; set; }
+    [JsonPropertyName("s5")] public int FiveStarCount { get; set; }
+    [JsonPropertyName("s4")] public int FourStarCount { get; set; }
+    [JsonPropertyName("s3")] public int ThreeStarCount { get; set; }
+    [JsonPropertyName("s2")] public int TwoStarCount { get; set; }
+    [JsonPropertyName("s1")] public int OneStarCount { get; set; }
+    /// <summary>Average accuracy ÷1000 (0–1000 where 1000 = 100%). Client divides by 10 for display.</summary>
+    [JsonPropertyName("aa")] public int AvgAccuracy { get; set; }
+    /// <summary>Best accuracy ÷1000 (0–1000 where 1000 = 100%).</summary>
+    [JsonPropertyName("ba")] public int BestAccuracy { get; set; }
+    [JsonPropertyName("ast")] public double AverageStars { get; set; }
+    [JsonPropertyName("as")] public double AvgScore { get; set; }
+    [JsonPropertyName("tsc")] public long TotalScore { get; set; }
+    [JsonPropertyName("cp")] public double CompletionPercent { get; set; }
 
     // ── Rank-dependent aggregates ─────────────────────────────
-    public int BestRank { get; set; }
-    public string? BestRankSongId { get; set; }
-    /// <summary>JSON-encoded percentile distribution: {"1":5,"5":12,...}.</summary>
-    public string? PercentileDist { get; set; }
-    public string? AvgPercentile { get; set; }
-    public string? OverallPercentile { get; set; }
-    /// <summary>Top 5 songs by percentile: [{songId, percentile}].</summary>
-    public string? TopSongs { get; set; }
-    /// <summary>Bottom 5 songs by percentile: [{songId, percentile}].</summary>
-    public string? BottomSongs { get; set; }
+    [JsonPropertyName("br")] public int BestRank { get; set; }
+    [JsonPropertyName("brs")] public string? BestRankSongId { get; set; }
+    /// <summary>Percentile distribution as a 17-element int array matching bucket order [1,2,3,4,5,10,15,20,25,30,40,50,60,70,80,90,100].</summary>
+    [JsonPropertyName("pd")] public int[]? PercentileDist { get; set; }
+    /// <summary>Index into PercentileBuckets array, or null. Client expands to "Top N%".</summary>
+    [JsonPropertyName("ap")] public int? AvgPercentile { get; set; }
+    /// <summary>Index into PercentileBuckets array, or null. Client expands to "Top N%".</summary>
+    [JsonPropertyName("op")] public int? OverallPercentile { get; set; }
+    /// <summary>Top 5 songs grouped by percentile: [{p:0,s:["id1","id2"]}]. Null means inherit from previous tier.</summary>
+    [JsonPropertyName("ts")] public string? TopSongs { get; set; }
+    /// <summary>Bottom 5 songs grouped by percentile: [{p:0,s:["id1","id2"]}]. Null means inherit from previous tier.</summary>
+    [JsonPropertyName("bs")] public string? BottomSongs { get; set; }
 
     // ── Overall-only field ────────────────────────────────────
-    /// <summary>Instrument of the best rank (only set on the "Overall" instrument row).</summary>
-    public string? BestRankInstrument { get; set; }
+    /// <summary>Instrument hex code of the best rank (only set on the "Overall" instrument row).</summary>
+    [JsonPropertyName("bri")] public string? BestRankInstrument { get; set; }
 }
 
 /// <summary>

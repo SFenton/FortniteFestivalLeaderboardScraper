@@ -574,8 +574,7 @@ public sealed class PostScrapeOrchestrator
             {
                 AccountId = accountId,
                 Instrument = inst,
-                TiersJson = System.Text.Json.JsonSerializer.Serialize(tiers,
-                    new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase }),
+                TiersJson = System.Text.Json.JsonSerializer.Serialize(tiers),
             });
         }
 
@@ -587,8 +586,7 @@ public sealed class PostScrapeOrchestrator
             {
                 AccountId = accountId,
                 Instrument = "Overall",
-                TiersJson = System.Text.Json.JsonSerializer.Serialize(overallTiers,
-                    new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase }),
+                TiersJson = System.Text.Json.JsonSerializer.Serialize(overallTiers),
             });
         }
 

@@ -26,7 +26,7 @@ import type {
   CompositeNeighborhoodResponse,
   LeaderboardRivalsListResponse,
 } from '@festival/core/api/serverTypes';
-import { expandWirePlayerResponse, expandWireSongsResponse } from '@festival/core/api/serverTypes';
+import { expandWirePlayerResponse, expandWireSongsResponse, expandWireStatsResponse } from '@festival/core/api/serverTypes';
 
 const BASE = '';
 
@@ -170,7 +170,8 @@ export const api = {
     ),
 
   getPlayerStats: (accountId: string) =>
-    get<PlayerStatsResponse>(`/api/player/${encodeURIComponent(accountId)}/stats`),
+    get<PlayerStatsResponse>(`/api/player/${encodeURIComponent(accountId)}/stats`)
+      .then(r => expandWireStatsResponse(r as never)),
 
   getVersion: () => get<{ version: string }>('/api/version'),
 

@@ -817,3 +817,134 @@ export function expandWireSongsResponse(wire: WireSongsResponse): SongsResponse 
     songs: wire.songs.map(expandSong),
   };
 }
+
+// ─── Stats wire types ────────────────────────────────────────
+
+/** Known percentile bucket values, matching server PercentileBuckets. */
+const PERCENTILE_BUCKETS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100] as const;
+
+/** Wire format of a single stats tier. */
+type WireStatsTier = {
+  ml: number | null;
+  sp: number;
+  otc: number;
+  fcc: number;
+  fcp: number;
+  s6: number;
+  s5: number;
+  s4: number;
+  s3: number;
+  s2: number;
+  s1: number;
+  aa: number; // avgAccuracy ÷1000 (0-1000)
+  ba: number; // bestAccuracy ÷1000 (0-1000)
+  ast: number;
+  as: number;
+  tsc: number;
+  cp: number;
+  br: number;
+  brs?: string | null;
+  pd?: number[] | null; // 17-element int array
+  ap?: number | null;   // bucket index
+  op?: number | null;   // bucket index
+  ts?: string | null;   // grouped songs JSON or null (inherit)
+  bs?: string | null;   // grouped songs JSON or null (inherit)
+  bri?: string | null;  // instrument hex (Overall only)
+};
+
+/** Wire format of a stats instrument group. */
+type WireStatsInstrument = {
+  ins: string; // hex instrument code ("01", "00" for Overall)
+  tiers: WireStatsTier[];
+};
+
+/** Wire format of the stats response. */
+type WireStatsResponse = {
+  accountId: string;
+  totalSongs: number;
+  instruments: WireStatsInstrument[];
+};
+
+function expandPercentileIndex(idx: number | null | undefined): string | null {
+  if (idx == null) return null;
+  return `Top ${PERCENTILE_BUCKETS[idx] ?? 100}%`;
+}
+
+function expandPercentileDist(arr: number[] | null | undefined): string | null {
+  if (!arr || arr.length === 0) return null;
+  const obj: Record<string, number> = {};
+  for (let i = 0; i < PERCENTILE_BUCKETS.length && i < arr.length; i++) {
+    obj[String(PERCENTILE_BUCKETS[i])] = arr[i];
+  }
+  return JSON.stringify(obj);
+}
+
+type GroupedSong = { p: number; s: string[] };
+
+function expandGroupedSongs(json: string | null | undefined): string | null {
+  if (!json) return null;
+  try {
+    const groups = JSON.parse(json) as GroupedSong[];
+    const flat = groups.flatMap(g =>
+      g.s.map(id => ({ songId: id, percentile: g.p }))
+    );
+    return JSON.stringify(flat);
+  } catch {
+    return json; // pass through if already in old format
+  }
+}
+
+function expandStatsTier(w: WireStatsTier, prevTopSongs: string | null, prevBottomSongs: string | null): PlayerStatsTier {
+  const topSongs = w.ts != null ? expandGroupedSongs(w.ts) : prevTopSongs;
+  const bottomSongs = w.bs != null ? expandGroupedSongs(w.bs) : prevBottomSongs;
+  return {
+    minLeeway: w.ml,
+    songsPlayed: w.sp,
+    overThresholdCount: w.otc,
+    fcCount: w.fcc,
+    fcPercent: w.fcp,
+    goldStarCount: w.s6,
+    fiveStarCount: w.s5,
+    fourStarCount: w.s4,
+    threeStarCount: w.s3,
+    twoStarCount: w.s2,
+    oneStarCount: w.s1,
+    avgAccuracy: w.aa * 1000, // expand 0-1000 back to 0-1,000,000 for ACCURACY_SCALE compat
+    bestAccuracy: w.ba * 1000,
+    averageStars: w.ast,
+    avgScore: w.as,
+    totalScore: w.tsc,
+    completionPercent: w.cp,
+    bestRank: w.br,
+    bestRankSongId: w.brs,
+    percentileDist: expandPercentileDist(w.pd),
+    avgPercentile: expandPercentileIndex(w.ap),
+    overallPercentile: expandPercentileIndex(w.op),
+    topSongs,
+    bottomSongs,
+    bestRankInstrument: w.bri != null ? instrumentFromHex(w.bri) : w.bri,
+  };
+}
+
+function expandStatsInstrument(w: WireStatsInstrument): PlayerStatsInstrument {
+  const instrument = w.ins === '00' ? 'Overall' : instrumentFromHex(w.ins);
+  const tiers: PlayerStatsTier[] = [];
+  let prevTop: string | null = null;
+  let prevBottom: string | null = null;
+  for (const t of w.tiers) {
+    const expanded = expandStatsTier(t, prevTop, prevBottom);
+    tiers.push(expanded);
+    if (expanded.topSongs != null) prevTop = expanded.topSongs;
+    if (expanded.bottomSongs != null) prevBottom = expanded.bottomSongs;
+  }
+  return { instrument, tiers };
+}
+
+/** Expand a compact wire stats response to the canonical PlayerStatsResponse. */
+export function expandWireStatsResponse(wire: WireStatsResponse): PlayerStatsResponse {
+  return {
+    accountId: wire.accountId,
+    totalSongs: wire.totalSongs ?? 0,
+    instruments: (wire.instruments ?? []).map(expandStatsInstrument),
+  };
+}

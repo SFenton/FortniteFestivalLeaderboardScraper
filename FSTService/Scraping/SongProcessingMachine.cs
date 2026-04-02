@@ -238,7 +238,7 @@ public class SongProcessingMachine
                     {
                         entries = await _scraper.LookupMultipleAccountsAsync(
                             songId, instrument, targetIds,
-                            accessToken, callerAccountId, pool.Limiter, ct);
+                            accessToken, callerAccountId, limiter: null, ct);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -312,7 +312,7 @@ public class SongProcessingMachine
                     {
                         sessions = await _scraper.LookupMultipleAccountSessionsAsync(
                             songId, instrument, seasonPrefix, targetIds,
-                            accessToken, callerAccountId, pool.Limiter, ct);
+                            accessToken, callerAccountId, limiter: null, ct);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {

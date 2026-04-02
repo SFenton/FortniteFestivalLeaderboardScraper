@@ -639,7 +639,7 @@ public sealed class ScrapeTimePrecomputer
             totalSongs,
             instruments = tierRows.Select(r => new
             {
-                instrument = r.Instrument,
+                ins = r.Instrument == "Overall" ? "00" : ComboIds.FromInstruments(new[] { r.Instrument }),
                 tiers = JsonSerializer.Deserialize<JsonElement>(r.TiersJson),
             }).ToList(),
         };

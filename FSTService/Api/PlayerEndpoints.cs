@@ -384,7 +384,7 @@ public static partial class ApiEndpoints
                     totalSongs,
                     instruments = tierRows.Select(r => new
                     {
-                        instrument = r.Instrument,
+                        ins = r.Instrument == "Overall" ? "00" : ComboIds.FromInstruments(new[] { r.Instrument }),
                         tiers = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(r.TiersJson),
                     }).ToList(),
                 };

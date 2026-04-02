@@ -258,7 +258,7 @@ public class PlayerStatsCalculatorTests
         Assert.Equal(900000, t.TotalScore);  // 500K + 400K
         Assert.Equal(3, t.BestRank);         // bass has rank 3 < guitar rank 5
         Assert.Equal("s2", t.BestRankSongId);
-        Assert.Equal("Solo_Bass", t.BestRankInstrument);
+        Assert.Equal("02", t.BestRankInstrument);
     }
 
     [Fact]
