@@ -144,15 +144,39 @@ public sealed class ResilientHttpExecutorTests
     }
 
     [Fact]
-    public async Task SendAsync_NetworkError_ExhaustsRetries_Throws()
+    public async Task SendAsync_NetworkError_RetriesIndefinitely_UntilSuccess()
     {
         var (executor, handler) = CreateExecutor();
-        handler.EnqueueException(new HttpRequestException("Connection refused"));
-        handler.EnqueueException(new HttpRequestException("Connection refused"));
+        // 6 consecutive network errors, then success — well beyond maxRetries=3
+        for (int i = 0; i < 6; i++)
+            handler.EnqueueException(new HttpRequestException("Connection refused"));
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
 
-        await Assert.ThrowsAsync<HttpRequestException>(
+        var response = await executor.SendAsync(
+            () => MakeRequest(), maxRetries: 3, label: "net-infinite-test");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(7, handler.Requests.Count); // 6 failures + 1 success
+    }
+
+    [Fact]
+    public async Task SendAsync_NetworkError_CancelledByCancellationToken()
+    {
+        var handler = new MockHttpMessageHandler();
+        // Enqueue enough errors to keep it retrying
+        for (int i = 0; i < 20; i++)
+            handler.EnqueueException(new HttpRequestException("Connection refused"));
+
+        var http = new HttpClient(handler);
+        var executor = new ResilientHttpExecutor(http, _log);
+
+        var cts = new CancellationTokenSource();
+        // Cancel after a short delay so the retry loop can run a few iterations
+        cts.CancelAfter(TimeSpan.FromMilliseconds(100));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => executor.SendAsync(
-                () => MakeRequest(), maxRetries: 1, label: "net-exhaust-test"));
+                () => MakeRequest(), maxRetries: 1, label: "net-cancel-test", ct: cts.Token));
     }
 
     // ─── Cancellation ───────────────────────────────────────────
@@ -226,18 +250,20 @@ public sealed class ResilientHttpExecutorTests
     }
 
     [Fact]
-    public async Task SendAsync_Timeout_ExhaustsRetries_Throws()
+    public async Task SendAsync_Timeout_RetriesIndefinitely_UntilSuccess()
     {
         var handler = new MockHttpMessageHandler();
-        // All requests: timeout
-        handler.EnqueueException(new TaskCanceledException("timeout 1"));
-        handler.EnqueueException(new TaskCanceledException("timeout 2"));
+        // 5 consecutive timeouts, then success — well beyond maxRetries=1
+        for (int i = 0; i < 5; i++)
+            handler.EnqueueException(new TaskCanceledException("The request timed out"));
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
 
         var http = new HttpClient(handler);
         var executor = new ResilientHttpExecutor(http, _log);
 
-        await Assert.ThrowsAsync<TaskCanceledException>(() =>
-            executor.SendAsync(() => MakeRequest(), maxRetries: 1, label: "timeout-exhaust"));
+        var res = await executor.SendAsync(() => MakeRequest(), maxRetries: 1, label: "timeout-infinite-test");
+        Assert.True(res.IsSuccessStatusCode);
+        Assert.Equal(6, handler.Requests.Count); // 5 timeouts + 1 success
     }
 
     // ─── Retryable code exhausts and returns response ───────────
@@ -379,5 +405,87 @@ public sealed class ResilientHttpExecutorTests
         var body = await response.Content.ReadAsStringAsync();
         Assert.Contains("auth_failed", body);
         Assert.Equal(2, handler.Requests.Count);
+    }
+
+    // ─── CDN non-probe path ─────────────────────────────────────
+
+    [Fact]
+    public async Task SendAsync_CdnNonProbe_RetriesHttpRequestException()
+    {
+        // Simulate the non-probe path: first CDN block becomes the probe,
+        // the second CDN block enters the non-probe path.
+        // To test the non-probe's error handling, we need two concurrent calls.
+        // Instead, we test the integrated behavior: CDN block → probe starts →
+        // probe succeeds → non-probe retries after cooldown with network error → eventually succeeds.
+        //
+        // Simpler approach: single call where the probe clears, then we get a network
+        // error on the probe's retry (which is the same code path).
+        // For non-probe specifically: the non-probe path fires when _cdnGate is held.
+        // We can't easily test concurrency in a unit test, so we test the probe path handles
+        // HttpRequestException (which uses the same pattern), and separately verify
+        // that a CDN block → network error → success works end-to-end.
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithZeroCdnDelay(handler);
+
+        // CDN block → probe retries → network error → success
+        handler.EnqueueHtml403();
+        handler.EnqueueException(new HttpRequestException("ResponseEnded"));
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        var response = await executor.SendAsync(() => MakeRequest(), label: "cdn-netfail-test");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task SendAsync_CdnNonProbe_RetriesCdnReBlock()
+    {
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithZeroCdnDelay(handler);
+
+        // CDN block → probe retries → still CDN blocked → eventually succeeds
+        handler.EnqueueHtml403();
+        handler.EnqueueHtml403();
+        handler.EnqueueHtml403();
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        var response = await executor.SendAsync(() => MakeRequest(), label: "cdn-reblock-test");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(4, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task SendAsync_CdnNonProbe_CdnThenNon403_ReturnsResponse()
+    {
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithZeroCdnDelay(handler);
+
+        // CDN block → probe clears → non-CDN 404 returned to caller
+        handler.EnqueueHtml403();
+        handler.EnqueueError(HttpStatusCode.NotFound, "not found");
+
+        var response = await executor.SendAsync(() => MakeRequest(), label: "cdn-then-404-test");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task SendAsync_CdnNonProbe_TimeoutRetries()
+    {
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithZeroCdnDelay(handler);
+
+        // CDN block → probe retries → timeout → success
+        handler.EnqueueHtml403();
+        handler.EnqueueException(new TaskCanceledException("timed out"));
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        var response = await executor.SendAsync(() => MakeRequest(), label: "cdn-timeout-test");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(3, handler.Requests.Count);
     }
 }

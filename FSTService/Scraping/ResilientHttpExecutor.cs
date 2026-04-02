@@ -51,8 +51,15 @@ public sealed class ResilientHttpExecutor
         TimeSpan.FromSeconds(60),
     ];
 
+    /// <summary>Maximum backoff cap for transient-error retries (network errors, timeouts).</summary>
+    internal static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
+
     /// <summary>Override CDN retry delays for testing (set to zero-delay arrays).</summary>
     internal TimeSpan[]? CdnRetryDelaysOverride { get; set; }
+
+    /// <summary>Maximum jitter (ms) added before non-probe CDN retry attempts.
+    /// Set to 0 in tests for determinism.</summary>
+    internal int MaxJitterMs { get; set; } = 500;
 
     private readonly HttpClient _http;
     private readonly ILogger _log;
@@ -94,13 +101,16 @@ public sealed class ResilientHttpExecutor
     /// error (e.g. 400, JSON 403). The caller is responsible for reading/disposing
     /// the response and handling non-retryable errors (such as <c>no_score_found</c>).
     /// </returns>
-    /// <exception cref="HttpRequestException">
-    /// Thrown when a network error persists after all retries.
+    /// <exception cref="OperationCanceledException">
+    /// Thrown when <paramref name="ct"/> is cancelled.
     /// </exception>
-    /// <exception cref="TaskCanceledException">
-    /// Thrown when a timeout persists after all retries, or when
-    /// <paramref name="ct"/> is cancelled.
-    /// </exception>
+    /// <remarks>
+    /// Transient network errors (<see cref="HttpRequestException"/>) and non-cancellation
+    /// timeouts (<see cref="TaskCanceledException"/>) are retried indefinitely with
+    /// capped exponential backoff + limiter feedback. Only <paramref name="ct"/>
+    /// cancellation exits. The <paramref name="maxRetries"/> parameter bounds only
+    /// HTTP status-code retries (429, 5xx).
+    /// </remarks>
     public async Task<HttpResponseMessage> SendAsync(
         Func<HttpRequestMessage> requestFactory,
         AdaptiveConcurrencyLimiter? limiter = null,
@@ -108,13 +118,16 @@ public sealed class ResilientHttpExecutor
         int maxRetries = DefaultMaxRetries,
         CancellationToken ct = default)
     {
-        for (int attempt = 0; attempt <= maxRetries; attempt++)
+        int statusAttempt = 0; // counts only HTTP status-code retries (429, 5xx)
+
+        for (int attempt = 0; ; attempt++)
         {
             if (attempt > 0)
             {
-                // Exponential backoff: 500 ms, 1 s, 2 s, …
+                // Exponential backoff capped at MaxBackoff
                 var backoff = TimeSpan.FromMilliseconds(
                     BaseDelay.TotalMilliseconds * Math.Pow(2, attempt - 1));
+                if (backoff > MaxBackoff) backoff = MaxBackoff;
                 await Task.Delay(backoff, ct);
             }
 
@@ -126,21 +139,21 @@ public sealed class ResilientHttpExecutor
             {
                 res = await _http.SendAsync(requestFactory(), ct);
             }
-            catch (HttpRequestException ex) when (attempt < maxRetries)
+            catch (HttpRequestException ex)
             {
                 _log.LogWarning(
-                    "HTTP error for {Operation} (attempt {Attempt}/{MaxAttempts}): {Error}",
-                    label ?? "request", attempt + 1, maxRetries + 1, ex.Message);
+                    "HTTP error for {Operation} (attempt {Attempt}): {Error}",
+                    label ?? "request", attempt + 1, ex.Message);
                 limiter?.ReportFailure();
-                continue;
+                continue; // transient — retry indefinitely
             }
-            catch (TaskCanceledException) when (!ct.IsCancellationRequested && attempt < maxRetries)
+            catch (TaskCanceledException) when (!ct.IsCancellationRequested)
             {
                 _log.LogWarning(
-                    "Timeout for {Operation} (attempt {Attempt}/{MaxAttempts})",
-                    label ?? "request", attempt + 1, maxRetries + 1);
+                    "Timeout for {Operation} (attempt {Attempt})",
+                    label ?? "request", attempt + 1);
                 limiter?.ReportFailure();
-                continue;
+                continue; // transient timeout — retry indefinitely
             }
 
             if (res.IsSuccessStatusCode)
@@ -171,8 +184,10 @@ public sealed class ResilientHttpExecutor
 
             bool retryable = statusCode == 429 || statusCode >= 500;
 
-            if (retryable && attempt < maxRetries)
+            if (retryable && statusAttempt < maxRetries)
             {
+                statusAttempt++;
+
                 // Honour Retry-After header on 429
                 if (statusCode == 429 && res.Headers.RetryAfter?.Delta is TimeSpan retryAfter)
                 {
@@ -187,13 +202,13 @@ public sealed class ResilientHttpExecutor
 
                 _log.LogWarning(
                     "{StatusCode} for {Operation} (attempt {Attempt}/{MaxAttempts})",
-                    statusCode, label ?? "request", attempt + 1, maxRetries + 1);
+                    statusCode, label ?? "request", statusAttempt, maxRetries + 1);
                 limiter?.ReportFailure();
                 res.Dispose();
                 continue;
             }
 
-            // Non-retryable status or retries exhausted — let caller decide.
+            // Non-retryable status or status-code retries exhausted — let caller decide.
             // Report failure only for retryable codes that exhausted retries;
             // non-retryable codes (400, 403, 404, …) are not "failures" for
             // the adaptive limiter (the server handled the request properly).
@@ -202,9 +217,6 @@ public sealed class ResilientHttpExecutor
 
             return res;
         }
-
-        // Unreachable: the loop always returns or throws.
-        throw new InvalidOperationException("Retry loop exited unexpectedly.");
     }
 
     /// <summary>
@@ -226,11 +238,57 @@ public sealed class ResilientHttpExecutor
         // Try to become the probe. Only one request probes at a time.
         if (!_cdnGate.Wait(0))
         {
-            // Another request is already probing — just wait for cooldown, then retry our request
+            // Another request is already probing — loop: wait for cooldown, jitter, attempt.
+            // Mirrors the probe's infinite retry pattern. Only CancellationToken exits.
             _log.LogDebug("CDN block on {Operation} — waiting for probe to clear cooldown.", label ?? "request");
-            await WaitForCdnCooldownAsync(ct);
-            limiter?.ReportFailure();
-            return await _http.SendAsync(requestFactory(), ct);
+            while (true)
+            {
+                await WaitForCdnCooldownAsync(ct);
+
+                // Jitter to stagger non-probe requests and avoid thundering herd
+                if (MaxJitterMs > 0)
+                    await Task.Delay(Random.Shared.Next(MaxJitterMs), ct);
+
+                limiter?.ReportFailure();
+
+                HttpResponseMessage nonProbeRes;
+                try
+                {
+                    nonProbeRes = await _http.SendAsync(requestFactory(), ct);
+                }
+                catch (HttpRequestException)
+                {
+                    continue; // transient error — wait for next cooldown cycle
+                }
+                catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+                {
+                    continue; // timeout — wait for next cooldown cycle
+                }
+
+                if (nonProbeRes.IsSuccessStatusCode)
+                {
+                    limiter?.ReportSuccess();
+                    return nonProbeRes;
+                }
+
+                if ((int)nonProbeRes.StatusCode == 403)
+                {
+                    var body = await nonProbeRes.Content.ReadAsStringAsync(ct);
+                    if (!body.TrimStart().StartsWith('{'))
+                    {
+                        nonProbeRes.Dispose();
+                        continue; // still CDN blocked — loop back to cooldown
+                    }
+
+                    // JSON 403 — CDN is clear, this is an API error
+                    nonProbeRes.Content.Dispose();
+                    nonProbeRes.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+                    return nonProbeRes;
+                }
+
+                // Non-CDN response — return to caller
+                return nonProbeRes;
+            }
         }
 
         // We are the probe. Walk the retry schedule, then continue at 60 s indefinitely.

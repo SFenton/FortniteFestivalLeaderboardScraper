@@ -540,20 +540,23 @@ public class GlobalLeaderboardScraperTests
         Assert.Equal(2, handler.Requests.Count);
     }
 
-    // ─── HttpRequestException exhausts all retries ───
+    // ─── HttpRequestException retries indefinitely until cancelled ───
 
     [Fact]
-    public async Task ScrapeLeaderboardAsync_HttpRequestException_ExhaustsRetries_ReturnsEmpty()
+    public async Task ScrapeLeaderboardAsync_HttpRequestException_RetriesUntilCancelled()
     {
         var (scraper, handler) = CreateScraper();
 
-        // All attempts throw → executor exhausts retries → FetchPageAsync returns OtherFailure
-        for (int i = 0; i <= 3; i++)
+        // Enough exceptions to keep retrying until cancellation kicks in
+        for (int i = 0; i < 50; i++)
             handler.EnqueueException(new HttpRequestException("Connection refused"));
 
-        var result = await scraper.ScrapeLeaderboardAsync("song1", "Solo_Guitar", "token", "acct");
+        var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
 
-        Assert.Empty(result.Entries);
+        // The executor retries indefinitely; cancellation propagates as OperationCanceledException
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            scraper.ScrapeLeaderboardAsync(
+                "song1", "Solo_Guitar", "token", "acct", ct: cts.Token));
     }
 
     // ─── ParseAllSessionsFromEntry ─────────────────────
