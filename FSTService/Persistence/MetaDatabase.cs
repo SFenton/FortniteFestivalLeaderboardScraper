@@ -719,23 +719,6 @@ public sealed class MetaDatabase : IMetaDatabase
     }
 
     /// <summary>
-    /// Get all known account IDs (for deduplication during
-    /// post-pass name resolution).
-    /// </summary>
-    public HashSet<string> GetKnownAccountIds()
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT AccountId FROM AccountNames;";
-
-        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-            ids.Add(reader.GetString(0));
-        return ids;
-    }
-
-    /// <summary>
     /// Bulk upsert resolved account names.  When an account ID already exists
     /// (e.g. pre-inserted during scraping with NULLs), the row is updated
     /// with the resolved display name and timestamp.
@@ -843,40 +826,6 @@ public sealed class MetaDatabase : IMetaDatabase
         }
 
         return deleted;
-    }
-
-    /// <summary>
-    /// Unregister ALL device registrations for an account.
-    /// Returns the list of device IDs that were removed (for personal DB cleanup).
-    /// </summary>
-    public List<string> UnregisterAccount(string accountId)
-    {
-        using var conn = OpenConnection();
-
-        // First, collect the device IDs so the caller can clean up personal DBs.
-        using var selectCmd = conn.CreateCommand();
-        selectCmd.CommandText = "SELECT DeviceId FROM RegisteredUsers WHERE AccountId = @accountId;";
-        selectCmd.Parameters.AddWithValue("@accountId", accountId);
-
-        var deviceIds = new List<string>();
-        using (var reader = selectCmd.ExecuteReader())
-        {
-            while (reader.Read())
-                deviceIds.Add(reader.GetString(0));
-        }
-
-        if (deviceIds.Count == 0) return deviceIds;
-
-        // Delete all registrations for this account.
-        using var deleteCmd = conn.CreateCommand();
-        deleteCmd.CommandText = "DELETE FROM RegisteredUsers WHERE AccountId = @accountId;";
-        deleteCmd.Parameters.AddWithValue("@accountId", accountId);
-        deleteCmd.ExecuteNonQuery();
-
-        // Clean up all per-account data (rivals, stats, backfill/recon tracking).
-        CleanupAccountData(conn, accountId);
-
-        return deviceIds;
     }
 
     /// <summary>
@@ -1240,55 +1189,6 @@ public sealed class MetaDatabase : IMetaDatabase
         return result;
     }
 
-    /// <summary>
-    /// Get the AccountId registered for a specific device, or null if not registered.
-    /// If multiple accounts are registered for a device, returns the most recent.
-    /// </summary>
-    public string? GetAccountForDevice(string deviceId)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT AccountId FROM RegisteredUsers
-            WHERE DeviceId = @deviceId
-            ORDER BY RegisteredAt DESC
-            LIMIT 1;
-            """;
-        cmd.Parameters.AddWithValue("@deviceId", deviceId);
-        return cmd.ExecuteScalar() as string;
-    }
-
-    /// <summary>
-    /// Update the LastSyncAt timestamp for a device + account registration.
-    /// </summary>
-    public void UpdateLastSync(string deviceId, string accountId)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE RegisteredUsers
-            SET LastSyncAt = @now
-            WHERE DeviceId = @deviceId AND AccountId = @accountId;
-            """;
-        cmd.Parameters.AddWithValue("@now", now);
-        cmd.Parameters.AddWithValue("@deviceId", deviceId);
-        cmd.Parameters.AddWithValue("@accountId", accountId);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Check whether a device is registered (has at least one account).
-    /// </summary>
-    public bool IsDeviceRegistered(string deviceId)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT COUNT(*) FROM RegisteredUsers WHERE DeviceId = @deviceId;";
-        cmd.Parameters.AddWithValue("@deviceId", deviceId);
-        return (long)(cmd.ExecuteScalar() ?? 0) > 0;
-    }
-
     // ─── Backfill Tracking ──────────────────────────────────────
 
     /// <summary>
@@ -1488,47 +1388,6 @@ public sealed class MetaDatabase : IMetaDatabase
         };
     }
 
-    // ─── RegisteredUsers (enhanced) ─────────────────────────────
-
-    /// <summary>
-    /// Register or update a user+device pair. Sets DisplayName, Platform, LastLoginAt.
-    /// Returns true if newly inserted.
-    /// </summary>
-    public bool RegisterOrUpdateUser(string deviceId, string accountId,
-                                     string? displayName, string? platform)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO RegisteredUsers (DeviceId, AccountId, RegisteredAt, DisplayName, Platform, LastLoginAt)
-            VALUES (@deviceId, @accountId, @now, @displayName, @platform, @now)
-            ON CONFLICT(DeviceId, AccountId) DO UPDATE SET
-                DisplayName = @displayName,
-                Platform    = @platform,
-                LastLoginAt = @now;
-            """;
-        cmd.Parameters.AddWithValue("@deviceId", deviceId);
-        cmd.Parameters.AddWithValue("@accountId", accountId);
-        cmd.Parameters.AddWithValue("@displayName", (object?)displayName ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@platform", (object?)platform ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@now", now);
-        // INSERT OR IGNORE returns 0 if conflict; ON CONFLICT DO UPDATE always returns 1,
-        // but we need to distinguish. Use a separate check.
-        cmd.ExecuteNonQuery();
-
-        // Check if just inserted (RegisteredAt == LastLoginAt == now)
-        using var check = conn.CreateCommand();
-        check.CommandText = """
-            SELECT RegisteredAt FROM RegisteredUsers
-            WHERE DeviceId = @deviceId AND AccountId = @accountId;
-            """;
-        check.Parameters.AddWithValue("@deviceId", deviceId);
-        check.Parameters.AddWithValue("@accountId", accountId);
-        var registeredAt = check.ExecuteScalar() as string;
-        return registeredAt == now;
-    }
-
     /// <summary>
     /// Look up an Epic account ID by display name (username) from AccountNames.
     /// Returns null if the username hasn't been resolved by the scraper yet.
@@ -1544,34 +1403,6 @@ public sealed class MetaDatabase : IMetaDatabase
             """;
         cmd.Parameters.AddWithValue("@username", username);
         return cmd.ExecuteScalar() as string;
-    }
-
-    /// <summary>
-    /// Get registration info for a specific username + device.
-    /// </summary>
-    public RegisteredUserInfo? GetRegistrationInfo(string username, string deviceId)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT AccountId, DisplayName, RegisteredAt, LastLoginAt
-            FROM RegisteredUsers
-            WHERE AccountId = @username AND DeviceId = @deviceId
-            LIMIT 1;
-            """;
-        cmd.Parameters.AddWithValue("@username", username);
-        cmd.Parameters.AddWithValue("@deviceId", deviceId);
-
-        using var reader = cmd.ExecuteReader();
-        if (!reader.Read()) return null;
-
-        return new RegisteredUserInfo
-        {
-            AccountId    = reader.GetString(0),
-            DisplayName  = reader.IsDBNull(1) ? null : reader.GetString(1),
-            RegisteredAt = reader.GetString(2),
-            LastLoginAt  = reader.IsDBNull(3) ? null : reader.GetString(3),
-        };
     }
 
     // ─── History Reconstruction Tracking ───────────────────────
@@ -1804,31 +1635,6 @@ public sealed class MetaDatabase : IMetaDatabase
     }
 
     /// <summary>
-    /// Get a specific season window by season number.
-    /// </summary>
-    public SeasonWindowInfo? GetSeasonWindow(int seasonNumber)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT SeasonNumber, EventId, WindowId, DiscoveredAt
-            FROM SeasonWindows
-            WHERE SeasonNumber = @season;
-            """;
-        cmd.Parameters.AddWithValue("@season", seasonNumber);
-        using var reader = cmd.ExecuteReader();
-        if (!reader.Read()) return null;
-
-        return new SeasonWindowInfo
-        {
-            SeasonNumber = reader.GetInt32(0),
-            EventId      = reader.GetString(1),
-            WindowId     = reader.GetString(2),
-            DiscoveredAt = reader.GetString(3),
-        };
-    }
-
-    /// <summary>
     /// Get the highest known season number, or 0 if none are tracked.
     /// </summary>
     public int GetCurrentSeason()
@@ -1853,89 +1659,6 @@ public sealed class MetaDatabase : IMetaDatabase
             CompletedAt         = reader.IsDBNull(7) ? null : reader.GetString(7),
             ErrorMessage        = reader.IsDBNull(8) ? null : reader.GetString(8),
         };
-    }
-
-    // ─── EpicUserTokens ────────────────────────────────────────
-
-    /// <summary>
-    /// Store (or update) an encrypted Epic token pair for a user.
-    /// Both the access and refresh tokens are encrypted with AES-256-GCM
-    /// before being passed to this method.
-    /// </summary>
-    public void UpsertEpicUserToken(
-        string accountId,
-        byte[] encryptedAccessToken,
-        byte[] encryptedRefreshToken,
-        DateTimeOffset tokenExpiresAt,
-        DateTimeOffset refreshExpiresAt,
-        byte[] nonce)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO EpicUserTokens (AccountId, EncryptedAccessToken, EncryptedRefreshToken,
-                                        TokenExpiresAt, RefreshExpiresAt, Nonce, UpdatedAt)
-            VALUES (@accountId, @accessToken, @refreshToken, @tokenExp, @refreshExp, @nonce, @now)
-            ON CONFLICT(AccountId) DO UPDATE SET
-                EncryptedAccessToken  = excluded.EncryptedAccessToken,
-                EncryptedRefreshToken = excluded.EncryptedRefreshToken,
-                TokenExpiresAt        = excluded.TokenExpiresAt,
-                RefreshExpiresAt      = excluded.RefreshExpiresAt,
-                Nonce                 = excluded.Nonce,
-                UpdatedAt             = excluded.UpdatedAt;
-            """;
-        cmd.Parameters.AddWithValue("@accountId", accountId);
-        cmd.Parameters.AddWithValue("@accessToken", encryptedAccessToken);
-        cmd.Parameters.AddWithValue("@refreshToken", encryptedRefreshToken);
-        cmd.Parameters.AddWithValue("@tokenExp", tokenExpiresAt.ToString("o"));
-        cmd.Parameters.AddWithValue("@refreshExp", refreshExpiresAt.ToString("o"));
-        cmd.Parameters.AddWithValue("@nonce", nonce);
-        cmd.Parameters.AddWithValue("@now", now);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Retrieve the encrypted token data for a user.
-    /// Returns null if no tokens are stored for this account.
-    /// </summary>
-    public StoredEpicUserToken? GetEpicUserToken(string accountId)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT EncryptedAccessToken, EncryptedRefreshToken, TokenExpiresAt,
-                   RefreshExpiresAt, Nonce, UpdatedAt
-            FROM EpicUserTokens
-            WHERE AccountId = @accountId;
-            """;
-        cmd.Parameters.AddWithValue("@accountId", accountId);
-
-        using var reader = cmd.ExecuteReader();
-        if (!reader.Read()) return null;
-
-        return new StoredEpicUserToken
-        {
-            AccountId = accountId,
-            EncryptedAccessToken = (byte[])reader["EncryptedAccessToken"],
-            EncryptedRefreshToken = (byte[])reader["EncryptedRefreshToken"],
-            TokenExpiresAt = DateTimeOffset.Parse((string)reader["TokenExpiresAt"]),
-            RefreshExpiresAt = DateTimeOffset.Parse((string)reader["RefreshExpiresAt"]),
-            Nonce = (byte[])reader["Nonce"],
-            UpdatedAt = (string)reader["UpdatedAt"],
-        };
-    }
-
-    /// <summary>
-    /// Delete all stored Epic tokens for a user (e.g. on logout or revocation).
-    /// </summary>
-    public void DeleteEpicUserToken(string accountId)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "DELETE FROM EpicUserTokens WHERE AccountId = @accountId;";
-        cmd.Parameters.AddWithValue("@accountId", accountId);
-        cmd.ExecuteNonQuery();
     }
 
     // ─── PlayerStats ────────────────────────────────────────────
@@ -2192,19 +1915,6 @@ public sealed class MetaDatabase : IMetaDatabase
         while (reader.Read())
             set.Add(reader.GetString(0));
         return set;
-    }
-
-    /// <summary>
-    /// Get the FirstSeenSeason for a specific song, or null if not yet calculated.
-    /// </summary>
-    public int? GetFirstSeenSeason(string songId)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT FirstSeenSeason FROM SongFirstSeenSeason WHERE SongId = @songId;";
-        cmd.Parameters.AddWithValue("@songId", songId);
-        var result = cmd.ExecuteScalar();
-        return result is long val ? (int)val : null;
     }
 
     /// <summary>
@@ -3684,20 +3394,4 @@ public sealed class ScrapeRunInfo
     public long TotalEntries { get; init; }
     public int TotalRequests { get; init; }
     public long TotalBytes { get; init; }
-}
-
-/// <summary>
-/// Encrypted Epic Games user token pair retrieved from the <c>EpicUserTokens</c> table.
-/// The access and refresh token fields contain AES-256-GCM ciphertext that must be
-/// decrypted with the <see cref="FSTService.Auth.TokenVault"/> before use.
-/// </summary>
-public sealed class StoredEpicUserToken
-{
-    public required string AccountId { get; init; }
-    public required byte[] EncryptedAccessToken { get; init; }
-    public required byte[] EncryptedRefreshToken { get; init; }
-    public required DateTimeOffset TokenExpiresAt { get; init; }
-    public required DateTimeOffset RefreshExpiresAt { get; init; }
-    public required byte[] Nonce { get; init; }
-    public required string UpdatedAt { get; init; }
 }

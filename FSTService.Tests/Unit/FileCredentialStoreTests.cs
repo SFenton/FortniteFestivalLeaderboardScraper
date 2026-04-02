@@ -72,31 +72,6 @@ public class FileCredentialStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task DeleteAsync_RemovesFile()
-    {
-        var path = GetPath();
-        var store = new FileCredentialStore(path, _log);
-
-        // Save then delete
-        await store.SaveAsync(new StoredCredentials
-        {
-            AccountId = "acct",
-            RefreshToken = "rt",
-        });
-        Assert.True(File.Exists(path));
-
-        await store.DeleteAsync();
-        Assert.False(File.Exists(path));
-    }
-
-    [Fact]
-    public async Task DeleteAsync_NoFile_DoesNotThrow()
-    {
-        var store = new FileCredentialStore(GetPath("nope.json"), _log);
-        await store.DeleteAsync(); // should not throw
-    }
-
-    [Fact]
     public async Task LoadAsync_CorruptJson_ReturnsNull()
     {
         var path = GetPath();

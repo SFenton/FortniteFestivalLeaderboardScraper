@@ -33,32 +33,16 @@ public static partial class ApiEndpoints
             // ── Check precomputed store for default sort ──
             if (effectiveRankBy == "totalscore")
             {
-                var precomputed = precomputer.TryGet($"lb-rivals:{accountId}:{instrument}:totalscore");
-                if (precomputed is not null)
                 {
-                    var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                    if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
-                    {
-                        httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                        return Results.StatusCode(304);
-                    }
-                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                    return Results.Bytes(precomputed.Value.Json, "application/json");
+                    var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet($"lb-rivals:{accountId}:{instrument}:totalscore"));
+                    if (result is not null) return result;
                 }
             }
 
             var cacheKey = $"lb-rivals:{accountId}:{instrument}:{effectiveRankBy}";
-            var cached = cache.Get(cacheKey);
-            if (cached is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = cached.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = cached.Value.ETag;
-                return Results.Bytes(cached.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, cache.Get(cacheKey));
+                if (result is not null) return result;
             }
 
             var rivals = metaDb.GetLeaderboardRivals(accountId, instrument, effectiveRankBy);
@@ -118,17 +102,9 @@ public static partial class ApiEndpoints
             httpContext.Response.Headers.CacheControl = "public, max-age=300, stale-while-revalidate=600";
 
             var cacheKey = $"lb-rival-detail:{accountId}:{instrument}:{rivalId}:{effectiveRankBy}:{effectiveSort}";
-            var cached = cache.Get(cacheKey);
-            if (cached is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = cached.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = cached.Value.ETag;
-                return Results.Bytes(cached.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, cache.Get(cacheKey));
+                if (result is not null) return result;
             }
 
             var samples = metaDb.GetLeaderboardRivalSongSamples(accountId, rivalId, instrument, effectiveRankBy);

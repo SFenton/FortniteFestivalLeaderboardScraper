@@ -344,45 +344,22 @@ builder.Services.AddRateLimiter(opts =>
     static string GetClientIp(HttpContext ctx)
         => ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
-    opts.AddPolicy("public", context =>
-        isTesting
+    static RateLimitPartition<string> CreateFixedWindowPolicy(HttpContext context, bool noLimit)
+        => noLimit
             ? RateLimitPartition.GetNoLimiter("test")
             : RateLimitPartition.GetFixedWindowLimiter(GetClientIp(context), _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 100,
                 Window = TimeSpan.FromSeconds(1),
                 QueueLimit = 0,
-            }));
+            });
 
-    opts.AddPolicy("auth", context =>
-        isTesting
-            ? RateLimitPartition.GetNoLimiter("test")
-            : RateLimitPartition.GetFixedWindowLimiter(GetClientIp(context), _ => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = 100,
-                Window = TimeSpan.FromSeconds(1),
-                QueueLimit = 0,
-            }));
-
-    opts.AddPolicy("protected", context =>
-        isTesting
-            ? RateLimitPartition.GetNoLimiter("test")
-            : RateLimitPartition.GetFixedWindowLimiter(GetClientIp(context), _ => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = 100,
-                Window = TimeSpan.FromSeconds(1),
-                QueueLimit = 0,
-            }));
+    opts.AddPolicy("public", context => CreateFixedWindowPolicy(context, isTesting));
+    opts.AddPolicy("auth", context => CreateFixedWindowPolicy(context, isTesting));
+    opts.AddPolicy("protected", context => CreateFixedWindowPolicy(context, isTesting));
 
     opts.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
-        isTesting
-            ? RateLimitPartition.GetNoLimiter("global")
-            : RateLimitPartition.GetFixedWindowLimiter(GetClientIp(context), _ => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = 100,
-                Window = TimeSpan.FromSeconds(1),
-                QueueLimit = 0,
-            }));
+        CreateFixedWindowPolicy(context, isTesting));
 });
 
 // ─── CORS ───────────────────────────────────────────────────

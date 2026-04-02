@@ -204,23 +204,6 @@ public sealed class PathDataStoreTests : IDisposable
     }
 
     [Fact]
-    public void ClearMaxScores_removes_scores_and_hash()
-    {
-        var scores = new SongMaxScores
-        {
-            MaxLeadScore = 100000,
-            GeneratedAt = "2026-01-01T00:00:00Z",
-        };
-        _store.UpdateMaxScores("song2", scores, "somehash");
-        Assert.Single(_store.GetAllMaxScores());
-
-        _store.ClearMaxScores("song2");
-
-        Assert.Empty(_store.GetAllMaxScores());
-        Assert.DoesNotContain("song2", (IDictionary<string, (string, string?)>)_store.GetPathGenerationState());
-    }
-
-    [Fact]
     public void UpdateMaxScores_partial_null_scores()
     {
         var scores = new SongMaxScores

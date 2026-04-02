@@ -150,17 +150,9 @@ public static partial class ApiEndpoints
         app.MapGet("/api/firstseen", (HttpContext httpContext, IMetaDatabase metaDb, ScrapeTimePrecomputer precomputer) =>
         {
             // ── Check precomputed store ──
-            var precomputed = precomputer.TryGet("firstseen");
-            if (precomputed is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                return Results.Bytes(precomputed.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet("firstseen"));
+                if (result is not null) return result;
             }
 
             var all = metaDb.GetAllFirstSeenSeasons();

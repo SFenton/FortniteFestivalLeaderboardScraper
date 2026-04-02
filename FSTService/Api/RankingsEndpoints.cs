@@ -30,17 +30,9 @@ public static partial class ApiEndpoints
             // ── Check precomputed store for page 1 with default size ──
             if (effectivePage == 1 && effectivePageSize == 50)
             {
-                var precomputed = precomputer.TryGet($"rankings:{instrument}:{metric}:1:50");
-                if (precomputed is not null)
                 {
-                    var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                    if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
-                    {
-                        httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                        return Results.StatusCode(304);
-                    }
-                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                    return Results.Bytes(precomputed.Value.Json, "application/json");
+                    var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet($"rankings:{instrument}:{metric}:1:50"));
+                    if (result is not null) return result;
                 }
             }
 
@@ -172,17 +164,9 @@ public static partial class ApiEndpoints
             if (effectivePage == 1 && effectivePageSize == 50)
             {
                 // Composite rankings are metric-agnostic; use adjusted as canonical key
-                var precomputed = precomputer.TryGet("rankings:composite:adjusted:1:50");
-                if (precomputed is not null)
                 {
-                    var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                    if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
-                    {
-                        httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                        return Results.StatusCode(304);
-                    }
-                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                    return Results.Bytes(precomputed.Value.Json, "application/json");
+                    var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet("rankings:composite:adjusted:1:50"));
+                    if (result is not null) return result;
                 }
             }
 
@@ -368,33 +352,17 @@ public static partial class ApiEndpoints
             // ── Check precomputed store for default radius ──
             if (effectiveRadius == 5)
             {
-                var precomputedResult = precomputer.TryGet($"neighborhood:{instrument}:{accountId}:5");
-                if (precomputedResult is not null)
                 {
-                    var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                    if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputedResult.Value.ETag)
-                    {
-                        httpContext.Response.Headers.ETag = precomputedResult.Value.ETag;
-                        return Results.StatusCode(304);
-                    }
-                    httpContext.Response.Headers.ETag = precomputedResult.Value.ETag;
-                    return Results.Bytes(precomputedResult.Value.Json, "application/json");
+                    var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet($"neighborhood:{instrument}:{accountId}:5"));
+                    if (result is not null) return result;
                 }
             }
 
             var cacheKey = $"neighborhood:{instrument}:{accountId}:{effectiveRadius}";
 
-            var cached = cache.Get(cacheKey);
-            if (cached is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = cached.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = cached.Value.ETag;
-                return Results.Bytes(cached.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, cache.Get(cacheKey));
+                if (result is not null) return result;
             }
 
             var db = persistence.GetOrCreateInstrumentDb(instrument);
@@ -460,33 +428,17 @@ public static partial class ApiEndpoints
             // ── Check precomputed store for default radius ──
             if (effectiveRadius == 5)
             {
-                var precomputedResult = precomputer.TryGet($"neighborhood:composite:{accountId}:5");
-                if (precomputedResult is not null)
                 {
-                    var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                    if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputedResult.Value.ETag)
-                    {
-                        httpContext.Response.Headers.ETag = precomputedResult.Value.ETag;
-                        return Results.StatusCode(304);
-                    }
-                    httpContext.Response.Headers.ETag = precomputedResult.Value.ETag;
-                    return Results.Bytes(precomputedResult.Value.Json, "application/json");
+                    var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet($"neighborhood:composite:{accountId}:5"));
+                    if (result is not null) return result;
                 }
             }
 
             var cacheKey = $"neighborhood:composite:{accountId}:{effectiveRadius}";
 
-            var cached = cache.Get(cacheKey);
-            if (cached is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = cached.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = cached.Value.ETag;
-                return Results.Bytes(cached.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, cache.Get(cacheKey));
+                if (result is not null) return result;
             }
 
             var (above, self, below) = metaDb.GetCompositeRankingNeighborhood(accountId, effectiveRadius);
@@ -547,18 +499,8 @@ public static partial class ApiEndpoints
             // ── Check precomputed store for default size ──
             if (effectivePageSize == 10)
             {
-                var precomputed = precomputer.TryGet($"rankings:overview:{metric}:10");
-                if (precomputed is not null)
-                {
-                    var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                    if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
-                    {
-                        httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                        return Results.StatusCode(304);
-                    }
-                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                    return Results.Bytes(precomputed.Value.Json, "application/json");
-                }
+                var cached = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet($"rankings:overview:{metric}:10"));
+                if (cached is not null) return cached;
             }
 
             var instrumentKeys = persistence.GetInstrumentKeys();

@@ -11,5 +11,4 @@ public interface IPathDataStore
     Dictionary<string, (string Hash, string? LastModified)> GetPathGenerationState();
     Dictionary<string, SongMaxScores> GetAllMaxScores();
     void UpdateMaxScores(string songId, SongMaxScores scores, string datFileHash, string? songLastModified = null);
-    void ClearMaxScores(string songId);
 }

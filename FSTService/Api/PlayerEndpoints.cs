@@ -32,32 +32,14 @@ public static partial class ApiEndpoints
             if (songId is null && instruments is null)
             {
                 var precomputedKey = $"player:{accountId}:::";
-                var precomputed = precomputer.TryGet(precomputedKey);
-                if (precomputed is not null)
-                {
-                    var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                    if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
-                    {
-                        httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                        return Results.StatusCode(304);
-                    }
-                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                    return Results.Bytes(precomputed.Value.Json, "application/json");
-                }
+                var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet(precomputedKey));
+                if (result is not null) return result;
             }
 
             // ── Check cache ──────────────────────────────────────
-            var cached = playerCache.Get(cacheKey);
-            if (cached is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = cached.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = cached.Value.ETag;
-                return Results.Bytes(cached.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, playerCache.Get(cacheKey));
+                if (result is not null) return result;
             }
 
             // ── Build response ───────────────────────────────────
@@ -321,17 +303,9 @@ public static partial class ApiEndpoints
             httpContext.Response.Headers.CacheControl = "public, max-age=5";
 
             // ── Check precomputed store ──
-            var precomputed = precomputer.TryGet($"syncstatus:{accountId}");
-            if (precomputed is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                return Results.Bytes(precomputed.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet($"syncstatus:{accountId}"));
+                if (result is not null) return result;
             }
 
             var backfill = metaDb.GetBackfillStatus(accountId);
@@ -389,30 +363,14 @@ public static partial class ApiEndpoints
             var cacheKey = $"playerstats:{accountId}";
 
             // ── Check precomputed store first ──
-            var precomputed = precomputer.TryGet(cacheKey);
-            if (precomputed is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                return Results.Bytes(precomputed.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet(cacheKey));
+                if (result is not null) return result;
             }
 
-            var cached = playerCache.Get(cacheKey);
-            if (cached is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = cached.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = cached.Value.ETag;
-                return Results.Bytes(cached.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, playerCache.Get(cacheKey));
+                if (result is not null) return result;
             }
 
             // Return tiered stats if available, else fall back to legacy flat stats
@@ -489,17 +447,9 @@ public static partial class ApiEndpoints
             // ── Check precomputed store for unfiltered requests ──
             if (songId is null && instrument is null && (limit is null || limit >= 50000))
             {
-                var precomputed = precomputer.TryGet($"history:{accountId}");
-                if (precomputed is not null)
                 {
-                    var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                    if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
-                    {
-                        httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                        return Results.StatusCode(304);
-                    }
-                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                    return Results.Bytes(precomputed.Value.Json, "application/json");
+                    var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet($"history:{accountId}"));
+                    if (result is not null) return result;
                 }
             }
 

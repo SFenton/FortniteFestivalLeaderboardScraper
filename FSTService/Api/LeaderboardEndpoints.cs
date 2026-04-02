@@ -84,33 +84,17 @@ public static partial class ApiEndpoints
 
             // ── Check precomputed store ──────────────────────────
             var cacheKey = $"lb:{songId}:{top ?? 10}:{leeway}";
-            var precomputed = precomputer.TryGet(cacheKey);
-            if (precomputed is not null)
             {
-                var reqETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(reqETag) && reqETag == precomputed.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                return Results.Bytes(precomputed.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet(cacheKey));
+                if (result is not null) return result;
             }
 
             // ── Check cache ──────────────────────────────────────
             // Re-key to match legacy format for non-precomputed variants
             var legacyCacheKey = $"lb:{songId}:{top}:{leeway}";
-            var cached = lbCache.Get(legacyCacheKey);
-            if (cached is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = cached.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = cached.Value.ETag;
-                return Results.Bytes(cached.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, lbCache.Get(legacyCacheKey));
+                if (result is not null) return result;
             }
 
             // ── Build response ───────────────────────────────────

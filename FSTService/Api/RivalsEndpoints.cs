@@ -24,31 +24,15 @@ public static partial class ApiEndpoints
 
             // ── Check precomputed store first ──
             var precomputedKey = $"rivals-overview:{accountId}";
-            var precomputed = precomputer.TryGet(precomputedKey);
-            if (precomputed is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputed.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = precomputed.Value.ETag;
-                return Results.Bytes(precomputed.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet(precomputedKey));
+                if (result is not null) return result;
             }
 
             var cacheKey = $"overview:{accountId}";
-            var cached = rivalsCache.Get(cacheKey);
-            if (cached is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = cached.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = cached.Value.ETag;
-                return Results.Bytes(cached.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, rivalsCache.Get(cacheKey));
+                if (result is not null) return result;
             }
 
             var status = metaDb.GetRivalsStatus(accountId);
@@ -95,17 +79,9 @@ public static partial class ApiEndpoints
                 ? (ComboIds.NormalizeAnyComboParam(combo) ?? combo)
                 : "";
             var cacheKey = $"suggestions:{accountId}:{effectiveCombo}:{effectiveLimit}";
-            var cached = rivalsCache.Get(cacheKey);
-            if (cached is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = cached.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = cached.Value.ETag;
-                return Results.Bytes(cached.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, rivalsCache.Get(cacheKey));
+                if (result is not null) return result;
             }
 
             var status = metaDb.GetRivalsStatus(accountId);
@@ -227,31 +203,15 @@ public static partial class ApiEndpoints
 
             // ── Check precomputed store first ──
             var precomputedKey = $"rivals-all:{accountId}";
-            var precomputedResult = precomputer.TryGet(precomputedKey);
-            if (precomputedResult is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == precomputedResult.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = precomputedResult.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = precomputedResult.Value.ETag;
-                return Results.Bytes(precomputedResult.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet(precomputedKey));
+                if (result is not null) return result;
             }
 
             var cacheKey = $"all:{accountId}";
-            var cached = rivalsCache.Get(cacheKey);
-            if (cached is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = cached.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = cached.Value.ETag;
-                return Results.Bytes(cached.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, rivalsCache.Get(cacheKey));
+                if (result is not null) return result;
             }
 
             var combos = metaDb.GetRivalCombos(accountId);
@@ -376,17 +336,9 @@ public static partial class ApiEndpoints
             combo = normalizedCombo;
 
             var cacheKey = $"list:{accountId}:{combo}";
-            var cached = rivalsCache.Get(cacheKey);
-            if (cached is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = cached.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = cached.Value.ETag;
-                return Results.Bytes(cached.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, rivalsCache.Get(cacheKey));
+                if (result is not null) return result;
             }
 
             var above = metaDb.GetUserRivals(accountId, combo, "above");
@@ -437,17 +389,9 @@ public static partial class ApiEndpoints
             var effectiveOffset = offset ?? 0;
             var sortMode = sort?.ToLowerInvariant() ?? "closest";
             var cacheKey = $"detail:{accountId}:{combo}:{rivalId}:{effectiveLimit}:{effectiveOffset}:{sortMode}";
-            var cached = rivalsCache.Get(cacheKey);
-            if (cached is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = cached.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = cached.Value.ETag;
-                return Results.Bytes(cached.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, rivalsCache.Get(cacheKey));
+                if (result is not null) return result;
             }
 
             // Parse combo into instruments — accepts hex ID ("03") or legacy ("Solo_Guitar+Solo_Bass") or single ("Solo_Guitar")
@@ -573,17 +517,9 @@ public static partial class ApiEndpoints
             var effectiveOffset = offset ?? 0;
             var sortMode = sort?.ToLowerInvariant() ?? "closest";
             var cacheKey = $"songs:{accountId}:{rivalId}:{instrument}:{effectiveLimit}:{effectiveOffset}:{sortMode}";
-            var cached = rivalsCache.Get(cacheKey);
-            if (cached is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
-                {
-                    httpContext.Response.Headers.ETag = cached.Value.ETag;
-                    return Results.StatusCode(304);
-                }
-                httpContext.Response.Headers.ETag = cached.Value.ETag;
-                return Results.Bytes(cached.Value.Json, "application/json");
+                var result = CacheHelper.ServeIfCached(httpContext, rivalsCache.Get(cacheKey));
+                if (result is not null) return result;
             }
 
             var samples = metaDb.GetRivalSongSamples(accountId, rivalId, instrument);

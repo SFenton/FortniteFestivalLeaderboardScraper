@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Reflection;
 using FortniteFestival.Core;
 using FortniteFestival.Core.Services;
@@ -11,7 +11,7 @@ using NSubstitute;
 namespace FSTService.Tests.Unit;
 
 /// <summary>
-/// Tests for <see cref="FirstSeenSeasonCalculator"/> — verifies season probing logic,
+/// Tests for <see cref="FirstSeenSeasonCalculator"/> â€” verifies season probing logic,
 /// MIN(Season) detection, and idempotent skip behavior.
 /// </summary>
 public class FirstSeenSeasonCalculatorTests : IDisposable
@@ -90,7 +90,7 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         db.UpsertEntries(songId, entries);
     }
 
-    // ─── No songs → returns 0 ────────────────────────────
+    // â”€â”€â”€ No songs â†’ returns 0 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task CalculateAsync_NoSongs_Returns0()
@@ -103,7 +103,7 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         Assert.Equal(0, result);
     }
 
-    // ─── Song with MIN season 1 → no probe, stored as 1 ──
+    // â”€â”€â”€ Song with MIN season 1 â†’ no probe, stored as 1 â”€â”€
 
     [Fact]
     public async Task CalculateAsync_MinSeason1_NoProbeNeeded()
@@ -117,12 +117,12 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         var result = await calculator.CalculateAsync(service, "token", "caller");
 
         Assert.Equal(1, result);
-        Assert.Equal(1, _metaDb.Db.GetFirstSeenSeason("song1"));
+        Assert.Equal(1, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song1").FirstSeenSeason);
         // No HTTP requests should have been made
         Assert.Empty(handler.Requests);
     }
 
-    // ─── Song with MIN season 3, probe season 2 succeeds → stored as 2 ──
+    // â”€â”€â”€ Song with MIN season 3, probe season 2 succeeds â†’ stored as 2 â”€â”€
 
     [Fact]
     public async Task CalculateAsync_MinSeason3_ProbeFindsEarlier_StoresProbed()
@@ -132,18 +132,18 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
 
         SeedEntries("Solo_Guitar", "song1", season: 3, count: 2);
 
-        // V2 lookup returns no_score_found → window exists but caller has no score
+        // V2 lookup returns no_score_found â†’ window exists but caller has no score
         handler.EnqueueJsonResponse(HttpStatusCode.NotFound,
             "{\"errorCode\": \"errors.com.epicgames.events.no_score_found\"}");
 
         var result = await calculator.CalculateAsync(service, "token", "caller");
 
         Assert.Equal(1, result);
-        Assert.Equal(2, _metaDb.Db.GetFirstSeenSeason("song1"));
+        Assert.Equal(2, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song1").FirstSeenSeason);
         Assert.Single(handler.Requests);
     }
 
-    // ─── Song with MIN season 3, probe season 2 fails → stored as 3 ──
+    // â”€â”€â”€ Song with MIN season 3, probe season 2 fails â†’ stored as 3 â”€â”€
 
     [Fact]
     public async Task CalculateAsync_MinSeason3_ProbeFailsHttpError_StoresMin()
@@ -153,16 +153,16 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
 
         SeedEntries("Solo_Bass", "song1", season: 3, count: 1);
 
-        // API returns 400 or similar → window doesn't exist
+        // API returns 400 or similar â†’ window doesn't exist
         handler.EnqueueError(HttpStatusCode.BadRequest, "invalid event");
 
         var result = await calculator.CalculateAsync(service, "token", "caller");
 
         Assert.Equal(1, result);
-        Assert.Equal(3, _metaDb.Db.GetFirstSeenSeason("song1"));
+        Assert.Equal(3, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song1").FirstSeenSeason);
     }
 
-    // ─── Song with MIN season 2, probe evergreen succeeds → stored as 1 ──
+    // â”€â”€â”€ Song with MIN season 2, probe evergreen succeeds â†’ stored as 1 â”€â”€
 
     [Fact]
     public async Task CalculateAsync_MinSeason2_ProbeEvergreenSucceeds_StoresAs1()
@@ -178,10 +178,10 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         var result = await calculator.CalculateAsync(service, "token", "caller");
 
         Assert.Equal(1, result);
-        Assert.Equal(1, _metaDb.Db.GetFirstSeenSeason("song1"));
+        Assert.Equal(1, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song1").FirstSeenSeason);
     }
 
-    // ─── Already calculated → skipped ────────────────────
+    // â”€â”€â”€ Already calculated â†’ skipped â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task CalculateAsync_AlreadyCalculated_Skips()
@@ -198,11 +198,11 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
 
         Assert.Equal(0, result);
         // Should still be the pre-populated value
-        Assert.Equal(2, _metaDb.Db.GetFirstSeenSeason("song1"));
+        Assert.Equal(2, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song1").FirstSeenSeason);
         Assert.Empty(handler.Requests);
     }
 
-    // ─── Song with no entries → skipped (no crash) ───────
+    // â”€â”€â”€ Song with no entries â†’ skipped (no crash) â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task CalculateAsync_NoEntries_SkipsGracefully()
@@ -210,17 +210,17 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         var (calculator, handler) = CreateCalculator();
         var service = CreateServiceWithSongs(new[] { MakeSong("song1") });
 
-        // No entries seeded — but no global max either (empty DBs)
+        // No entries seeded â€” but no global max either (empty DBs)
 
         var result = await calculator.CalculateAsync(service, "token", "caller");
 
         // No global max available, so nothing can be estimated
         Assert.Equal(0, result);
-        Assert.Null(_metaDb.Db.GetFirstSeenSeason("song1"));
+        Assert.Null(_metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song1").FirstSeenSeason);
         Assert.Empty(handler.Requests);
     }
 
-    // ─── Song with no entries but other songs exist → estimated ───
+    // â”€â”€â”€ Song with no entries but other songs exist â†’ estimated â”€â”€â”€
 
     [Fact]
     public async Task CalculateAsync_NoEntries_WithGlobalMax_StoresEstimated()
@@ -234,17 +234,17 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
 
         var result = await calculator.CalculateAsync(service, "token", "caller");
 
-        // song1 → firstSeen=1, song2 → estimated=7 (global max)
+        // song1 â†’ firstSeen=1, song2 â†’ estimated=7 (global max)
         Assert.Equal(2, result);
-        Assert.Equal(1, _metaDb.Db.GetFirstSeenSeason("song1"));
-        Assert.Null(_metaDb.Db.GetFirstSeenSeason("song2"));
+        Assert.Equal(1, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song1").FirstSeenSeason);
+        Assert.Null(_metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song2").FirstSeenSeason);
 
         var all = _metaDb.Db.GetAllFirstSeenSeasons();
         Assert.Equal(7, all["song2"].EstimatedSeason);
         Assert.Null(all["song2"].FirstSeenSeason);
     }
 
-    // ─── Multiple songs, mixed results ──────────────────
+    // â”€â”€â”€ Multiple songs, mixed results â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task CalculateAsync_MultipleSongs_ProcessesAll()
@@ -252,30 +252,30 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         var (calculator, handler) = CreateCalculator();
         var service = CreateServiceWithSongs(new[]
         {
-            MakeSong("s1"), // MIN=1 → no probe
-            MakeSong("s2"), // MIN=4 → probe season 3
-            MakeSong("s3"), // no entries → skip
+            MakeSong("s1"), // MIN=1 â†’ no probe
+            MakeSong("s2"), // MIN=4 â†’ probe season 3
+            MakeSong("s3"), // no entries â†’ skip
         });
 
         SeedEntries("Solo_Guitar", "s1", season: 1);
         SeedEntries("Solo_Guitar", "s2", season: 4);
 
-        // Probe for s2 → season 3 not found
+        // Probe for s2 â†’ season 3 not found
         handler.EnqueueError(HttpStatusCode.BadRequest, "invalid event");
 
         var result = await calculator.CalculateAsync(service, "token", "caller");
 
-        // s1 → calculated (min 1), s2 → calculated (probe failed, stays 4), s3 → estimated (global max = 4)
+        // s1 â†’ calculated (min 1), s2 â†’ calculated (probe failed, stays 4), s3 â†’ estimated (global max = 4)
         Assert.Equal(3, result);
-        Assert.Equal(1, _metaDb.Db.GetFirstSeenSeason("s1"));
-        Assert.Equal(4, _metaDb.Db.GetFirstSeenSeason("s2"));
-        Assert.Null(_metaDb.Db.GetFirstSeenSeason("s3"));
+        Assert.Equal(1, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("s1").FirstSeenSeason);
+        Assert.Equal(4, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("s2").FirstSeenSeason);
+        Assert.Null(_metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("s3").FirstSeenSeason);
 
         var all = _metaDb.Db.GetAllFirstSeenSeasons();
         Assert.Equal(4, all["s3"].EstimatedSeason);
     }
 
-    // ─── MIN across multiple instruments ────────────────
+    // â”€â”€â”€ MIN across multiple instruments â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task CalculateAsync_MinAcrossInstruments_UsesGlobalMin()
@@ -287,16 +287,16 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         SeedEntries("Solo_Drums", "song1", season: 3);
         SeedEntries("Solo_Vocals", "song1", season: 4);
 
-        // Probe for season 2 → not found
+        // Probe for season 2 â†’ not found
         handler.EnqueueError(HttpStatusCode.BadRequest, "invalid event");
 
         var result = await calculator.CalculateAsync(service, "token", "caller");
 
         Assert.Equal(1, result);
-        Assert.Equal(3, _metaDb.Db.GetFirstSeenSeason("song1"));
+        Assert.Equal(3, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song1").FirstSeenSeason);
     }
 
-    // ─── Helper: build a V2 lookup response JSON ────────
+    // â”€â”€â”€ Helper: build a V2 lookup response JSON â”€â”€â”€â”€â”€â”€â”€â”€
 
     private static string BuildV2LookupResponse(
         string songId, string instrument, string accountId, int score, int season)
@@ -337,7 +337,7 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
         """;
     }
 
-    // ─── Probe throws non-HttpRequestException → catch block fallback ──
+    // â”€â”€â”€ Probe throws non-HttpRequestException â†’ catch block fallback â”€â”€
 
     [Fact]
     public async Task CalculateAsync_ProbeThrowsNonHttp_CatchFallsBackToMin()
@@ -355,6 +355,6 @@ public class FirstSeenSeasonCalculatorTests : IDisposable
 
         Assert.Equal(1, result);
         // Falls back to observed MIN season
-        Assert.Equal(3, _metaDb.Db.GetFirstSeenSeason("song1"));
+        Assert.Equal(3, _metaDb.Db.GetAllFirstSeenSeasons().GetValueOrDefault("song1").FirstSeenSeason);
     }
 }

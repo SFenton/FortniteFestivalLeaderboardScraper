@@ -8,5 +8,4 @@ public interface ICredentialStore
 {
     Task<StoredCredentials?> LoadAsync(CancellationToken ct = default);
     Task SaveAsync(StoredCredentials credentials, CancellationToken ct = default);
-    Task DeleteAsync(CancellationToken ct = default);
 }

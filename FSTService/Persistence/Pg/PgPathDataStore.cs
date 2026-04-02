@@ -124,25 +124,4 @@ public sealed class PgPathDataStore : IPathDataStore
             _maxScoresCache = null; // invalidate cache
         }
     }
-
-    public void ClearMaxScores(string songId)
-    {
-        using var conn = _ds.OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE songs
-            SET max_lead_score = NULL, max_bass_score = NULL, max_drums_score = NULL,
-                max_vocals_score = NULL, max_pro_lead_score = NULL, max_pro_bass_score = NULL,
-                dat_file_hash = NULL, song_last_modified = NULL, paths_generated_at = NULL,
-                chopt_version = NULL
-            WHERE song_id = @songId
-            """;
-        cmd.Parameters.AddWithValue("songId", songId);
-        cmd.ExecuteNonQuery();
-
-        lock (_maxScoresCacheLock)
-        {
-            _maxScoresCache = null;
-        }
-    }
 }

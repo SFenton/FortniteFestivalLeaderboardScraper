@@ -39,7 +39,6 @@ public interface IMetaDatabase : IDisposable
     int InsertAccountIds(IEnumerable<string> accountIds);
     List<string> GetUnresolvedAccountIds();
     int GetUnresolvedAccountCount();
-    HashSet<string> GetKnownAccountIds();
     int InsertAccountNames(IReadOnlyList<(string AccountId, string? DisplayName)> accounts);
     string? GetDisplayName(string accountId);
     List<(string AccountId, string DisplayName)> SearchAccountNames(string query, int limit = 10);
@@ -49,13 +48,7 @@ public interface IMetaDatabase : IDisposable
     HashSet<string> GetRegisteredAccountIds();
     bool RegisterUser(string deviceId, string accountId);
     bool UnregisterUser(string deviceId, string accountId);
-    List<string> UnregisterAccount(string accountId);
-    bool RegisterOrUpdateUser(string deviceId, string accountId, string? displayName, string? platform);
     string? GetAccountIdForUsername(string username);
-    RegisteredUserInfo? GetRegistrationInfo(string username, string deviceId);
-    string? GetAccountForDevice(string deviceId);
-    void UpdateLastSync(string deviceId, string accountId);
-    bool IsDeviceRegistered(string deviceId);
 
     // ── Backfill ─────────────────────────────────────────────────────
     void EnqueueBackfill(string accountId, int totalSongsToCheck);
@@ -82,14 +75,8 @@ public interface IMetaDatabase : IDisposable
     // ── Season windows ───────────────────────────────────────────────
     void UpsertSeasonWindow(int seasonNumber, string eventId, string windowId);
     List<SeasonWindowInfo> GetSeasonWindows();
-    SeasonWindowInfo? GetSeasonWindow(int seasonNumber);
     int GetCurrentSeason();
 
-    // ── Epic user tokens ─────────────────────────────────────────────
-    void UpsertEpicUserToken(string accountId, byte[] encryptedAccessToken, byte[] encryptedRefreshToken,
-        DateTimeOffset tokenExpiresAt, DateTimeOffset refreshExpiresAt, byte[] nonce);
-    StoredEpicUserToken? GetEpicUserToken(string accountId);
-    void DeleteEpicUserToken(string accountId);
 
     // ── Player stats ─────────────────────────────────────────────────
     void UpsertPlayerStats(PlayerStatsDto stats);
@@ -102,7 +89,6 @@ public interface IMetaDatabase : IDisposable
 
     // ── First seen season ────────────────────────────────────────────
     HashSet<string> GetSongsWithFirstSeenSeason();
-    int? GetFirstSeenSeason(string songId);
     void UpsertFirstSeenSeason(string songId, int? firstSeenSeason, int? minObservedSeason, int estimatedSeason, string? probeResult);
     Dictionary<string, (int? FirstSeenSeason, int EstimatedSeason)> GetAllFirstSeenSeasons();
 

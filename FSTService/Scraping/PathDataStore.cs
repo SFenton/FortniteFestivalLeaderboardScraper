@@ -153,26 +153,6 @@ public sealed class PathDataStore : IPathDataStore
         cmd.Parameters.AddWithValue("@songId", songId);
         cmd.ExecuteNonQuery();
     }
-
-    /// <summary>
-    /// Clear max scores for a song (used before regeneration).
-    /// </summary>
-    public void ClearMaxScores(string songId)
-    {
-        lock (_maxScoresCacheLock) { _maxScoresCache = null; }
-        using var conn = new SqliteConnection(_connectionString);
-        conn.Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE Songs
-            SET MaxLeadScore = NULL, MaxBassScore = NULL, MaxDrumsScore = NULL,
-                MaxVocalsScore = NULL, MaxProLeadScore = NULL, MaxProBassScore = NULL,
-                DatFileHash = NULL, PathsGeneratedAt = NULL, CHOptVersion = NULL
-            WHERE SongId = @songId
-            """;
-        cmd.Parameters.AddWithValue("@songId", songId);
-        cmd.ExecuteNonQuery();
-    }
 }
 
 /// <summary>

@@ -102,73 +102,16 @@ public sealed class MetaDatabaseTests : IDisposable
     // ═══ RegisteredUsers ════════════════════════════════════════
 
     [Fact]
-    public void RegisterOrUpdateUser_returns_true_on_first_insert()
-    {
-        var isNew = Db.RegisterOrUpdateUser("dev_1", "acct_1", "Player", "iOS");
-        Assert.True(isNew);
-    }
-
-    [Fact]
-    public void RegisterOrUpdateUser_returns_false_on_duplicate()
-    {
-        Db.RegisterOrUpdateUser("dev_1", "acct_1", "Player", "iOS");
-        var isNew = Db.RegisterOrUpdateUser("dev_1", "acct_1", "Player", "iOS");
-        Assert.False(isNew);
-    }
-
-    [Fact]
     public void GetRegisteredAccountIds_returns_distinct_accounts()
     {
-        Db.RegisterOrUpdateUser("dev_1", "acct_1", "P1", null);
-        Db.RegisterOrUpdateUser("dev_2", "acct_1", "P1", null);
-        Db.RegisterOrUpdateUser("dev_3", "acct_2", "P2", null);
+        Db.RegisterUser("dev_1", "acct_1");
+        Db.RegisterUser("dev_2", "acct_1");
+        Db.RegisterUser("dev_3", "acct_2");
 
         var ids = Db.GetRegisteredAccountIds();
         Assert.Equal(2, ids.Count);
         Assert.Contains("acct_1", ids);
         Assert.Contains("acct_2", ids);
-    }
-
-    [Fact]
-    public void GetRegistrationInfo_returns_details()
-    {
-        Db.RegisterOrUpdateUser("dev_1", "acct_1", "Player", "Android");
-        var info = Db.GetRegistrationInfo("acct_1", "dev_1");
-        Assert.NotNull(info);
-        Assert.Equal("acct_1", info.AccountId);
-        Assert.Equal("Player", info.DisplayName);
-    }
-
-    [Fact]
-    public void IsDeviceRegistered_reflects_state()
-    {
-        Assert.False(Db.IsDeviceRegistered("dev_1"));
-        Db.RegisterOrUpdateUser("dev_1", "acct_1", "P1", null);
-        Assert.True(Db.IsDeviceRegistered("dev_1"));
-    }
-
-    [Fact]
-    public void UnregisterAccount_removes_all_devices_and_returns_ids()
-    {
-        Db.RegisterOrUpdateUser("dev_1", "acct_1", "P1", null);
-        Db.RegisterOrUpdateUser("dev_2", "acct_1", "P1", null);
-        Db.RegisterOrUpdateUser("dev_3", "acct_2", "P2", null);
-
-        var removed = Db.UnregisterAccount("acct_1");
-        Assert.Equal(2, removed.Count);
-        Assert.Contains("dev_1", removed);
-        Assert.Contains("dev_2", removed);
-
-        // acct_2 should be unaffected
-        Assert.True(Db.IsDeviceRegistered("dev_3"));
-        Assert.False(Db.IsDeviceRegistered("dev_1"));
-    }
-
-    [Fact]
-    public void UnregisterAccount_returns_empty_for_unknown_account()
-    {
-        var removed = Db.UnregisterAccount("nonexistent");
-        Assert.Empty(removed);
     }
 
     // ═══ ScoreHistory ═══════════════════════════════════════════
@@ -549,123 +492,20 @@ public sealed class MetaDatabaseTests : IDisposable
         Db.UpsertSeasonWindow(1, "evt_1", "season_1");
         Db.UpsertSeasonWindow(1, "evt_1_updated", "season_1_new");
 
-        var window = Db.GetSeasonWindow(1);
-        Assert.NotNull(window);
+        var windows = Db.GetSeasonWindows();
+        var window = windows.First(w => w.SeasonNumber == 1);
         Assert.Equal("evt_1_updated", window.EventId);
         Assert.Equal("season_1_new", window.WindowId);
-    }
-
-    [Fact]
-    public void GetSeasonWindow_returns_null_for_unknown()
-    {
-        var window = Db.GetSeasonWindow(99);
-        Assert.Null(window);
-    }
-
-    // ═══ GetKnownAccountIds ═════════════════════════════════════
-
-    [Fact]
-    public void GetKnownAccountIds_returns_empty_when_no_accounts()
-    {
-        var ids = Db.GetKnownAccountIds();
-        Assert.Empty(ids);
-    }
-
-    [Fact]
-    public void GetKnownAccountIds_returns_all_account_ids()
-    {
-        Db.InsertAccountIds(["acct_1", "acct_2", "acct_3"]);
-        // Resolve one of them to ensure both resolved and unresolved are returned
-        Db.InsertAccountNames([("acct_1", "Player One")]);
-
-        var ids = Db.GetKnownAccountIds();
-        Assert.Equal(3, ids.Count);
-        Assert.Contains("acct_1", ids);
-        Assert.Contains("acct_2", ids);
-        Assert.Contains("acct_3", ids);
-    }
-
-    // ═══ EpicUserTokens ════════════════════════════════════════
-
-    [Fact]
-    public void UpsertEpicUserToken_and_GetEpicUserToken_roundtrip()
-    {
-        var nonce = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 };
-        var encAccess = new byte[] { 0xAA, 0xBB, 0xCC };
-        var encRefresh = new byte[] { 0xDD, 0xEE, 0xFF };
-        var tokenExp = DateTimeOffset.UtcNow.AddHours(2);
-        var refreshExp = DateTimeOffset.UtcNow.AddDays(7);
-
-        Db.UpsertEpicUserToken("acct_1", encAccess, encRefresh, tokenExp, refreshExp, nonce);
-
-        var stored = Db.GetEpicUserToken("acct_1");
-        Assert.NotNull(stored);
-        Assert.Equal("acct_1", stored.AccountId);
-        Assert.Equal(encAccess, stored.EncryptedAccessToken);
-        Assert.Equal(encRefresh, stored.EncryptedRefreshToken);
-        Assert.Equal(nonce, stored.Nonce);
-        Assert.NotNull(stored.UpdatedAt);
-    }
-
-    [Fact]
-    public void GetEpicUserToken_returns_null_for_unknown()
-    {
-        var stored = Db.GetEpicUserToken("nonexistent");
-        Assert.Null(stored);
-    }
-
-    [Fact]
-    public void UpsertEpicUserToken_updates_existing()
-    {
-        var nonce1 = new byte[12];
-        var nonce2 = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 };
-        var enc1 = new byte[] { 0x01 };
-        var enc2 = new byte[] { 0x02 };
-        var now = DateTimeOffset.UtcNow;
-
-        Db.UpsertEpicUserToken("acct_1", enc1, enc1, now.AddHours(1), now.AddDays(1), nonce1);
-        Db.UpsertEpicUserToken("acct_1", enc2, enc2, now.AddHours(2), now.AddDays(2), nonce2);
-
-        var stored = Db.GetEpicUserToken("acct_1");
-        Assert.NotNull(stored);
-        Assert.Equal(enc2, stored.EncryptedAccessToken);
-        Assert.Equal(nonce2, stored.Nonce);
-    }
-
-    [Fact]
-    public void DeleteEpicUserToken_removes_stored_token()
-    {
-        var nonce = new byte[12];
-        Db.UpsertEpicUserToken("acct_1", [0x01], [0x02],
-            DateTimeOffset.UtcNow.AddHours(1), DateTimeOffset.UtcNow.AddDays(1), nonce);
-
-        Db.DeleteEpicUserToken("acct_1");
-
-        Assert.Null(Db.GetEpicUserToken("acct_1"));
-    }
-
-    [Fact]
-    public void DeleteEpicUserToken_noop_for_nonexistent()
-    {
-        // Should not throw
-        Db.DeleteEpicUserToken("nonexistent");
     }
 
     // ═══ SongFirstSeenSeason ════════════════════════════════════
 
     [Fact]
-    public void UpsertFirstSeenSeason_and_GetFirstSeenSeason_roundtrip()
+    public void UpsertFirstSeenSeason_roundtrip()
     {
         Db.UpsertFirstSeenSeason("song_1", 5, 4, 5, "found_at_season_5");
-        var result = Db.GetFirstSeenSeason("song_1");
-        Assert.Equal(5, result);
-    }
-
-    [Fact]
-    public void GetFirstSeenSeason_returns_null_for_unknown()
-    {
-        var result = Db.GetFirstSeenSeason("unknown_song");
-        Assert.Null(result);
+        var dict = Db.GetAllFirstSeenSeasons();
+        Assert.Equal(5, dict["song_1"].FirstSeenSeason);
     }
 
     [Fact]
@@ -700,10 +540,8 @@ public sealed class MetaDatabaseTests : IDisposable
         Db.UpsertFirstSeenSeason("song_1", 5, 4, 5, "initial");
         Db.UpsertFirstSeenSeason("song_1", 3, 2, 3, "updated");
 
-        var result = Db.GetFirstSeenSeason("song_1");
-        Assert.Equal(3, result);
-
         var dict = Db.GetAllFirstSeenSeasons();
+        Assert.Equal(3, dict["song_1"].FirstSeenSeason);
         Assert.Equal(3, dict["song_1"].EstimatedSeason);
     }
 
@@ -711,8 +549,6 @@ public sealed class MetaDatabaseTests : IDisposable
     public void UpsertFirstSeenSeason_nullable_firstSeen()
     {
         Db.UpsertFirstSeenSeason("song_1", null, 3, 3, null);
-        var result = Db.GetFirstSeenSeason("song_1");
-        Assert.Null(result);
 
         var dict = Db.GetAllFirstSeenSeasons();
         Assert.Null(dict["song_1"].FirstSeenSeason);
@@ -749,111 +585,6 @@ public sealed class MetaDatabaseTests : IDisposable
     {
         var removed = Db.UnregisterUser("dev1", "acct1");
         Assert.False(removed);
-    }
-
-    // ═══ GetAccountForDevice ════════════════════════════════════
-
-    [Fact]
-    public void GetAccountForDevice_returns_null_when_not_registered()
-    {
-        Assert.Null(Db.GetAccountForDevice("dev1"));
-    }
-
-    [Fact]
-    public void GetAccountForDevice_returns_account()
-    {
-        Db.RegisterUser("dev1", "acct1");
-        Assert.Equal("acct1", Db.GetAccountForDevice("dev1"));
-    }
-
-    // ═══ UpdateLastSync ═════════════════════════════════════════
-
-    [Fact]
-    public void UpdateLastSync_does_not_throw()
-    {
-        Db.RegisterUser("dev1", "acct1");
-        Db.UpdateLastSync("dev1", "acct1");
-        // No exception = success. The sync timestamp is updated.
-    }
-
-    // ═══ IsDeviceRegistered ═════════════════════════════════════
-
-    [Fact]
-    public void IsDeviceRegistered_false_when_empty()
-    {
-        Assert.False(Db.IsDeviceRegistered("dev1"));
-    }
-
-    [Fact]
-    public void IsDeviceRegistered_true_after_register()
-    {
-        Db.RegisterUser("dev1", "acct1");
-        Assert.True(Db.IsDeviceRegistered("dev1"));
-    }
-
-    // ═══ UnregisterAccount ══════════════════════════════════════
-
-    [Fact]
-    public void UnregisterAccount_removes_all_devices()
-    {
-        Db.RegisterUser("devA", "acct1");
-        Db.RegisterUser("devB", "acct1");
-        var removed = Db.UnregisterAccount("acct1");
-        Assert.Equal(2, removed.Count);
-        Assert.Contains("devA", removed);
-        Assert.Contains("devB", removed);
-        Assert.False(Db.IsDeviceRegistered("devA"));
-        Assert.False(Db.IsDeviceRegistered("devB"));
-    }
-
-    [Fact]
-    public void UnregisterAccount_returns_empty_for_unknown()
-    {
-        var removed = Db.UnregisterAccount("nobody");
-        Assert.Empty(removed);
-    }
-
-    [Fact]
-    public void UnregisterAccount_cleans_up_player_stats()
-    {
-        Db.RegisterUser("dev1", "acct1");
-        Db.UpsertPlayerStats(new PlayerStatsDto
-        {
-            AccountId = "acct1", Instrument = "Solo_Guitar", SongsPlayed = 10,
-        });
-        Db.UpsertPlayerStats(new PlayerStatsDto
-        {
-            AccountId = "acct2", Instrument = "Solo_Guitar", SongsPlayed = 5,
-        });
-
-        Db.UnregisterAccount("acct1");
-
-        Assert.Empty(Db.GetPlayerStats("acct1"));
-        Assert.Single(Db.GetPlayerStats("acct2")); // acct2 unaffected
-    }
-
-    [Fact]
-    public void UnregisterAccount_cleans_up_backfill_and_history_recon()
-    {
-        Db.RegisterUser("dev1", "acct1");
-        Db.EnqueueBackfill("acct1", 50);
-        Db.MarkBackfillSongChecked("acct1", "song1", "Solo_Guitar", true);
-        Db.EnqueueHistoryRecon("acct1", 50);
-
-        // Seed for second account to verify isolation
-        Db.RegisterUser("dev2", "acct2");
-        Db.EnqueueBackfill("acct2", 30);
-        Db.EnqueueHistoryRecon("acct2", 30);
-
-        Db.UnregisterAccount("acct1");
-
-        Assert.Null(Db.GetBackfillStatus("acct1"));
-        Assert.Empty(Db.GetCheckedBackfillPairs("acct1"));
-        Assert.Null(Db.GetHistoryReconStatus("acct1"));
-
-        // acct2 unaffected
-        Assert.NotNull(Db.GetBackfillStatus("acct2"));
-        Assert.NotNull(Db.GetHistoryReconStatus("acct2"));
     }
 
     [Fact]
@@ -893,7 +624,7 @@ public sealed class MetaDatabaseTests : IDisposable
         // Per-account data should still exist (dev2 still registered)
         Assert.Single(Db.GetPlayerStats("acct1"));
         Assert.NotNull(Db.GetBackfillStatus("acct1"));
-        Assert.True(Db.IsDeviceRegistered("dev2"));
+        Assert.Contains("acct1", Db.GetRegisteredAccountIds());
     }
 
     // ═══ Constructor / Directory Creation ═══════════════════════
@@ -1063,27 +794,6 @@ public sealed class MetaDatabaseTests : IDisposable
         Assert.Equal(3, all["song_a"].FirstSeenSeason);
         Assert.Null(all["song_b"].FirstSeenSeason);
         Assert.Equal(5, all["song_b"].EstimatedSeason);
-    }
-
-    // ═══ GetRegistrationInfo ════════════════════════════════════
-
-    [Fact]
-    public void GetRegistrationInfo_returns_info_for_registered_user()
-    {
-        Db.RegisterOrUpdateUser("dev_info", "acct_info", "TestPlayer", "iOS");
-        var info = Db.GetRegistrationInfo("acct_info", "dev_info");
-        Assert.NotNull(info);
-        Assert.Equal("acct_info", info.AccountId);
-        Assert.Equal("TestPlayer", info.DisplayName);
-        Assert.NotNull(info.RegisteredAt);
-        Assert.NotNull(info.LastLoginAt);
-    }
-
-    [Fact]
-    public void GetRegistrationInfo_returns_null_for_unknown()
-    {
-        var info = Db.GetRegistrationInfo("nobody", "nodev");
-        Assert.Null(info);
     }
 
     // ═══ InsertScoreChange with full params ═════════════════════

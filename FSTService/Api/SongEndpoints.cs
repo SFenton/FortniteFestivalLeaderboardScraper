@@ -22,19 +22,13 @@ public static partial class ApiEndpoints
             httpContext.Response.Headers.CacheControl = "public, max-age=1800, stale-while-revalidate=3600";
 
             // ── Check cache ──────────────────────────────────────
-            var cached = songsCache.Get();
-            if (cached is not null)
             {
-                var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-                if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
+                var result = CacheHelper.ServeIfCached(httpContext, songsCache.Get());
+                if (result is not null)
                 {
-                    httpContext.Response.Headers.ETag = cached.Value.ETag;
-                    return Results.StatusCode(304);
+                    httpContext.Response.ContentType = "application/json; charset=utf-8";
+                    return result;
                 }
-
-                httpContext.Response.Headers.ETag = cached.Value.ETag;
-                httpContext.Response.ContentType = "application/json; charset=utf-8";
-                return Results.Bytes(cached.Value.Json, "application/json");
             }
 
             // ── Build response ───────────────────────────────────
@@ -60,16 +54,8 @@ public static partial class ApiEndpoints
             if (cached is null)
                 return Results.Ok(new { count = 0, songs = Array.Empty<object>(), lastUpdated = (string?)null });
 
-            var requestETag = httpContext.Request.Headers.IfNoneMatch.ToString();
-            if (!string.IsNullOrEmpty(requestETag) && requestETag == cached.Value.ETag)
-            {
-                httpContext.Response.Headers.ETag = cached.Value.ETag;
-                return Results.StatusCode(304);
-            }
-
-            httpContext.Response.Headers.ETag = cached.Value.ETag;
             httpContext.Response.ContentType = "application/json; charset=utf-8";
-            return Results.Bytes(cached.Value.Json, "application/json");
+            return CacheHelper.ServeIfCached(httpContext, cached)!;
         })
         .WithTags("Shop")
         .RequireRateLimiting("public");

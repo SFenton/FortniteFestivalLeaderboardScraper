@@ -215,7 +215,8 @@ public sealed class MetaDatabaseRivalsTests : IDisposable
         };
         Db.ReplaceRivalsData("acct_1", rivals, samples);
 
-        Db.UnregisterAccount("acct_1");
+        // Unregister last device → cascades to full cleanup
+        Db.UnregisterUser("dev1", "acct_1");
 
         Assert.Empty(Db.GetUserRivals("acct_1"));
         Assert.Empty(Db.GetRivalSongSamples("acct_1", "r1"));

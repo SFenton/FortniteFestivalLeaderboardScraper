@@ -78,28 +78,6 @@ public class MetaDatabaseAdditionalTests : IDisposable
     }
 
     [Fact]
-    public void RivalSuggestionEntry_Properties_Accessible()
-    {
-        var entry = new RivalSuggestionEntry
-        {
-            AccountId = "acct1",
-            DisplayName = "Player1",
-            Direction = "above",
-            SharedSongCount = 50,
-            AheadCount = 30,
-            BehindCount = 20,
-            Songs = [new RivalSongSampleRow { SongId = "s1", Instrument = "Solo_Guitar" }],
-        };
-        Assert.Equal("acct1", entry.AccountId);
-        Assert.Equal("Player1", entry.DisplayName);
-        Assert.Equal("above", entry.Direction);
-        Assert.Equal(50, entry.SharedSongCount);
-        Assert.Equal(30, entry.AheadCount);
-        Assert.Equal(20, entry.BehindCount);
-        Assert.Single(entry.Songs);
-    }
-
-    [Fact]
     public void SaveAndLoadItemShopTracks_RoundTrips()
     {
         var songIds = new HashSet<string> { "shop1", "shop2" };

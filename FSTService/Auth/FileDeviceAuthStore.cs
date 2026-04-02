@@ -48,11 +48,4 @@ public sealed class FileCredentialStore : ICredentialStore
         await File.WriteAllTextAsync(_path, json, ct);
         _log.LogDebug("Credentials saved to {Path}", _path);
     }
-
-    public Task DeleteAsync(CancellationToken ct = default)
-    {
-        if (File.Exists(_path))
-            File.Delete(_path);
-        return Task.CompletedTask;
-    }
 }
