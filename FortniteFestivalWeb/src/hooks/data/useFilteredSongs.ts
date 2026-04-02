@@ -5,7 +5,7 @@
 import { useMemo } from 'react';
 import { type ServerSong as Song, type PlayerScore, type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import type { SongFilters, SongSortMode } from '../../utils/songSettings';
-import { compareByMode } from '../../pages/songs/components/SongRow';
+import { compareByMode } from '../../utils/songSort';
 
 interface FilterSortOptions {
   songs: Song[];

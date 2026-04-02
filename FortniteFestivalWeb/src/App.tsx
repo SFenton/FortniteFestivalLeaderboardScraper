@@ -28,6 +28,61 @@ const FullRankingsPage = lazy(() => import('./pages/leaderboards/FullRankingsPag
 const CompetePage = lazy(() => import('./pages/compete/CompetePage'));
 /* v8 ignore stop */
 import { Size, Layout, QUERY_NARROW_GRID } from '@festival/theme';
+
+/** Shared route tree used by both mobile and wide-desktop layouts. */
+function RoutesContent({ player }: { player: TrackedPlayer | null }) {
+  return (
+    <Suspense fallback={<SuspenseFallback />}>
+    <Routes>
+      <Route path="/" element={<Navigate to={AppRoutes.songs} replace />} />
+      <Route path="/songs" element={<SongsPage />} />
+      <Route path="/songs/:songId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SongDetailPage /></ErrorBoundary>} />
+      <Route path="/songs/:songId/:instrument" element={<ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardPage /></ErrorBoundary>} />
+      <Route path="/songs/:songId/:instrument/history" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerHistoryPage /></ErrorBoundary>} />
+      <Route path="/player/:accountId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage /></ErrorBoundary>} />
+      {player ? (
+        <Route path="/rivals" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><RivalsPage /></ErrorBoundary></FeatureGate>} />
+      ) : (
+        <Route path="/rivals" element={<Navigate to={AppRoutes.songs} replace />} />
+      )}
+      {player ? (
+        <Route path="/rivals/all" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><AllRivalsPage /></ErrorBoundary></FeatureGate>} />
+      ) : (
+        <Route path="/rivals/all" element={<Navigate to={AppRoutes.songs} replace />} />
+      )}
+      {player ? (
+        <Route path="/rivals/:rivalId" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><RivalDetailPage /></ErrorBoundary></FeatureGate>} />
+      ) : (
+        <Route path="/rivals/:rivalId" element={<Navigate to={AppRoutes.songs} replace />} />
+      )}
+      {player ? (
+        <Route path="/rivals/:rivalId/rivalry" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><RivalCategoryPage /></ErrorBoundary></FeatureGate>} />
+      ) : (
+        <Route path="/rivals/:rivalId/rivalry" element={<Navigate to={AppRoutes.songs} replace />} />
+      )}
+      {player ? (
+        <Route path="/statistics" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage accountId={player.accountId} /></ErrorBoundary>} />
+      ) : (
+        <Route path="/statistics" element={<Navigate to={AppRoutes.songs} replace />} />
+      )}
+      {player ? (
+        <Route path="/suggestions" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SuggestionsPage accountId={player.accountId} /></ErrorBoundary>} />
+      ) : (
+        <Route path="/suggestions" element={<Navigate to={AppRoutes.songs} replace />} />
+      )}
+      <Route path="/shop" element={<FeatureGate flag="shop"><ErrorBoundary fallback={<RouteErrorFallback />}><ShopPage /></ErrorBoundary></FeatureGate>} />
+      <Route path="/leaderboards" element={<FeatureGate flag="leaderboards"><ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardsOverviewPage /></ErrorBoundary></FeatureGate>} />
+      <Route path="/leaderboards/all" element={<FeatureGate flag="leaderboards"><ErrorBoundary fallback={<RouteErrorFallback />}><FullRankingsPage /></ErrorBoundary></FeatureGate>} />
+      {player ? (
+        <Route path="/compete" element={<FeatureGate flag="compete"><ErrorBoundary fallback={<RouteErrorFallback />}><CompetePage /></ErrorBoundary></FeatureGate>} />
+      ) : (
+        <Route path="/compete" element={<Navigate to={AppRoutes.songs} replace />} />
+      )}
+      <Route path="/settings" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SettingsPage /></ErrorBoundary>} />
+    </Routes>
+    </Suspense>
+  );
+}
 import { appStyles } from './appStyles';
 import { resetSongSettingsForDeselect, loadSongSettings, SONG_SETTINGS_CHANGED_EVENT } from './utils/songSettings';
 import BackLink from './components/shell/mobile/BackLink';
@@ -122,55 +177,7 @@ function WideDesktopLayout({
           <div style={appStyles.sidebarGutter} />
           <div style={appStyles.centerColumn}>
             <div id="main-content" style={{ ...appStyles.content, ...appStyles.contentPinned }}>
-              <Suspense fallback={<SuspenseFallback />}>
-              <Routes>
-                <Route path="/" element={<Navigate to={AppRoutes.songs} replace />} />
-                <Route path="/songs" element={<SongsPage />} />
-                <Route path="/songs/:songId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SongDetailPage /></ErrorBoundary>} />
-                <Route path="/songs/:songId/:instrument" element={<ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardPage /></ErrorBoundary>} />
-                <Route path="/songs/:songId/:instrument/history" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerHistoryPage /></ErrorBoundary>} />
-                <Route path="/player/:accountId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage /></ErrorBoundary>} />
-                {player ? (
-                  <Route path="/rivals" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><RivalsPage /></ErrorBoundary></FeatureGate>} />
-                ) : (
-                  <Route path="/rivals" element={<Navigate to={AppRoutes.songs} replace />} />
-                )}
-                {player ? (
-                  <Route path="/rivals/all" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><AllRivalsPage /></ErrorBoundary></FeatureGate>} />
-                ) : (
-                  <Route path="/rivals/all" element={<Navigate to={AppRoutes.songs} replace />} />
-                )}
-                {player ? (
-                  <Route path="/rivals/:rivalId" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><RivalDetailPage /></ErrorBoundary></FeatureGate>} />
-                ) : (
-                  <Route path="/rivals/:rivalId" element={<Navigate to={AppRoutes.songs} replace />} />
-                )}
-                {player ? (
-                  <Route path="/rivals/:rivalId/rivalry" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><RivalCategoryPage /></ErrorBoundary></FeatureGate>} />
-                ) : (
-                  <Route path="/rivals/:rivalId/rivalry" element={<Navigate to={AppRoutes.songs} replace />} />
-                )}
-                {player ? (
-                  <Route path="/statistics" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage accountId={player.accountId} /></ErrorBoundary>} />
-                ) : (
-                  <Route path="/statistics" element={<Navigate to={AppRoutes.songs} replace />} />
-                )}
-                {player ? (
-                  <Route path="/suggestions" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SuggestionsPage accountId={player.accountId} /></ErrorBoundary>} />
-                ) : (
-                  <Route path="/suggestions" element={<Navigate to={AppRoutes.songs} replace />} />
-                )}
-                <Route path="/shop" element={<FeatureGate flag="shop"><ErrorBoundary fallback={<RouteErrorFallback />}><ShopPage /></ErrorBoundary></FeatureGate>} />
-                <Route path="/leaderboards" element={<FeatureGate flag="leaderboards"><ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardsOverviewPage /></ErrorBoundary></FeatureGate>} />
-                <Route path="/leaderboards/all" element={<FeatureGate flag="leaderboards"><ErrorBoundary fallback={<RouteErrorFallback />}><FullRankingsPage /></ErrorBoundary></FeatureGate>} />
-                {player ? (
-                  <Route path="/compete" element={<FeatureGate flag="compete"><ErrorBoundary fallback={<RouteErrorFallback />}><CompetePage /></ErrorBoundary></FeatureGate>} />
-                ) : (
-                  <Route path="/compete" element={<Navigate to={AppRoutes.songs} replace />} />
-                )}
-                <Route path="/settings" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SettingsPage /></ErrorBoundary>} />
-              </Routes>
-              </Suspense>
+              <RoutesContent player={player} />
             </div>
           </div>
           <div style={appStyles.rightGutter} />
@@ -345,6 +352,15 @@ function AppShell() {
 
   const wideDesktop = !isMobile && isWideDesktop;
 
+  /** Shared FAB action group for player navigation (Find Player + Profile/Select + optionally Item Shop). */
+  const playerActions = (includeShop = true) => [
+    { label: t('common.findPlayer'), icon: <IoSearch size={Size.iconFab} />, onPress: () => setFindPlayerOpen(true) },
+    player
+      ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
+      : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
+    ...(includeShop && isShopVisible ? [{ label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />, onPress: () => navigate(AppRoutes.shop) }] : []),
+  ];
+
   return (
     <PlayerDataProvider accountId={player?.accountId}>
     <div style={appStyles.shell}>
@@ -402,55 +418,7 @@ function AppShell() {
         <div ref={shellScrollRef} style={appStyles.scrollContainer}>
         <div style={appStyles.contentColumn}>
         <div id="main-content" style={appStyles.content}>
-          <Suspense fallback={<SuspenseFallback />}>
-        <Routes>
-          <Route path="/" element={<Navigate to={AppRoutes.songs} replace />} />
-          <Route path="/songs" element={<SongsPage />} />
-          <Route path="/songs/:songId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SongDetailPage /></ErrorBoundary>} />
-          <Route path="/songs/:songId/:instrument" element={<ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardPage /></ErrorBoundary>} />
-          <Route path="/songs/:songId/:instrument/history" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerHistoryPage /></ErrorBoundary>} />
-          <Route path="/player/:accountId" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage /></ErrorBoundary>} />
-          {player ? (
-            <Route path="/rivals" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><RivalsPage /></ErrorBoundary></FeatureGate>} />
-          ) : (
-            <Route path="/rivals" element={<Navigate to={AppRoutes.songs} replace />} />
-          )}
-          {player ? (
-            <Route path="/rivals/all" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><AllRivalsPage /></ErrorBoundary></FeatureGate>} />
-          ) : (
-            <Route path="/rivals/all" element={<Navigate to={AppRoutes.songs} replace />} />
-          )}
-          {player ? (
-            <Route path="/rivals/:rivalId" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><RivalDetailPage /></ErrorBoundary></FeatureGate>} />
-          ) : (
-            <Route path="/rivals/:rivalId" element={<Navigate to={AppRoutes.songs} replace />} />
-          )}
-          {player ? (
-            <Route path="/rivals/:rivalId/rivalry" element={<FeatureGate flag="rivals"><ErrorBoundary fallback={<RouteErrorFallback />}><RivalCategoryPage /></ErrorBoundary></FeatureGate>} />
-          ) : (
-            <Route path="/rivals/:rivalId/rivalry" element={<Navigate to={AppRoutes.songs} replace />} />
-          )}
-          {player ? (
-            <Route path="/statistics" element={<ErrorBoundary fallback={<RouteErrorFallback />}><PlayerPage accountId={player.accountId} /></ErrorBoundary>} />
-          ) : (
-            <Route path="/statistics" element={<Navigate to={AppRoutes.songs} replace />} />
-          )}
-          {player ? (
-            <Route path="/suggestions" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SuggestionsPage accountId={player.accountId} /></ErrorBoundary>} />
-          ) : (
-            <Route path="/suggestions" element={<Navigate to={AppRoutes.songs} replace />} />
-          )}
-          <Route path="/shop" element={<FeatureGate flag="shop"><ErrorBoundary fallback={<RouteErrorFallback />}><ShopPage /></ErrorBoundary></FeatureGate>} />
-          <Route path="/leaderboards" element={<FeatureGate flag="leaderboards"><ErrorBoundary fallback={<RouteErrorFallback />}><LeaderboardsOverviewPage /></ErrorBoundary></FeatureGate>} />
-          <Route path="/leaderboards/all" element={<FeatureGate flag="leaderboards"><ErrorBoundary fallback={<RouteErrorFallback />}><FullRankingsPage /></ErrorBoundary></FeatureGate>} />
-          {player ? (
-            <Route path="/compete" element={<FeatureGate flag="compete"><ErrorBoundary fallback={<RouteErrorFallback />}><CompetePage /></ErrorBoundary></FeatureGate>} />
-          ) : (
-            <Route path="/compete" element={<Navigate to={AppRoutes.songs} replace />} />
-          )}
-          <Route path="/settings" element={<ErrorBoundary fallback={<RouteErrorFallback />}><SettingsPage /></ErrorBoundary>} />
-        </Routes>
-          </Suspense>
+          <RoutesContent player={player} />
         </div>
         </div>
         </div>
@@ -469,13 +437,7 @@ function AppShell() {
               { label: t('common.sortSongs'), icon: <IoSwapVerticalSharp size={Size.iconFab} />, onPress: () => fabSearch.openSort() },
               ...(player ? [{ label: t('common.filterSongs'), icon: <IoFunnel size={Size.iconFab} />, onPress: () => fabSearch.openFilter() }] : []),
             ],
-            [
-              { label: t('common.findPlayer'), icon: <IoSearch size={Size.iconFab} />, onPress: () => setFindPlayerOpen(true) },
-              player
-                ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
-                : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
-              ...(isShopVisible ? [{ label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />, onPress: () => navigate(AppRoutes.shop) }] : []),
-            ],
+            playerActions(),
           ]}
           onPress={() => {}}
         />
@@ -487,13 +449,7 @@ function AppShell() {
             [
               { label: t('common.filterSuggestions'), icon: <IoFunnel size={Size.iconFab} />, onPress: () => fabSearch.openSuggestionsFilter() },
             ],
-            [
-              { label: t('common.findPlayer'), icon: <IoSearch size={Size.iconFab} />, onPress: () => setFindPlayerOpen(true) },
-              player
-                ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
-                : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
-              ...(isShopVisible ? [{ label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />, onPress: () => navigate(AppRoutes.shop) }] : []),
-            ],
+            playerActions(),
           ]}
           onPress={() => {}}
         />
@@ -505,13 +461,7 @@ function AppShell() {
             [
               { label: t('common.sortPlayerScores'), icon: <IoSwapVerticalSharp size={Size.iconFab} />, onPress: () => fabSearch.openPlayerHistorySort() },
             ],
-            [
-              { label: t('common.findPlayer'), icon: <IoSearch size={Size.iconFab} />, onPress: () => setFindPlayerOpen(true) },
-              player
-                ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
-                : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
-              ...(isShopVisible ? [{ label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />, onPress: () => navigate(AppRoutes.shop) }] : []),
-            ],
+            playerActions(),
           ]}
           onPress={() => {}}
         />
@@ -533,13 +483,7 @@ function AppShell() {
               onPress: () => window.open(currentShopUrl, '_blank', 'noopener,noreferrer'),
             }] : []),
             ]] : []),
-            [
-              { label: t('common.findPlayer'), icon: <IoSearch size={Size.iconFab} />, onPress: () => setFindPlayerOpen(true) },
-              player
-                ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
-                : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
-              ...(isShopVisible ? [{ label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />, onPress: () => navigate(AppRoutes.shop) }] : []),
-            ],
+            playerActions(),
           ]}
           onPress={() => {}}
         />
@@ -554,12 +498,7 @@ function AppShell() {
               icon: fabSearch.shopViewMode === 'grid' ? <IoList size={Size.iconFab} /> : <IoGrid size={Size.iconFab} />,
               onPress: () => fabSearch.shopToggleView(),
             }]] : []),
-            [
-              { label: t('common.findPlayer'), icon: <IoSearch size={Size.iconFab} />, onPress: () => setFindPlayerOpen(true) },
-              player
-                ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
-                : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
-            ],
+            playerActions(false),
           ]}
           onPress={() => {}}
         />
@@ -574,13 +513,7 @@ function AppShell() {
           mode="players"
           actionGroups={[
             ...(leaderboardActions.length > 0 ? [leaderboardActions] : []),
-            [
-              { label: t('common.findPlayer'), icon: <IoSearch size={Size.iconFab} />, onPress: () => setFindPlayerOpen(true) },
-              player
-                ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
-                : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
-              ...(isShopVisible ? [{ label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />, onPress: () => navigate(AppRoutes.shop) }] : []),
-            ],
+            playerActions(),
           ]}
           onPress={() => {}}
         />
@@ -595,13 +528,7 @@ function AppShell() {
               icon: fabSearch.rivalsActiveTab === 'song' ? <IoTrophy size={Size.iconFab} /> : <IoMusicalNotes size={Size.iconFab} />,
               onPress: () => fabSearch.rivalsToggleTab(),
             }],
-            [
-              { label: t('common.findPlayer'), icon: <IoSearch size={Size.iconFab} />, onPress: () => setFindPlayerOpen(true) },
-              player
-                ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
-                : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
-              ...(isShopVisible ? [{ label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />, onPress: () => navigate(AppRoutes.shop) }] : []),
-            ],
+            playerActions(),
           ]}
           onPress={() => {}}
         />
@@ -613,13 +540,7 @@ function AppShell() {
             ...(fabSearch.playerPageSelect ? [[
               { label: t('common.selectAsProfile', { name: fabSearch.playerPageSelect.displayName }), icon: <IoPersonAdd size={Size.iconFab} />, onPress: fabSearch.playerPageSelect.onSelect },
             ]] : []),
-            [
-              { label: t('common.findPlayer'), icon: <IoSearch size={Size.iconFab} />, onPress: () => setFindPlayerOpen(true) },
-              player
-                ? { label: player.displayName, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.statistics) }
-                : { label: t('common.selectPlayerProfile'), icon: <IoPerson size={Size.iconFab} />, onPress: () => setPlayerModalOpen(true) },
-              ...(isShopVisible ? [{ label: t('common.itemShop', 'Item Shop'), icon: <IoBagHandle size={Size.iconFab} />, onPress: () => navigate(AppRoutes.shop) }] : []),
-            ],
+            playerActions(),
           ]}
           onPress={() => {}}
         />
