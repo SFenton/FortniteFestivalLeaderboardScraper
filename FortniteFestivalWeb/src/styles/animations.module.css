@@ -192,3 +192,14 @@
   animation: shopBreatheRed 3s ease-in-out infinite;
   z-index: -1;
 }
+
+/* ── CHOpt invalid-score icon pulse (InvalidScoreIcon) ── */
+
+@keyframes choptIconPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.choptIconPulse {
+  animation: choptIconPulse 2s ease-in-out infinite;
+}

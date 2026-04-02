@@ -6,6 +6,7 @@ import { IoAlertCircleOutline, IoWarning } from 'react-icons/io5';
 import type { ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { Colors, InstrumentSize, Cursor, flexCenter } from '@festival/theme';
 import ConfirmAlert from '../../../components/modals/ConfirmAlert';
+import anim from '../../../styles/animations.module.css';
 
 const INSTRUMENT_I18N_KEY: Record<string, string> = {
   Solo_Guitar: 'instruments.lead',
@@ -71,7 +72,10 @@ export default function InvalidScoreIcon({
     }
     if (instruments.length === 0) return '';
 
-    const instNames = instruments.map(i => i.name).join(', ');
+    const names = instruments.map(i => i.name);
+    const instNames = names.length <= 2
+      ? names.join(' and ')
+      : `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
     const isChipsView = instrumentFilter == null;
 
     // All over-threshold: different header + no footer
@@ -82,17 +86,35 @@ export default function InvalidScoreIcon({
     const header = t('songs.invalidScoreHeader', { song: songTitle, instruments: instNames });
 
     // State-dependent text differs between chips view (no scores shown) and filtered view
-    const details = instruments.map(i => {
-      if (i.reason === 'over-threshold') return t('songs.invalidScoreOverThresholdDetail', { instrument: i.name });
-      if (i.reason === 'fallback') return isChipsView
-        ? t('songs.invalidScoreHasFallbackChip', { instrument: i.name })
-        : t('songs.invalidScoreHasFallback');
-      return t('songs.invalidScoreNoFallback', { instrument: i.name });
-    }).join(' ');
+    const detailParts: string[] = [];
+    const fallbackInsts = instruments.filter(i => i.reason === 'fallback');
+    const otherInsts = instruments.filter(i => i.reason !== 'fallback');
 
-    const footer = t('songs.invalidScoreFooter', { toggle: t('settings.filterInvalidScores') });
+    if (fallbackInsts.length > 0) {
+      if (!isChipsView) {
+        detailParts.push(t('songs.invalidScoreHasFallback'));
+      } else if (fallbackInsts.length === 1) {
+        detailParts.push(t('songs.invalidScoreHasFallbackChip', { instrument: fallbackInsts[0].name }));
+      } else {
+        detailParts.push(t('songs.invalidScoreHasFallbackChipPlural'));
+      }
+    }
+    for (const i of otherInsts) {
+      if (i.reason === 'over-threshold') detailParts.push(t('songs.invalidScoreOverThresholdDetail', { instrument: i.name }));
+      else detailParts.push(t('songs.invalidScoreNoFallback', { instrument: i.name }));
+    }
+    const details = detailParts.join(' ');
 
-    return `${header} ${details} ${footer}`;
+    const footerKey = instruments.length > 1 ? 'songs.invalidScoreFooterPlural' : 'songs.invalidScoreFooter';
+    const footer = t(footerKey, { toggle: t('settings.filterInvalidScores') });
+
+    const filterHint = ' ' + (isChipsView
+      ? t('songs.invalidScoreFilterHint', { filterName: t('filter.overThreshold') })
+      : t('songs.invalidScoreFilterHintSingle', {
+          filterName: t('filter.instrumentOverThreshold', { instrument: t(INSTRUMENT_I18N_KEY[instrumentFilter!]) }),
+        }));
+
+    return `${header} ${details}\n\n${footer}${filterHint}`;
   }, [invalidInstruments, instrumentFilter, songTitle, t]);
 
   return (
@@ -101,6 +123,7 @@ export default function InvalidScoreIcon({
         role="button"
         tabIndex={0}
         aria-label={t('songs.invalidScoreAriaLabel')}
+        className={anim.choptIconPulse}
         style={s.container}
         onClick={handleClick}
         onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleClick(e as unknown as React.MouseEvent); } }}
