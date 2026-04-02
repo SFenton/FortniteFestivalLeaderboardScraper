@@ -103,6 +103,45 @@ public class ScrapeProgressTrackerTests
     }
 
     [Fact]
+    public void ReportLeaderboardComplete_TransitionsToPersistingScores_WhenAllLeaderboardsDone()
+    {
+        _tracker.BeginPass(2, 1, 0);
+        _tracker.SetSubOperation("fetching_leaderboards");
+
+        _tracker.ReportLeaderboardComplete("Solo_Guitar");
+        // Only 1 of 2 done — should still be fetching
+        Assert.Equal("fetching_leaderboards", _tracker.GetProgressResponse().Current?.SubOperation);
+
+        _tracker.ReportLeaderboardComplete("Solo_Bass");
+        // All done — should auto-transition
+        Assert.Equal("persisting_scores", _tracker.GetProgressResponse().Current?.SubOperation);
+    }
+
+    [Fact]
+    public void ReportLeaderboardComplete_DoesNotClobberOtherSubOperations()
+    {
+        _tracker.BeginPass(1, 1, 0);
+        _tracker.SetSubOperation("deep_scraping");
+
+        _tracker.ReportLeaderboardComplete("Solo_Guitar");
+        // Sub-operation was not "fetching_leaderboards", so must not change
+        Assert.Equal("deep_scraping", _tracker.GetProgressResponse().Current?.SubOperation);
+    }
+
+    [Fact]
+    public void SetSubOperation_CanOverridePersistingScores()
+    {
+        _tracker.BeginPass(1, 1, 0);
+        _tracker.SetSubOperation("fetching_leaderboards");
+        _tracker.ReportLeaderboardComplete("Solo_Guitar");
+        Assert.Equal("persisting_scores", _tracker.GetProgressResponse().Current?.SubOperation);
+
+        // Deep scrape or orchestrator can override
+        _tracker.SetSubOperation("deep_scraping");
+        Assert.Equal("deep_scraping", _tracker.GetProgressResponse().Current?.SubOperation);
+    }
+
+    [Fact]
     public void ReportSongComplete_IncrementsSongCounter()
     {
         _tracker.BeginPass(2, 2, 0);

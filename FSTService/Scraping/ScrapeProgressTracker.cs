@@ -166,8 +166,15 @@ public sealed class ScrapeProgressTracker
 
     public void ReportLeaderboardComplete(string instrument)
     {
-        Interlocked.Increment(ref _completedLeaderboards);
+        var completed = Interlocked.Increment(ref _completedLeaderboards);
         _completedByInstrument.AddOrUpdate(instrument, 1, (_, v) => v + 1);
+
+        // When all leaderboards have finished fetching but songs are still
+        // being persisted via onSongComplete callbacks, transition the
+        // sub-operation so the progress API reflects the actual work.
+        if (completed == _totalLeaderboards && _subOperation == "fetching_leaderboards")
+            _subOperation = "persisting_scores";
+
         Interlocked.Increment(ref _changeSequence);
     }
 
