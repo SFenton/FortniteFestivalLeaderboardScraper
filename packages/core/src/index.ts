@@ -22,7 +22,7 @@ export * from './app/formatters';
 export const APP_VERSION = '0.0.3';
 
 /** Current @festival/core package version. Keep in sync with packages/core/package.json. */
-export const CORE_VERSION = '0.0.5';
+export const CORE_VERSION = '0.0.6';
 
 /** Current @festival/theme package version. Keep in sync with packages/theme/package.json. */
 export const THEME_VERSION = '0.0.2';
