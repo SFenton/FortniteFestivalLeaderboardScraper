@@ -21,6 +21,7 @@ import type { ServerInstrumentKey as InstrumentKey, RankingMetric } from '@festi
 import { InstrumentHeaderSize } from '@festival/core';
 import { serverInstrumentLabel, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
 import { getRankForMetric, formatRating, getRatingForMetric, RANKING_METRICS, EXPERIMENTAL_METRICS, computeRankWidth } from './helpers/rankingHelpers';
+import { loadLeaderboardRankBy, saveLeaderboardRankBy } from '../../utils/leaderboardSettings';
 import { rankingsCache } from '../../api/pageCache';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { useIsMobile, useIsMobileChrome } from '../../hooks/ui/useIsMobile';
@@ -42,7 +43,7 @@ export default function FullRankingsPage() {
   const { settings } = useSettings();
 
   const instrument = (searchParams.get('instrument') ?? 'Solo_Guitar') as InstrumentKey;
-  const rawMetric = (searchParams.get('rankBy') ?? 'totalscore') as RankingMetric;
+  const rawMetric = (searchParams.get('rankBy') ?? loadLeaderboardRankBy()) as RankingMetric;
   const metric = settings.enableExperimentalRanks ? rawMetric : 'totalscore' as RankingMetric;
   const pageParam = Math.max(1, Number(searchParams.get('page')) || 1);
 
@@ -67,6 +68,7 @@ export default function FullRankingsPage() {
   const applyMetric = useCallback(() => {
     const m = metricModal.draft;
     metricModal.close();
+    saveLeaderboardRankBy(m);
     scrollContainerRef.current?.scrollTo(0, 0);
     setPage(1);
     setSearchParams({ instrument, rankBy: m, page: '1' }, { replace: true });

@@ -21,6 +21,7 @@ import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerS
 import type { RankingMetric, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { LoadPhase } from '@festival/core';
 import { RANKING_METRICS, EXPERIMENTAL_METRICS } from './helpers/rankingHelpers';
+import { loadLeaderboardRankBy, saveLeaderboardRankBy } from '../../utils/leaderboardSettings';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useGridColumnCount } from '../../hooks/ui/useGridColumnCount';
@@ -44,7 +45,7 @@ export default function LeaderboardsOverviewPage() {
   const isMobile = useIsMobileChrome();
   const fabSearch = useFabSearch();
   const [searchParams, setSearchParams] = useSearchParams();
-  const rawMetric = (searchParams.get('rankBy') ?? 'totalscore') as RankingMetric;
+  const rawMetric = (searchParams.get('rankBy') ?? loadLeaderboardRankBy()) as RankingMetric;
   const metric = settings.enableExperimentalRanks ? rawMetric : 'totalscore' as RankingMetric;
 
   const metricModal = useModalState<RankingMetric>(() => 'totalscore');
@@ -57,6 +58,7 @@ export default function LeaderboardsOverviewPage() {
   const applyMetric = useCallback(() => {
     scrollRef.current?.scrollTo(0, 0);
     setShouldStagger(true);
+    saveLeaderboardRankBy(metricModal.draft);
     setSearchParams({ rankBy: metricModal.draft }, { replace: true });
     metricModal.close();
   }, [metricModal, setSearchParams]);
