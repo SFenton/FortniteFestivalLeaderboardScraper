@@ -37,6 +37,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
     protected readonly ScrapeProgressTracker _progress;
     protected readonly IHostApplicationLifetime _lifetime;
     protected readonly ILogger<ScraperWorker> _log;
+    private MetaDatabase? _shopMetaDb;
 
     protected ScraperWorkerTestBase()
     {
@@ -115,6 +116,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
 
     public void Dispose()
     {
+        _shopMetaDb?.Dispose();
         _persistence.Dispose();
         _metaDb.Dispose();
         try { Directory.Delete(_tempDir, true); } catch { }
@@ -173,15 +175,15 @@ public abstract class ScraperWorkerTestBase : IDisposable
             serviceProvider, _pool,
             Substitute.For<ILogger<BackfillOrchestrator>>());
 
-        var shopMetaDb = new FSTService.Persistence.MetaDatabase(
-                Path.Combine(Path.GetTempPath(), $"fst-shop-test-{Guid.NewGuid()}.db"),
+        _shopMetaDb = new FSTService.Persistence.MetaDatabase(
+                Path.Combine(_tempDir, $"fst-shop-{Guid.NewGuid():N}.db"),
                 Substitute.For<ILogger<FSTService.Persistence.MetaDatabase>>());
-        shopMetaDb.EnsureSchema();
+        _shopMetaDb.EnsureSchema();
 
         var shopService = new FSTService.Scraping.ItemShopService(
             new HttpClient(),
             _festivalService,
-            shopMetaDb,
+            _shopMetaDb,
             Substitute.For<ILogger<FSTService.Scraping.ItemShopService>>());
 
         var dbInitializer = new DatabaseInitializer(
