@@ -54,7 +54,7 @@ const UNKNOWN_USER = 'Unknown User';
 const ALBUM_ART_PREFIX = 'https://cdn2.unrealengine.com/';
 const SONGS_CACHE_KEY = 'fst_songs_cache';
 
-function expandAlbumArt(songs: SongsResponse['songs']): void {
+export function expandAlbumArt(songs: { albumArt?: string }[]): void {
   for (const song of songs) {
     if (song.albumArt && !song.albumArt.startsWith('http')) {
       song.albumArt = ALBUM_ART_PREFIX + song.albumArt;
@@ -125,7 +125,11 @@ export const api = {
     return data;
   },
 
-  getShop: () => getWithETag<ShopResponse>('/api/shop'),
+  getShop: async (): Promise<ShopResponse> => {
+    const data = await getWithETag<ShopResponse>('/api/shop');
+    expandAlbumArt(data.songs);
+    return data;
+  },
 
   getLeaderboard: (songId: string, instrument: InstrumentKey, top = 100, offset = 0, leeway?: number) =>
     get<LeaderboardResponse>(

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { api } from '../../src/api/client';
+import { api, expandAlbumArt } from '../../src/api/client';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -224,6 +224,46 @@ describe('api/client', () => {
     it('throws on non-ok POST response', async () => {
       mockFetchError(500, 'Internal Server Error');
       await expect(api.trackPlayer('p1')).rejects.toThrow('API 500: Internal Server Error');
+    });
+  });
+
+  describe('expandAlbumArt', () => {
+    it('prepends CDN prefix to relative album art URLs', () => {
+      const songs = [
+        { albumArt: 'fortnite/image1.png' },
+        { albumArt: 'fortnite/image2.png' },
+      ];
+      expandAlbumArt(songs);
+      expect(songs[0].albumArt).toBe('https://cdn2.unrealengine.com/fortnite/image1.png');
+      expect(songs[1].albumArt).toBe('https://cdn2.unrealengine.com/fortnite/image2.png');
+    });
+
+    it('does not modify URLs that already have http prefix', () => {
+      const songs = [{ albumArt: 'https://cdn2.unrealengine.com/fortnite/image.png' }];
+      expandAlbumArt(songs);
+      expect(songs[0].albumArt).toBe('https://cdn2.unrealengine.com/fortnite/image.png');
+    });
+
+    it('skips songs without albumArt', () => {
+      const songs = [{ albumArt: undefined }, { albumArt: 'fortnite/img.png' }];
+      expandAlbumArt(songs);
+      expect(songs[0].albumArt).toBeUndefined();
+      expect(songs[1].albumArt).toBe('https://cdn2.unrealengine.com/fortnite/img.png');
+    });
+  });
+
+  describe('getShop', () => {
+    it('expands album art URLs in shop response', async () => {
+      const shopData = {
+        songs: [
+          { songId: 's1', title: 'Test', artist: 'A', albumArt: 'fortnite/art.png', shopUrl: 'https://fortnite.com/shop/1' },
+          { songId: 's2', title: 'Test2', artist: 'B', shopUrl: 'https://fortnite.com/shop/2' },
+        ],
+      };
+      mockFetchOk(shopData);
+      const result = await api.getShop();
+      expect(result.songs[0].albumArt).toBe('https://cdn2.unrealengine.com/fortnite/art.png');
+      expect(result.songs[1].albumArt).toBeUndefined();
     });
   });
 });

@@ -10,6 +10,7 @@ import type {
   ShopSnapshotMessage,
   ShopSong,
 } from '@festival/core/api/serverTypes';
+import { expandAlbumArt } from '../../api/client';
 
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
@@ -72,6 +73,7 @@ export function useShopWebSocket(
         case 'shop_snapshot': {
           const snap = msg as ShopSnapshotMessage;
           // snap.songs is now ShopSong[] (enriched objects)
+          expandAlbumArt(snap.songs);
           const map = new Map<string, ShopSong>();
           const ids = new Set<string>();
           for (const s of snap.songs) {
@@ -86,6 +88,7 @@ export function useShopWebSocket(
         case 'shop_changed': {
           const delta = msg as ShopChangedMessage;
           // delta.added is now ShopSong[] (enriched), delta.removed is still string[]
+          expandAlbumArt(delta.added);
           setShopSongsMap(prev => {
             const next = new Map(prev ?? []);
             for (const id of delta.removed) next.delete(id);
