@@ -41,16 +41,21 @@ public sealed class PlayerStatsCalculator
             if (maxScores.TryGetValue(s.SongId, out var ms))
             {
                 var max = ms.GetByInstrument(instrument);
-                if (max.HasValue && max.Value > 0 && s.Score > max.Value)
-                    minLeeway = Math.Round(((double)s.Score / max.Value - 1.0) * 100.0, 1);
+                if (max.HasValue && max.Value > 0)
+                {
+                    var rawLeeway = Math.Round(((double)s.Score / max.Value - 1.0) * 100.0, 1);
+                    if (rawLeeway >= -5.0)
+                        minLeeway = rawLeeway;
+                    // else: score is well below CHOpt max → null (always included)
+                }
             }
 
             var totalEntries = population.GetValueOrDefault((s.SongId, instrument), 0);
 
             ValidScoreFallback? fallback = null;
-            if (minLeeway.HasValue && fallbacks is not null)
+            if (minLeeway.HasValue && minLeeway.Value > 0.0 && fallbacks is not null)
             {
-                // Find best fallback at leeway=0 (score <= max)
+                // Find best fallback at leeway=0 (score > max, needs substitution)
                 var key = (s.SongId, instrument);
                 if (fallbacks.TryGetValue(key, out var tierList) && tierList.Count > 0)
                     fallback = tierList[0]; // Already sorted best-first
@@ -65,18 +70,19 @@ public sealed class PlayerStatsCalculator
             });
         }
 
-        // Find distinct breakpoints (sorted ascending)
+        // Find distinct breakpoints (sorted ascending), capped to slider range [-5, 5]
         var breakpoints = classified
             .Where(c => c.MinLeeway.HasValue)
             .Select(c => c.MinLeeway!.Value)
+            .Where(x => x >= -5.0 && x <= 5.0)
             .Distinct()
             .OrderBy(x => x)
             .ToList();
 
-        // Always produce the base tier (minLeeway = null = strictest filtering)
+        // Always produce the base tier (minLeeway = null = scores well below CHOpt max)
         var tiers = new List<PlayerStatsTier>(breakpoints.Count + 1);
 
-        // Base tier: only scores at or below CHOpt max (+ fallbacks for over-threshold)
+        // Base tier: only scores with null minLeeway (< 95% of CHOpt max or no max available)
         tiers.Add(BuildTier(classified, minLeewayThreshold: null, totalSongs));
 
         // One tier per breakpoint: each includes scores up to that leeway
@@ -93,11 +99,11 @@ public sealed class PlayerStatsCalculator
         Dictionary<string, List<PlayerStatsTier>> perInstrumentTiers,
         int totalSongs)
     {
-        // Collect all distinct breakpoints across all instruments
+        // Collect all distinct breakpoints across all instruments, capped to slider range
         var allBreakpoints = new SortedSet<double>();
         foreach (var (_, tiers) in perInstrumentTiers)
             foreach (var t in tiers)
-                if (t.MinLeeway.HasValue)
+                if (t.MinLeeway.HasValue && t.MinLeeway.Value >= -5.0 && t.MinLeeway.Value <= 5.0)
                     allBreakpoints.Add(t.MinLeeway.Value);
 
         var result = new List<PlayerStatsTier>(allBreakpoints.Count + 1);
