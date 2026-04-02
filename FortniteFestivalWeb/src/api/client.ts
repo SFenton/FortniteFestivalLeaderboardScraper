@@ -26,6 +26,7 @@ import type {
   CompositeNeighborhoodResponse,
   LeaderboardRivalsListResponse,
 } from '@festival/core/api/serverTypes';
+import { expandWirePlayerResponse, expandWireSongsResponse } from '@festival/core/api/serverTypes';
 
 const BASE = '';
 
@@ -118,7 +119,7 @@ export const api = {
 
     if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
 
-    const data = await res.json() as SongsResponse;
+    const data = expandWireSongsResponse(await res.json());
     expandAlbumArt(data.songs);
     saveSongsCache(data, res.headers.get('etag'));
     return data;
@@ -139,7 +140,7 @@ export const api = {
     const qs = params.toString();
     return getWithETag<PlayerResponse>(
       `/api/player/${encodeURIComponent(accountId)}${qs ? `?${qs}` : ''}`,
-    ).then(normalizeDisplayName);
+    ).then(r => normalizeDisplayName(expandWirePlayerResponse(r as never)));
   },
 
   searchAccounts: (q: string, limit = 10) =>

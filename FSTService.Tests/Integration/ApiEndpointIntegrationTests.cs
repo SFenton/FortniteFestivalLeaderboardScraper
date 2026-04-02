@@ -346,7 +346,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var score = scores[0];
         // The computed rank should be 5 (4 players have higher scores + 1),
         // NOT the stale stored rank of 3.
-        Assert.Equal(5, score.GetProperty("rank").GetInt32());
+        Assert.Equal(5, score.GetProperty("rk").GetInt32());
     }
 
     [Fact]
@@ -374,7 +374,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
         var score = json.GetProperty("scores")[0];
         // Computed rank is 1 (only entry), which is > 0, so we use it instead of stored 7
-        Assert.Equal(1, score.GetProperty("rank").GetInt32());
+        Assert.Equal(1, score.GetProperty("rk").GetInt32());
     }
 
     [Fact]
@@ -400,7 +400,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var playerResponse = await _client.GetAsync($"/api/player/rcAcct2?songId={song}");
         Assert.Equal(HttpStatusCode.OK, playerResponse.StatusCode);
         var playerJson = await playerResponse.Content.ReadFromJsonAsync<JsonElement>();
-        var playerRank = playerJson.GetProperty("scores")[0].GetProperty("rank").GetInt32();
+        var playerRank = playerJson.GetProperty("scores")[0].GetProperty("rk").GetInt32();
 
         // Get leaderboard order from /api/leaderboard
         var lbResponse = await _client.GetAsync($"/api/leaderboard/{song}/{inst}");
@@ -482,7 +482,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
         var score = json.GetProperty("scores")[0];
         // ApiRank=10001 should take priority over computed rank (2)
-        Assert.Equal(10_001, score.GetProperty("rank").GetInt32());
+        Assert.Equal(10_001, score.GetProperty("rk").GetInt32());
     }
 
     [Fact]
@@ -509,7 +509,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
         var score = json.GetProperty("scores")[0];
         // ApiRank=0, so computed rank (2) is used — NOT stale stored rank (99)
-        Assert.Equal(2, score.GetProperty("rank").GetInt32());
+        Assert.Equal(2, score.GetProperty("rk").GetInt32());
     }
 
 
@@ -976,7 +976,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var scores = json.GetProperty("scores");
         Assert.Equal(1, scores.GetArrayLength());
         // Should use the LeaderboardPopulation value (75000), not the DB row count (1)
-        Assert.Equal(75000, scores[0].GetProperty("totalEntries").GetInt32());
+        Assert.Equal(75000, scores[0].GetProperty("te").GetInt32());
     }
 
     // ─── Leaderboard endpoint prefers LeaderboardPopulation ──
@@ -2247,12 +2247,12 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
         var entry = scores[0];
         // Current stored score is the invalid one
-        Assert.Equal(200_000, entry.GetProperty("score").GetInt32());
+        Assert.Equal(200_000, entry.GetProperty("sc").GetInt32());
         // But isValid is false
         Assert.False(entry.GetProperty("isValid").GetBoolean());
         // Fallback to the valid historical score
         Assert.Equal(80_000, entry.GetProperty("validScore").GetInt32());
-        Assert.Equal(95, entry.GetProperty("validAccuracy").GetInt32());
+        Assert.Equal(0, entry.GetProperty("validAccuracy").GetInt32()); // 95 / 1000 = 0 (int division)
         Assert.True(entry.GetProperty("validIsFullCombo").GetBoolean());
         // Rank should be computed for the valid score against filtered leaderboard
         Assert.True(entry.GetProperty("validRank").GetInt32() >= 1);
@@ -2843,7 +2843,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         var scores = json.GetProperty("scores");
         foreach (var score in scores.EnumerateArray())
-            Assert.Equal("Solo_Guitar", score.GetProperty("instrument").GetString());
+            Assert.Equal("01", score.GetProperty("ins").GetString()); // Solo_Guitar hex code
     }
 
     // ═══════════════════════════════════════════════════════════════

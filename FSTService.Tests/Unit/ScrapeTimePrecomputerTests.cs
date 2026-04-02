@@ -104,9 +104,9 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         Assert.Equal(1, scores.GetArrayLength());
 
         var score = scores[0];
-        Assert.Equal("s1", score.GetProperty("songId").GetString());
-        Assert.Equal(95000, score.GetProperty("score").GetInt32());
-        Assert.True(score.GetProperty("rank").GetInt32() > 0);
+        Assert.Equal("s1", score.GetProperty("si").GetString());
+        Assert.Equal(95000, score.GetProperty("sc").GetInt32());
+        Assert.True(score.GetProperty("rk").GetInt32() > 0);
     }
 
     [Fact]
@@ -124,7 +124,7 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
 
         var json = JsonDocument.Parse(result.Value.Json);
         var score = json.RootElement.GetProperty("scores")[0];
-        Assert.Equal(5.0, score.GetProperty("minLeeway").GetDouble());
+        Assert.Equal(50, score.GetProperty("ml").GetInt32());
     }
 
     [Fact]
@@ -146,12 +146,12 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         var score = json.RootElement.GetProperty("scores")[0];
 
         // Should have validScores array with the 99000 fallback
-        Assert.True(score.TryGetProperty("validScores", out var validScores));
+        Assert.True(score.TryGetProperty("vs", out var validScores));
         Assert.True(validScores.GetArrayLength() > 0);
 
         var fallback = validScores[0];
-        Assert.Equal(99000, fallback.GetProperty("score").GetInt32());
-        Assert.True(fallback.GetProperty("minLeeway").GetDouble() <= 0);
+        Assert.Equal(99000, fallback.GetProperty("sc").GetInt32());
+        Assert.True(fallback.GetProperty("ml").GetInt32() <= 0);
     }
 
     [Fact]
@@ -263,17 +263,17 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         Assert.NotNull(result);
 
         var json = JsonDocument.Parse(result.Value.Json);
-        var validScores = json.RootElement.GetProperty("scores")[0].GetProperty("validScores");
+        var validScores = json.RootElement.GetProperty("scores")[0].GetProperty("vs");
         var fallback = validScores[0];
 
         // Should have rankTiers
-        Assert.True(fallback.TryGetProperty("rankTiers", out var rankTiers));
+        Assert.True(fallback.TryGetProperty("rt", out var rankTiers));
         Assert.True(rankTiers.GetArrayLength() > 0);
 
         // Each tier should have leeway and rank
         var firstTier = rankTiers[0];
-        Assert.True(firstTier.TryGetProperty("leeway", out _));
-        Assert.True(firstTier.TryGetProperty("rank", out _));
+        Assert.True(firstTier.TryGetProperty("l", out _));
+        Assert.True(firstTier.TryGetProperty("r", out _));
     }
 
     [Fact]

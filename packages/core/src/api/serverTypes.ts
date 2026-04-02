@@ -653,3 +653,167 @@ export type CompositeNeighborhoodResponse = {
   self: CompositeNeighborEntry;
   below: CompositeNeighborEntry[];
 };
+
+// ═══════════════════════════════════════════════════════════════
+// Compact wire format types & transforms
+// ═══════════════════════════════════════════════════════════════
+//
+// The API transmits a bandwidth-optimised format with short field names,
+// instrument hex codes, accuracy ÷ 1000, and leeway × 10. The functions
+// below expand them back to the canonical types above so consumers need
+// no changes.
+
+/** Decode a single-instrument hex combo ID to the canonical instrument key. */
+function instrumentFromHex(hex: string): ServerInstrumentKey {
+  const mask = parseInt(hex, 16);
+  for (let bit = 0; bit < SERVER_INSTRUMENT_KEYS.length; bit++) {
+    if (mask & (1 << bit)) return SERVER_INSTRUMENT_KEYS[bit];
+  }
+  return SERVER_INSTRUMENT_KEYS[0]; // fallback
+}
+
+// ─── Player wire types ───────────────────────────────────────
+
+/** Wire format of a player score (compact keys). */
+type WirePlayerScore = {
+  si: string;
+  ins: string;
+  sc: number;
+  acc: number;
+  fc: boolean;
+  st: number;
+  dif: number;
+  sn: number;
+  pct: number;
+  rk: number;
+  et?: string;
+  te: number;
+  ml?: number | null;
+  vs?: WireValidScore[] | null;
+  // Legacy fallback fields (non-precomputed path only)
+  isValid?: boolean | null;
+  validScore?: number | null;
+  validAccuracy?: number | null;
+  validIsFullCombo?: boolean | null;
+  validStars?: number | null;
+  validRank?: number | null;
+  validTotalEntries?: number | null;
+};
+
+/** Wire format of a valid score variant. */
+type WireValidScore = {
+  sc: number;
+  acc?: number | null;
+  fc?: boolean | null;
+  st?: number | null;
+  ml: number;
+  rt?: WireRankTier[] | null;
+};
+
+/** Wire format of a rank tier changepoint. */
+type WireRankTier = { l: number; r: number };
+
+/** Wire format of the full player response. */
+type WirePlayerResponse = {
+  accountId: string;
+  displayName: string;
+  totalScores: number;
+  scores: WirePlayerScore[];
+};
+
+// ─── Population tier wire types (inside /api/songs) ─────────
+
+/** Wire format of PopulationTierData. */
+type WirePopulationTierData = { bc: number; t: WirePopulationTier[] };
+
+/** Wire format of a single population tier changepoint. */
+type WirePopulationTier = { l: number; t: number };
+
+/** Wire format of a song (only populationTiers changes). */
+type WireSong = Omit<ServerSong, 'populationTiers'> & {
+  populationTiers?: Partial<Record<ServerInstrumentKey, WirePopulationTierData>> | null;
+};
+
+/** Wire format of the songs response. */
+type WireSongsResponse = Omit<SongsResponse, 'songs'> & { songs: WireSong[] };
+
+// ─── Transform: player ───────────────────────────────────────
+
+function expandRankTier(w: WireRankTier): RankTier {
+  return { leeway: w.l / 10, rank: w.r };
+}
+
+function expandValidScore(w: WireValidScore): ValidScoreVariant {
+  return {
+    score: w.sc,
+    accuracy: w.acc != null ? w.acc * 1000 : w.acc,
+    fc: w.fc,
+    stars: w.st,
+    minLeeway: w.ml / 10,
+    rankTiers: w.rt?.map(expandRankTier),
+  };
+}
+
+function expandPlayerScore(w: WirePlayerScore): PlayerScore {
+  return {
+    songId: w.si,
+    instrument: instrumentFromHex(w.ins),
+    score: w.sc,
+    accuracy: w.acc * 1000,
+    isFullCombo: w.fc,
+    stars: w.st,
+    difficulty: w.dif,
+    season: w.sn,
+    percentile: w.pct,
+    rank: w.rk,
+    endTime: w.et,
+    totalEntries: w.te,
+    minLeeway: w.ml != null ? w.ml / 10 : w.ml,
+    validScores: w.vs?.map(expandValidScore),
+    // Legacy fallback fields (pass through, scaling accuracy)
+    isValid: w.isValid,
+    validScore: w.validScore,
+    validRank: w.validRank,
+    validAccuracy: w.validAccuracy != null ? w.validAccuracy * 1000 : w.validAccuracy,
+    validIsFullCombo: w.validIsFullCombo,
+    validStars: w.validStars,
+    validTotalEntries: w.validTotalEntries,
+  };
+}
+
+/** Expand a compact wire player response to the canonical PlayerResponse. */
+export function expandWirePlayerResponse(wire: WirePlayerResponse): PlayerResponse {
+  return {
+    accountId: wire.accountId,
+    displayName: wire.displayName,
+    totalScores: wire.totalScores,
+    scores: wire.scores.map(expandPlayerScore),
+  };
+}
+
+// ─── Transform: songs (population tiers only) ────────────────
+
+function expandPopulationTier(w: WirePopulationTier): PopulationTier {
+  return { leeway: w.l / 10, total: w.t };
+}
+
+function expandPopulationTierData(w: WirePopulationTierData): PopulationTierData {
+  return { baseCount: w.bc, tiers: w.t.map(expandPopulationTier) };
+}
+
+function expandSong(w: WireSong): ServerSong {
+  if (!w.populationTiers) return w as ServerSong;
+  const expanded: Partial<Record<ServerInstrumentKey, PopulationTierData>> = {};
+  for (const [key, val] of Object.entries(w.populationTiers)) {
+    if (val) expanded[key as ServerInstrumentKey] = expandPopulationTierData(val);
+  }
+  return { ...w, populationTiers: expanded } as ServerSong;
+}
+
+/** Expand a compact wire songs response to the canonical SongsResponse. */
+export function expandWireSongsResponse(wire: WireSongsResponse): SongsResponse {
+  return {
+    ...wire,
+    songs: wire.songs.map(expandSong),
+  };
+}

@@ -193,14 +193,14 @@ public sealed class ScrapeTimePrecomputer
             var baseCount = db.GetPopulationAtOrBelow(songId, lowerBound);
             var bandScores = db.GetScoresInBand(songId, lowerBound, upperBound);
 
-            // Build changepoints: each score maps to a leeway value
+            // Build changepoints: each score maps to a leeway value (int × 10)
             var tiers = new List<PopulationTier>();
             int cumulative = baseCount;
-            double prevLeeway = double.NegativeInfinity;
+            int prevLeeway = int.MinValue;
             foreach (var score in bandScores)
             {
                 cumulative++;
-                double leeway = Math.Round(((double)score / maxScore - 1.0) * 100.0, 1);
+                int leeway = (int)Math.Round(((double)score / maxScore - 1.0) * 1000.0);
                 // Only emit a new tier when leeway actually changes
                 if (leeway > prevLeeway)
                 {
@@ -336,7 +336,7 @@ public sealed class ScrapeTimePrecomputer
             {
                 var max = songMax.GetByInstrument(s.Instrument);
                 if (max.HasValue && max.Value > 0)
-                    minLeeway = Math.Round(((double)s.Score / max.Value - 1.0) * 100.0, 1);
+                    minLeeway = (int)Math.Round(((double)s.Score / max.Value - 1.0) * 1000.0);
             }
 
             // Build validScores with rankTiers for this entry
@@ -354,13 +354,13 @@ public sealed class ScrapeTimePrecomputer
                         // Skip the current score (it's already the primary entry)
                         if (fb.Score == s.Score) continue;
 
-                        var fbLeeway = Math.Round(((double)fb.Score / maxVal.Value - 1.0) * 100.0, 1);
+                        var fbLeeway = (int)Math.Round(((double)fb.Score / maxVal.Value - 1.0) * 1000.0);
                         var rankTiers = ComputeRankTiers(fb.Score, maxVal.Value, bandScores, key, s.Instrument);
 
                         validScores.Add(new PrecomputedValidScore
                         {
                             Score = fb.Score,
-                            Accuracy = fb.Accuracy,
+                            Accuracy = fb.Accuracy / 1000,
                             IsFullCombo = fb.IsFullCombo,
                             Stars = fb.Stars,
                             MinLeeway = fbLeeway,
@@ -376,9 +376,9 @@ public sealed class ScrapeTimePrecomputer
             enriched.Add(new PrecomputedPlayerScore
             {
                 SongId = s.SongId,
-                Instrument = s.Instrument,
+                Instrument = ComboIds.FromInstruments(new[] { s.Instrument }),
                 Score = s.Score,
-                Accuracy = s.Accuracy,
+                Accuracy = s.Accuracy / 1000,
                 IsFullCombo = s.IsFullCombo,
                 Stars = s.Stars,
                 Difficulty = s.Difficulty,
@@ -417,7 +417,7 @@ public sealed class ScrapeTimePrecomputer
             // No scores in the threshold band — rank is just basePopulation-based
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
             var baseRank = db.GetRankForScore(key.SongId, fallbackScore);
-            return [new RankTier { Leeway = -5.0, Rank = baseRank }];
+            return [new RankTier { Leeway = -50, Rank = baseRank }];
         }
 
         // The band scores are sorted ascending. We need to compute:
@@ -442,18 +442,18 @@ public sealed class ScrapeTimePrecomputer
 
         var tiers = new List<RankTier>();
         int cumAboveFallback = alwaysAbove;
-        double prevLeeway = double.NegativeInfinity;
+        int prevLeeway = int.MinValue;
         int prevRank = -1;
 
-        // At leeway = -5.0 (everything below 0.95*max), rank is alwaysAbove + 1
+        // At leeway = -50 (i.e. -5.0%, everything below 0.95*max), rank is alwaysAbove + 1
         int baseRankForTier = alwaysAbove + 1;
-        tiers.Add(new RankTier { Leeway = -5.0, Rank = baseRankForTier });
+        tiers.Add(new RankTier { Leeway = -50, Rank = baseRankForTier });
         prevRank = baseRankForTier;
-        prevLeeway = -5.0;
+        prevLeeway = -50;
 
         foreach (var score in bandScores)
         {
-            double leeway = Math.Round(((double)score / maxScore - 1.0) * 100.0, 1);
+            int leeway = (int)Math.Round(((double)score / maxScore - 1.0) * 1000.0);
             if (score > fallbackScore)
             {
                 cumAboveFallback++;
@@ -1265,34 +1265,34 @@ public sealed class ScrapeTimePrecomputer
 
     internal sealed class PrecomputedPlayerScore
     {
-        [JsonPropertyName("songId")] public string SongId { get; init; } = "";
-        [JsonPropertyName("instrument")] public string Instrument { get; init; } = "";
-        [JsonPropertyName("score")] public int Score { get; init; }
-        [JsonPropertyName("accuracy")] public int Accuracy { get; init; }
-        [JsonPropertyName("isFullCombo")] public bool IsFullCombo { get; init; }
-        [JsonPropertyName("stars")] public int Stars { get; init; }
-        [JsonPropertyName("difficulty")] public int Difficulty { get; init; }
-        [JsonPropertyName("season")] public int Season { get; init; }
-        [JsonPropertyName("percentile")] public double Percentile { get; init; }
-        [JsonPropertyName("rank")] public int Rank { get; init; }
-        [JsonPropertyName("endTime")] public string? EndTime { get; init; }
-        [JsonPropertyName("totalEntries")] public int TotalEntries { get; init; }
-        [JsonPropertyName("minLeeway")] public double? MinLeeway { get; init; }
-        [JsonPropertyName("validScores")]
+        [JsonPropertyName("si")] public string SongId { get; init; } = "";
+        [JsonPropertyName("ins")] public string Instrument { get; init; } = "";
+        [JsonPropertyName("sc")] public int Score { get; init; }
+        [JsonPropertyName("acc")] public int Accuracy { get; init; }
+        [JsonPropertyName("fc")] public bool IsFullCombo { get; init; }
+        [JsonPropertyName("st")] public int Stars { get; init; }
+        [JsonPropertyName("dif")] public int Difficulty { get; init; }
+        [JsonPropertyName("sn")] public int Season { get; init; }
+        [JsonPropertyName("pct")] public double Percentile { get; init; }
+        [JsonPropertyName("rk")] public int Rank { get; init; }
+        [JsonPropertyName("et")] public string? EndTime { get; init; }
+        [JsonPropertyName("te")] public int TotalEntries { get; init; }
+        [JsonPropertyName("ml")] public double? MinLeeway { get; init; }
+        [JsonPropertyName("vs")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public List<PrecomputedValidScore>? ValidScores { get; init; }
     }
 
     internal sealed class PrecomputedValidScore
     {
-        [JsonPropertyName("score")] public int Score { get; init; }
-        [JsonPropertyName("accuracy")] public int? Accuracy { get; init; }
+        [JsonPropertyName("sc")] public int Score { get; init; }
+        [JsonPropertyName("acc")] public int? Accuracy { get; init; }
         [JsonPropertyName("fc")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public bool? IsFullCombo { get; init; }
-        [JsonPropertyName("stars")] public int? Stars { get; init; }
-        [JsonPropertyName("minLeeway")] public double MinLeeway { get; init; }
-        [JsonPropertyName("rankTiers")]
+        [JsonPropertyName("st")] public int? Stars { get; init; }
+        [JsonPropertyName("ml")] public double MinLeeway { get; init; }
+        [JsonPropertyName("rt")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public List<RankTier>? RankTiers { get; init; }
     }
@@ -1301,20 +1301,20 @@ public sealed class ScrapeTimePrecomputer
 /// <summary>Precomputed population data for a (songId, instrument) pair.</summary>
 public sealed class PopulationTierData
 {
-    [JsonPropertyName("baseCount")] public int BaseCount { get; init; }
-    [JsonPropertyName("tiers")] public List<PopulationTier> Tiers { get; init; } = new();
+    [JsonPropertyName("bc")] public int BaseCount { get; init; }
+    [JsonPropertyName("t")] public List<PopulationTier> Tiers { get; init; } = new();
 }
 
-/// <summary>A single changepoint in the population tier curve.</summary>
+/// <summary>A single changepoint in the population tier curve. Leeway is stored as int × 10 (e.g. -50 = -5.0%).</summary>
 public sealed record PopulationTier
 {
-    [JsonPropertyName("leeway")] public double Leeway { get; init; }
-    [JsonPropertyName("total")] public int Total { get; init; }
+    [JsonPropertyName("l")] public int Leeway { get; init; }
+    [JsonPropertyName("t")] public int Total { get; init; }
 }
 
-/// <summary>A single changepoint in a fallback score's rank curve.</summary>
+/// <summary>A single changepoint in a fallback score's rank curve. Leeway is stored as int × 10 (e.g. -50 = -5.0%).</summary>
 public sealed record RankTier
 {
-    [JsonPropertyName("leeway")] public double Leeway { get; init; }
-    [JsonPropertyName("rank")] public int Rank { get; init; }
+    [JsonPropertyName("l")] public int Leeway { get; init; }
+    [JsonPropertyName("r")] public int Rank { get; init; }
 }
