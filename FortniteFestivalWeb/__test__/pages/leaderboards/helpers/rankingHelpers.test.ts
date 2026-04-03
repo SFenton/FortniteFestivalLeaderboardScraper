@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { computeRankWidth, formatRating } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
+import { computeRankWidth, formatRating, getSongsLabel } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
+import type { RankingMetric } from '@festival/core/api/serverTypes';
 import { Layout } from '@festival/theme';
 
 describe('computeRankWidth', () => {
@@ -52,4 +53,19 @@ describe('formatRating', () => {
   it('formats totalscore with locale separators', () => {
     expect(formatRating(1250000, 'totalscore')).toBe((1250000).toLocaleString());
   });
+});
+
+describe('getSongsLabel', () => {
+  const entry = { fullComboCount: 631, songsPlayed: 632, totalChartedSongs: 633 };
+
+  it('returns fullComboCount / songsPlayed for fcrate', () => {
+    expect(getSongsLabel(entry, 'fcrate')).toBe('631 / 632');
+  });
+
+  it.each<RankingMetric>(['adjusted', 'weighted', 'totalscore', 'maxscore'])(
+    'returns songsPlayed / totalChartedSongs for %s',
+    (metric) => {
+      expect(getSongsLabel(entry, metric)).toBe('632 / 633');
+    },
+  );
 });

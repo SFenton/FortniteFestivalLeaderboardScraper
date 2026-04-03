@@ -20,7 +20,7 @@ import InstrumentHeader from '../../components/display/InstrumentHeader';
 import type { ServerInstrumentKey as InstrumentKey, RankingMetric } from '@festival/core/api/serverTypes';
 import { InstrumentHeaderSize } from '@festival/core';
 import { serverInstrumentLabel, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
-import { getRankForMetric, formatRating, getRatingForMetric, RANKING_METRICS, EXPERIMENTAL_METRICS, computeRankWidth } from './helpers/rankingHelpers';
+import { getRankForMetric, formatRating, getRatingForMetric, getSongsLabel, RANKING_METRICS, EXPERIMENTAL_METRICS, computeRankWidth } from './helpers/rankingHelpers';
 import { loadLeaderboardRankBy, saveLeaderboardRankBy } from '../../utils/leaderboardSettings';
 import { rankingsCache } from '../../api/pageCache';
 import { useModalState } from '../../hooks/ui/useModalState';
@@ -241,7 +241,7 @@ export default function FullRankingsPage() {
             rank={getRankForMetric(e, metric)}
             displayName={e.displayName ?? e.accountId.slice(0, 8)}
             ratingLabel={formatRating(getRatingForMetric(e, metric), metric)}
-            songsLabel={`${e.songsPlayed} / ${e.totalChartedSongs}`}
+            songsLabel={getSongsLabel(e, metric)}
             isPlayer={e.accountId === player?.accountId}
             rankWidth={rankWidth}
           />
@@ -258,7 +258,7 @@ export default function FullRankingsPage() {
               rank={getRankForMetric(playerRanking, metric)}
               displayName={playerRanking.displayName ?? playerRanking.accountId.slice(0, 8)}
               ratingLabel={formatRating(getRatingForMetric(playerRanking, metric), metric)}
-              songsLabel={`${playerRanking.songsPlayed} / ${playerRanking.totalChartedSongs}`}
+              songsLabel={getSongsLabel(playerRanking, metric)}
               isPlayer
               rankWidth={playerRankWidth}
             />

@@ -8,7 +8,7 @@ import { RankingEntry } from './RankingEntry';
 import type { ServerInstrumentKey as InstrumentKey, AccountRankingEntry, AccountRankingDto, RankingMetric } from '@festival/core/api/serverTypes';
 import { Routes } from '../../../routes';
 import { parseApiError } from '../../../utils/apiError';
-import { getRankForMetric, formatRating, getRatingForMetric, computeRankWidth } from '../helpers/rankingHelpers';
+import { getRankForMetric, formatRating, getRatingForMetric, computeRankWidth, getSongsLabel } from '../helpers/rankingHelpers';
 import { staggerDelay } from '@festival/ui-utils';
 import {
   Colors, Font, Weight, Gap, Radius, Layout,
@@ -112,7 +112,7 @@ export default memo(function RankingCard({
                 rank={rank}
                 displayName={e.displayName ?? e.accountId.slice(0, 8)}
                 ratingLabel={formatRating(getRatingForMetric(e, metric), metric)}
-                songsLabel={`${e.songsPlayed} / ${e.totalChartedSongs}`}
+                songsLabel={getSongsLabel(e, metric)}
                 isPlayer={isPlayer}
                 rankWidth={rankWidth}
               />
@@ -135,7 +135,7 @@ export default memo(function RankingCard({
                 rank={rank}
                 displayName={playerRanking.displayName ?? playerRanking.accountId.slice(0, 8)}
                 ratingLabel={formatRating(getRatingForMetric(playerRanking, metric), metric)}
-                songsLabel={`${playerRanking.songsPlayed} / ${playerRanking.totalChartedSongs}`}
+                songsLabel={getSongsLabel(playerRanking, metric)}
                 isPlayer
                 rankWidth={playerRankWidth}
               />

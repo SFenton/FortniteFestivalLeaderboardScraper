@@ -23,6 +23,15 @@ export function getRatingForMetric(entry: AccountRankingEntry, metric: RankingMe
   }
 }
 
+/** Build the songs-column label, varying by metric. */
+export function getSongsLabel(
+  entry: Pick<AccountRankingEntry, 'fullComboCount' | 'songsPlayed' | 'totalChartedSongs'>,
+  metric: RankingMetric,
+): string {
+  if (metric === 'fcrate') return `${entry.fullComboCount} / ${entry.songsPlayed}`;
+  return `${entry.songsPlayed} / ${entry.totalChartedSongs}`;
+}
+
 /** Format a rating value for display based on the metric type. */
 export function formatRating(value: number, metric: RankingMetric): string {
   switch (metric) {
