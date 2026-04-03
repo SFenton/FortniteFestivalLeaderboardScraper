@@ -983,6 +983,50 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
     /// Should be called post-scrape.
     /// </summary>
     /// <returns>Number of rows updated.</returns>
+    public int RecomputeRanksForSong(string songId)
+    {
+        lock (_writeLock)
+        {
+            var conn = GetPersistentConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                UPDATE LeaderboardEntries
+                SET Rank = (
+                    SELECT cnt FROM (
+                        SELECT AccountId AS aid,
+                               ROW_NUMBER() OVER (
+                                   ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC
+                               ) AS cnt
+                        FROM LeaderboardEntries
+                        WHERE SongId = @songId AND Source = 'scrape'
+                    ) ranked
+                    WHERE ranked.aid = LeaderboardEntries.AccountId
+                )
+                WHERE SongId = @songId AND Source = 'scrape'
+                  AND Rank IS NOT (
+                    SELECT cnt FROM (
+                        SELECT AccountId AS aid,
+                               ROW_NUMBER() OVER (
+                                   ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC
+                               ) AS cnt
+                        FROM LeaderboardEntries
+                        WHERE SongId = @songId AND Source = 'scrape'
+                    ) ranked
+                    WHERE ranked.aid = LeaderboardEntries.AccountId
+                );
+            ";
+            cmd.Parameters.AddWithValue("@songId", songId);
+            return cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>
+    /// Batch-recompute the Rank column for scraped entries (Source = 'scrape') in every song.
+    /// Uses ROW_NUMBER window function to assign 1-based ranks ordered by
+    /// Score DESC, EndTime ASC. Backfill and neighbor entries keep their ApiRank.
+    /// Should be called post-scrape.
+    /// </summary>
+    /// <returns>Number of rows updated.</returns>
     public int RecomputeAllRanks()
     {
         lock (_writeLock)
@@ -1007,7 +1051,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 WHERE Source = 'scrape'
                   AND Rank IS NOT (
                     SELECT cnt FROM (
-                        SELECT AccountId AS aid, SongId AS sid,
+                        Select AccountId AS aid, SongId AS sid,
                                ROW_NUMBER() OVER (
                                    PARTITION BY SongId
                                    ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC

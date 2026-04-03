@@ -93,8 +93,9 @@ public sealed class SongsCacheService
         if (droppedSongs.Count > 0)
         {
             foreach (var d in droppedSongs)
-                Console.WriteLine($"[SongsCache] Dropped song from /api/songs: _title='{d._title}', track={(d.track is null ? "null" : "present")}, su={(d.track?.su is null ? "null" : $"'{d.track.su}'")}");
+                Console.Error.WriteLine($"[SongsCache] Dropped song from /api/songs: _title='{d._title}', track={(d.track is null ? "null" : "present")}, su={(d.track?.su is null ? "null" : $"'{d.track.su}'")}");
         }
+        Console.Error.WriteLine($"[SongsCache] BuildSongsJson: {allSongs.Count} total songs, {droppedSongs.Count} dropped, {allSongs.Count - droppedSongs.Count} returned");
         var songs = allSongs
             .Where(s => s.track?.su is not null)
             .Select(s =>

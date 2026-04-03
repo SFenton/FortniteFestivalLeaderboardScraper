@@ -41,6 +41,7 @@ public interface IInstrumentDatabase : IDisposable
 
     // ── Rank computation ─────────────────────────────────────────────
     int RecomputeAllRanks();
+    int RecomputeRanksForSong(string songId);
 
     // ── Pruning ──────────────────────────────────────────────────────
     int PruneExcessEntries(string songId, int maxEntries, IReadOnlySet<string> preserveAccountIds, int? overThresholdScore = null);

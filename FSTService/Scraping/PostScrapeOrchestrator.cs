@@ -141,7 +141,18 @@ public sealed class PostScrapeOrchestrator
         {
             try
             {
-                var rankUpdated = _persistence.RecomputeAllRanks();
+                int rankUpdated;
+                var changedSongs = ctx.Aggregates?.ChangedSongIds;
+                if (changedSongs is { Count: > 0 })
+                {
+                    _log.LogInformation("Recomputing ranks for {Count:N0} changed song(s) (of {Total:N0} total).",
+                        changedSongs.Count, ctx.ScrapeRequests.Count);
+                    rankUpdated = _persistence.RecomputeRanksForSongs(changedSongs);
+                }
+                else
+                {
+                    rankUpdated = _persistence.RecomputeAllRanks();
+                }
                 _log.LogInformation("Recomputed ranks across all instruments: {Count:N0} entries updated.", rankUpdated);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

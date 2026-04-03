@@ -184,7 +184,10 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         }
 
         // ── UPSERT all entries in one transaction ──
+        int countBefore = db.GetLeaderboardCount(result.SongId);
         var rowsAffected = db.UpsertEntries(result.SongId, result.Entries);
+        int countAfter = db.GetLeaderboardCount(result.SongId);
+        bool hasNewEntries = countAfter > countBefore;
 
         // ── Post-UPSERT: detect score changes for registered users ──
         var changedAccountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -251,6 +254,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
             RowsAffected = rowsAffected,
             ScoreChangesDetected = scoreChanges.Count,
             ChangedAccountIds = changedAccountIds,
+            HasNewEntries = hasNewEntries,
         };
     }
 
@@ -284,6 +288,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         private readonly ConcurrentDictionary<(string AccountId, string SongId, string Instrument), byte>
             _seenRegisteredEntries = new();
         private readonly ConcurrentDictionary<string, byte> _deferredAccountIds = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, byte> _changedSongIds = new(StringComparer.OrdinalIgnoreCase);
 
         public int TotalEntries => _totalEntries;
         public int TotalChanges => _totalChanges;
@@ -301,6 +306,9 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         /// <summary>Account IDs accumulated during scrape for bulk flush after drain.</summary>
         public ICollection<string> DeferredAccountIds => _deferredAccountIds.Keys;
 
+        /// <summary>Song IDs where entries were inserted or scores changed during this pass.</summary>
+        public IReadOnlyCollection<string> ChangedSongIds => _changedSongIds.Keys.ToArray();
+
         public void AddEntries(int count) => Interlocked.Add(ref _totalEntries, count);
         public void AddChanges(int count) => Interlocked.Add(ref _totalChanges, count);
         public void IncrementSongsWithData() => Interlocked.Increment(ref _songsWithData);
@@ -317,6 +325,9 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         {
             foreach (var e in entries) _seenRegisteredEntries.TryAdd(e, 0);
         }
+
+        /// <summary>Mark a song as having data changes (new entries or score changes).</summary>
+        public void AddChangedSongId(string songId) => _changedSongIds.TryAdd(songId, 0);
 
         /// <summary>Thread-safe HashSet built on ConcurrentDictionary.</summary>
         private sealed class ConcurrentHashSet : IReadOnlyCollection<string>
@@ -366,6 +377,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                         agg.AddChangedAccountIds(persistResult.ChangedAccountIds);
                         agg.AddEntries(item.Result.Entries.Count);
                         agg.AddChanges(persistResult.ScoreChangesDetected);
+                        if (persistResult.HasNewEntries || persistResult.ScoreChangesDetected > 0)
+                            agg.AddChangedSongId(item.Result.SongId);
 
                         // Track which registered users were seen in this result
                         if (item.RegisteredAccountIds is { Count: > 0 })
@@ -787,6 +800,49 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     }
 
     /// <summary>
+    /// Recompute the stored Rank column only for the specified songs across all instrument databases.
+    /// Much faster than <see cref="RecomputeAllRanks"/> when only a subset of songs changed.
+    /// Falls back to <see cref="RecomputeAllRanks"/> when <paramref name="songIds"/> is empty.
+    /// </summary>
+    public int RecomputeRanksForSongs(IReadOnlyCollection<string> songIds)
+    {
+        if (songIds.Count == 0)
+            return RecomputeAllRanks();
+
+        int total = 0;
+        if (_pgDataSource is not null)
+        {
+            foreach (var kvp in _instrumentDbs)
+            {
+                int instTotal = 0;
+                foreach (var songId in songIds)
+                    instTotal += kvp.Value.RecomputeRanksForSong(songId);
+                _log.LogInformation("Recomputed ranks for {Instrument}: {Updated} entries across {Songs} changed songs.",
+                    kvp.Key, instTotal, songIds.Count);
+                total += instTotal;
+            }
+        }
+        else
+        {
+            var results = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            Parallel.ForEach(_instrumentDbs, kvp =>
+            {
+                int instTotal = 0;
+                foreach (var songId in songIds)
+                    instTotal += kvp.Value.RecomputeRanksForSong(songId);
+                results[kvp.Key] = instTotal;
+            });
+            foreach (var (instrument, updated) in results)
+            {
+                _log.LogInformation("Recomputed ranks for {Instrument}: {Updated} entries across {Songs} changed songs.",
+                    instrument, updated, songIds.Count);
+                total += updated;
+            }
+        }
+        return total;
+    }
+
+    /// <summary>
     /// Get a list of all known instrument keys.
     /// </summary>
     public IReadOnlyList<string> GetInstrumentKeys()
@@ -901,6 +957,9 @@ public sealed class PersistResult
 
     /// <summary>Number of score changes detected for registered users.</summary>
     public int ScoreChangesDetected { get; init; }
+
+    /// <summary>Whether the upsert inserted any brand-new leaderboard entries.</summary>
+    public bool HasNewEntries { get; init; }
 
     /// <summary>
     /// Account IDs of registered users whose scores changed in this result.

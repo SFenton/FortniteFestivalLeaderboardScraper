@@ -308,13 +308,44 @@ public sealed class PgInstrumentDatabase : IInstrumentDatabase
 
     // ── Rank computation ─────────────────────────────────────────────
 
-    public int RecomputeAllRanks()
+    public int RecomputeRanksForSong(string songId)
     {
-        using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
-        cmd.CommandTimeout = 300; // Large UPDATE; default 30s too short for millions of rows
-        cmd.CommandText = "UPDATE leaderboard_entries le SET rank = sub.rn FROM (SELECT account_id, song_id, ROW_NUMBER() OVER (PARTITION BY song_id ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rn FROM leaderboard_entries WHERE instrument = @instrument AND source = 'scrape') sub WHERE le.song_id = sub.song_id AND le.account_id = sub.account_id AND le.instrument = @instrument AND le.source = 'scrape' AND le.rank IS DISTINCT FROM sub.rn";
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            "UPDATE leaderboard_entries le SET rank = sub.rn FROM " +
+            "(SELECT account_id, ROW_NUMBER() OVER (ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rn " +
+            "FROM leaderboard_entries WHERE song_id = @songId AND instrument = @instrument AND source = 'scrape') sub " +
+            "WHERE le.song_id = @songId AND le.account_id = sub.account_id " +
+            "AND le.instrument = @instrument AND le.source = 'scrape' " +
+            "AND le.rank IS DISTINCT FROM sub.rn";
+        cmd.Parameters.AddWithValue("songId", songId);
         cmd.Parameters.AddWithValue("instrument", Instrument);
         return cmd.ExecuteNonQuery();
+    }
+
+    public int RecomputeAllRanks()
+    {
+        // Fetch all distinct song IDs for this instrument.
+        var songIds = new List<string>();
+        using (var conn = _ds.OpenConnection())
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandTimeout = 60;
+            cmd.CommandText = "SELECT DISTINCT song_id FROM leaderboard_entries WHERE instrument = @instrument AND source = 'scrape'";
+            cmd.Parameters.AddWithValue("instrument", Instrument);
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) songIds.Add(r.GetString(0));
+        }
+
+        int total = 0;
+        for (int i = 0; i < songIds.Count; i++)
+        {
+            total += RecomputeRanksForSong(songIds[i]);
+            if ((i + 1) % 100 == 0)
+                _log.LogDebug("Rank recomputation progress for {Instrument}: {Done}/{Total} songs.", Instrument, i + 1, songIds.Count);
+        }
+        return total;
     }
 
     // ── Pruning ──────────────────────────────────────────────────────
