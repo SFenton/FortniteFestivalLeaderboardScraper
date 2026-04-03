@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "windows": "echo '{\"systemMessage\": \"IMPORTANT: Before starting work, check /memories/repo/ for existing architecture registries, domain knowledge, and consistency patterns. Read relevant memory files before researching or planning.\"}'",
+        "timeout": 5
+      }
+    ]
+  }
+}

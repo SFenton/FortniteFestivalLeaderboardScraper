@@ -3,6 +3,14 @@
         "playwright": {
             "command": "npx",
             "args": ["@playwright/mcp@latest", "--browser", "msedge"]
+        },
+        "fst-production": {
+            "command": "node",
+            "args": ["tools/mcp/fst-production-server.mjs"],
+            "env": {
+                "FST_BASE_URL": "${env:FST_BASE_URL}",
+                "FST_API_KEY": "${env:FST_API_KEY}"
+            }
         }
     }
 }

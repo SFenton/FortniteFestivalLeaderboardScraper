@@ -1,0 +1,11 @@
+{
+  "name": "fst-production-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only MCP server for querying production FSTService API",
+  "main": "fst-production-server.mjs",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}

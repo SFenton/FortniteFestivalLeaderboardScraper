@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "windows": "powershell -NoProfile -File tools/scripts/agent-evolution-hook.ps1",
+        "timeout": 10
+      }
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "windows": "powershell -NoProfile -File tools/scripts/test-after-edit-hook.ps1",
+        "timeout": 5
+      }
+    ]
+  }
+}

@@ -1,4 +1,5 @@
 {
+    "chat.subagents.allowInvocationsFromSubagents": true,
     "files.watcherExclude": {
         "**/node_modules/**": true,
         "**/FortniteFestivalRN/android/**": true,
