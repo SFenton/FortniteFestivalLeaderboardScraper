@@ -90,7 +90,7 @@ public sealed class ScrapeOrchestrator
         _progress.SetInstrumentTotals(instrumentTotals);
 
         // ── Pipelined: per-instrument channel writers ──
-        var aggregates = _persistence.StartWriters(opts.BoundedChannelCapacity, ct);
+        var aggregates = _persistence.StartWriters(opts.BoundedChannelCapacity, opts.WriteBatchSize, ct);
         int totalRequests = 0;
         long totalBytes = 0;
 

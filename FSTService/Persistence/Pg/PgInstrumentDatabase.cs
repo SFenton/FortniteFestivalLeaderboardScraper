@@ -16,6 +16,9 @@ public sealed class PgInstrumentDatabase : IInstrumentDatabase
     private readonly ILogger<PgInstrumentDatabase> _log;
     public string Instrument { get; }
 
+    /// <summary>Exposes the data source for batched writer transactions.</summary>
+    internal NpgsqlDataSource DataSource => _ds;
+
     /// <summary>Below this entry count, use the prepared-statement loop. Above, use COPY + merge.</summary>
     internal const int BulkThreshold = 50;
 
@@ -39,6 +42,20 @@ public sealed class PgInstrumentDatabase : IInstrumentDatabase
     }
 
     /// <summary>
+    /// Upsert entries using an externally managed connection and transaction.
+    /// Used by the pipelined writer to batch multiple songs into one PG transaction,
+    /// amortizing commit overhead.
+    /// </summary>
+    public int UpsertEntries(string songId, IReadOnlyList<LeaderboardEntry> entries,
+                             NpgsqlConnection conn, NpgsqlTransaction tx)
+    {
+        if (entries.Count == 0) return 0;
+        return entries.Count > BulkThreshold
+            ? UpsertEntriesBulk(songId, entries, conn, tx)
+            : UpsertEntriesLoop(songId, entries, conn, tx);
+    }
+
+    /// <summary>
     /// COPY binary into an unlogged temp table, then INSERT … SELECT … ON CONFLICT
     /// to merge into the real table in a single statement. 10-50x faster than the
     /// loop path for large batches.
@@ -48,6 +65,10 @@ public sealed class PgInstrumentDatabase : IInstrumentDatabase
         var now = DateTime.UtcNow;
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
+
+        // Disable synchronous WAL flush for this transaction — scrape data is
+        // re-scrape-able so we trade crash-safety for ~5-10x commit throughput.
+        using (var sc = conn.CreateCommand()) { sc.Transaction = tx; sc.CommandText = "SET LOCAL synchronous_commit = off"; sc.ExecuteNonQuery(); }
 
         // 1. Create unlogged temp table (dropped at transaction end)
         using (var c = conn.CreateCommand())
@@ -121,12 +142,156 @@ public sealed class PgInstrumentDatabase : IInstrumentDatabase
         return affected;
     }
 
+    /// <summary>Bulk upsert using an externally managed connection/transaction (for batched commits).</summary>
+    private int UpsertEntriesBulk(string songId, IReadOnlyList<LeaderboardEntry> entries,
+                                   NpgsqlConnection conn, NpgsqlTransaction tx)
+    {
+        var now = DateTime.UtcNow;
+
+        // Drop any leftover staging table from a previous song in this batch,
+        // then recreate. Cannot use ON COMMIT DROP here because the transaction
+        // spans multiple songs.
+        using (var c = conn.CreateCommand())
+        {
+            c.Transaction = tx;
+            c.CommandText = "DROP TABLE IF EXISTS _le_staging";
+            c.ExecuteNonQuery();
+        }
+        using (var c = conn.CreateCommand())
+        {
+            c.Transaction = tx;
+            c.CommandText =
+                "CREATE TEMP TABLE _le_staging (" +
+                "song_id TEXT, instrument TEXT, account_id TEXT, score INTEGER, accuracy INTEGER, " +
+                "is_full_combo BOOLEAN, stars INTEGER, season INTEGER, difficulty INTEGER, " +
+                "percentile DOUBLE PRECISION, rank INTEGER, end_time TEXT, api_rank INTEGER, " +
+                "source TEXT, ts TIMESTAMPTZ" +
+                ")";
+            c.ExecuteNonQuery();
+        }
+
+        using (var writer = conn.BeginBinaryImport(
+            "COPY _le_staging (song_id, instrument, account_id, score, accuracy, is_full_combo, " +
+            "stars, season, difficulty, percentile, rank, end_time, api_rank, source, ts) FROM STDIN (FORMAT BINARY)"))
+        {
+            foreach (var e in entries)
+            {
+                writer.StartRow();
+                writer.Write(songId, NpgsqlDbType.Text);
+                writer.Write(Instrument, NpgsqlDbType.Text);
+                writer.Write(e.AccountId, NpgsqlDbType.Text);
+                writer.Write(e.Score, NpgsqlDbType.Integer);
+                writer.Write(e.Accuracy, NpgsqlDbType.Integer);
+                writer.Write(e.IsFullCombo, NpgsqlDbType.Boolean);
+                writer.Write(e.Stars, NpgsqlDbType.Integer);
+                writer.Write(e.Season, NpgsqlDbType.Integer);
+                writer.Write(e.Difficulty, NpgsqlDbType.Integer);
+                writer.Write(e.Percentile, NpgsqlDbType.Double);
+                writer.Write(e.Rank, NpgsqlDbType.Integer);
+                if (e.EndTime is not null) writer.Write(e.EndTime, NpgsqlDbType.Text);
+                else writer.WriteNull();
+                if (e.ApiRank > 0) writer.Write(e.ApiRank, NpgsqlDbType.Integer);
+                else writer.WriteNull();
+                writer.Write(e.Source ?? "scrape", NpgsqlDbType.Text);
+                writer.Write(now, NpgsqlDbType.TimestampTz);
+            }
+            writer.Complete();
+        }
+
+        int affected;
+        using (var c = conn.CreateCommand())
+        {
+            c.Transaction = tx;
+            c.CommandText =
+                "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, first_seen_at, last_updated_at) " +
+                "SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, ts, ts FROM _le_staging " +
+                "ORDER BY song_id, instrument, account_id, score DESC " +
+                "ON CONFLICT(song_id, instrument, account_id) DO UPDATE SET " +
+                "score = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.score ELSE leaderboard_entries.score END, " +
+                "accuracy = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.accuracy ELSE leaderboard_entries.accuracy END, " +
+                "is_full_combo = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.is_full_combo ELSE leaderboard_entries.is_full_combo END, " +
+                "stars = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.stars ELSE leaderboard_entries.stars END, " +
+                "season = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.season ELSE leaderboard_entries.season END, " +
+                "difficulty = CASE WHEN EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0 THEN EXCLUDED.difficulty WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.difficulty ELSE leaderboard_entries.difficulty END, " +
+                "percentile = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.percentile WHEN EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0 THEN EXCLUDED.percentile ELSE leaderboard_entries.percentile END, " +
+                "rank = CASE WHEN EXCLUDED.rank > 0 THEN EXCLUDED.rank ELSE leaderboard_entries.rank END, " +
+                "api_rank = CASE WHEN EXCLUDED.api_rank > 0 THEN EXCLUDED.api_rank ELSE leaderboard_entries.api_rank END, " +
+                "source = CASE WHEN leaderboard_entries.source = 'scrape' THEN 'scrape' WHEN EXCLUDED.source = 'scrape' THEN 'scrape' WHEN leaderboard_entries.source = 'backfill' THEN 'backfill' WHEN EXCLUDED.source = 'backfill' THEN 'backfill' ELSE EXCLUDED.source END, " +
+                "end_time = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.end_time ELSE leaderboard_entries.end_time END, " +
+                "last_updated_at = EXCLUDED.last_updated_at";
+            affected = c.ExecuteNonQuery();
+        }
+
+        // Clean up staging table for the next song in this batch
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "DROP TABLE IF EXISTS _le_staging"; c.ExecuteNonQuery(); }
+
+        return affected;
+    }
+
+    /// <summary>Loop upsert using an externally managed connection/transaction (for batched commits).</summary>
+    private int UpsertEntriesLoop(string songId, IReadOnlyList<LeaderboardEntry> entries,
+                                   NpgsqlConnection conn, NpgsqlTransaction tx)
+    {
+        var now = DateTime.UtcNow;
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText =
+            "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, first_seen_at, last_updated_at) " +
+            "VALUES (@songId, @instrument, @accountId, @score, @accuracy, @fc, @stars, @season, @difficulty, @pct, @rank, @endTime, @apiRank, @source, @now, @now) " +
+            "ON CONFLICT(song_id, instrument, account_id) DO UPDATE SET " +
+            "score = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.score ELSE leaderboard_entries.score END, " +
+            "accuracy = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.accuracy ELSE leaderboard_entries.accuracy END, " +
+            "is_full_combo = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.is_full_combo ELSE leaderboard_entries.is_full_combo END, " +
+            "stars = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.stars ELSE leaderboard_entries.stars END, " +
+            "season = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.season ELSE leaderboard_entries.season END, " +
+            "difficulty = CASE WHEN EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0 THEN EXCLUDED.difficulty WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.difficulty ELSE leaderboard_entries.difficulty END, " +
+            "percentile = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.percentile WHEN EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0 THEN EXCLUDED.percentile ELSE leaderboard_entries.percentile END, " +
+            "rank = CASE WHEN EXCLUDED.rank > 0 THEN EXCLUDED.rank ELSE leaderboard_entries.rank END, " +
+            "api_rank = CASE WHEN EXCLUDED.api_rank > 0 THEN EXCLUDED.api_rank ELSE leaderboard_entries.api_rank END, " +
+            "source = CASE WHEN leaderboard_entries.source = 'scrape' THEN 'scrape' WHEN EXCLUDED.source = 'scrape' THEN 'scrape' WHEN leaderboard_entries.source = 'backfill' THEN 'backfill' WHEN EXCLUDED.source = 'backfill' THEN 'backfill' ELSE EXCLUDED.source END, " +
+            "end_time = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.end_time ELSE leaderboard_entries.end_time END, " +
+            "last_updated_at = EXCLUDED.last_updated_at";
+        var pSongId = cmd.Parameters.Add("songId", NpgsqlTypes.NpgsqlDbType.Text);
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        var pAccountId = cmd.Parameters.Add("accountId", NpgsqlTypes.NpgsqlDbType.Text);
+        var pScore = cmd.Parameters.Add("score", NpgsqlTypes.NpgsqlDbType.Integer);
+        var pAccuracy = cmd.Parameters.Add("accuracy", NpgsqlTypes.NpgsqlDbType.Integer);
+        var pFc = cmd.Parameters.Add("fc", NpgsqlTypes.NpgsqlDbType.Boolean);
+        var pStars = cmd.Parameters.Add("stars", NpgsqlTypes.NpgsqlDbType.Integer);
+        var pSeason = cmd.Parameters.Add("season", NpgsqlTypes.NpgsqlDbType.Integer);
+        var pDifficulty = cmd.Parameters.Add("difficulty", NpgsqlTypes.NpgsqlDbType.Integer);
+        var pPct = cmd.Parameters.Add("pct", NpgsqlTypes.NpgsqlDbType.Double);
+        var pRank = cmd.Parameters.Add("rank", NpgsqlTypes.NpgsqlDbType.Integer);
+        var pEndTime = cmd.Parameters.Add("endTime", NpgsqlTypes.NpgsqlDbType.Text);
+        var pApiRank = cmd.Parameters.Add("apiRank", NpgsqlTypes.NpgsqlDbType.Integer);
+        var pSource = cmd.Parameters.Add("source", NpgsqlTypes.NpgsqlDbType.Text);
+        var pNow = cmd.Parameters.Add("now", NpgsqlTypes.NpgsqlDbType.TimestampTz);
+        cmd.Prepare();
+        int affected = 0;
+        foreach (var entry in entries)
+        {
+            pSongId.Value = songId; pAccountId.Value = entry.AccountId; pScore.Value = entry.Score;
+            pAccuracy.Value = entry.Accuracy; pFc.Value = entry.IsFullCombo;
+            pStars.Value = entry.Stars; pSeason.Value = entry.Season; pDifficulty.Value = entry.Difficulty;
+            pPct.Value = entry.Percentile; pRank.Value = entry.Rank;
+            pEndTime.Value = (object?)entry.EndTime ?? DBNull.Value;
+            pApiRank.Value = entry.ApiRank > 0 ? entry.ApiRank : DBNull.Value;
+            pSource.Value = entry.Source ?? "scrape"; pNow.Value = now;
+            affected += cmd.ExecuteNonQuery();
+        }
+        return affected;
+    }
+
     /// <summary>Prepared-statement loop for small batches (&le; <see cref="BulkThreshold"/>).</summary>
     private int UpsertEntriesLoop(string songId, IReadOnlyList<LeaderboardEntry> entries)
     {
         var now = DateTime.UtcNow;
         using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
+
+        // Disable synchronous WAL flush — same rationale as UpsertEntriesBulk.
+        using (var sc = conn.CreateCommand()) { sc.Transaction = tx; sc.CommandText = "SET LOCAL synchronous_commit = off"; sc.ExecuteNonQuery(); }
+
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText =

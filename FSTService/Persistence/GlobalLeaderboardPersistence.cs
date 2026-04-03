@@ -160,7 +160,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// The number of rows affected and the set of account IDs seen in this result.
     /// </returns>
     public PersistResult PersistResult(GlobalLeaderboardResult result,
-                                       IReadOnlySet<string>? registeredAccountIds = null)
+                                       IReadOnlySet<string>? registeredAccountIds = null,
+                                       (NpgsqlConnection Conn, NpgsqlTransaction Tx)? pgConnTx = null)
     {
         var db = GetOrCreateInstrumentDb(result.Instrument);
 
@@ -183,11 +184,10 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 previousState = new Dictionary<string, LeaderboardEntry>(StringComparer.OrdinalIgnoreCase);
         }
 
-        // ── UPSERT all entries in one transaction ──
-        int countBefore = db.GetLeaderboardCount(result.SongId);
-        var rowsAffected = db.UpsertEntries(result.SongId, result.Entries);
-        int countAfter = db.GetLeaderboardCount(result.SongId);
-        bool hasNewEntries = countAfter > countBefore;
+        var rowsAffected = pgConnTx is not null && db is Pg.PgInstrumentDatabase pgDb
+            ? pgDb.UpsertEntries(result.SongId, result.Entries, pgConnTx.Value.Conn, pgConnTx.Value.Tx)
+            : db.UpsertEntries(result.SongId, result.Entries);
+        bool hasNewEntries = rowsAffected > 0 && result.Entries.Count > 0;
 
         // ── Post-UPSERT: detect score changes for registered users ──
         var changedAccountIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -347,9 +347,12 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// <summary>
     /// Start per-instrument writer tasks.  Call once before the scrape loop begins.
     /// Each instrument gets a bounded channel and a dedicated writer task.
+    /// When PostgreSQL is the backend, multiple work items are batched into a single
+    /// transaction to amortize commit overhead (biggest throughput multiplier).
     /// </summary>
-    /// <param name="channelCapacity">Per-instrument channel capacity (default 32).</param>
-    public PipelineAggregates StartWriters(int channelCapacity = 32, CancellationToken ct = default)
+    /// <param name="channelCapacity">Per-instrument channel capacity (default 128).</param>
+    /// <param name="writeBatchSize">Max work items per PG transaction (default 10).</param>
+    public PipelineAggregates StartWriters(int channelCapacity = 128, int writeBatchSize = 10, CancellationToken ct = default)
     {
         _aggregates = new PipelineAggregates();
         _channels = new Dictionary<string, Channel<PersistWorkItem>>(StringComparer.OrdinalIgnoreCase);
@@ -367,46 +370,118 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
             var db = _instrumentDbs[instrument];
             var agg = _aggregates;
+            var isPg = db is PgInstrumentDatabase;
             var task = Task.Run(async () =>
             {
-                await foreach (var item in channel.Reader.ReadAllAsync(ct))
-                {
-                    try
-                    {
-                        var persistResult = PersistResult(item.Result, item.RegisteredAccountIds);
-                        agg.AddChangedAccountIds(persistResult.ChangedAccountIds);
-                        agg.AddEntries(item.Result.Entries.Count);
-                        agg.AddChanges(persistResult.ScoreChangesDetected);
-                        if (persistResult.HasNewEntries || persistResult.ScoreChangesDetected > 0)
-                            agg.AddChangedSongId(item.Result.SongId);
-
-                        // Track which registered users were seen in this result
-                        if (item.RegisteredAccountIds is { Count: > 0 })
-                        {
-                            var seen = item.Result.Entries
-                                .Where(e => item.RegisteredAccountIds.Contains(e.AccountId))
-                                .Select(e => (e.AccountId, item.Result.SongId, item.Result.Instrument));
-                            agg.AddSeenRegisteredEntries(seen);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _log.LogError(ex, "Writer error for {Instrument}/{SongId}",
-                            item.Result.Instrument, item.Result.SongId);
-                    }
-                }
+                if (isPg && _pgDataSource is not null)
+                    await RunBatchedWriterAsync(channel.Reader, db, agg, writeBatchSize, ct);
+                else
+                    await RunSimpleWriterAsync(channel.Reader, db, agg, ct);
             }, ct);
 
             _writerTasks.Add(task);
         }
 
-        _log.LogInformation("Started {Count} per-instrument writer tasks.", _writerTasks.Count);
+        _log.LogInformation("Started {Count} per-instrument writer tasks (PG batching: {IsPg}, batch size: {BatchSize}).",
+            _writerTasks.Count, _pgDataSource is not null, writeBatchSize);
         return _aggregates;
+    }
+
+    /// <summary>Simple writer: one work item per transaction (SQLite path).</summary>
+    private async Task RunSimpleWriterAsync(ChannelReader<PersistWorkItem> reader,
+                                            IInstrumentDatabase db, PipelineAggregates agg,
+                                            CancellationToken ct)
+    {
+        await foreach (var item in reader.ReadAllAsync(ct))
+        {
+            try
+            {
+                ProcessWorkItem(item, db, agg, pgConnTx: null);
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Writer error for {Instrument}/{SongId}",
+                    item.Result.Instrument, item.Result.SongId);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Batched writer: drains up to <paramref name="batchSize"/> items from the channel
+    /// and processes them in a single PG transaction, amortizing commit overhead.
+    /// </summary>
+    private async Task RunBatchedWriterAsync(ChannelReader<PersistWorkItem> reader,
+                                             IInstrumentDatabase db, PipelineAggregates agg,
+                                             int batchSize, CancellationToken ct)
+    {
+        var pgDb = (PgInstrumentDatabase)db;
+        var batch = new List<PersistWorkItem>(batchSize);
+
+        while (await reader.WaitToReadAsync(ct))
+        {
+            // Drain up to batchSize items without blocking
+            batch.Clear();
+            while (batch.Count < batchSize && reader.TryRead(out var item))
+                batch.Add(item);
+
+            if (batch.Count == 0) continue;
+
+            try
+            {
+                using var conn = pgDb.DataSource.OpenConnection();
+                using var tx = conn.BeginTransaction();
+
+                // Disable synchronous WAL flush for the entire batch transaction
+                using (var sc = conn.CreateCommand()) { sc.Transaction = tx; sc.CommandText = "SET LOCAL synchronous_commit = off"; sc.ExecuteNonQuery(); }
+
+                foreach (var item in batch)
+                {
+                    try
+                    {
+                        ProcessWorkItem(item, db, agg, (conn, tx));
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.LogError(ex, "Writer error for {Instrument}/{SongId} (in batch)",
+                            item.Result.Instrument, item.Result.SongId);
+                    }
+                }
+
+                tx.Commit();
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "Batch commit failed for {Instrument} ({Count} items). Data will be retried next pass.",
+                    db.Instrument, batch.Count);
+            }
+        }
+    }
+
+    /// <summary>Processes a single work item: upsert, change detection, aggregate tracking.</summary>
+    private void ProcessWorkItem(PersistWorkItem item, IInstrumentDatabase db,
+                                  PipelineAggregates agg,
+                                  (NpgsqlConnection Conn, NpgsqlTransaction Tx)? pgConnTx)
+    {
+        var persistResult = PersistResult(item.Result, item.RegisteredAccountIds, pgConnTx);
+        agg.AddChangedAccountIds(persistResult.ChangedAccountIds);
+        agg.AddEntries(item.Result.Entries.Count);
+        agg.AddChanges(persistResult.ScoreChangesDetected);
+        if (persistResult.HasNewEntries || persistResult.ScoreChangesDetected > 0)
+            agg.AddChangedSongId(item.Result.SongId);
+
+        // Track which registered users were seen in this result
+        if (item.RegisteredAccountIds is { Count: > 0 })
+        {
+            var seen = item.Result.Entries
+                .Where(e => item.RegisteredAccountIds.Contains(e.AccountId))
+                .Select(e => (e.AccountId, item.Result.SongId, item.Result.Instrument));
+            agg.AddSeenRegisteredEntries(seen);
+        }
     }
 
     /// <summary>
     /// Enqueue a single instrument result for asynchronous persistence.
-    /// Non-blocking unless the channel is full (capacity 32), in which case
+    /// Non-blocking unless the channel is full (capacity 128), in which case
     /// it applies back-pressure to the caller — naturally throttling the
     /// scraper when persistence can't keep up.
     /// </summary>

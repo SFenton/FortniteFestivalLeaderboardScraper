@@ -234,9 +234,16 @@ public sealed class ScraperOptions
     /// <summary>
     /// Capacity of each per-instrument bounded channel in the persistence pipeline.
     /// Higher values allow more buffering between scraper and writer tasks; lower
-    /// values apply earlier back-pressure. Default 32.
+    /// values apply earlier back-pressure. Default 128.
     /// </summary>
-    public int BoundedChannelCapacity { get; set; } = 32;
+    public int BoundedChannelCapacity { get; set; } = 128;
+
+    /// <summary>
+    /// Maximum number of work items batched into a single PostgreSQL transaction
+    /// by the pipelined writer. Higher values reduce commit overhead but increase
+    /// transaction size and memory usage. Default 10.
+    /// </summary>
+    public int WriteBatchSize { get; set; } = 10;
 
     /// <summary>
     /// Number of leaderboard neighbors above/below to include when computing
