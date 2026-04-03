@@ -21,7 +21,7 @@ public class BatchResultProcessorTests : IDisposable
         loggerFactory.CreateLogger(Arg.Any<string>()).Returns(Substitute.For<ILogger>());
         loggerFactory.CreateLogger<InstrumentDatabase>().Returns(Substitute.For<ILogger<InstrumentDatabase>>());
         var persLog = Substitute.For<ILogger<GlobalLeaderboardPersistence>>();
-        _persistence = new GlobalLeaderboardPersistence(_dataDir, _metaDb.Db, loggerFactory, persLog);
+        _persistence = new GlobalLeaderboardPersistence(_metaDb.Db, loggerFactory, persLog, _metaDb.DataSource);
         _persistence.Initialize();
         _processor = new BatchResultProcessor(
             _persistence, Substitute.For<ILogger<BatchResultProcessor>>());

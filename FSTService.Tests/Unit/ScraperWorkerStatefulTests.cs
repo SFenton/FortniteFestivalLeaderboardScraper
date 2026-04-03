@@ -66,7 +66,6 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         {
             ResolveOnly = true,
             DataDirectory = _tempDir,
-            DatabasePath = Path.Combine(_tempDir, "core.db"),
         });
 
         await worker.StartAsync(CancellationToken.None);
@@ -494,23 +493,6 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
             Content = new ByteArrayContent(encrypted),
         });
 
-        var dbPath = Path.Combine(_tempDir, "core.db");
-        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}"))
-        {
-            conn.Open();
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
-                CREATE TABLE IF NOT EXISTS Songs (
-                    SongId TEXT PRIMARY KEY, Title TEXT,
-                    MaxLeadScore INTEGER, MaxBassScore INTEGER, MaxDrumsScore INTEGER,
-                    MaxVocalsScore INTEGER, MaxProLeadScore INTEGER, MaxProBassScore INTEGER,
-                    DatFileHash TEXT, SongLastModified TEXT, PathsGeneratedAt TEXT, CHOptVersion TEXT
-                );
-                INSERT INTO Songs (SongId, Title) VALUES ('testSong', 'Test Song');
-                """;
-            cmd.ExecuteNonQuery();
-        }
-
         var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
         var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
         var songsField = typeof(FestivalService).GetField("_songs", flags)!;
@@ -530,7 +512,6 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
         var opts = new ScraperOptions
         {
             DataDirectory = _tempDir,
-            DatabasePath = dbPath,
             DeviceAuthPath = Path.Combine(_tempDir, "device.json"),
             EnablePathGeneration = true,
             MidiEncryptionKey = keyHex,
@@ -543,9 +524,23 @@ public class ScraperWorkerStatefulTests : ScraperWorkerTestBase
 
         var worker = CreateWorkerWithHttp(opts, handler);
 
+        // Ensure the song row exists in PG so UpdateMaxScores can UPDATE it
+        var storeField = typeof(ScraperWorker).GetField("_pathDataStore",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var store = (PathDataStore)storeField.GetValue(worker)!;
+        var dsField = typeof(PathDataStore).GetField("_ds",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var ds = (Npgsql.NpgsqlDataSource)dsField.GetValue(store)!;
+        using (var seedConn = ds.OpenConnection())
+        {
+            using var seedCmd = seedConn.CreateCommand();
+            seedCmd.CommandText = "INSERT INTO songs (song_id, title) VALUES ('testSong', 'Test Song') ON CONFLICT DO NOTHING";
+            seedCmd.ExecuteNonQuery();
+        }
+
         await worker.TryGeneratePathsAsync(service, force: false, CancellationToken.None);
 
-        var store = new PathDataStore(dbPath);
+        // Verify path generation ran by checking the worker's PathDataStore via reflection
         var state = store.GetPathGenerationState();
         var allScores = store.GetAllMaxScores();
 

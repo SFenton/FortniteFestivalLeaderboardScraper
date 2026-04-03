@@ -2,7 +2,6 @@ namespace FSTService.Persistence;
 
 /// <summary>
 /// Abstraction over the central metadata database.
-/// Implemented by MetaDatabase (SQLite) and PgMetaDatabase (PostgreSQL).
 /// </summary>
 public interface IMetaDatabase : IDisposable
 {

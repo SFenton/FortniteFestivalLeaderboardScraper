@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
@@ -426,25 +427,17 @@ public sealed class PathGeneratorOrchestrationTests : IDisposable
     [Fact]
     public async Task End_to_end_generate_and_persist_to_PathDataStore()
     {
-        // Set up a real Songs table + PathDataStore so we can verify DB persistence
-        var dbPath = Path.Combine(_tempDir, "e2e.db");
-        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}"))
+        // Set up PathDataStore backed by PG
+        var ds = SharedPostgresContainer.CreateDatabase();
+        // Ensure a Songs row exists
+        using (var conn = ds.OpenConnection())
         {
-            conn.Open();
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
-                CREATE TABLE Songs (
-                    SongId TEXT PRIMARY KEY, Title TEXT,
-                    MaxLeadScore INTEGER, MaxBassScore INTEGER, MaxDrumsScore INTEGER,
-                    MaxVocalsScore INTEGER, MaxProLeadScore INTEGER, MaxProBassScore INTEGER,
-                    DatFileHash TEXT, SongLastModified TEXT, PathsGeneratedAt TEXT, CHOptVersion TEXT
-                );
-                INSERT INTO Songs (SongId, Title) VALUES ('testSong', 'Test Song');
-                """;
+            cmd.CommandText = "INSERT INTO songs (song_id) VALUES ('testSong') ON CONFLICT DO NOTHING;";
             cmd.ExecuteNonQuery();
         }
 
-        var store = new PathDataStore(dbPath);
+        var store = new PathDataStore(ds);
         var midi = BuildMinimalMidi();
         var encrypted = EncryptMidi(midi);
 

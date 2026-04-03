@@ -4,6 +4,7 @@ using FSTService.Api;
 using FSTService.Auth;
 using FSTService.Persistence;
 using FSTService.Scraping;
+using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -14,6 +15,7 @@ namespace FSTService.Tests.Unit;
 public class PostScrapeOrchestratorTests : IDisposable
 {
     private readonly string _tempDir;
+    private readonly InMemoryMetaDatabase _metaFixture = new();
     private readonly MetaDatabase _metaDb;
     private readonly GlobalLeaderboardPersistence _persistence;
 
@@ -35,15 +37,14 @@ public class PostScrapeOrchestratorTests : IDisposable
         _tempDir = Path.Combine(Path.GetTempPath(), $"pso_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
 
-        _metaDb = new MetaDatabase(
-            Path.Combine(_tempDir, "meta.db"),
+        _metaDb = new MetaDatabase(_metaFixture.DataSource,
             Substitute.For<ILogger<MetaDatabase>>());
-        _metaDb.EnsureSchema();
 
         _persistence = new GlobalLeaderboardPersistence(
-            _tempDir, _metaDb,
+            _metaDb,
             Substitute.For<ILoggerFactory>(),
-            Substitute.For<ILogger<GlobalLeaderboardPersistence>>());
+            Substitute.For<ILogger<GlobalLeaderboardPersistence>>(),
+            _metaFixture.DataSource);
         _persistence.Initialize();
 
         var noOpHandler = new NoOpHttpHandler();
@@ -92,7 +93,7 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         _notifications = new NotificationService(Substitute.For<ILogger<NotificationService>>());
         _progress = new ScrapeProgressTracker();
-        _pathDataStore = new PathDataStore(Path.Combine(_tempDir, "core.db"));
+        _pathDataStore = new PathDataStore(SharedPostgresContainer.CreateDatabase());
         _log = Substitute.For<ILogger<PostScrapeOrchestrator>>();
 
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
@@ -117,6 +118,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         _pool.Dispose();
         _persistence.Dispose();
         _metaDb.Dispose();
+        _metaFixture.Dispose();
         try { Directory.Delete(_tempDir, true); } catch { }
     }
 
@@ -501,31 +503,13 @@ public class PostScrapeOrchestratorTests : IDisposable
 
     private static void EnsureSongRow(PathDataStore pathStore, string songId)
     {
-        var connField = typeof(PathDataStore)
-            .GetField("_connectionString", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-        var connStr = (string)connField.GetValue(pathStore)!;
-
-        using var conn = new Microsoft.Data.Sqlite.SqliteConnection(connStr);
-        conn.Open();
+        var dsField = typeof(PathDataStore)
+            .GetField("_ds", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var ds = (Npgsql.NpgsqlDataSource)dsField.GetValue(pathStore)!;
+        using var conn = ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            CREATE TABLE IF NOT EXISTS Songs (
-                SongId TEXT PRIMARY KEY,
-                Title TEXT,
-                MaxLeadScore INTEGER,
-                MaxBassScore INTEGER,
-                MaxDrumsScore INTEGER,
-                MaxVocalsScore INTEGER,
-                MaxProLeadScore INTEGER,
-                MaxProBassScore INTEGER,
-                DatFileHash TEXT,
-                SongLastModified TEXT,
-                PathsGeneratedAt TEXT,
-                CHOptVersion TEXT
-            );
-            INSERT OR IGNORE INTO Songs (SongId, Title) VALUES (@songId, 'Test Song');
-            """;
-        cmd.Parameters.AddWithValue("@songId", songId);
+        cmd.CommandText = "INSERT INTO songs (song_id) VALUES (@sid) ON CONFLICT DO NOTHING";
+        cmd.Parameters.AddWithValue("sid", songId);
         cmd.ExecuteNonQuery();
     }
 
@@ -697,10 +681,10 @@ public class PostScrapeOrchestratorTests : IDisposable
         // Pre-warm cache for user-warm
         _persistence.PreWarmRankingsCache(new HashSet<string> { "user-warm" });
 
-        // Subsequent call should return the same cached instance (not re-query)
+        // Verify rankings data is correct (PG has no in-memory cache, so each call is a fresh query)
         var first = db.GetPlayerRankings("user-warm");
         var second = db.GetPlayerRankings("user-warm");
-        Assert.Same(first, second);
+        Assert.Equal(first, second);
         Assert.Single(first);
         Assert.Equal(1, first["song_1"]); // rank 1 (top score)
     }
@@ -735,13 +719,12 @@ public class PostScrapeOrchestratorTests : IDisposable
             AccountId = "p1", Score = 1000, Accuracy = 95, Stars = 5, Season = 3,
         }]);
 
-        // Drop SongStats table to make ComputeAccountRankings fail
-        var connStr = $"Data Source={Path.Combine(_tempDir, "fst-Solo_Guitar.db")}";
-        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection(connStr))
+        // Drop song_stats table via PG to make ComputeAccountRankings fail
+        var pgDb = (InstrumentDatabase)db;
+        using (var conn = pgDb.DataSource.OpenConnection())
         {
-            conn.Open();
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = "DROP TABLE IF EXISTS SongStats;";
+            cmd.CommandText = "DROP TABLE IF EXISTS song_stats_solo_guitar;";
             cmd.ExecuteNonQuery();
         }
 

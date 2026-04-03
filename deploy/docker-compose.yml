@@ -63,7 +63,6 @@ services:
     environment:
       - DOTNET_ENVIRONMENT=Production
       # ── Database ──
-      - DatabaseProvider=PostgreSQL
       - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=fstservice;Username=fst;Password=${PG_PASSWORD:?Set PG_PASSWORD in .env};Minimum Pool Size=5;Maximum Pool Size=50;Connection Idle Lifetime=300;Command Timeout=30
       # ── Required secrets (override defaults from appsettings.json) ──
       # Generate with: openssl rand -hex 32

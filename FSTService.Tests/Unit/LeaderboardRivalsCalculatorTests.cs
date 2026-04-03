@@ -22,8 +22,9 @@ public sealed class LeaderboardRivalsCalculatorTests : IDisposable
         Directory.CreateDirectory(_dataDir);
 
         _persistence = new GlobalLeaderboardPersistence(
-            _dataDir, _metaFixture.Db, new NullLoggerFactory(),
-            NullLogger<GlobalLeaderboardPersistence>.Instance);
+            _metaFixture.Db, new NullLoggerFactory(),
+            NullLogger<GlobalLeaderboardPersistence>.Instance,
+            _metaFixture.DataSource);
         _persistence.Initialize();
 
         _sut = new LeaderboardRivalsCalculator(
@@ -183,12 +184,11 @@ public sealed class LeaderboardRivalsCalculatorTests : IDisposable
         Assert.NotEmpty(initialRivals);
 
         // Now clear AccountRankings (simulating a failed or empty ranking computation)
-        var dbPath = Path.Combine(_dataDir, "fst-Solo_Guitar.db");
-        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}"))
+        var pgDb = (InstrumentDatabase)db;
+        using (var conn = pgDb.DataSource.OpenConnection())
         {
-            conn.Open();
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = "DELETE FROM AccountRankings;";
+            cmd.CommandText = "DELETE FROM account_rankings WHERE instrument = 'Solo_Guitar';";
             cmd.ExecuteNonQuery();
         }
 
@@ -216,12 +216,11 @@ public sealed class LeaderboardRivalsCalculatorTests : IDisposable
         Assert.NotEmpty(initialRivals);
 
         // Remove the neighbor so user is ranked but alone (no neighbors in radius)
-        var dbPath = Path.Combine(_dataDir, "fst-Solo_Guitar.db");
-        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}"))
+        var pgDb = (InstrumentDatabase)db;
+        using (var conn = pgDb.DataSource.OpenConnection())
         {
-            conn.Open();
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = "DELETE FROM LeaderboardEntries WHERE AccountId = 'neighbor';";
+            cmd.CommandText = "DELETE FROM leaderboard_entries WHERE account_id = 'neighbor' AND instrument = 'Solo_Guitar';";
             cmd.ExecuteNonQuery();
         }
 

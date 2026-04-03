@@ -467,3 +467,62 @@ public sealed class ComboLeaderboardEntry
     public int FullComboCount { get; init; }
     public string ComputedAt { get; init; } = "";
 }
+
+/// <summary>
+/// Summary of a completed scrape run.
+/// </summary>
+public sealed class ScrapeRunInfo
+{
+    public long Id { get; init; }
+    public string StartedAt { get; init; } = "";
+    public string? CompletedAt { get; init; }
+    public int SongsScraped { get; init; }
+    public long TotalEntries { get; init; }
+    public int TotalRequests { get; init; }
+    public long TotalBytes { get; init; }
+}
+
+/// <summary>
+/// Max attainable scores for a song, one per instrument.
+/// </summary>
+public sealed class SongMaxScores
+{
+    public int? MaxLeadScore { get; set; }
+    public int? MaxBassScore { get; set; }
+    public int? MaxDrumsScore { get; set; }
+    public int? MaxVocalsScore { get; set; }
+    public int? MaxProLeadScore { get; set; }
+    public int? MaxProBassScore { get; set; }
+    public string? GeneratedAt { get; set; }
+    public string? CHOptVersion { get; set; }
+
+    /// <summary>
+    /// Get max score by instrument DB name (e.g., "Solo_Guitar").
+    /// </summary>
+    public int? GetByInstrument(string instrument) => instrument switch
+    {
+        "Solo_Guitar" => MaxLeadScore,
+        "Solo_Bass" => MaxBassScore,
+        "Solo_Drums" => MaxDrumsScore,
+        "Solo_Vocals" => MaxVocalsScore,
+        "Solo_PeripheralGuitar" => MaxProLeadScore,
+        "Solo_PeripheralBass" => MaxProBassScore,
+        _ => null,
+    };
+
+    /// <summary>
+    /// Set max score by instrument DB name.
+    /// </summary>
+    public void SetByInstrument(string instrument, int? score)
+    {
+        switch (instrument)
+        {
+            case "Solo_Guitar": MaxLeadScore = score; break;
+            case "Solo_Bass": MaxBassScore = score; break;
+            case "Solo_Drums": MaxDrumsScore = score; break;
+            case "Solo_Vocals": MaxVocalsScore = score; break;
+            case "Solo_PeripheralGuitar": MaxProLeadScore = score; break;
+            case "Solo_PeripheralBass": MaxProBassScore = score; break;
+        }
+    }
+}

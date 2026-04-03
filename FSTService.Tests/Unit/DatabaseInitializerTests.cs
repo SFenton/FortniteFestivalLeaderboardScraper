@@ -12,27 +12,24 @@ namespace FSTService.Tests.Unit;
 
 public class DatabaseInitializerTests : IDisposable
 {
-    private readonly string _dataDir;
     private readonly InMemoryMetaDatabase _metaFixture;
     private readonly GlobalLeaderboardPersistence _persistence;
 
     public DatabaseInitializerTests()
     {
-        _dataDir = Path.Combine(Path.GetTempPath(), $"fst_dbinit_{Guid.NewGuid():N}");
-        Directory.CreateDirectory(_dataDir);
         _metaFixture = new InMemoryMetaDatabase();
         var loggerFactory = Substitute.For<ILoggerFactory>();
         loggerFactory.CreateLogger(Arg.Any<string>()).Returns(Substitute.For<ILogger>());
         _persistence = new GlobalLeaderboardPersistence(
-            _dataDir, _metaFixture.Db, loggerFactory,
-            Substitute.For<ILogger<GlobalLeaderboardPersistence>>());
+            _metaFixture.Db, loggerFactory,
+            Substitute.For<ILogger<GlobalLeaderboardPersistence>>(),
+            _metaFixture.DataSource);
     }
 
     public void Dispose()
     {
         _persistence.Dispose();
         _metaFixture.Dispose();
-        try { Directory.Delete(_dataDir, true); } catch { }
     }
 
     [Fact]
@@ -44,9 +41,9 @@ public class DatabaseInitializerTests : IDisposable
             Substitute.For<ILogger<ItemShopService>>());
         var lifetime = Substitute.For<IHostApplicationLifetime>();
 
-        var init = new DatabaseInitializer(
+        var init = new StartupInitializer(
             _persistence, festivalService, shopService, lifetime,
-            Substitute.For<ILogger<DatabaseInitializer>>());
+            Substitute.For<ILogger<StartupInitializer>>());
 
         Assert.False(init.IsReady);
         var result = await init.CheckHealthAsync(new HealthCheckContext());
@@ -62,9 +59,9 @@ public class DatabaseInitializerTests : IDisposable
             Substitute.For<ILogger<ItemShopService>>());
         var lifetime = Substitute.For<IHostApplicationLifetime>();
 
-        var init = new DatabaseInitializer(
+        var init = new StartupInitializer(
             _persistence, festivalService, shopService, lifetime,
-            Substitute.For<ILogger<DatabaseInitializer>>());
+            Substitute.For<ILogger<StartupInitializer>>());
 
         await init.StartAsync(CancellationToken.None);
 
@@ -86,9 +83,9 @@ public class DatabaseInitializerTests : IDisposable
             Substitute.For<ILogger<ItemShopService>>());
         var lifetime = Substitute.For<IHostApplicationLifetime>();
 
-        var init = new DatabaseInitializer(
+        var init = new StartupInitializer(
             _persistence, festivalService, shopService, lifetime,
-            Substitute.For<ILogger<DatabaseInitializer>>());
+            Substitute.For<ILogger<StartupInitializer>>());
 
         await init.StopAsync(CancellationToken.None);
     }

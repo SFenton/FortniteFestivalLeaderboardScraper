@@ -1,10 +1,30 @@
 services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: fst-postgres
+    restart: unless-stopped
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=fstservice
+      - POSTGRES_USER=fst
+      - POSTGRES_PASSWORD=${PG_PASSWORD:-fst_dev}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fst -d fstservice"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   fstservice:
     build:
       context: .
       dockerfile: FSTService/Dockerfile
     container_name: fstservice
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - ./fst-data:/app/data
     # Bind to localhost only — not exposed to the network.
@@ -13,6 +33,8 @@ services:
       - "127.0.0.1:8080:8080"
     environment:
       - DOTNET_ENVIRONMENT=Production
+      # ── Database ──
+      - ConnectionStrings__PostgreSQL=Host=postgres;Port=5432;Database=fstservice;Username=fst;Password=${PG_PASSWORD:-fst_dev};Minimum Pool Size=5;Maximum Pool Size=50;Connection Idle Lifetime=300;Command Timeout=30
       # ── Required secrets (override defaults from appsettings.json) ──
       # Generate with: openssl rand -hex 32
       - Api__ApiKey=${API_KEY:?Set API_KEY in .env}
@@ -56,3 +78,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+volumes:
+  pg-data:

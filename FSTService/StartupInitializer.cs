@@ -6,17 +6,17 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 namespace FSTService;
 
 /// <summary>
-/// Initializes all SQLite database schemas and eagerly loads the song catalog
+/// Initializes database schemas and eagerly loads the song catalog
 /// as a background hosted service, allowing Kestrel to start accepting connections
 /// immediately. Implements <see cref="IHealthCheck"/> for the /readyz endpoint.
 /// </summary>
-public sealed class DatabaseInitializer : IHostedService, IHealthCheck
+public sealed class StartupInitializer : IHostedService, IHealthCheck
 {
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly FestivalService _festivalService;
     private readonly ItemShopService _shopService;
     private readonly IHostApplicationLifetime _lifetime;
-    private readonly ILogger<DatabaseInitializer> _log;
+    private readonly ILogger<StartupInitializer> _log;
     private readonly TaskCompletionSource _readySignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>True once databases and song catalog are fully initialized.</summary>
@@ -26,12 +26,12 @@ public sealed class DatabaseInitializer : IHostedService, IHealthCheck
     public Task WaitForReadyAsync(CancellationToken ct = default)
         => _readySignal.Task.WaitAsync(ct);
 
-    public DatabaseInitializer(
+    public StartupInitializer(
         GlobalLeaderboardPersistence persistence,
         FestivalService festivalService,
         ItemShopService shopService,
         IHostApplicationLifetime lifetime,
-        ILogger<DatabaseInitializer> log)
+        ILogger<StartupInitializer> log)
     {
         _persistence = persistence;
         _festivalService = festivalService;

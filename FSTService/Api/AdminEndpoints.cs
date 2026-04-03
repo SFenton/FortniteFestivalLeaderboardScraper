@@ -402,53 +402,5 @@ public static partial class ApiEndpoints
         .WithTags("Leaderboard")
         .RequireAuthorization()
         .RequireRateLimiting("protected");
-
-        // ── Backfill max scores from SQLite → PG ────────────────────────
-        app.MapPost("/api/admin/backfill-max-scores", async (
-            IPathDataStore pathStore,
-            SongsCacheService songsCache,
-            ScrapeTimePrecomputer precomputer,
-            FortniteFestival.Core.Services.FestivalService festivalService,
-            IMetaDatabase metaDb,
-            IOptions<ScraperOptions> scraperOptions,
-            IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> jsonOptions,
-            ILoggerFactory loggerFactory,
-            CancellationToken ct) =>
-        {
-            var log = loggerFactory.CreateLogger("AdminEndpoints");
-
-            // Read max scores from SQLite fst-service.db (always on disk)
-            var opts = scraperOptions.Value;
-            var sqliteDbPath = Path.GetFullPath(opts.DatabasePath);
-            if (!File.Exists(sqliteDbPath))
-                return Results.Problem($"SQLite song DB not found at {sqliteDbPath}.");
-
-            var sqliteStore = new PathDataStore(sqliteDbPath);
-            var sqliteMaxScores = sqliteStore.GetAllMaxScores();
-            if (sqliteMaxScores.Count == 0)
-                return Results.Ok(new { message = "No max scores found in SQLite DB.", updated = 0 });
-
-            // Write each to the active IPathDataStore (PG in PG mode, SQLite otherwise)
-            var pathState = sqliteStore.GetPathGenerationState();
-            var updated = 0;
-            foreach (var (songId, scores) in sqliteMaxScores)
-            {
-                pathState.TryGetValue(songId, out var state);
-                pathStore.UpdateMaxScores(songId, scores, state.Hash ?? "", state.LastModified);
-                updated++;
-            }
-
-            songsCache.Prime(festivalService, pathStore, metaDb, precomputer, jsonOptions.Value.SerializerOptions);
-
-            // Re-run precomputation so player responses include minLeeway + validScores
-            log.LogInformation("Backfilled max scores for {Count} songs. Running precomputation...", updated);
-            await precomputer.PrecomputeAllAsync(ct);
-            log.LogInformation("Precomputation complete after max-score backfill.");
-
-            return Results.Ok(new { message = $"Backfilled max scores for {updated} songs and recomputed player data.", updated });
-        })
-        .WithTags("Admin")
-        .RequireAuthorization()
-        .RequireRateLimiting("protected");
     }
 }

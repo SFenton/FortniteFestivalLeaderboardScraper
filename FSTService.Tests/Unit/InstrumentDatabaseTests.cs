@@ -485,34 +485,35 @@ public sealed class InstrumentDatabaseTests : IDisposable
     // ═══ GetPlayerRankings caching ═════════════════════════════
 
     [Fact]
-    public void GetPlayerRankings_returns_cached_result_on_second_call()
+    public void GetPlayerRankings_returns_consistent_result_on_second_call()
     {
         Db.UpsertEntries("song_1", [MakeEntry("acct_1", 100_000), MakeEntry("acct_2", 80_000)]);
 
         var first = Db.GetPlayerRankings("acct_1");
         var second = Db.GetPlayerRankings("acct_1");
 
-        // Same dictionary instance means it came from cache
-        Assert.Same(first, second);
+        // PG has no cache — verify results are equivalent
+        Assert.Equal(first.Count, second.Count);
+        foreach (var key in first.Keys)
+            Assert.Equal(first[key], second[key]);
     }
 
     [Fact]
-    public void GetPlayerRankings_cache_survives_upsert()
+    public void GetPlayerRankings_reflects_new_data_after_upsert()
     {
-        // Populate and warm the cache
         Db.UpsertEntries("song_1", [MakeEntry("acct_1", 100_000)]);
-        var cached = Db.GetPlayerRankings("acct_1");
+        var before = Db.GetPlayerRankings("acct_1");
+        Assert.Single(before);
 
-        // Upsert new entries — should NOT clear the cache (TTL-based expiry only)
+        // Upsert new entries — PG always returns fresh data
         Db.UpsertEntries("song_2", [MakeEntry("acct_1", 50_000)]);
-        var afterUpsert = Db.GetPlayerRankings("acct_1");
+        var after = Db.GetPlayerRankings("acct_1");
 
-        // Cache should still return the same object (song_2 not reflected yet, by design)
-        Assert.Same(cached, afterUpsert);
+        Assert.Equal(2, after.Count);
     }
 
     [Fact]
-    public void GetPlayerRankingsFiltered_returns_cached_result_on_second_call()
+    public void GetPlayerRankingsFiltered_returns_consistent_result_on_second_call()
     {
         Db.UpsertEntries("song_1", [MakeEntry("acct_1", 100_000), MakeEntry("acct_2", 200_000)]);
         var maxScores = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) { ["song_1"] = 150_000 };
@@ -520,7 +521,10 @@ public sealed class InstrumentDatabaseTests : IDisposable
         var first = Db.GetPlayerRankingsFiltered("acct_1", maxScores);
         var second = Db.GetPlayerRankingsFiltered("acct_1", maxScores);
 
-        Assert.Same(first, second);
+        // PG has no cache — verify results are equivalent
+        Assert.Equal(first.Count, second.Count);
+        foreach (var key in first.Keys)
+            Assert.Equal(first[key], second[key]);
     }
 
     [Fact]
@@ -579,36 +583,31 @@ public sealed class InstrumentDatabaseTests : IDisposable
     // ─── Constructor directory creation ─────────────────────
 
     [Fact]
-    public void Constructor_creates_directory_if_not_exists()
+    public void Constructor_with_datasource_succeeds()
     {
-        var dir = Path.Combine(Path.GetTempPath(), $"fst_inst_dir_{Guid.NewGuid():N}", "sub");
-        var dbPath = Path.Combine(dir, "test.db");
+        var ds = SharedPostgresContainer.CreateDatabase();
         try
         {
             var logger = NSubstitute.Substitute.For<ILogger<InstrumentDatabase>>();
-            using var db = new InstrumentDatabase("Solo_Guitar", dbPath, logger);
-            Assert.True(Directory.Exists(dir));
+            using var db = new InstrumentDatabase("Solo_Guitar", ds, logger);
         }
         finally
         {
-            try { Directory.Delete(Path.GetDirectoryName(dir)!, true); } catch { }
+            ds.Dispose();
         }
     }
 
     // ─── Dispose ────────────────────────────────────────────
 
     [Fact]
-    public void Dispose_cleans_up_persistent_connection()
+    public void Dispose_cleans_up()
     {
-        var dir = Path.Combine(Path.GetTempPath(), $"fst_inst_dispose_{Guid.NewGuid():N}");
-        var dbPath = Path.Combine(dir, "test.db");
-        Directory.CreateDirectory(dir);
+        var ds = SharedPostgresContainer.CreateDatabase();
         try
         {
             var logger = NSubstitute.Substitute.For<ILogger<InstrumentDatabase>>();
-            var db = new InstrumentDatabase("Solo_Guitar", dbPath, logger);
-            db.EnsureSchema();
-            // Force persistent connection creation by upserting entries
+            var db = new InstrumentDatabase("Solo_Guitar", ds, logger);
+            // Force connection by upserting entries
             var entry = MakeEntry("acct_dispose", 50000);
             db.UpsertEntries("song_dispose", [entry]);
             // Dispose should not throw
@@ -618,7 +617,7 @@ public sealed class InstrumentDatabaseTests : IDisposable
         }
         finally
         {
-            try { Directory.Delete(dir, true); } catch { }
+            ds.Dispose();
         }
     }
 
@@ -655,72 +654,6 @@ public sealed class InstrumentDatabaseTests : IDisposable
     public void Instrument_property_returns_instrument_name()
     {
         Assert.Equal("Solo_Guitar", Db.Instrument);
-    }
-
-    // ─── MigrateDropColumn with existing column ─────────────
-
-    [Fact]
-    public void EnsureSchema_drops_PointsEarned_column_when_present()
-    {
-        // Create a DB with the old schema that includes the PointsEarned column
-        var dir = Path.Combine(Path.GetTempPath(), $"fst_inst_migrate_{Guid.NewGuid():N}");
-        var dbPath = Path.Combine(dir, "test.db");
-        Directory.CreateDirectory(dir);
-        try
-        {
-            // Create the DB with the old schema (including PointsEarned)
-            using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}"))
-            {
-                conn.Open();
-                using var cmd = conn.CreateCommand();
-                cmd.CommandText = @"
-                    CREATE TABLE LeaderboardEntries (
-                        SongId        TEXT    NOT NULL,
-                        AccountId     TEXT    NOT NULL,
-                        Score         INTEGER NOT NULL,
-                        Accuracy      INTEGER,
-                        IsFullCombo   INTEGER,
-                        Stars         INTEGER,
-                        Season        INTEGER,
-                        Percentile    REAL,
-                        EndTime       TEXT,
-                        PointsEarned  INTEGER DEFAULT 0,
-                        FirstSeenAt   TEXT    NOT NULL DEFAULT '2025-01-01',
-                        LastUpdatedAt TEXT    NOT NULL DEFAULT '2025-01-01',
-                        PRIMARY KEY (SongId, AccountId)
-                    );
-                    CREATE INDEX IF NOT EXISTS IX_Song ON LeaderboardEntries (SongId, Score DESC);
-                    CREATE INDEX IF NOT EXISTS IX_Account ON LeaderboardEntries (AccountId);";
-                cmd.ExecuteNonQuery();
-
-                // Insert a row to verify the column exists
-                using var insert = conn.CreateCommand();
-                insert.CommandText = "INSERT INTO LeaderboardEntries (SongId, AccountId, Score, PointsEarned) VALUES ('s1', 'a1', 100, 42)";
-                insert.ExecuteNonQuery();
-            }
-
-            // Now create InstrumentDatabase pointing at this DB and call EnsureSchema
-            var logger = NSubstitute.Substitute.For<ILogger<InstrumentDatabase>>();
-            using var db = new InstrumentDatabase("Solo_Guitar", dbPath, logger);
-            db.EnsureSchema();
-
-            // Verify column was dropped
-            using var verify = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}");
-            verify.Open();
-            using var check = verify.CreateCommand();
-            check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('LeaderboardEntries') WHERE name = 'PointsEarned'";
-            var exists = (long)(check.ExecuteScalar() ?? 0);
-            Assert.Equal(0, exists);
-
-            // Verify data is still intact
-            using var data = verify.CreateCommand();
-            data.CommandText = "SELECT Score FROM LeaderboardEntries WHERE SongId = 's1'";
-            Assert.Equal(100L, (long)data.ExecuteScalar()!);
-        }
-        finally
-        {
-            try { Directory.Delete(dir, true); } catch { }
-        }
     }
 
     // ═══ RecomputeAllRanks ══════════════════════════════════════
@@ -1125,29 +1058,6 @@ public sealed class InstrumentDatabaseTests : IDisposable
             Assert.Equal(3, Db.GetLeaderboardCount($"song_{s}"));
     }
 
-    // ═══ Pragmas ════════════════════════════════════════════════
-
-    [Fact]
-    public void OpenConnection_sets_busy_timeout()
-    {
-        using var conn = new Microsoft.Data.Sqlite.SqliteConnection(
-            new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = _fixture.DbPath }.ToString());
-        conn.Open();
-
-        // First connection after EnsureSchema should have WAL + busy_timeout already set,
-        // but open a fresh one through the public API (GetTotalEntryCount triggers OpenConnection).
-        Db.GetTotalEntryCount();
-
-        // Verify by opening a raw connection and querying the pragma
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "PRAGMA busy_timeout;";
-        var timeout = (long)(cmd.ExecuteScalar() ?? 0);
-
-        // busy_timeout is per-file on WAL-enabled databases — the value we set persists
-        // as long as any connection is open. Accept any positive value.
-        Assert.True(timeout >= 0);
-    }
-
     // ═══ Checkpoint ═════════════════════════════════════════════
 
     [Fact]
@@ -1175,22 +1085,21 @@ public sealed class InstrumentDatabaseTests : IDisposable
 
     private void SeedAccountRankings(params (string AccountId, long TotalScore, int TotalScoreRank)[] accounts)
     {
-        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_fixture.DbPath}");
-        conn.Open();
+        using var conn = _fixture.DataSource.OpenConnection();
         foreach (var (id, score, rank) in accounts)
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                INSERT INTO AccountRankings
-                (AccountId, SongsPlayed, TotalChartedSongs, Coverage,
-                 RawSkillRating, AdjustedSkillRating, AdjustedSkillRank,
-                 WeightedRating, WeightedRank,
-                 FcRate, FcRateRank,
-                 TotalScore, TotalScoreRank,
-                 MaxScorePercent, MaxScorePercentRank,
-                 AvgAccuracy, FullComboCount, AvgStars, BestRank, AvgRank,
-                 ComputedAt)
-                VALUES (@id, 10, 100, 0.1,
+                INSERT INTO account_rankings
+                (account_id, instrument, songs_played, total_charted_songs, coverage,
+                 raw_skill_rating, adjusted_skill_rating, adjusted_skill_rank,
+                 weighted_rating, weighted_rank,
+                 fc_rate, fc_rate_rank,
+                 total_score, total_score_rank,
+                 max_score_percent, max_score_percent_rank,
+                 avg_accuracy, full_combo_count, avg_stars, best_rank, avg_rank,
+                 computed_at)
+                VALUES (@id, @instrument, 10, 100, 0.1,
                         0.5, 0.5, @rank,
                         0.5, @rank,
                         0.5, @rank,
@@ -1200,6 +1109,7 @@ public sealed class InstrumentDatabaseTests : IDisposable
                         '2025-01-01T00:00:00Z');
                 """;
             cmd.Parameters.AddWithValue("@id", id);
+            cmd.Parameters.AddWithValue("@instrument", Db.Instrument);
             cmd.Parameters.AddWithValue("@score", score);
             cmd.Parameters.AddWithValue("@rank", rank);
             cmd.ExecuteNonQuery();

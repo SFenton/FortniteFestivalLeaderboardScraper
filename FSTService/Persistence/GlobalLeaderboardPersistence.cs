@@ -1,26 +1,18 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
-using FSTService.Persistence.Pg;
 using FSTService.Scraping;
 using Npgsql;
 
 namespace FSTService.Persistence;
 
 /// <summary>
-/// Coordinates the per-instrument sharded databases and the central meta DB.
+/// Coordinates the per-instrument databases and the central meta DB.
 /// This is the single entry point that <see cref="ScraperWorker"/> uses to
 /// persist global leaderboard results.
 ///
 /// During a scrape pass, persistence is fully pipelined via per-instrument
 /// <see cref="Channel{T}"/> writers.  Each of the 6 instruments has its own
-/// dedicated writer task that drains work items and writes to its own SQLite
-/// file — zero cross-instrument contention.
-///
-/// File layout (all under the configured data directory):
-///   fst-meta.db                  ← ScrapeLog, ScoreHistory, AccountNames, RegisteredUsers
-///   fst-Solo_Guitar.db           ← LeaderboardEntries for Guitar
-///   fst-Solo_Bass.db             ← LeaderboardEntries for Bass
-///   …one per instrument…
+/// dedicated writer task — zero cross-instrument contention.
 /// </summary>
 public sealed class GlobalLeaderboardPersistence : IDisposable
 {
@@ -28,25 +20,20 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     private readonly IMetaDatabase _metaDb;
     private readonly ILogger<GlobalLeaderboardPersistence> _log;
     private readonly ILoggerFactory _loggerFactory;
-    private readonly string _dataDir;
-    private readonly NpgsqlDataSource? _pgDataSource;
+    private readonly NpgsqlDataSource _pgDataSource;
 
     /// <summary>The meta database (ScrapeLog, ScoreHistory, etc.).</summary>
     public IMetaDatabase Meta => _metaDb;
 
-    public GlobalLeaderboardPersistence(string dataDir, IMetaDatabase metaDb,
+    public GlobalLeaderboardPersistence(IMetaDatabase metaDb,
                                         ILoggerFactory loggerFactory,
                                         ILogger<GlobalLeaderboardPersistence> log,
-                                        NpgsqlDataSource? pgDataSource = null)
+                                        NpgsqlDataSource pgDataSource)
     {
-        _dataDir = dataDir;
         _metaDb = metaDb;
         _loggerFactory = loggerFactory;
         _log = log;
         _pgDataSource = pgDataSource;
-
-        if (!Directory.Exists(dataDir))
-            Directory.CreateDirectory(dataDir);
     }
 
     /// <summary>
@@ -59,45 +46,18 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
         var instruments = GlobalLeaderboardScraper.AllInstruments;
 
-        if (_pgDataSource is not null)
+        foreach (var instrument in instruments)
         {
-            // PostgreSQL mode: one shared table, partitioned by instrument
-            foreach (var instrument in instruments)
-            {
-                var db = new PgInstrumentDatabase(
-                    instrument, _pgDataSource,
-                    _loggerFactory.CreateLogger<PgInstrumentDatabase>());
-                _instrumentDbs[instrument] = db;
-                _log.LogDebug("Opened PG instrument DB: {Instrument}", instrument);
-            }
-
-            _log.LogInformation("GlobalLeaderboardPersistence initialized (PostgreSQL). " +
-                                "{InstrumentCount} instruments.",
-                                _instrumentDbs.Count);
+            var db = new InstrumentDatabase(
+                instrument, _pgDataSource,
+                _loggerFactory.CreateLogger<InstrumentDatabase>());
+            _instrumentDbs[instrument] = db;
+            _log.LogDebug("Opened PG instrument DB: {Instrument}", instrument);
         }
-        else
-        {
-            // SQLite mode: one file per instrument
-            var dbs = new IInstrumentDatabase[instruments.Count];
-            Parallel.For(0, instruments.Count, i =>
-            {
-                var instrument = instruments[i];
-                var dbPath = Path.Combine(_dataDir, $"fst-{instrument}.db");
-                var db = new InstrumentDatabase(
-                    instrument, dbPath,
-                    _loggerFactory.CreateLogger<InstrumentDatabase>());
-                db.EnsureSchema();
-                dbs[i] = db;
-                _log.LogDebug("Opened instrument DB: {Instrument} \u2192 {Path}", instrument, dbPath);
-            });
 
-            foreach (var db in dbs)
-                _instrumentDbs[db.Instrument] = db;
-
-            _log.LogInformation("GlobalLeaderboardPersistence initialized (SQLite). " +
-                                "{InstrumentCount} instrument DBs in {DataDir}",
-                                _instrumentDbs.Count, _dataDir);
-        }
+        _log.LogInformation("GlobalLeaderboardPersistence initialized. " +
+                            "{InstrumentCount} instruments.",
+                            _instrumentDbs.Count);
     }
 
     /// <summary>
@@ -130,22 +90,9 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         if (_instrumentDbs.TryGetValue(instrument, out var db))
             return db;
 
-        if (_pgDataSource is not null)
-        {
-            db = new PgInstrumentDatabase(
-                instrument, _pgDataSource,
-                _loggerFactory.CreateLogger<PgInstrumentDatabase>());
-        }
-        else
-        {
-            var dbPath = Path.Combine(_dataDir, $"fst-{instrument}.db");
-            var sqliteDb = new InstrumentDatabase(
-                instrument, dbPath,
-                _loggerFactory.CreateLogger<InstrumentDatabase>());
-            sqliteDb.EnsureSchema();
-            db = sqliteDb;
-            _log.LogDebug("Opened instrument DB: {Instrument} → {Path}", instrument, dbPath);
-        }
+        db = new InstrumentDatabase(
+            instrument, _pgDataSource,
+            _loggerFactory.CreateLogger<InstrumentDatabase>());
 
         _instrumentDbs[instrument] = db;
         return db;
@@ -184,7 +131,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                 previousState = new Dictionary<string, LeaderboardEntry>(StringComparer.OrdinalIgnoreCase);
         }
 
-        var rowsAffected = pgConnTx is not null && db is Pg.PgInstrumentDatabase pgDb
+        var rowsAffected = pgConnTx is not null && db is InstrumentDatabase pgDb
             ? pgDb.UpsertEntries(result.SongId, result.Entries, pgConnTx.Value.Conn, pgConnTx.Value.Tx)
             : db.UpsertEntries(result.SongId, result.Entries);
         bool hasNewEntries = rowsAffected > 0 && result.Entries.Count > 0;
@@ -370,40 +317,17 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
             var db = _instrumentDbs[instrument];
             var agg = _aggregates;
-            var isPg = db is PgInstrumentDatabase;
             var task = Task.Run(async () =>
             {
-                if (isPg && _pgDataSource is not null)
-                    await RunBatchedWriterAsync(channel.Reader, db, agg, writeBatchSize, ct);
-                else
-                    await RunSimpleWriterAsync(channel.Reader, db, agg, ct);
+                await RunBatchedWriterAsync(channel.Reader, db, agg, writeBatchSize, ct);
             }, ct);
 
             _writerTasks.Add(task);
         }
 
-        _log.LogInformation("Started {Count} per-instrument writer tasks (PG batching: {IsPg}, batch size: {BatchSize}).",
-            _writerTasks.Count, _pgDataSource is not null, writeBatchSize);
+        _log.LogInformation("Started {Count} per-instrument writer tasks (batch size: {BatchSize}).",
+            _writerTasks.Count, writeBatchSize);
         return _aggregates;
-    }
-
-    /// <summary>Simple writer: one work item per transaction (SQLite path).</summary>
-    private async Task RunSimpleWriterAsync(ChannelReader<PersistWorkItem> reader,
-                                            IInstrumentDatabase db, PipelineAggregates agg,
-                                            CancellationToken ct)
-    {
-        await foreach (var item in reader.ReadAllAsync(ct))
-        {
-            try
-            {
-                ProcessWorkItem(item, db, agg, pgConnTx: null);
-            }
-            catch (Exception ex)
-            {
-                _log.LogError(ex, "Writer error for {Instrument}/{SongId}",
-                    item.Result.Instrument, item.Result.SongId);
-            }
-        }
     }
 
     /// <summary>
@@ -414,7 +338,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
                                              IInstrumentDatabase db, PipelineAggregates agg,
                                              int batchSize, CancellationToken ct)
     {
-        var pgDb = (PgInstrumentDatabase)db;
+        var pgDb = (InstrumentDatabase)db;
         var batch = new List<PersistWorkItem>(batchSize);
 
         while (await reader.WaitToReadAsync(ct))

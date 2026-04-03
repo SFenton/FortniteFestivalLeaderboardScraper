@@ -635,7 +635,6 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
         var worker = CreateWorker(new ScraperOptions
         {
             DataDirectory = _tempDir,
-            DatabasePath = Path.Combine(_tempDir, "core.db"),
             DeviceAuthPath = Path.Combine(_tempDir, "device.json"),
             EnablePathGeneration = false,
         });
@@ -651,7 +650,6 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
         var worker = CreateWorker(new ScraperOptions
         {
             DataDirectory = _tempDir,
-            DatabasePath = Path.Combine(_tempDir, "core.db"),
             DeviceAuthPath = Path.Combine(_tempDir, "device.json"),
             EnablePathGeneration = true,
             MidiEncryptionKey = "0123456789abcdef0123456789abcdef",
@@ -684,7 +682,6 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
         var worker = CreateWorker(new ScraperOptions
         {
             DataDirectory = _tempDir,
-            DatabasePath = Path.Combine(_tempDir, "core.db"),
             DeviceAuthPath = Path.Combine(_tempDir, "device.json"),
             EnablePathGeneration = true,
             MidiEncryptionKey = "0123456789abcdef0123456789abcdef",

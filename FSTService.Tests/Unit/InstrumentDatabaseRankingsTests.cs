@@ -276,9 +276,8 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
         var nfc = Db.GetAccountRanking("nonfcer");
         Assert.NotNull(fcr);
         Assert.NotNull(nfc);
-        // FcRate stores raw value; ranked by FullComboCount DESC
-        Assert.Equal(1.0, fcr.FcRate);
-        Assert.Equal(0.0, nfc.FcRate);
+        // FcRate stores Bayesian-adjusted value; verify FC player > non-FC player
+        Assert.True(fcr.FcRate > nfc.FcRate);
         Assert.True(fcr.FcRateRank < nfc.FcRateRank);
     }
 

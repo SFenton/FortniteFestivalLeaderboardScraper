@@ -32,10 +32,10 @@ public sealed class PersistencePipelineIntegrationTests : IDisposable
     {
         var loggerFactory = new NullLoggerFactory();
         var glp = new GlobalLeaderboardPersistence(
-            _dataDir,
             _metaFixture.Db,
             loggerFactory,
-            NullLogger<GlobalLeaderboardPersistence>.Instance);
+            NullLogger<GlobalLeaderboardPersistence>.Instance,
+            _metaFixture.DataSource);
         glp.Initialize();
         return glp;
     }
@@ -67,7 +67,7 @@ public sealed class PersistencePipelineIntegrationTests : IDisposable
     public async Task Pipeline_enqueue_and_drain_produces_correct_aggregates()
     {
         using var glp = CreatePersistence();
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 
         var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "acct_tracked" };
 

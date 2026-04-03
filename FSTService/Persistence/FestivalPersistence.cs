@@ -3,18 +3,18 @@ using FortniteFestival.Core.Persistence;
 using Npgsql;
 using NpgsqlTypes;
 
-namespace FSTService.Persistence.Pg;
+namespace FSTService.Persistence;
 
 /// <summary>
-/// PostgreSQL implementation of <see cref="IFestivalPersistence"/> for the Core library's
-/// FestivalService. Reads/writes the <c>songs</c> table in PostgreSQL.
-/// The Scores table is not migrated — leaderboard data lives in leaderboard_entries.
+/// <see cref="IFestivalPersistence"/> implementation for the Core library's
+/// FestivalService. Reads/writes the <c>songs</c> table.
+/// The Scores table is not used — leaderboard data lives in leaderboard_entries.
 /// </summary>
-public sealed class PgFestivalPersistence : IFestivalPersistence
+public sealed class FestivalPersistence : IFestivalPersistence
 {
     private readonly NpgsqlDataSource _ds;
 
-    public PgFestivalPersistence(NpgsqlDataSource dataSource)
+    public FestivalPersistence(NpgsqlDataSource dataSource)
     {
         _ds = dataSource;
     }

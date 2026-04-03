@@ -32,7 +32,7 @@ public class ScoreBackfillerTests : IDisposable
         loggerFactory.CreateLogger(Arg.Any<string>()).Returns(Substitute.For<ILogger>());
         loggerFactory.CreateLogger<InstrumentDatabase>().Returns(Substitute.For<ILogger<InstrumentDatabase>>());
         var persLog = Substitute.For<ILogger<GlobalLeaderboardPersistence>>();
-        _persistence = new GlobalLeaderboardPersistence(_dataDir, _metaDb.Db, loggerFactory, persLog);
+        _persistence = new GlobalLeaderboardPersistence(_metaDb.Db, loggerFactory, persLog, _metaDb.DataSource);
         _persistence.Initialize();
         _limiter = new AdaptiveConcurrencyLimiter(16, minDop: 2, maxDop: 64, Substitute.For<ILogger>());
         _pool = new SharedDopPool(_limiter, lowPrioritySlots: 16);

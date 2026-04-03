@@ -32,10 +32,10 @@ public sealed class RivalsOrchestratorTests : IDisposable
     {
         var loggerFactory = new NullLoggerFactory();
         var glp = new GlobalLeaderboardPersistence(
-            _dataDir,
             _metaFixture.Db,
             loggerFactory,
-            NullLogger<GlobalLeaderboardPersistence>.Instance);
+            NullLogger<GlobalLeaderboardPersistence>.Instance,
+            _metaFixture.DataSource);
         glp.Initialize();
         return glp;
     }

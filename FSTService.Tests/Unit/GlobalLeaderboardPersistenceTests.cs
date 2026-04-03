@@ -32,10 +32,10 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
     {
         var loggerFactory = new NullLoggerFactory();
         var glp = new GlobalLeaderboardPersistence(
-            _dataDir,
             _metaFixture.Db,
             loggerFactory,
-            NullLogger<GlobalLeaderboardPersistence>.Instance);
+            NullLogger<GlobalLeaderboardPersistence>.Instance,
+            _metaFixture.DataSource);
         glp.Initialize();
         return glp;
     }
@@ -441,19 +441,14 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
     }
 
     [Fact]
-    public void Constructor_creates_directory_if_not_exists()
+    public void Constructor_creates_persistence_without_directory()
     {
-        var subDir = Path.Combine(_dataDir, "subdir_" + Guid.NewGuid().ToString("N"));
-        Assert.False(Directory.Exists(subDir));
-
         var loggerFactory = new NullLoggerFactory();
         using var glp = new GlobalLeaderboardPersistence(
-            subDir,
             _metaFixture.Db,
             loggerFactory,
-            NullLogger<GlobalLeaderboardPersistence>.Instance);
-
-        Assert.True(Directory.Exists(subDir));
+            NullLogger<GlobalLeaderboardPersistence>.Instance,
+            _metaFixture.DataSource);
     }
 
     // ═══ GetLeaderboardWithCount ════════════════════════════════
@@ -656,8 +651,9 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
             var metaFixture = new InMemoryMetaDatabase();
             var loggerFactory = new Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory();
             var glp = new GlobalLeaderboardPersistence(
-                tempDir, metaFixture.Db, loggerFactory,
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<GlobalLeaderboardPersistence>.Instance);
+                metaFixture.Db, loggerFactory,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<GlobalLeaderboardPersistence>.Instance,
+                metaFixture.DataSource);
             // Don't call Initialize — no DBs
             Assert.False(glp.IsReady());
             glp.Dispose();
@@ -786,8 +782,9 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
                 .Do(_ => throw new InvalidOperationException("Simulated DB timeout"));
 
         using var glp = new GlobalLeaderboardPersistence(
-            _dataDir, mockMeta, new NullLoggerFactory(),
-            NullLogger<GlobalLeaderboardPersistence>.Instance);
+            mockMeta, new NullLoggerFactory(),
+            NullLogger<GlobalLeaderboardPersistence>.Instance,
+            _metaFixture.DataSource);
         glp.Initialize();
         var agg = glp.StartWriters();
 

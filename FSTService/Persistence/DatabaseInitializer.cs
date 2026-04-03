@@ -1,13 +1,12 @@
 using Npgsql;
 
-namespace FSTService.Persistence.Pg;
+namespace FSTService.Persistence;
 
 /// <summary>
 /// Creates the PostgreSQL schema for FSTService.
 /// All statements are idempotent (IF NOT EXISTS).
-/// Consolidates 8 SQLite databases into a single PostgreSQL database.
 /// </summary>
-public static class PgDatabaseInitializer
+public static class DatabaseInitializer
 {
     public static async Task EnsureSchemaAsync(NpgsqlDataSource dataSource, CancellationToken ct = default)
     {
@@ -591,6 +590,50 @@ public static class PgDatabaseInitializer
 
         CREATE INDEX IF NOT EXISTS ix_cr_rank
             ON composite_rankings (composite_rank);
+
+        -- =====================================================================
+        -- LEADERBOARD RIVALS (from fst-meta.db)
+        -- =====================================================================
+
+        CREATE TABLE IF NOT EXISTS leaderboard_rivals (
+            user_id           TEXT    NOT NULL,
+            rival_account_id  TEXT    NOT NULL,
+            instrument        TEXT    NOT NULL,
+            rank_method       TEXT    NOT NULL,
+            direction         TEXT    NOT NULL,
+            user_rank         INTEGER NOT NULL,
+            rival_rank        INTEGER NOT NULL,
+            shared_song_count INTEGER NOT NULL,
+            ahead_count       INTEGER NOT NULL,
+            behind_count      INTEGER NOT NULL,
+            avg_signed_delta  REAL    NOT NULL,
+            computed_at       TIMESTAMPTZ NOT NULL,
+            PRIMARY KEY (user_id, rival_account_id, instrument, rank_method)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_lbr_user_inst
+            ON leaderboard_rivals (user_id, instrument, rank_method, direction);
+
+        -- =====================================================================
+        -- LEADERBOARD RIVAL SONG SAMPLES (from fst-meta.db)
+        -- =====================================================================
+
+        CREATE TABLE IF NOT EXISTS leaderboard_rival_song_samples (
+            user_id          TEXT    NOT NULL,
+            rival_account_id TEXT    NOT NULL,
+            instrument       TEXT    NOT NULL,
+            rank_method      TEXT    NOT NULL,
+            song_id          TEXT    NOT NULL,
+            user_rank        INTEGER NOT NULL,
+            rival_rank       INTEGER NOT NULL,
+            rank_delta       INTEGER NOT NULL,
+            user_score       INTEGER,
+            rival_score      INTEGER,
+            PRIMARY KEY (user_id, rival_account_id, instrument, rank_method, song_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_lbrss_user_rival
+            ON leaderboard_rival_song_samples (user_id, rival_account_id, instrument, rank_method);
 
         -- =====================================================================
         -- COMPOSITE RANK HISTORY (from fst-meta.db)

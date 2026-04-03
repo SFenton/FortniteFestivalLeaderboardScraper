@@ -4,7 +4,6 @@ namespace FSTService.Persistence;
 
 /// <summary>
 /// Abstraction over a per-instrument leaderboard database.
-/// Implemented by InstrumentDatabase (SQLite) and PgInstrumentDatabase (PostgreSQL).
 /// Each instance is scoped to a single instrument.
 /// </summary>
 public interface IInstrumentDatabase : IDisposable

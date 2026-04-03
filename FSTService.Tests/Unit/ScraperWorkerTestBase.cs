@@ -5,6 +5,7 @@ using FSTService.Api;
 using FSTService.Auth;
 using FSTService.Persistence;
 using FSTService.Scraping;
+using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -20,6 +21,7 @@ namespace FSTService.Tests.Unit;
 public abstract class ScraperWorkerTestBase : IDisposable
 {
     protected readonly string _tempDir;
+    private readonly InMemoryMetaDatabase _metaFixture = new();
     protected readonly MetaDatabase _metaDb;
     protected readonly GlobalLeaderboardPersistence _persistence;
 
@@ -44,15 +46,14 @@ public abstract class ScraperWorkerTestBase : IDisposable
         _tempDir = Path.Combine(Path.GetTempPath(), $"sw_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
 
-        _metaDb = new MetaDatabase(
-            Path.Combine(_tempDir, "meta.db"),
+        _metaDb = new MetaDatabase(_metaFixture.DataSource,
             Substitute.For<ILogger<MetaDatabase>>());
-        _metaDb.EnsureSchema();
 
         _persistence = new GlobalLeaderboardPersistence(
-            _tempDir, _metaDb,
+            _metaDb,
             Substitute.For<ILoggerFactory>(),
-            Substitute.For<ILogger<GlobalLeaderboardPersistence>>());
+            Substitute.For<ILogger<GlobalLeaderboardPersistence>>(),
+            _metaFixture.DataSource);
         _persistence.Initialize();
 
         var noOpHandler = new NoOpHttpHandler();
@@ -119,6 +120,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
         _shopMetaDb?.Dispose();
         _persistence.Dispose();
         _metaDb.Dispose();
+        _metaFixture.Dispose();
         try { Directory.Delete(_tempDir, true); } catch { }
     }
 
@@ -130,7 +132,6 @@ public abstract class ScraperWorkerTestBase : IDisposable
         var options = Options.Create(opts ?? new ScraperOptions
         {
             DataDirectory = _tempDir,
-            DatabasePath = Path.Combine(_tempDir, "core.db"),
             DeviceAuthPath = Path.Combine(_tempDir, "device.json"),
         });
 
@@ -141,8 +142,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _progress,
             Substitute.For<ILogger<PathGenerator>>());
 
-        var pathDataStore = new PathDataStore(
-            Path.Combine(_tempDir, "core.db"));
+        var pathDataStore = new PathDataStore(SharedPostgresContainer.CreateDatabase());
 
         var notifications = new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>());
 
@@ -176,9 +176,8 @@ public abstract class ScraperWorkerTestBase : IDisposable
             Substitute.For<ILogger<BackfillOrchestrator>>());
 
         _shopMetaDb = new FSTService.Persistence.MetaDatabase(
-                Path.Combine(_tempDir, $"fst-shop-{Guid.NewGuid():N}.db"),
+                SharedPostgresContainer.CreateDatabase(),
                 Substitute.For<ILogger<FSTService.Persistence.MetaDatabase>>());
-        _shopMetaDb.EnsureSchema();
 
         var shopService = new FSTService.Scraping.ItemShopService(
             new HttpClient(),
@@ -186,10 +185,10 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _shopMetaDb,
             Substitute.For<ILogger<FSTService.Scraping.ItemShopService>>());
 
-        var dbInitializer = new DatabaseInitializer(
+        var dbInitializer = new StartupInitializer(
             _persistence, _festivalService, shopService,
             _lifetime,
-            Substitute.For<ILogger<DatabaseInitializer>>());
+            Substitute.For<ILogger<StartupInitializer>>());
         dbInitializer.StartAsync(CancellationToken.None);
         dbInitializer.WaitForReadyAsync().GetAwaiter().GetResult();
 
@@ -216,7 +215,6 @@ public abstract class ScraperWorkerTestBase : IDisposable
         var options = Options.Create(opts ?? new ScraperOptions
         {
             DataDirectory = _tempDir,
-            DatabasePath = Path.Combine(_tempDir, "core.db"),
             DeviceAuthPath = Path.Combine(_tempDir, "device.json"),
         });
         var notifications = new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>());

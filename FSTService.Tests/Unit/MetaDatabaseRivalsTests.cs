@@ -178,22 +178,6 @@ public sealed class MetaDatabaseRivalsTests : IDisposable
         Assert.Equal(2, all.Count);
     }
 
-    // ═══ FeatureVersion ══════════════════════════════════════════
-
-    [Fact]
-    public void FeatureVersion_rivals_initialized_on_schema()
-    {
-        var version = Db.GetFeatureVersion("Rivals");
-        Assert.Equal(MetaDatabase.RivalsVersion, version);
-    }
-
-    [Fact]
-    public void FeatureVersion_data_collection_still_works()
-    {
-        var version = Db.GetDataCollectionVersion();
-        Assert.Equal(MetaDatabase.DataCollectionVersion, version);
-    }
-
     // ═══ Cleanup on unregister ═══════════════════════════════════
 
     [Fact]

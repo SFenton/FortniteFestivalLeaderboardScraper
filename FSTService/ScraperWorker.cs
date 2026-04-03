@@ -27,7 +27,7 @@ public sealed class ScraperWorker : BackgroundService
     private readonly GlobalLeaderboardScraper _globalScraper;
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly FestivalService _festivalService;
-    private readonly DatabaseInitializer _dbInitializer;
+    private readonly StartupInitializer _dbInitializer;
     private readonly ScrapeOrchestrator _scrapeOrchestrator;
     private readonly PostScrapeOrchestrator _postScrapeOrchestrator;
     private readonly BackfillOrchestrator _backfillOrchestrator;
@@ -51,7 +51,7 @@ public sealed class ScraperWorker : BackgroundService
         GlobalLeaderboardScraper globalScraper,
         GlobalLeaderboardPersistence persistence,
         FestivalService festivalService,
-        DatabaseInitializer dbInitializer,
+        StartupInitializer dbInitializer,
         ScrapeOrchestrator scrapeOrchestrator,
         PostScrapeOrchestrator postScrapeOrchestrator,
         BackfillOrchestrator backfillOrchestrator,

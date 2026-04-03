@@ -1,31 +1,32 @@
 using FSTService.Persistence;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using NSubstitute;
 
 namespace FSTService.Tests.Helpers;
 
 /// <summary>
-/// Creates an InstrumentDatabase backed by a temp-file SQLite database.
+/// Creates an InstrumentDatabase backed by a fresh PostgreSQL database.
+/// Drop-in replacement for the old SQLite-backed fixture.
 /// </summary>
 public sealed class TempInstrumentDatabase : IDisposable
 {
-    private readonly string _dbPath;
+    private readonly NpgsqlDataSource _ds;
     public InstrumentDatabase Db { get; }
-    public string DbPath => _dbPath;
 
     public TempInstrumentDatabase(string instrument = "Solo_Guitar")
     {
-        _dbPath = Path.Combine(Path.GetTempPath(), $"fst_inst_test_{Guid.NewGuid():N}.db");
+        _ds = SharedPostgresContainer.CreateDatabase();
         var logger = Substitute.For<ILogger<InstrumentDatabase>>();
-        Db = new InstrumentDatabase(instrument, _dbPath, logger);
-        Db.EnsureSchema();
+        Db = new InstrumentDatabase(instrument, _ds, logger);
     }
+
+    /// <summary>The underlying NpgsqlDataSource (for tests that need direct PG access).</summary>
+    public NpgsqlDataSource DataSource => _ds;
 
     public void Dispose()
     {
         Db.Dispose();
-        try { File.Delete(_dbPath); } catch { }
-        try { File.Delete(_dbPath + "-wal"); } catch { }
-        try { File.Delete(_dbPath + "-shm"); } catch { }
+        _ds.Dispose();
     }
 }

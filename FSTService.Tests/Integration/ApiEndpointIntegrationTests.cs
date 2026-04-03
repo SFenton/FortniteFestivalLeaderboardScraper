@@ -9,6 +9,7 @@ using FSTService.Api;
 using FSTService.Auth;
 using FSTService.Persistence;
 using FSTService.Scraping;
+using FSTService.Tests.Helpers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -19,6 +20,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
+using Npgsql;
 
 namespace FSTService.Tests.Integration;
 
@@ -1383,38 +1385,19 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
     }
 
     /// <summary>
-    /// Ensures the Songs table and a row for the given songId exist in the PathDataStore database
+    /// Ensures a row for the given songId exists in the PG songs table
     /// so UpdateMaxScores can UPDATE the row.
     /// </summary>
     private static void EnsureSongRow(PathDataStore pathStore, string songId)
     {
-        // PathDataStore exposes its connection string pattern internally;
-        // retrieve the DB path via reflection on the private _connectionString field.
-        var connField = typeof(PathDataStore)
-            .GetField("_connectionString", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        var connStr = (string)connField.GetValue(pathStore)!;
+        var dsField = typeof(PathDataStore)
+            .GetField("_ds", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var ds = (Npgsql.NpgsqlDataSource)dsField.GetValue(pathStore)!;
 
-        using var conn = new Microsoft.Data.Sqlite.SqliteConnection(connStr);
-        conn.Open();
+        using var conn = ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            CREATE TABLE IF NOT EXISTS Songs (
-                SongId TEXT PRIMARY KEY,
-                Title TEXT,
-                MaxLeadScore INTEGER,
-                MaxBassScore INTEGER,
-                MaxDrumsScore INTEGER,
-                MaxVocalsScore INTEGER,
-                MaxProLeadScore INTEGER,
-                MaxProBassScore INTEGER,
-                DatFileHash TEXT,
-                SongLastModified TEXT,
-                PathsGeneratedAt TEXT,
-                CHOptVersion TEXT
-            );
-            INSERT OR IGNORE INTO Songs (SongId, Title) VALUES (@songId, 'Test Song');
-            """;
-        cmd.Parameters.AddWithValue("@songId", songId);
+        cmd.CommandText = "INSERT INTO songs (song_id, title) VALUES (@songId, 'Test Song') ON CONFLICT DO NOTHING";
+        cmd.Parameters.AddWithValue("songId", songId);
         cmd.ExecuteNonQuery();
     }
 
@@ -2895,64 +2878,7 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             (int)response.StatusCode == 502);
     }
 
-    // ─── POST /api/admin/backfill-max-scores ────────────────────
-
-    [Fact]
-    public async Task BackfillMaxScores_WritesMaxScoresToActiveStore()
-    {
-        using var scope = _factory.Services.CreateScope();
-        var pathStore = scope.ServiceProvider.GetRequiredService<PathDataStore>();
-
-        // Ensure Songs table exists in the SQLite core.db (PathDataStore target)
-        var opts = scope.ServiceProvider.GetRequiredService<IOptions<ScraperOptions>>().Value;
-        var coreDbPath = Path.GetFullPath(opts.DatabasePath);
-        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={coreDbPath}"))
-        {
-            conn.Open();
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
-                CREATE TABLE IF NOT EXISTS Songs (
-                    SongId TEXT PRIMARY KEY,
-                    Title TEXT,
-                    MaxLeadScore INTEGER, MaxBassScore INTEGER, MaxDrumsScore INTEGER,
-                    MaxVocalsScore INTEGER, MaxProLeadScore INTEGER, MaxProBassScore INTEGER,
-                    DatFileHash TEXT, SongLastModified TEXT, PathsGeneratedAt TEXT, CHOptVersion TEXT
-                )
-                """;
-            cmd.ExecuteNonQuery();
-            cmd.CommandText = "INSERT OR IGNORE INTO Songs (SongId, Title) VALUES ('testSong1', 'Test')";
-            cmd.ExecuteNonQuery();
-        }
-
-        // Seed max scores into SQLite PathDataStore
-        var scores = new SongMaxScores
-        {
-            MaxLeadScore = 100000,
-            MaxBassScore = 80000,
-            MaxDrumsScore = 120000,
-            MaxVocalsScore = 70000,
-        };
-        pathStore.UpdateMaxScores("testSong1", scores, "hash123", "2026-01-01");
-
-        // Call the backfill endpoint
-        var response = await _authedClient.PostAsync("/api/admin/backfill-max-scores", null);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-
-        var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
-        Assert.True(json.GetProperty("updated").GetInt32() >= 1);
-
-        // Verify the IPathDataStore now has the scores
-        var allMax = scope.ServiceProvider.GetRequiredService<IPathDataStore>().GetAllMaxScores();
-        Assert.True(allMax.ContainsKey("testSong1"));
-        Assert.Equal(100000, allMax["testSong1"].MaxLeadScore);
-    }
-
-    [Fact]
-    public async Task BackfillMaxScores_RequiresAuth()
-    {
-        var response = await _client.PostAsync("/api/admin/backfill-max-scores", null);
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
+    // BackfillMaxScores endpoint was removed (SQLite→PG migration utility, no longer needed)
 
     // ═══════════════════════════════════════════════════════════════
     // Shop endpoint tests
@@ -3005,9 +2931,9 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["Scraper:DataDirectory"] = _tempDir,
-                    ["Scraper:DatabasePath"] = Path.Combine(_tempDir, "core.db"),
                     ["Scraper:DeviceAuthPath"] = Path.Combine(_tempDir, "device-auth.json"),
                     ["Scraper:ApiOnly"] = "true",
+                    ["ConnectionStrings:PostgreSQL"] = SharedPostgresContainer.ConnectionString,
                     ["Api:ApiKey"] = TestApiKey,
                     ["Api:AllowedOrigins:0"] = "*",
                     ["Jwt:SecretKey"] = "TestSecretKey_SuperLongEnough_For_HMACSHA256_12345678",
@@ -3025,6 +2951,13 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
 
             builder.ConfigureServices(services =>
             {
+                // Override the NpgsqlDataSource that Program.cs creates eagerly
+                // from builder.Configuration (which still has appsettings.json values
+                // at that point, before test config overrides are applied).
+                services.RemoveAll<NpgsqlDataSource>();
+                var testDs = SharedPostgresContainer.CreateDatabase();
+                services.AddSingleton(testDs);
+
                 // Remove the real ScraperWorker — we don't want background scraping.
                 // Also removes DatabaseInitializer (prevents HTTP calls to Epic CDN).
                 services.RemoveAll<IHostedService>();
@@ -3128,17 +3061,17 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
         }
 
         /// <summary>
-        /// Test replacement for DatabaseInitializer — initializes DB schemas directly
+        /// Test replacement for StartupInitializer — initializes DB schemas directly
         /// without calling FestivalService.InitializeAsync() (which makes HTTP calls).
         /// </summary>
         private sealed class TestDatabaseInitializer : IHostedService
         {
             private readonly GlobalLeaderboardPersistence _persistence;
-            private readonly DatabaseInitializer _dbInitializer;
+            private readonly StartupInitializer _dbInitializer;
 
             public TestDatabaseInitializer(
                 GlobalLeaderboardPersistence persistence,
-                DatabaseInitializer dbInitializer)
+                StartupInitializer dbInitializer)
             {
                 _persistence = persistence;
                 _dbInitializer = dbInitializer;
@@ -3147,10 +3080,10 @@ public class ApiEndpointIntegrationTests : IClassFixture<ApiEndpointIntegrationT
             public Task StartAsync(CancellationToken cancellationToken)
             {
                 _persistence.Initialize();
-                // Signal ready on the real DatabaseInitializer singleton so
+                // Signal ready on the real StartupInitializer singleton so
                 // /readyz health check and ScraperWorker see it as ready.
                 // Use reflection to set the TaskCompletionSource since it's private.
-                var field = typeof(DatabaseInitializer).GetField("_readySignal",
+                var field = typeof(StartupInitializer).GetField("_readySignal",
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                 var tcs = (TaskCompletionSource)field!.GetValue(_dbInitializer)!;
                 tcs.TrySetResult();

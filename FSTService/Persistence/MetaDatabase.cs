@@ -1,3397 +1,803 @@
-using Microsoft.Data.Sqlite;
+using Npgsql;
+using NpgsqlTypes;
 
 namespace FSTService.Persistence;
 
 /// <summary>
-/// Manages the central <c>fst-meta.db</c> database containing cross-cutting
-/// concerns: ScrapeLog, ScoreHistory, AccountNames, RegisteredUsers.
+/// Central metadata database (<see cref="IMetaDatabase"/> implementation).
+/// Uses NpgsqlDataSource (connection pooling) — MVCC handles concurrent reads/writes natively.
 /// </summary>
 public sealed class MetaDatabase : IMetaDatabase
 {
-    /// <summary>
-    /// Bump this when data-collection logic changes in a way that requires
-    /// re-running backfill / history reconstruction for all users.
-    /// </summary>
+    private readonly NpgsqlDataSource _ds;
+    private readonly ILogger<MetaDatabase> _log;
+
     internal const int DataCollectionVersion = 3;
 
-    /// <summary>
-    /// Bump this when rivals computation logic changes in a way that requires
-    /// re-running rivals for all registered users.
-    /// </summary>
-    internal const int RivalsVersion = 1;
-
-    /// <summary>
-    /// Bump this when combo leaderboard schema changes (tables are rebuilt each scrape).
-    /// v1 → v2: Added multi-metric columns, changed PK from (ComboKey,Rank) to (ComboId,AccountId).
-    /// </summary>
-    internal const int ComboVersion = 2;
-
-    private readonly string _connectionString;
-    private readonly ILogger<MetaDatabase> _log;
-    private bool _initialized;
-
-    // ── In-memory cache for leaderboard population (rarely changes) ──
-    private Dictionary<(string SongId, string Instrument), long>? _populationCache;
-    private DateTime _populationCacheTime;
-    private readonly object _populationCacheLock = new();
-    private static readonly TimeSpan PopulationCacheTtl = TimeSpan.FromMinutes(5);
-
-    public MetaDatabase(string dbPath, ILogger<MetaDatabase> log)
+    public MetaDatabase(NpgsqlDataSource dataSource, ILogger<MetaDatabase> log)
     {
+        _ds = dataSource;
         _log = log;
-
-        var dir = Path.GetDirectoryName(dbPath);
-        if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-            Directory.CreateDirectory(dir);
-
-        _connectionString = new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString();
     }
 
-    /// <summary>Allow tests to re-run <see cref="EnsureSchema"/> after mutating version rows.</summary>
-    internal void ResetInitialized() => _initialized = false;
+    public void EnsureSchema() { } // Created by DatabaseInitializer
 
-    /// <summary>
-    /// Create all meta-DB tables if they don't already exist.
-    /// </summary>
-    public void EnsureSchema()
-    {
-        if (_initialized) return;
+    // ── Scrape log ───────────────────────────────────────────────────
 
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            CREATE TABLE IF NOT EXISTS ScrapeLog (
-                Id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                StartedAt     TEXT    NOT NULL,
-                CompletedAt   TEXT,
-                SongsScraped  INTEGER,
-                TotalEntries  INTEGER,
-                TotalRequests INTEGER,
-                TotalBytes    INTEGER
-            );
-
-            CREATE TABLE IF NOT EXISTS ScoreHistory (
-                Id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                SongId      TEXT    NOT NULL,
-                Instrument  TEXT    NOT NULL,
-                AccountId   TEXT    NOT NULL,
-                OldScore    INTEGER,
-                NewScore    INTEGER,
-                OldRank     INTEGER,
-                NewRank     INTEGER,
-                Accuracy    INTEGER,
-                IsFullCombo INTEGER,
-                Stars       INTEGER,
-                Percentile  REAL,
-                Season      INTEGER,
-                ScoreAchievedAt TEXT,
-                SeasonRank  INTEGER,
-                AllTimeRank INTEGER,
-                ChangedAt   TEXT    NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS IX_ScoreHist_Account ON ScoreHistory (AccountId);
-            CREATE INDEX IF NOT EXISTS IX_ScoreHist_Song    ON ScoreHistory (SongId, Instrument);
-
-            CREATE TABLE IF NOT EXISTS AccountNames (
-                AccountId    TEXT PRIMARY KEY,
-                DisplayName  TEXT,
-                LastResolved TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS RegisteredUsers (
-                DeviceId     TEXT NOT NULL,
-                AccountId    TEXT NOT NULL,
-                RegisteredAt TEXT NOT NULL,
-                LastSyncAt   TEXT,
-                PRIMARY KEY (DeviceId, AccountId)
-            );
-
-            CREATE INDEX IF NOT EXISTS IX_Reg_Account ON RegisteredUsers (AccountId);
-
-            CREATE TABLE IF NOT EXISTS BackfillStatus (
-                AccountId         TEXT    PRIMARY KEY,
-                Status            TEXT    NOT NULL DEFAULT 'pending',
-                SongsChecked      INTEGER NOT NULL DEFAULT 0,
-                EntriesFound      INTEGER NOT NULL DEFAULT 0,
-                TotalSongsToCheck INTEGER NOT NULL DEFAULT 0,
-                StartedAt         TEXT,
-                CompletedAt       TEXT,
-                LastResumedAt     TEXT,
-                ErrorMessage      TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS BackfillProgress (
-                AccountId   TEXT    NOT NULL,
-                SongId      TEXT    NOT NULL,
-                Instrument  TEXT    NOT NULL,
-                Checked     INTEGER NOT NULL DEFAULT 0,
-                EntryFound  INTEGER NOT NULL DEFAULT 0,
-                CheckedAt   TEXT,
-                PRIMARY KEY (AccountId, SongId, Instrument)
-            );
-
-            CREATE INDEX IF NOT EXISTS IX_BfProgress_Account ON BackfillProgress (AccountId);
-
-            CREATE TABLE IF NOT EXISTS HistoryReconStatus (
-                AccountId             TEXT    PRIMARY KEY,
-                Status                TEXT    NOT NULL DEFAULT 'pending',
-                SongsProcessed        INTEGER NOT NULL DEFAULT 0,
-                TotalSongsToProcess   INTEGER NOT NULL DEFAULT 0,
-                SeasonsQueried        INTEGER NOT NULL DEFAULT 0,
-                HistoryEntriesFound   INTEGER NOT NULL DEFAULT 0,
-                StartedAt             TEXT,
-                CompletedAt           TEXT,
-                ErrorMessage          TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS HistoryReconProgress (
-                AccountId   TEXT    NOT NULL,
-                SongId      TEXT    NOT NULL,
-                Instrument  TEXT    NOT NULL,
-                Processed   INTEGER NOT NULL DEFAULT 0,
-                ProcessedAt TEXT,
-                PRIMARY KEY (AccountId, SongId, Instrument)
-            );
-
-            CREATE INDEX IF NOT EXISTS IX_HrProgress_Account ON HistoryReconProgress (AccountId);
-
-            CREATE TABLE IF NOT EXISTS SeasonWindows (
-                SeasonNumber INTEGER PRIMARY KEY,
-                EventId      TEXT    NOT NULL,
-                WindowId     TEXT    NOT NULL,
-                DiscoveredAt TEXT    NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS SongFirstSeenSeason (
-                SongId           TEXT    PRIMARY KEY,
-                FirstSeenSeason  INTEGER,
-                MinObservedSeason INTEGER,
-                EstimatedSeason  INTEGER NOT NULL,
-                ProbeResult      TEXT,
-                CalculatedAt     TEXT    NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS EpicUserTokens (
-                AccountId              TEXT PRIMARY KEY,
-                EncryptedAccessToken   BLOB NOT NULL,
-                EncryptedRefreshToken  BLOB NOT NULL,
-                TokenExpiresAt         TEXT NOT NULL,
-                RefreshExpiresAt       TEXT NOT NULL,
-                Nonce                  BLOB NOT NULL,
-                UpdatedAt              TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS LeaderboardPopulation (
-                SongId       TEXT    NOT NULL,
-                Instrument   TEXT    NOT NULL,
-                TotalEntries INTEGER NOT NULL DEFAULT -1,
-                UpdatedAt    TEXT    NOT NULL,
-                PRIMARY KEY (SongId, Instrument)
-            );
-
-            CREATE TABLE IF NOT EXISTS PlayerStats (
-                AccountId       TEXT    NOT NULL,
-                Instrument      TEXT    NOT NULL,
-                SongsPlayed     INTEGER NOT NULL DEFAULT 0,
-                FullComboCount  INTEGER NOT NULL DEFAULT 0,
-                GoldStarCount   INTEGER NOT NULL DEFAULT 0,
-                AvgAccuracy     REAL    NOT NULL DEFAULT 0,
-                BestRank        INTEGER NOT NULL DEFAULT 0,
-                BestRankSongId  TEXT,
-                TotalScore      INTEGER NOT NULL DEFAULT 0,
-                PercentileDist  TEXT,
-                AvgPercentile   TEXT,
-                OverallPercentile TEXT,
-                UpdatedAt       TEXT    NOT NULL,
-                PRIMARY KEY (AccountId, Instrument)
-            );
-
-            CREATE TABLE IF NOT EXISTS PlayerStatsTiers (
-                AccountId  TEXT NOT NULL,
-                Instrument TEXT NOT NULL,
-                TiersJson  TEXT NOT NULL DEFAULT '[]',
-                UpdatedAt  TEXT NOT NULL,
-                PRIMARY KEY (AccountId, Instrument)
-            );
-
-            CREATE TABLE IF NOT EXISTS DataVersion (
-                Key     TEXT PRIMARY KEY,
-                Version INTEGER NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS RivalsStatus (
-                AccountId              TEXT    PRIMARY KEY,
-                Status                 TEXT    NOT NULL DEFAULT 'pending',
-                CombosComputed         INTEGER NOT NULL DEFAULT 0,
-                TotalCombosToCompute   INTEGER NOT NULL DEFAULT 0,
-                RivalsFound            INTEGER NOT NULL DEFAULT 0,
-                StartedAt              TEXT,
-                CompletedAt            TEXT,
-                ErrorMessage           TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS UserRivals (
-                UserId          TEXT    NOT NULL,
-                RivalAccountId  TEXT    NOT NULL,
-                InstrumentCombo TEXT    NOT NULL,
-                Direction       TEXT    NOT NULL,
-                RivalScore      REAL    NOT NULL,
-                AvgSignedDelta  REAL    NOT NULL,
-                SharedSongCount INTEGER NOT NULL,
-                AheadCount      INTEGER NOT NULL,
-                BehindCount     INTEGER NOT NULL,
-                ComputedAt      TEXT    NOT NULL,
-                PRIMARY KEY (UserId, RivalAccountId, InstrumentCombo)
-            );
-
-            CREATE INDEX IF NOT EXISTS IX_UserRivals_Combo
-                ON UserRivals (UserId, InstrumentCombo, Direction, RivalScore DESC);
-
-            CREATE TABLE IF NOT EXISTS RivalSongSamples (
-                UserId          TEXT    NOT NULL,
-                RivalAccountId  TEXT    NOT NULL,
-                Instrument      TEXT    NOT NULL,
-                SongId          TEXT    NOT NULL,
-                UserRank        INTEGER NOT NULL,
-                RivalRank       INTEGER NOT NULL,
-                RankDelta       INTEGER NOT NULL,
-                UserScore       INTEGER,
-                RivalScore      INTEGER,
-                PRIMARY KEY (UserId, RivalAccountId, Instrument, SongId)
-            );
-
-            CREATE INDEX IF NOT EXISTS IX_RivalSamples_Rival
-                ON RivalSongSamples (UserId, RivalAccountId, Instrument);
-
-            CREATE TABLE IF NOT EXISTS LeaderboardRivals (
-                UserId          TEXT    NOT NULL,
-                RivalAccountId  TEXT    NOT NULL,
-                Instrument      TEXT    NOT NULL,
-                RankMethod      TEXT    NOT NULL,
-                Direction       TEXT    NOT NULL,
-                UserRank        INTEGER NOT NULL,
-                RivalRank       INTEGER NOT NULL,
-                SharedSongCount INTEGER NOT NULL,
-                AheadCount      INTEGER NOT NULL,
-                BehindCount     INTEGER NOT NULL,
-                AvgSignedDelta  REAL    NOT NULL,
-                ComputedAt      TEXT    NOT NULL,
-                PRIMARY KEY (UserId, RivalAccountId, Instrument, RankMethod)
-            );
-
-            CREATE INDEX IF NOT EXISTS IX_LeaderboardRivals_Lookup
-                ON LeaderboardRivals (UserId, Instrument, RankMethod, Direction);
-
-            CREATE TABLE IF NOT EXISTS LeaderboardRivalSongSamples (
-                UserId          TEXT    NOT NULL,
-                RivalAccountId  TEXT    NOT NULL,
-                Instrument      TEXT    NOT NULL,
-                RankMethod      TEXT    NOT NULL,
-                SongId          TEXT    NOT NULL,
-                UserRank        INTEGER NOT NULL,
-                RivalRank       INTEGER NOT NULL,
-                RankDelta       INTEGER NOT NULL,
-                UserScore       INTEGER,
-                RivalScore      INTEGER,
-                PRIMARY KEY (UserId, RivalAccountId, Instrument, RankMethod, SongId)
-            );
-
-            CREATE INDEX IF NOT EXISTS IX_LeaderboardRivalSamples_Rival
-                ON LeaderboardRivalSongSamples (UserId, RivalAccountId, Instrument, RankMethod);
-
-            CREATE TABLE IF NOT EXISTS ItemShopTracks (
-                SongId          TEXT    PRIMARY KEY,
-                ScrapedAt       TEXT    NOT NULL,
-                LeavingTomorrow INTEGER NOT NULL DEFAULT 0
-            );
-
-            CREATE TABLE IF NOT EXISTS CompositeRankings (
-                AccountId              TEXT    PRIMARY KEY,
-                InstrumentsPlayed      INTEGER NOT NULL,
-                TotalSongsPlayed       INTEGER NOT NULL,
-                CompositeRating        REAL    NOT NULL,
-                CompositeRank          INTEGER NOT NULL UNIQUE,
-
-                GuitarAdjustedSkill    REAL,
-                GuitarSkillRank        INTEGER,
-                BassAdjustedSkill      REAL,
-                BassSkillRank          INTEGER,
-                DrumsAdjustedSkill     REAL,
-                DrumsSkillRank         INTEGER,
-                VocalsAdjustedSkill    REAL,
-                VocalsSkillRank        INTEGER,
-                ProGuitarAdjustedSkill REAL,
-                ProGuitarSkillRank     INTEGER,
-                ProBassAdjustedSkill   REAL,
-                ProBassSkillRank       INTEGER,
-
-                ComputedAt             TEXT    NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS IX_CompositeRank ON CompositeRankings (CompositeRank);
-
-            CREATE TABLE IF NOT EXISTS CompositeRankHistory (
-                AccountId      TEXT    NOT NULL,
-                SnapshotDate   TEXT    NOT NULL,
-                CompositeRank  INTEGER NOT NULL,
-                PRIMARY KEY (AccountId, SnapshotDate)
-            );
-
-            -- ComboLeaderboard + ComboStats are created/migrated by
-            -- MigrateFeatureVersion("Combo", ..., ResetComboTables) below.
-
-            """;
-        cmd.ExecuteNonQuery();
-
-        // ── Migrations: add snapshot columns to ScoreHistory (existing DBs) ──
-        MigrateAddColumn(conn, "ScoreHistory", "Accuracy", "INTEGER");
-        MigrateAddColumn(conn, "ScoreHistory", "IsFullCombo", "INTEGER");
-
-        // SongFirstSeenSeason: allow NULL FirstSeenSeason/MinObservedSeason + add EstimatedSeason
-        MigrateAddColumn(conn, "SongFirstSeenSeason", "EstimatedSeason", "INTEGER");
-        MigrateSongFirstSeenSeasonSchema(conn);
-        MigrateAddColumn(conn, "ScoreHistory", "Stars", "INTEGER");
-        MigrateAddColumn(conn, "ScoreHistory", "Percentile", "REAL");
-        MigrateAddColumn(conn, "ScoreHistory", "Season", "INTEGER");
-        MigrateAddColumn(conn, "ScoreHistory", "ScoreAchievedAt", "TEXT");
-        MigrateAddColumn(conn, "ScoreHistory", "SeasonRank", "INTEGER");
-        MigrateAddColumn(conn, "ScoreHistory", "AllTimeRank", "INTEGER");
-        MigrateAddColumn(conn, "ScoreHistory", "Difficulty", "INTEGER");
-
-        // ── Migration: dedup index on ScoreHistory ──
-        using (var idxCmd = conn.CreateCommand())
-        {
-            // Remove any pre-existing duplicates before creating the unique index
-            idxCmd.CommandText = """
-                DELETE FROM ScoreHistory
-                WHERE Id NOT IN (
-                    SELECT MIN(Id) FROM ScoreHistory
-                    GROUP BY AccountId, SongId, Instrument, NewScore, ScoreAchievedAt
-                );
-                CREATE UNIQUE INDEX IF NOT EXISTS IX_ScoreHist_Dedup
-                    ON ScoreHistory (AccountId, SongId, Instrument, NewScore, ScoreAchievedAt);
-                """;
-            idxCmd.ExecuteNonQuery();
-        }
-
-        // ── Migrations: add columns to RegisteredUsers (existing DBs) ──
-        MigrateAddColumn(conn, "RegisteredUsers", "DisplayName", "TEXT");
-        MigrateAddColumn(conn, "RegisteredUsers", "Platform", "TEXT");
-        MigrateAddColumn(conn, "RegisteredUsers", "LastLoginAt", "TEXT");
-
-        // ── Migration: add TotalCombosToCompute to RivalsStatus (existing DBs) ──
-        MigrateAddColumn(conn, "RivalsStatus", "TotalCombosToCompute", "INTEGER NOT NULL DEFAULT 0");
-
-        // ── Migration: add metric value columns to CompositeRankHistory (existing DBs) ──
-        MigrateAddColumn(conn, "CompositeRankHistory", "CompositeRating", "REAL");
-        MigrateAddColumn(conn, "CompositeRankHistory", "InstrumentsPlayed", "INTEGER");
-        MigrateAddColumn(conn, "CompositeRankHistory", "TotalSongsPlayed", "INTEGER");
-
-        // ── Migration: re-queue backfill / history recon when data-collection version bumps ──
-        MigrateDataCollectionVersion(conn);
-
-        // ── Migration: re-queue rivals computation when rivals version bumps ──
-        MigrateFeatureVersion(conn, "Rivals", RivalsVersion, ResetRivalsStatus);
-
-        // ── Migration: rebuild combo tables when combo version bumps ──
-        MigrateFeatureVersion(conn, "Combo", ComboVersion, ResetComboTables);
-
-        // ── Performance indexes for frequently-queried columns ──
-        using (var perfIdx = conn.CreateCommand())
-        {
-            perfIdx.CommandText = """
-                CREATE INDEX IF NOT EXISTS IX_AccountNames_Unresolved
-                    ON AccountNames (LastResolved) WHERE LastResolved IS NULL;
-                CREATE INDEX IF NOT EXISTS IX_BackfillStatus_Status
-                    ON BackfillStatus (Status);
-                CREATE INDEX IF NOT EXISTS IX_HistoryReconStatus_Status
-                    ON HistoryReconStatus (Status);
-                CREATE INDEX IF NOT EXISTS IX_ScrapeLog_Completed
-                    ON ScrapeLog (Id DESC) WHERE CompletedAt IS NOT NULL;
-                CREATE INDEX IF NOT EXISTS IX_AccountNames_Name
-                    ON AccountNames (DisplayName COLLATE NOCASE) WHERE DisplayName IS NOT NULL;
-                """;
-            perfIdx.ExecuteNonQuery();
-        }
-
-        _initialized = true;
-
-        _log.LogDebug("Meta DB schema ensured.");
-    }
-
-    // ─── ScrapeLog ──────────────────────────────────────────────
-
-    /// <summary>
-    /// Start a new scrape run. Returns the auto-generated Id.
-    /// </summary>
     public long StartScrapeRun()
     {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
+        using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO ScrapeLog (StartedAt)
-            VALUES (@now);
-            SELECT last_insert_rowid();
-            """;
-        cmd.Parameters.AddWithValue("@now", now);
-        return (long)(cmd.ExecuteScalar() ?? 0);
+        cmd.CommandText = "INSERT INTO scrape_log (started_at) VALUES (@now) RETURNING id";
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        return (long)(int)cmd.ExecuteScalar()!;
     }
 
-    /// <summary>
-    /// Mark a scrape run as completed with summary statistics.
-    /// </summary>
-    public void CompleteScrapeRun(long scrapeId, int songsScraped, long totalEntries,
-                                  int totalRequests, long totalBytes)
+    public void CompleteScrapeRun(long scrapeId, int songsScraped, long totalEntries, int totalRequests, long totalBytes)
     {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
+        using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE ScrapeLog
-            SET CompletedAt   = @now,
-                SongsScraped  = @songs,
-                TotalEntries  = @entries,
-                TotalRequests = @requests,
-                TotalBytes    = @bytes
-            WHERE Id = @id;
-            """;
-        cmd.Parameters.AddWithValue("@now", now);
-        cmd.Parameters.AddWithValue("@songs", songsScraped);
-        cmd.Parameters.AddWithValue("@entries", totalEntries);
-        cmd.Parameters.AddWithValue("@requests", totalRequests);
-        cmd.Parameters.AddWithValue("@bytes", totalBytes);
-        cmd.Parameters.AddWithValue("@id", scrapeId);
+        cmd.CommandText = "UPDATE scrape_log SET completed_at = @now, songs_scraped = @songs, total_entries = @entries, total_requests = @requests, total_bytes = @bytes WHERE id = @id";
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.Parameters.AddWithValue("songs", songsScraped);
+        cmd.Parameters.AddWithValue("entries", (int)totalEntries);
+        cmd.Parameters.AddWithValue("requests", totalRequests);
+        cmd.Parameters.AddWithValue("bytes", totalBytes);
+        cmd.Parameters.AddWithValue("id", (int)scrapeId);
         cmd.ExecuteNonQuery();
     }
 
-    /// <summary>
-    /// Get the most recent completed scrape run, or null if none.
-    /// </summary>
     public ScrapeRunInfo? GetLastCompletedScrapeRun()
     {
-        using var conn = OpenConnection();
+        using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT Id, StartedAt, CompletedAt, SongsScraped, TotalEntries, TotalRequests, TotalBytes
-            FROM ScrapeLog
-            WHERE CompletedAt IS NOT NULL
-            ORDER BY Id DESC
-            LIMIT 1;
-            """;
-        using var reader = cmd.ExecuteReader();
-        if (!reader.Read()) return null;
-
+        cmd.CommandText = "SELECT id, started_at, completed_at, songs_scraped, total_entries, total_requests, total_bytes FROM scrape_log WHERE completed_at IS NOT NULL ORDER BY id DESC LIMIT 1";
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
         return new ScrapeRunInfo
         {
-            Id            = reader.GetInt64(0),
-            StartedAt     = reader.GetString(1),
-            CompletedAt   = reader.IsDBNull(2) ? null : reader.GetString(2),
-            SongsScraped  = reader.IsDBNull(3) ? 0 : reader.GetInt32(3),
-            TotalEntries  = reader.IsDBNull(4) ? 0 : reader.GetInt64(4),
-            TotalRequests = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
-            TotalBytes    = reader.IsDBNull(6) ? 0 : reader.GetInt64(6),
+            Id = r.GetInt32(0),
+            StartedAt = r.GetDateTime(1).ToString("o"),
+            CompletedAt = r.IsDBNull(2) ? null : r.GetDateTime(2).ToString("o"),
+            SongsScraped = r.IsDBNull(3) ? 0 : r.GetInt32(3),
+            TotalEntries = r.IsDBNull(4) ? 0 : r.GetInt32(4),
+            TotalRequests = r.IsDBNull(5) ? 0 : r.GetInt32(5),
+            TotalBytes = r.IsDBNull(6) ? 0 : r.GetInt64(6),
         };
     }
 
-    // ─── ScoreHistory ───────────────────────────────────────────
+    // ── Score history ────────────────────────────────────────────────
 
-    /// <summary>
-    /// Record a score change for a registered user.
-    /// </summary>
     public void InsertScoreChange(string songId, string instrument, string accountId,
-                                  int? oldScore, int newScore, int? oldRank, int newRank,
-                                  int? accuracy = null, bool? isFullCombo = null,
-                                  int? stars = null, double? percentile = null,
-                                  int? season = null, string? scoreAchievedAt = null,
-                                  int? seasonRank = null, int? allTimeRank = null,
-                                  int? difficulty = null)
+        int? oldScore, int newScore, int? oldRank, int newRank,
+        int? accuracy = null, bool? isFullCombo = null, int? stars = null,
+        double? percentile = null, int? season = null, string? scoreAchievedAt = null,
+        int? seasonRank = null, int? allTimeRank = null, int? difficulty = null)
     {
-        var now = DateTime.UtcNow.ToString("o");
-        lock (_writeLock)
-        {
-        var conn = GetPersistentConnection();
+        using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO ScoreHistory (SongId, Instrument, AccountId, OldScore, NewScore, OldRank, NewRank,
-                                     Accuracy, IsFullCombo, Stars, Percentile, Season, ScoreAchievedAt,
-                                     SeasonRank, AllTimeRank, Difficulty, ChangedAt)
-            VALUES (@songId, @instrument, @accountId, @oldScore, @newScore, @oldRank, @newRank,
-                    @accuracy, @fc, @stars, @percentile, @season, @scoreAchievedAt,
-                    @seasonRank, @allTimeRank, @difficulty, @now)
-            ON CONFLICT(AccountId, SongId, Instrument, NewScore, ScoreAchievedAt) DO UPDATE SET
-                SeasonRank  = COALESCE(excluded.SeasonRank,  ScoreHistory.SeasonRank),
-                AllTimeRank = COALESCE(excluded.AllTimeRank, ScoreHistory.AllTimeRank),
-                OldScore    = COALESCE(excluded.OldScore,    ScoreHistory.OldScore),
-                OldRank     = COALESCE(excluded.OldRank,     ScoreHistory.OldRank),
-                Difficulty  = COALESCE(excluded.Difficulty,   ScoreHistory.Difficulty),
-                ChangedAt   = excluded.ChangedAt;
-            """;
-        cmd.Parameters.AddWithValue("@songId", songId);
-        cmd.Parameters.AddWithValue("@instrument", instrument);
-        cmd.Parameters.AddWithValue("@accountId", accountId);
-        cmd.Parameters.AddWithValue("@oldScore", oldScore.HasValue ? oldScore.Value : DBNull.Value);
-        cmd.Parameters.AddWithValue("@newScore", newScore);
-        cmd.Parameters.AddWithValue("@oldRank", oldRank.HasValue ? oldRank.Value : DBNull.Value);
-        cmd.Parameters.AddWithValue("@newRank", newRank);
-        cmd.Parameters.AddWithValue("@accuracy", accuracy.HasValue ? accuracy.Value : DBNull.Value);
-        cmd.Parameters.AddWithValue("@fc", isFullCombo.HasValue ? (isFullCombo.Value ? 1 : 0) : DBNull.Value);
-        cmd.Parameters.AddWithValue("@stars", stars.HasValue ? stars.Value : DBNull.Value);
-        cmd.Parameters.AddWithValue("@percentile", percentile.HasValue ? percentile.Value : DBNull.Value);
-        cmd.Parameters.AddWithValue("@season", season.HasValue ? season.Value : DBNull.Value);
-        cmd.Parameters.AddWithValue("@scoreAchievedAt", (object?)scoreAchievedAt ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@seasonRank", seasonRank.HasValue ? seasonRank.Value : DBNull.Value);
-        cmd.Parameters.AddWithValue("@allTimeRank", allTimeRank.HasValue ? allTimeRank.Value : DBNull.Value);
-        cmd.Parameters.AddWithValue("@difficulty", difficulty.HasValue ? difficulty.Value : DBNull.Value);
-        cmd.Parameters.AddWithValue("@now", now);
+        cmd.CommandText =
+            "INSERT INTO score_history (song_id, instrument, account_id, old_score, new_score, old_rank, new_rank, accuracy, is_full_combo, stars, percentile, season, score_achieved_at, season_rank, all_time_rank, difficulty, changed_at) " +
+            "VALUES (@songId, @instrument, @accountId, @oldScore, @newScore, @oldRank, @newRank, @accuracy, @isFullCombo, @stars, @percentile, @season, @scoreAchievedAt, @seasonRank, @allTimeRank, @difficulty, @now) " +
+            "ON CONFLICT (account_id, song_id, instrument, new_score, score_achieved_at) DO UPDATE SET " +
+            "season_rank = COALESCE(EXCLUDED.season_rank, score_history.season_rank), all_time_rank = COALESCE(EXCLUDED.all_time_rank, score_history.all_time_rank)";
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("oldScore", (object?)oldScore ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("newScore", newScore);
+        cmd.Parameters.AddWithValue("oldRank", (object?)oldRank ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("newRank", newRank);
+        cmd.Parameters.AddWithValue("accuracy", (object?)accuracy ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("isFullCombo", (object?)isFullCombo ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("stars", (object?)stars ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("percentile", (object?)percentile ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("season", (object?)season ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("scoreAchievedAt", scoreAchievedAt is not null ? ParseUtc(scoreAchievedAt) : DBNull.Value);
+        cmd.Parameters.AddWithValue("seasonRank", (object?)seasonRank ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("allTimeRank", (object?)allTimeRank ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("difficulty", (object?)difficulty ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         cmd.ExecuteNonQuery();
-        } // lock
     }
 
-    /// <summary>
-    /// Backfill difficulty on existing ScoreHistory rows where it is currently NULL.
-    /// Only writes when there are matching rows to update; no-ops otherwise.
-    /// </summary>
     public void BackfillScoreHistoryDifficulty(string accountId, string songId, string instrument, int score, int difficulty)
     {
-        lock (_writeLock)
-        {
-        var conn = GetPersistentConnection();
+        using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE ScoreHistory
-               SET Difficulty = @difficulty
-             WHERE AccountId = @accountId
-               AND SongId = @songId
-               AND Instrument = @instrument
-               AND NewScore = @score
-               AND Difficulty IS NULL;
-            """;
-        cmd.Parameters.AddWithValue("@accountId", accountId);
-        cmd.Parameters.AddWithValue("@songId", songId);
-        cmd.Parameters.AddWithValue("@instrument", instrument);
-        cmd.Parameters.AddWithValue("@score", score);
-        cmd.Parameters.AddWithValue("@difficulty", difficulty);
+        cmd.CommandText = "UPDATE score_history SET difficulty = @difficulty WHERE account_id = @accountId AND song_id = @songId AND instrument = @instrument AND new_score = @score AND difficulty IS NULL";
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("score", score);
+        cmd.Parameters.AddWithValue("difficulty", difficulty);
         cmd.ExecuteNonQuery();
-        } // lock
     }
 
-    /// <summary>
-    /// Batch-insert multiple score changes in a single transaction.
-    /// Avoids per-call connection overhead when called from the scrape pipeline.
-    /// </summary>
     public int InsertScoreChanges(IReadOnlyList<ScoreChangeRecord> changes)
     {
         if (changes.Count == 0) return 0;
-
-        lock (_writeLock)
-        {
-        var now = DateTime.UtcNow.ToString("o");
-        var conn = GetPersistentConnection();
+        var now = DateTime.UtcNow;
+        using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
-        using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT INTO ScoreHistory (SongId, Instrument, AccountId, OldScore, NewScore, OldRank, NewRank,
-                                     Accuracy, IsFullCombo, Stars, Percentile, Season, ScoreAchievedAt,
-                                     SeasonRank, AllTimeRank, Difficulty, ChangedAt)
-            VALUES (@songId, @instrument, @accountId, @oldScore, @newScore, @oldRank, @newRank,
-                    @accuracy, @fc, @stars, @percentile, @season, @scoreAchievedAt,
-                    @seasonRank, @allTimeRank, @difficulty, @now)
-            ON CONFLICT(AccountId, SongId, Instrument, NewScore, ScoreAchievedAt) DO UPDATE SET
-                SeasonRank  = COALESCE(excluded.SeasonRank,  ScoreHistory.SeasonRank),
-                AllTimeRank = COALESCE(excluded.AllTimeRank, ScoreHistory.AllTimeRank),
-                OldScore    = COALESCE(excluded.OldScore,    ScoreHistory.OldScore),
-                OldRank     = COALESCE(excluded.OldRank,     ScoreHistory.OldRank),
-                Difficulty  = COALESCE(excluded.Difficulty,   ScoreHistory.Difficulty),
-                ChangedAt   = excluded.ChangedAt;
-            """;
 
-        var pSongId         = cmd.Parameters.Add("@songId", SqliteType.Text);
-        var pInstrument     = cmd.Parameters.Add("@instrument", SqliteType.Text);
-        var pAccountId      = cmd.Parameters.Add("@accountId", SqliteType.Text);
-        var pOldScore       = cmd.Parameters.Add("@oldScore", SqliteType.Integer);
-        var pNewScore       = cmd.Parameters.Add("@newScore", SqliteType.Integer);
-        var pOldRank        = cmd.Parameters.Add("@oldRank", SqliteType.Integer);
-        var pNewRank        = cmd.Parameters.Add("@newRank", SqliteType.Integer);
-        var pAccuracy       = cmd.Parameters.Add("@accuracy", SqliteType.Integer);
-        var pFc             = cmd.Parameters.Add("@fc", SqliteType.Integer);
-        var pStars          = cmd.Parameters.Add("@stars", SqliteType.Integer);
-        var pPercentile     = cmd.Parameters.Add("@percentile", SqliteType.Real);
-        var pSeason         = cmd.Parameters.Add("@season", SqliteType.Integer);
-        var pScoreAchievedAt = cmd.Parameters.Add("@scoreAchievedAt", SqliteType.Text);
-        var pSeasonRank     = cmd.Parameters.Add("@seasonRank", SqliteType.Integer);
-        var pAllTimeRank    = cmd.Parameters.Add("@allTimeRank", SqliteType.Integer);
-        var pDifficulty     = cmd.Parameters.Add("@difficulty", SqliteType.Integer);
-        var pNow            = cmd.Parameters.Add("@now", SqliteType.Text);
-        cmd.Prepare();
-
-        int inserted = 0;
-        foreach (var c in changes)
+        // Use COPY + merge for larger batches
+        if (changes.Count > 20)
         {
-            pSongId.Value         = c.SongId;
-            pInstrument.Value     = c.Instrument;
-            pAccountId.Value      = c.AccountId;
-            pOldScore.Value       = c.OldScore.HasValue ? c.OldScore.Value : DBNull.Value;
-            pNewScore.Value       = c.NewScore;
-            pOldRank.Value        = c.OldRank.HasValue ? c.OldRank.Value : DBNull.Value;
-            pNewRank.Value        = c.NewRank;
-            pAccuracy.Value       = c.Accuracy.HasValue ? c.Accuracy.Value : DBNull.Value;
-            pFc.Value             = c.IsFullCombo.HasValue ? (c.IsFullCombo.Value ? 1 : 0) : DBNull.Value;
-            pStars.Value          = c.Stars.HasValue ? c.Stars.Value : DBNull.Value;
-            pPercentile.Value     = c.Percentile.HasValue ? c.Percentile.Value : DBNull.Value;
-            pSeason.Value         = c.Season.HasValue ? c.Season.Value : DBNull.Value;
-            pScoreAchievedAt.Value = (object?)c.ScoreAchievedAt ?? DBNull.Value;
-            pSeasonRank.Value     = c.SeasonRank.HasValue ? c.SeasonRank.Value : DBNull.Value;
-            pAllTimeRank.Value    = c.AllTimeRank.HasValue ? c.AllTimeRank.Value : DBNull.Value;
-            pDifficulty.Value     = c.Difficulty.HasValue ? c.Difficulty.Value : DBNull.Value;
-            pNow.Value            = now;
-            inserted += cmd.ExecuteNonQuery();
-        }
-
-        tx.Commit();
-        return inserted;
-        } // lock
-    }
-
-    // ─── AccountNames ───────────────────────────────────────────
-
-    /// <summary>
-    /// Bulk insert account IDs seen during scraping.  New IDs are added with
-    /// <c>DisplayName = NULL</c> and <c>LastResolved = NULL</c> so the name
-    /// resolver can pick them up later.  Existing rows are left untouched.
-    /// </summary>
-    public int InsertAccountIds(IEnumerable<string> accountIds)
-    {
-        lock (_writeLock)
-        {
-        var conn = GetPersistentConnection();
-        using var tx = conn.BeginTransaction();
-        using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT OR IGNORE INTO AccountNames (AccountId, DisplayName, LastResolved)
-            VALUES (@id, NULL, NULL);
-            """;
-        var pId = cmd.Parameters.Add("@id", SqliteType.Text);
-        cmd.Prepare();
-
-        int inserted = 0;
-        foreach (var id in accountIds)
-        {
-            pId.Value = id;
-            inserted += cmd.ExecuteNonQuery();
-        }
-
-        tx.Commit();
-        return inserted;
-        } // lock
-    }
-
-    /// <summary>
-    /// Get all account IDs that have never been resolved (LastResolved IS NULL).
-    /// These are accounts seen during scraping that the name resolver hasn't
-    /// attempted yet.
-    /// </summary>
-    public List<string> GetUnresolvedAccountIds()
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT AccountId FROM AccountNames WHERE LastResolved IS NULL;";
-
-        var ids = new List<string>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-            ids.Add(reader.GetString(0));
-        return ids;
-    }
-
-    /// <summary>
-    /// Get the count of account IDs that have never been resolved.
-    /// </summary>
-    public int GetUnresolvedAccountCount()
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT COUNT(*) FROM AccountNames WHERE LastResolved IS NULL;";
-        return Convert.ToInt32(cmd.ExecuteScalar());
-    }
-
-    /// <summary>
-    /// Bulk upsert resolved account names.  When an account ID already exists
-    /// (e.g. pre-inserted during scraping with NULLs), the row is updated
-    /// with the resolved display name and timestamp.
-    /// </summary>
-    public int InsertAccountNames(IReadOnlyList<(string AccountId, string? DisplayName)> accounts)
-    {
-        if (accounts.Count == 0) return 0;
-
-        var now = DateTime.UtcNow.ToString("o");
-        int affected = 0;
-
-        lock (_writeLock)
-        {
-            var conn = GetPersistentConnection();
-            using var tx = conn.BeginTransaction();
-            using var cmd = conn.CreateCommand();
-            cmd.Transaction = tx;
-            cmd.CommandText = """
-                INSERT INTO AccountNames (AccountId, DisplayName, LastResolved)
-                VALUES (@id, @name, @now)
-                ON CONFLICT(AccountId) DO UPDATE SET
-                    DisplayName  = excluded.DisplayName,
-                    LastResolved = excluded.LastResolved;
-                """;
-
-            var pId   = cmd.Parameters.Add("@id", SqliteType.Text);
-            var pName = cmd.Parameters.Add("@name", SqliteType.Text);
-            var pNow  = cmd.Parameters.Add("@now", SqliteType.Text);
-            cmd.Prepare();
-
-            foreach (var (accountId, displayName) in accounts)
+            using (var c = conn.CreateCommand())
             {
-                pId.Value   = accountId;
-                pName.Value = displayName is not null ? displayName : DBNull.Value;
-                pNow.Value  = now;
-                affected += cmd.ExecuteNonQuery();
+                c.Transaction = tx;
+                c.CommandText =
+                    "CREATE TEMP TABLE _sh_staging (" +
+                    "song_id TEXT, instrument TEXT, account_id TEXT, old_score INTEGER, new_score INTEGER, " +
+                    "old_rank INTEGER, new_rank INTEGER, accuracy INTEGER, is_full_combo BOOLEAN, " +
+                    "stars INTEGER, percentile DOUBLE PRECISION, season INTEGER, " +
+                    "score_achieved_at TIMESTAMPTZ, season_rank INTEGER, all_time_rank INTEGER, " +
+                    "difficulty INTEGER, changed_at TIMESTAMPTZ" +
+                    ") ON COMMIT DROP";
+                c.ExecuteNonQuery();
             }
 
+            using (var writer = conn.BeginBinaryImport(
+                "COPY _sh_staging (song_id, instrument, account_id, old_score, new_score, old_rank, new_rank, " +
+                "accuracy, is_full_combo, stars, percentile, season, score_achieved_at, season_rank, " +
+                "all_time_rank, difficulty, changed_at) FROM STDIN (FORMAT BINARY)"))
+            {
+                foreach (var c in changes)
+                {
+                    writer.StartRow();
+                    writer.Write(c.SongId, NpgsqlDbType.Text);
+                    writer.Write(c.Instrument, NpgsqlDbType.Text);
+                    writer.Write(c.AccountId, NpgsqlDbType.Text);
+                    WriteNullableInt(writer, c.OldScore);
+                    writer.Write(c.NewScore, NpgsqlDbType.Integer);
+                    WriteNullableInt(writer, c.OldRank);
+                    writer.Write(c.NewRank, NpgsqlDbType.Integer);
+                    WriteNullableInt(writer, c.Accuracy);
+                    if (c.IsFullCombo.HasValue) writer.Write(c.IsFullCombo.Value, NpgsqlDbType.Boolean);
+                    else writer.WriteNull();
+                    WriteNullableInt(writer, c.Stars);
+                    if (c.Percentile.HasValue) writer.Write(c.Percentile.Value, NpgsqlDbType.Double);
+                    else writer.WriteNull();
+                    WriteNullableInt(writer, c.Season);
+                    if (c.ScoreAchievedAt is not null) writer.Write(ParseUtc(c.ScoreAchievedAt), NpgsqlDbType.TimestampTz);
+                    else writer.WriteNull();
+                    WriteNullableInt(writer, c.SeasonRank);
+                    WriteNullableInt(writer, c.AllTimeRank);
+                    WriteNullableInt(writer, c.Difficulty);
+                    writer.Write(now, NpgsqlDbType.TimestampTz);
+                }
+                writer.Complete();
+            }
+
+            int inserted;
+            using (var c = conn.CreateCommand())
+            {
+                c.Transaction = tx;
+                c.CommandTimeout = 120;
+                c.CommandText =
+                    "INSERT INTO score_history (song_id, instrument, account_id, old_score, new_score, old_rank, new_rank, accuracy, is_full_combo, stars, percentile, season, score_achieved_at, season_rank, all_time_rank, difficulty, changed_at) " +
+                    "SELECT song_id, instrument, account_id, old_score, new_score, old_rank, new_rank, accuracy, is_full_combo, stars, percentile, season, score_achieved_at, season_rank, all_time_rank, difficulty, changed_at FROM _sh_staging " +
+                    "ON CONFLICT(account_id, song_id, instrument, new_score, score_achieved_at) DO UPDATE SET " +
+                    "season_rank = COALESCE(EXCLUDED.season_rank, score_history.season_rank), all_time_rank = COALESCE(EXCLUDED.all_time_rank, score_history.all_time_rank), " +
+                    "old_score = COALESCE(EXCLUDED.old_score, score_history.old_score), old_rank = COALESCE(EXCLUDED.old_rank, score_history.old_rank), " +
+                    "difficulty = COALESCE(EXCLUDED.difficulty, score_history.difficulty), changed_at = EXCLUDED.changed_at";
+                inserted = c.ExecuteNonQuery();
+            }
             tx.Commit();
+            return inserted;
         }
-        return affected;
-    }
 
-    // ─── RegisteredUsers ────────────────────────────────────────
-
-    /// <summary>
-    /// Get all registered account IDs (for change detection during scrape).
-    /// </summary>
-    public HashSet<string> GetRegisteredAccountIds()
-    {
-        using var conn = OpenConnection();
+        // Small batch: prepared-statement loop
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT DISTINCT AccountId FROM RegisteredUsers;";
-
-        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-            ids.Add(reader.GetString(0));
-        return ids;
-    }
-
-    /// <summary>
-    /// Register a device + account pair. Returns true if newly inserted.
-    /// </summary>
-    public bool RegisterUser(string deviceId, string accountId)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT OR IGNORE INTO RegisteredUsers (DeviceId, AccountId, RegisteredAt)
-            VALUES (@deviceId, @accountId, @now);
-            """;
-        cmd.Parameters.AddWithValue("@deviceId", deviceId);
-        cmd.Parameters.AddWithValue("@accountId", accountId);
-        cmd.Parameters.AddWithValue("@now", now);
-        return cmd.ExecuteNonQuery() > 0;
-    }
-
-    /// <summary>
-    /// Unregister a device + account pair. Returns true if a row was deleted.
-    /// If this was the last device for the account, also cleans up all per-account data.
-    /// </summary>
-    public bool UnregisterUser(string deviceId, string accountId)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            DELETE FROM RegisteredUsers
-            WHERE DeviceId = @deviceId AND AccountId = @accountId;
-            """;
-        cmd.Parameters.AddWithValue("@deviceId", deviceId);
-        cmd.Parameters.AddWithValue("@accountId", accountId);
-        var deleted = cmd.ExecuteNonQuery() > 0;
-
-        if (deleted)
+        cmd.Transaction = tx;
+        cmd.CommandText =
+            "INSERT INTO score_history (song_id, instrument, account_id, old_score, new_score, old_rank, new_rank, accuracy, is_full_combo, stars, percentile, season, score_achieved_at, season_rank, all_time_rank, difficulty, changed_at) " +
+            "VALUES (@songId, @instrument, @accountId, @oldScore, @newScore, @oldRank, @newRank, @accuracy, @fc, @stars, @percentile, @season, @scoreAchievedAt, @seasonRank, @allTimeRank, @difficulty, @now) " +
+            "ON CONFLICT(account_id, song_id, instrument, new_score, score_achieved_at) DO UPDATE SET " +
+            "season_rank = COALESCE(EXCLUDED.season_rank, score_history.season_rank), all_time_rank = COALESCE(EXCLUDED.all_time_rank, score_history.all_time_rank), " +
+            "old_score = COALESCE(EXCLUDED.old_score, score_history.old_score), old_rank = COALESCE(EXCLUDED.old_rank, score_history.old_rank), " +
+            "difficulty = COALESCE(EXCLUDED.difficulty, score_history.difficulty), changed_at = EXCLUDED.changed_at";
+        var pSongId = cmd.Parameters.Add("songId", NpgsqlDbType.Text);
+        var pInstrument = cmd.Parameters.Add("instrument", NpgsqlDbType.Text);
+        var pAccountId = cmd.Parameters.Add("accountId", NpgsqlDbType.Text);
+        var pOldScore = cmd.Parameters.Add("oldScore", NpgsqlDbType.Integer);
+        var pNewScore = cmd.Parameters.Add("newScore", NpgsqlDbType.Integer);
+        var pOldRank = cmd.Parameters.Add("oldRank", NpgsqlDbType.Integer);
+        var pNewRank = cmd.Parameters.Add("newRank", NpgsqlDbType.Integer);
+        var pAccuracy = cmd.Parameters.Add("accuracy", NpgsqlDbType.Integer);
+        var pFc = cmd.Parameters.Add("fc", NpgsqlDbType.Boolean);
+        var pStars = cmd.Parameters.Add("stars", NpgsqlDbType.Integer);
+        var pPercentile = cmd.Parameters.Add("percentile", NpgsqlDbType.Double);
+        var pSeason = cmd.Parameters.Add("season", NpgsqlDbType.Integer);
+        var pScoreAchievedAt = cmd.Parameters.Add("scoreAchievedAt", NpgsqlDbType.TimestampTz);
+        var pSeasonRank = cmd.Parameters.Add("seasonRank", NpgsqlDbType.Integer);
+        var pAllTimeRank = cmd.Parameters.Add("allTimeRank", NpgsqlDbType.Integer);
+        var pDifficulty = cmd.Parameters.Add("difficulty", NpgsqlDbType.Integer);
+        var pNow = cmd.Parameters.Add("now", NpgsqlDbType.TimestampTz);
+        cmd.Prepare();
+        int loopInserted = 0;
+        foreach (var c in changes)
         {
-            // If no registrations remain for this account, clean up all per-account data.
-            using var countCmd = conn.CreateCommand();
-            countCmd.CommandText = "SELECT COUNT(*) FROM RegisteredUsers WHERE AccountId = @accountId;";
-            countCmd.Parameters.AddWithValue("@accountId", accountId);
-            var remaining = Convert.ToInt32(countCmd.ExecuteScalar());
-            if (remaining == 0)
-                CleanupAccountData(conn, accountId);
+            pSongId.Value = c.SongId; pInstrument.Value = c.Instrument; pAccountId.Value = c.AccountId;
+            pOldScore.Value = c.OldScore.HasValue ? c.OldScore.Value : DBNull.Value;
+            pNewScore.Value = c.NewScore;
+            pOldRank.Value = c.OldRank.HasValue ? c.OldRank.Value : DBNull.Value;
+            pNewRank.Value = c.NewRank;
+            pAccuracy.Value = c.Accuracy.HasValue ? c.Accuracy.Value : DBNull.Value;
+            pFc.Value = c.IsFullCombo.HasValue ? c.IsFullCombo.Value : DBNull.Value;
+            pStars.Value = c.Stars.HasValue ? c.Stars.Value : DBNull.Value;
+            pPercentile.Value = c.Percentile.HasValue ? c.Percentile.Value : DBNull.Value;
+            pSeason.Value = c.Season.HasValue ? c.Season.Value : DBNull.Value;
+            pScoreAchievedAt.Value = c.ScoreAchievedAt is not null ? ParseUtc(c.ScoreAchievedAt) : DBNull.Value;
+            pSeasonRank.Value = c.SeasonRank.HasValue ? c.SeasonRank.Value : DBNull.Value;
+            pAllTimeRank.Value = c.AllTimeRank.HasValue ? c.AllTimeRank.Value : DBNull.Value;
+            pDifficulty.Value = c.Difficulty.HasValue ? c.Difficulty.Value : DBNull.Value;
+            pNow.Value = now;
+            loopInserted += cmd.ExecuteNonQuery();
         }
-
-        return deleted;
+        tx.Commit();
+        return loopInserted;
     }
 
-    /// <summary>
-    /// Get score history for an account, newest first.
-    /// </summary>
     public List<ScoreHistoryEntry> GetScoreHistory(string accountId, int limit = 100, string? songId = null, string? instrument = null)
     {
-        using var conn = OpenConnection();
+        using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        var where = "AccountId = @accountId";
-        if (songId is not null)
-            where += " AND SongId = @songId";
-        if (instrument is not null)
-            where += " AND Instrument = @instrument";
-
-        cmd.CommandText = $"""
-            SELECT SongId, Instrument, OldScore, NewScore, OldRank, NewRank,
-                   Accuracy, IsFullCombo, Stars, Percentile, Season, ScoreAchievedAt, ChangedAt,
-                   SeasonRank, AllTimeRank, Difficulty
-            FROM ScoreHistory
-            WHERE {where}
-            ORDER BY Id DESC
-            LIMIT @limit;
-            """;
-        cmd.Parameters.AddWithValue("@accountId", accountId);
-        cmd.Parameters.AddWithValue("@limit", limit);
-        if (songId is not null)
-            cmd.Parameters.AddWithValue("@songId", songId);
-        if (instrument is not null)
-            cmd.Parameters.AddWithValue("@instrument", instrument);
-
-        var entries = new List<ScoreHistoryEntry>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
+        var where = "WHERE account_id = @accountId";
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        if (songId is not null) { where += " AND song_id = @songId"; cmd.Parameters.AddWithValue("songId", songId); }
+        if (instrument is not null) { where += " AND instrument = @instrument"; cmd.Parameters.AddWithValue("instrument", instrument); }
+        cmd.CommandText = $"SELECT song_id, instrument, old_score, new_score, old_rank, new_rank, accuracy, is_full_combo, stars, percentile, season, score_achieved_at, changed_at, season_rank, all_time_rank, difficulty FROM score_history {where} ORDER BY id DESC LIMIT @limit";
+        cmd.Parameters.AddWithValue("limit", limit);
+        var list = new List<ScoreHistoryEntry>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
         {
-            entries.Add(new ScoreHistoryEntry
+            list.Add(new ScoreHistoryEntry
             {
-                SongId      = reader.GetString(0),
-                Instrument  = reader.GetString(1),
-                OldScore    = reader.IsDBNull(2) ? null : reader.GetInt32(2),
-                NewScore    = reader.GetInt32(3),
-                OldRank     = reader.IsDBNull(4) ? null : reader.GetInt32(4),
-                NewRank     = reader.GetInt32(5),
-                Accuracy    = reader.IsDBNull(6) ? null : reader.GetInt32(6),
-                IsFullCombo = reader.IsDBNull(7) ? null : reader.GetInt32(7) == 1,
-                Stars       = reader.IsDBNull(8) ? null : reader.GetInt32(8),
-                Percentile  = reader.IsDBNull(9) ? null : reader.GetDouble(9),
-                Season      = reader.IsDBNull(10) ? null : reader.GetInt32(10),
-                ScoreAchievedAt = reader.IsDBNull(11) ? null : reader.GetString(11),
-                ChangedAt   = reader.GetString(12),
-                SeasonRank  = reader.IsDBNull(13) ? null : reader.GetInt32(13),
-                AllTimeRank = reader.IsDBNull(14) ? null : reader.GetInt32(14),
-                Difficulty  = reader.IsDBNull(15) ? null : reader.GetInt32(15),
+                SongId = r.GetString(0), Instrument = r.GetString(1),
+                OldScore = r.IsDBNull(2) ? null : r.GetInt32(2), NewScore = r.GetInt32(3),
+                OldRank = r.IsDBNull(4) ? null : r.GetInt32(4), NewRank = r.GetInt32(5),
+                Accuracy = r.IsDBNull(6) ? null : r.GetInt32(6),
+                IsFullCombo = r.IsDBNull(7) ? null : r.GetBoolean(7),
+                Stars = r.IsDBNull(8) ? null : r.GetInt32(8),
+                Percentile = r.IsDBNull(9) ? null : r.GetDouble(9),
+                Season = r.IsDBNull(10) ? null : r.GetInt32(10),
+                ScoreAchievedAt = r.IsDBNull(11) ? null : r.GetDateTime(11).ToString("o"),
+                ChangedAt = r.GetDateTime(12).ToString("o"),
+                SeasonRank = r.IsDBNull(13) ? null : r.GetInt32(13),
+                AllTimeRank = r.IsDBNull(14) ? null : r.GetInt32(14),
+                Difficulty = r.IsDBNull(15) ? null : r.GetInt32(15),
             });
         }
-        return entries;
+        return list;
     }
 
-    /// <summary>
-    /// For each (SongId, Instrument) where the given account has score history,
-    /// return the highest NewScore that is at or below the per-song threshold.
-    /// Used to find a player's best valid score when their current leaderboard
-    /// entry exceeds the CHOpt max.
-    /// </summary>
-    /// <param name="accountId">Account whose history to search.</param>
-    /// <param name="thresholds">Per (SongId, Instrument) score ceilings. Entries without a threshold are excluded.</param>
-    /// <returns>Map of (SongId, Instrument) → best valid score details. Only includes entries that have a valid score.</returns>
-    public Dictionary<(string SongId, string Instrument), ValidScoreFallback> GetBestValidScores(
-        string accountId, Dictionary<(string SongId, string Instrument), int> thresholds)
+    public Dictionary<(string SongId, string Instrument), ValidScoreFallback> GetBestValidScores(string accountId, Dictionary<(string SongId, string Instrument), int> thresholds)
     {
-        if (thresholds.Count == 0)
-            return new Dictionary<(string, string), ValidScoreFallback>();
-
-        using var conn = OpenConnection();
-
-        // Build temp table of thresholds
-        using var createCmd = conn.CreateCommand();
-        createCmd.CommandText = "CREATE TEMP TABLE IF NOT EXISTS _validThresholds (SongId TEXT NOT NULL, Instrument TEXT NOT NULL, MaxScore INTEGER NOT NULL, PRIMARY KEY (SongId, Instrument)); DELETE FROM _validThresholds;";
-        createCmd.ExecuteNonQuery();
-
-        using var insertCmd = conn.CreateCommand();
-        insertCmd.CommandText = "INSERT INTO _validThresholds (SongId, Instrument, MaxScore) VALUES (@sid, @inst, @ms);";
-        var pSid = insertCmd.Parameters.Add("@sid", SqliteType.Text);
-        var pInst = insertCmd.Parameters.Add("@inst", SqliteType.Text);
-        var pMs = insertCmd.Parameters.Add("@ms", SqliteType.Integer);
-        insertCmd.Prepare();
-        foreach (var ((sid, inst), ms) in thresholds)
-        {
-            pSid.Value = sid;
-            pInst.Value = inst;
-            pMs.Value = ms;
-            insertCmd.ExecuteNonQuery();
-        }
-
-        // Find best valid score per (SongId, Instrument) from ScoreHistory
+        if (thresholds.Count == 0) return new();
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "CREATE TEMP TABLE _valid_thresholds (song_id TEXT, instrument TEXT, max_score INTEGER) ON COMMIT DROP"; c.ExecuteNonQuery(); }
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "INSERT INTO _valid_thresholds VALUES (@s, @i, @m)"; var ps = c.Parameters.Add("s", NpgsqlTypes.NpgsqlDbType.Text); var pi = c.Parameters.Add("i", NpgsqlTypes.NpgsqlDbType.Text); var pm = c.Parameters.Add("m", NpgsqlTypes.NpgsqlDbType.Integer); c.Prepare(); foreach (var ((s, i), m) in thresholds) { ps.Value = s; pi.Value = i; pm.Value = m; c.ExecuteNonQuery(); } }
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT sh.SongId, sh.Instrument, sh.NewScore, sh.Accuracy, sh.IsFullCombo, sh.Stars
-            FROM ScoreHistory sh
-            JOIN _validThresholds vt ON vt.SongId = sh.SongId AND vt.Instrument = sh.Instrument
-            WHERE sh.AccountId = @accountId
-              AND sh.NewScore <= vt.MaxScore
-              AND sh.NewScore = (
-                  SELECT MAX(sh2.NewScore) FROM ScoreHistory sh2
-                  WHERE sh2.AccountId = @accountId
-                    AND sh2.SongId = sh.SongId AND sh2.Instrument = sh.Instrument
-                    AND sh2.NewScore <= vt.MaxScore
-              )
-            GROUP BY sh.SongId, sh.Instrument;
-            """;
-        cmd.Parameters.AddWithValue("@accountId", accountId);
-
+        cmd.Transaction = tx;
+        cmd.CommandText = "SELECT sh.song_id, sh.instrument, sh.new_score, sh.accuracy, sh.is_full_combo, sh.stars FROM score_history sh JOIN _valid_thresholds vt ON vt.song_id = sh.song_id AND vt.instrument = sh.instrument WHERE sh.account_id = @accountId AND sh.new_score <= vt.max_score AND sh.new_score = (SELECT MAX(sh2.new_score) FROM score_history sh2 WHERE sh2.account_id = @accountId AND sh2.song_id = sh.song_id AND sh2.instrument = sh.instrument AND sh2.new_score <= vt.max_score) GROUP BY sh.song_id, sh.instrument, sh.new_score, sh.accuracy, sh.is_full_combo, sh.stars";
+        cmd.Parameters.AddWithValue("accountId", accountId);
         var result = new Dictionary<(string, string), ValidScoreFallback>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
+        using (var r = cmd.ExecuteReader())
         {
-            var key = (reader.GetString(0), reader.GetString(1));
-            result[key] = new ValidScoreFallback
-            {
-                Score = reader.GetInt32(2),
-                Accuracy = reader.IsDBNull(3) ? null : reader.GetInt32(3),
-                IsFullCombo = reader.IsDBNull(4) ? null : reader.GetInt32(4) == 1,
-                Stars = reader.IsDBNull(5) ? null : reader.GetInt32(5),
-            };
+            while (r.Read()) result[(r.GetString(0), r.GetString(1))] = new ValidScoreFallback { Score = r.GetInt32(2), Accuracy = r.IsDBNull(3) ? null : r.GetInt32(3), IsFullCombo = r.IsDBNull(4) ? null : r.GetBoolean(4), Stars = r.IsDBNull(5) ? null : r.GetInt32(5) };
         }
-
-        using var cleanCmd = conn.CreateCommand();
-        cleanCmd.CommandText = "DELETE FROM _validThresholds;";
-        cleanCmd.ExecuteNonQuery();
-
+        tx.Commit();
         return result;
     }
 
-    /// <summary>
-    /// Bulk lookup of best valid historical scores for multiple accounts across a single instrument.
-    /// Used by <see cref="Scraping.RankingsCalculator"/> to find fallback scores for entries
-    /// that exceed the CHOpt threshold, so they can still be counted in rankings.
-    /// </summary>
-    /// <param name="instrument">The instrument to query (e.g. "Solo_Guitar").</param>
-    /// <param name="entries">Map of (AccountId, SongId) → score threshold ceiling.</param>
-    /// <returns>Map of (AccountId, SongId) → best valid score details. Only entries with a valid score are returned.</returns>
-    public Dictionary<(string AccountId, string SongId), ValidScoreFallback> GetBulkBestValidScores(
-        string instrument, Dictionary<(string AccountId, string SongId), int> entries)
+    public Dictionary<(string AccountId, string SongId), ValidScoreFallback> GetBulkBestValidScores(string instrument, Dictionary<(string AccountId, string SongId), int> entries)
     {
-        if (entries.Count == 0)
-            return new Dictionary<(string, string), ValidScoreFallback>();
-
-        using var conn = OpenConnection();
-
-        // Build temp table of thresholds
-        using var createCmd = conn.CreateCommand();
-        createCmd.CommandText = """
-            CREATE TEMP TABLE IF NOT EXISTS _bulkThresholds (
-                AccountId TEXT NOT NULL,
-                SongId    TEXT NOT NULL,
-                MaxScore  INTEGER NOT NULL,
-                PRIMARY KEY (AccountId, SongId)
-            );
-            DELETE FROM _bulkThresholds;
-            """;
-        createCmd.ExecuteNonQuery();
-
-        using var insertCmd = conn.CreateCommand();
-        insertCmd.CommandText = "INSERT INTO _bulkThresholds (AccountId, SongId, MaxScore) VALUES (@aid, @sid, @ms);";
-        var pAid = insertCmd.Parameters.Add("@aid", SqliteType.Text);
-        var pSid = insertCmd.Parameters.Add("@sid", SqliteType.Text);
-        var pMs = insertCmd.Parameters.Add("@ms", SqliteType.Integer);
-        insertCmd.Prepare();
-        foreach (var ((aid, sid), ms) in entries)
-        {
-            pAid.Value = aid;
-            pSid.Value = sid;
-            pMs.Value = ms;
-            insertCmd.ExecuteNonQuery();
-        }
-
-        // Find best valid score per (AccountId, SongId) from ScoreHistory
+        if (entries.Count == 0) return new();
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "CREATE TEMP TABLE _bulk_thresholds (account_id TEXT, song_id TEXT, max_score INTEGER) ON COMMIT DROP"; c.ExecuteNonQuery(); }
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "INSERT INTO _bulk_thresholds VALUES (@a, @s, @m)"; var pa = c.Parameters.Add("a", NpgsqlTypes.NpgsqlDbType.Text); var ps = c.Parameters.Add("s", NpgsqlTypes.NpgsqlDbType.Text); var pm = c.Parameters.Add("m", NpgsqlTypes.NpgsqlDbType.Integer); c.Prepare(); foreach (var ((a, s), m) in entries) { pa.Value = a; ps.Value = s; pm.Value = m; c.ExecuteNonQuery(); } }
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT sh.AccountId, sh.SongId, sh.NewScore, sh.Accuracy, sh.IsFullCombo, sh.Stars
-            FROM ScoreHistory sh
-            JOIN _bulkThresholds bt ON bt.AccountId = sh.AccountId AND bt.SongId = sh.SongId
-            WHERE sh.Instrument = @instrument
-              AND sh.NewScore <= bt.MaxScore
-              AND sh.NewScore = (
-                  SELECT MAX(sh2.NewScore) FROM ScoreHistory sh2
-                  WHERE sh2.AccountId = sh.AccountId
-                    AND sh2.SongId = sh.SongId AND sh2.Instrument = @instrument
-                    AND sh2.NewScore <= bt.MaxScore
-              )
-            GROUP BY sh.AccountId, sh.SongId;
-            """;
-        cmd.Parameters.AddWithValue("@instrument", instrument);
-
+        cmd.Transaction = tx;
+        cmd.CommandText = "SELECT sh.account_id, sh.song_id, sh.new_score, sh.accuracy, sh.is_full_combo, sh.stars FROM score_history sh JOIN _bulk_thresholds bt ON bt.account_id = sh.account_id AND bt.song_id = sh.song_id WHERE sh.instrument = @instrument AND sh.new_score <= bt.max_score AND sh.new_score = (SELECT MAX(sh2.new_score) FROM score_history sh2 WHERE sh2.account_id = sh.account_id AND sh2.song_id = sh.song_id AND sh2.instrument = @instrument AND sh2.new_score <= bt.max_score) GROUP BY sh.account_id, sh.song_id, sh.new_score, sh.accuracy, sh.is_full_combo, sh.stars";
+        cmd.Parameters.AddWithValue("instrument", instrument);
         var result = new Dictionary<(string, string), ValidScoreFallback>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
+        using (var r = cmd.ExecuteReader())
         {
-            var key = (reader.GetString(0), reader.GetString(1));
-            result[key] = new ValidScoreFallback
-            {
-                Score = reader.GetInt32(2),
-                Accuracy = reader.IsDBNull(3) ? null : reader.GetInt32(3),
-                IsFullCombo = reader.IsDBNull(4) ? null : reader.GetInt32(4) == 1,
-                Stars = reader.IsDBNull(5) ? null : reader.GetInt32(5),
-            };
+            while (r.Read()) result[(r.GetString(0), r.GetString(1))] = new ValidScoreFallback { Score = r.GetInt32(2), Accuracy = r.IsDBNull(3) ? null : r.GetInt32(3), IsFullCombo = r.IsDBNull(4) ? null : r.GetBoolean(4), Stars = r.IsDBNull(5) ? null : r.GetInt32(5) };
         }
-
-        using var cleanCmd2 = conn.CreateCommand();
-        cleanCmd2.CommandText = "DELETE FROM _bulkThresholds;";
-        cleanCmd2.ExecuteNonQuery();
-
+        tx.Commit();
         return result;
     }
 
-    /// <summary>
-    /// Returns ALL distinct historical scores per (songId, instrument) for a given account
-    /// that are at or below the specified threshold, with accuracy/fc/stars.
-    /// Ordered by score descending within each key. Used for precomputing validity tiers.
-    /// </summary>
     public Dictionary<(string SongId, string Instrument), List<ValidScoreFallback>> GetAllValidScoreTiers(
         string accountId, Dictionary<(string SongId, string Instrument), int> maxThresholds)
     {
-        if (maxThresholds.Count == 0)
-            return new Dictionary<(string, string), List<ValidScoreFallback>>();
-
-        using var conn = OpenConnection();
-
-        using var createCmd = conn.CreateCommand();
-        createCmd.CommandText = "CREATE TEMP TABLE IF NOT EXISTS _tierThresholds (SongId TEXT NOT NULL, Instrument TEXT NOT NULL, MaxScore INTEGER NOT NULL, PRIMARY KEY (SongId, Instrument)); DELETE FROM _tierThresholds;";
-        createCmd.ExecuteNonQuery();
-
-        using var insertCmd = conn.CreateCommand();
-        insertCmd.CommandText = "INSERT INTO _tierThresholds (SongId, Instrument, MaxScore) VALUES (@sid, @inst, @ms);";
-        var pSid = insertCmd.Parameters.Add("@sid", SqliteType.Text);
-        var pInst = insertCmd.Parameters.Add("@inst", SqliteType.Text);
-        var pMs = insertCmd.Parameters.Add("@ms", SqliteType.Integer);
-        insertCmd.Prepare();
-        foreach (var ((sid, inst), ms) in maxThresholds)
+        if (maxThresholds.Count == 0) return new();
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "CREATE TEMP TABLE _tier_thresholds (song_id TEXT, instrument TEXT, max_score INTEGER, PRIMARY KEY (song_id, instrument)) ON COMMIT DROP"; c.ExecuteNonQuery(); }
+        using (var c = conn.CreateCommand())
         {
-            pSid.Value = sid; pInst.Value = inst; pMs.Value = ms;
-            insertCmd.ExecuteNonQuery();
+            c.Transaction = tx;
+            c.CommandText = "INSERT INTO _tier_thresholds VALUES (@s, @i, @m)";
+            var ps = c.Parameters.Add("s", NpgsqlTypes.NpgsqlDbType.Text);
+            var pi = c.Parameters.Add("i", NpgsqlTypes.NpgsqlDbType.Text);
+            var pm = c.Parameters.Add("m", NpgsqlTypes.NpgsqlDbType.Integer);
+            c.Prepare();
+            foreach (var ((s, i), m) in maxThresholds) { ps.Value = s; pi.Value = i; pm.Value = m; c.ExecuteNonQuery(); }
         }
-
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT sh.SongId, sh.Instrument, sh.NewScore,
-                   MAX(sh.Accuracy) AS Accuracy, MAX(sh.IsFullCombo) AS IsFullCombo, MAX(sh.Stars) AS Stars
-            FROM ScoreHistory sh
-            JOIN _tierThresholds tt ON tt.SongId = sh.SongId AND tt.Instrument = sh.Instrument
-            WHERE sh.AccountId = @accountId AND sh.NewScore <= tt.MaxScore
-            GROUP BY sh.SongId, sh.Instrument, sh.NewScore
-            ORDER BY sh.SongId, sh.Instrument, sh.NewScore DESC;
-            """;
-        cmd.Parameters.AddWithValue("@accountId", accountId);
-
+        cmd.Transaction = tx;
+        cmd.CommandText = "SELECT sh.song_id, sh.instrument, sh.new_score, MAX(sh.accuracy), MAX(CASE WHEN sh.is_full_combo THEN 1 ELSE 0 END)::BOOLEAN, MAX(sh.stars) FROM score_history sh JOIN _tier_thresholds tt ON tt.song_id = sh.song_id AND tt.instrument = sh.instrument WHERE sh.account_id = @accountId AND sh.new_score <= tt.max_score GROUP BY sh.song_id, sh.instrument, sh.new_score ORDER BY sh.song_id, sh.instrument, sh.new_score DESC";
+        cmd.Parameters.AddWithValue("accountId", accountId);
         var result = new Dictionary<(string, string), List<ValidScoreFallback>>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
+        using (var r = cmd.ExecuteReader())
         {
-            var key = (reader.GetString(0), reader.GetString(1));
-            if (!result.TryGetValue(key, out var list))
+            while (r.Read())
             {
-                list = new List<ValidScoreFallback>();
-                result[key] = list;
+                var key = (r.GetString(0), r.GetString(1));
+                if (!result.TryGetValue(key, out var list)) { list = new List<ValidScoreFallback>(); result[key] = list; }
+                list.Add(new ValidScoreFallback { Score = r.GetInt32(2), Accuracy = r.IsDBNull(3) ? null : r.GetInt32(3), IsFullCombo = r.IsDBNull(4) ? null : r.GetBoolean(4), Stars = r.IsDBNull(5) ? null : r.GetInt32(5) });
             }
-            list.Add(new ValidScoreFallback
-            {
-                Score = reader.GetInt32(2),
-                Accuracy = reader.IsDBNull(3) ? null : reader.GetInt32(3),
-                IsFullCombo = reader.IsDBNull(4) ? null : reader.GetInt32(4) == 1,
-                Stars = reader.IsDBNull(5) ? null : reader.GetInt32(5),
-            });
         }
-
-        using var cleanCmd = conn.CreateCommand();
-        cleanCmd.CommandText = "DELETE FROM _tierThresholds;";
-        cleanCmd.ExecuteNonQuery();
-
+        tx.Commit();
         return result;
     }
 
-    /// <summary>
-    /// Resolve a display name for an account ID, or null if unknown.
-    /// </summary>
-    public string? GetDisplayName(string accountId)
+    // ── Account names ────────────────────────────────────────────────
+
+    public int InsertAccountIds(IEnumerable<string> accountIds)
     {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT DisplayName FROM AccountNames WHERE AccountId = @id;";
-        cmd.Parameters.AddWithValue("@id", accountId);
-        return cmd.ExecuteScalar() as string;
-    }
+        var idList = accountIds as IList<string> ?? accountIds.ToList();
+        if (idList.Count == 0) return 0;
 
-    /// <summary>
-    /// Search for account display names matching a query string.
-    /// Results are ordered: prefix matches first, then substring matches, alphabetically within each group.
-    /// </summary>
-    public List<(string AccountId, string DisplayName)> SearchAccountNames(string query, int limit = 10)
-    {
-        if (string.IsNullOrWhiteSpace(query)) return new List<(string, string)>();
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
 
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"
-            SELECT AccountId, DisplayName
-            FROM AccountNames
-            WHERE DisplayName IS NOT NULL AND DisplayName LIKE @pattern
-            ORDER BY
-                CASE WHEN DisplayName LIKE @prefix THEN 0 ELSE 1 END,
-                LENGTH(DisplayName),
-                DisplayName COLLATE NOCASE
-            LIMIT @limit;
-        ";
-        cmd.Parameters.AddWithValue("@pattern", $"%{query}%");
-        cmd.Parameters.AddWithValue("@prefix", $"{query}%");
-        cmd.Parameters.AddWithValue("@limit", limit);
-
-        var results = new List<(string, string)>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
+        // COPY + merge for larger batches
+        if (idList.Count > 50)
         {
-            results.Add((reader.GetString(0), reader.GetString(1)));
+            using (var c = conn.CreateCommand())
+            {
+                c.Transaction = tx;
+                c.CommandText = "CREATE TEMP TABLE _acct_staging (account_id TEXT) ON COMMIT DROP";
+                c.ExecuteNonQuery();
+            }
+
+            using (var writer = conn.BeginBinaryImport("COPY _acct_staging (account_id) FROM STDIN (FORMAT BINARY)"))
+            {
+                foreach (var id in idList)
+                {
+                    writer.StartRow();
+                    writer.Write(id, NpgsqlDbType.Text);
+                }
+                writer.Complete();
+            }
+
+            int inserted;
+            using (var c = conn.CreateCommand())
+            {
+                c.Transaction = tx;
+                c.CommandTimeout = 120;
+                c.CommandText = "INSERT INTO account_names (account_id) SELECT account_id FROM _acct_staging ON CONFLICT DO NOTHING";
+                inserted = c.ExecuteNonQuery();
+            }
+            tx.Commit();
+            return inserted;
         }
-        return results;
+
+        // Small batch: prepared-statement loop
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "INSERT INTO account_names (account_id) VALUES (@id) ON CONFLICT DO NOTHING";
+        var pId = cmd.Parameters.Add("id", NpgsqlDbType.Text); cmd.Prepare();
+        int loopInserted = 0;
+        foreach (var id in idList) { pId.Value = id; loopInserted += cmd.ExecuteNonQuery(); }
+        tx.Commit();
+        return loopInserted;
     }
 
-    /// <summary>
-    /// Bulk-resolve display names for a set of account IDs.
-    /// Returns a dictionary mapping AccountId → DisplayName (only for accounts with a known name).
-    /// </summary>
+    public List<string> GetUnresolvedAccountIds() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id FROM account_names WHERE last_resolved IS NULL"; var ids = new List<string>(); using var r = cmd.ExecuteReader(); while (r.Read()) ids.Add(r.GetString(0)); return ids; }
+    public int GetUnresolvedAccountCount() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT COUNT(*) FROM account_names WHERE last_resolved IS NULL"; return Convert.ToInt32(cmd.ExecuteScalar()); }
+
+    public int InsertAccountNames(IReadOnlyList<(string AccountId, string? DisplayName)> accounts)
+    {
+        if (accounts.Count == 0) return 0;
+        var now = DateTime.UtcNow;
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "INSERT INTO account_names (account_id, display_name, last_resolved) VALUES (@id, @name, @now) ON CONFLICT(account_id) DO UPDATE SET display_name = EXCLUDED.display_name, last_resolved = EXCLUDED.last_resolved";
+        var pId = cmd.Parameters.Add("id", NpgsqlTypes.NpgsqlDbType.Text); var pName = cmd.Parameters.Add("name", NpgsqlTypes.NpgsqlDbType.Text); var pNow = cmd.Parameters.Add("now", NpgsqlTypes.NpgsqlDbType.TimestampTz); cmd.Prepare();
+        int inserted = 0;
+        foreach (var (accountId, displayName) in accounts) { pId.Value = accountId; pName.Value = displayName is not null ? displayName : DBNull.Value; pNow.Value = now; inserted += cmd.ExecuteNonQuery(); }
+        tx.Commit();
+        return inserted;
+    }
+
+    public string? GetDisplayName(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT display_name FROM account_names WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); var result = cmd.ExecuteScalar(); return result is DBNull or null ? null : (string)result; }
+    public List<(string AccountId, string DisplayName)> SearchAccountNames(string query, int limit = 10) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, display_name FROM account_names WHERE display_name IS NOT NULL AND display_name ILIKE @pattern ORDER BY CASE WHEN display_name ILIKE @prefix THEN 0 ELSE 1 END, LENGTH(display_name), display_name LIMIT @limit"; cmd.Parameters.AddWithValue("pattern", $"%{query}%"); cmd.Parameters.AddWithValue("prefix", $"{query}%"); cmd.Parameters.AddWithValue("limit", limit); var list = new List<(string, string)>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add((r.GetString(0), r.GetString(1))); return list; }
+
     public Dictionary<string, string> GetDisplayNames(IEnumerable<string> accountIds)
     {
-        var ids = accountIds.ToList();
-        if (ids.Count == 0) return new Dictionary<string, string>();
-
+        var idList = accountIds as IList<string> ?? accountIds.ToList();
+        if (idList.Count == 0) return new();
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        using var conn = OpenConnection();
-
-        // Process in batches to stay within SQLite variable limits
-        const int batchSize = 500;
-        for (int i = 0; i < ids.Count; i += batchSize)
+        foreach (var batch in idList.Chunk(500))
         {
-            var batchCount = Math.Min(batchSize, ids.Count - i);
+            using var conn = _ds.OpenConnection();
             using var cmd = conn.CreateCommand();
-            var paramNames = new List<string>(batchCount);
-            for (int j = 0; j < batchCount; j++)
-            {
-                var pName = $"@id{j}";
-                paramNames.Add(pName);
-                cmd.Parameters.AddWithValue(pName, ids[i + j]);
-            }
-            cmd.CommandText = $"SELECT AccountId, DisplayName FROM AccountNames WHERE DisplayName IS NOT NULL AND AccountId IN ({string.Join(",", paramNames)});";
-
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
-            {
-                result[reader.GetString(0)] = reader.GetString(1);
-            }
+            var paramNames = new string[batch.Length];
+            for (int i = 0; i < batch.Length; i++) { paramNames[i] = $"@id{i}"; cmd.Parameters.AddWithValue($"id{i}", batch[i]); }
+            cmd.CommandText = $"SELECT account_id, display_name FROM account_names WHERE display_name IS NOT NULL AND account_id IN ({string.Join(',', paramNames)})";
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) result[r.GetString(0)] = r.GetString(1);
         }
         return result;
     }
 
-    // ─── Backfill Tracking ──────────────────────────────────────
+    // ── Registered users ─────────────────────────────────────────────
 
-    /// <summary>
-    /// Create or reset a backfill status entry for an account. Sets status to 'pending'.
-    /// </summary>
-    public void EnqueueBackfill(string accountId, int totalSongsToCheck)
+    public HashSet<string> GetRegisteredAccountIds() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT DISTINCT account_id FROM registered_users"; var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) ids.Add(r.GetString(0)); return ids; }
+    public bool RegisterUser(string deviceId, string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO registered_users (device_id, account_id, registered_at) VALUES (@deviceId, @accountId, @now) ON CONFLICT DO NOTHING"; cmd.Parameters.AddWithValue("deviceId", deviceId); cmd.Parameters.AddWithValue("accountId", accountId); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); return cmd.ExecuteNonQuery() > 0; }
+    public bool UnregisterUser(string deviceId, string accountId)
     {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO BackfillStatus (AccountId, Status, TotalSongsToCheck)
-            VALUES (@id, 'pending', @total)
-            ON CONFLICT(AccountId) DO UPDATE SET
-                Status            = CASE WHEN Status = 'complete' THEN Status ELSE 'pending' END,
-                TotalSongsToCheck = @total
-            WHERE Status != 'complete';
-            """;
-        cmd.Parameters.AddWithValue("@id", accountId);
-        cmd.Parameters.AddWithValue("@total", totalSongsToCheck);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Get all backfill requests that are pending or in_progress.
-    /// </summary>
-    public List<BackfillStatusInfo> GetPendingBackfills()
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT AccountId, Status, SongsChecked, EntriesFound, TotalSongsToCheck,
-                   StartedAt, CompletedAt, LastResumedAt, ErrorMessage
-            FROM BackfillStatus
-            WHERE Status IN ('pending', 'in_progress')
-            ORDER BY rowid;
-            """;
-        var list = new List<BackfillStatusInfo>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using var delCmd = conn.CreateCommand();
+        delCmd.Transaction = tx;
+        delCmd.CommandText = "DELETE FROM registered_users WHERE device_id = @deviceId AND account_id = @accountId";
+        delCmd.Parameters.AddWithValue("deviceId", deviceId);
+        delCmd.Parameters.AddWithValue("accountId", accountId);
+        bool removed = delCmd.ExecuteNonQuery() > 0;
+        if (removed)
         {
-            list.Add(ReadBackfillStatus(reader));
-        }
-        return list;
-    }
-
-    /// <summary>
-    /// Get the backfill status for a specific account.
-    /// </summary>
-    public BackfillStatusInfo? GetBackfillStatus(string accountId)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT AccountId, Status, SongsChecked, EntriesFound, TotalSongsToCheck,
-                   StartedAt, CompletedAt, LastResumedAt, ErrorMessage
-            FROM BackfillStatus
-            WHERE AccountId = @id;
-            """;
-        cmd.Parameters.AddWithValue("@id", accountId);
-        using var reader = cmd.ExecuteReader();
-        return reader.Read() ? ReadBackfillStatus(reader) : null;
-    }
-
-    /// <summary>
-    /// Mark a backfill as in_progress with a start/resume timestamp.
-    /// </summary>
-    public void StartBackfill(string accountId)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE BackfillStatus
-            SET Status = 'in_progress', StartedAt = COALESCE(StartedAt, @now), LastResumedAt = @now
-            WHERE AccountId = @id;
-            """;
-        cmd.Parameters.AddWithValue("@id", accountId);
-        cmd.Parameters.AddWithValue("@now", now);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Mark a backfill as complete.
-    /// </summary>
-    public void CompleteBackfill(string accountId)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE BackfillStatus
-            SET Status = 'complete', CompletedAt = @now
-            WHERE AccountId = @id;
-            """;
-        cmd.Parameters.AddWithValue("@id", accountId);
-        cmd.Parameters.AddWithValue("@now", now);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Mark a backfill as errored.
-    /// </summary>
-    public void FailBackfill(string accountId, string errorMessage)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE BackfillStatus
-            SET Status = 'error', ErrorMessage = @err
-            WHERE AccountId = @id;
-            """;
-        cmd.Parameters.AddWithValue("@id", accountId);
-        cmd.Parameters.AddWithValue("@err", errorMessage);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Update the progress counters for a backfill.
-    /// </summary>
-    public void UpdateBackfillProgress(string accountId, int songsChecked, int entriesFound)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE BackfillStatus
-            SET SongsChecked = @checked, EntriesFound = @found
-            WHERE AccountId = @id;
-            """;
-        cmd.Parameters.AddWithValue("@id", accountId);
-        cmd.Parameters.AddWithValue("@checked", songsChecked);
-        cmd.Parameters.AddWithValue("@found", entriesFound);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Mark a specific song/instrument as checked for an account's backfill.
-    /// </summary>
-    public void MarkBackfillSongChecked(string accountId, string songId, string instrument, bool entryFound)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO BackfillProgress (AccountId, SongId, Instrument, Checked, EntryFound, CheckedAt)
-            VALUES (@acct, @song, @inst, 1, @found, @now)
-            ON CONFLICT(AccountId, SongId, Instrument) DO UPDATE SET
-                Checked    = 1,
-                EntryFound = @found,
-                CheckedAt  = @now;
-            """;
-        cmd.Parameters.AddWithValue("@acct", accountId);
-        cmd.Parameters.AddWithValue("@song", songId);
-        cmd.Parameters.AddWithValue("@inst", instrument);
-        cmd.Parameters.AddWithValue("@found", entryFound ? 1 : 0);
-        cmd.Parameters.AddWithValue("@now", now);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Get the set of song/instrument pairs already checked for an account (for resumption).
-    /// </summary>
-    public HashSet<(string SongId, string Instrument)> GetCheckedBackfillPairs(string accountId)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT SongId, Instrument
-            FROM BackfillProgress
-            WHERE AccountId = @acct AND Checked = 1;
-            """;
-        cmd.Parameters.AddWithValue("@acct", accountId);
-
-        var set = new HashSet<(string, string)>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            set.Add((reader.GetString(0), reader.GetString(1)));
-        }
-        return set;
-    }
-
-    private static BackfillStatusInfo ReadBackfillStatus(Microsoft.Data.Sqlite.SqliteDataReader reader)
-    {
-        return new BackfillStatusInfo
-        {
-            AccountId         = reader.GetString(0),
-            Status            = reader.GetString(1),
-            SongsChecked      = reader.GetInt32(2),
-            EntriesFound      = reader.GetInt32(3),
-            TotalSongsToCheck = reader.GetInt32(4),
-            StartedAt         = reader.IsDBNull(5) ? null : reader.GetString(5),
-            CompletedAt       = reader.IsDBNull(6) ? null : reader.GetString(6),
-            LastResumedAt     = reader.IsDBNull(7) ? null : reader.GetString(7),
-            ErrorMessage      = reader.IsDBNull(8) ? null : reader.GetString(8),
-        };
-    }
-
-    /// <summary>
-    /// Look up an Epic account ID by display name (username) from AccountNames.
-    /// Returns null if the username hasn't been resolved by the scraper yet.
-    /// </summary>
-    public string? GetAccountIdForUsername(string username)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT AccountId FROM AccountNames
-            WHERE DisplayName = @username COLLATE NOCASE
-            LIMIT 1;
-            """;
-        cmd.Parameters.AddWithValue("@username", username);
-        return cmd.ExecuteScalar() as string;
-    }
-
-    // ─── History Reconstruction Tracking ───────────────────────
-
-    /// <summary>
-    /// Create or reset a history reconstruction status entry. Sets status to 'pending'.
-    /// </summary>
-    public void EnqueueHistoryRecon(string accountId, int totalSongsToProcess)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO HistoryReconStatus (AccountId, Status, TotalSongsToProcess)
-            VALUES (@id, 'pending', @total)
-            ON CONFLICT(AccountId) DO UPDATE SET
-                Status              = CASE WHEN Status = 'complete' THEN Status ELSE 'pending' END,
-                TotalSongsToProcess = @total
-            WHERE Status != 'complete';
-            """;
-        cmd.Parameters.AddWithValue("@id", accountId);
-        cmd.Parameters.AddWithValue("@total", totalSongsToProcess);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Get all history recon requests that are pending or in_progress.
-    /// </summary>
-    public List<HistoryReconStatusInfo> GetPendingHistoryRecons()
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT AccountId, Status, SongsProcessed, TotalSongsToProcess,
-                   SeasonsQueried, HistoryEntriesFound, StartedAt, CompletedAt, ErrorMessage
-            FROM HistoryReconStatus
-            WHERE Status IN ('pending', 'in_progress')
-            ORDER BY rowid;
-            """;
-        var list = new List<HistoryReconStatusInfo>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-            list.Add(ReadHistoryReconStatus(reader));
-        return list;
-    }
-
-    /// <summary>
-    /// Get history recon status for a specific account.
-    /// </summary>
-    public HistoryReconStatusInfo? GetHistoryReconStatus(string accountId)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT AccountId, Status, SongsProcessed, TotalSongsToProcess,
-                   SeasonsQueried, HistoryEntriesFound, StartedAt, CompletedAt, ErrorMessage
-            FROM HistoryReconStatus
-            WHERE AccountId = @id;
-            """;
-        cmd.Parameters.AddWithValue("@id", accountId);
-        using var reader = cmd.ExecuteReader();
-        return reader.Read() ? ReadHistoryReconStatus(reader) : null;
-    }
-
-    /// <summary>
-    /// Mark a history recon as in_progress.
-    /// </summary>
-    public void StartHistoryRecon(string accountId)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE HistoryReconStatus
-            SET Status = 'in_progress', StartedAt = COALESCE(StartedAt, @now)
-            WHERE AccountId = @id;
-            """;
-        cmd.Parameters.AddWithValue("@id", accountId);
-        cmd.Parameters.AddWithValue("@now", now);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Mark a history recon as complete.
-    /// </summary>
-    public void CompleteHistoryRecon(string accountId)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE HistoryReconStatus
-            SET Status = 'complete', CompletedAt = @now
-            WHERE AccountId = @id;
-            """;
-        cmd.Parameters.AddWithValue("@id", accountId);
-        cmd.Parameters.AddWithValue("@now", now);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Mark a history recon as errored.
-    /// </summary>
-    public void FailHistoryRecon(string accountId, string errorMessage)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE HistoryReconStatus
-            SET Status = 'error', ErrorMessage = @err
-            WHERE AccountId = @id;
-            """;
-        cmd.Parameters.AddWithValue("@id", accountId);
-        cmd.Parameters.AddWithValue("@err", errorMessage);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Update the progress counters for a history recon.
-    /// </summary>
-    public void UpdateHistoryReconProgress(string accountId, int songsProcessed,
-                                            int seasonsQueried, int historyEntriesFound)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE HistoryReconStatus
-            SET SongsProcessed = @songs, SeasonsQueried = @seasons, HistoryEntriesFound = @entries
-            WHERE AccountId = @id;
-            """;
-        cmd.Parameters.AddWithValue("@id", accountId);
-        cmd.Parameters.AddWithValue("@songs", songsProcessed);
-        cmd.Parameters.AddWithValue("@seasons", seasonsQueried);
-        cmd.Parameters.AddWithValue("@entries", historyEntriesFound);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Mark a specific song/instrument as processed for history recon.
-    /// </summary>
-    public void MarkHistoryReconSongProcessed(string accountId, string songId, string instrument)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO HistoryReconProgress (AccountId, SongId, Instrument, Processed, ProcessedAt)
-            VALUES (@acct, @song, @inst, 1, @now)
-            ON CONFLICT(AccountId, SongId, Instrument) DO UPDATE SET
-                Processed   = 1,
-                ProcessedAt = @now;
-            """;
-        cmd.Parameters.AddWithValue("@acct", accountId);
-        cmd.Parameters.AddWithValue("@song", songId);
-        cmd.Parameters.AddWithValue("@inst", instrument);
-        cmd.Parameters.AddWithValue("@now", now);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Get the set of song/instrument pairs already processed for history recon (for resumption).
-    /// </summary>
-    public HashSet<(string SongId, string Instrument)> GetProcessedHistoryReconPairs(string accountId)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT SongId, Instrument
-            FROM HistoryReconProgress
-            WHERE AccountId = @acct AND Processed = 1;
-            """;
-        cmd.Parameters.AddWithValue("@acct", accountId);
-
-        var set = new HashSet<(string, string)>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-            set.Add((reader.GetString(0), reader.GetString(1)));
-        return set;
-    }
-
-    // ─── SeasonWindows ──────────────────────────────────────────
-
-    /// <summary>
-    /// Insert or update a season window.
-    /// </summary>
-    public void UpsertSeasonWindow(int seasonNumber, string eventId, string windowId)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO SeasonWindows (SeasonNumber, EventId, WindowId, DiscoveredAt)
-            VALUES (@season, @eventId, @windowId, @now)
-            ON CONFLICT(SeasonNumber) DO UPDATE SET
-                EventId  = @eventId,
-                WindowId = @windowId;
-            """;
-        cmd.Parameters.AddWithValue("@season", seasonNumber);
-        cmd.Parameters.AddWithValue("@eventId", eventId);
-        cmd.Parameters.AddWithValue("@windowId", windowId);
-        cmd.Parameters.AddWithValue("@now", now);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Get all known season windows, ordered by season number.
-    /// </summary>
-    public List<SeasonWindowInfo> GetSeasonWindows()
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT SeasonNumber, EventId, WindowId, DiscoveredAt
-            FROM SeasonWindows
-            ORDER BY SeasonNumber;
-            """;
-
-        var list = new List<SeasonWindowInfo>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            list.Add(new SeasonWindowInfo
+            using var chk = conn.CreateCommand();
+            chk.Transaction = tx;
+            chk.CommandText = "SELECT COUNT(*) FROM registered_users WHERE account_id = @accountId";
+            chk.Parameters.AddWithValue("accountId", accountId);
+            int remaining = Convert.ToInt32(chk.ExecuteScalar());
+            if (remaining == 0)
             {
-                SeasonNumber = reader.GetInt32(0),
-                EventId      = reader.GetString(1),
-                WindowId     = reader.GetString(2),
-                DiscoveredAt = reader.GetString(3),
-            });
+                // Cascade-delete all per-account data (account_id column)
+                foreach (var t in new[] { "player_stats", "player_stats_tiers", "backfill_status", "backfill_progress", "history_recon_status", "history_recon_progress", "rivals_status" })
+                { using var c = conn.CreateCommand(); c.Transaction = tx; c.CommandText = $"DELETE FROM {t} WHERE account_id = @id"; c.Parameters.AddWithValue("id", accountId); c.ExecuteNonQuery(); }
+                // Rivals tables use user_id column
+                foreach (var t in new[] { "user_rivals", "rival_song_samples" })
+                { using var c = conn.CreateCommand(); c.Transaction = tx; c.CommandText = $"DELETE FROM {t} WHERE user_id = @id"; c.Parameters.AddWithValue("id", accountId); c.ExecuteNonQuery(); }
+            }
         }
-        return list;
+        tx.Commit();
+        return removed;
     }
 
-    /// <summary>
-    /// Get the highest known season number, or 0 if none are tracked.
-    /// </summary>
-    public int GetCurrentSeason()
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT COALESCE(MAX(SeasonNumber), 0) FROM SeasonWindows;";
-        return Convert.ToInt32(cmd.ExecuteScalar());
-    }
+    public string? GetAccountIdForUsername(string username) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id FROM account_names WHERE LOWER(display_name) = LOWER(@username) LIMIT 1"; cmd.Parameters.AddWithValue("username", username); var result = cmd.ExecuteScalar(); return result is DBNull or null ? null : (string)result; }
 
-    private static HistoryReconStatusInfo ReadHistoryReconStatus(SqliteDataReader reader)
-    {
-        return new HistoryReconStatusInfo
-        {
-            AccountId           = reader.GetString(0),
-            Status              = reader.GetString(1),
-            SongsProcessed      = reader.GetInt32(2),
-            TotalSongsToProcess = reader.GetInt32(3),
-            SeasonsQueried      = reader.GetInt32(4),
-            HistoryEntriesFound = reader.GetInt32(5),
-            StartedAt           = reader.IsDBNull(6) ? null : reader.GetString(6),
-            CompletedAt         = reader.IsDBNull(7) ? null : reader.GetString(7),
-            ErrorMessage        = reader.IsDBNull(8) ? null : reader.GetString(8),
-        };
-    }
+    // ── Backfill ─────────────────────────────────────────────────────
 
-    // ─── PlayerStats ────────────────────────────────────────────
+    public void EnqueueBackfill(string accountId, int totalSongsToCheck) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO backfill_status (account_id, status, total_songs_to_check) VALUES (@id, 'pending', @total) ON CONFLICT(account_id) DO UPDATE SET status = CASE WHEN backfill_status.status = 'complete' THEN backfill_status.status ELSE 'pending' END, total_songs_to_check = EXCLUDED.total_songs_to_check WHERE backfill_status.status != 'complete'"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("total", totalSongsToCheck); cmd.ExecuteNonQuery(); }
+    public List<BackfillStatusInfo> GetPendingBackfills() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, status, songs_checked, entries_found, total_songs_to_check, started_at, completed_at, last_resumed_at, error_message FROM backfill_status WHERE status IN ('pending', 'in_progress')"; var list = new List<BackfillStatusInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadBackfillStatus(r)); return list; }
+    public BackfillStatusInfo? GetBackfillStatus(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, status, songs_checked, entries_found, total_songs_to_check, started_at, completed_at, last_resumed_at, error_message FROM backfill_status WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); using var r = cmd.ExecuteReader(); return r.Read() ? ReadBackfillStatus(r) : null; }
+    public void StartBackfill(string accountId) { SimpleUpdate("UPDATE backfill_status SET status = 'in_progress', started_at = COALESCE(started_at, @now), last_resumed_at = @now WHERE account_id = @id", accountId); }
+    public void CompleteBackfill(string accountId) { SimpleUpdate("UPDATE backfill_status SET status = 'complete', completed_at = @now WHERE account_id = @id", accountId); }
+    public void FailBackfill(string accountId, string errorMessage) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE backfill_status SET status = 'error', error_message = @err WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("err", errorMessage); cmd.ExecuteNonQuery(); }
+    public void UpdateBackfillProgress(string accountId, int songsChecked, int entriesFound) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE backfill_status SET songs_checked = @checked, entries_found = @found WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("checked", songsChecked); cmd.Parameters.AddWithValue("found", entriesFound); cmd.ExecuteNonQuery(); }
+    public void MarkBackfillSongChecked(string accountId, string songId, string instrument, bool entryFound) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO backfill_progress (account_id, song_id, instrument, checked, entry_found, checked_at) VALUES (@acct, @song, @inst, 1, @found, @now) ON CONFLICT(account_id, song_id, instrument) DO UPDATE SET checked = 1, entry_found = EXCLUDED.entry_found, checked_at = EXCLUDED.checked_at"; cmd.Parameters.AddWithValue("acct", accountId); cmd.Parameters.AddWithValue("song", songId); cmd.Parameters.AddWithValue("inst", instrument); cmd.Parameters.AddWithValue("found", entryFound ? 1 : 0); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
+    public HashSet<(string SongId, string Instrument)> GetCheckedBackfillPairs(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id, instrument FROM backfill_progress WHERE account_id = @acct AND checked = 1"; cmd.Parameters.AddWithValue("acct", accountId); var set = new HashSet<(string, string)>(); using var r = cmd.ExecuteReader(); while (r.Read()) set.Add((r.GetString(0), r.GetString(1))); return set; }
 
-    /// <summary>
-    /// Upsert pre-computed player stats for a specific instrument (or "Overall").
-    /// </summary>
-    public void UpsertPlayerStats(PlayerStatsDto stats)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        lock (_writeLock)
-        {
-            using var conn = OpenConnection();
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
-                INSERT INTO PlayerStats (AccountId, Instrument, SongsPlayed, FullComboCount,
-                    GoldStarCount, AvgAccuracy, BestRank, BestRankSongId, TotalScore,
-                    PercentileDist, AvgPercentile, OverallPercentile, UpdatedAt)
-                VALUES (@accountId, @instrument, @songsPlayed, @fcCount,
-                    @goldStars, @avgAcc, @bestRank, @bestRankSongId, @totalScore,
-                    @pctDist, @avgPct, @overallPct, @now)
-                ON CONFLICT(AccountId, Instrument) DO UPDATE SET
-                    SongsPlayed       = excluded.SongsPlayed,
-                    FullComboCount    = excluded.FullComboCount,
-                    GoldStarCount     = excluded.GoldStarCount,
-                    AvgAccuracy       = excluded.AvgAccuracy,
-                    BestRank          = excluded.BestRank,
-                    BestRankSongId    = excluded.BestRankSongId,
-                    TotalScore        = excluded.TotalScore,
-                    PercentileDist    = excluded.PercentileDist,
-                    AvgPercentile     = excluded.AvgPercentile,
-                    OverallPercentile = excluded.OverallPercentile,
-                    UpdatedAt         = excluded.UpdatedAt;
-                """;
-            cmd.Parameters.AddWithValue("@accountId", stats.AccountId);
-            cmd.Parameters.AddWithValue("@instrument", stats.Instrument);
-            cmd.Parameters.AddWithValue("@songsPlayed", stats.SongsPlayed);
-            cmd.Parameters.AddWithValue("@fcCount", stats.FullComboCount);
-            cmd.Parameters.AddWithValue("@goldStars", stats.GoldStarCount);
-            cmd.Parameters.AddWithValue("@avgAcc", stats.AvgAccuracy);
-            cmd.Parameters.AddWithValue("@bestRank", stats.BestRank);
-            cmd.Parameters.AddWithValue("@bestRankSongId", (object?)stats.BestRankSongId ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@totalScore", stats.TotalScore);
-            cmd.Parameters.AddWithValue("@pctDist", (object?)stats.PercentileDist ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@avgPct", (object?)stats.AvgPercentile ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@overallPct", (object?)stats.OverallPercentile ?? DBNull.Value);
-            cmd.Parameters.AddWithValue("@now", now);
-            cmd.ExecuteNonQuery();
-        }
-    }
+    // ── History reconstruction ───────────────────────────────────────
 
-    /// <summary>
-    /// Get all pre-computed stats for a player (one row per instrument + "Overall").
-    /// </summary>
-    public List<PlayerStatsDto> GetPlayerStats(string accountId)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT Instrument, SongsPlayed, FullComboCount, GoldStarCount, AvgAccuracy,
-                   BestRank, BestRankSongId, TotalScore, PercentileDist,
-                   AvgPercentile, OverallPercentile, UpdatedAt
-            FROM PlayerStats
-            WHERE AccountId = @accountId;
-            """;
-        cmd.Parameters.AddWithValue("@accountId", accountId);
+    public void EnqueueHistoryRecon(string accountId, int totalSongsToProcess) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO history_recon_status (account_id, status, total_songs_to_process) VALUES (@id, 'pending', @total) ON CONFLICT(account_id) DO UPDATE SET status = CASE WHEN history_recon_status.status = 'complete' THEN history_recon_status.status ELSE 'pending' END, total_songs_to_process = EXCLUDED.total_songs_to_process WHERE history_recon_status.status != 'complete'"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("total", totalSongsToProcess); cmd.ExecuteNonQuery(); }
+    public List<HistoryReconStatusInfo> GetPendingHistoryRecons() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, status, songs_processed, total_songs_to_process, seasons_queried, history_entries_found, started_at, completed_at, error_message FROM history_recon_status WHERE status IN ('pending', 'in_progress')"; var list = new List<HistoryReconStatusInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadHistoryReconStatus(r)); return list; }
+    public HistoryReconStatusInfo? GetHistoryReconStatus(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, status, songs_processed, total_songs_to_process, seasons_queried, history_entries_found, started_at, completed_at, error_message FROM history_recon_status WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); using var r = cmd.ExecuteReader(); return r.Read() ? ReadHistoryReconStatus(r) : null; }
+    public void StartHistoryRecon(string accountId) { SimpleUpdate("UPDATE history_recon_status SET status = 'in_progress', started_at = COALESCE(started_at, @now) WHERE account_id = @id", accountId); }
+    public void CompleteHistoryRecon(string accountId) { SimpleUpdate("UPDATE history_recon_status SET status = 'complete', completed_at = @now WHERE account_id = @id", accountId); }
+    public void FailHistoryRecon(string accountId, string errorMessage) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE history_recon_status SET status = 'error', error_message = @err WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("err", errorMessage); cmd.ExecuteNonQuery(); }
+    public void UpdateHistoryReconProgress(string accountId, int songsProcessed, int seasonsQueried, int historyEntriesFound) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE history_recon_status SET songs_processed = @songs, seasons_queried = @seasons, history_entries_found = @entries WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("songs", songsProcessed); cmd.Parameters.AddWithValue("seasons", seasonsQueried); cmd.Parameters.AddWithValue("entries", historyEntriesFound); cmd.ExecuteNonQuery(); }
+    public void MarkHistoryReconSongProcessed(string accountId, string songId, string instrument) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO history_recon_progress (account_id, song_id, instrument, processed, processed_at) VALUES (@acct, @song, @inst, 1, @now) ON CONFLICT(account_id, song_id, instrument) DO UPDATE SET processed = 1, processed_at = EXCLUDED.processed_at"; cmd.Parameters.AddWithValue("acct", accountId); cmd.Parameters.AddWithValue("song", songId); cmd.Parameters.AddWithValue("inst", instrument); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
+    public HashSet<(string SongId, string Instrument)> GetProcessedHistoryReconPairs(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id, instrument FROM history_recon_progress WHERE account_id = @acct AND processed = 1"; cmd.Parameters.AddWithValue("acct", accountId); var set = new HashSet<(string, string)>(); using var r = cmd.ExecuteReader(); while (r.Read()) set.Add((r.GetString(0), r.GetString(1))); return set; }
 
-        var list = new List<PlayerStatsDto>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            list.Add(new PlayerStatsDto
-            {
-                AccountId = accountId,
-                Instrument = reader.GetString(0),
-                SongsPlayed = reader.GetInt32(1),
-                FullComboCount = reader.GetInt32(2),
-                GoldStarCount = reader.GetInt32(3),
-                AvgAccuracy = reader.GetDouble(4),
-                BestRank = reader.GetInt32(5),
-                BestRankSongId = reader.IsDBNull(6) ? null : reader.GetString(6),
-                TotalScore = reader.GetInt64(7),
-                PercentileDist = reader.IsDBNull(8) ? null : reader.GetString(8),
-                AvgPercentile = reader.IsDBNull(9) ? null : reader.GetString(9),
-                OverallPercentile = reader.IsDBNull(10) ? null : reader.GetString(10),
-            });
-        }
-        return list;
-    }
+    // ── Season windows ───────────────────────────────────────────────
 
-    // ── Player stats tiers ───────────────────────────────────────
+    public void UpsertSeasonWindow(int seasonNumber, string eventId, string windowId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO season_windows (season_number, event_id, window_id, discovered_at) VALUES (@season, @eventId, @windowId, @now) ON CONFLICT(season_number) DO UPDATE SET event_id = EXCLUDED.event_id, window_id = EXCLUDED.window_id"; cmd.Parameters.AddWithValue("season", seasonNumber); cmd.Parameters.AddWithValue("eventId", eventId); cmd.Parameters.AddWithValue("windowId", windowId); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
+    public List<SeasonWindowInfo> GetSeasonWindows() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT season_number, event_id, window_id, discovered_at FROM season_windows ORDER BY season_number"; var list = new List<SeasonWindowInfo>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(new SeasonWindowInfo { SeasonNumber = r.GetInt32(0), EventId = r.GetString(1), WindowId = r.GetString(2), DiscoveredAt = r.GetDateTime(3).ToString("o") }); return list; }
+    public SeasonWindowInfo? GetSeasonWindow(int seasonNumber) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT season_number, event_id, window_id, discovered_at FROM season_windows WHERE season_number = @season"; cmd.Parameters.AddWithValue("season", seasonNumber); using var r = cmd.ExecuteReader(); if (!r.Read()) return null; return new SeasonWindowInfo { SeasonNumber = r.GetInt32(0), EventId = r.GetString(1), WindowId = r.GetString(2), DiscoveredAt = r.GetDateTime(3).ToString("o") }; }
+    public int GetCurrentSeason() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT COALESCE(MAX(season_number), 0) FROM season_windows"; return Convert.ToInt32(cmd.ExecuteScalar()); }
+
+    // ── Player stats ─────────────────────────────────────────────────
+
+    public void UpsertPlayerStats(PlayerStatsDto stats) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO player_stats (account_id, instrument, songs_played, full_combo_count, gold_star_count, avg_accuracy, best_rank, best_rank_song_id, total_score, percentile_dist, avg_percentile, overall_percentile, updated_at) VALUES (@accountId, @instrument, @songsPlayed, @fcCount, @goldStars, @avgAcc, @bestRank, @bestRankSongId, @totalScore, @pctDist, @avgPct, @overallPct, @now) ON CONFLICT(account_id, instrument) DO UPDATE SET songs_played = EXCLUDED.songs_played, full_combo_count = EXCLUDED.full_combo_count, gold_star_count = EXCLUDED.gold_star_count, avg_accuracy = EXCLUDED.avg_accuracy, best_rank = EXCLUDED.best_rank, best_rank_song_id = EXCLUDED.best_rank_song_id, total_score = EXCLUDED.total_score, percentile_dist = EXCLUDED.percentile_dist, avg_percentile = EXCLUDED.avg_percentile, overall_percentile = EXCLUDED.overall_percentile, updated_at = EXCLUDED.updated_at"; cmd.Parameters.AddWithValue("accountId", stats.AccountId); cmd.Parameters.AddWithValue("instrument", stats.Instrument); cmd.Parameters.AddWithValue("songsPlayed", stats.SongsPlayed); cmd.Parameters.AddWithValue("fcCount", stats.FullComboCount); cmd.Parameters.AddWithValue("goldStars", stats.GoldStarCount); cmd.Parameters.AddWithValue("avgAcc", stats.AvgAccuracy); cmd.Parameters.AddWithValue("bestRank", stats.BestRank); cmd.Parameters.AddWithValue("bestRankSongId", (object?)stats.BestRankSongId ?? DBNull.Value); cmd.Parameters.AddWithValue("totalScore", stats.TotalScore); cmd.Parameters.AddWithValue("pctDist", (object?)stats.PercentileDist ?? DBNull.Value); cmd.Parameters.AddWithValue("avgPct", (object?)stats.AvgPercentile ?? DBNull.Value); cmd.Parameters.AddWithValue("overallPct", (object?)stats.OverallPercentile ?? DBNull.Value); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
+    public List<PlayerStatsDto> GetPlayerStats(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT instrument, songs_played, full_combo_count, gold_star_count, avg_accuracy, best_rank, best_rank_song_id, total_score, percentile_dist, avg_percentile, overall_percentile FROM player_stats WHERE account_id = @accountId"; cmd.Parameters.AddWithValue("accountId", accountId); var list = new List<PlayerStatsDto>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(new PlayerStatsDto { AccountId = accountId, Instrument = r.GetString(0), SongsPlayed = r.GetInt32(1), FullComboCount = r.GetInt32(2), GoldStarCount = r.GetInt32(3), AvgAccuracy = r.GetDouble(4), BestRank = r.GetInt32(5), BestRankSongId = r.IsDBNull(6) ? null : r.GetString(6), TotalScore = r.GetInt64(7), PercentileDist = r.IsDBNull(8) ? null : r.GetString(8), AvgPercentile = r.IsDBNull(9) ? null : r.GetString(9), OverallPercentile = r.IsDBNull(10) ? null : r.GetString(10) }); return list; }
+
+    // ── Player stats tiers ───────────────────────────────────────────
 
     public void UpsertPlayerStatsTiers(string accountId, string instrument, string tiersJson)
     {
-        var now = DateTime.UtcNow.ToString("o");
-        lock (_writeLock)
-        {
-            using var conn = OpenConnection();
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
-                INSERT INTO PlayerStatsTiers (AccountId, Instrument, TiersJson, UpdatedAt)
-                VALUES (@accountId, @instrument, @tiers, @now)
-                ON CONFLICT(AccountId, Instrument) DO UPDATE SET
-                    TiersJson = excluded.TiersJson,
-                    UpdatedAt = excluded.UpdatedAt;
-                """;
-            cmd.Parameters.AddWithValue("@accountId", accountId);
-            cmd.Parameters.AddWithValue("@instrument", instrument);
-            cmd.Parameters.AddWithValue("@tiers", tiersJson);
-            cmd.Parameters.AddWithValue("@now", now);
-            cmd.ExecuteNonQuery();
-        }
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "INSERT INTO player_stats_tiers (account_id, instrument, tiers_json, updated_at) VALUES (@accountId, @instrument, @tiers::jsonb, @now) ON CONFLICT(account_id, instrument) DO UPDATE SET tiers_json = EXCLUDED.tiers_json, updated_at = EXCLUDED.updated_at";
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("tiers", tiersJson);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.ExecuteNonQuery();
     }
 
     public void UpsertPlayerStatsTiersBatch(IReadOnlyList<PlayerStatsTiersRow> rows)
     {
         if (rows.Count == 0) return;
-        var now = DateTime.UtcNow.ToString("o");
-        lock (_writeLock)
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "INSERT INTO player_stats_tiers (account_id, instrument, tiers_json, updated_at) VALUES (@accountId, @instrument, @tiers::jsonb, @now) ON CONFLICT(account_id, instrument) DO UPDATE SET tiers_json = EXCLUDED.tiers_json, updated_at = EXCLUDED.updated_at";
+        var pAcct = cmd.Parameters.Add("accountId", NpgsqlTypes.NpgsqlDbType.Text);
+        var pInst = cmd.Parameters.Add("instrument", NpgsqlTypes.NpgsqlDbType.Text);
+        var pTiers = cmd.Parameters.Add("tiers", NpgsqlTypes.NpgsqlDbType.Text);
+        var pNow = cmd.Parameters.Add("now", NpgsqlTypes.NpgsqlDbType.TimestampTz);
+        cmd.Prepare();
+        var now = DateTime.UtcNow;
+        foreach (var r in rows)
         {
-            using var conn = OpenConnection();
-            using var tx = conn.BeginTransaction();
-            using var cmd = conn.CreateCommand();
-            cmd.Transaction = tx;
-            cmd.CommandText = """
-                INSERT INTO PlayerStatsTiers (AccountId, Instrument, TiersJson, UpdatedAt)
-                VALUES (@accountId, @instrument, @tiers, @now)
-                ON CONFLICT(AccountId, Instrument) DO UPDATE SET
-                    TiersJson = excluded.TiersJson,
-                    UpdatedAt = excluded.UpdatedAt;
-                """;
-            var pAcct = cmd.Parameters.Add("@accountId", SqliteType.Text);
-            var pInst = cmd.Parameters.Add("@instrument", SqliteType.Text);
-            var pTiers = cmd.Parameters.Add("@tiers", SqliteType.Text);
-            var pNow = cmd.Parameters.Add("@now", SqliteType.Text);
-            cmd.Prepare();
-            foreach (var r in rows)
-            {
-                pAcct.Value = r.AccountId;
-                pInst.Value = r.Instrument;
-                pTiers.Value = r.TiersJson;
-                pNow.Value = now;
-                cmd.ExecuteNonQuery();
-            }
-            tx.Commit();
+            pAcct.Value = r.AccountId;
+            pInst.Value = r.Instrument;
+            pTiers.Value = r.TiersJson;
+            pNow.Value = now;
+            cmd.ExecuteNonQuery();
         }
+        tx.Commit();
     }
 
     public List<PlayerStatsTiersRow> GetPlayerStatsTiers(string accountId)
     {
-        using var conn = OpenConnection();
+        using var conn = _ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT Instrument, TiersJson, UpdatedAt FROM PlayerStatsTiers WHERE AccountId = @accountId";
-        cmd.Parameters.AddWithValue("@accountId", accountId);
+        cmd.CommandText = "SELECT instrument, tiers_json, updated_at FROM player_stats_tiers WHERE account_id = @accountId";
+        cmd.Parameters.AddWithValue("accountId", accountId);
         var list = new List<PlayerStatsTiersRow>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
         {
             list.Add(new PlayerStatsTiersRow
             {
                 AccountId = accountId,
-                Instrument = reader.GetString(0),
-                TiersJson = reader.GetString(1),
-                UpdatedAt = reader.GetString(2),
+                Instrument = r.GetString(0),
+                TiersJson = r.GetString(1),
+                UpdatedAt = r.GetDateTime(2).ToString("o"),
             });
         }
         return list;
     }
 
-    // ─── Helpers ────────────────────────────────────────────────
+    // ── First seen season ────────────────────────────────────────────
 
-    private readonly object _writeLock = new();
+    public HashSet<string> GetSongsWithFirstSeenSeason() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id FROM song_first_seen_season"; var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) set.Add(r.GetString(0)); return set; }
+    public void UpsertFirstSeenSeason(string songId, int? firstSeenSeason, int? minObservedSeason, int estimatedSeason, string? probeResult) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO song_first_seen_season (song_id, first_seen_season, min_observed_season, estimated_season, probe_result, calculated_at) VALUES (@songId, @firstSeen, @minObserved, @estimated, @probeResult, @now) ON CONFLICT(song_id) DO UPDATE SET first_seen_season = EXCLUDED.first_seen_season, min_observed_season = EXCLUDED.min_observed_season, estimated_season = EXCLUDED.estimated_season, probe_result = EXCLUDED.probe_result, calculated_at = EXCLUDED.calculated_at"; cmd.Parameters.AddWithValue("songId", songId); cmd.Parameters.AddWithValue("firstSeen", (object?)firstSeenSeason ?? DBNull.Value); cmd.Parameters.AddWithValue("minObserved", (object?)minObservedSeason ?? DBNull.Value); cmd.Parameters.AddWithValue("estimated", estimatedSeason); cmd.Parameters.AddWithValue("probeResult", (object?)probeResult ?? DBNull.Value); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
+    public Dictionary<string, (int? FirstSeenSeason, int EstimatedSeason)> GetAllFirstSeenSeasons() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id, first_seen_season, estimated_season FROM song_first_seen_season"; var dict = new Dictionary<string, (int?, int)>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) dict[r.GetString(0)] = (r.IsDBNull(1) ? null : r.GetInt32(1), r.GetInt32(2)); return dict; }
 
-    /// <summary>Long-lived connection used for write operations (same pattern as InstrumentDatabase).</summary>
-    private SqliteConnection? _persistentConn;
-    private readonly object _connLock = new();
+    // ── Leaderboard population ───────────────────────────────────────
 
-    private volatile bool _pragmasInitialized;
+    public void RaiseLeaderboardPopulationFloor(string songId, string instrument, long floor) { if (floor <= 0) return; using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO leaderboard_population (song_id, instrument, total_entries, updated_at) VALUES (@songId, @instrument, @floor, @now) ON CONFLICT (song_id, instrument) DO UPDATE SET total_entries = GREATEST(leaderboard_population.total_entries, EXCLUDED.total_entries), updated_at = CASE WHEN EXCLUDED.total_entries > leaderboard_population.total_entries THEN EXCLUDED.updated_at ELSE leaderboard_population.updated_at END"; cmd.Parameters.AddWithValue("songId", songId); cmd.Parameters.AddWithValue("instrument", instrument); cmd.Parameters.AddWithValue("floor", (int)floor); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
 
-    private SqliteConnection OpenConnection()
-    {
-        var conn = new SqliteConnection(_connectionString);
-        conn.Open();
-
-        if (!_pragmasInitialized)
-        {
-            using var pragma = conn.CreateCommand();
-            pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;";
-            pragma.ExecuteNonQuery();
-            _pragmasInitialized = true;
-        }
-        else
-        {
-            // WAL and synchronous persist per-file; foreign_keys and busy_timeout are per-connection
-            using var pragma = conn.CreateCommand();
-            pragma.CommandText = "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;";
-            pragma.ExecuteNonQuery();
-        }
-
-        return conn;
-    }
-
-    /// <summary>
-    /// Get the long-lived persistent connection for write operations.
-    /// Avoids per-call connection setup + pragma overhead.
-    /// </summary>
-    private SqliteConnection GetPersistentConnection()
-    {
-        if (_persistentConn is not null)
-            return _persistentConn;
-
-        lock (_connLock)
-        {
-            if (_persistentConn is not null)
-                return _persistentConn;
-
-            _persistentConn = OpenConnection();
-        }
-
-        return _persistentConn;
-    }
-
-    /// <summary>Force a WAL checkpoint on the meta database.</summary>
-    public void Checkpoint()
-    {
-        var conn = GetPersistentConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "PRAGMA wal_checkpoint(PASSIVE);";
-        cmd.ExecuteNonQuery();
-    }
-
-    public void Dispose()
-    {
-        if (_persistentConn is not null)
-        {
-            _persistentConn.Dispose();
-            _persistentConn = null;
-        }
-    }
-
-    // ─── SongFirstSeenSeason ────────────────────────────────────
-
-    /// <summary>
-    /// Get the set of song IDs that already have a calculated FirstSeenSeason.
-    /// </summary>
-    public HashSet<string> GetSongsWithFirstSeenSeason()
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT SongId FROM SongFirstSeenSeason;";
-
-        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-            set.Add(reader.GetString(0));
-        return set;
-    }
-
-    /// <summary>
-    /// Store the calculated FirstSeenSeason for a song.
-    /// </summary>
-    public void UpsertFirstSeenSeason(string songId, int? firstSeenSeason, int? minObservedSeason, int estimatedSeason, string? probeResult)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO SongFirstSeenSeason (SongId, FirstSeenSeason, MinObservedSeason, EstimatedSeason, ProbeResult, CalculatedAt)
-            VALUES (@songId, @firstSeen, @minObserved, @estimated, @probeResult, @calculatedAt)
-            ON CONFLICT(SongId) DO UPDATE SET
-                FirstSeenSeason   = excluded.FirstSeenSeason,
-                MinObservedSeason = excluded.MinObservedSeason,
-                EstimatedSeason   = excluded.EstimatedSeason,
-                ProbeResult       = excluded.ProbeResult,
-                CalculatedAt      = excluded.CalculatedAt;
-            """;
-        cmd.Parameters.AddWithValue("@songId", songId);
-        cmd.Parameters.AddWithValue("@firstSeen", (object?)firstSeenSeason ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@minObserved", (object?)minObservedSeason ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@estimated", estimatedSeason);
-        cmd.Parameters.AddWithValue("@probeResult", (object?)probeResult ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@calculatedAt", DateTime.UtcNow.ToString("o"));
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Get all FirstSeenSeason values as a dictionary for bulk lookups.
-    /// </summary>
-    public Dictionary<string, (int? FirstSeenSeason, int EstimatedSeason)> GetAllFirstSeenSeasons()
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT SongId, FirstSeenSeason, EstimatedSeason FROM SongFirstSeenSeason;";
-
-        var dict = new Dictionary<string, (int? FirstSeenSeason, int EstimatedSeason)>(StringComparer.OrdinalIgnoreCase);
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            var songId = reader.GetString(0);
-            int? firstSeen = reader.IsDBNull(1) ? null : reader.GetInt32(1);
-            int estimated = reader.GetInt32(2);
-            dict[songId] = (firstSeen, estimated);
-        }
-        return dict;
-    }
-
-    // ─── LeaderboardPopulation ──────────────────────────────────
-
-    /// <summary>
-    /// Invalidate the in-memory population cache, forcing the next call to
-    /// <see cref="GetAllLeaderboardPopulation"/> to re-read from disk.
-    /// </summary>
-    internal void InvalidatePopulationCache()
-    {
-        lock (_populationCacheLock) { _populationCache = null; }
-    }
-
-    /// <summary>
-    /// Raise the leaderboard population floor for a song/instrument.
-    /// A user's rank is a guaranteed minimum — if they're ranked N, there are at least N entries.
-    /// Only updates when the new value is higher than the existing value (one-way ratchet).
-    /// </summary>
-    public void RaiseLeaderboardPopulationFloor(string songId, string instrument, long floor)
-    {
-        if (floor <= 0) return;
-        InvalidatePopulationCache();
-
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO LeaderboardPopulation (SongId, Instrument, TotalEntries, UpdatedAt)
-            VALUES (@songId, @instrument, @floor, @now)
-            ON CONFLICT (SongId, Instrument) DO UPDATE SET
-                TotalEntries = MAX(TotalEntries, excluded.TotalEntries),
-                UpdatedAt    = CASE WHEN excluded.TotalEntries > TotalEntries
-                                    THEN excluded.UpdatedAt ELSE UpdatedAt END;
-            """;
-        cmd.Parameters.AddWithValue("@songId", songId);
-        cmd.Parameters.AddWithValue("@instrument", instrument);
-        cmd.Parameters.AddWithValue("@floor", floor);
-        cmd.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("o"));
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Upsert leaderboard population entries (total entries per song/instrument).
-    /// </summary>
     public void UpsertLeaderboardPopulation(IReadOnlyList<(string SongId, string Instrument, long TotalEntries)> items)
     {
         if (items.Count == 0) return;
-
-        using var conn = OpenConnection();
+        using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-
-        cmd.CommandText = """
-            INSERT INTO LeaderboardPopulation (SongId, Instrument, TotalEntries, UpdatedAt)
-            VALUES (@songId, @instrument, @totalEntries, @now)
-            ON CONFLICT (SongId, Instrument) DO UPDATE SET
-                TotalEntries = @totalEntries,
-                UpdatedAt    = @now;
-            """;
-
-        var pSongId = cmd.Parameters.Add("@songId", SqliteType.Text);
-        var pInstrument = cmd.Parameters.Add("@instrument", SqliteType.Text);
-        var pTotal = cmd.Parameters.Add("@totalEntries", SqliteType.Integer);
-        var pNow = cmd.Parameters.Add("@now", SqliteType.Text);
-
-        var now = DateTime.UtcNow.ToString("o");
-
-        foreach (var (songId, instrument, totalEntries) in items)
-        {
-            pSongId.Value = songId;
-            pInstrument.Value = instrument;
-            pTotal.Value = totalEntries;
-            pNow.Value = now;
-            cmd.ExecuteNonQuery();
-        }
-
+        cmd.CommandText = "INSERT INTO leaderboard_population (song_id, instrument, total_entries, updated_at) VALUES (@songId, @instrument, @totalEntries, @now) ON CONFLICT (song_id, instrument) DO UPDATE SET total_entries = EXCLUDED.total_entries, updated_at = EXCLUDED.updated_at";
+        var pSong = cmd.Parameters.Add("songId", NpgsqlTypes.NpgsqlDbType.Text); var pInst = cmd.Parameters.Add("instrument", NpgsqlTypes.NpgsqlDbType.Text); var pTotal = cmd.Parameters.Add("totalEntries", NpgsqlTypes.NpgsqlDbType.Integer); var pNow = cmd.Parameters.Add("now", NpgsqlTypes.NpgsqlDbType.TimestampTz); cmd.Prepare();
+        var now = DateTime.UtcNow;
+        foreach (var (songId, instrument, totalEntries) in items) { pSong.Value = songId; pInst.Value = instrument; pTotal.Value = (int)totalEntries; pNow.Value = now; cmd.ExecuteNonQuery(); }
         tx.Commit();
-        InvalidatePopulationCache();
-        _log.LogDebug("Upserted {Count} LeaderboardPopulation entries.", items.Count);
     }
 
-    /// <summary>
-    /// Get the total leaderboard entries for a specific song/instrument. Returns -1 if not yet populated.
-    /// </summary>
-    public long GetLeaderboardPopulation(string songId, string instrument)
+    public long GetLeaderboardPopulation(string songId, string instrument) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT total_entries FROM leaderboard_population WHERE song_id = @s AND instrument = @i"; cmd.Parameters.AddWithValue("s", songId); cmd.Parameters.AddWithValue("i", instrument); var result = cmd.ExecuteScalar(); return result is DBNull or null ? -1 : Convert.ToInt64(result); }
+    public Dictionary<(string SongId, string Instrument), long> GetAllLeaderboardPopulation() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id, instrument, total_entries FROM leaderboard_population"; var dict = new Dictionary<(string, string), long>(); using var r = cmd.ExecuteReader(); while (r.Read()) dict[(r.GetString(0), r.GetString(1))] = r.GetInt32(2); return dict; }
+
+    // ── Rivals ───────────────────────────────────────────────────────
+
+    public void EnsureRivalsStatus(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "INSERT INTO rivals_status (account_id, status) VALUES (@id, 'pending') ON CONFLICT DO NOTHING"; cmd.Parameters.AddWithValue("id", accountId); cmd.ExecuteNonQuery(); }
+    public void StartRivals(string accountId, int totalCombosToCompute = 0) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE rivals_status SET status = 'in_progress', started_at = @now, total_combos_to_compute = @total, combos_computed = 0, rivals_found = 0, error_message = NULL WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.Parameters.AddWithValue("total", totalCombosToCompute); cmd.ExecuteNonQuery(); }
+    public void CompleteRivals(string accountId, int combosComputed, int rivalsFound) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE rivals_status SET status = 'complete', combos_computed = @combos, rivals_found = @rivals, completed_at = @now, error_message = NULL WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("combos", combosComputed); cmd.Parameters.AddWithValue("rivals", rivalsFound); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
+    public void FailRivals(string accountId, string errorMessage) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "UPDATE rivals_status SET status = 'error', error_message = @err, completed_at = @now WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("err", errorMessage); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
+    public RivalsStatusInfo? GetRivalsStatus(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, status, combos_computed, total_combos_to_compute, rivals_found, started_at, completed_at, error_message FROM rivals_status WHERE account_id = @id"; cmd.Parameters.AddWithValue("id", accountId); using var r = cmd.ExecuteReader(); if (!r.Read()) return null; return new RivalsStatusInfo { AccountId = r.GetString(0), Status = r.GetString(1), CombosComputed = r.GetInt32(2), TotalCombosToCompute = r.GetInt32(3), RivalsFound = r.GetInt32(4), StartedAt = r.IsDBNull(5) ? null : r.GetDateTime(5).ToString("o"), CompletedAt = r.IsDBNull(6) ? null : r.GetDateTime(6).ToString("o"), ErrorMessage = r.IsDBNull(7) ? null : r.GetString(7) }; }
+    public List<string> GetPendingRivalsAccounts() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id FROM rivals_status WHERE status IN ('pending', 'in_progress')"; var list = new List<string>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(r.GetString(0)); return list; }
+
+    public void ReplaceRivalsData(string userId, IReadOnlyList<UserRivalRow> rivals, IReadOnlyList<RivalSongSampleRow> samples)
     {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT TotalEntries FROM LeaderboardPopulation WHERE SongId = @s AND Instrument = @i;";
-        cmd.Parameters.AddWithValue("@s", songId);
-        cmd.Parameters.AddWithValue("@i", instrument);
-        var result = cmd.ExecuteScalar();
-        return result is long l ? l : -1;
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "DELETE FROM rival_song_samples WHERE user_id = @uid"; c.Parameters.AddWithValue("uid", userId); c.ExecuteNonQuery(); }
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "DELETE FROM user_rivals WHERE user_id = @uid"; c.Parameters.AddWithValue("uid", userId); c.ExecuteNonQuery(); }
+        if (rivals.Count > 0) { using var c = conn.CreateCommand(); c.Transaction = tx; c.CommandText = "INSERT INTO user_rivals (user_id, rival_account_id, instrument_combo, direction, rival_score, avg_signed_delta, shared_song_count, ahead_count, behind_count, computed_at) VALUES (@uid, @rid, @combo, @dir, @score, @delta, @songs, @ahead, @behind, @at)"; var pUid = c.Parameters.Add("uid", NpgsqlTypes.NpgsqlDbType.Text); var pRid = c.Parameters.Add("rid", NpgsqlTypes.NpgsqlDbType.Text); var pCombo = c.Parameters.Add("combo", NpgsqlTypes.NpgsqlDbType.Text); var pDir = c.Parameters.Add("dir", NpgsqlTypes.NpgsqlDbType.Text); var pScore = c.Parameters.Add("score", NpgsqlTypes.NpgsqlDbType.Double); var pDelta = c.Parameters.Add("delta", NpgsqlTypes.NpgsqlDbType.Double); var pSongs = c.Parameters.Add("songs", NpgsqlTypes.NpgsqlDbType.Integer); var pAhead = c.Parameters.Add("ahead", NpgsqlTypes.NpgsqlDbType.Integer); var pBehind = c.Parameters.Add("behind", NpgsqlTypes.NpgsqlDbType.Integer); var pAt = c.Parameters.Add("at", NpgsqlTypes.NpgsqlDbType.TimestampTz); c.Prepare(); foreach (var rv in rivals) { pUid.Value = rv.UserId; pRid.Value = rv.RivalAccountId; pCombo.Value = rv.InstrumentCombo; pDir.Value = rv.Direction; pScore.Value = rv.RivalScore; pDelta.Value = rv.AvgSignedDelta; pSongs.Value = rv.SharedSongCount; pAhead.Value = rv.AheadCount; pBehind.Value = rv.BehindCount; pAt.Value = ParseUtc(rv.ComputedAt); c.ExecuteNonQuery(); } }
+        if (samples.Count > 0) { using var c = conn.CreateCommand(); c.Transaction = tx; c.CommandText = "INSERT INTO rival_song_samples (user_id, rival_account_id, instrument, song_id, user_rank, rival_rank, rank_delta, user_score, rival_score) VALUES (@uid, @rid, @inst, @sid, @ur, @rr, @rd, @us, @rs)"; var pUid = c.Parameters.Add("uid", NpgsqlTypes.NpgsqlDbType.Text); var pRid = c.Parameters.Add("rid", NpgsqlTypes.NpgsqlDbType.Text); var pInst = c.Parameters.Add("inst", NpgsqlTypes.NpgsqlDbType.Text); var pSid = c.Parameters.Add("sid", NpgsqlTypes.NpgsqlDbType.Text); var pUr = c.Parameters.Add("ur", NpgsqlTypes.NpgsqlDbType.Integer); var pRr = c.Parameters.Add("rr", NpgsqlTypes.NpgsqlDbType.Integer); var pRd = c.Parameters.Add("rd", NpgsqlTypes.NpgsqlDbType.Integer); var pUs = c.Parameters.Add("us", NpgsqlTypes.NpgsqlDbType.Integer); var pRs = c.Parameters.Add("rs", NpgsqlTypes.NpgsqlDbType.Integer); c.Prepare(); foreach (var s in samples) { pUid.Value = s.UserId; pRid.Value = s.RivalAccountId; pInst.Value = s.Instrument; pSid.Value = s.SongId; pUr.Value = s.UserRank; pRr.Value = s.RivalRank; pRd.Value = s.RankDelta; pUs.Value = (object?)s.UserScore ?? DBNull.Value; pRs.Value = (object?)s.RivalScore ?? DBNull.Value; c.ExecuteNonQuery(); } }
+        tx.Commit();
     }
 
-    /// <summary>
-    /// Get all leaderboard population data. Results are cached in-memory for 5 minutes.
-    /// </summary>
-    public Dictionary<(string SongId, string Instrument), long> GetAllLeaderboardPopulation()
+    public List<UserRivalRow> GetUserRivals(string userId, string? instrumentCombo = null, string? direction = null) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); var where = "WHERE user_id = @uid"; cmd.Parameters.AddWithValue("uid", userId); if (instrumentCombo is not null) { where += " AND instrument_combo = @combo"; cmd.Parameters.AddWithValue("combo", instrumentCombo); } if (direction is not null) { where += " AND direction = @dir"; cmd.Parameters.AddWithValue("dir", direction); } cmd.CommandText = $"SELECT user_id, rival_account_id, instrument_combo, direction, rival_score, avg_signed_delta, shared_song_count, ahead_count, behind_count, computed_at FROM user_rivals {where} ORDER BY rival_score DESC"; var list = new List<UserRivalRow>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(new UserRivalRow { UserId = r.GetString(0), RivalAccountId = r.GetString(1), InstrumentCombo = r.GetString(2), Direction = r.GetString(3), RivalScore = r.GetDouble(4), AvgSignedDelta = r.GetDouble(5), SharedSongCount = r.GetInt32(6), AheadCount = r.GetInt32(7), BehindCount = r.GetInt32(8), ComputedAt = r.GetDateTime(9).ToString("o") }); return list; }
+    public List<RivalComboSummary> GetRivalCombos(string userId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT instrument_combo, SUM(CASE WHEN direction = 'above' THEN 1 ELSE 0 END), SUM(CASE WHEN direction = 'below' THEN 1 ELSE 0 END) FROM user_rivals WHERE user_id = @uid GROUP BY instrument_combo ORDER BY instrument_combo"; cmd.Parameters.AddWithValue("uid", userId); var list = new List<RivalComboSummary>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(new RivalComboSummary { InstrumentCombo = r.GetString(0), AboveCount = (int)r.GetInt64(1), BelowCount = (int)r.GetInt64(2) }); return list; }
+    public List<RivalSongSampleRow> GetRivalSongSamples(string userId, string rivalAccountId, string? instrument = null) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); var where = "WHERE user_id = @uid AND rival_account_id = @rid"; cmd.Parameters.AddWithValue("uid", userId); cmd.Parameters.AddWithValue("rid", rivalAccountId); if (instrument is not null) { where += " AND instrument = @inst"; cmd.Parameters.AddWithValue("inst", instrument); } cmd.CommandText = $"SELECT user_id, rival_account_id, instrument, song_id, user_rank, rival_rank, rank_delta, user_score, rival_score FROM rival_song_samples {where} ORDER BY ABS(rank_delta) ASC"; return ReadRivalSamples(cmd); }
+    public Dictionary<string, List<RivalSongSampleRow>> GetAllRivalSongSamplesForUser(string userId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT user_id, rival_account_id, instrument, song_id, user_rank, rival_rank, rank_delta, user_score, rival_score FROM rival_song_samples WHERE user_id = @uid ORDER BY rival_account_id, ABS(rank_delta) ASC"; cmd.Parameters.AddWithValue("uid", userId); var dict = new Dictionary<string, List<RivalSongSampleRow>>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) { var sample = ReadRivalSample(r); if (!dict.TryGetValue(sample.RivalAccountId, out var list)) { list = new(); dict[sample.RivalAccountId] = list; } list.Add(sample); } return dict; }
+
+    // ── Leaderboard Rivals ───────────────────────────────────────────
+
+    public void ReplaceLeaderboardRivalsData(string userId, string instrument,
+        IReadOnlyList<LeaderboardRivalRow> rivals, IReadOnlyList<LeaderboardRivalSongSampleRow> samples)
     {
-        lock (_populationCacheLock)
-        {
-            if (_populationCache is not null && DateTime.UtcNow - _populationCacheTime < PopulationCacheTtl)
-                return _populationCache;
-        }
-
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT SongId, Instrument, TotalEntries FROM LeaderboardPopulation;";
-        using var reader = cmd.ExecuteReader();
-        var dict = new Dictionary<(string, string), long>();
-        while (reader.Read())
-        {
-            var songId = reader.GetString(0);
-            var instrument = reader.GetString(1);
-            var total = reader.GetInt64(2);
-            dict[(songId, instrument)] = total;
-        }
-
-        lock (_populationCacheLock)
-        {
-            _populationCache = dict;
-            _populationCacheTime = DateTime.UtcNow;
-        }
-        return dict;
-    }
-
-    /// <summary>
-    /// Migrate SongFirstSeenSeason: if the old schema has NOT NULL on FirstSeenSeason,
-    /// recreate the table with nullable columns. Idempotent — checks column nullability first.
-    /// </summary>
-    private void MigrateSongFirstSeenSeasonSchema(SqliteConnection conn)
-    {
-        // Check if FirstSeenSeason column is NOT NULL (notnull=1 in pragma_table_info)
-        using var check = conn.CreateCommand();
-        check.CommandText = "SELECT \"notnull\" FROM pragma_table_info('SongFirstSeenSeason') WHERE name = 'FirstSeenSeason';";
-        var notnull = check.ExecuteScalar();
-        if (notnull is not long nn || nn == 0)
-            return; // Already nullable or table doesn't exist
-
-        _log.LogInformation("Migrating SongFirstSeenSeason: relaxing NOT NULL constraints + adding EstimatedSeason.");
-
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            CREATE TABLE IF NOT EXISTS SongFirstSeenSeason_new (
-                SongId           TEXT    PRIMARY KEY,
-                FirstSeenSeason  INTEGER,
-                MinObservedSeason INTEGER,
-                EstimatedSeason  INTEGER NOT NULL DEFAULT 0,
-                ProbeResult      TEXT,
-                CalculatedAt     TEXT    NOT NULL
-            );
-            INSERT OR IGNORE INTO SongFirstSeenSeason_new (SongId, FirstSeenSeason, MinObservedSeason, EstimatedSeason, ProbeResult, CalculatedAt)
-                SELECT SongId, FirstSeenSeason, MinObservedSeason, COALESCE(EstimatedSeason, FirstSeenSeason), ProbeResult, CalculatedAt
-                FROM SongFirstSeenSeason;
-            DROP TABLE SongFirstSeenSeason;
-            ALTER TABLE SongFirstSeenSeason_new RENAME TO SongFirstSeenSeason;
-            """;
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// If the stored data-collection version is behind <see cref="DataCollectionVersion"/>,
-    /// reset all completed backfill and history-reconstruction work so it re-runs
-    /// with the latest collection logic.
-    /// </summary>
-    private void MigrateDataCollectionVersion(SqliteConnection conn)
-    {
-        // Read current stored version (0 if row doesn't exist yet)
-        int storedVersion;
-        using (var read = conn.CreateCommand())
-        {
-            read.CommandText = "SELECT Version FROM DataVersion WHERE Key = 'DataCollection';";
-            var result = read.ExecuteScalar();
-            storedVersion = result is long v ? (int)v : 0;
-        }
-
-        if (storedVersion >= DataCollectionVersion)
-            return;
-
-        _log.LogInformation(
-            "Data-collection version upgraded {Old} → {New}. Re-queuing completed backfill/history-recon work.",
-            storedVersion, DataCollectionVersion);
-
-        using (var reset = conn.CreateCommand())
-        {
-            reset.CommandText = """
-                UPDATE BackfillStatus
-                   SET Status = 'pending', SongsChecked = 0, EntriesFound = 0,
-                       StartedAt = NULL, CompletedAt = NULL, LastResumedAt = NULL, ErrorMessage = NULL
-                 WHERE Status = 'complete';
-
-                DELETE FROM BackfillProgress
-                 WHERE AccountId IN (SELECT AccountId FROM BackfillStatus WHERE Status = 'pending');
-
-                UPDATE HistoryReconStatus
-                   SET Status = 'pending', SongsProcessed = 0, TotalSongsToProcess = 0,
-                       SeasonsQueried = 0, HistoryEntriesFound = 0,
-                       StartedAt = NULL, CompletedAt = NULL, ErrorMessage = NULL
-                 WHERE Status = 'complete';
-
-                DELETE FROM HistoryReconProgress
-                 WHERE AccountId IN (SELECT AccountId FROM HistoryReconStatus WHERE Status = 'pending');
-                """;
-            reset.ExecuteNonQuery();
-        }
-
-        // Store the new version
-        using (var upsert = conn.CreateCommand())
-        {
-            upsert.CommandText = """
-                INSERT INTO DataVersion (Key, Version) VALUES ('DataCollection', @ver)
-                ON CONFLICT(Key) DO UPDATE SET Version = @ver;
-                """;
-            upsert.Parameters.AddWithValue("@ver", DataCollectionVersion);
-            upsert.ExecuteNonQuery();
-        }
-    }
-
-    /// <summary>
-    /// Returns the stored data-collection version, or 0 if not yet recorded.
-    /// </summary>
-    internal int GetDataCollectionVersion()
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT Version FROM DataVersion WHERE Key = 'DataCollection';";
-        var result = cmd.ExecuteScalar();
-        return result is long v ? (int)v : 0;
-    }
-
-    /// <summary>
-    /// Generic per-feature version migration. Compares the stored version for <paramref name="featureKey"/>
-    /// against <paramref name="codeVersion"/>. If stale, calls <paramref name="resetAction"/> and updates.
-    /// </summary>
-    private void MigrateFeatureVersion(SqliteConnection conn, string featureKey, int codeVersion, Action<SqliteConnection> resetAction)
-    {
-        int storedVersion;
-        using (var read = conn.CreateCommand())
-        {
-            read.CommandText = "SELECT Version FROM DataVersion WHERE Key = @key;";
-            read.Parameters.AddWithValue("@key", featureKey);
-            var result = read.ExecuteScalar();
-            storedVersion = result is long v ? (int)v : 0;
-        }
-
-        if (storedVersion >= codeVersion)
-            return;
-
-        _log.LogInformation(
-            "Feature version upgraded {Feature}: {Old} → {New}. Running reset action.",
-            featureKey, storedVersion, codeVersion);
-
-        resetAction(conn);
-
-        using var upsert = conn.CreateCommand();
-        upsert.CommandText = """
-            INSERT INTO DataVersion (Key, Version) VALUES (@key, @ver)
-            ON CONFLICT(Key) DO UPDATE SET Version = @ver;
-            """;
-        upsert.Parameters.AddWithValue("@key", featureKey);
-        upsert.Parameters.AddWithValue("@ver", codeVersion);
-        upsert.ExecuteNonQuery();
-    }
-
-    /// <summary>Reset action for Rivals: re-queue all completed rivals computations.</summary>
-    private static void ResetRivalsStatus(SqliteConnection conn)
-    {
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE RivalsStatus
-               SET Status = 'pending', CombosComputed = 0, TotalCombosToCompute = 0, RivalsFound = 0,
-                   StartedAt = NULL, CompletedAt = NULL, ErrorMessage = NULL
-             WHERE Status = 'complete';
-            """;
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>Reset action for Combo: drop old tables and recreate with new schema.</summary>
-    private static void ResetComboTables(SqliteConnection conn)
-    {
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            DROP TABLE IF EXISTS ComboLeaderboard;
-            DROP TABLE IF EXISTS ComboStats;
-
-            CREATE TABLE IF NOT EXISTS ComboLeaderboard (
-                ComboId         TEXT    NOT NULL,
-                AccountId       TEXT    NOT NULL,
-                AdjustedRating  REAL    NOT NULL,
-                WeightedRating  REAL    NOT NULL,
-                FcRate          REAL    NOT NULL,
-                TotalScore      INTEGER NOT NULL,
-                MaxScorePercent REAL    NOT NULL,
-                SongsPlayed     INTEGER NOT NULL,
-                FullComboCount  INTEGER NOT NULL,
-                ComputedAt      TEXT    NOT NULL,
-                PRIMARY KEY (ComboId, AccountId)
-            );
-
-            CREATE INDEX IF NOT EXISTS IX_ComboLB_Adjusted  ON ComboLeaderboard (ComboId, AdjustedRating ASC);
-            CREATE INDEX IF NOT EXISTS IX_ComboLB_Weighted   ON ComboLeaderboard (ComboId, WeightedRating ASC);
-            CREATE INDEX IF NOT EXISTS IX_ComboLB_FcRate     ON ComboLeaderboard (ComboId, FcRate DESC);
-            CREATE INDEX IF NOT EXISTS IX_ComboLB_TotalScore ON ComboLeaderboard (ComboId, TotalScore DESC);
-            CREATE INDEX IF NOT EXISTS IX_ComboLB_MaxScore   ON ComboLeaderboard (ComboId, MaxScorePercent DESC);
-
-            CREATE TABLE IF NOT EXISTS ComboStats (
-                ComboId        TEXT PRIMARY KEY,
-                TotalAccounts  INTEGER NOT NULL,
-                ComputedAt     TEXT    NOT NULL
-            );
-            """;
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Returns the stored version for a feature, or 0 if not yet recorded.
-    /// </summary>
-    internal int GetFeatureVersion(string featureKey)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT Version FROM DataVersion WHERE Key = @key;";
-        cmd.Parameters.AddWithValue("@key", featureKey);
-        var result = cmd.ExecuteScalar();
-        return result is long v ? (int)v : 0;
-    }
-
-    // ─── Rivals ────────────────────────────────────────────────
-
-    /// <summary>
-    /// Ensure a <c>RivalsStatus</c> row exists for a registered user (idempotent).
-    /// </summary>
-    public void EnsureRivalsStatus(string accountId)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT OR IGNORE INTO RivalsStatus (AccountId, Status) VALUES (@id, 'pending');
-            """;
-        cmd.Parameters.AddWithValue("@id", accountId);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>Mark a user's rivals computation as in-progress.</summary>
-    public void StartRivals(string accountId, int totalCombosToCompute = 0)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE RivalsStatus SET Status = 'in_progress', StartedAt = @now,
-                   TotalCombosToCompute = @total, CombosComputed = 0, RivalsFound = 0, ErrorMessage = NULL
-            WHERE AccountId = @id;
-            """;
-        cmd.Parameters.AddWithValue("@id", accountId);
-        cmd.Parameters.AddWithValue("@now", now);
-        cmd.Parameters.AddWithValue("@total", totalCombosToCompute);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>Mark a user's rivals computation as complete.</summary>
-    public void CompleteRivals(string accountId, int combosComputed, int rivalsFound)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE RivalsStatus
-               SET Status = 'complete', CombosComputed = @combos, RivalsFound = @rivals,
-                   CompletedAt = @now, ErrorMessage = NULL
-             WHERE AccountId = @id;
-            """;
-        cmd.Parameters.AddWithValue("@id", accountId);
-        cmd.Parameters.AddWithValue("@combos", combosComputed);
-        cmd.Parameters.AddWithValue("@rivals", rivalsFound);
-        cmd.Parameters.AddWithValue("@now", now);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>Mark a user's rivals computation as failed.</summary>
-    public void FailRivals(string accountId, string errorMessage)
-    {
-        var now = DateTime.UtcNow.ToString("o");
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE RivalsStatus SET Status = 'error', ErrorMessage = @err, CompletedAt = @now
-            WHERE AccountId = @id;
-            """;
-        cmd.Parameters.AddWithValue("@id", accountId);
-        cmd.Parameters.AddWithValue("@err", errorMessage);
-        cmd.Parameters.AddWithValue("@now", now);
-        cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>Get the rivals computation status for a user.</summary>
-    public RivalsStatusInfo? GetRivalsStatus(string accountId)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT AccountId, Status, CombosComputed, TotalCombosToCompute, RivalsFound, StartedAt, CompletedAt, ErrorMessage
-            FROM RivalsStatus WHERE AccountId = @id;
-            """;
-        cmd.Parameters.AddWithValue("@id", accountId);
-        using var reader = cmd.ExecuteReader();
-        if (!reader.Read()) return null;
-        return new RivalsStatusInfo
-        {
-            AccountId = reader.GetString(0),
-            Status = reader.GetString(1),
-            CombosComputed = reader.GetInt32(2),
-            TotalCombosToCompute = reader.GetInt32(3),
-            RivalsFound = reader.GetInt32(4),
-            StartedAt = reader.IsDBNull(5) ? null : reader.GetString(5),
-            CompletedAt = reader.IsDBNull(6) ? null : reader.GetString(6),
-            ErrorMessage = reader.IsDBNull(7) ? null : reader.GetString(7),
-        };
-    }
-
-    /// <summary>Get all registered users whose rivals need (re)computation.</summary>
-    public List<string> GetPendingRivalsAccounts()
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT AccountId FROM RivalsStatus
-            WHERE Status IN ('pending', 'in_progress')
-            ORDER BY rowid;
-            """;
-        var list = new List<string>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read()) list.Add(reader.GetString(0));
-        return list;
-    }
-
-    /// <summary>
-    /// Replace all rivals data for a user in a single transaction.
-    /// Deletes old UserRivals + RivalSongSamples, then bulk-inserts the new data.
-    /// </summary>
-    public void ReplaceRivalsData(
-        string userId,
-        IReadOnlyList<UserRivalRow> rivals,
-        IReadOnlyList<RivalSongSampleRow> samples)
-    {
-        using var conn = OpenConnection();
-        using var txn = conn.BeginTransaction();
-
-        using (var del1 = conn.CreateCommand())
-        {
-            del1.CommandText = "DELETE FROM RivalSongSamples WHERE UserId = @uid;";
-            del1.Parameters.AddWithValue("@uid", userId);
-            del1.ExecuteNonQuery();
-        }
-        using (var del2 = conn.CreateCommand())
-        {
-            del2.CommandText = "DELETE FROM UserRivals WHERE UserId = @uid;";
-            del2.Parameters.AddWithValue("@uid", userId);
-            del2.ExecuteNonQuery();
-        }
-
-        if (rivals.Count > 0)
-        {
-            using var insertRival = conn.CreateCommand();
-            insertRival.CommandText = """
-                INSERT INTO UserRivals (UserId, RivalAccountId, InstrumentCombo, Direction,
-                                        RivalScore, AvgSignedDelta, SharedSongCount, AheadCount, BehindCount, ComputedAt)
-                VALUES (@uid, @rid, @combo, @dir, @score, @delta, @songs, @ahead, @behind, @at);
-                """;
-            var pUid = insertRival.Parameters.Add("@uid", SqliteType.Text);
-            var pRid = insertRival.Parameters.Add("@rid", SqliteType.Text);
-            var pCombo = insertRival.Parameters.Add("@combo", SqliteType.Text);
-            var pDir = insertRival.Parameters.Add("@dir", SqliteType.Text);
-            var pScore = insertRival.Parameters.Add("@score", SqliteType.Real);
-            var pDelta = insertRival.Parameters.Add("@delta", SqliteType.Real);
-            var pSongs = insertRival.Parameters.Add("@songs", SqliteType.Integer);
-            var pAhead = insertRival.Parameters.Add("@ahead", SqliteType.Integer);
-            var pBehind = insertRival.Parameters.Add("@behind", SqliteType.Integer);
-            var pAt = insertRival.Parameters.Add("@at", SqliteType.Text);
-
-            foreach (var r in rivals)
-            {
-                pUid.Value = r.UserId;
-                pRid.Value = r.RivalAccountId;
-                pCombo.Value = r.InstrumentCombo;
-                pDir.Value = r.Direction;
-                pScore.Value = r.RivalScore;
-                pDelta.Value = r.AvgSignedDelta;
-                pSongs.Value = r.SharedSongCount;
-                pAhead.Value = r.AheadCount;
-                pBehind.Value = r.BehindCount;
-                pAt.Value = r.ComputedAt;
-                insertRival.ExecuteNonQuery();
-            }
-        }
-
-        if (samples.Count > 0)
-        {
-            using var insertSample = conn.CreateCommand();
-            insertSample.CommandText = """
-                INSERT INTO RivalSongSamples (UserId, RivalAccountId, Instrument, SongId,
-                                              UserRank, RivalRank, RankDelta, UserScore, RivalScore)
-                VALUES (@uid, @rid, @inst, @sid, @ur, @rr, @rd, @us, @rs);
-                """;
-            var sUid = insertSample.Parameters.Add("@uid", SqliteType.Text);
-            var sRid = insertSample.Parameters.Add("@rid", SqliteType.Text);
-            var sInst = insertSample.Parameters.Add("@inst", SqliteType.Text);
-            var sSid = insertSample.Parameters.Add("@sid", SqliteType.Text);
-            var sUr = insertSample.Parameters.Add("@ur", SqliteType.Integer);
-            var sRr = insertSample.Parameters.Add("@rr", SqliteType.Integer);
-            var sRd = insertSample.Parameters.Add("@rd", SqliteType.Integer);
-            var sUs = insertSample.Parameters.Add("@us", SqliteType.Integer);
-            var sRs = insertSample.Parameters.Add("@rs", SqliteType.Integer);
-
-            foreach (var s in samples)
-            {
-                sUid.Value = s.UserId;
-                sRid.Value = s.RivalAccountId;
-                sInst.Value = s.Instrument;
-                sSid.Value = s.SongId;
-                sUr.Value = s.UserRank;
-                sRr.Value = s.RivalRank;
-                sRd.Value = s.RankDelta;
-                sUs.Value = (object?)s.UserScore ?? DBNull.Value;
-                sRs.Value = (object?)s.RivalScore ?? DBNull.Value;
-                insertSample.ExecuteNonQuery();
-            }
-        }
-
-        txn.Commit();
-    }
-
-    /// <summary>Get all UserRivals rows for a user, optionally filtered by combo and direction.</summary>
-    public List<UserRivalRow> GetUserRivals(string userId, string? instrumentCombo = null, string? direction = null)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        var where = "UserId = @uid";
-        if (instrumentCombo is not null) where += " AND InstrumentCombo = @combo";
-        if (direction is not null) where += " AND Direction = @dir";
-
-        cmd.CommandText = $"""
-            SELECT UserId, RivalAccountId, InstrumentCombo, Direction,
-                   RivalScore, AvgSignedDelta, SharedSongCount, AheadCount, BehindCount, ComputedAt
-            FROM UserRivals WHERE {where}
-            ORDER BY RivalScore DESC;
-            """;
-        cmd.Parameters.AddWithValue("@uid", userId);
-        if (instrumentCombo is not null) cmd.Parameters.AddWithValue("@combo", instrumentCombo);
-        if (direction is not null) cmd.Parameters.AddWithValue("@dir", direction);
-
-        var list = new List<UserRivalRow>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            list.Add(new UserRivalRow
-            {
-                UserId = reader.GetString(0),
-                RivalAccountId = reader.GetString(1),
-                InstrumentCombo = reader.GetString(2),
-                Direction = reader.GetString(3),
-                RivalScore = reader.GetDouble(4),
-                AvgSignedDelta = reader.GetDouble(5),
-                SharedSongCount = reader.GetInt32(6),
-                AheadCount = reader.GetInt32(7),
-                BehindCount = reader.GetInt32(8),
-                ComputedAt = reader.GetString(9),
-            });
-        }
-        return list;
-    }
-
-    /// <summary>Get distinct instrument combos that have rivals for a user.</summary>
-    public List<RivalComboSummary> GetRivalCombos(string userId)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT InstrumentCombo,
-                   SUM(CASE WHEN Direction = 'above' THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN Direction = 'below' THEN 1 ELSE 0 END)
-            FROM UserRivals WHERE UserId = @uid
-            GROUP BY InstrumentCombo
-            ORDER BY InstrumentCombo;
-            """;
-        cmd.Parameters.AddWithValue("@uid", userId);
-        var list = new List<RivalComboSummary>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            list.Add(new RivalComboSummary
-            {
-                InstrumentCombo = reader.GetString(0),
-                AboveCount = reader.GetInt32(1),
-                BelowCount = reader.GetInt32(2),
-            });
-        }
-        return list;
-    }
-
-    /// <summary>Get rival song samples for a specific user/rival pair, optionally filtered by instrument.</summary>
-    public List<RivalSongSampleRow> GetRivalSongSamples(
-        string userId, string rivalAccountId, string? instrument = null)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        var where = "UserId = @uid AND RivalAccountId = @rid";
-        if (instrument is not null) where += " AND Instrument = @inst";
-
-        cmd.CommandText = $"""
-            SELECT UserId, RivalAccountId, Instrument, SongId,
-                   UserRank, RivalRank, RankDelta, UserScore, RivalScore
-            FROM RivalSongSamples WHERE {where}
-            ORDER BY ABS(RankDelta) ASC;
-            """;
-        cmd.Parameters.AddWithValue("@uid", userId);
-        cmd.Parameters.AddWithValue("@rid", rivalAccountId);
-        if (instrument is not null) cmd.Parameters.AddWithValue("@inst", instrument);
-
-        var list = new List<RivalSongSampleRow>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            list.Add(new RivalSongSampleRow
-            {
-                UserId = reader.GetString(0),
-                RivalAccountId = reader.GetString(1),
-                Instrument = reader.GetString(2),
-                SongId = reader.GetString(3),
-                UserRank = reader.GetInt32(4),
-                RivalRank = reader.GetInt32(5),
-                RankDelta = reader.GetInt32(6),
-                UserScore = reader.IsDBNull(7) ? null : reader.GetInt32(7),
-                RivalScore = reader.IsDBNull(8) ? null : reader.GetInt32(8),
-            });
-        }
-        return list;
-    }
-
-    /// <summary>Get all rival song samples for a user across all rivals. Groups by rival.</summary>
-    public Dictionary<string, List<RivalSongSampleRow>> GetAllRivalSongSamplesForUser(string userId)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT UserId, RivalAccountId, Instrument, SongId,
-                   UserRank, RivalRank, RankDelta, UserScore, RivalScore
-            FROM RivalSongSamples WHERE UserId = @uid
-            ORDER BY RivalAccountId, ABS(RankDelta) ASC;
-            """;
-        cmd.Parameters.AddWithValue("@uid", userId);
-
-        var result = new Dictionary<string, List<RivalSongSampleRow>>(StringComparer.OrdinalIgnoreCase);
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            var row = new RivalSongSampleRow
-            {
-                UserId = reader.GetString(0),
-                RivalAccountId = reader.GetString(1),
-                Instrument = reader.GetString(2),
-                SongId = reader.GetString(3),
-                UserRank = reader.GetInt32(4),
-                RivalRank = reader.GetInt32(5),
-                RankDelta = reader.GetInt32(6),
-                UserScore = reader.IsDBNull(7) ? null : reader.GetInt32(7),
-                RivalScore = reader.IsDBNull(8) ? null : reader.GetInt32(8),
-            };
-            if (!result.TryGetValue(row.RivalAccountId, out var list))
-            {
-                list = new List<RivalSongSampleRow>();
-                result[row.RivalAccountId] = list;
-            }
-            list.Add(row);
-        }
-        return result;
-    }
-
-    /// <summary>Delete all per-account data: rivals, player stats, backfill/recon tracking.</summary>
-    private static void CleanupAccountData(SqliteConnection conn, string accountId)
-    {
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            DELETE FROM RivalSongSamples WHERE UserId = @id;
-            DELETE FROM UserRivals WHERE UserId = @id;
-            DELETE FROM RivalsStatus WHERE AccountId = @id;
-            DELETE FROM LeaderboardRivalSongSamples WHERE UserId = @id;
-            DELETE FROM LeaderboardRivals WHERE UserId = @id;
-            DELETE FROM PlayerStats WHERE AccountId = @id;
-            DELETE FROM BackfillStatus WHERE AccountId = @id;
-            DELETE FROM BackfillProgress WHERE AccountId = @id;
-            DELETE FROM HistoryReconStatus WHERE AccountId = @id;
-            DELETE FROM HistoryReconProgress WHERE AccountId = @id;
-            """;
-        cmd.Parameters.AddWithValue("@id", accountId);
-        cmd.ExecuteNonQuery();
-    }
-
-    // ─── Leaderboard Rivals ────────────────────────────────────
-
-    /// <summary>
-    /// Replace all leaderboard rivals data for a user on a specific instrument.
-    /// Called per-instrument so that partial updates don't lose data from other instruments.
-    /// </summary>
-    public void ReplaceLeaderboardRivalsData(
-        string userId,
-        string instrument,
-        IReadOnlyList<LeaderboardRivalRow> rivals,
-        IReadOnlyList<LeaderboardRivalSongSampleRow> samples)
-    {
-        using var conn = OpenConnection();
-        using var txn = conn.BeginTransaction();
-
-        using (var del1 = conn.CreateCommand())
-        {
-            del1.CommandText = "DELETE FROM LeaderboardRivalSongSamples WHERE UserId = @uid AND Instrument = @inst;";
-            del1.Parameters.AddWithValue("@uid", userId);
-            del1.Parameters.AddWithValue("@inst", instrument);
-            del1.ExecuteNonQuery();
-        }
-        using (var del2 = conn.CreateCommand())
-        {
-            del2.CommandText = "DELETE FROM LeaderboardRivals WHERE UserId = @uid AND Instrument = @inst;";
-            del2.Parameters.AddWithValue("@uid", userId);
-            del2.Parameters.AddWithValue("@inst", instrument);
-            del2.ExecuteNonQuery();
-        }
-
-        if (rivals.Count > 0)
-        {
-            using var insertRival = conn.CreateCommand();
-            insertRival.CommandText = """
-                INSERT INTO LeaderboardRivals (UserId, RivalAccountId, Instrument, RankMethod, Direction,
-                                               UserRank, RivalRank, SharedSongCount, AheadCount, BehindCount,
-                                               AvgSignedDelta, ComputedAt)
-                VALUES (@uid, @rid, @inst, @rm, @dir, @ur, @rr, @songs, @ahead, @behind, @delta, @at);
-                """;
-            var pUid = insertRival.Parameters.Add("@uid", SqliteType.Text);
-            var pRid = insertRival.Parameters.Add("@rid", SqliteType.Text);
-            var pInst = insertRival.Parameters.Add("@inst", SqliteType.Text);
-            var pRm = insertRival.Parameters.Add("@rm", SqliteType.Text);
-            var pDir = insertRival.Parameters.Add("@dir", SqliteType.Text);
-            var pUr = insertRival.Parameters.Add("@ur", SqliteType.Integer);
-            var pRr = insertRival.Parameters.Add("@rr", SqliteType.Integer);
-            var pSongs = insertRival.Parameters.Add("@songs", SqliteType.Integer);
-            var pAhead = insertRival.Parameters.Add("@ahead", SqliteType.Integer);
-            var pBehind = insertRival.Parameters.Add("@behind", SqliteType.Integer);
-            var pDelta = insertRival.Parameters.Add("@delta", SqliteType.Real);
-            var pAt = insertRival.Parameters.Add("@at", SqliteType.Text);
-
-            foreach (var r in rivals)
-            {
-                pUid.Value = r.UserId;
-                pRid.Value = r.RivalAccountId;
-                pInst.Value = r.Instrument;
-                pRm.Value = r.RankMethod;
-                pDir.Value = r.Direction;
-                pUr.Value = r.UserRank;
-                pRr.Value = r.RivalRank;
-                pSongs.Value = r.SharedSongCount;
-                pAhead.Value = r.AheadCount;
-                pBehind.Value = r.BehindCount;
-                pDelta.Value = r.AvgSignedDelta;
-                pAt.Value = r.ComputedAt;
-                insertRival.ExecuteNonQuery();
-            }
-        }
-
-        if (samples.Count > 0)
-        {
-            using var insertSample = conn.CreateCommand();
-            insertSample.CommandText = """
-                INSERT INTO LeaderboardRivalSongSamples (UserId, RivalAccountId, Instrument, RankMethod,
-                                                         SongId, UserRank, RivalRank, RankDelta, UserScore, RivalScore)
-                VALUES (@uid, @rid, @inst, @rm, @sid, @ur, @rr, @rd, @us, @rs);
-                """;
-            var sUid = insertSample.Parameters.Add("@uid", SqliteType.Text);
-            var sRid = insertSample.Parameters.Add("@rid", SqliteType.Text);
-            var sInst = insertSample.Parameters.Add("@inst", SqliteType.Text);
-            var sRm = insertSample.Parameters.Add("@rm", SqliteType.Text);
-            var sSid = insertSample.Parameters.Add("@sid", SqliteType.Text);
-            var sUr = insertSample.Parameters.Add("@ur", SqliteType.Integer);
-            var sRr = insertSample.Parameters.Add("@rr", SqliteType.Integer);
-            var sRd = insertSample.Parameters.Add("@rd", SqliteType.Integer);
-            var sUs = insertSample.Parameters.Add("@us", SqliteType.Integer);
-            var sRs = insertSample.Parameters.Add("@rs", SqliteType.Integer);
-
-            foreach (var s in samples)
-            {
-                sUid.Value = s.UserId;
-                sRid.Value = s.RivalAccountId;
-                sInst.Value = s.Instrument;
-                sRm.Value = s.RankMethod;
-                sSid.Value = s.SongId;
-                sUr.Value = s.UserRank;
-                sRr.Value = s.RivalRank;
-                sRd.Value = s.RankDelta;
-                sUs.Value = (object?)s.UserScore ?? DBNull.Value;
-                sRs.Value = (object?)s.RivalScore ?? DBNull.Value;
-                insertSample.ExecuteNonQuery();
-            }
-        }
-
-        txn.Commit();
-    }
-
-    /// <summary>Get leaderboard rivals for a user, optionally filtered by instrument, rank method, and direction.</summary>
-    public List<LeaderboardRivalRow> GetLeaderboardRivals(
-        string userId, string? instrument = null, string? rankMethod = null, string? direction = null)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        var where = "UserId = @uid";
-        if (instrument is not null) where += " AND Instrument = @inst";
-        if (rankMethod is not null) where += " AND RankMethod = @rm";
-        if (direction is not null) where += " AND Direction = @dir";
-
-        cmd.CommandText = $"""
-            SELECT UserId, RivalAccountId, Instrument, RankMethod, Direction,
-                   UserRank, RivalRank, SharedSongCount, AheadCount, BehindCount,
-                   AvgSignedDelta, ComputedAt
-            FROM LeaderboardRivals WHERE {where}
-            ORDER BY SharedSongCount DESC;
-            """;
-        cmd.Parameters.AddWithValue("@uid", userId);
-        if (instrument is not null) cmd.Parameters.AddWithValue("@inst", instrument);
-        if (rankMethod is not null) cmd.Parameters.AddWithValue("@rm", rankMethod);
-        if (direction is not null) cmd.Parameters.AddWithValue("@dir", direction);
-
-        var list = new List<LeaderboardRivalRow>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            list.Add(new LeaderboardRivalRow
-            {
-                UserId = reader.GetString(0),
-                RivalAccountId = reader.GetString(1),
-                Instrument = reader.GetString(2),
-                RankMethod = reader.GetString(3),
-                Direction = reader.GetString(4),
-                UserRank = reader.GetInt32(5),
-                RivalRank = reader.GetInt32(6),
-                SharedSongCount = reader.GetInt32(7),
-                AheadCount = reader.GetInt32(8),
-                BehindCount = reader.GetInt32(9),
-                AvgSignedDelta = reader.GetDouble(10),
-                ComputedAt = reader.GetString(11),
-            });
-        }
-        return list;
-    }
-
-    /// <summary>Get leaderboard rival song samples for a specific user/rival/instrument/rankMethod.</summary>
-    public List<LeaderboardRivalSongSampleRow> GetLeaderboardRivalSongSamples(
-        string userId, string rivalAccountId, string instrument, string rankMethod)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT UserId, RivalAccountId, Instrument, RankMethod, SongId,
-                   UserRank, RivalRank, RankDelta, UserScore, RivalScore
-            FROM LeaderboardRivalSongSamples
-            WHERE UserId = @uid AND RivalAccountId = @rid AND Instrument = @inst AND RankMethod = @rm
-            ORDER BY ABS(RankDelta) ASC;
-            """;
-        cmd.Parameters.AddWithValue("@uid", userId);
-        cmd.Parameters.AddWithValue("@rid", rivalAccountId);
-        cmd.Parameters.AddWithValue("@inst", instrument);
-        cmd.Parameters.AddWithValue("@rm", rankMethod);
-
-        var list = new List<LeaderboardRivalSongSampleRow>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            list.Add(new LeaderboardRivalSongSampleRow
-            {
-                UserId = reader.GetString(0),
-                RivalAccountId = reader.GetString(1),
-                Instrument = reader.GetString(2),
-                RankMethod = reader.GetString(3),
-                SongId = reader.GetString(4),
-                UserRank = reader.GetInt32(5),
-                RivalRank = reader.GetInt32(6),
-                RankDelta = reader.GetInt32(7),
-                UserScore = reader.IsDBNull(8) ? null : reader.GetInt32(8),
-                RivalScore = reader.IsDBNull(9) ? null : reader.GetInt32(9),
-            });
-        }
-        return list;
-    }
-
-    // ─── Item Shop ─────────────────────────────────────────────
-
-    /// <summary>
-    /// Replaces the entire ItemShopTracks table with the given set of song IDs.
-    /// </summary>
-    public void SaveItemShopTracks(IReadOnlySet<string> songIds, IReadOnlySet<string> leavingTomorrow, DateTime scrapedAt)
-    {
-        var ts = scrapedAt.ToString("o");
-        using var conn = OpenConnection();
+        using var conn = _ds.OpenConnection();
         using var tx = conn.BeginTransaction();
 
-        using (var del = conn.CreateCommand())
+        // Delete existing rivals + samples for this user/instrument
+        using (var d = conn.CreateCommand()) { d.Transaction = tx; d.CommandText = "DELETE FROM leaderboard_rival_song_samples WHERE user_id = @uid AND instrument = @inst"; d.Parameters.AddWithValue("uid", userId); d.Parameters.AddWithValue("inst", instrument); d.ExecuteNonQuery(); }
+        using (var d = conn.CreateCommand()) { d.Transaction = tx; d.CommandText = "DELETE FROM leaderboard_rivals WHERE user_id = @uid AND instrument = @inst"; d.Parameters.AddWithValue("uid", userId); d.Parameters.AddWithValue("inst", instrument); d.ExecuteNonQuery(); }
+
+        // Insert rivals
+        if (rivals.Count > 0)
         {
-            del.Transaction = tx;
-            del.CommandText = "DELETE FROM ItemShopTracks;";
-            del.ExecuteNonQuery();
+            using var c = conn.CreateCommand(); c.Transaction = tx;
+            c.CommandText = "INSERT INTO leaderboard_rivals (user_id, rival_account_id, instrument, rank_method, direction, user_rank, rival_rank, shared_song_count, ahead_count, behind_count, avg_signed_delta, computed_at) VALUES (@uid, @rid, @inst, @rm, @dir, @ur, @rr, @ssc, @ac, @bc, @asd, @ca)";
+            var pUid = c.Parameters.Add("uid", NpgsqlTypes.NpgsqlDbType.Text); var pRid = c.Parameters.Add("rid", NpgsqlTypes.NpgsqlDbType.Text);
+            var pInst = c.Parameters.Add("inst", NpgsqlTypes.NpgsqlDbType.Text); var pRm = c.Parameters.Add("rm", NpgsqlTypes.NpgsqlDbType.Text);
+            var pDir = c.Parameters.Add("dir", NpgsqlTypes.NpgsqlDbType.Text); var pUr = c.Parameters.Add("ur", NpgsqlTypes.NpgsqlDbType.Integer);
+            var pRr = c.Parameters.Add("rr", NpgsqlTypes.NpgsqlDbType.Integer); var pSsc = c.Parameters.Add("ssc", NpgsqlTypes.NpgsqlDbType.Integer);
+            var pAc = c.Parameters.Add("ac", NpgsqlTypes.NpgsqlDbType.Integer); var pBc = c.Parameters.Add("bc", NpgsqlTypes.NpgsqlDbType.Integer);
+            var pAsd = c.Parameters.Add("asd", NpgsqlTypes.NpgsqlDbType.Double); var pCa = c.Parameters.Add("ca", NpgsqlTypes.NpgsqlDbType.TimestampTz);
+            c.Prepare();
+            foreach (var r in rivals)
+            {
+                pUid.Value = r.UserId; pRid.Value = r.RivalAccountId; pInst.Value = r.Instrument; pRm.Value = r.RankMethod;
+                pDir.Value = r.Direction; pUr.Value = r.UserRank; pRr.Value = r.RivalRank; pSsc.Value = r.SharedSongCount;
+                pAc.Value = r.AheadCount; pBc.Value = r.BehindCount; pAsd.Value = r.AvgSignedDelta;
+                pCa.Value = DateTime.TryParse(r.ComputedAt, null, System.Globalization.DateTimeStyles.RoundtripKind, out var dt) ? dt.ToUniversalTime() : DateTime.UtcNow;
+                c.ExecuteNonQuery();
+            }
         }
 
-        using (var ins = conn.CreateCommand())
+        // Insert samples
+        if (samples.Count > 0)
         {
-            ins.Transaction = tx;
-            ins.CommandText = "INSERT INTO ItemShopTracks (SongId, ScrapedAt, LeavingTomorrow) VALUES (@songId, @ts, @leaving);";
-            var pSongId = ins.Parameters.Add("@songId", Microsoft.Data.Sqlite.SqliteType.Text);
-            var pTs = ins.Parameters.Add("@ts", Microsoft.Data.Sqlite.SqliteType.Text);
-            var pLeaving = ins.Parameters.Add("@leaving", Microsoft.Data.Sqlite.SqliteType.Integer);
-            pTs.Value = ts;
-
-            foreach (var songId in songIds)
+            using var c = conn.CreateCommand(); c.Transaction = tx;
+            c.CommandText = "INSERT INTO leaderboard_rival_song_samples (user_id, rival_account_id, instrument, rank_method, song_id, user_rank, rival_rank, rank_delta, user_score, rival_score) VALUES (@uid, @rid, @inst, @rm, @sid, @ur, @rr, @rd, @us, @rs)";
+            var pUid = c.Parameters.Add("uid", NpgsqlTypes.NpgsqlDbType.Text); var pRid = c.Parameters.Add("rid", NpgsqlTypes.NpgsqlDbType.Text);
+            var pInst = c.Parameters.Add("inst", NpgsqlTypes.NpgsqlDbType.Text); var pRm = c.Parameters.Add("rm", NpgsqlTypes.NpgsqlDbType.Text);
+            var pSid = c.Parameters.Add("sid", NpgsqlTypes.NpgsqlDbType.Text); var pUr = c.Parameters.Add("ur", NpgsqlTypes.NpgsqlDbType.Integer);
+            var pRr = c.Parameters.Add("rr", NpgsqlTypes.NpgsqlDbType.Integer); var pRd = c.Parameters.Add("rd", NpgsqlTypes.NpgsqlDbType.Integer);
+            var pUs = c.Parameters.Add("us", NpgsqlTypes.NpgsqlDbType.Integer); var pRs = c.Parameters.Add("rs", NpgsqlTypes.NpgsqlDbType.Integer);
+            c.Prepare();
+            foreach (var s in samples)
             {
-                pSongId.Value = songId;
-                pLeaving.Value = leavingTomorrow.Contains(songId) ? 1 : 0;
-                ins.ExecuteNonQuery();
+                pUid.Value = s.UserId; pRid.Value = s.RivalAccountId; pInst.Value = s.Instrument; pRm.Value = s.RankMethod;
+                pSid.Value = s.SongId; pUr.Value = s.UserRank; pRr.Value = s.RivalRank; pRd.Value = s.RankDelta;
+                pUs.Value = (object?)s.UserScore ?? DBNull.Value; pRs.Value = (object?)s.RivalScore ?? DBNull.Value;
+                c.ExecuteNonQuery();
             }
         }
 
         tx.Commit();
     }
 
-    /// <summary>
-    /// Loads the persisted set of in-shop song IDs and leaving-tomorrow set from the database.
-    /// </summary>
-    public (HashSet<string> InShop, HashSet<string> LeavingTomorrow) LoadItemShopTracks()
+    public List<LeaderboardRivalRow> GetLeaderboardRivals(string userId, string? instrument = null, string? rankMethod = null, string? direction = null)
     {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT SongId, LeavingTomorrow FROM ItemShopTracks;";
-
-        var inShop = new HashSet<string>();
-        var leaving = new HashSet<string>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            var songId = reader.GetString(0);
-            inShop.Add(songId);
-            if (reader.GetInt64(1) == 1)
-                leaving.Add(songId);
-        }
-        return (inShop, leaving);
+        using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
+        var where = "WHERE user_id = @uid"; cmd.Parameters.AddWithValue("uid", userId);
+        if (instrument is not null) { where += " AND instrument = @inst"; cmd.Parameters.AddWithValue("inst", instrument); }
+        if (rankMethod is not null) { where += " AND rank_method = @rm"; cmd.Parameters.AddWithValue("rm", rankMethod); }
+        if (direction is not null) { where += " AND direction = @dir"; cmd.Parameters.AddWithValue("dir", direction); }
+        cmd.CommandText = $"SELECT user_id, rival_account_id, instrument, rank_method, direction, user_rank, rival_rank, shared_song_count, ahead_count, behind_count, avg_signed_delta, computed_at FROM leaderboard_rivals {where} ORDER BY rank_method, direction";
+        var list = new List<LeaderboardRivalRow>(); using var r = cmd.ExecuteReader();
+        while (r.Read()) list.Add(new LeaderboardRivalRow { UserId = r.GetString(0), RivalAccountId = r.GetString(1), Instrument = r.GetString(2), RankMethod = r.GetString(3), Direction = r.GetString(4), UserRank = r.GetInt32(5), RivalRank = r.GetInt32(6), SharedSongCount = r.GetInt32(7), AheadCount = r.GetInt32(8), BehindCount = r.GetInt32(9), AvgSignedDelta = r.GetDouble(10), ComputedAt = r.GetDateTime(11).ToString("o") });
+        return list;
     }
 
-    // ─── Rankings ───────────────────────────────────────────────
+    public List<LeaderboardRivalSongSampleRow> GetLeaderboardRivalSongSamples(string userId, string rivalAccountId, string instrument, string rankMethod)
+    {
+        using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT user_id, rival_account_id, instrument, rank_method, song_id, user_rank, rival_rank, rank_delta, user_score, rival_score FROM leaderboard_rival_song_samples WHERE user_id = @uid AND rival_account_id = @rid AND instrument = @inst AND rank_method = @rm ORDER BY ABS(rank_delta) ASC";
+        cmd.Parameters.AddWithValue("uid", userId); cmd.Parameters.AddWithValue("rid", rivalAccountId); cmd.Parameters.AddWithValue("inst", instrument); cmd.Parameters.AddWithValue("rm", rankMethod);
+        var list = new List<LeaderboardRivalSongSampleRow>(); using var r = cmd.ExecuteReader();
+        while (r.Read()) list.Add(new LeaderboardRivalSongSampleRow { UserId = r.GetString(0), RivalAccountId = r.GetString(1), Instrument = r.GetString(2), RankMethod = r.GetString(3), SongId = r.GetString(4), UserRank = r.GetInt32(5), RivalRank = r.GetInt32(6), RankDelta = r.GetInt32(7), UserScore = r.IsDBNull(8) ? null : r.GetInt32(8), RivalScore = r.IsDBNull(9) ? null : r.GetInt32(9) });
+        return list;
+    }
 
-    /// <summary>
-    /// Replaces all rows in <c>CompositeRankings</c> with pre-computed data.
-    /// Called by <see cref="RankingsCalculator"/> after aggregating per-instrument data.
-    /// </summary>
+    // ── Item shop ────────────────────────────────────────────────────
+
+    public void SaveItemShopTracks(IReadOnlySet<string> songIds, IReadOnlySet<string> leavingTomorrow, DateTime scrapedAt)
+    {
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "DELETE FROM item_shop_tracks"; c.ExecuteNonQuery(); }
+        if (songIds.Count > 0) { using var c = conn.CreateCommand(); c.Transaction = tx; c.CommandText = "INSERT INTO item_shop_tracks (song_id, scraped_at, leaving_tomorrow) VALUES (@songId, @ts, @leaving)"; var pSong = c.Parameters.Add("songId", NpgsqlTypes.NpgsqlDbType.Text); var pTs = c.Parameters.Add("ts", NpgsqlTypes.NpgsqlDbType.TimestampTz); var pLeaving = c.Parameters.Add("leaving", NpgsqlTypes.NpgsqlDbType.Boolean); c.Prepare(); foreach (var songId in songIds) { pSong.Value = songId; pTs.Value = scrapedAt; pLeaving.Value = leavingTomorrow.Contains(songId); c.ExecuteNonQuery(); } }
+        tx.Commit();
+    }
+
+    public (HashSet<string> InShop, HashSet<string> LeavingTomorrow) LoadItemShopTracks() { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT song_id, leaving_tomorrow FROM item_shop_tracks"; var inShop = new HashSet<string>(StringComparer.OrdinalIgnoreCase); var leaving = new HashSet<string>(StringComparer.OrdinalIgnoreCase); using var r = cmd.ExecuteReader(); while (r.Read()) { inShop.Add(r.GetString(0)); if (r.GetBoolean(1)) leaving.Add(r.GetString(0)); } return (inShop, leaving); }
+
+    // ── Composite rankings ───────────────────────────────────────────
+
     public void ReplaceCompositeRankings(IReadOnlyList<CompositeRankingDto> rankings)
     {
-        var conn = GetPersistentConnection();
-        lock (_writeLock)
-        {
-            using var tx = conn.BeginTransaction();
-
-            using (var del = conn.CreateCommand())
-            {
-                del.Transaction = tx;
-                del.CommandText = "DELETE FROM CompositeRankings;";
-                del.ExecuteNonQuery();
-            }
-
-            using var ins = conn.CreateCommand();
-            ins.Transaction = tx;
-            ins.CommandText = """
-                INSERT INTO CompositeRankings
-                (AccountId, InstrumentsPlayed, TotalSongsPlayed, CompositeRating, CompositeRank,
-                 GuitarAdjustedSkill, GuitarSkillRank, BassAdjustedSkill, BassSkillRank,
-                 DrumsAdjustedSkill, DrumsSkillRank, VocalsAdjustedSkill, VocalsSkillRank,
-                 ProGuitarAdjustedSkill, ProGuitarSkillRank, ProBassAdjustedSkill, ProBassSkillRank,
-                 ComputedAt)
-                VALUES (@aid, @instPlayed, @totalSongs, @rating, @rank,
-                        @gSkill, @gRank, @bSkill, @bRank,
-                        @dSkill, @dRank, @vSkill, @vRank,
-                        @pgSkill, @pgRank, @pbSkill, @pbRank,
-                        @now);
-                """;
-            var pAid = ins.Parameters.Add("@aid", SqliteType.Text);
-            var pInstPlayed = ins.Parameters.Add("@instPlayed", SqliteType.Integer);
-            var pTotalSongs = ins.Parameters.Add("@totalSongs", SqliteType.Integer);
-            var pRating = ins.Parameters.Add("@rating", SqliteType.Real);
-            var pRank = ins.Parameters.Add("@rank", SqliteType.Integer);
-            var pGSkill = ins.Parameters.Add("@gSkill", SqliteType.Real);
-            var pGRank = ins.Parameters.Add("@gRank", SqliteType.Integer);
-            var pBSkill = ins.Parameters.Add("@bSkill", SqliteType.Real);
-            var pBRank = ins.Parameters.Add("@bRank", SqliteType.Integer);
-            var pDSkill = ins.Parameters.Add("@dSkill", SqliteType.Real);
-            var pDRank = ins.Parameters.Add("@dRank", SqliteType.Integer);
-            var pVSkill = ins.Parameters.Add("@vSkill", SqliteType.Real);
-            var pVRank = ins.Parameters.Add("@vRank", SqliteType.Integer);
-            var pPGSkill = ins.Parameters.Add("@pgSkill", SqliteType.Real);
-            var pPGRank = ins.Parameters.Add("@pgRank", SqliteType.Integer);
-            var pPBSkill = ins.Parameters.Add("@pbSkill", SqliteType.Real);
-            var pPBRank = ins.Parameters.Add("@pbRank", SqliteType.Integer);
-            var pNow = ins.Parameters.Add("@now", SqliteType.Text);
-            ins.Prepare();
-
-            var now = DateTime.UtcNow.ToString("o");
-            foreach (var r in rankings)
-            {
-                pAid.Value = r.AccountId;
-                pInstPlayed.Value = r.InstrumentsPlayed;
-                pTotalSongs.Value = r.TotalSongsPlayed;
-                pRating.Value = r.CompositeRating;
-                pRank.Value = r.CompositeRank;
-                pGSkill.Value = (object?)r.GuitarAdjustedSkill ?? DBNull.Value;
-                pGRank.Value = (object?)r.GuitarSkillRank ?? DBNull.Value;
-                pBSkill.Value = (object?)r.BassAdjustedSkill ?? DBNull.Value;
-                pBRank.Value = (object?)r.BassSkillRank ?? DBNull.Value;
-                pDSkill.Value = (object?)r.DrumsAdjustedSkill ?? DBNull.Value;
-                pDRank.Value = (object?)r.DrumsSkillRank ?? DBNull.Value;
-                pVSkill.Value = (object?)r.VocalsAdjustedSkill ?? DBNull.Value;
-                pVRank.Value = (object?)r.VocalsSkillRank ?? DBNull.Value;
-                pPGSkill.Value = (object?)r.ProGuitarAdjustedSkill ?? DBNull.Value;
-                pPGRank.Value = (object?)r.ProGuitarSkillRank ?? DBNull.Value;
-                pPBSkill.Value = (object?)r.ProBassAdjustedSkill ?? DBNull.Value;
-                pPBRank.Value = (object?)r.ProBassSkillRank ?? DBNull.Value;
-                pNow.Value = now;
-                ins.ExecuteNonQuery();
-            }
-
-            tx.Commit();
-        }
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "DELETE FROM composite_rankings"; c.ExecuteNonQuery(); }
+        if (rankings.Count > 0) { using var c = conn.CreateCommand(); c.Transaction = tx; c.CommandText = "INSERT INTO composite_rankings (account_id, instruments_played, total_songs_played, composite_rating, composite_rank, guitar_adjusted_skill, guitar_skill_rank, bass_adjusted_skill, bass_skill_rank, drums_adjusted_skill, drums_skill_rank, vocals_adjusted_skill, vocals_skill_rank, pro_guitar_adjusted_skill, pro_guitar_skill_rank, pro_bass_adjusted_skill, pro_bass_skill_rank, computed_at) VALUES (@aid, @instPlayed, @totalSongs, @rating, @rank, @gSkill, @gRank, @bSkill, @bRank, @dSkill, @dRank, @vSkill, @vRank, @pgSkill, @pgRank, @pbSkill, @pbRank, @now)"; var now = DateTime.UtcNow; c.Parameters.Add("aid", NpgsqlTypes.NpgsqlDbType.Text); c.Parameters.Add("instPlayed", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("totalSongs", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("rating", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("rank", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("gSkill", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("gRank", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("bSkill", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("bRank", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("dSkill", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("dRank", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("vSkill", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("vRank", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("pgSkill", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("pgRank", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("pbSkill", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("pbRank", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("now", NpgsqlTypes.NpgsqlDbType.TimestampTz); c.Prepare(); foreach (var rv in rankings) { c.Parameters["aid"].Value = rv.AccountId; c.Parameters["instPlayed"].Value = rv.InstrumentsPlayed; c.Parameters["totalSongs"].Value = rv.TotalSongsPlayed; c.Parameters["rating"].Value = rv.CompositeRating; c.Parameters["rank"].Value = rv.CompositeRank; c.Parameters["gSkill"].Value = (object?)rv.GuitarAdjustedSkill ?? DBNull.Value; c.Parameters["gRank"].Value = (object?)rv.GuitarSkillRank ?? DBNull.Value; c.Parameters["bSkill"].Value = (object?)rv.BassAdjustedSkill ?? DBNull.Value; c.Parameters["bRank"].Value = (object?)rv.BassSkillRank ?? DBNull.Value; c.Parameters["dSkill"].Value = (object?)rv.DrumsAdjustedSkill ?? DBNull.Value; c.Parameters["dRank"].Value = (object?)rv.DrumsSkillRank ?? DBNull.Value; c.Parameters["vSkill"].Value = (object?)rv.VocalsAdjustedSkill ?? DBNull.Value; c.Parameters["vRank"].Value = (object?)rv.VocalsSkillRank ?? DBNull.Value; c.Parameters["pgSkill"].Value = (object?)rv.ProGuitarAdjustedSkill ?? DBNull.Value; c.Parameters["pgRank"].Value = (object?)rv.ProGuitarSkillRank ?? DBNull.Value; c.Parameters["pbSkill"].Value = (object?)rv.ProBassAdjustedSkill ?? DBNull.Value; c.Parameters["pbRank"].Value = (object?)rv.ProBassSkillRank ?? DBNull.Value; c.Parameters["now"].Value = now; c.ExecuteNonQuery(); } }
+        tx.Commit();
     }
 
-    /// <summary>Get a paginated composite rankings leaderboard.</summary>
-    public (List<CompositeRankingDto> Entries, int TotalCount) GetCompositeRankings(int page = 1, int pageSize = 50)
-    {
-        using var conn = OpenConnection();
+    public (List<CompositeRankingDto> Entries, int TotalCount) GetCompositeRankings(int page = 1, int pageSize = 50) { using var conn = _ds.OpenConnection(); int total; using (var c = conn.CreateCommand()) { c.CommandText = "SELECT COUNT(*) FROM composite_rankings"; total = Convert.ToInt32(c.ExecuteScalar()); } using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, instruments_played, total_songs_played, composite_rating, composite_rank, guitar_adjusted_skill, guitar_skill_rank, bass_adjusted_skill, bass_skill_rank, drums_adjusted_skill, drums_skill_rank, vocals_adjusted_skill, vocals_skill_rank, pro_guitar_adjusted_skill, pro_guitar_skill_rank, pro_bass_adjusted_skill, pro_bass_skill_rank, computed_at FROM composite_rankings ORDER BY composite_rank ASC LIMIT @limit OFFSET @offset"; cmd.Parameters.AddWithValue("limit", pageSize); cmd.Parameters.AddWithValue("offset", (page - 1) * pageSize); var list = new List<CompositeRankingDto>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadCompositeRanking(r)); return (list, total); }
+    public CompositeRankingDto? GetCompositeRanking(string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT account_id, instruments_played, total_songs_played, composite_rating, composite_rank, guitar_adjusted_skill, guitar_skill_rank, bass_adjusted_skill, bass_skill_rank, drums_adjusted_skill, drums_skill_rank, vocals_adjusted_skill, vocals_skill_rank, pro_guitar_adjusted_skill, pro_guitar_skill_rank, pro_bass_adjusted_skill, pro_bass_skill_rank, computed_at FROM composite_rankings WHERE account_id = @accountId"; cmd.Parameters.AddWithValue("accountId", accountId); using var r = cmd.ExecuteReader(); return r.Read() ? ReadCompositeRanking(r) : null; }
 
-        int totalCount;
-        using (var cntCmd = conn.CreateCommand())
-        {
-            cntCmd.CommandText = "SELECT COUNT(*) FROM CompositeRankings;";
-            totalCount = Convert.ToInt32(cntCmd.ExecuteScalar());
-        }
-
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT AccountId, InstrumentsPlayed, TotalSongsPlayed, CompositeRating, CompositeRank,
-                   GuitarAdjustedSkill, GuitarSkillRank, BassAdjustedSkill, BassSkillRank,
-                   DrumsAdjustedSkill, DrumsSkillRank, VocalsAdjustedSkill, VocalsSkillRank,
-                   ProGuitarAdjustedSkill, ProGuitarSkillRank, ProBassAdjustedSkill, ProBassSkillRank,
-                   ComputedAt
-            FROM CompositeRankings
-            ORDER BY CompositeRank ASC
-            LIMIT @limit OFFSET @offset;
-            """;
-        cmd.Parameters.AddWithValue("@limit", pageSize);
-        cmd.Parameters.AddWithValue("@offset", (page - 1) * pageSize);
-
-        var entries = new List<CompositeRankingDto>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-            entries.Add(ReadCompositeDto(reader));
-
-        return (entries, totalCount);
-    }
-
-    /// <summary>Get a single account's composite ranking.</summary>
-    public CompositeRankingDto? GetCompositeRanking(string accountId)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT AccountId, InstrumentsPlayed, TotalSongsPlayed, CompositeRating, CompositeRank,
-                   GuitarAdjustedSkill, GuitarSkillRank, BassAdjustedSkill, BassSkillRank,
-                   DrumsAdjustedSkill, DrumsSkillRank, VocalsAdjustedSkill, VocalsSkillRank,
-                   ProGuitarAdjustedSkill, ProGuitarSkillRank, ProBassAdjustedSkill, ProBassSkillRank,
-                   ComputedAt
-            FROM CompositeRankings
-            WHERE AccountId = @accountId;
-            """;
-        cmd.Parameters.AddWithValue("@accountId", accountId);
-
-        using var reader = cmd.ExecuteReader();
-        if (!reader.Read()) return null;
-        return ReadCompositeDto(reader);
-    }
-
-    /// <summary>Fetch composite ranking neighbors around a given account (above/self/below).</summary>
-    public (List<CompositeRankingDto> Above, CompositeRankingDto? Self, List<CompositeRankingDto> Below)
-        GetCompositeRankingNeighborhood(string accountId, int radius = 5)
+    public (List<CompositeRankingDto> Above, CompositeRankingDto? Self, List<CompositeRankingDto> Below) GetCompositeRankingNeighborhood(string accountId, int radius = 5)
     {
         var self = GetCompositeRanking(accountId);
-        if (self is null) return ([], null, []);
-
-        using var conn = OpenConnection();
+        if (self is null) return (new(), null, new());
+        using var conn = _ds.OpenConnection();
         var above = new List<CompositeRankingDto>();
+        using (var cmd = conn.CreateCommand()) { cmd.CommandText = "SELECT account_id, instruments_played, total_songs_played, composite_rating, composite_rank, guitar_adjusted_skill, guitar_skill_rank, bass_adjusted_skill, bass_skill_rank, drums_adjusted_skill, drums_skill_rank, vocals_adjusted_skill, vocals_skill_rank, pro_guitar_adjusted_skill, pro_guitar_skill_rank, pro_bass_adjusted_skill, pro_bass_skill_rank, computed_at FROM composite_rankings WHERE composite_rank < @selfRank ORDER BY composite_rank DESC LIMIT @radius"; cmd.Parameters.AddWithValue("selfRank", self.CompositeRank); cmd.Parameters.AddWithValue("radius", radius); using var r = cmd.ExecuteReader(); while (r.Read()) above.Add(ReadCompositeRanking(r)); }
+        above.Reverse();
         var below = new List<CompositeRankingDto>();
-
-        using (var cmd = conn.CreateCommand())
-        {
-            cmd.CommandText = """
-                SELECT AccountId, InstrumentsPlayed, TotalSongsPlayed, CompositeRating, CompositeRank,
-                       GuitarAdjustedSkill, GuitarSkillRank, BassAdjustedSkill, BassSkillRank,
-                       DrumsAdjustedSkill, DrumsSkillRank, VocalsAdjustedSkill, VocalsSkillRank,
-                       ProGuitarAdjustedSkill, ProGuitarSkillRank, ProBassAdjustedSkill, ProBassSkillRank,
-                       ComputedAt
-                FROM CompositeRankings
-                WHERE CompositeRank < @selfRank
-                ORDER BY CompositeRank DESC
-                LIMIT @radius;
-                """;
-            cmd.Parameters.AddWithValue("@selfRank", self.CompositeRank);
-            cmd.Parameters.AddWithValue("@radius", radius);
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read()) above.Add(ReadCompositeDto(reader));
-        }
-        above.Reverse(); // Return in ascending rank order
-
-        using (var cmd = conn.CreateCommand())
-        {
-            cmd.CommandText = """
-                SELECT AccountId, InstrumentsPlayed, TotalSongsPlayed, CompositeRating, CompositeRank,
-                       GuitarAdjustedSkill, GuitarSkillRank, BassAdjustedSkill, BassSkillRank,
-                       DrumsAdjustedSkill, DrumsSkillRank, VocalsAdjustedSkill, VocalsSkillRank,
-                       ProGuitarAdjustedSkill, ProGuitarSkillRank, ProBassAdjustedSkill, ProBassSkillRank,
-                       ComputedAt
-                FROM CompositeRankings
-                WHERE CompositeRank > @selfRank
-                ORDER BY CompositeRank ASC
-                LIMIT @radius;
-                """;
-            cmd.Parameters.AddWithValue("@selfRank", self.CompositeRank);
-            cmd.Parameters.AddWithValue("@radius", radius);
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read()) below.Add(ReadCompositeDto(reader));
-        }
-
+        using (var cmd = conn.CreateCommand()) { cmd.CommandText = "SELECT account_id, instruments_played, total_songs_played, composite_rating, composite_rank, guitar_adjusted_skill, guitar_skill_rank, bass_adjusted_skill, bass_skill_rank, drums_adjusted_skill, drums_skill_rank, vocals_adjusted_skill, vocals_skill_rank, pro_guitar_adjusted_skill, pro_guitar_skill_rank, pro_bass_adjusted_skill, pro_bass_skill_rank, computed_at FROM composite_rankings WHERE composite_rank > @selfRank ORDER BY composite_rank ASC LIMIT @radius"; cmd.Parameters.AddWithValue("selfRank", self.CompositeRank); cmd.Parameters.AddWithValue("radius", radius); using var r = cmd.ExecuteReader(); while (r.Read()) below.Add(ReadCompositeRanking(r)); }
         return (above, self, below);
     }
 
-    /// <summary>Snapshot today's composite ranks for top N + additional accounts.</summary>
     public void SnapshotCompositeRankHistory(int topN, IReadOnlySet<string>? additionalAccountIds = null, int retentionDays = 365)
     {
-        var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
-        var conn = GetPersistentConnection();
-        lock (_writeLock)
-        {
-            using var tx = conn.BeginTransaction();
-
-            using (var ins = conn.CreateCommand())
-            {
-                ins.Transaction = tx;
-                ins.CommandText = """
-                    INSERT OR REPLACE INTO CompositeRankHistory (AccountId, SnapshotDate, CompositeRank, CompositeRating, InstrumentsPlayed, TotalSongsPlayed)
-                    SELECT AccountId, @today, CompositeRank, CompositeRating, InstrumentsPlayed, TotalSongsPlayed
-                    FROM CompositeRankings
-                    WHERE CompositeRank <= @topN;
-                    """;
-                ins.Parameters.AddWithValue("@today", today);
-                ins.Parameters.AddWithValue("@topN", topN);
-                ins.ExecuteNonQuery();
-            }
-
-            if (additionalAccountIds is { Count: > 0 })
-            {
-                using var ins2 = conn.CreateCommand();
-                ins2.Transaction = tx;
-                ins2.CommandText = """
-                    INSERT OR REPLACE INTO CompositeRankHistory (AccountId, SnapshotDate, CompositeRank, CompositeRating, InstrumentsPlayed, TotalSongsPlayed)
-                    SELECT AccountId, @today, CompositeRank, CompositeRating, InstrumentsPlayed, TotalSongsPlayed
-                    FROM CompositeRankings
-                    WHERE AccountId = @aid;
-                    """;
-                ins2.Parameters.AddWithValue("@today", today);
-                var pAid = ins2.Parameters.Add("@aid", SqliteType.Text);
-                ins2.Prepare();
-                foreach (var aid in additionalAccountIds)
-                {
-                    pAid.Value = aid;
-                    ins2.ExecuteNonQuery();
-                }
-            }
-
-            using (var purge = conn.CreateCommand())
-            {
-                purge.Transaction = tx;
-                purge.CommandText = "DELETE FROM CompositeRankHistory WHERE SnapshotDate < date(@today, @retention);";
-                purge.Parameters.AddWithValue("@today", today);
-                purge.Parameters.AddWithValue("@retention", $"-{retentionDays} days");
-                purge.ExecuteNonQuery();
-            }
-
-            tx.Commit();
-        }
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "INSERT INTO composite_rank_history (account_id, snapshot_date, composite_rank, composite_rating, instruments_played, total_songs_played) SELECT account_id, @today, composite_rank, composite_rating, instruments_played, total_songs_played FROM composite_rankings WHERE composite_rank <= @topN ON CONFLICT (account_id, snapshot_date) DO UPDATE SET composite_rank = EXCLUDED.composite_rank, composite_rating = EXCLUDED.composite_rating, instruments_played = EXCLUDED.instruments_played, total_songs_played = EXCLUDED.total_songs_played"; c.Parameters.AddWithValue("today", today); c.Parameters.AddWithValue("topN", topN); c.ExecuteNonQuery(); }
+        if (additionalAccountIds is { Count: > 0 }) { using var c = conn.CreateCommand(); c.Transaction = tx; c.CommandText = "INSERT INTO composite_rank_history (account_id, snapshot_date, composite_rank, composite_rating, instruments_played, total_songs_played) SELECT account_id, @today, composite_rank, composite_rating, instruments_played, total_songs_played FROM composite_rankings WHERE account_id = @aid ON CONFLICT (account_id, snapshot_date) DO UPDATE SET composite_rank = EXCLUDED.composite_rank, composite_rating = EXCLUDED.composite_rating, instruments_played = EXCLUDED.instruments_played, total_songs_played = EXCLUDED.total_songs_played"; c.Parameters.Add("today", NpgsqlTypes.NpgsqlDbType.Date); c.Parameters.Add("aid", NpgsqlTypes.NpgsqlDbType.Text); c.Prepare(); foreach (var aid in additionalAccountIds) { c.Parameters["today"].Value = today; c.Parameters["aid"].Value = aid; c.ExecuteNonQuery(); } }
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "DELETE FROM composite_rank_history WHERE snapshot_date < @cutoff"; c.Parameters.AddWithValue("cutoff", today.AddDays(-retentionDays)); c.ExecuteNonQuery(); }
+        tx.Commit();
     }
 
-    /// <summary>Replace all combo leaderboard data for a specific combo ID.</summary>
-    public void ReplaceComboLeaderboard(
-        string comboId,
-        IReadOnlyList<(string AccountId, double AdjustedRating, double WeightedRating, double FcRate, long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)> entries,
-        int totalAccounts)
+    // ── Combo leaderboard ────────────────────────────────────────────
+
+    public void ReplaceComboLeaderboard(string comboId, IReadOnlyList<(string AccountId, double AdjustedRating, double WeightedRating, double FcRate, long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)> entries, int totalAccounts)
     {
-        var conn = GetPersistentConnection();
-        lock (_writeLock)
-        {
-            var now = DateTime.UtcNow.ToString("o");
-            using var tx = conn.BeginTransaction();
-
-            using (var del = conn.CreateCommand())
-            {
-                del.Transaction = tx;
-                del.CommandText = "DELETE FROM ComboLeaderboard WHERE ComboId = @id;";
-                del.Parameters.AddWithValue("@id", comboId);
-                del.ExecuteNonQuery();
-            }
-
-            using (var ins = conn.CreateCommand())
-            {
-                ins.Transaction = tx;
-                ins.CommandText = """
-                    INSERT INTO ComboLeaderboard (ComboId, AccountId, AdjustedRating, WeightedRating, FcRate, TotalScore, MaxScorePercent, SongsPlayed, FullComboCount, ComputedAt)
-                    VALUES (@id, @aid, @adj, @wgt, @fc, @ts, @ms, @songs, @fcc, @now);
-                    """;
-                var pId = ins.Parameters.Add("@id", SqliteType.Text);
-                var pAid = ins.Parameters.Add("@aid", SqliteType.Text);
-                var pAdj = ins.Parameters.Add("@adj", SqliteType.Real);
-                var pWgt = ins.Parameters.Add("@wgt", SqliteType.Real);
-                var pFc = ins.Parameters.Add("@fc", SqliteType.Real);
-                var pTs = ins.Parameters.Add("@ts", SqliteType.Integer);
-                var pMs = ins.Parameters.Add("@ms", SqliteType.Real);
-                var pSongs = ins.Parameters.Add("@songs", SqliteType.Integer);
-                var pFcc = ins.Parameters.Add("@fcc", SqliteType.Integer);
-                var pNow = ins.Parameters.Add("@now", SqliteType.Text);
-                ins.Prepare();
-
-                foreach (var e in entries)
-                {
-                    pId.Value = comboId;
-                    pAid.Value = e.AccountId;
-                    pAdj.Value = e.AdjustedRating;
-                    pWgt.Value = e.WeightedRating;
-                    pFc.Value = e.FcRate;
-                    pTs.Value = e.TotalScore;
-                    pMs.Value = e.MaxScorePercent;
-                    pSongs.Value = e.SongsPlayed;
-                    pFcc.Value = e.FullComboCount;
-                    pNow.Value = now;
-                    ins.ExecuteNonQuery();
-                }
-            }
-
-            // Upsert combo stats
-            using (var stats = conn.CreateCommand())
-            {
-                stats.Transaction = tx;
-                stats.CommandText = """
-                    INSERT INTO ComboStats (ComboId, TotalAccounts, ComputedAt)
-                    VALUES (@id, @total, @now)
-                    ON CONFLICT(ComboId) DO UPDATE SET TotalAccounts = excluded.TotalAccounts, ComputedAt = excluded.ComputedAt;
-                    """;
-                stats.Parameters.AddWithValue("@id", comboId);
-                stats.Parameters.AddWithValue("@total", totalAccounts);
-                stats.Parameters.AddWithValue("@now", now);
-                stats.ExecuteNonQuery();
-            }
-
-            tx.Commit();
-        }
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "DELETE FROM combo_leaderboard WHERE combo_id = @id"; c.Parameters.AddWithValue("id", comboId); c.ExecuteNonQuery(); }
+        var now = DateTime.UtcNow;
+        if (entries.Count > 0) { using var c = conn.CreateCommand(); c.Transaction = tx; c.CommandText = "INSERT INTO combo_leaderboard (combo_id, account_id, adjusted_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, computed_at) VALUES (@id, @aid, @adj, @wgt, @fc, @ts, @ms, @songs, @fcc, @now)"; c.Parameters.Add("id", NpgsqlTypes.NpgsqlDbType.Text); c.Parameters.Add("aid", NpgsqlTypes.NpgsqlDbType.Text); c.Parameters.Add("adj", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("wgt", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("fc", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("ts", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("ms", NpgsqlTypes.NpgsqlDbType.Double); c.Parameters.Add("songs", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("fcc", NpgsqlTypes.NpgsqlDbType.Integer); c.Parameters.Add("now", NpgsqlTypes.NpgsqlDbType.TimestampTz); c.Prepare(); foreach (var e in entries) { c.Parameters["id"].Value = comboId; c.Parameters["aid"].Value = e.AccountId; c.Parameters["adj"].Value = e.AdjustedRating; c.Parameters["wgt"].Value = e.WeightedRating; c.Parameters["fc"].Value = e.FcRate; c.Parameters["ts"].Value = (int)e.TotalScore; c.Parameters["ms"].Value = e.MaxScorePercent; c.Parameters["songs"].Value = e.SongsPlayed; c.Parameters["fcc"].Value = e.FullComboCount; c.Parameters["now"].Value = now; c.ExecuteNonQuery(); } }
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "INSERT INTO combo_stats (combo_id, total_accounts, computed_at) VALUES (@id, @total, @now) ON CONFLICT(combo_id) DO UPDATE SET total_accounts = EXCLUDED.total_accounts, computed_at = EXCLUDED.computed_at"; c.Parameters.AddWithValue("id", comboId); c.Parameters.AddWithValue("total", totalAccounts); c.Parameters.AddWithValue("now", now); c.ExecuteNonQuery(); }
+        tx.Commit();
     }
 
-    /// <summary>Get a paginated combo leaderboard, ranked by the specified metric.</summary>
-    public (List<ComboLeaderboardEntry> Entries, int TotalAccounts) GetComboLeaderboard(string comboId, string rankBy = "adjusted", int page = 1, int pageSize = 50)
+    public (List<ComboLeaderboardEntry> Entries, int TotalAccounts) GetComboLeaderboard(string comboId, string rankBy = "adjusted", int page = 1, int pageSize = 50) { using var conn = _ds.OpenConnection(); int total; using (var c = conn.CreateCommand()) { c.CommandText = "SELECT total_accounts FROM combo_stats WHERE combo_id = @id"; c.Parameters.AddWithValue("id", comboId); var r2 = c.ExecuteScalar(); total = r2 is DBNull or null ? 0 : Convert.ToInt32(r2); } var (col, dir) = RankByColumn(rankBy); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT ROW_NUMBER() OVER (ORDER BY {col} {dir}, songs_played DESC, account_id ASC) AS rank, account_id, adjusted_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, computed_at FROM combo_leaderboard WHERE combo_id = @id ORDER BY {col} {dir}, songs_played DESC, account_id ASC LIMIT @limit OFFSET @offset"; cmd.Parameters.AddWithValue("id", comboId); cmd.Parameters.AddWithValue("limit", pageSize); cmd.Parameters.AddWithValue("offset", (page - 1) * pageSize); var list = new List<ComboLeaderboardEntry>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadComboEntry(r)); return (list, total); }
+    public ComboLeaderboardEntry? GetComboRank(string comboId, string accountId, string rankBy = "adjusted") { var (col, dir) = RankByColumn(rankBy); using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = $"SELECT rank, account_id, adjusted_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, computed_at FROM (SELECT ROW_NUMBER() OVER (ORDER BY {col} {dir}, songs_played DESC, account_id ASC) AS rank, account_id, adjusted_rating, weighted_rating, fc_rate, total_score, max_score_percent, songs_played, full_combo_count, computed_at FROM combo_leaderboard WHERE combo_id = @id) sub WHERE account_id = @aid"; cmd.Parameters.AddWithValue("id", comboId); cmd.Parameters.AddWithValue("aid", accountId); using var r = cmd.ExecuteReader(); return r.Read() ? ReadComboEntry(r) : null; }
+    public int GetComboTotalAccounts(string comboId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = "SELECT total_accounts FROM combo_stats WHERE combo_id = @id"; cmd.Parameters.AddWithValue("id", comboId); var result = cmd.ExecuteScalar(); return result is DBNull or null ? 0 : Convert.ToInt32(result); }
+
+    // ── Maintenance ──────────────────────────────────────────────────
+    public void Checkpoint() { }
+
+    // ── Private helpers ──────────────────────────────────────────────
+
+    private void SimpleUpdate(string sql, string accountId) { using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand(); cmd.CommandText = sql; cmd.Parameters.AddWithValue("id", accountId); cmd.Parameters.AddWithValue("now", DateTime.UtcNow); cmd.ExecuteNonQuery(); }
+    private static BackfillStatusInfo ReadBackfillStatus(NpgsqlDataReader r) => new() { AccountId = r.GetString(0), Status = r.GetString(1), SongsChecked = r.GetInt32(2), EntriesFound = r.GetInt32(3), TotalSongsToCheck = r.GetInt32(4), StartedAt = r.IsDBNull(5) ? null : r.GetDateTime(5).ToString("o"), CompletedAt = r.IsDBNull(6) ? null : r.GetDateTime(6).ToString("o"), LastResumedAt = r.IsDBNull(7) ? null : r.GetDateTime(7).ToString("o"), ErrorMessage = r.IsDBNull(8) ? null : r.GetString(8) };
+    private static HistoryReconStatusInfo ReadHistoryReconStatus(NpgsqlDataReader r) => new() { AccountId = r.GetString(0), Status = r.GetString(1), SongsProcessed = r.GetInt32(2), TotalSongsToProcess = r.GetInt32(3), SeasonsQueried = r.GetInt32(4), HistoryEntriesFound = r.GetInt32(5), StartedAt = r.IsDBNull(6) ? null : r.GetDateTime(6).ToString("o"), CompletedAt = r.IsDBNull(7) ? null : r.GetDateTime(7).ToString("o"), ErrorMessage = r.IsDBNull(8) ? null : r.GetString(8) };
+    private static CompositeRankingDto ReadCompositeRanking(NpgsqlDataReader r) => new() { AccountId = r.GetString(0), InstrumentsPlayed = r.GetInt32(1), TotalSongsPlayed = r.GetInt32(2), CompositeRating = r.GetDouble(3), CompositeRank = r.GetInt32(4), GuitarAdjustedSkill = r.IsDBNull(5) ? null : r.GetDouble(5), GuitarSkillRank = r.IsDBNull(6) ? null : r.GetInt32(6), BassAdjustedSkill = r.IsDBNull(7) ? null : r.GetDouble(7), BassSkillRank = r.IsDBNull(8) ? null : r.GetInt32(8), DrumsAdjustedSkill = r.IsDBNull(9) ? null : r.GetDouble(9), DrumsSkillRank = r.IsDBNull(10) ? null : r.GetInt32(10), VocalsAdjustedSkill = r.IsDBNull(11) ? null : r.GetDouble(11), VocalsSkillRank = r.IsDBNull(12) ? null : r.GetInt32(12), ProGuitarAdjustedSkill = r.IsDBNull(13) ? null : r.GetDouble(13), ProGuitarSkillRank = r.IsDBNull(14) ? null : r.GetInt32(14), ProBassAdjustedSkill = r.IsDBNull(15) ? null : r.GetDouble(15), ProBassSkillRank = r.IsDBNull(16) ? null : r.GetInt32(16), ComputedAt = r.GetDateTime(17).ToString("o") };
+    private static ComboLeaderboardEntry ReadComboEntry(NpgsqlDataReader r) => new() { Rank = (int)r.GetInt64(0), AccountId = r.GetString(1), AdjustedRating = r.GetDouble(2), WeightedRating = r.GetDouble(3), FcRate = r.GetDouble(4), TotalScore = r.GetInt32(5), MaxScorePercent = r.GetDouble(6), SongsPlayed = r.GetInt32(7), FullComboCount = r.GetInt32(8), ComputedAt = r.GetDateTime(9).ToString("o") };
+    private static (string Column, string Direction) RankByColumn(string rankBy) => rankBy switch { "weighted" => ("weighted_rating", "ASC"), "fcrate" => ("fc_rate", "DESC"), "totalscore" => ("total_score", "DESC"), "maxscore" => ("max_score_percent", "DESC"), _ => ("adjusted_rating", "ASC") };
+    private static List<RivalSongSampleRow> ReadRivalSamples(NpgsqlCommand cmd) { var list = new List<RivalSongSampleRow>(); using var r = cmd.ExecuteReader(); while (r.Read()) list.Add(ReadRivalSample(r)); return list; }
+    private static RivalSongSampleRow ReadRivalSample(NpgsqlDataReader r) => new() { UserId = r.GetString(0), RivalAccountId = r.GetString(1), Instrument = r.GetString(2), SongId = r.GetString(3), UserRank = r.GetInt32(4), RivalRank = r.GetInt32(5), RankDelta = r.GetInt32(6), UserScore = r.IsDBNull(7) ? null : r.GetInt32(7), RivalScore = r.IsDBNull(8) ? null : r.GetInt32(8) };
+
+    /// <summary>Parse an ISO 8601 string to UTC DateTime (required by Npgsql for TIMESTAMPTZ).</summary>
+    private static DateTime ParseUtc(string s) => DateTime.Parse(s, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal);
+
+    /// <summary>Write a nullable int to a binary importer, or NULL if absent.</summary>
+    private static void WriteNullableInt(NpgsqlBinaryImporter writer, int? value)
     {
-        using var conn = OpenConnection();
-
-        int totalAccounts = 0;
-        using (var statsCmd = conn.CreateCommand())
-        {
-            statsCmd.CommandText = "SELECT TotalAccounts FROM ComboStats WHERE ComboId = @id;";
-            statsCmd.Parameters.AddWithValue("@id", comboId);
-            var result = statsCmd.ExecuteScalar();
-            if (result is long l) totalAccounts = (int)l;
-        }
-
-        var (orderCol, direction) = RankByColumn(rankBy);
-
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"""
-            SELECT ROW_NUMBER() OVER (ORDER BY {orderCol} {direction}, SongsPlayed DESC, AccountId ASC) AS Rank,
-                   AccountId, AdjustedRating, WeightedRating, FcRate, TotalScore, MaxScorePercent, SongsPlayed, FullComboCount, ComputedAt
-            FROM ComboLeaderboard
-            WHERE ComboId = @id
-            ORDER BY {orderCol} {direction}, SongsPlayed DESC, AccountId ASC
-            LIMIT @limit OFFSET @offset;
-            """;
-        cmd.Parameters.AddWithValue("@id", comboId);
-        cmd.Parameters.AddWithValue("@limit", pageSize);
-        cmd.Parameters.AddWithValue("@offset", (page - 1) * pageSize);
-
-        var entries = new List<ComboLeaderboardEntry>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
-        {
-            entries.Add(ReadComboEntry(reader));
-        }
-        return (entries, totalAccounts);
+        if (value.HasValue) writer.Write(value.Value, NpgsqlDbType.Integer);
+        else writer.WriteNull();
     }
 
-    /// <summary>Get a single account's entry within a specific combo.</summary>
-    public ComboLeaderboardEntry? GetComboRank(string comboId, string accountId, string rankBy = "adjusted")
-    {
-        using var conn = OpenConnection();
-        var (orderCol, direction) = RankByColumn(rankBy);
-
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = $"""
-            SELECT Rank, AccountId, AdjustedRating, WeightedRating, FcRate, TotalScore, MaxScorePercent, SongsPlayed, FullComboCount, ComputedAt
-            FROM (
-                SELECT ROW_NUMBER() OVER (ORDER BY {orderCol} {direction}, SongsPlayed DESC, AccountId ASC) AS Rank,
-                       AccountId, AdjustedRating, WeightedRating, FcRate, TotalScore, MaxScorePercent, SongsPlayed, FullComboCount, ComputedAt
-                FROM ComboLeaderboard
-                WHERE ComboId = @id
-            )
-            WHERE AccountId = @aid;
-            """;
-        cmd.Parameters.AddWithValue("@id", comboId);
-        cmd.Parameters.AddWithValue("@aid", accountId);
-
-        using var reader = cmd.ExecuteReader();
-        if (!reader.Read()) return null;
-        return ReadComboEntry(reader);
-    }
-
-    /// <summary>Get combo stats (total accounts) for a combo ID.</summary>
-    public int GetComboTotalAccounts(string comboId)
-    {
-        using var conn = OpenConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT TotalAccounts FROM ComboStats WHERE ComboId = @id;";
-        cmd.Parameters.AddWithValue("@id", comboId);
-        var result = cmd.ExecuteScalar();
-        return result is long l ? (int)l : 0;
-    }
-
-    private static ComboLeaderboardEntry ReadComboEntry(SqliteDataReader reader)
-    {
-        return new ComboLeaderboardEntry
-        {
-            Rank = reader.GetInt32(0),
-            AccountId = reader.GetString(1),
-            AdjustedRating = reader.GetDouble(2),
-            WeightedRating = reader.GetDouble(3),
-            FcRate = reader.GetDouble(4),
-            TotalScore = reader.GetInt64(5),
-            MaxScorePercent = reader.GetDouble(6),
-            SongsPlayed = reader.GetInt32(7),
-            FullComboCount = reader.GetInt32(8),
-            ComputedAt = reader.GetString(9),
-        };
-    }
-
-    /// <summary>Map a rankBy string to the SQL column name and sort direction.</summary>
-    private static (string Column, string Direction) RankByColumn(string rankBy)
-    {
-        return rankBy.ToLowerInvariant() switch
-        {
-            "weighted" => ("WeightedRating", "ASC"),
-            "fcrate" => ("FcRate", "DESC"),
-            "totalscore" => ("TotalScore", "DESC"),
-            "maxscore" => ("MaxScorePercent", "DESC"),
-            _ => ("AdjustedRating", "ASC"),
-        };
-    }
-
-    private static CompositeRankingDto ReadCompositeDto(SqliteDataReader reader)
-    {
-        return new CompositeRankingDto
-        {
-            AccountId = reader.GetString(0),
-            InstrumentsPlayed = reader.GetInt32(1),
-            TotalSongsPlayed = reader.GetInt32(2),
-            CompositeRating = reader.GetDouble(3),
-            CompositeRank = reader.GetInt32(4),
-            GuitarAdjustedSkill = reader.IsDBNull(5) ? null : reader.GetDouble(5),
-            GuitarSkillRank = reader.IsDBNull(6) ? null : reader.GetInt32(6),
-            BassAdjustedSkill = reader.IsDBNull(7) ? null : reader.GetDouble(7),
-            BassSkillRank = reader.IsDBNull(8) ? null : reader.GetInt32(8),
-            DrumsAdjustedSkill = reader.IsDBNull(9) ? null : reader.GetDouble(9),
-            DrumsSkillRank = reader.IsDBNull(10) ? null : reader.GetInt32(10),
-            VocalsAdjustedSkill = reader.IsDBNull(11) ? null : reader.GetDouble(11),
-            VocalsSkillRank = reader.IsDBNull(12) ? null : reader.GetInt32(12),
-            ProGuitarAdjustedSkill = reader.IsDBNull(13) ? null : reader.GetDouble(13),
-            ProGuitarSkillRank = reader.IsDBNull(14) ? null : reader.GetInt32(14),
-            ProBassAdjustedSkill = reader.IsDBNull(15) ? null : reader.GetDouble(15),
-            ProBassSkillRank = reader.IsDBNull(16) ? null : reader.GetInt32(16),
-            ComputedAt = reader.GetString(17),
-        };
-    }
-
-    /// <summary>
-    /// Idempotent migration: adds a column to a table if it doesn't already exist.
-    /// </summary>
-    private void MigrateAddColumn(SqliteConnection conn, string table, string column, string type)
-    {
-        using var check = conn.CreateCommand();
-        check.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{column}';";
-        var exists = (long)(check.ExecuteScalar() ?? 0);
-        if (exists > 0) return;
-
-        using var alter = conn.CreateCommand();
-        alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {type};";
-        alter.ExecuteNonQuery();
-
-        _log.LogInformation("Migrated {Table}: added column {Column} ({Type})", table, column, type);
-    }
-}
-
-/// <summary>
-/// Info about a completed scrape run from the ScrapeLog table.
-/// </summary>
-public sealed class ScrapeRunInfo
-{
-    public long Id { get; init; }
-    public string StartedAt { get; init; } = "";
-    public string? CompletedAt { get; init; }
-    public int SongsScraped { get; init; }
-    public long TotalEntries { get; init; }
-    public int TotalRequests { get; init; }
-    public long TotalBytes { get; init; }
+    public void Dispose() { }
 }

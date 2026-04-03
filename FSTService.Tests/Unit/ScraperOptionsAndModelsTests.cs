@@ -20,7 +20,6 @@ public class ScraperOptionsAndModelsTests
         Assert.True(opts.QueryProLead);
         Assert.True(opts.QueryProBass);
         Assert.Equal("data", opts.DataDirectory);
-        Assert.Equal("data/fst-service.db", opts.DatabasePath);
         Assert.Equal("data/device-auth.json", opts.DeviceAuthPath);
         Assert.False(opts.ApiOnly);
         Assert.False(opts.SetupOnly);

@@ -18,9 +18,10 @@ public sealed class RankingsEndpointsTests : IDisposable
         Directory.CreateDirectory(_tempDir);
         _metaFixture = new InMemoryMetaDatabase();
         _persistence = new GlobalLeaderboardPersistence(
-            _tempDir, _metaFixture.Db,
+            _metaFixture.Db,
             Substitute.For<ILoggerFactory>(),
-            Substitute.For<ILogger<GlobalLeaderboardPersistence>>());
+            Substitute.For<ILogger<GlobalLeaderboardPersistence>>(),
+            _metaFixture.DataSource);
         _persistence.Initialize();
     }
 
@@ -154,7 +155,7 @@ public sealed class RankingsEndpointsTests : IDisposable
         SeedAndComputeRankings("Solo_Guitar", songCount: 1, playersPerSong: 3);
         SeedAndComputeRankings("Solo_Bass", songCount: 1, playersPerSong: 3);
 
-        var pathStore = new PathDataStore(Path.Combine(_tempDir, "fst-service.db"));
+        var pathStore = new PathDataStore(SharedPostgresContainer.CreateDatabase());
         var calc = new RankingsCalculator(_persistence, _metaFixture.Db,
             pathStore, new ScrapeProgressTracker(), Substitute.For<ILogger<RankingsCalculator>>());
         calc.ComputeCompositeRankings(["Solo_Guitar", "Solo_Bass"]);

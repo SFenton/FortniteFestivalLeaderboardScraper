@@ -41,7 +41,7 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         Assert.Equal(2, entries.Count);
         Assert.Equal("p1", entries[0].AccountId);
         Assert.Equal(0.05, entries[0].CompositeRating, 4);
-        Assert.Equal(0.03, entries[0].GuitarAdjustedSkill);
+        Assert.Equal(0.03, entries[0].GuitarAdjustedSkill!.Value, 2);
         Assert.Null(entries[0].DrumsAdjustedSkill);
     }
 

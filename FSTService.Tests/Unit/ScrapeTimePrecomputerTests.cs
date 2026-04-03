@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FSTService.Persistence;
 using FSTService.Scraping;
+using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 
@@ -9,6 +10,7 @@ namespace FSTService.Tests.Unit;
 public sealed class ScrapeTimePrecomputerTests : IDisposable
 {
     private readonly string _tempDir;
+    private readonly InMemoryMetaDatabase _metaFixture = new();
     private readonly MetaDatabase _metaDb;
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly PathDataStore _pathDataStore;
@@ -19,18 +21,17 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
         _tempDir = Path.Combine(Path.GetTempPath(), $"precomp_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
 
-        _metaDb = new MetaDatabase(
-            Path.Combine(_tempDir, "meta.db"),
+        _metaDb = new MetaDatabase(_metaFixture.DataSource,
             Substitute.For<ILogger<MetaDatabase>>());
-        _metaDb.EnsureSchema();
 
         _persistence = new GlobalLeaderboardPersistence(
-            _tempDir, _metaDb,
+            _metaDb,
             Substitute.For<ILoggerFactory>(),
-            Substitute.For<ILogger<GlobalLeaderboardPersistence>>());
+            Substitute.For<ILogger<GlobalLeaderboardPersistence>>(),
+            _metaFixture.DataSource);
         _persistence.Initialize();
 
-        _pathDataStore = new PathDataStore(Path.Combine(_tempDir, "core.db"));
+        _pathDataStore = new PathDataStore(SharedPostgresContainer.CreateDatabase());
 
         _sut = new ScrapeTimePrecomputer(
             _persistence, _metaDb, _pathDataStore,
@@ -43,6 +44,7 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
     {
         _persistence.Dispose();
         _metaDb.Dispose();
+        _metaFixture.Dispose();
         try { Directory.Delete(_tempDir, true); } catch { }
     }
 
@@ -341,32 +343,13 @@ public sealed class ScrapeTimePrecomputerTests : IDisposable
 
     private void EnsureSongRow(string songId)
     {
-        // PathDataStore uses a private _connectionString field for its DB path.
-        var connField = typeof(PathDataStore)
-            .GetField("_connectionString", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-        var connStr = (string)connField.GetValue(_pathDataStore)!;
-
-        using var conn = new Microsoft.Data.Sqlite.SqliteConnection(connStr);
-        conn.Open();
+        var dsField = typeof(PathDataStore)
+            .GetField("_ds", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var ds = (Npgsql.NpgsqlDataSource)dsField.GetValue(_pathDataStore)!;
+        using var conn = ds.OpenConnection();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            CREATE TABLE IF NOT EXISTS Songs (
-                SongId TEXT PRIMARY KEY,
-                Title TEXT,
-                MaxLeadScore INTEGER,
-                MaxBassScore INTEGER,
-                MaxDrumsScore INTEGER,
-                MaxVocalsScore INTEGER,
-                MaxProLeadScore INTEGER,
-                MaxProBassScore INTEGER,
-                DatFileHash TEXT,
-                SongLastModified TEXT,
-                PathsGeneratedAt TEXT,
-                CHOptVersion TEXT
-            );
-            INSERT OR IGNORE INTO Songs (SongId, Title) VALUES (@songId, 'Test Song');
-            """;
-        cmd.Parameters.AddWithValue("@songId", songId);
+        cmd.CommandText = "INSERT INTO songs (song_id) VALUES (@sid) ON CONFLICT DO NOTHING";
+        cmd.Parameters.AddWithValue("sid", songId);
         cmd.ExecuteNonQuery();
     }
 }

@@ -41,14 +41,9 @@ public sealed class ScraperOptions
     public bool QueryProBass { get; set; } = true;
 
     /// <summary>
-    /// Root directory for all data files (instrument DBs, meta DB, core DB, credentials).
+    /// Root directory for all data files (device auth, MIDI cache, path images, precomputed responses).
     /// </summary>
     public string DataDirectory { get; set; } = "data";
-
-    /// <summary>
-    /// Path to the SQLite database file (core song catalog / personal scores).
-    /// </summary>
-    public string DatabasePath { get; set; } = "data/fst-service.db";
 
     /// <summary>
     /// Path to the device auth credentials file.
@@ -97,13 +92,6 @@ public sealed class ScraperOptions
     /// Set via <c>--test "song name"</c> CLI argument.
     /// </summary>
     public string? TestSongQuery { get; set; }
-
-    /// <summary>
-    /// When true, migrate all SQLite data to PostgreSQL and exit.
-    /// Requires <c>DatabaseProvider=PostgreSQL</c> and a valid connection string.
-    /// Set via <c>--migrate-to-pg</c> CLI argument.
-    /// </summary>
-    public bool MigrateToPg { get; set; }
 
     /// <summary>
     /// When true, precompute player and leaderboard API responses to disk and exit.

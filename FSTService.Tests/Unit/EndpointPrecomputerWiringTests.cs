@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FSTService.Persistence;
 using FSTService.Scraping;
+using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 
@@ -13,6 +14,7 @@ namespace FSTService.Tests.Unit;
 public sealed class EndpointPrecomputerWiringTests : IDisposable
 {
     private readonly string _tempDir;
+    private readonly InMemoryMetaDatabase _metaFixture = new();
     private readonly MetaDatabase _metaDb;
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly PathDataStore _pathDataStore;
@@ -23,18 +25,17 @@ public sealed class EndpointPrecomputerWiringTests : IDisposable
         _tempDir = Path.Combine(Path.GetTempPath(), $"wiring_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
 
-        _metaDb = new MetaDatabase(
-            Path.Combine(_tempDir, "meta.db"),
+        _metaDb = new MetaDatabase(_metaFixture.DataSource,
             Substitute.For<ILogger<MetaDatabase>>());
-        _metaDb.EnsureSchema();
 
         _persistence = new GlobalLeaderboardPersistence(
-            _tempDir, _metaDb,
+            _metaDb,
             Substitute.For<ILoggerFactory>(),
-            Substitute.For<ILogger<GlobalLeaderboardPersistence>>());
+            Substitute.For<ILogger<GlobalLeaderboardPersistence>>(),
+            _metaFixture.DataSource);
         _persistence.Initialize();
 
-        _pathDataStore = new PathDataStore(Path.Combine(_tempDir, "core.db"));
+        _pathDataStore = new PathDataStore(SharedPostgresContainer.CreateDatabase());
 
         _precomputer = new ScrapeTimePrecomputer(
             _persistence, _metaDb, _pathDataStore,
@@ -47,6 +48,7 @@ public sealed class EndpointPrecomputerWiringTests : IDisposable
     {
         _persistence.Dispose();
         _metaDb.Dispose();
+        _metaFixture.Dispose();
         try { Directory.Delete(_tempDir, true); } catch { }
     }
 

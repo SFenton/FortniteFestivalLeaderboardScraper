@@ -25,28 +25,13 @@ public sealed class RankingsCalculatorTests : IDisposable
 
         _metaFixture = new InMemoryMetaDatabase();
         _persistence = new GlobalLeaderboardPersistence(
-            _tempDir, _metaFixture.Db,
+            _metaFixture.Db,
             Substitute.For<ILoggerFactory>(),
-            Substitute.For<ILogger<GlobalLeaderboardPersistence>>());
+            Substitute.For<ILogger<GlobalLeaderboardPersistence>>(),
+            _metaFixture.DataSource);
         _persistence.Initialize();
 
-        // Create a minimal fst-service.db for PathDataStore
-        var coreDbPath = Path.Combine(_tempDir, "fst-service.db");
-        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={coreDbPath}"))
-        {
-            conn.Open();
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
-                CREATE TABLE IF NOT EXISTS Songs (
-                    SongId TEXT PRIMARY KEY,
-                    MaxLeadScore INTEGER, MaxBassScore INTEGER, MaxDrumsScore INTEGER,
-                    MaxVocalsScore INTEGER, MaxProLeadScore INTEGER, MaxProBassScore INTEGER,
-                    DatFileHash TEXT, SongLastModified TEXT, PathsGeneratedAt TEXT, CHOptVersion TEXT
-                );
-                """;
-            cmd.ExecuteNonQuery();
-        }
-        _pathStore = new PathDataStore(coreDbPath);
+        _pathStore = new PathDataStore(SharedPostgresContainer.CreateDatabase());
 
         _sut = new RankingsCalculator(_persistence, _metaFixture.Db,
             _pathStore, new ScrapeProgressTracker(), Substitute.For<ILogger<RankingsCalculator>>());

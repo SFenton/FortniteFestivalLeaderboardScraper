@@ -1,5 +1,4 @@
 using System.Threading.RateLimiting;
-using FortniteFestival.Core.Persistence;
 using FortniteFestival.Core.Services;
 using FSTService;
 using FSTService.Api;
@@ -94,10 +93,6 @@ builder.Services.PostConfigure<ScraperOptions>(opts =>
         {
             opts.TestSongQuery = args[++i];
         }
-        else if (args[i].Equals("--migrate-to-pg", StringComparison.OrdinalIgnoreCase))
-        {
-            opts.MigrateToPg = true;
-        }
         else if (args[i].Equals("--precompute", StringComparison.OrdinalIgnoreCase))
         {
             opts.PrecomputeOnly = true;
@@ -147,57 +142,32 @@ builder.Services.AddSingleton<ICredentialStore>(sp =>
 builder.Services.AddSingleton<EpicAuthService>();
 builder.Services.AddSingleton<TokenManager>();
 
-// ─── Persistence ────────────────────────────────────────────
+// ─── Persistence (PostgreSQL) ───────────────────────────────
 
-var dbProvider = builder.Configuration.GetValue<string>("DatabaseProvider") ?? "SQLite";
+var pgConnStr = builder.Configuration.GetConnectionString("PostgreSQL")
+    ?? throw new InvalidOperationException("ConnectionStrings:PostgreSQL is required.");
+var pgDataSource = NpgsqlDataSource.Create(pgConnStr);
+builder.Services.AddSingleton(pgDataSource);
 
-if (dbProvider.Equals("PostgreSQL", StringComparison.OrdinalIgnoreCase))
-{
-    var pgConnStr = builder.Configuration.GetConnectionString("PostgreSQL")
-        ?? throw new InvalidOperationException("ConnectionStrings:PostgreSQL is required when DatabaseProvider=PostgreSQL");
-    var pgDataSource = NpgsqlDataSource.Create(pgConnStr);
-    builder.Services.AddSingleton(pgDataSource);
+builder.Services.AddSingleton<IMetaDatabase>(sp =>
+    new FSTService.Persistence.MetaDatabase(sp.GetRequiredService<NpgsqlDataSource>(),
+        sp.GetRequiredService<ILogger<FSTService.Persistence.MetaDatabase>>()));
+builder.Services.AddSingleton(sp => (FSTService.Persistence.MetaDatabase)sp.GetRequiredService<IMetaDatabase>());
 
-    // PG implementations
-    builder.Services.AddSingleton<IMetaDatabase>(sp =>
-        new FSTService.Persistence.Pg.PgMetaDatabase(sp.GetRequiredService<NpgsqlDataSource>(),
-            sp.GetRequiredService<ILogger<FSTService.Persistence.Pg.PgMetaDatabase>>()));
+builder.Services.AddSingleton<IPathDataStore>(sp =>
+    new FSTService.Scraping.PathDataStore(sp.GetRequiredService<NpgsqlDataSource>(),
+        sp.GetRequiredService<ILogger<FSTService.Scraping.PathDataStore>>()));
+builder.Services.AddSingleton(sp => (FSTService.Scraping.PathDataStore)sp.GetRequiredService<IPathDataStore>());
 
-    builder.Services.AddSingleton<IPathDataStore>(sp =>
-        new FSTService.Scraping.PgPathDataStore(sp.GetRequiredService<NpgsqlDataSource>(),
-            sp.GetRequiredService<ILogger<FSTService.Scraping.PgPathDataStore>>()));
-}
-else
-{
-// SQLite registrations (used when DatabaseProvider=SQLite)
-builder.Services.AddSingleton<MetaDatabase>(sp =>
-{
-    var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
-    var metaPath = Path.Combine(Path.GetFullPath(opts.DataDirectory), "fst-meta.db");
-    return new MetaDatabase(metaPath, sp.GetRequiredService<ILogger<MetaDatabase>>());
-});
-builder.Services.AddSingleton<IMetaDatabase>(sp => sp.GetRequiredService<MetaDatabase>());
-
-builder.Services.AddSingleton<PathDataStore>(sp =>
-{
-    var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
-    var dbPath = Path.GetFullPath(opts.DatabasePath);
-    return new PathDataStore(dbPath);
-});
-builder.Services.AddSingleton<IPathDataStore>(sp => sp.GetRequiredService<PathDataStore>());
-} // end SQLite/PG switch
-
-// ─── Shared services (registered for both SQLite and PostgreSQL) ────
+// ─── Shared services ────────────────────────────────────────
 
 builder.Services.AddSingleton<GlobalLeaderboardPersistence>(sp =>
 {
-    var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
     return new GlobalLeaderboardPersistence(
-        Path.GetFullPath(opts.DataDirectory),
         sp.GetRequiredService<IMetaDatabase>(),
         sp.GetRequiredService<ILoggerFactory>(),
         sp.GetRequiredService<ILogger<GlobalLeaderboardPersistence>>(),
-        sp.GetService<NpgsqlDataSource>());
+        sp.GetRequiredService<NpgsqlDataSource>());
 });
 
 builder.Services.AddSingleton<BackfillQueue>();
@@ -287,21 +257,8 @@ builder.Services.AddHttpClient<PathGenerator>()
 // Core FestivalService — song catalog sync. Shared with API for /api/songs.
 builder.Services.AddSingleton<FestivalService>(sp =>
 {
-    IFestivalPersistence persistence;
-    var pgDs = sp.GetService<NpgsqlDataSource>();
-    if (pgDs is not null)
-    {
-        persistence = new FSTService.Persistence.Pg.PgFestivalPersistence(pgDs);
-    }
-    else
-    {
-        var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;
-        var dbPath = Path.GetFullPath(opts.DatabasePath);
-        var dbDir = Path.GetDirectoryName(dbPath);
-        if (!string.IsNullOrEmpty(dbDir) && !Directory.Exists(dbDir))
-            Directory.CreateDirectory(dbDir);
-        persistence = new SqlitePersistence(dbPath);
-    }
+    var persistence = new FSTService.Persistence.FestivalPersistence(
+        sp.GetRequiredService<NpgsqlDataSource>());
 
     var service = new FestivalService(persistence);
     var log = sp.GetRequiredService<ILogger<FestivalService>>();
@@ -376,33 +333,21 @@ builder.Services.AddCors(opts =>
 
 // ─── Background worker ─────────────────────────────────────
 
-// DatabaseInitializer must run before ScraperWorker (hosted services start in registration order)
-builder.Services.AddSingleton<DatabaseInitializer>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<DatabaseInitializer>());
+// StartupInitializer must run before ScraperWorker (hosted services start in registration order)
+builder.Services.AddSingleton<StartupInitializer>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<StartupInitializer>());
 builder.Services.AddHealthChecks()
-    .AddCheck<DatabaseInitializer>("database", tags: ["ready"]);
+    .AddCheck<StartupInitializer>("database", tags: ["ready"]);
 builder.Services.AddHostedService<ScraperWorker>();
 
 // ─── Build and configure pipeline ───────────────────────────
 
 var app = builder.Build();
 
-// Initialize PG schema if using PostgreSQL
-if (dbProvider.Equals("PostgreSQL", StringComparison.OrdinalIgnoreCase))
+// Initialize PostgreSQL schema
 {
     var pgDs = app.Services.GetRequiredService<NpgsqlDataSource>();
-    await FSTService.Persistence.Pg.PgDatabaseInitializer.EnsureSchemaAsync(pgDs);
-
-    // One-shot migration: --migrate-to-pg
-    var scraperOpts = app.Services.GetRequiredService<IOptions<ScraperOptions>>().Value;
-    if (scraperOpts.MigrateToPg)
-    {
-        var migLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("DataMigrator");
-        var dataDir = Path.GetFullPath(scraperOpts.DataDirectory);
-        await FSTService.Persistence.Pg.DataMigrator.MigrateAsync(dataDir, pgDs, migLog);
-        migLog.LogInformation("Migration complete. Exiting.");
-        return;
-    }
+    await FSTService.Persistence.DatabaseInitializer.EnsureSchemaAsync(pgDs);
 }
 
 // One-shot precompute: --precompute

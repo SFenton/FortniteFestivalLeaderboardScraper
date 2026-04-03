@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using FortniteFestival.Core;
+using FSTService.Persistence;
 
 namespace FSTService.Scraping;
 
