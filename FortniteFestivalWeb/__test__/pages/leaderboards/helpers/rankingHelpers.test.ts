@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { computeRankWidth, formatRating, getSongsLabel } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
+import { computeRankWidth, formatRating, getRatingForMetric, getSongsLabel } from '../../../../src/pages/leaderboards/helpers/rankingHelpers';
+import type { AccountRankingEntry } from '@festival/core/api/serverTypes';
 import type { RankingMetric } from '@festival/core/api/serverTypes';
 import { Layout } from '@festival/theme';
 
@@ -55,11 +56,29 @@ describe('formatRating', () => {
   });
 });
 
+describe('getRatingForMetric – fcrate uses raw ratio', () => {
+  const entry = {
+    fullComboCount: 631,
+    songsPlayed: 632,
+    totalChartedSongs: 633,
+    fcRate: 0.962,
+  } as AccountRankingEntry;
+
+  it('returns raw fullComboCount/totalChartedSongs, not Bayesian fcRate', () => {
+    expect(getRatingForMetric(entry, 'fcrate')).toBeCloseTo(631 / 633);
+  });
+
+  it('returns 0 when totalChartedSongs is 0', () => {
+    const empty = { fullComboCount: 0, songsPlayed: 0, totalChartedSongs: 0, fcRate: 0 } as AccountRankingEntry;
+    expect(getRatingForMetric(empty, 'fcrate')).toBe(0);
+  });
+});
+
 describe('getSongsLabel', () => {
   const entry = { fullComboCount: 631, songsPlayed: 632, totalChartedSongs: 633 };
 
-  it('returns fullComboCount / songsPlayed for fcrate', () => {
-    expect(getSongsLabel(entry, 'fcrate')).toBe('631 / 632');
+  it('returns fullComboCount / totalChartedSongs for fcrate', () => {
+    expect(getSongsLabel(entry, 'fcrate')).toBe('631 / 633');
   });
 
   it.each<RankingMetric>(['adjusted', 'weighted', 'totalscore', 'maxscore'])(

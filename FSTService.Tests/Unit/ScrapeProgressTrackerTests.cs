@@ -311,14 +311,12 @@ public class ScrapeProgressTrackerTests
         _tracker.BeginPass(1, 1, 0);
 
         _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.ResolvingNames);
-        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.RebuildingPersonalDbs);
         _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.BackfillingScores);
 
         var progress = _tracker.GetProgressResponse();
-        Assert.Equal(3, progress.CompletedOperations.Count);
+        Assert.Equal(2, progress.CompletedOperations.Count);
         Assert.Equal("Scraping", progress.CompletedOperations[0].Operation);
         Assert.Equal("ResolvingNames", progress.CompletedOperations[1].Operation);
-        Assert.Equal("RebuildingPersonalDbs", progress.CompletedOperations[2].Operation);
     }
 
     // ─── Idle state ─────────────────────────────────────
@@ -343,15 +341,6 @@ public class ScrapeProgressTrackerTests
         Assert.Equal("Initializing", progress.Current?.Operation);
     }
 
-    [Fact]
-    public void RebuildingPersonalDbs_Phase_ReturnsSnapshot()
-    {
-        _tracker.BeginPass(0, 0, 0);
-        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.RebuildingPersonalDbs);
-
-        var progress = _tracker.GetProgressResponse();
-        Assert.Equal("RebuildingPersonalDbs", progress.Current?.Operation);
-    }
 
     // ─── Adaptive concurrency integration ───────────────
 
@@ -537,7 +526,7 @@ public class ScrapeProgressTrackerTests
     public void ReportPhaseAccountComplete_Increments()
     {
         _tracker.BeginPass(0, 0, 0);
-        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.RebuildingPersonalDbs);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.RefreshingRegisteredUsers);
         _tracker.BeginPhaseProgress(totalItems: 0, totalAccounts: 5);
 
         _tracker.ReportPhaseAccountComplete();
@@ -675,20 +664,6 @@ public class ScrapeProgressTrackerTests
 
         var progress = _tracker.GetProgressResponse();
         Assert.Equal(100.0, progress.Current?.ProgressPercent);
-    }
-
-    [Fact]
-    public void RebuildingPersonalDbs_UsesGenericPhaseSnapshot()
-    {
-        _tracker.BeginPass(0, 0, 0);
-        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.RebuildingPersonalDbs);
-        _tracker.BeginPhaseProgress(totalItems: 0, totalAccounts: 3);
-        _tracker.ReportPhaseAccountComplete();
-
-        var progress = _tracker.GetProgressResponse();
-        Assert.Equal("RebuildingPersonalDbs", progress.Current?.Operation);
-        Assert.Equal(3, progress.Current?.Accounts?.Total);
-        Assert.Equal(1, progress.Current?.Accounts?.Completed);
     }
 
     [Fact]

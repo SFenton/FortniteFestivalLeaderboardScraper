@@ -112,7 +112,6 @@ export type ShopSnapshotMessage = {
 export type WsNotificationMessage =
   | ShopChangedMessage
   | ShopSnapshotMessage
-  | { type: 'personal_db_ready' }
   | { type: 'backfill_complete' }
   | { type: 'history_recon_complete' }
   | { type: 'rivals_complete' };

@@ -10,7 +10,7 @@ namespace FSTService.Scraping;
 
 /// <summary>
 /// Orchestrates the post-scrape enrichment phases: parallel rank/firstSeen/nameRes,
-/// personal DB rebuild, refresh of registered users, and session cleanup.
+/// refresh of registered users, and session cleanup.
 /// Extracted from <see cref="ScraperWorker"/> to reduce its dependency count and
 /// make each phase independently testable.
 /// </summary>
@@ -73,8 +73,8 @@ public sealed class PostScrapeOrchestrator
     }
 
     /// <summary>
-    /// Run all post-scrape phases in sequence: enrichment (parallel), personal DB
-    /// rebuild, registered user refresh, and session cleanup.
+    /// Run all post-scrape phases in sequence: enrichment (parallel),
+    /// registered user refresh, and session cleanup.
     /// </summary>
     public async Task RunAsync(ScrapePassContext ctx, FestivalService service, CancellationToken ct)
     {
@@ -184,7 +184,7 @@ public sealed class PostScrapeOrchestrator
 
     /// <summary>
     /// Compute per-instrument + composite + combo rankings and daily history snapshots.
-    /// Runs after enrichment/pruning and registered-user refresh, before personal DB rebuild and rivals.
+    /// Runs after enrichment/pruning and registered-user refresh, before rivals.
     /// </summary>
     internal async Task ComputeRankingsAsync(FestivalService service, CancellationToken ct)
     {

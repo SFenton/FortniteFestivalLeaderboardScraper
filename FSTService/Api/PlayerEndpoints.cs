@@ -231,7 +231,7 @@ public static partial class ApiEndpoints
                 metaDb.EnqueueBackfill(accountId, songCount * 6); // songs × instruments
                 backfillKicked = true;
 
-                // Fire-and-forget: run backfill + history recon + personal DB rebuild
+                // Fire-and-forget: run backfill + history recon
                 _ = Task.Run(async () =>
                 {
                     var log = loggerFactory.CreateLogger("FSTService.Api.TrackBackfill");

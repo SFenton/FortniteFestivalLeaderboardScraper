@@ -25,7 +25,6 @@ public sealed class ScrapeProgressTracker
         ComputingRankings,
         CalculatingFirstSeen,
         ResolvingNames,
-        RebuildingPersonalDbs,
         RefreshingRegisteredUsers,
         ComputingRivals,
         BackfillingScores,
@@ -419,7 +418,6 @@ public sealed class ScrapeProgressTracker
                 StartedAtUtc = _phaseStartedAtUtc,
                 ElapsedSeconds = Math.Round(elapsed.TotalSeconds, 1),
             },
-            ScrapePhase.RebuildingPersonalDbs or
             ScrapePhase.RefreshingRegisteredUsers or
             ScrapePhase.BackfillingScores or
             ScrapePhase.ReconstructingHistory or

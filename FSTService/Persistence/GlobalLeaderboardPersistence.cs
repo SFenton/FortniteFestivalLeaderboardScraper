@@ -904,7 +904,7 @@ public sealed class PersistResult
 
     /// <summary>
     /// Account IDs of registered users whose scores changed in this result.
-    /// Used to flag personal DB rebuilds.
+    /// Used to flag stale entries for refresh.
     /// </summary>
     public HashSet<string> ChangedAccountIds { get; init; } = [];
 }

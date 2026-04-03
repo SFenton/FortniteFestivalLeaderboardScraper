@@ -132,7 +132,6 @@ export type LeaderboardData = {
 
 /**
  * A single row from the ScoreHistory table — represents one score change event.
- * Matches the personal DB schema produced by FSTService's PersonalDbBuilder.
  */
 export type ScoreHistoryEntry = {
   id?: number;

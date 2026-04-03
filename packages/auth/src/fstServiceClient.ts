@@ -6,9 +6,6 @@
  *
  * Endpoints:
  *   GET  /api/account/check?username=xxx — public, check if account exists
- *   GET  /api/me/sync                    — download personal SQLite DB
- *   GET  /api/me/sync/version            — check personal DB version/size
- *   GET  /api/me/backfill/status         — check backfill + history recon status
  */
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -19,30 +16,8 @@ export interface AccountCheckResult {
   displayName: string | null;
 }
 
-export interface SyncVersionResult {
-  deviceId: string;
-  available: boolean;
-  version: string | null;
-  sizeBytes: number | null;
-}
-
 export interface ServiceVersionResult {
   version: string;
-}
-
-export interface BackfillStatusResult {
-  accountId: string;
-  backfill: {
-    status: string;
-    songsChecked: number;
-    totalSongsToCheck: number;
-    entriesFound: number;
-    startedAt: string;
-    completedAt: string | null;
-  } | null;
-  historyRecon: {
-    status: string;
-  } | null;
 }
 
 // ── Client ──────────────────────────────────────────────────────────
@@ -74,51 +49,6 @@ export class FstServiceClient {
     }
 
     return res.json() as Promise<AccountCheckResult>;
-  }
-
-  /**
-   * Get the version/size of the personal DB for the authenticated device.
-   */
-  async getSyncVersion(): Promise<SyncVersionResult> {
-    const res = await fetch(`${this.baseUrl}/api/me/sync/version`, {
-      headers: {Authorization: `Bearer ${this.accessToken}`},
-    });
-
-    if (!res.ok) {
-      throw new FstServiceError('getSyncVersion', res.status, await res.text().catch(() => ''));
-    }
-
-    return res.json() as Promise<SyncVersionResult>;
-  }
-
-  /**
-   * Download the personal SQLite DB as an ArrayBuffer.
-   */
-  async downloadPersonalDb(): Promise<ArrayBuffer> {
-    const res = await fetch(`${this.baseUrl}/api/me/sync`, {
-      headers: {Authorization: `Bearer ${this.accessToken}`},
-    });
-
-    if (!res.ok) {
-      throw new FstServiceError('downloadPersonalDb', res.status, await res.text().catch(() => ''));
-    }
-
-    return res.arrayBuffer();
-  }
-
-  /**
-   * Get the current backfill + history reconstruction status.
-   */
-  async getBackfillStatus(): Promise<BackfillStatusResult> {
-    const res = await fetch(`${this.baseUrl}/api/me/backfill/status`, {
-      headers: {Authorization: `Bearer ${this.accessToken}`},
-    });
-
-    if (!res.ok) {
-      throw new FstServiceError('getBackfillStatus', res.status, await res.text().catch(() => ''));
-    }
-
-    return res.json() as Promise<BackfillStatusResult>;
   }
 
   /**

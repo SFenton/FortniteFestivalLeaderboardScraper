@@ -12,7 +12,7 @@ namespace FSTService.Api;
 /// to connected mobile clients (e.g. when backfill completes).
 ///
 /// Clients connect via <c>GET /api/ws?token={jwt}</c> and receive
-/// JSON messages like <c>{"type":"personal_db_ready"}</c>.
+/// JSON messages like <c>{"type":"backfill_complete"}</c>.
 /// </summary>
 public sealed class NotificationService
 {

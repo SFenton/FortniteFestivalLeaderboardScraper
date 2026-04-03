@@ -369,7 +369,6 @@ public static partial class ApiEndpoints
                 }
             }
 
-            // ── Step 3: Rebuild personal DB ──
             var accountSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { accountId };
 
             return Results.Ok(new

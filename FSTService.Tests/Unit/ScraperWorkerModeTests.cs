@@ -238,21 +238,6 @@ public class ScraperWorkerModeTests : ScraperWorkerTestBase
         await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
     }
 
-    [Fact]
-    public async Task RunBackfillPhase_PersonalDbRebuildThrows_DoesNotPropagate()
-    {
-        _backfillQueue.Enqueue(new BackfillRequest("acct1"));
-
-        _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<string?>("token"));
-        _tokenManager.AccountId.Returns("callerAcct");
-
-        var orchestrator = CreateBackfillOrchestrator();
-
-        // Should not throw — post-completion errors are caught per-user
-        await orchestrator.RunBackfillAsync(_festivalService, CancellationToken.None);
-    }
-
     // ═══════════════════════════════════════════════════════════════
     // RunHistoryReconPhaseAsync
     // ═══════════════════════════════════════════════════════════════

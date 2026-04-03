@@ -89,7 +89,7 @@ function getAsyncStorage(): {
 
 /**
  * Get or create a stable device identifier (UUID v4 stored in AsyncStorage).
- * This identifies the device to FSTService for personal DB sync.
+ * This identifies the device to FSTService for registration.
  */
 async function getDeviceId(): Promise<string> {
   const storage = getAsyncStorage();

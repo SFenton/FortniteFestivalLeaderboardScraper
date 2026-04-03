@@ -17,7 +17,7 @@ namespace FSTService;
 ///   1. Ensure authenticated (device auth → refresh → device code setup)
 ///   2. Initialize FestivalService (song catalog, images)
 ///   3. Scrape global leaderboards for all songs (V1 alltime)
-///   4. Persist to sharded SQLite DBs, resolve names, rebuild personal DBs
+///   4. Persist to sharded SQLite DBs, resolve names
 ///   5. Sleep for configured interval
 ///   6. Repeat
 /// </summary>
