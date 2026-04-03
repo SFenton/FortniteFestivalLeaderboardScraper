@@ -754,13 +754,28 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     /// <returns>Total number of rows updated across all instruments.</returns>
     public int RecomputeAllRanks()
     {
-        // Each instrument has its own DB file and _writeLock — run all 6 in parallel.
         var results = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        Parallel.ForEach(_instrumentDbs, kvp =>
+
+        if (_pgDataSource is not null)
         {
-            var updated = kvp.Value.RecomputeAllRanks();
-            results[kvp.Key] = updated;
-        });
+            // PostgreSQL mode: run sequentially — all instruments share the same
+            // database, so parallel massive UPDATEs contend for WAL writer, buffer
+            // pool, and checkpointer, causing Npgsql read-timeouts.
+            foreach (var kvp in _instrumentDbs)
+            {
+                var updated = kvp.Value.RecomputeAllRanks();
+                results[kvp.Key] = updated;
+            }
+        }
+        else
+        {
+            // SQLite mode: each instrument has its own DB file — run in parallel.
+            Parallel.ForEach(_instrumentDbs, kvp =>
+            {
+                var updated = kvp.Value.RecomputeAllRanks();
+                results[kvp.Key] = updated;
+            });
+        }
 
         int total = 0;
         foreach (var (instrument, updated) in results)

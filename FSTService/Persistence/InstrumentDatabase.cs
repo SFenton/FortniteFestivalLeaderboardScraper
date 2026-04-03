@@ -1004,7 +1004,20 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                     WHERE ranked.sid = LeaderboardEntries.SongId
                       AND ranked.aid = LeaderboardEntries.AccountId
                 )
-                WHERE Source = 'scrape';
+                WHERE Source = 'scrape'
+                  AND Rank IS NOT (
+                    SELECT cnt FROM (
+                        SELECT AccountId AS aid, SongId AS sid,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY SongId
+                                   ORDER BY Score DESC, COALESCE(EndTime, FirstSeenAt) ASC
+                               ) AS cnt
+                        FROM LeaderboardEntries
+                        WHERE Source = 'scrape'
+                    ) ranked
+                    WHERE ranked.sid = LeaderboardEntries.SongId
+                      AND ranked.aid = LeaderboardEntries.AccountId
+                );
             ";
             return cmd.ExecuteNonQuery();
         }

@@ -311,7 +311,8 @@ public sealed class PgInstrumentDatabase : IInstrumentDatabase
     public int RecomputeAllRanks()
     {
         using var conn = _ds.OpenConnection(); using var cmd = conn.CreateCommand();
-        cmd.CommandText = "UPDATE leaderboard_entries le SET rank = sub.rn FROM (SELECT account_id, song_id, ROW_NUMBER() OVER (PARTITION BY song_id ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rn FROM leaderboard_entries WHERE instrument = @instrument AND source = 'scrape') sub WHERE le.song_id = sub.song_id AND le.account_id = sub.account_id AND le.instrument = @instrument AND le.source = 'scrape'";
+        cmd.CommandTimeout = 300; // Large UPDATE; default 30s too short for millions of rows
+        cmd.CommandText = "UPDATE leaderboard_entries le SET rank = sub.rn FROM (SELECT account_id, song_id, ROW_NUMBER() OVER (PARTITION BY song_id ORDER BY score DESC, COALESCE(end_time, first_seen_at::TEXT) ASC) AS rn FROM leaderboard_entries WHERE instrument = @instrument AND source = 'scrape') sub WHERE le.song_id = sub.song_id AND le.account_id = sub.account_id AND le.instrument = @instrument AND le.source = 'scrape' AND le.rank IS DISTINCT FROM sub.rn";
         cmd.Parameters.AddWithValue("instrument", Instrument);
         return cmd.ExecuteNonQuery();
     }
@@ -417,6 +418,7 @@ public sealed class PgInstrumentDatabase : IInstrumentDatabase
         // TRUNCATE the partition directly — instant, no dead tuples, no vacuum needed
         using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = $"TRUNCATE {GetPartitionName("account_rankings")}"; c.ExecuteNonQuery(); }
         using var cmd = conn.CreateCommand(); cmd.Transaction = tx;
+        cmd.CommandTimeout = 300; // 4-CTE ranking query is expensive; default 30s too short
         cmd.CommandText =
             "WITH ValidEntries AS (" +
             "SELECT le.song_id, le.account_id, le.score, le.accuracy, le.is_full_combo, le.stars, COALESCE(NULLIF(le.api_rank, 0), le.rank) AS effective_rank, ss.entry_count, ss.log_weight, ss.max_score FROM leaderboard_entries le JOIN song_stats ss ON ss.song_id = le.song_id AND ss.instrument = le.instrument WHERE le.instrument = @instrument AND le.score <= COALESCE(CAST(ss.max_score * 1.05 AS INTEGER), le.score + 1) AND ss.entry_count > 0 AND COALESCE(NULLIF(le.api_rank, 0), le.rank) > 0 " +

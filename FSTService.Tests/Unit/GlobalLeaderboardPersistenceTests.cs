@@ -524,6 +524,26 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         Assert.Equal(1, bassDb.GetEntry("song_1", "a3")!.Rank);
     }
 
+    [Fact]
+    public void RecomputeAllRanks_skips_unchanged_ranks()
+    {
+        using var glp = CreatePersistence();
+        var db = glp.GetOrCreateInstrumentDb("Solo_Guitar");
+        db.UpsertEntries("song_1", new[]
+        {
+            new LeaderboardEntry { AccountId = "a1", Score = 300 },
+            new LeaderboardEntry { AccountId = "a2", Score = 200 },
+        });
+
+        // First call assigns ranks from 0 → correct values
+        var first = glp.RecomputeAllRanks();
+        Assert.Equal(2, first);
+
+        // Second call with no changes should skip all rows (ranks already correct)
+        var second = glp.RecomputeAllRanks();
+        Assert.Equal(0, second);
+    }
+
     // ═══ GetSongCountsForInstruments ════════════════════════════
 
     [Fact]
