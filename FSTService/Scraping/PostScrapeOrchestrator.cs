@@ -78,9 +78,10 @@ public sealed class PostScrapeOrchestrator
     /// </summary>
     public async Task RunAsync(ScrapePassContext ctx, FestivalService service, CancellationToken ct)
     {
+        // Enrichment runs ranks, firstSeen, nameRes, and pruning with maximum
+        // parallelism — pruning starts as soon as ranks finish, overlapping
+        // with the remaining enrichment tasks.
         await RunEnrichmentAsync(ctx, service, ct);
-        _progress.SetSubOperation("pruning_excess_entries");
-        PruneExcessEntries(ctx);
 
         // Refresh registered users BEFORE rankings so that low scores (below the
         // global-scrape cutoff) are present in the instrument DBs when rankings
@@ -94,30 +95,38 @@ public sealed class PostScrapeOrchestrator
             ComputeRivalsAsync(ctx, ct),
             ComputeLeaderboardRivalsAsync(ctx, ct));
 
-        // ── Precompute API responses for registered players + top leaderboards ──
+        // ── Precompute API responses + player stats tiers in parallel ──
+        // PrecomputeAllAsync writes to an in-memory ConcurrentDictionary;
+        // ComputePlayerStatsTiersAsync writes to the player_stats_tiers table.
+        // Neither reads the other's output, so they can overlap.
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Precomputing);
-        await _precomputer.PrecomputeAllAsync(ct);
-
-        // ── Compute player stats tiers for changed accounts ──
-        _progress.SetSubOperation("player_stats_tiers");
-        await ComputePlayerStatsTiersAsync(ctx, ct);
+        await Task.WhenAll(
+            _precomputer.PrecomputeAllAsync(ct),
+            ComputePlayerStatsTiersAsync(ctx, ct));
 
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Finalizing);
 
-        // Checkpoint all WAL files after post-scrape writes (enrichment, refresh,
-        // rankings) to keep them small for subsequent API reads.
-        _progress.SetSubOperation("final_checkpoint");
-        _persistence.CheckpointAll();
-
-        // Pre-warm the rankings cache for registered users so that the first API
-        // request after a scrape pass is a cache hit rather than an expensive CTE query.
-        _progress.SetSubOperation("pre_warming_cache");
-        _persistence.PreWarmRankingsCache(ctx.RegisteredIds);
+        // Checkpoint WAL files and pre-warm the rankings cache in parallel.
+        // CheckpointAll is I/O-bound (WAL flush); PreWarmRankingsCache is
+        // CPU/IO-bound (CTE queries). No shared write targets.
+        await Task.WhenAll(
+            Task.Run(() =>
+            {
+                _progress.SetSubOperation("final_checkpoint");
+                _persistence.CheckpointAll();
+            }, ct),
+            Task.Run(() =>
+            {
+                _progress.SetSubOperation("pre_warming_cache");
+                _persistence.PreWarmRankingsCache(ctx.RegisteredIds);
+            }, ct));
     }
 
     /// <summary>
-    /// Three independent operations run in parallel: rank recomputation,
-    /// FirstSeenSeason calculation, and account name resolution.
+    /// Four operations with partial parallelism: rank recomputation runs first,
+    /// then pruning starts in parallel with FirstSeenSeason and account name resolution.
+    /// Pruning only needs CHOpt max scores and registered IDs — it does not depend on
+    /// FirstSeenSeason or account names.
     /// </summary>
     internal async Task RunEnrichmentAsync(ScrapePassContext ctx, FestivalService service, CancellationToken ct)
     {
@@ -173,7 +182,17 @@ public sealed class PostScrapeOrchestrator
             }
         }, ct);
 
-        await Task.WhenAll(rankTask, firstSeenTask, nameResTask);
+        // Wait for ranks first — pruning needs fresh ranks in the DB, but does not
+        // need firstSeen or account names.  Fire pruning in parallel with the tail.
+        await rankTask;
+
+        var pruneTask = Task.Run(() =>
+        {
+            _progress.SetSubOperation("pruning_excess_entries");
+            PruneExcessEntries(ctx);
+        }, ct);
+
+        await Task.WhenAll(firstSeenTask, nameResTask, pruneTask);
     }
 
     /// <summary>
@@ -427,7 +446,8 @@ public sealed class PostScrapeOrchestrator
     /// preserving registered users. When CHOpt max scores are available, entries above
     /// the over-threshold boundary are exempt from pruning so that deep-scraped valid
     /// entries are not discarded along with exploited scores.
-    /// Runs after rank recomputation so ranks are fresh.
+    /// Only depends on CHOpt max scores and registered IDs — runs in parallel with
+    /// FirstSeenSeason and account name resolution during enrichment.
     /// </summary>
     internal void PruneExcessEntries(ScrapePassContext ctx)
     {

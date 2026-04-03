@@ -193,7 +193,8 @@ public class SongProcessingMachine
 
     /// <summary>
     /// Process one song + one instrument for all users.
-    /// Performs alltime batch lookup, then seasonal session lookups per required season.
+    /// Performs alltime batch lookups and seasonal session lookups in parallel,
+    /// since they target independent API endpoints and write to separate tables.
     /// </summary>
     private async Task<SongStepResult> ProcessSongInstrumentAsync(
         string songId,
@@ -211,7 +212,59 @@ public class SongProcessingMachine
         int sessionsInserted = 0;
         int apiCalls = 0;
 
-        // ─── Alltime lookups ──────────────────────────────────
+        // ─── Alltime lookups (async task) ─────────────────────
+        var alltimeTask = RunAlltimeLookups(
+            songId, instrument, users, accessToken, callerAccountId,
+            pool, isHighPriority, batchSize, ct);
+
+        // ─── Seasonal session lookups (async task) ────────────
+        var seasonalTask = RunSeasonalLookups(
+            songId, instrument, users, seasonPrefixMap, accessToken, callerAccountId,
+            pool, isHighPriority, batchSize, ct);
+
+        // Both phases use the SharedDopPool for backpressure — total API
+        // concurrency remains bounded regardless of in-flight overlap.
+        var results = await Task.WhenAll(alltimeTask, seasonalTask);
+
+        foreach (var r in results)
+        {
+            Interlocked.Add(ref entriesUpdated, r.EntriesUpdated);
+            Interlocked.Add(ref sessionsInserted, r.SessionsInserted);
+            Interlocked.Add(ref apiCalls, r.ApiCalls);
+        }
+
+        // Mark history recon processed for users doing that work
+        foreach (var user in users)
+        {
+            if (user.Purposes.HasFlag(WorkPurpose.HistoryRecon) && !user.IsAlreadyChecked(songId, instrument))
+                _resultProcessor.MarkHistoryReconProcessed(user.AccountId, songId, instrument);
+        }
+
+        return new SongStepResult
+        {
+            EntriesUpdated = entriesUpdated,
+            SessionsInserted = sessionsInserted,
+            ApiCalls = apiCalls,
+        };
+    }
+
+    /// <summary>
+    /// Run alltime batch lookups for all users needing them on this song/instrument.
+    /// </summary>
+    private async Task<SongStepResult> RunAlltimeLookups(
+        string songId,
+        string instrument,
+        IReadOnlyList<UserWorkItem> users,
+        string accessToken,
+        string callerAccountId,
+        SharedDopPool pool,
+        bool isHighPriority,
+        int batchSize,
+        CancellationToken ct)
+    {
+        int entriesUpdated = 0;
+        int apiCalls = 0;
+
         var alltimeUsers = users
             .Where(u => u.AllTimeNeeded && !u.IsAlreadyChecked(songId, instrument))
             .ToList();
@@ -270,7 +323,27 @@ public class SongProcessingMachine
             }
         }
 
-        // ─── Seasonal session lookups ─────────────────────────
+        return new SongStepResult { EntriesUpdated = entriesUpdated, ApiCalls = apiCalls };
+    }
+
+    /// <summary>
+    /// Run seasonal session lookups for all users needing them on this song/instrument.
+    /// </summary>
+    private async Task<SongStepResult> RunSeasonalLookups(
+        string songId,
+        string instrument,
+        IReadOnlyList<UserWorkItem> users,
+        IReadOnlyDictionary<int, string> seasonPrefixMap,
+        string accessToken,
+        string callerAccountId,
+        SharedDopPool pool,
+        bool isHighPriority,
+        int batchSize,
+        CancellationToken ct)
+    {
+        int sessionsInserted = 0;
+        int apiCalls = 0;
+
         var seasonUserGroups = new Dictionary<int, List<UserWorkItem>>();
         foreach (var user in users)
         {
@@ -336,19 +409,7 @@ public class SongProcessingMachine
             }
         }
 
-        // Mark history recon processed for users doing that work
-        foreach (var user in users)
-        {
-            if (user.Purposes.HasFlag(WorkPurpose.HistoryRecon) && !user.IsAlreadyChecked(songId, instrument))
-                _resultProcessor.MarkHistoryReconProcessed(user.AccountId, songId, instrument);
-        }
-
-        return new SongStepResult
-        {
-            EntriesUpdated = entriesUpdated,
-            SessionsInserted = sessionsInserted,
-            ApiCalls = apiCalls,
-        };
+        return new SongStepResult { SessionsInserted = sessionsInserted, ApiCalls = apiCalls };
     }
 
     /// <summary>
