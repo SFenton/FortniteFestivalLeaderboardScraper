@@ -246,6 +246,10 @@ namespace FortniteFestival.Core.Services
                     return;
                 }
                 var list = new List<Song>();
+                int totalObjects = 0;
+                int droppedNoSu = 0;
+                int droppedNullTrack = 0;
+                int droppedErrors = 0;
                 using (var doc = JsonDocument.Parse(content))
                 {
                     foreach (var prop in doc.RootElement.EnumerateObject())
@@ -253,6 +257,7 @@ namespace FortniteFestival.Core.Services
                         var elem = prop.Value;
                         if (elem.ValueKind != JsonValueKind.Object)
                             continue;
+                        totalObjects++;
                         try
                         {
                             string raw = elem.GetRawText(); // naive parse of required fields
@@ -262,11 +267,27 @@ namespace FortniteFestival.Core.Services
                                 var song = System.Text.Json.JsonSerializer.Deserialize<Song>(raw);
                                 if (song != null && song.track != null && song.track.su != null)
                                     list.Add(song);
+                                else
+                                {
+                                    droppedNullTrack++;
+                                    LogLine($"SongSync: dropped '{prop.Name}' — track or su is null (track={song?.track != null}, su={song?.track?.su ?? "null"})");
+                                }
+                            }
+                            else
+                            {
+                                droppedNoSu++;
+                                LogLine($"SongSync: dropped '{prop.Name}' — no \"su\" field found");
                             }
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            droppedErrors++;
+                            LogLine($"SongSync: dropped '{prop.Name}' — parse error: {ex.Message}");
+                        }
                     }
                 }
+                if (droppedNoSu > 0 || droppedNullTrack > 0 || droppedErrors > 0)
+                    LogLine($"SongSync: parsed {list.Count} songs from {totalObjects} objects ({droppedNoSu} no su, {droppedNullTrack} null track, {droppedErrors} errors)");
                 lock (_sync)
                 {
                     var incomingIds = new HashSet<string>(list.Select(s => s.track.su));
