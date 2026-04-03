@@ -1479,7 +1479,6 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                     SELECT *,
                         (SongsPlayed * RawSkillRating + @m * @C) / (SongsPlayed + @m)   AS AdjustedSkillRating,
                         (SongsPlayed * COALESCE(WeightedRating, 1.0) + @m * @C) / (SongsPlayed + @m) AS AdjustedWeightedRating,
-                        (SongsPlayed * FcRate + @m * @C) / (SongsPlayed + @m)           AS AdjustedFcRate,
                         (SongsPlayed * COALESCE(MaxScorePercent, 0.5) + @m * @C) / (SongsPlayed + @m) AS AdjustedMaxScorePercent
                     FROM Aggregated
                 ),
@@ -1487,7 +1486,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                     SELECT *,
                         ROW_NUMBER() OVER (ORDER BY AdjustedSkillRating ASC, SongsPlayed DESC, TotalScore DESC, FullComboCount DESC, AccountId ASC) AS AdjustedSkillRank,
                         ROW_NUMBER() OVER (ORDER BY AdjustedWeightedRating ASC, SongsPlayed DESC, TotalScore DESC, FullComboCount DESC, AccountId ASC) AS WeightedRank,
-                        ROW_NUMBER() OVER (ORDER BY AdjustedFcRate DESC, SongsPlayed DESC, AdjustedSkillRating ASC, AccountId ASC) AS FcRateRank,
+                        ROW_NUMBER() OVER (ORDER BY FullComboCount DESC, TotalScore DESC, AccountId ASC) AS FcRateRank,
                         ROW_NUMBER() OVER (ORDER BY TotalScore DESC, SongsPlayed DESC, AdjustedSkillRating ASC, AccountId ASC) AS TotalScoreRank,
                         ROW_NUMBER() OVER (ORDER BY AdjustedMaxScorePercent DESC, SongsPlayed DESC, AdjustedSkillRating ASC, AccountId ASC) AS MaxScorePercentRank
                     FROM WithBayesian
@@ -1496,7 +1495,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
                 SELECT AccountId, SongsPlayed, TotalChartedSongs, Coverage,
                        RawSkillRating, AdjustedSkillRating, AdjustedSkillRank,
                        AdjustedWeightedRating, WeightedRank,
-                       AdjustedFcRate, FcRateRank,
+                       FcRate, FcRateRank,
                        TotalScore, TotalScoreRank,
                        AdjustedMaxScorePercent, MaxScorePercentRank,
                        AvgAccuracy, FullComboCount, AvgStars, BestRank, AvgRank,

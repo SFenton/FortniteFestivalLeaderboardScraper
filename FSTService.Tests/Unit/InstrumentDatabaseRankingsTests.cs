@@ -276,9 +276,35 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
         var nfc = Db.GetAccountRanking("nonfcer");
         Assert.NotNull(fcr);
         Assert.NotNull(nfc);
-        // FcRate stores Bayesian-adjusted values; raw 1.0/0.0 pulled toward 0.5
-        Assert.True(fcr.FcRate > nfc.FcRate);
+        // FcRate stores raw value; ranked by FullComboCount DESC
+        Assert.Equal(1.0, fcr.FcRate);
+        Assert.Equal(0.0, nfc.FcRate);
         Assert.True(fcr.FcRateRank < nfc.FcRateRank);
+    }
+
+    [Fact]
+    public void ComputeAccountRankings_FcRate_Tiebreaker_TotalScoreDesc()
+    {
+        // Both players FC all songs, but highScorer has higher total score
+        Db.UpsertEntries("song1", [
+            MakeEntry("highScorer", 5000, fc: true, rank: 1),
+            MakeEntry("lowScorer", 3000, fc: true, rank: 2),
+        ]);
+        Db.UpsertEntries("song2", [
+            MakeEntry("highScorer", 5000, fc: true, rank: 1),
+            MakeEntry("lowScorer", 3000, fc: true, rank: 2),
+        ]);
+        Db.RecomputeAllRanks();
+        Db.ComputeSongStats();
+        Db.ComputeAccountRankings(totalChartedSongs: 2);
+
+        var high = Db.GetAccountRanking("highScorer");
+        var low = Db.GetAccountRanking("lowScorer");
+        Assert.NotNull(high);
+        Assert.NotNull(low);
+        Assert.Equal(high.FullComboCount, low.FullComboCount); // same FC count
+        Assert.True(high.FcRateRank < low.FcRateRank,
+            $"Higher total score ({high.TotalScore}) should rank above lower ({low.TotalScore}) when FC count is tied");
     }
 
     [Fact]
