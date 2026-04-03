@@ -35,8 +35,7 @@ Comprehensive Wikipedia-style documentation. ~92 pages across 14 sections.
 - [ ] docs/service/ScrapePhase4-GlobalScrape.md
 - [ ] docs/service/ScrapePhase5-FirstSeenSeason.md
 - [ ] docs/service/ScrapePhase6-NameResolution.md
-- [ ] docs/service/ScrapePhase7-PersonalDbBuild.md
-- [ ] docs/service/ScrapePhase8-PostScrapeRefresh.md
+- [ ] docs/service/ScrapePhase7-PostScrapeRefresh.md
 - [ ] docs/service/ScrapePhase9-Backfill.md
 - [ ] docs/service/ScrapePhase10-HistoryRecon.md
 - [ ] docs/service/ScrapePhase11-Cleanup.md
@@ -46,7 +45,6 @@ Comprehensive Wikipedia-style documentation. ~92 pages across 14 sections.
 ### 14.4 — Database (6 pages)
 - [ ] docs/database/MetaDatabase.md
 - [ ] docs/database/InstrumentDatabases.md
-- [ ] docs/database/PersonalDatabases.md
 - [ ] docs/database/CoreSongDatabase.md
 - [ ] docs/database/DataAccuracyGuide.md
 - [ ] docs/database/StorageOptimization.md

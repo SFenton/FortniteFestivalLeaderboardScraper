@@ -20,7 +20,6 @@ Fix performance bottlenecks, memory leaks, and storage inefficiencies across bot
 
 ### Service Performance
 - [ ] Fix unbounded ConcurrentBag in pipeline → chunked DB inserts
-- [ ] Fix N+1 personal DB builds → batch cross-DB query
 - [ ] Fix double materialization in MetaDatabase pagination
 - [ ] Cache PRAGMA result in static helper (avoid per-connection no-op)
 - [ ] Pre-compile high-frequency statements (UPSERT, SELECT)
@@ -28,7 +27,6 @@ Fix performance bottlenecks, memory leaks, and storage inefficiencies across bot
 
 ### Storage Optimization
 - [ ] Normalize difficulty columns (score-level → song-level): ~480 MB savings
-- [ ] Add missing FK indexes in personal DBs: `IX_Scores_SongId`
 - [ ] Implement TTL-based percentile refresh for accuracy
 - [ ] Evaluate 4-column composite PK in UserRivals: ~800 MB savings
 
@@ -36,6 +34,5 @@ Fix performance bottlenecks, memory leaks, and storage inefficiencies across bot
 
 - [ ] Chrome DevTools Performance: improved paint time on Songs page
 - [ ] No `ConcurrentBag` in pipeline code
-- [ ] Personal DB build uses single cross-DB query
 - [ ] `dotnet test` + `vitest` all pass
 - [ ] Storage audit shows reduced DB sizes after normalization

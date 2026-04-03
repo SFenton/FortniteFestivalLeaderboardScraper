@@ -20,7 +20,7 @@ Decompose ScraperWorker monolith, split ApiEndpoints, extract shared auth to Cor
 
 ### 11.2 — Decompose ScraperWorker
 - [ ] Create `ScrapeOrchestrator.cs` (phases 1-4: auth, catalog, paths, global scrape)
-- [ ] Create `EnrichmentOrchestrator.cs` (phases 5-8: first-seen, names, personal DB, refresh)
+- [ ] Create `EnrichmentOrchestrator.cs` (phases 5-8: first-seen, names, refresh)
 - [ ] Create `BackfillOrchestrator.cs` (phases 9-10: backfill, history recon)
 - [ ] Create `ScraperCoordinator.cs` (~100 lines, sequences orchestrators)
 - [ ] Delete original ScraperWorker.cs (1,020 lines)

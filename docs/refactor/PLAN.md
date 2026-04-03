@@ -755,7 +755,7 @@ Both services consume Core auth. PercentileService's `EpicTokenManager` and FSTS
 **Solution**: Split into domain-specific orchestrators with a thin coordinator:
 
 - `ScrapeOrchestrator.cs` — phases 1-4 (auth, catalog sync, path gen, global scrape)
-- `EnrichmentOrchestrator.cs` — phases 5-8 (FirstSeenSeason, name resolution, personal DB, post-scrape refresh)
+- `EnrichmentOrchestrator.cs` — phases 5-8 (FirstSeenSeason, name resolution, post-scrape refresh)
 - `BackfillOrchestrator.cs` — phases 9-10 (backfill, history reconstruction)
 - `ScraperCoordinator.cs` — thin ~100-line coordinator that sequences orchestrators
 
@@ -793,7 +793,6 @@ Register via `app.MapGroup()` pattern.
 
 **Storage optimization:**
 - Normalize difficulty columns out of score-level tables into song-level: ~480 MB savings at scale
-- Add missing foreign key indexes in personal DBs: `IX_Scores_SongId`
 
 ### 11.5 — Consolidate HTTP Client Patterns
 
@@ -856,7 +855,6 @@ ScraperWorker backfill-only mode contains a hardcoded song "092c2537" lookup for
 | Issue | Severity | Fix |
 |---|---|---|
 | `ConcurrentBag` unbounded aggregation in pipeline | **HIGH** | Chunked DB inserts, flush in batches |
-| N+1 personal DB builds (6 separate instrument queries) | **HIGH** | Batch-load all instruments in single cross-DB query |
 | Double materialization in MetaDatabase pagination | **MEDIUM** | Lazy evaluation or single-pass |
 | PRAGMA executed per connection (no-op after first) | **LOW** | Cache result in static helper |
 | No statement pre-compilation | **MEDIUM** | Pre-compile UPSERT + SELECT hot paths |
@@ -867,7 +865,6 @@ ScraperWorker backfill-only mode contains a hardcoded song "092c2537" lookup for
 | Issue | Severity | Fix | Savings |
 |---|---|---|---|
 | Difficulty columns denormalized into score tables | **HIGH** | Normalize to Songs table only | ~480 MB |
-| Missing FK indexes in personal DBs | **MEDIUM** | Add `IX_Scores_SongId` | Query speed |
 | Stale percentile never refreshed | **MEDIUM** | TTL-based refresh or nightly recalculation | Accuracy |
 | Oversized 4-column composite PK in UserRivals | **LOW** | Consider surrogate key | ~800 MB |
 
@@ -928,7 +925,7 @@ Update all 7 design docs with implementation status headers (`✅ IMPLEMENTED` /
 | Page | Contents |
 |---|---|
 | **Overview.md** | Monorepo component diagram (Mermaid), component responsibilities, data flow (Epic API → FSTService → SQLite → Web/RN), deployment topology, shared package relationships |
-| **DataFlow.md** | End-to-end lifecycle of a score: Epic API leaderboard → scrape → UPSERT → change detection → ScoreHistory → personal DB → Web API → client cache → render. Every hop, every transformation. |
+| **DataFlow.md** | End-to-end lifecycle of a score: Epic API leaderboard → scrape → UPSERT → change detection → ScoreHistory → Web API → client cache → render. Every hop, every transformation. |
 | **DeploymentTopology.md** | Docker Compose topology, FSTService + PercentileService relationship, volume mounts, networking, health checks, readiness probes |
 | **SharedPackages.md** | @festival/core (types, API client), @festival/theme (design tokens, breakpoints), @festival/ui-utils (formatters, platform detection). What lives where, why, import conventions. |
 | **SecurityModel.md** | Auth layers: no auth (public), X-API-Key (admin), Bearer JWT (user). Path traversal guard middleware. Rate limiting (per-endpoint categories with limits). CORS. Input validation. |
@@ -946,8 +943,7 @@ Existing 5 pages stay (Overview, ApiReference, AuthSecurity, DeploymentConfig, S
 | **ScrapePhase4-GlobalScrape.md** | Pipelined architecture: song iteration → per-instrument channel → writer tasks. InstrumentDatabase UPSERT. Change detection (ChangedAccountIds). DOP management. AdaptiveConcurrencyLimiter AIMD algorithm. |
 | **ScrapePhase5-FirstSeenSeason.md** | Algorithm: MIN across 6 DBs → probe (MIN-1) → set. Skip logic. Immutability after calculation. |
 | **ScrapePhase6-NameResolution.md** | Batch API (100 per request). AccountNames table. LastResolved timestamp. Best-effort retry. |
-| **ScrapePhase7-PersonalDbBuild.md** | Per-user/device SQLite generation. Schema. Data sources (instrument DBs, meta DB). Trigger conditions (changed users). N+1 problem documentation. |
-| **ScrapePhase8-PostScrapeRefresh.md** | Batched V2 lookups. Users per request (500). Stale entry detection. Current-season session capture (RefreshCurrentSeasonSessions). |
+| **ScrapePhase7-PostScrapeRefresh.md** | Batched V2 lookups. Users per request (500). Stale entry detection. Current-season session capture (RefreshCurrentSeasonSessions). |
 | **ScrapePhase9-Backfill.md** | Per-user score acquisition for below-60K entries. BackfillStatus state machine. BackfillProgress tracking. Resumption. |
 | **ScrapePhase10-HistoryRecon.md** | Season window discovery. Seasonal leaderboard walks. ScoreHistory deduplication (unique index + COALESCE merge). OldScore tracking for improvement detection. FirstSeenSeason optimization. |
 | **ScrapePhase11-Cleanup.md** | Expired session removal. |
@@ -963,7 +959,6 @@ Existing FSTServiceDatabaseDesign.md stays. Add:
 |---|---|
 | **MetaDatabase.md** | All 11 tables with full column definitions, types, defaults, constraints, indexes. ScoreHistory deduplication logic (ON CONFLICT DO UPDATE with COALESCE). Rank semantics (SeasonRankFinal vs AllTimeRankAtLookup). BackfillStatus state machine diagram. |
 | **InstrumentDatabases.md** | LeaderboardEntries schema. Sharding rationale (1 DB per instrument). PRAGMA configuration. Write lock pattern. Migration history. Index definitions. |
-| **PersonalDatabases.md** | Per-user/device schema. Build trigger conditions. Data staleness model. Sync protocol with mobile client. |
 | **CoreSongDatabase.md** | fst-service.db schema. FestivalService catalog. Song model fields. Calendar API mapping. |
 | **DataAccuracyGuide.md** | Known accuracy gaps: Rank=0 ambiguity, stale percentiles, EndTime NULL overwrites, SeasonRank = final (not point-in-time). Mitigation strategies for each. |
 | **StorageOptimization.md** | Difficulty denormalization analysis (~480MB savings). 4-column PK analysis (~800MB savings). FK index gaps. WAL configuration. Vacuum strategy. |
