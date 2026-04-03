@@ -55,11 +55,13 @@ public sealed class LeaderboardRivalsCalculator
 
             // Cache neighbor scores to avoid re-fetching across rank methods
             var neighborScoreCache = new Dictionary<string, Dictionary<string, PlayerScoreDto>>(StringComparer.OrdinalIgnoreCase);
+            var selfFoundForInstrument = false;
 
             foreach (var rankMethod in RankMethods)
             {
                 var (above, self, below) = db.GetAccountRankingNeighborhood(userId, _radius, rankMethod);
                 if (self is null) continue;
+                selfFoundForInstrument = true;
 
                 var userRank = InstrumentDatabase.GetRankValue(self, rankMethod);
                 var neighbors = new List<(AccountRankingDto Dto, string Direction)>();
@@ -142,10 +144,22 @@ public sealed class LeaderboardRivalsCalculator
                 }
             }
 
-            // Persist all data for this instrument at once
-            var instrumentRivals = allRivals.Where(r => r.Instrument == instrument).ToList();
-            var instrumentSamples = allSamples.Where(s => s.Instrument == instrument).ToList();
-            _meta.ReplaceLeaderboardRivalsData(userId, instrument, instrumentRivals, instrumentSamples);
+            // Persist all data for this instrument at once — but only if the user
+            // was found in AccountRankings for at least one rank method. When the user
+            // is absent (e.g. rankings computation failed or data not yet available),
+            // skip the replace to preserve previously-computed rivals.
+            if (selfFoundForInstrument)
+            {
+                var instrumentRivals = allRivals.Where(r => r.Instrument == instrument).ToList();
+                var instrumentSamples = allSamples.Where(s => s.Instrument == instrument).ToList();
+                _meta.ReplaceLeaderboardRivalsData(userId, instrument, instrumentRivals, instrumentSamples);
+            }
+            else
+            {
+                _log.LogDebug(
+                    "Skipping leaderboard rivals replace for {User}/{Instrument}: user not found in AccountRankings.",
+                    userId, instrument);
+            }
         }
 
         return new LeaderboardRivalsResult

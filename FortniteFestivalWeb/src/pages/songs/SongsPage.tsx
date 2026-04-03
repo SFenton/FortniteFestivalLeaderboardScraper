@@ -495,6 +495,7 @@ export default function SongsPage() {
             seasonachieved: appSettings.metadataShowSeasonAchieved,
             intensity: appSettings.metadataShowDifficulty,
             stars: appSettings.metadataShowStars,
+            maxdistance: appSettings.metadataShowMaxDistance,
           }}
           onChange={sortModal.setDraft}
           onCancel={sortModal.close}

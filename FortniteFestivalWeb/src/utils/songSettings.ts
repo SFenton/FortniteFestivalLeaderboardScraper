@@ -19,7 +19,8 @@ export type SongSortMode =
   | 'percentile'
   | 'stars'
   | 'seasonachieved'
-  | 'intensity';
+  | 'intensity'
+  | 'maxdistance';
 
 /** Sort modes only valid when an instrument filter is active. */
 export const INSTRUMENT_SORT_MODES: { mode: SongSortMode; label: string }[] = [
@@ -29,6 +30,7 @@ export const INSTRUMENT_SORT_MODES: { mode: SongSortMode; label: string }[] = [
   { mode: 'stars', label: 'Stars' },
   { mode: 'seasonachieved', label: 'Season' },
   { mode: 'intensity', label: 'Intensity' },
+  { mode: 'maxdistance', label: 'Max Score %' },
 ];
 
 export const isInstrumentSortMode = (mode: SongSortMode): boolean =>
@@ -41,11 +43,18 @@ export const METADATA_SORT_DISPLAY: Record<string, string> = {
   stars: 'Stars',
   seasonachieved: 'Season Achieved',
   intensity: 'Song Intensity',
+  maxdistance: 'Max Score %',
 };
 
 export const DEFAULT_METADATA_ORDER: string[] = [
-  'score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity',
+  'score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity', 'maxdistance',
 ];
+
+/** Append any new DEFAULT_METADATA_ORDER keys missing from a saved order. */
+function migrateMetadataOrder(saved: string[]): string[] {
+  const missing = DEFAULT_METADATA_ORDER.filter(k => !saved.includes(k));
+  return missing.length > 0 ? [...saved, ...missing] : saved;
+}
 
 /* ── Filter ── */
 
@@ -124,7 +133,7 @@ export function loadSongSettings(): SongSettings {
     return {
       sortMode: parsed.sortMode ?? defaults.sortMode,
       sortAscending: parsed.sortAscending ?? defaults.sortAscending,
-      metadataOrder: parsed.metadataOrder ?? defaults.metadataOrder,
+      metadataOrder: migrateMetadataOrder(parsed.metadataOrder ?? defaults.metadataOrder),
       instrumentOrder: parsed.instrumentOrder ?? defaults.instrumentOrder,
       filters: {
         ...defaults.filters,

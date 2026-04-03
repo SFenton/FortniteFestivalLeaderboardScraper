@@ -88,7 +88,14 @@ public sealed class SongsCacheService
         var maxScoresMap = pathStore.GetAllMaxScores();
         var currentSeason = metaDb.GetCurrentSeason();
         var popTiers = precomputer.GetPopulationTiers();
-        var songs = service.Songs
+        var allSongs = service.Songs;
+        var droppedSongs = allSongs.Where(s => s.track?.su is null).ToList();
+        if (droppedSongs.Count > 0)
+        {
+            foreach (var d in droppedSongs)
+                Console.WriteLine($"[SongsCache] Dropped song from /api/songs: _title='{d._title}', track={(d.track is null ? "null" : "present")}, su={(d.track?.su is null ? "null" : $"'{d.track.su}'")}");
+        }
+        var songs = allSongs
             .Where(s => s.track?.su is not null)
             .Select(s =>
             {
@@ -126,14 +133,14 @@ public sealed class SongsCacheService
                         proGuitar  = s.track.@in.pg,
                         proBass    = s.track.@in.pb,
                     },
-                    maxScores = ms is null ? null : new
+                    maxScores = ms is null ? null : new Dictionary<string, int?>
                     {
-                        Solo_Guitar           = ms.MaxLeadScore,
-                        Solo_Bass             = ms.MaxBassScore,
-                        Solo_Drums            = ms.MaxDrumsScore,
-                        Solo_Vocals           = ms.MaxVocalsScore,
-                        Solo_PeripheralGuitar = ms.MaxProLeadScore,
-                        Solo_PeripheralBass   = ms.MaxProBassScore,
+                        ["Solo_Guitar"]           = ms.MaxLeadScore,
+                        ["Solo_Bass"]             = ms.MaxBassScore,
+                        ["Solo_Drums"]            = ms.MaxDrumsScore,
+                        ["Solo_Vocals"]           = ms.MaxVocalsScore,
+                        ["Solo_PeripheralGuitar"] = ms.MaxProLeadScore,
+                        ["Solo_PeripheralBass"]   = ms.MaxProBassScore,
                     },
                     populationTiers = songPopTiers,
                     pathsGeneratedAt = ms?.GeneratedAt,

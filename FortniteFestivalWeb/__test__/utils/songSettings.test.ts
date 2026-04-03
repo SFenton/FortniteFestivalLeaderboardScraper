@@ -21,11 +21,12 @@ beforeEach(() => {
 
 describe('songSettings', () => {
   describe('getInstrumentSortModes', () => {
-    it('returns 6 instrument sort modes', () => {
+    it('returns 7 instrument sort modes', () => {
       const modes = INSTRUMENT_SORT_MODES;
-      expect(modes).toHaveLength(6);
+      expect(modes).toHaveLength(7);
       expect(modes.map(m => m.mode)).toContain('score');
       expect(modes.map(m => m.mode)).toContain('intensity');
+      expect(modes.map(m => m.mode)).toContain('maxdistance');
     });
 
     it('each mode has a label', () => {
@@ -40,6 +41,7 @@ describe('songSettings', () => {
       expect(isInstrumentSortMode('score')).toBe(true);
       expect(isInstrumentSortMode('percentile')).toBe(true);
       expect(isInstrumentSortMode('intensity')).toBe(true);
+      expect(isInstrumentSortMode('maxdistance')).toBe(true);
     });
 
     it('returns false for non-instrument sort modes', () => {
@@ -58,12 +60,13 @@ describe('songSettings', () => {
       expect(display.stars).toBeTruthy();
       expect(display.seasonachieved).toBeTruthy();
       expect(display.intensity).toBeTruthy();
+      expect(display.maxdistance).toBeTruthy();
     });
   });
 
   describe('DEFAULT_METADATA_ORDER', () => {
-    it('contains 6 keys', () => {
-      expect(DEFAULT_METADATA_ORDER).toHaveLength(6);
+    it('contains 7 keys', () => {
+      expect(DEFAULT_METADATA_ORDER).toHaveLength(7);
     });
   });
 
@@ -123,6 +126,20 @@ describe('songSettings', () => {
       const loaded = loadSongSettings();
       expect(loaded.sortMode).toBe('artist');
       expect(loaded.sortAscending).toBe(true); // from defaults
+    });
+
+    it('appends new metadata keys to saved metadataOrder', () => {
+      const oldOrder = ['score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity'];
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ metadataOrder: oldOrder }));
+      const loaded = loadSongSettings();
+      expect(loaded.metadataOrder).toEqual([...oldOrder, 'maxdistance']);
+    });
+
+    it('preserves existing metadataOrder when it already has all keys', () => {
+      const fullOrder = ['percentage', 'score', 'percentile', 'stars', 'seasonachieved', 'intensity', 'maxdistance'];
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ metadataOrder: fullOrder }));
+      const loaded = loadSongSettings();
+      expect(loaded.metadataOrder).toEqual(fullOrder);
     });
   });
 

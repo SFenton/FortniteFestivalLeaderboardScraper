@@ -4,8 +4,8 @@ import { useFilteredSongs } from '../../../src/hooks/data/useFilteredSongs';
 import { compareByMode } from '../../../src/pages/songs/components/SongRow';
 import type { ServerSong as Song, PlayerScore, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 
-function song(id: string, title: string, artist: string, year?: number): Song {
-  return { songId: id, title, artist, year: year ?? 2024, albumArt: '', maxScores: null } as unknown as Song;
+function song(id: string, title: string, artist: string, year?: number, maxScores?: Partial<Record<InstrumentKey, number>>): Song {
+  return { songId: id, title, artist, year: year ?? 2024, albumArt: '', maxScores: maxScores ?? null } as unknown as Song;
 }
 
 function score(songId: string, overrides: Partial<PlayerScore> = {}): PlayerScore {
@@ -635,5 +635,101 @@ describe('useFilteredSongs — instrument-specific filters ignored when no instr
       scoreMap, allScoreMap,
     }));
     expect(result.current).toHaveLength(3);
+  });
+});
+
+describe('useFilteredSongs — maxdistance sort', () => {
+  const inst = 'Solo_Guitar' as InstrumentKey;
+
+  const songsWithMax = [
+    song('s1', 'Alpha', 'A', 2020, { Solo_Guitar: 100000 }),
+    song('s2', 'Beta', 'B', 2021, { Solo_Guitar: 100000 }),
+    song('s3', 'Gamma', 'C', 2022, { Solo_Guitar: 100000 }),
+  ];
+
+  it('sorts by score / maxScore ratio descending', () => {
+    const scoreMap = new Map([
+      ['s1', score('s1', { score: 80000 })],  // 80%
+      ['s2', score('s2', { score: 95000 })],  // 95%
+      ['s3', score('s3', { score: 70000 })],  // 70%
+    ]);
+    const allScoreMap = new Map(Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([[inst, s]])]));
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: songsWithMax, search: '', sortMode: 'maxdistance' as any, sortAscending: false,
+      filters: emptyFilters as any, instrument: inst,
+      scoreMap, allScoreMap,
+    }));
+    expect(result.current.map(s => s.title)).toEqual(['Beta', 'Alpha', 'Gamma']);
+  });
+
+  it('sorts by score / maxScore ratio ascending', () => {
+    const scoreMap = new Map([
+      ['s1', score('s1', { score: 80000 })],
+      ['s2', score('s2', { score: 95000 })],
+      ['s3', score('s3', { score: 70000 })],
+    ]);
+    const allScoreMap = new Map(Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([[inst, s]])]));
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: songsWithMax, search: '', sortMode: 'maxdistance' as any, sortAscending: true,
+      filters: emptyFilters as any, instrument: inst,
+      scoreMap, allScoreMap,
+    }));
+    expect(result.current.map(s => s.title)).toEqual(['Gamma', 'Alpha', 'Beta']);
+  });
+
+  it('songs without player score sort last (descending)', () => {
+    const scoreMap = new Map([
+      ['s1', score('s1', { score: 80000 })],
+      // s2 has no score
+      ['s3', score('s3', { score: 70000 })],
+    ]);
+    const allScoreMap = new Map(Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([[inst, s]])]));
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: songsWithMax, search: '', sortMode: 'maxdistance' as any, sortAscending: false,
+      filters: emptyFilters as any, instrument: inst,
+      scoreMap, allScoreMap,
+    }));
+    expect(result.current.map(s => s.title)).toEqual(['Alpha', 'Gamma', 'Beta']);
+  });
+
+  it('songs without max score sort last (descending)', () => {
+    const songsPartialMax = [
+      song('s1', 'Alpha', 'A', 2020, { Solo_Guitar: 100000 }),
+      song('s2', 'Beta', 'B', 2021),  // no maxScores
+      song('s3', 'Gamma', 'C', 2022, { Solo_Guitar: 100000 }),
+    ];
+    const scoreMap = new Map([
+      ['s1', score('s1', { score: 80000 })],
+      ['s2', score('s2', { score: 95000 })],
+      ['s3', score('s3', { score: 70000 })],
+    ]);
+    const allScoreMap = new Map(Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([[inst, s]])]));
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: songsPartialMax, search: '', sortMode: 'maxdistance' as any, sortAscending: false,
+      filters: emptyFilters as any, instrument: inst,
+      scoreMap, allScoreMap,
+    }));
+    expect(result.current.map(s => s.title)).toEqual(['Alpha', 'Gamma', 'Beta']);
+  });
+
+  it('falls back to score sort when no songs have maxScores (descending)', () => {
+    const songsNoMax = [
+      song('s1', 'Alpha', 'A', 2020),
+      song('s2', 'Beta', 'B', 2021),
+      song('s3', 'Gamma', 'C', 2022),
+    ];
+    const scoreMap = new Map([
+      ['s1', score('s1', { score: 80000 })],
+      ['s2', score('s2', { score: 95000 })],
+      ['s3', score('s3', { score: 70000 })],
+    ]);
+    const allScoreMap = new Map(Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([[inst, s]])]));
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: songsNoMax, search: '', sortMode: 'maxdistance' as any, sortAscending: false,
+      filters: emptyFilters as any, instrument: inst,
+      scoreMap, allScoreMap,
+    }));
+    // Falls back to raw score comparison: 95k > 80k > 70k
+    expect(result.current.map(s => s.title)).toEqual(['Beta', 'Alpha', 'Gamma']);
   });
 });

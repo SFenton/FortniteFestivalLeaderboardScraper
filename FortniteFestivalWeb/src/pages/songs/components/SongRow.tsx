@@ -35,14 +35,24 @@ function renderMetadataElement(
   score: PlayerScore,
   _allKeys: string[],
   songIntensityRaw?: number,
+  maxScore?: number,
+  sortMode?: string,
 ): React.ReactNode | null {
   const stars = score.stars ?? 0;
 
   switch (key) {
     case 'score':
-      return score.score > 0 ? (
-        <ScorePill score={score.score} width="78px" bold />
-      ) : null;
+      if (score.score <= 0) return null;
+      if (sortMode === 'maxdistance' && maxScore) {
+        return (
+          <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: '2px' }}>
+            <ScorePill score={score.score} bold />
+            <span style={{ color: Colors.textMuted, fontSize: Font.sm }}>/</span>
+            <ScorePill score={maxScore} bold />
+          </span>
+        );
+      }
+      return <ScorePill score={score.score} width="78px" bold />;
     case 'percentage':
       return (score.accuracy ?? 0) > 0 ? (
         <AccuracyDisplay
@@ -70,6 +80,11 @@ function renderMetadataElement(
     }
     case 'intensity':
       return songIntensityRaw != null ? <DifficultyBars level={songIntensityRaw} raw /> : null;
+    case 'maxdistance': {
+      if (!maxScore || score.score <= 0) return null;
+      const pct = (score.score / maxScore) * 100;
+      return <PercentilePill display={`${pct.toFixed(1)}%`} />;
+    }
     default:
       return null;
   }
@@ -157,24 +172,29 @@ export const SongRow = memo(function SongRow({ song,
   const displayOrder = useMemo(() => {
     const order = [...metadataOrder];
     const generalModes = ['title', 'artist', 'year', 'hasfc'];
-    if (!generalModes.includes(sortMode) && order.includes(sortMode)) {
-      return [sortMode, ...order.filter(k => k !== sortMode)];
+    if (!generalModes.includes(sortMode)) {
+      if (order.includes(sortMode)) {
+        return [sortMode, ...order.filter(k => k !== sortMode)];
+      }
+      // Sort mode not in saved order (e.g. new metadata key) — prepend it
+      return [sortMode, ...order];
     }
     return order;
   }, [metadataOrder, sortMode]);
 
   const diffKey = INSTRUMENT_DIFFICULTY_KEY[instrument];
   const songIntensityRaw = diffKey != null ? song.difficulty?.[diffKey] : undefined;
+  const maxScore = song.maxScores?.[instrument];
 
   const entries = useMemo(() => {
     if (!score || instrumentChips) return [];
     const result: MetadataEntry[] = [];
     for (const key of displayOrder) {
-      const el = renderMetadataElement(key, score, displayOrder, songIntensityRaw);
+      const el = renderMetadataElement(key, score, displayOrder, songIntensityRaw, maxScore, sortMode);
       if (el) result.push({ key, el });
     }
     return result;
-  }, [score, displayOrder, songIntensityRaw, instrumentChips]);
+  }, [score, displayOrder, songIntensityRaw, maxScore, sortMode, instrumentChips]);
 
   /* v8 ignore start -- computed rendering variables with ternaries */
   const rowStyle = isMobile ? s.rowMobile : s.row;

@@ -103,6 +103,8 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger, rankBy 
     r.data && (r.data.above.length > 0 || r.data.below.length > 0),
   );
 
+  const hasAnyError = instrumentRivals.some(r => r.error);
+
   const PREVIEW_COUNT = 3;
 
   /* v8 ignore start -- render helpers */
@@ -117,7 +119,12 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger, rankBy 
   return (
     <div style={{ ...flexColumn, gap: Gap.section }}>
       {allReady && !hasAnyRivals && (
-        <EmptyState fullPage title={t('rivals.leaderboardEmpty')} style={nextStagger()} onAnimationEnd={clearAnim} />
+        <EmptyState
+          fullPage
+          title={hasAnyError ? t('common.failedToLoad') : t('rivals.leaderboardEmpty')}
+          style={nextStagger()}
+          onAnimationEnd={clearAnim}
+        />
       )}
 
       {instrumentRivals.map(entry => {

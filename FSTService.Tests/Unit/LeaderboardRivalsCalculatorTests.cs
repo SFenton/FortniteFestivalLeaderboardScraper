@@ -167,4 +167,74 @@ public sealed class LeaderboardRivalsCalculatorTests : IDisposable
         Assert.Contains("song1", songIds);
         Assert.Contains("song2", songIds);
     }
+
+    [Fact]
+    public void ComputeForUser_PreservesExistingRivalsWhenUserNotInAccountRankings()
+    {
+        var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        // Seed scores for "user" and a neighbor, compute rankings + rivals normally
+        SeedScoresAndRankings(db,
+            ("song1", [("user", 1000), ("neighbor", 1100)]),
+            ("song2", [("user", 2000), ("neighbor", 2100)]));
+
+        _sut.ComputeForUser("user");
+        var initialRivals = _metaFixture.Db.GetLeaderboardRivals("user", "Solo_Guitar", "totalscore");
+        Assert.NotEmpty(initialRivals);
+
+        // Now clear AccountRankings (simulating a failed or empty ranking computation)
+        var dbPath = Path.Combine(_dataDir, "fst-Solo_Guitar.db");
+        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}"))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DELETE FROM AccountRankings;";
+            cmd.ExecuteNonQuery();
+        }
+
+        // Compute again — user no longer in AccountRankings
+        _sut.ComputeForUser("user");
+
+        // Existing rivals should be PRESERVED (not wiped)
+        var afterRivals = _metaFixture.Db.GetLeaderboardRivals("user", "Solo_Guitar", "totalscore");
+        Assert.NotEmpty(afterRivals);
+        Assert.Equal(initialRivals.Count, afterRivals.Count);
+    }
+
+    [Fact]
+    public void ComputeForUser_ReplacesWithEmptyWhenUserRankedButNoNeighbors()
+    {
+        var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+
+        // Seed two users so we can compute rivals initially
+        SeedScoresAndRankings(db,
+            ("song1", [("user", 1000), ("neighbor", 1100)]),
+            ("song2", [("user", 2000), ("neighbor", 2100)]));
+
+        _sut.ComputeForUser("user");
+        var initialRivals = _metaFixture.Db.GetLeaderboardRivals("user", "Solo_Guitar", "totalscore");
+        Assert.NotEmpty(initialRivals);
+
+        // Remove the neighbor so user is ranked but alone (no neighbors in radius)
+        var dbPath = Path.Combine(_dataDir, "fst-Solo_Guitar.db");
+        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={dbPath}"))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DELETE FROM LeaderboardEntries WHERE AccountId = 'neighbor';";
+            cmd.ExecuteNonQuery();
+        }
+
+        // Recompute rankings with only the user
+        db.RecomputeAllRanks();
+        db.ComputeSongStats();
+        db.ComputeAccountRankings(2);
+
+        // Compute rivals — user IS ranked but has no neighbors
+        _sut.ComputeForUser("user");
+
+        // Rivals should be cleared (legitimate empty state)
+        var afterRivals = _metaFixture.Db.GetLeaderboardRivals("user", "Solo_Guitar", "totalscore");
+        Assert.Empty(afterRivals);
+    }
 }

@@ -712,6 +712,45 @@ public class PostScrapeOrchestratorTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
+    // ComputeLeaderboardRivalsAsync — skip when rankings fail
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ComputeRankingsAsync_ReturnsTrue_OnSuccess()
+    {
+        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var result = await _sut.ComputeRankingsAsync(service, CancellationToken.None);
+        Assert.True(result);
+    }
+
+    [Fact]
+    public async Task ComputeRankingsAsync_ReturnsFalse_OnFailure()
+    {
+        // Seed data so rankings computation actually runs, then corrupt a required
+        // table to trigger an error inside the rankings CTE.
+        var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        db.UpsertEntries("song1", [new LeaderboardEntry
+        {
+            AccountId = "p1", Score = 1000, Accuracy = 95, Stars = 5, Season = 3,
+        }]);
+
+        // Drop SongStats table to make ComputeAccountRankings fail
+        var connStr = $"Data Source={Path.Combine(_tempDir, "fst-Solo_Guitar.db")}";
+        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection(connStr))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "DROP TABLE IF EXISTS SongStats;";
+            cmd.ExecuteNonQuery();
+        }
+
+        var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
+        var result = await _sut.ComputeRankingsAsync(service, CancellationToken.None);
+        Assert.False(result);
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // NoOpHttpHandler (shared utility)
     // ═══════════════════════════════════════════════════════════
 

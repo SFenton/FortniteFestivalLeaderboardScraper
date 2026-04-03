@@ -302,7 +302,8 @@
     "percentile": "Percentile",
     "seasonAchieved": "Season Achieved",
     "intensity": "Song Intensity",
-    "stars": "Stars"
+    "stars": "Stars",
+    "maxDistance": "Max Score %"
   },
   "history": {
     "title": "Score History",
@@ -394,7 +395,8 @@
     "percentile": "Percentile",
     "stars": "Stars",
     "seasonAchieved": "Season Achieved",
-    "intensity": "Song Intensity"
+    "intensity": "Song Intensity",
+    "maxDistance": "Max Score %"
   },
   "format": {
     "noScore": "—",

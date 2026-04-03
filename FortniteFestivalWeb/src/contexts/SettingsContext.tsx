@@ -42,6 +42,7 @@ export type AppSettings = {
   metadataShowSeasonAchieved: boolean;
   metadataShowDifficulty: boolean;
   metadataShowStars: boolean;
+  metadataShowMaxDistance: boolean;
 };
 
 export const defaultAppSettings = (): AppSettings => ({
@@ -69,6 +70,7 @@ export const defaultAppSettings = (): AppSettings => ({
   metadataShowSeasonAchieved: true,
   metadataShowDifficulty: true,
   metadataShowStars: true,
+  metadataShowMaxDistance: true,
 });
 
 /* ── Show-key mapping ── */
@@ -108,7 +110,13 @@ function loadSettings(): AppSettings {
     if (!raw) return defaultAppSettings();
     const parsed = JSON.parse(raw);
     const defaults = defaultAppSettings();
-    return { ...defaults, ...parsed };
+    const merged = { ...defaults, ...parsed };
+    // Migrate songRowVisualOrder: append new DEFAULT_METADATA_ORDER keys
+    if (Array.isArray(merged.songRowVisualOrder)) {
+      const missing = DEFAULT_METADATA_ORDER.filter(k => !merged.songRowVisualOrder.includes(k));
+      if (missing.length > 0) merged.songRowVisualOrder = [...merged.songRowVisualOrder, ...missing];
+    }
+    return merged;
   } catch {
     return defaultAppSettings();
   }

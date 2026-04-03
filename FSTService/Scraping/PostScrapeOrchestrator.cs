@@ -87,13 +87,17 @@ public sealed class PostScrapeOrchestrator
         // global-scrape cutoff) are present in the instrument DBs when rankings
         // are computed.  The SharedDopPool handles concurrency.
         await RefreshRegisteredUsersAsync(ctx, ct);
-        await ComputeRankingsAsync(service, ct);
+        var rankingsSucceeded = await ComputeRankingsAsync(service, ct);
 
         // Per-song rivals and leaderboard rivals have no shared write targets
         // and both depend only on rankings, so they can run in parallel.
+        // Leaderboard rivals are skipped when rankings failed — running against
+        // stale/empty AccountRankings would wipe previously-computed rivals.
         await Task.WhenAll(
             ComputeRivalsAsync(ctx, ct),
-            ComputeLeaderboardRivalsAsync(ctx, ct));
+            rankingsSucceeded
+                ? ComputeLeaderboardRivalsAsync(ctx, ct)
+                : Task.CompletedTask);
 
         // ── Precompute API responses + player stats tiers in parallel ──
         // PrecomputeAllAsync writes to an in-memory ConcurrentDictionary;
@@ -205,16 +209,18 @@ public sealed class PostScrapeOrchestrator
     /// Compute per-instrument + composite + combo rankings and daily history snapshots.
     /// Runs after enrichment/pruning and registered-user refresh, before rivals.
     /// </summary>
-    internal async Task ComputeRankingsAsync(FestivalService service, CancellationToken ct)
+    internal async Task<bool> ComputeRankingsAsync(FestivalService service, CancellationToken ct)
     {
         try
         {
             _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRankings);
             await _rankingsCalculator.ComputeAllAsync(service, ct);
+            return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.LogWarning(ex, "Rankings computation failed. Will retry next pass.");
+            return false;
         }
     }
 
