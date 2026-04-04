@@ -276,7 +276,21 @@ export function PaginatedLeaderboard<T>({
             );
           })}
           {entries.length === 0 && emptyMessage && (
-            <div style={s.emptyRow}>{emptyMessage}</div>
+            <div
+              style={{
+                ...s.emptyRow,
+                ...(animMode !== 'cached'
+                  ? { opacity: 0, animation: `fadeInUp ${FADE_DURATION}ms ease-out forwards` }
+                  : undefined),
+              }}
+              onAnimationEnd={(ev) => {
+                const el = ev.currentTarget;
+                el.style.opacity = '';
+                el.style.animation = '';
+              }}
+            >
+              {emptyMessage}
+            </div>
           )}
         </div>
       )}

@@ -79,9 +79,12 @@ export const plbStyles = {
   } as CSSProperties,
 
   emptyRow: {
-    padding: Gap.xl,
+    ...flexColumn,
+    alignItems: Align.center,
+    justifyContent: Justify.center,
     textAlign: TextAlign.center,
     color: Colors.textMuted,
+    minHeight: `calc(100vh - ${Layout.shellChromeHeight}px)`,
   } as CSSProperties,
 
   /* ── Pagination inner styles (content layout, not fixed position) ── */
