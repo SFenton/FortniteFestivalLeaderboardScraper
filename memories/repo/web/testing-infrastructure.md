@@ -238,7 +238,7 @@ __test__/
 |---|---|
 | Test directory | `./e2e` |
 | Timeout | 30000ms |
-| Base URL | `http://localhost:5173` |
+| Base URL | `http://localhost:3000` |
 | Headless | `true` |
 
 **4 viewport projects**:
@@ -250,7 +250,7 @@ __test__/
 | `mobile` | 375×812 | Yes |
 | `mobile-narrow` | 320×568 | Yes |
 
-**Web server**: `npx vite --mode e2e --port 5173` with reuse, 30s startup timeout.
+**Web server**: `npx vite --mode e2e --port 3000` with reuse, 30s startup timeout.
 
 **15 E2E spec files**:
 ```

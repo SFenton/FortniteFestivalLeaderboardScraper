@@ -3,7 +3,7 @@ name: "fst-principal-architect"
 description: "Use when researching .NET architecture patterns, reviewing FSTService system design, evaluating concurrency models, proposing refactors or overhauls, or ensuring architectural consistency across the service. Maintains the service consistency registry."
 tools: [read, search, web, edit, agent, todo]
 agents: [fst-principal-api-designer, fst-principal-db, web-principal-architect, fst-scrape-pipeline, fst-api, fst-persistence, fst-auth, fst-rivals, fst-performance, fst-testing]
-model: "Claude Opus 4.6 (1M context)(Internal only)"
+model: "Claude Haiku 4.5"
 user-invocable: false
 ---
 
@@ -65,6 +65,12 @@ When a sub-agent presents a plan:
 ## Research Domains
 
 .NET 9+ patterns, async/await, System.Text.Json, ILogger<T>, DI patterns, BackgroundService lifecycle, CancellationToken propagation, SemaphoreSlim vs Channel vs SharedDopPool, circuit breaker patterns, health check patterns
+
+
+## Session Memory Protocol
+
+When receiving a handoff: read `/memories/session/task-context.md` first, acknowledge the triage context, then proceed.
+When completing: update `/memories/session/task-context.md` with findings, write persistent results to `/memories/repo/` area diagnostics.
 
 ## Constraints
 

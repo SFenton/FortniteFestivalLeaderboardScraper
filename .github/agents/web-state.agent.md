@@ -1,9 +1,9 @@
 ---
 name: "web-state"
 description: "Use when working on React contexts, custom hooks (ui/ or data/), React Query (queryClient, queryKeys, pageCache), data flow patterns, or storage patterns in FortniteFestivalWeb."
-tools: [read, search, edit, agent]
+tools: [read, search, edit, agent, web, fst-production/*]
 agents: [web-principal-architect, web-principal-designer]
-model: "Claude Opus 4.6 (1M context)(Internal only)"
+model: "Claude Haiku 4.5"
 user-invocable: false
 ---
 
@@ -38,9 +38,25 @@ You are the **Web State Agent** — specialist for state management and data flo
 4. Follow `useEffect` dependency patterns (include all deps for FAB actions)
 5. Update `/memories/repo/web/state-management.md`
 
+
+## Session Memory Protocol
+
+When receiving a handoff: read `/memories/session/task-context.md` first, acknowledge the triage context, then proceed.
+When completing: update `/memories/session/task-context.md` with findings, write persistent results to `/memories/repo/` area diagnostics.
+
 ## Constraints
 
 - DO NOT store navigation state in localStorage (use URL searchParams)
 - DO register all query keys in queryKeys.ts
 - DO invalidate related queries after mutations
+- DO verify API responses using `fst-production/*` or `web` tools when diagnosing data flow issues
 - CONSULT web-principal-architect for new state patterns
+
+## Diagnostic Protocol
+
+When investigating a state/data issue or answering "why doesn't the UI show X?":
+
+1. **Check real API data** — Use `fst-production/*` or `web` tools to verify what the API returns
+2. **Trace the data flow** — Read API client → React Query cache → context provider → hook → component consumer
+3. **Check transformations** — Verify data mapping, filtering, and null handling at each step
+4. Report root cause with specific file and line references

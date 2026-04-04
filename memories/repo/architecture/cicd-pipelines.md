@@ -117,7 +117,7 @@
   - Coverage: `@vitest/coverage-v8` with per-file thresholds (95% lines/branches/statements/functions)
 - **E2E tests**: Playwright 1.58.2
   - 4 viewport projects: desktop (1280×800), desktop-narrow (800×800), mobile (375×812), mobile-narrow (320×568)
-  - Dev server auto-starts: `npx vite --mode e2e --port 5173`
+  - Dev server auto-starts: `npx vite --mode e2e --port 3000`
   - Headless by default
 
 ## Coverage Gates

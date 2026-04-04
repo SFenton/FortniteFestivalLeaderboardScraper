@@ -53,6 +53,8 @@ const UNKNOWN_USER = 'Unknown User';
 
 const ALBUM_ART_PREFIX = 'https://cdn2.unrealengine.com/';
 const SONGS_CACHE_KEY = 'fst_songs_cache';
+/** Bump when the SongsResponse shape changes (e.g. adding maxScores). */
+const SONGS_CACHE_VERSION = 2;
 
 export function expandAlbumArt(songs: { albumArt?: string }[]): void {
   for (const song of songs) {
@@ -62,13 +64,19 @@ export function expandAlbumArt(songs: { albumArt?: string }[]): void {
   }
 }
 
-type SongsCache = { data: SongsResponse; etag: string | null };
+type SongsCache = { data: SongsResponse; etag: string | null; v?: number };
 
 function loadSongsCache(): SongsCache | null {
   try {
     const raw = localStorage.getItem(SONGS_CACHE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as SongsCache;
+    const parsed = JSON.parse(raw) as SongsCache;
+    // Discard caches from before the current version (shape may have changed)
+    if ((parsed.v ?? 0) < SONGS_CACHE_VERSION) {
+      localStorage.removeItem(SONGS_CACHE_KEY);
+      return null;
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -76,7 +84,7 @@ function loadSongsCache(): SongsCache | null {
 
 function saveSongsCache(data: SongsResponse, etag: string | null): void {
   try {
-    localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({ data, etag }));
+    localStorage.setItem(SONGS_CACHE_KEY, JSON.stringify({ data, etag, v: SONGS_CACHE_VERSION }));
   } catch { /* quota exceeded — ignore */ }
 }
 

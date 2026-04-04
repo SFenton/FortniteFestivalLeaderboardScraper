@@ -5,6 +5,7 @@ import { useLocation, useNavigationType } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { staggerDelay, estimateVisibleCount } from '@festival/ui-utils';
 import { useStaggerStyle, buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
+import { useContainerWidth } from '../../hooks/ui/useContainerWidth';
 import { useFestival } from '../../contexts/FestivalContext';
 import { usePlayerData } from '../../contexts/PlayerDataContext';
 import { useSettings } from '../../contexts/SettingsContext';
@@ -46,6 +47,36 @@ import {
 } from '../../utils/songSettings';
 import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransition';
 
+/**
+ * Estimated minimum width (px) for each metadata element in desktop row layout.
+ * Includes the element itself plus its share of the gap.
+ * Used to predict whether all elements fit before rendering.
+ */
+const METADATA_MIN_WIDTH: Record<string, number> = {
+  score: 94,        // ScorePill (78px) + gap share
+  percentage: 72,   // AccuracyDisplay (~55px) + gap share
+  percentile: 96,   // PercentilePill (~80px) + gap share
+  stars: 120,       // 5 gold stars (~104px) + gap share
+  seasonachieved: 48, // SeasonPill (~32px) + gap share
+  intensity: 44,    // DifficultyBars (~28px) + gap share
+  maxdistance: 76,  // PercentilePill with % (~60px) + gap share
+};
+
+/** Fixed overhead: row padding (32px) + SongInfo (albumArt 48 + gap 16 + min title 150) + gap to metadata (16). */
+const ROW_FIXED_OVERHEAD = 262;
+
+function getMinDesktopRowWidth(visibleKeys: string[], sortMode?: string): number {
+  let width = ROW_FIXED_OVERHEAD;
+  for (const key of visibleKeys) {
+    if (key === 'score' && sortMode === 'maxdistance') {
+      width += 192;  // dual score: 78 + 6 + ~8 + 6 + 78 = 176px + 16px gap share
+    } else {
+      width += METADATA_MIN_WIDTH[key] ?? 80;
+    }
+  }
+  return width;
+}
+
 export default function SongsPage() {
   const { t } = useTranslation();
   const {
@@ -54,6 +85,49 @@ export default function SongsPage() {
   const { settings: appSettings } = useSettings();
   const isMobile = useIsMobile();
   const isMobileChrome = useIsMobileChrome();
+  const [settings, setSettings] = useState<SongSettings>(loadSongSettings);
+  
+  // Filter metadata keys by visibility settings (computed early for container-width detection)
+  /* v8 ignore start — metadata visibility: settings-dependent presentation filter */
+  const visibleMetadataOrder = useMemo(() => {
+    const hidden = new Set<string>();
+    if (!appSettings.metadataShowScore) hidden.add('score');
+    if (!appSettings.metadataShowPercentage) hidden.add('percentage');
+    if (!appSettings.metadataShowPercentile) hidden.add('percentile');
+    if (!appSettings.metadataShowSeasonAchieved) hidden.add('seasonachieved');
+    if (!appSettings.metadataShowDifficulty) hidden.add('intensity');
+    if (!appSettings.metadataShowStars) hidden.add('stars');
+    if (hidden.size === 0) return settings.metadataOrder;
+
+    if (appSettings.songRowVisualOrderEnabled) {
+      return appSettings.songRowVisualOrder.filter(k => !hidden.has(k));
+    }
+    return settings.metadataOrder.filter(k => !hidden.has(k));
+  }, [
+    settings.metadataOrder,
+    appSettings.songRowVisualOrderEnabled,
+    appSettings.songRowVisualOrder,
+    appSettings.metadataShowScore,
+    appSettings.metadataShowPercentage,
+    appSettings.metadataShowPercentile,
+    appSettings.metadataShowSeasonAchieved,
+    appSettings.metadataShowDifficulty,
+    appSettings.metadataShowStars,
+  ]);
+  /* v8 ignore stop */
+  
+  // Container-width-aware compact row detection
+  const containerRef = useRef<HTMLDivElement>(null);
+  const containerWidth = useContainerWidth(containerRef);
+  const minDesktopWidth = useMemo(
+    () => getMinDesktopRowWidth(visibleMetadataOrder, settings.sortMode),
+    [visibleMetadataOrder, settings.sortMode],
+  );
+  // Fall back to viewport query until first ResizeObserver measurement
+  const isCompactRow = containerWidth > 0
+    ? containerWidth < minDesktopWidth
+    : window.innerWidth <= 1100;
+  const songRowMobile = isMobile || isCompactRow;
 
   const songsSlidesMemo = useMemo(() => songSlides(isMobileChrome), [isMobileChrome]);
 
@@ -78,7 +152,6 @@ export default function SongsPage() {
     const id = setTimeout(() => setDebouncedSearch(effectiveSearch), 250);
     return () => clearTimeout(id);
   }, [effectiveSearch]);
-  const [settings, setSettings] = useState<SongSettings>(loadSongSettings);
 
   // Re-sync settings from localStorage when changed externally (e.g. PlayerPage card clicks)
   const savingRef = useRef(false);
@@ -290,35 +363,6 @@ export default function SongsPage() {
     [appSettings],
   );
 
-  // Filter metadata keys by visibility settings (mirrors mobile visibleMetadataKeys)
-  /* v8 ignore start — metadata visibility: settings-dependent presentation filter */
-  const visibleMetadataOrder = useMemo(() => {
-    const hidden = new Set<string>();
-    if (!appSettings.metadataShowScore) hidden.add('score');
-    if (!appSettings.metadataShowPercentage) hidden.add('percentage');
-    if (!appSettings.metadataShowPercentile) hidden.add('percentile');
-    if (!appSettings.metadataShowSeasonAchieved) hidden.add('seasonachieved');
-    if (!appSettings.metadataShowDifficulty) hidden.add('intensity');
-    if (!appSettings.metadataShowStars) hidden.add('stars');
-    if (hidden.size === 0) return settings.metadataOrder;
-
-    if (appSettings.songRowVisualOrderEnabled) {
-      return appSettings.songRowVisualOrder.filter(k => !hidden.has(k));
-    }
-    return settings.metadataOrder.filter(k => !hidden.has(k));
-  }, [
-    settings.metadataOrder,
-    appSettings.songRowVisualOrderEnabled,
-    appSettings.songRowVisualOrder,
-    appSettings.metadataShowScore,
-    appSettings.metadataShowPercentage,
-    appSettings.metadataShowPercentile,
-    appSettings.metadataShowSeasonAchieved,
-    appSettings.metadataShowDifficulty,
-    appSettings.metadataShowStars,
-  ]);
-  /* v8 ignore stop */
-
   // Derive available seasons from player scores
   const availableSeasons = useMemo(() => {
     if (!playerData) return [];
@@ -401,7 +445,7 @@ export default function SongsPage() {
   }, [loadPhase]);
 
   // Turn off stagger after all animations finish
-  const maxVisibleSongs = useMemo(() => estimateVisibleCount(isMobile ? 120 : 72), [isMobile]);
+  const maxVisibleSongs = useMemo(() => estimateVisibleCount(songRowMobile ? 120 : 72), [songRowMobile]);
   useEffect(() => {
     if (loadPhase !== LoadPhase.ContentIn || !shouldStagger) return;
     const totalAnimTime = (maxVisibleSongs + 1) * 125 + 400;
@@ -424,7 +468,7 @@ export default function SongsPage() {
   /* v8 ignore stop */
 
   // ── Virtual list ──
-  const ROW_HEIGHT = isMobile ? 122 : 68; // row + 2px gap
+  const ROW_HEIGHT = songRowMobile ? 122 : 68; // row + 2px gap
   const listParentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
     count: loadPhase === LoadPhase.ContentIn ? filtered.length : 0,
@@ -514,6 +558,7 @@ export default function SongsPage() {
         />
       </>}
     >
+      <div ref={containerRef} style={songsStyles.container}>
         {isSyncing && playerData && (
           <SyncBanner
             displayName={playerData.displayName}
@@ -564,19 +609,21 @@ export default function SongsPage() {
                       enabledInstruments={enabledInstruments}
                       metadataOrder={visibleMetadataOrder}
                       sortMode={settings.sortMode}
-                      isMobile={isMobile}
+                      isMobile={songRowMobile}
                       /* v8 ignore start — stagger delay calculation */
                       staggerDelay={shouldStagger && i < maxVisibleSongs ? (staggerDelay(i, 125, maxVisibleSongs) ?? maxVisibleSongs * 125) : undefined}
                       /* v8 ignore stop */
                       shopHighlight={isShopHighlighted(song.songId)}
                       shopHighlightRed={isLeavingTomorrow(song.songId)}
                       invalidInstruments={invalidScoreMap.get(song.songId)}
+                      containerWidth={containerWidth}
                     />
                   </div>
                 );
             })}
           </div>
         )}
+      </div>
     </Page>
   );
 }

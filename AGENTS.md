@@ -53,6 +53,15 @@ Detailed designs in `docs/`. These are source of truth for feature architecture:
 
 This repository uses a hierarchical agent organization. All agents follow these rules:
 
+### Model Tiers
+
+| Tier | Model | Agents | Purpose |
+|---|---|---|---|
+| Research/Coordination | Claude Opus 4.6 | festival-score-tracker | Deep reasoning, architecture, triage |
+| Implementation | Claude Haiku 4.5 | All other agents (45) — heads, principals, design, feat, test, cross-cutting, runner | Design review, code gen, measurement, mechanical tasks |
+
+Only the `festival-score-tracker` coordinator is user-invocable. All other agents are called internally via `runSubagent`.
+
 ### Memory Protocol
 - **Read broadly, write narrowly** — Any agent reads any memory file. Write only to your designated area.
 - **Update on completion** — After plan mode: write findings + plan. After execute mode: write outcomes + lessons.
@@ -67,6 +76,40 @@ This repository uses a hierarchical agent organization. All agents follow these 
 ### Testing Coordination
 - Code changes hand off to testing agents with context written to `/memories/session/task-context.md`.
 - Test failures are classified: TEST BUG (test agent fixes), CODE BUG (area owner fixes), ARCHITECTURE ISSUE (principal reviews).
+
+### Plan → Confirm → Act Workflow
+
+ALL implementation requests follow a mandatory two-phase flow with user approval between phases.
+
+#### Plan Phase (max 3 agent chains, no Playwright)
+
+1. **Triage** — Coordinator classifies issue, gathers user context (player, sort, instrument, FRE, settings, page, behavior)
+2. **Developer research** — Developer agent researches root cause, proposes fix (no implementation)
+3. **Design review** — Designer reviews proposal via code analysis only (no Playwright), approves or counter-proposes
+4. **Test planning** — Test team proposes test cases
+5. **Negotiation** — Full dev↔design↔test exchange written to `/memories/session/plan-negotiation.md`
+6. **User gate** — Coordinator presents ENTIRE negotiation transparently. User approves, modifies, or rejects.
+
+#### Act Phase (max 3 agent chains, Playwright enabled)
+
+1. **Implementation** — Developer implements the approved plan
+2. **Design validation** — Designer validates with Playwright via `web-playwright-runner` + `web-state/*` MCP tools for browser state bootstrap → BLOCK/ADVISORY/PASS
+3. **Test execution** — Test team writes and runs tests
+4. **Outcomes** — Written to `/memories/session/act-log.md`, presented to user
+
+#### Rules
+- **MANDATORY user approval** between Plan and Act phases. No auto-execution.
+- Feature agents report "implemented, pending design review" — never "complete"
+- Design reviews in Act phase without Playwright measurements are INVALID
+- Design agents delegate ALL Playwright to `web-playwright-runner`
+- `web-state/*` MCP tools bootstrap browser state (player, sort, instrument, FRE) via JS snippets passed to `playwright/evaluate`
+- Chain depth limit: 3 per phase. Escalate to user after limit.
+
+#### Session Memory Files
+- `/memories/session/task-context.md` — Triage context + user context
+- `/memories/session/plan-negotiation.md` — Full agent negotiation during plan phase
+- `/memories/session/plan-proposal.md` — Approved plan after user confirmation
+- `/memories/session/act-log.md` — Implementation outcomes during act phase
 
 ## Registered Test Accounts
 

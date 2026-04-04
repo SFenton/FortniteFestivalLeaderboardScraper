@@ -1,8 +1,8 @@
-/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
+﻿/* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
  * Song row components for the songs list, extracted from SongsPage.
  */
-import { memo, useMemo, useRef, useCallback, Fragment, type CSSProperties } from 'react';
+import { memo, useMemo, useRef, useCallback, Fragment, useState, useLayoutEffect, type CSSProperties } from 'react';
 import InvalidScoreIcon from './InvalidScoreIcon';
 import { Link, useLocation } from 'react-router-dom';
 import { IoBagHandle, IoChevronForward } from 'react-icons/io5';
@@ -29,6 +29,9 @@ const INSTRUMENT_DIFFICULTY_KEY: Record<string, keyof SongDifficulty> = {
   Solo_PeripheralBass: 'proBass',
 };
 
+/** Below this container width (px), mobile rows use unified wrapping instead of top-row primary element. */
+const MOBILE_PILL_THRESHOLD = 310;
+
 /** Render a single metadata element for the given key. */
 function renderMetadataElement(
   key: string,
@@ -43,12 +46,12 @@ function renderMetadataElement(
   switch (key) {
     case 'score':
       if (score.score <= 0) return null;
-      if (sortMode === 'maxdistance' && maxScore) {
+      if (sortMode === 'maxdistance') {
         return (
-          <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: '2px' }}>
-            <ScorePill score={score.score} bold />
-            <span style={{ color: Colors.textMuted, fontSize: Font.sm }}>/</span>
-            <ScorePill score={maxScore} bold />
+          <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: Gap.md }}>
+            <ScorePill score={score.score} width="78px" bold />
+            <span style={{ color: Colors.textPrimary, fontSize: Font.lg, fontWeight: Weight.bold, flexShrink: 0 }}>/</span>
+            {maxScore ? <ScorePill score={maxScore} width="78px" bold textAlign="left" /> : <span style={{ color: Colors.textMuted, fontSize: Font.lg, fontWeight: Weight.bold, width: '78px', display: 'inline-block', textAlign: 'left' }}>—</span>}
           </span>
         );
       }
@@ -81,7 +84,8 @@ function renderMetadataElement(
     case 'intensity':
       return songIntensityRaw != null ? <DifficultyBars level={songIntensityRaw} raw /> : null;
     case 'maxdistance': {
-      if (!maxScore || score.score <= 0) return null;
+      if (score.score <= 0) return null;
+      if (!maxScore) return <PercentilePill display="—" />;
       const pct = (score.score / maxScore) * 100;
       return <PercentilePill display={`${pct.toFixed(1)}%`} />;
     }
@@ -90,15 +94,92 @@ function renderMetadataElement(
   }
 }
 
+type NeighborStatus = 'alone' | 'left' | 'right' | 'both';
+
 type MetadataEntry = { key: string; el: React.ReactNode };
 
 /* v8 ignore start — internal presentation component */
 function MetadataBottomRow({ entries }: { entries: MetadataEntry[] }) {
   const s = useStyles();
+  const [neighborMap, setNeighborMap] = useState<Record<string, NeighborStatus>>({});
+  const ref = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (!ref.current) return;
+
+    const measureNeighbors = () => {
+      const children = ref.current?.querySelectorAll('[data-metadata-key]');
+      if (!children || children.length === 0) return;
+
+      // Get top position for each child, rounded to nearest integer for float tolerance
+      const positions: Array<{ key: string; top: number }> = [];
+      children.forEach((child) => {
+        const key = child.getAttribute('data-metadata-key');
+        if (key) {
+          const rect = child.getBoundingClientRect();
+          positions.push({ key, top: Math.round(rect.top) });
+        }
+      });
+
+      // Group children by their top position
+      const grouped = new Map<number, string[]>();
+      positions.forEach(({ key, top }) => {
+        if (!grouped.has(top)) grouped.set(top, []);
+        grouped.get(top)!.push(key);
+      });
+
+      // Assign neighbor status to each entry
+      const newNeighborMap: Record<string, NeighborStatus> = {};
+      grouped.forEach((keys) => {
+        if (keys.length === 1) {
+          newNeighborMap[keys[0]] = 'alone';
+        } else {
+          keys.forEach((key, idx) => {
+            if (idx === 0) {
+              newNeighborMap[key] = 'right';
+            } else if (idx === keys.length - 1) {
+              newNeighborMap[key] = 'left';
+            } else {
+              newNeighborMap[key] = 'both';
+            }
+          });
+        }
+      });
+
+      setNeighborMap(newNeighborMap);
+    };
+
+    // Run measurement after render
+    measureNeighbors();
+
+    // Set up ResizeObserver to re-measure on container resize
+    const observer = new ResizeObserver(() => {
+      measureNeighbors();
+    });
+    observer.observe(ref.current);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [entries]);
+
   if (entries.length === 0) return null;
+
   return (
-    <div style={s.metadataWrap}>
-      {entries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}
+    <div ref={ref} style={s.metadataWrap}>
+      {entries.map(e => {
+        const status = neighborMap[e.key] || 'loading';
+        return (
+          <div
+            key={e.key}
+            data-metadata-key={e.key}
+            className={`metadataItem metadataItem--${status}`}
+            style={s[`metadataItem${status === 'alone' ? 'Alone' : status === 'left' ? 'Left' : status === 'right' ? 'Right' : 'Both'}` as keyof ReturnType<typeof useStyles>]}
+          >
+            {e.el}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -121,6 +202,7 @@ export const SongRow = memo(function SongRow({ song,
   shopHighlightRed,
   externalHref,
   invalidInstruments,
+  containerWidth,
 }: {
   song: Song;
   score?: PlayerScore;
@@ -140,6 +222,8 @@ export const SongRow = memo(function SongRow({ song,
   externalHref?: string;
   /** Map of instrument → hasFallback for invalid scores on this song. */
   invalidInstruments?: Map<InstrumentKey, 'fallback' | 'no-fallback' | 'over-threshold'>;
+  /** Container width for threshold-based layout decisions. */
+  containerWidth?: number;
 }) {
   const s = useStyles();
   const instrumentChips = useMemo(() => {
@@ -200,7 +284,8 @@ export const SongRow = memo(function SongRow({ song,
   const rowStyle = isMobile ? s.rowMobile : s.row;
   const rowClassName = shopHighlightRed ? anim.shopHighlightRed : shopHighlight ? anim.shopHighlight : undefined;
 
-  const songInfo = <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} />;
+  const infoMinWidth = isMobile ? 160 : 200;
+  const songInfo = <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} minWidth={infoMinWidth} />;
 
   // External link: render <a> instead of <Link>
   const defaultTo = `/songs/${song.songId}${instrumentFilter != null ? `?instrument=${encodeURIComponent(instrument)}` : ''}`;
@@ -236,30 +321,55 @@ export const SongRow = memo(function SongRow({ song,
   /* v8 ignore stop */
 
   if (isMobile && entries.length > 0) {
-    const primaryKey = entries[0]?.key;
-    /* v8 ignore start -- defensive: entries[0] always has a key */
-    const scoreEntry = primaryKey ? entries.find(e => e.key === primaryKey) : null;
-    const bottomEntries = primaryKey ? entries.filter(e => e.key !== primaryKey) : entries;
-    /* v8 ignore stop */
     const mergedStyle = animStyle ? { ...rowStyle, ...animStyle } : rowStyle;
+    const pillFitsTopRow = !containerWidth || containerWidth >= MOBILE_PILL_THRESHOLD;
+
+    if (pillFitsTopRow) {
+      // Primary/secondary split: primary entry in detailStrip at top right, rest in bottom row
+      const primaryEntry = entries[0];
+      const bottomEntries = entries.slice(1);
+
+      return (
+        externalHref ? (
+          <a ref={linkRef as React.Ref<HTMLAnchorElement>} {...linkProps} className={rowClassName} style={mergedStyle} onAnimationEnd={handleAnimEnd}>
+            <div style={s.mobileTopRow}>
+              {songInfo}
+              <div style={s.detailStrip}>{primaryEntry.el}{invalidIcon}</div>
+            </div>
+            {bottomEntries.length > 0 && <MetadataBottomRow entries={bottomEntries} />}
+            {externalIndicator}
+          </a>
+        ) : (
+          <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={mergedStyle} onAnimationEnd={handleAnimEnd}>
+            <div style={s.mobileTopRow}>
+              {songInfo}
+              <div style={s.detailStrip}>{primaryEntry.el}{invalidIcon}</div>
+            </div>
+            {bottomEntries.length > 0 && <MetadataBottomRow entries={bottomEntries} />}
+          </Link>
+        )
+      );
+    }
+
+    // Unified wrapping: all entries in MetadataBottomRow
     return (
       externalHref ? (
         <a ref={linkRef as React.Ref<HTMLAnchorElement>} {...linkProps} className={rowClassName} style={mergedStyle} onAnimationEnd={handleAnimEnd}>
           <div style={s.mobileTopRow}>
             {songInfo}
-            {scoreEntry && <div style={s.detailStrip}>{scoreEntry.el}</div>}
+            {invalidIcon}
           </div>
-          {bottomEntries.length > 0 && <MetadataBottomRow entries={bottomEntries} />}
+          <MetadataBottomRow entries={entries} />
           {externalIndicator}
         </a>
       ) : (
-      <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={mergedStyle} onAnimationEnd={handleAnimEnd}>
-        <div style={s.mobileTopRow}>
-          {songInfo}
-          <div style={s.detailStrip}>{scoreEntry && scoreEntry.el}{invalidIcon}</div>
-        </div>
-        {bottomEntries.length > 0 && <MetadataBottomRow entries={bottomEntries} />}
-      </Link>
+        <Link ref={linkRef} to={defaultTo} state={{ backTo: location.pathname }} className={rowClassName} style={mergedStyle} onAnimationEnd={handleAnimEnd}>
+          <div style={s.mobileTopRow}>
+            {songInfo}
+            {invalidIcon}
+          </div>
+          <MetadataBottomRow entries={entries} />
+        </Link>
       )
     );
   }
@@ -356,9 +466,9 @@ export const SongRow = memo(function SongRow({ song,
 
 function useStyles() {
   return useMemo(() => ({
-    row: { ...frostedCard, ...flexRow, gap: Gap.xl, padding: padding(0, Gap.xl), height: Layout.playerSongRowHeight, borderRadius: Radius.md, textDecoration: CssValue.none, color: CssValue.inherit } as CSSProperties,
-    rowMobile: { ...frostedCard, ...flexColumn, gap: Gap.md, padding: padding(Gap.lg, Gap.xl), borderRadius: Radius.md, textDecoration: CssValue.none, color: CssValue.inherit } as CSSProperties,
-    mobileTopRow: { ...flexRow, gap: Gap.xl } as CSSProperties,
+    row: { ...frostedCard, ...flexRow, gap: Gap.xl, padding: padding(0, Gap.xl), height: Layout.playerSongRowHeight, borderRadius: Radius.md, overflow: 'hidden', textDecoration: CssValue.none, color: CssValue.inherit } as CSSProperties,
+    rowMobile: { ...frostedCard, ...flexColumn, gap: Gap.md, padding: padding(Gap.lg, Gap.xl), borderRadius: Radius.md, overflow: 'hidden', textDecoration: CssValue.none, color: CssValue.inherit } as CSSProperties,
+    mobileTopRow: { ...flexRow, gap: Gap.lg, minWidth: 0 } as CSSProperties,
     detailStrip: { ...flexRow, gap: Gap.xl, flexShrink: 0, marginLeft: CssValue.auto } as CSSProperties,
     metadataWrap: { display: Display.flex, flexWrap: 'wrap', alignItems: Align.center, justifyContent: Justify.end, gap: Gap.lg } as CSSProperties,
     instrumentStatusRow: { display: Display.flex, gap: Gap.sm, alignItems: Align.center, flexShrink: 0 } as CSSProperties,
@@ -366,9 +476,14 @@ function useStyles() {
     rowText: { ...flexColumn, gap: Gap.xs, minWidth: 0, flex: 1 } as CSSProperties,
     rowTitle: { fontSize: Font.md, fontWeight: Weight.semibold, ...truncate } as CSSProperties,
     rowArtist: { fontSize: Font.sm, color: Colors.textSubtle, ...truncate } as CSSProperties,
-    scoreMeta: { ...flexRow, gap: Gap.xl, flexShrink: 0 } as CSSProperties,
+    scoreMeta: { ...flexRow, gap: Gap.xl, flexShrink: 1, minWidth: 0, overflow: 'hidden' } as CSSProperties,
     mobileChipRowWrapper: { position: Position.relative, display: Display.flex, alignItems: Align.center, justifyContent: Justify.center } as CSSProperties,
     mobileChipInvalidIcon: { position: Position.absolute, right: 0, top: '50%', transform: 'translateY(-50%)' } as CSSProperties,
     externalIndicator: { ...flexRow, gap: Gap.xs, flexShrink: 0, marginLeft: CssValue.auto, color: Colors.textSubtle } as CSSProperties,
+    // Metadata item wrapper styles (base and neighbor status variants)
+    metadataItemAlone: {} as CSSProperties,
+    metadataItemLeft: {} as CSSProperties,
+    metadataItemRight: {} as CSSProperties,
+    metadataItemBoth: { padding: `0 ${Gap.md}px` } as CSSProperties,
   }), []);
 }

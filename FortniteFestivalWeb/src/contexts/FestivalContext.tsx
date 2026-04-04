@@ -11,12 +11,17 @@ import { api } from '../api/client';
 import { queryKeys } from '../api/queryKeys';
 
 const SONGS_CACHE_KEY = 'fst_songs_cache';
+/** Must match SONGS_CACHE_VERSION in api/client.ts */
+const SONGS_CACHE_VERSION = 2;
 
 function getCachedSongs(): SongsResponse | undefined {
   try {
     const raw = localStorage.getItem(SONGS_CACHE_KEY);
     if (!raw) return undefined;
-    return (JSON.parse(raw) as { data: SongsResponse }).data;
+    const parsed = JSON.parse(raw) as { data: SongsResponse; v?: number };
+    // Reject stale cache versions (shape may lack new fields like maxScores)
+    if ((parsed.v ?? 0) < SONGS_CACHE_VERSION) return undefined;
+    return parsed.data;
   } catch {
     return undefined;
   }

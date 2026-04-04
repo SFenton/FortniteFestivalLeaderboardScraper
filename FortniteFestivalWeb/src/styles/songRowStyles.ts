@@ -42,7 +42,7 @@ export const detailStrip: CSSProperties = {
 export const scoreMeta: CSSProperties = {
   ...flexRow,
   gap: Gap.xl,
-  flexShrink: 0,
+  flexShrink: 1,
 };
 
 /** Wrapping metadata row (mobile). */
@@ -71,4 +71,18 @@ export const instrumentStatusChip: CSSProperties = {
   borderWidth: 2,
   borderStyle: 'solid',
   flexShrink: 0,
+};
+
+/** Metadata item wrapper (for neighbor-detection padding). */
+export const metadataItemAlone: CSSProperties = {};
+
+/** Metadata item with left neighbor. */
+export const metadataItemLeft: CSSProperties = {};
+
+/** Metadata item with right neighbor. */
+export const metadataItemRight: CSSProperties = {};
+
+/** Metadata item with both neighbors (adds horizontal padding for breathing room). */
+export const metadataItemBoth: CSSProperties = {
+  padding: '0 8px',
 };

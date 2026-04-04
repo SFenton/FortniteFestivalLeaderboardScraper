@@ -205,10 +205,10 @@ function renderPage(route = '/songs', accountId = 'test-player') {
   - `desktop-narrow` — 800×800
   - `mobile` — 375×812, hasTouch: true
   - `mobile-narrow` — 320×568, hasTouch: true
-- **baseURL:** `http://localhost:5173`
+- **baseURL:** `http://localhost:3000`
 - **testDir:** `./e2e`
 - **timeout:** 30s per test
-- **webServer:** Auto-starts Vite in `e2e` mode on port 5173
+- **webServer:** Auto-starts Vite in `e2e` mode on port 3000
 
 ### Directory Structure
 ```

@@ -193,7 +193,7 @@ export const Size = {
 } as const;
 
 export const MaxWidth = {
-  card: 1080,
+  card: 1400,
   grid: 2170,
   narrow: 600,
 } as const;

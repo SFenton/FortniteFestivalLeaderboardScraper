@@ -10,19 +10,21 @@ interface ScorePillProps {
   /** Use bold weight (SongRow style) vs semi-bold (leaderboard style). */
   bold?: boolean;
   className?: string;
+  /** Text alignment override. Defaults to 'right'. */
+  textAlign?: 'left' | 'right' | 'center';
 }
 
-const ScorePill = memo(function ScorePill({ score, width, bold, className }: ScorePillProps) {
-  const s = useStyles(bold, width);
+const ScorePill = memo(function ScorePill({ score, width, bold, className, textAlign }: ScorePillProps) {
+  const s = useStyles(bold, width, textAlign);
   return <span className={className} style={s.pill}>{score.toLocaleString()}</span>;
 });
 
 export default ScorePill;
 
-function useStyles(bold?: boolean, width?: string) {
+function useStyles(bold?: boolean, width?: string, textAlign?: 'left' | 'right' | 'center') {
   return useMemo(() => ({
     pill: {
-      textAlign: TextAlign.right,
+      textAlign: textAlign ?? TextAlign.right,
       fontSize: Font.lg,
       fontWeight: bold ? Weight.bold : Weight.semibold,
       color: Colors.textPrimary,
@@ -31,5 +33,5 @@ function useStyles(bold?: boolean, width?: string) {
       display: Display.inlineBlock,
       width,
     } as CSSProperties,
-  }), [bold, width]);
+  }), [bold, width, textAlign]);
 }

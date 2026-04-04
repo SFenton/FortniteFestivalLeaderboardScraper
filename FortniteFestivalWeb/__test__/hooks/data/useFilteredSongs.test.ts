@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+﻿import { describe, it, expect } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useFilteredSongs } from '../../../src/hooks/data/useFilteredSongs';
 import { compareByMode } from '../../../src/pages/songs/components/SongRow';
@@ -731,5 +731,40 @@ describe('useFilteredSongs — maxdistance sort', () => {
     }));
     // Falls back to raw score comparison: 95k > 80k > 70k
     expect(result.current.map(s => s.title)).toEqual(['Beta', 'Alpha', 'Gamma']);
+  });
+
+  it('songs without player score sort last (ascending)', () => {
+    const scoreMap = new Map([
+      ['s1', score('s1', { score: 80000 })],
+      // s2 has no score
+      ['s3', score('s3', { score: 70000 })],
+    ]);
+    const allScoreMap = new Map(Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([[inst, s]])]));
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: songsWithMax, search: '', sortMode: 'maxdistance' as any, sortAscending: true,
+      filters: emptyFilters as any, instrument: inst,
+      scoreMap, allScoreMap,
+    }));
+    expect(result.current.map(s => s.title)).toEqual(['Gamma', 'Alpha', 'Beta']);
+  });
+
+  it('songs without max score sort last (ascending)', () => {
+    const songsPartialMax = [
+      song('s1', 'Alpha', 'A', 2020, { Solo_Guitar: 100000 }),
+      song('s2', 'Beta', 'B', 2021),  // no maxScores
+      song('s3', 'Gamma', 'C', 2022, { Solo_Guitar: 100000 }),
+    ];
+    const scoreMap = new Map([
+      ['s1', score('s1', { score: 80000 })],
+      ['s2', score('s2', { score: 95000 })],
+      ['s3', score('s3', { score: 70000 })],
+    ]);
+    const allScoreMap = new Map(Array.from(scoreMap.entries()).map(([id, s]) => [id, new Map([[inst, s]])]));
+    const { result } = renderHook(() => useFilteredSongs({
+      songs: songsPartialMax, search: '', sortMode: 'maxdistance' as any, sortAscending: true,
+      filters: emptyFilters as any, instrument: inst,
+      scoreMap, allScoreMap,
+    }));
+    expect(result.current.map(s => s.title)).toEqual(['Gamma', 'Alpha', 'Beta']);
   });
 });

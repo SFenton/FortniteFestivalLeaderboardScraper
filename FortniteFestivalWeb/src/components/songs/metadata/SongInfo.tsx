@@ -12,10 +12,11 @@ export interface SongInfoProps {
   title: string;
   artist: string;
   year?: number;
+  minWidth?: number;
 }
 
-const SongInfo = memo(function SongInfo({ albumArt, title, artist, year }: SongInfoProps) {
-  const s = useStyles();
+const SongInfo = memo(function SongInfo({ albumArt, title, artist, year, minWidth }: SongInfoProps) {
+  const s = useStyles(minWidth);
   return (
     <>
       <AlbumArt src={albumArt} size={Size.thumb} />
@@ -29,12 +30,12 @@ const SongInfo = memo(function SongInfo({ albumArt, title, artist, year }: SongI
 
 export default SongInfo;
 
-function useStyles() {
+function useStyles(minWidth?: number) {
   return useMemo(() => ({
     text: {
       ...flexColumn,
       gap: Gap.xs,
-      minWidth: 0,
+      minWidth: minWidth ?? 200,
       flex: 1,
     },
     title: {
@@ -47,5 +48,5 @@ function useStyles() {
       fontSize: Font.sm,
       color: Colors.textSubtle,
     },
-  }), []);
+  }), [minWidth]);
 }

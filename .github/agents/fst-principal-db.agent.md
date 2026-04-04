@@ -3,7 +3,7 @@ name: "fst-principal-db"
 description: "Use when planning database schema changes, query optimization, PostgreSQL tuning, migrations, index strategy, bulk write patterns, connection pooling, or transaction design for FSTService."
 tools: [read, search, web, edit, agent, todo]
 agents: [fst-principal-architect, fst-principal-api-designer, fst-persistence]
-model: "Claude Opus 4.6 (1M context)(Internal only)"
+model: "Claude Haiku 4.5"
 user-invocable: false
 ---
 
@@ -54,6 +54,12 @@ When reviewing a DB change:
 5. Check index coverage for new queries
 6. Check migration idempotency (`IF NOT EXISTS`)
 7. Return: APPROVED or REJECTED with specific alignment instructions
+
+
+## Session Memory Protocol
+
+When receiving a handoff: read `/memories/session/task-context.md` first, acknowledge the triage context, then proceed.
+When completing: update `/memories/session/task-context.md` with findings, write persistent results to `/memories/repo/` area diagnostics.
 
 ## Constraints
 

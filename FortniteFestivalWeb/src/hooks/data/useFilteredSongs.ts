@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Hook that encapsulates the song list filtering and sorting logic.
  * Extracted from SongsPage for readability and potential reuse.
  */
@@ -176,9 +176,9 @@ export function useFilteredSongs({
           if (ra != null && rb != null) {
             cmp = ra - rb;
           } else if (ra != null) {
-            cmp = 1;
+            cmp = -dir; // a scored, b didn't - scored wins regardless of sort direction
           } else if (rb != null) {
-            cmp = -1;
+            cmp = dir;  // b scored, a didn't - scored wins regardless of sort direction
           } else {
             // Fallback: compare by raw score when max scores unavailable
             cmp = compareByMode('score', sa, sb);

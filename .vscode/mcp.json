@@ -2,7 +2,7 @@
     "servers": {
         "playwright": {
             "command": "npx",
-            "args": ["@playwright/mcp@latest", "--browser", "msedge"]
+            "args": ["@playwright/mcp@latest", "--browser", "msedge", "--caps", "devtools,vision,testing,config"]
         },
         "fst-production": {
             "command": "node",
@@ -11,6 +11,10 @@
                 "FST_BASE_URL": "${env:FST_BASE_URL}",
                 "FST_API_KEY": "${env:FST_API_KEY}"
             }
+        },
+        "web-state": {
+            "command": "node",
+            "args": ["tools/mcp/fst-web-state-server.mjs"]
         }
     }
 }

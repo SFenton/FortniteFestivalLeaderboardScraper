@@ -62,11 +62,8 @@ function scrollAreaStyle(v: ScrollAreaVariant): CSSProperties {
 /* ── Container variant ── */
 export type ContainerVariant = 'default' | 'z';
 
-function containerBaseStyle(v: ContainerVariant): CSSProperties {
-  /* v8 ignore start */
-  if (v === 'z') return pageCss.containerZ;
-  /* v8 ignore stop */
-  return pageCss.container;
+function getContainerStyle(v: ContainerVariant): CSSProperties {
+  return v === 'z' ? pageCss.containerZ : pageCss.container;
 }
 
 /* ── Page variant (outer wrapper) ── */
@@ -253,7 +250,7 @@ export default function Page({
 
   const pgStyle = pageStyle(variant);
   const saStyle = scrollAreaStyle(scrollVariant);
-  const cStyle = containerBaseStyle(containerVariant);
+  const cStyle = getContainerStyle(containerVariant);
 
   const pageScrollValue = useMemo(() => ({ scrollRef, resetRush }), [scrollRef, resetRush]);
 

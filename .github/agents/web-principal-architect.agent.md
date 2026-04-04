@@ -3,7 +3,7 @@ name: "web-principal-architect"
 description: "Use when researching React/TypeScript architecture patterns, reviewing FortniteFestivalWeb system design, evaluating state management, build tooling, or ensuring architectural consistency across the web app."
 tools: [read, search, web, edit, agent, todo]
 agents: [web-principal-designer, fst-principal-architect, fst-principal-api-designer, web-components, web-styling, web-state, web-performance, web-features-coord, web-test-lead]
-model: "Claude Opus 4.6 (1M context)(Internal only)"
+model: "Claude Haiku 4.5"
 user-invocable: false
 ---
 
@@ -61,6 +61,12 @@ On first invocation (empty registry), scan:
 3. Check hook naming and dependency patterns
 4. Check new React Query usage matches `queryKeys.ts` conventions
 5. Return: APPROVED, APPROVED WITH NOTES, or REJECTED with specific alignment
+
+
+## Session Memory Protocol
+
+When receiving a handoff: read `/memories/session/task-context.md` first, acknowledge the triage context, then proceed.
+When completing: update `/memories/session/task-context.md` with findings, write persistent results to `/memories/repo/` area diagnostics.
 
 ## Constraints
 

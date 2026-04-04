@@ -67,10 +67,15 @@ name: "{name}"
 description: "Use when {keyword-rich trigger phrases for subagent discovery}"
 tools: [{minimal tools}]
 agents: [{communication links}]
-model: "Claude Opus 4.6 (1M context)(Internal only)"
+model: "Claude Haiku 4.5"
 user-invocable: false
 ---
 ```
+
+**Model tier selection:**
+- **Haiku 4.5** (default) — Implementation agents: code gen, testing, mechanical tasks
+- **Sonnet 4.6** — Design/analysis agents: vision analysis, design judgment, screenshot interpretation
+- **Opus 4.6** — Coordination/research agents: principals, heads, coordinator. Only when deep reasoning is essential.
 
 Body must include:
 - Ownership section (files/directories)

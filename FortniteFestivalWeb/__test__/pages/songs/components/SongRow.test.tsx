@@ -479,3 +479,80 @@ describe('SongRow — mobile with instrumentFilter', () => {
     expect(link?.getAttribute('href')).toContain('instrument=Solo_Guitar');
   });
 });
+
+describe('SongRow — maxdistance sort mode', () => {
+  const songWithMax: Song = {
+    ...baseSong,
+    maxScores: { Solo_Guitar: 200000 } as Partial<Record<InstrumentKey, number>>,
+  };
+
+  it('shows dual score format (score / maxScore) when maxScore is available', () => {
+    renderSongRow({
+      song: songWithMax,
+      score: ps({ score: 150000 }),
+      sortMode: 'maxdistance' as SongSortMode,
+      metadataOrder: ['score', 'maxdistance'],
+    });
+    expect(screen.getByText('150,000')).toBeTruthy();
+    expect(screen.getByText('200,000')).toBeTruthy();
+    expect(screen.getByText('/')).toBeTruthy();
+  });
+
+  it('shows percentage pill when maxScore is available', () => {
+    renderSongRow({
+      song: songWithMax,
+      score: ps({ score: 150000 }),
+      sortMode: 'maxdistance' as SongSortMode,
+      metadataOrder: ['maxdistance'],
+    });
+    // 150000 / 200000 = 75.0%
+    expect(screen.getByTestId('percentile')).toBeTruthy();
+    expect(screen.getByText('75.0%')).toBeTruthy();
+  });
+
+  it('shows score / — fallback when maxScore is unavailable', () => {
+    renderSongRow({
+      song: baseSong, // no maxScores
+      score: ps({ score: 150000 }),
+      sortMode: 'maxdistance' as SongSortMode,
+      metadataOrder: ['score', 'maxdistance'],
+    });
+    expect(screen.getByText('150,000')).toBeTruthy();
+    expect(screen.getByText('/')).toBeTruthy();
+    // "—" em-dash fallback for missing maxScore
+    const dashes = screen.getAllByText('—');
+    expect(dashes.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('shows — pill fallback for maxdistance metadata when maxScore is unavailable', () => {
+    renderSongRow({
+      song: baseSong, // no maxScores
+      score: ps({ score: 150000 }),
+      sortMode: 'maxdistance' as SongSortMode,
+      metadataOrder: ['maxdistance'],
+    });
+    expect(screen.getByTestId('percentile')).toBeTruthy();
+    expect(screen.getByText('—')).toBeTruthy();
+  });
+
+  it('shows nothing for maxdistance metadata when score is 0', () => {
+    renderSongRow({
+      song: songWithMax,
+      score: ps({ score: 0 }),
+      sortMode: 'maxdistance' as SongSortMode,
+      metadataOrder: ['maxdistance'],
+    });
+    expect(screen.queryByTestId('percentile')).toBeNull();
+  });
+
+  it('shows nothing for score when score is 0 in maxdistance mode', () => {
+    renderSongRow({
+      song: songWithMax,
+      score: ps({ score: 0 }),
+      sortMode: 'maxdistance' as SongSortMode,
+      metadataOrder: ['score'],
+    });
+    // score=0 returns null in renderMetadataElement
+    expect(screen.queryByText('200,000')).toBeNull();
+  });
+});
