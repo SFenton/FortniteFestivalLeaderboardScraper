@@ -182,6 +182,7 @@ export default function LeaderboardsOverviewPage() {
                 instrument={inst as InstrumentKey}
                 metric={metric}
                 entries={q?.data?.entries ?? []}
+                totalAccounts={q?.data?.totalAccounts ?? 0}
                 playerRanking={pq?.data ?? null}
                 playerAccountId={player?.accountId}
                 error={q?.error ? String(q.error) : null}

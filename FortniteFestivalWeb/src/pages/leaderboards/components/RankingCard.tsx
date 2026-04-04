@@ -9,6 +9,7 @@ import type { ServerInstrumentKey as InstrumentKey, AccountRankingEntry, Account
 import { Routes } from '../../../routes';
 import { parseApiError } from '../../../utils/apiError';
 import { getRankForMetric, formatRating, getRatingForMetric, computeRankWidth, getSongsLabel } from '../helpers/rankingHelpers';
+import { formatLeaderboardPercentile } from '@festival/core';
 import { staggerDelay } from '@festival/ui-utils';
 import {
   Colors, Font, Weight, Gap, Radius, Layout,
@@ -20,6 +21,7 @@ interface RankingCardProps {
   instrument: InstrumentKey;
   metric: RankingMetric;
   entries: AccountRankingEntry[];
+  totalAccounts: number;
   playerRanking?: AccountRankingDto | null;
   playerAccountId?: string;
   error?: string | null;
@@ -31,6 +33,7 @@ export default memo(function RankingCard({
   instrument,
   metric,
   entries,
+  totalAccounts,
   playerRanking,
   playerAccountId,
   error,
@@ -92,6 +95,7 @@ export default memo(function RankingCard({
         {!error && entries.map((e, i) => {
           const rank = getRankForMetric(e, metric);
           const isPlayer = e.accountId === playerAccountId;
+          const usePercentile = metric === 'adjusted' || metric === 'weighted';
           const rowStyle = isPlayer ? st.playerEntryRow : st.entryRow;
           const delay = shouldStagger ? staggerDelay(i + 1 + staggerOffset, STAGGER_INTERVAL, totalStaggerItems) : undefined;
           const staggerStyle: CSSProperties | undefined = delay != null
@@ -113,6 +117,7 @@ export default memo(function RankingCard({
                 displayName={e.displayName ?? e.accountId.slice(0, 8)}
                 ratingLabel={formatRating(getRatingForMetric(e, metric), metric)}
                 songsLabel={getSongsLabel(e, metric)}
+                percentileDisplay={usePercentile ? formatLeaderboardPercentile(rank, totalAccounts) : undefined}
                 isPlayer={isPlayer}
                 rankWidth={rankWidth}
               />
@@ -121,6 +126,7 @@ export default memo(function RankingCard({
         })}
         {playerRanking && !playerInTop && (() => {
           const rank = getRankForMetric(playerRanking, metric);
+          const usePercentile = metric === 'adjusted' || metric === 'weighted';
           return (
             <Link
               to={`/player/${playerRanking.accountId}`}
@@ -136,6 +142,7 @@ export default memo(function RankingCard({
                 displayName={playerRanking.displayName ?? playerRanking.accountId.slice(0, 8)}
                 ratingLabel={formatRating(getRatingForMetric(playerRanking, metric), metric)}
                 songsLabel={getSongsLabel(playerRanking, metric)}
+                percentileDisplay={usePercentile ? formatLeaderboardPercentile(rank, totalAccounts) : undefined}
                 isPlayer
                 rankWidth={playerRankWidth}
               />

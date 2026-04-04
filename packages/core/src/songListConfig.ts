@@ -3,6 +3,9 @@ import type {InstrumentKey} from './instruments';
 /** Bucket thresholds used for leaderboard percentile display ("Top N%"). */
 export const PERCENTILE_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100] as const;
 
+/** Granular bucket thresholds for account-level rankings (sub-1% precision). */
+export const LEADERBOARD_PERCENTILE_THRESHOLDS = [0.01, 0.02, 0.03, 0.04, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100] as const;
+
 /**
  * Map a raw percentile fraction (e.g. 0.0144) to its display bucket (e.g. 2).
  * Returns 0 when the tracker has no percentile data.

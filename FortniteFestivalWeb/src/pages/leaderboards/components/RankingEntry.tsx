@@ -5,6 +5,7 @@
  */
 import { memo, useMemo } from 'react';
 import { Colors, Font, FontVariant, Layout, TextAlign, Weight, truncate } from '@festival/theme';
+import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 
 export interface RankingEntryProps {
   rank: number;
@@ -13,6 +14,8 @@ export interface RankingEntryProps {
   ratingLabel: string;
   /** Songs played count (e.g. "142 / 200"). */
   songsLabel?: string;
+  /** Percentile display string (e.g. "Top 0.05%"). When present, renders a PercentilePill instead of songsLabel. */
+  percentileDisplay?: string;
   isPlayer?: boolean;
   /** Pixel width for the rank column. Computed from the longest rank in the list. */
   rankWidth?: number;
@@ -23,6 +26,7 @@ export const RankingEntry = memo(function RankingEntry({
   displayName,
   ratingLabel,
   songsLabel,
+  percentileDisplay,
   isPlayer,
   rankWidth,
 }: RankingEntryProps) {
@@ -32,7 +36,7 @@ export const RankingEntry = memo(function RankingEntry({
     <>
       <span style={s.colRank}>#{rank.toLocaleString()}</span>
       <span style={s.colName}>{displayName}</span>
-      {songsLabel && <span style={s.colSongs}>{songsLabel}</span>}
+      {percentileDisplay ? <PercentilePill display={percentileDisplay} /> : songsLabel && <span style={s.colSongs}>{songsLabel}</span>}
       {ratingLabel && <span style={s.colRating}>{ratingLabel}</span>}
     </>
   );

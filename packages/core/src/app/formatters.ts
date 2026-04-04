@@ -1,4 +1,5 @@
 import type {InstrumentKey} from '../instruments';
+import { LEADERBOARD_PERCENTILE_THRESHOLDS } from '../songListConfig';
 
 const clamp = (v: number, min: number, max: number): number => Math.max(min, Math.min(max, v));
 
@@ -78,6 +79,19 @@ const PERCENTILE_BUCKETS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 8
 export const formatPercentileBucket = (pct: number): string => {
   const clamped = Math.max(1, Math.min(100, pct));
   const bucket = PERCENTILE_BUCKETS.find(t => clamped <= t) ?? 100;
+  return `Top ${bucket}%`;
+};
+
+/**
+ * Format an account-level ranking percentile from rank and total accounts.
+ * Uses granular sub-1% buckets (0.01–0.5) for leaderboard display.
+ * Returns undefined when totalAccounts is 0.
+ */
+export const formatLeaderboardPercentile = (rank: number, totalAccounts: number): string | undefined => {
+  if (totalAccounts <= 0) return undefined;
+  const pct = (rank / totalAccounts) * 100;
+  const clamped = Math.max(0.01, Math.min(100, pct));
+  const bucket = LEADERBOARD_PERCENTILE_THRESHOLDS.find(t => clamped <= t) ?? 100;
   return `Top ${bucket}%`;
 };
 

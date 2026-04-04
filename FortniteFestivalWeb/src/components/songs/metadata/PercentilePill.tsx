@@ -1,6 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- useStyles pattern */
 import { memo, useMemo, type CSSProperties } from 'react';
-import { PercentileTier } from '@festival/core';
 import { Colors, MetadataSize, Weight, goldOutline, goldOutlineSkew, Display, TextAlign, BoxSizing, CssValue, border, padding } from '@festival/theme';
 import { Border, Gap, Radius } from '@festival/theme';
 
@@ -12,10 +11,9 @@ const PercentilePill = memo(function PercentilePill({ display }: PercentilePillP
   const s = useStyles();
   if (!display) return null;
 
-  const isTop1 = display === PercentileTier.Top1;
-  const isTop5 = !isTop1 && /^Top [2-5]%$/.test(display);
-
-  const style = isTop1 ? s.top1 : isTop5 ? s.top5 : s.default;
+  const match = display.match(/^Top\s+([\d.]+)%$/);
+  const pct = match ? parseFloat(match[1]) : NaN;
+  const style = !isNaN(pct) && pct <= 1 ? s.top1 : !isNaN(pct) && pct <= 5 ? s.top5 : s.default;
 
   return <span style={style}>{display}</span>;
 });
