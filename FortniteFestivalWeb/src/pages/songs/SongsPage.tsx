@@ -513,6 +513,7 @@ export default function SongsPage() {
       scrollRestoreKey="songs"
       scrollDeps={[loadPhase, filtered]}
       staggerRushRef={staggerRushRef}
+      containerStyle={{ paddingTop: Layout.paddingTop }}
       firstRun={{ key: 'songs', label: t('nav.songs'), slides: songsSlidesMemo, gateContext: firstRunGateCtx }}
       fabSpacer={isMobileChrome ? 'fixed' : 'end'}
       before={<>
@@ -658,9 +659,6 @@ function useSongsStyles() {
   return useMemo(() => ({
     container: {
       width: CssValue.full,
-      maxWidth: MaxWidth.card,
-      margin: CssValue.marginCenter,
-      padding: padding(Layout.paddingTop, Layout.paddingHorizontal),
       boxSizing: BoxSizing.borderBox,
     } as CSSProperties,
     list: {
