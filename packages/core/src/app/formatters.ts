@@ -146,6 +146,18 @@ export function accuracyColor(pct: number): string {
 }
 
 /**
+ * Interpolate a max-score percentage (0-100) to an RGB color string.
+ * 0% → red (220,40,40), 100% → darker green (34,139,34).
+ */
+export function maxScoreColor(pct: number): string {
+  const t = clamp(pct / 100, 0, 1);
+  const r = Math.round(220 * (1 - t) + 34 * t);
+  const g = Math.round(40 * (1 - t) + 139 * t);
+  const b = Math.round(40 * (1 - t) + 34 * t);
+  return `rgb(${r},${g},${b})`;
+}
+
+/**
  * Calculate the CSS `ch` width needed to display the largest score in a list.
  */
 export function calculateScoreWidth(scores: { score: number }[]): string {

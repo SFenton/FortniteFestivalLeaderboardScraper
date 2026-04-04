@@ -6,7 +6,7 @@ import { memo, useMemo, useRef, useCallback, Fragment, useEffect, type CSSProper
 import InvalidScoreIcon from './InvalidScoreIcon';
 import { Link, useLocation } from 'react-router-dom';
 import { IoBagHandle, IoChevronForward } from 'react-icons/io5';
-import { formatPercentileBucket } from '@festival/core';
+import { formatPercentileBucket, maxScoreColor } from '@festival/core';
 import type { ServerSong as Song, PlayerScore, SongDifficulty, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { Colors, Gap, Radius, Font, Weight, InstrumentSize, frostedCard, flexRow, flexColumn, flexCenter, truncate, CssValue, Align, Justify, Display, Position, Layout, BorderStyle, padding } from '@festival/theme';
 import { InstrumentIcon, getInstrumentStatusVisual } from '../../../components/display/InstrumentIcons';
@@ -90,7 +90,7 @@ function renderMetadataElement(
       if (score.score <= 0) return null;
       if (!maxScore) return <PercentilePill display="—" />;
       const pct = (score.score / maxScore) * 100;
-      return <PercentilePill display={`${pct.toFixed(1)}%`} />;
+      return <PercentilePill display={`${pct.toFixed(1)}%`} color={maxScoreColor(pct)} />;
     }
     default:
       return null;
