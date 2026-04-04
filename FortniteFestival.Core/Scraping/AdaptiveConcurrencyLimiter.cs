@@ -17,6 +17,10 @@ namespace FortniteFestival.Core.Scraping
     ///   <item>DOP is clamped between <see cref="_minDop"/> and <see cref="_maxDop"/></item>
     /// </list>
     ///
+    /// A circuit breaker pauses all slot acquisitions when the failure rate exceeds
+    /// <see cref="CircuitBreakerThreshold"/> within a sliding window, preventing
+    /// thundering-herd retry storms from overwhelming downstream services.
+    ///
     /// The limiter wraps a <see cref="SemaphoreSlim"/> and adjusts its available tokens:
     /// increase adds tokens via <c>Release()</c>; decrease drains tokens via non-blocking <c>Wait(0)</c>.
     /// </summary>
@@ -53,6 +57,23 @@ namespace FortniteFestival.Core.Scraping
         private const double ErrorThresholdHigh = 0.05; // 5% → decrease
         private const double ErrorThresholdLow = 0.01;  // 1% → increase
 
+        // ── Circuit breaker ──
+        private const double CircuitBreakerThreshold = 0.50; // 50% failure rate → trip
+        private const int CircuitBreakerWindowMs = 30_000;    // 30 s sliding window
+        private const int CircuitBreakerPauseMs = 10_000;     // 10 s pause
+        private const int CircuitBreakerMinSamples = 50;      // need this many before tripping
+        private volatile bool _circuitOpen;
+        private DateTimeOffset _circuitOpensAt;
+        private int _cbWindowSuccesses;
+        private int _cbWindowFailures;
+        private readonly Stopwatch _cbWindowStopwatch = Stopwatch.StartNew();
+        private readonly object _cbLock = new object();
+
+        // ── Health logging timer ──
+#pragma warning disable CS8632 // nullable annotations (net472 compat)
+        private readonly Timer? _healthTimer;
+#pragma warning restore CS8632
+
         // ── Token-bucket rate limiter ──
         private const int RateBucketIntervalMs = 50;  // refill every 50ms
         private const int RateBucketTicksPerSecond = 1000 / RateBucketIntervalMs; // 20
@@ -78,6 +99,9 @@ namespace FortniteFestival.Core.Scraping
         /// <summary>Configured max requests per second (0 = unlimited).</summary>
         public int MaxRequestsPerSecond => _maxRequestsPerSecond;
 
+        /// <summary>Whether the circuit breaker is currently open (pausing acquisitions).</summary>
+        public bool IsCircuitOpen => _circuitOpen;
+
         public AdaptiveConcurrencyLimiter(int initialDop, int minDop, int maxDop, ILogger log,
             int maxRequestsPerSecond = 0)
         {
@@ -100,11 +124,24 @@ namespace FortniteFestival.Core.Scraping
                     "Rate limiter active: {MaxRps} req/s ({TokensPerTick} tokens every {IntervalMs}ms)",
                     _maxRequestsPerSecond, _tokensPerTick, RateBucketIntervalMs);
             }
+
+            // ── Periodic health logging (every 60 s when active) ──
+            _healthTimer = new Timer(LogHealth, null, 60_000, 60_000);
         }
 
-        /// <summary>Wait for a concurrency slot, then a rate-limiter token (if active).</summary>
+        /// <summary>Wait for a concurrency slot, then a rate-limiter token (if active).
+        /// If the circuit breaker is open, blocks until the pause expires.</summary>
         public async Task WaitAsync(CancellationToken ct)
         {
+            // ── Circuit breaker: wait for pause to expire if open ──
+            if (_circuitOpen)
+            {
+                var remaining = _circuitOpensAt.AddMilliseconds(CircuitBreakerPauseMs) - DateTimeOffset.UtcNow;
+                if (remaining > TimeSpan.Zero)
+                    await Task.Delay(remaining, ct);
+                _circuitOpen = false;
+            }
+
             await _semaphore.WaitAsync(ct);
 
             if (_rateBucket != null)
@@ -142,6 +179,7 @@ namespace FortniteFestival.Core.Scraping
         {
             Interlocked.Increment(ref _totalRequests);
             Interlocked.Increment(ref _windowSuccesses);
+            Interlocked.Increment(ref _cbWindowSuccesses);
             MaybeEvaluate();
         }
 
@@ -150,6 +188,8 @@ namespace FortniteFestival.Core.Scraping
         {
             Interlocked.Increment(ref _totalRequests);
             Interlocked.Increment(ref _windowFailures);
+            Interlocked.Increment(ref _cbWindowFailures);
+            MaybeEvaluateCircuitBreaker();
             MaybeEvaluate();
         }
 
@@ -247,9 +287,69 @@ namespace FortniteFestival.Core.Scraping
 
         public void Dispose()
         {
+            _healthTimer?.Dispose();
             _rateBucketTimer?.Dispose();
             _rateBucket?.Dispose();
             _semaphore.Dispose();
+        }
+
+        // ── Circuit breaker evaluation ──
+
+        private void MaybeEvaluateCircuitBreaker()
+        {
+            if (_circuitOpen) return;
+
+            lock (_cbLock)
+            {
+                // Reset window if it's expired
+                if (_cbWindowStopwatch.ElapsedMilliseconds >= CircuitBreakerWindowMs)
+                {
+                    _cbWindowSuccesses = 0;
+                    _cbWindowFailures = 0;
+                    _cbWindowStopwatch.Restart();
+                }
+
+                int total = _cbWindowSuccesses + _cbWindowFailures;
+                if (total < CircuitBreakerMinSamples) return;
+
+                double failureRate = (double)_cbWindowFailures / total;
+                if (failureRate >= CircuitBreakerThreshold)
+                {
+                    _circuitOpen = true;
+                    _circuitOpensAt = DateTimeOffset.UtcNow;
+                    _cbWindowSuccesses = 0;
+                    _cbWindowFailures = 0;
+                    _cbWindowStopwatch.Restart();
+
+                    _log.LogWarning(
+                        "Circuit breaker OPEN: failure rate {FailureRate:P0} ({Failures}/{Total}) in {Window}s window. " +
+                        "Pausing new acquisitions for {Pause}s. DOP={Dop}, InFlight={InFlight}.",
+                        failureRate, _cbWindowFailures, total,
+                        CircuitBreakerWindowMs / 1000, CircuitBreakerPauseMs / 1000,
+                        _currentDop, InFlight);
+                }
+            }
+        }
+
+        // ── Periodic health logging ──
+
+        private void LogHealth(object state)
+        {
+            int inFlight = InFlight;
+            if (inFlight <= 0 && Volatile.Read(ref _totalRequests) == 0) return;
+
+            double cbFailureRate;
+            lock (_cbLock)
+            {
+                int cbTotal = _cbWindowSuccesses + _cbWindowFailures;
+                cbFailureRate = cbTotal > 0 ? (double)_cbWindowFailures / cbTotal : 0;
+            }
+
+            _log.LogInformation(
+                "Limiter health: DOP={Dop}, InFlight={InFlight}, TotalRequests={Total}, " +
+                "CB={CircuitState} (failure rate {CbFailureRate:P0})",
+                _currentDop, inFlight, Volatile.Read(ref _totalRequests),
+                _circuitOpen ? "OPEN" : "closed", cbFailureRate);
         }
     }
 }

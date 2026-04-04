@@ -109,6 +109,7 @@ var apiSettings = builder.Configuration
 builder.Services.AddHttpClient<EpicAuthService>();
 
 builder.Services.AddHttpClient<GlobalLeaderboardScraper>()
+    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30))
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {
         MaxConnectionsPerServer = 2048,
@@ -121,6 +122,7 @@ builder.Services.AddHttpClient<GlobalLeaderboardScraper>()
 builder.Services.AddSingleton<ILeaderboardQuerier>(sp => sp.GetRequiredService<GlobalLeaderboardScraper>());
 
 builder.Services.AddHttpClient<AccountNameResolver>()
+    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30))
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {
         MaxConnectionsPerServer = 32,
@@ -235,6 +237,7 @@ builder.Services.AddSingleton<ItemShopService>(sp =>
 
 
 builder.Services.AddHttpClient<HistoryReconstructor>()
+    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30))
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {
         MaxConnectionsPerServer = 32,
@@ -246,6 +249,7 @@ builder.Services.AddHttpClient<HistoryReconstructor>()
 // ─── Path Generation ────────────────────────────────────────
 
 builder.Services.AddHttpClient<PathGenerator>()
+    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30))
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {
         MaxConnectionsPerServer = 8,

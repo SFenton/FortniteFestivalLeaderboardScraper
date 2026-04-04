@@ -124,11 +124,11 @@ public sealed class ResilientHttpExecutor
         {
             if (attempt > 0)
             {
-                // Exponential backoff capped at MaxBackoff
-                var backoff = TimeSpan.FromMilliseconds(
-                    BaseDelay.TotalMilliseconds * Math.Pow(2, attempt - 1));
-                if (backoff > MaxBackoff) backoff = MaxBackoff;
-                await Task.Delay(backoff, ct);
+                // Exponential backoff capped at MaxBackoff, with ±30% jitter
+                var baseMs = BaseDelay.TotalMilliseconds * Math.Pow(2, attempt - 1);
+                if (baseMs > MaxBackoff.TotalMilliseconds) baseMs = MaxBackoff.TotalMilliseconds;
+                var jitter = baseMs * (0.7 + Random.Shared.NextDouble() * 0.6); // [0.7, 1.3]
+                await Task.Delay(TimeSpan.FromMilliseconds(jitter), ct);
             }
 
             // ── Wait for any active CDN cooldown before sending ──
@@ -142,16 +142,16 @@ public sealed class ResilientHttpExecutor
             catch (HttpRequestException ex)
             {
                 _log.LogWarning(
-                    "HTTP error for {Operation} (attempt {Attempt}): {Error}",
-                    label ?? "request", attempt + 1, ex.Message);
+                    "HTTP error for {Operation} (attempt {Attempt}, DOP {Dop}): {Error}",
+                    label ?? "request", attempt + 1, limiter?.CurrentDop ?? -1, ex.Message);
                 limiter?.ReportFailure();
                 continue; // transient — retry indefinitely
             }
             catch (TaskCanceledException) when (!ct.IsCancellationRequested)
             {
                 _log.LogWarning(
-                    "Timeout for {Operation} (attempt {Attempt})",
-                    label ?? "request", attempt + 1);
+                    "Timeout for {Operation} (attempt {Attempt}, DOP {Dop})",
+                    label ?? "request", attempt + 1, limiter?.CurrentDop ?? -1);
                 limiter?.ReportFailure();
                 continue; // transient timeout — retry indefinitely
             }
@@ -192,8 +192,8 @@ public sealed class ResilientHttpExecutor
                 if (statusCode == 429 && res.Headers.RetryAfter?.Delta is TimeSpan retryAfter)
                 {
                     _log.LogWarning(
-                        "Rate-limited on {Operation}, waiting {Delay:F1}s",
-                        label ?? "request", retryAfter.TotalSeconds);
+                        "Rate-limited on {Operation}, waiting {Delay:F1}s (DOP {Dop})",
+                        label ?? "request", retryAfter.TotalSeconds, limiter?.CurrentDop ?? -1);
                     limiter?.ReportFailure();
                     res.Dispose();
                     await Task.Delay(retryAfter, ct);
@@ -201,8 +201,8 @@ public sealed class ResilientHttpExecutor
                 }
 
                 _log.LogWarning(
-                    "{StatusCode} for {Operation} (attempt {Attempt}/{MaxAttempts})",
-                    statusCode, label ?? "request", statusAttempt, maxRetries + 1);
+                    "{StatusCode} for {Operation} (attempt {Attempt}/{MaxAttempts}, DOP {Dop})",
+                    statusCode, label ?? "request", statusAttempt, maxRetries + 1, limiter?.CurrentDop ?? -1);
                 limiter?.ReportFailure();
                 res.Dispose();
                 continue;

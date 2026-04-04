@@ -141,6 +141,29 @@ public sealed class DeepScrapeCoordinator
             "Deep scrape coordinator seeded {TotalPages} pages across {JobCount} jobs.",
             workItems.Count, jobs.Count);
 
+        // ── Periodic progress logging ──
+        int completedJobCount = 0;
+        using var progressCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var progressTask = Task.Run(async () =>
+        {
+            try
+            {
+                while (!progressCts.Token.IsCancellationRequested)
+                {
+                    await Task.Delay(30_000, progressCts.Token);
+                    int done = Volatile.Read(ref completedJobCount);
+                    int totalPages = jobs.Sum(j => j.Entries.Count);
+                    int totalReqs = jobs.Sum(j => Volatile.Read(ref j.RequestCount));
+                    _log.LogInformation(
+                        "Deep scrape progress: {Done}/{Total} jobs complete, {Pages:N0} pages fetched, " +
+                        "{Requests:N0} requests, DOP={Dop}, elapsed {Elapsed}.",
+                        done, jobs.Count, totalPages, totalReqs,
+                        limiter.CurrentDop, sw.Elapsed);
+                }
+            }
+            catch (OperationCanceledException) { }
+        }, progressCts.Token);
+
         // ── Local functions ──
 
         bool AdvanceCursor(DeepScrapeJob job, int page, List<LeaderboardEntry> entries)
@@ -169,6 +192,7 @@ public sealed class DeepScrapeCoordinator
             var job = jobs[jobIndex];
             if (job.Done) return;
             job.Done = true;
+            Interlocked.Increment(ref completedJobCount);
 
             try { job.Cts?.Cancel(); } catch { }
 
@@ -318,6 +342,10 @@ public sealed class DeepScrapeCoordinator
         // so callers (e.g. ScrapeOrchestrator) can safely close channels.
         if (!callbackTasks.IsEmpty)
             await Task.WhenAll(callbackTasks);
+
+        // Stop progress logging
+        progressCts.Cancel();
+        try { await progressTask; } catch (OperationCanceledException) { }
 
         // Dispose per-job CTS
         foreach (var job in jobs)
