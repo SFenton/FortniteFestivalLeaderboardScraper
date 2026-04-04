@@ -11,16 +11,13 @@ import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
 import { ActionPill } from '../../components/common/ActionPill';
-import Modal from '../../components/modals/Modal';
-import { ModalSection } from '../../components/modals/components/ModalSection';
-import { RadioRow } from '../../components/common/RadioRow';
 import RankingCard from './components/RankingCard';
 import EmptyState from '../../components/common/EmptyState';
 import { parseApiError } from '../../utils/apiError';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import type { RankingMetric, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { LoadPhase } from '@festival/core';
-import { RANKING_METRICS, EXPERIMENTAL_METRICS } from './helpers/rankingHelpers';
+import RankByModal from './modals/RankByModal';
 import { loadLeaderboardRankBy, saveLeaderboardRankBy } from '../../utils/leaderboardSettings';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
@@ -32,8 +29,6 @@ import {
   GridTemplate, Size, STAGGER_INTERVAL, FADE_DURATION,
 } from '@festival/theme';
 import { leaderboardsSlides } from './firstRun';
-import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
-import { getMetricInfoSlides } from './firstRun/metricInfo';
 
 /** Set to 1 to stagger the right column one slot (125 ms) after the left. */
 const COLUMN_STAGGER_OFFSET = 1;
@@ -49,7 +44,6 @@ export default function LeaderboardsOverviewPage() {
   const metric = settings.enableExperimentalRanks ? rawMetric : 'totalscore' as RankingMetric;
 
   const metricModal = useModalState<RankingMetric>(() => 'totalscore');
-  const [infoMetric, setInfoMetric] = useState<RankingMetric | null>(null);
 
   const openMetricModal = useCallback(() => {
     metricModal.open(metric);
@@ -138,31 +132,16 @@ export default function LeaderboardsOverviewPage() {
         />
         )
       }
-      after={<>
-        <Modal
+      after={
+        <RankByModal
           visible={metricModal.visible}
-          title={t('rankings.rankBy')}
+          draft={metricModal.draft}
+          onDraftChange={metricModal.setDraft}
           onClose={metricModal.close}
           onApply={applyMetric}
           onReset={metricModal.reset}
-          resetLabel={t('rankings.rankByReset')}
-          resetHint={t('rankings.rankByResetHint')}
-        >
-          <ModalSection title={t('rankings.rankBy')} hint={t('rankings.rankByHint')}>
-            {RANKING_METRICS.map((m) => (
-              <RadioRow
-                key={m}
-                label={t(`rankings.metric.${m}`)}
-                hint={t(`rankings.metric.${m}Desc`)}
-                selected={metricModal.draft === m}
-                onSelect={() => metricModal.setDraft(m)}
-                onInfo={EXPERIMENTAL_METRICS.includes(m) ? () => setInfoMetric(m) : undefined}
-              />
-            ))}
-          </ModalSection>
-        </Modal>
-        {infoMetric && <FirstRunCarousel slides={getMetricInfoSlides(infoMetric)} onDismiss={() => {}} onExitComplete={() => setInfoMetric(null)} />}
-      </>}
+        />
+      }
     >
       {loadPhase === LoadPhase.ContentIn && allErrored && (() => {
         const parsed = parseApiError(String(rankingQueries[0]!.error));

@@ -13,14 +13,11 @@ import { PaginatedLeaderboard } from '../../components/leaderboard/PaginatedLead
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
 import { ActionPill } from '../../components/common/ActionPill';
-import Modal from '../../components/modals/Modal';
-import { ModalSection } from '../../components/modals/components/ModalSection';
-import { RadioRow } from '../../components/common/RadioRow';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
 import type { ServerInstrumentKey as InstrumentKey, RankingMetric } from '@festival/core/api/serverTypes';
 import { InstrumentHeaderSize } from '@festival/core';
 import { serverInstrumentLabel, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
-import { getRankForMetric, formatRating, getRatingForMetric, getSongsLabel, RANKING_METRICS, EXPERIMENTAL_METRICS, computeRankWidth } from './helpers/rankingHelpers';
+import { getRankForMetric, formatRating, getRatingForMetric, getSongsLabel, computeRankWidth } from './helpers/rankingHelpers';
 import { loadLeaderboardRankBy, saveLeaderboardRankBy } from '../../utils/leaderboardSettings';
 import { rankingsCache } from '../../api/pageCache';
 import { useModalState } from '../../hooks/ui/useModalState';
@@ -29,11 +26,10 @@ import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import { useFabSearch } from '../../contexts/FabSearchContext';
 import EmptyState from '../../components/common/EmptyState';
 import { parseApiError } from '../../utils/apiError';
-import FirstRunCarousel from '../../components/firstRun/FirstRunCarousel';
-import { getMetricInfoSlides } from './firstRun/metricInfo';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { Size } from '@festival/theme';
 import InstrumentPickerModal from './modals/InstrumentPickerModal';
+import RankByModal from './modals/RankByModal';
 
 const PAGE_SIZE = 25;
 
@@ -55,7 +51,6 @@ export default function FullRankingsPage() {
 
   const metricModal = useModalState<RankingMetric>(() => 'totalscore');
   const instrumentModal = useModalState<InstrumentKey>(() => DEFAULT_INSTRUMENT);
-  const [infoMetric, setInfoMetric] = useState<RankingMetric | null>(null);
 
   const openMetricModal = useCallback(() => {
     metricModal.open(metric);
@@ -201,29 +196,14 @@ export default function FullRankingsPage() {
           onCancel={instrumentModal.close}
           onApply={applyInstrument}
         />
-        <Modal
+        <RankByModal
           visible={metricModal.visible}
-          title={t('rankings.rankBy')}
+          draft={metricModal.draft}
+          onDraftChange={metricModal.setDraft}
           onClose={metricModal.close}
           onApply={applyMetric}
           onReset={metricModal.reset}
-          resetLabel={t('rankings.rankByReset')}
-          resetHint={t('rankings.rankByResetHint')}
-        >
-          <ModalSection title={t('rankings.rankBy')} hint={t('rankings.rankByHint')}>
-            {RANKING_METRICS.map((m) => (
-              <RadioRow
-                key={m}
-                label={t(`rankings.metric.${m}`)}
-                hint={t(`rankings.metric.${m}Desc`)}
-                selected={metricModal.draft === m}
-                onSelect={() => metricModal.setDraft(m)}
-                onInfo={EXPERIMENTAL_METRICS.includes(m) ? () => setInfoMetric(m) : undefined}
-              />
-            ))}
-          </ModalSection>
-        </Modal>
-        {infoMetric && <FirstRunCarousel slides={getMetricInfoSlides(infoMetric)} onDismiss={() => {}} onExitComplete={() => setInfoMetric(null)} />}
+        />
       </>}
     >
 

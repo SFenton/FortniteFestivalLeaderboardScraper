@@ -28,6 +28,8 @@ import { rivalsSlides } from './firstRun';
 import LeaderboardRivalsTab from './LeaderboardRivalsTab';
 import { ActionPill } from '../../components/common/ActionPill';
 import { useFabSearch } from '../../contexts/FabSearchContext';
+import { useModalState } from '../../hooks/ui/useModalState';
+import RankByModal from '../leaderboards/modals/RankByModal';
 
 // Module-level data cache so back-navigation has instant data
 let _cachedInstrumentRivals: InstrumentRivals[] = [];
@@ -64,6 +66,17 @@ export default function RivalsPage() {
     if (metric !== 'totalscore') params.rankBy = metric;
     setSearchParams(params, { replace: true });
   }, [setSearchParams]);
+
+  const metricModal = useModalState<RankingMetric>(() => 'totalscore');
+
+  const openMetricModal = useCallback(() => {
+    metricModal.open(rankBy);
+  }, [metricModal, rankBy]);
+
+  const applyMetric = useCallback(() => {
+    setRankBy(metricModal.draft);
+    metricModal.close();
+  }, [metricModal, setRankBy]);
 
   const toggleTab = useCallback(() => {
     setTab(activeTab === 'song' ? 'leaderboard' : 'song');
@@ -298,11 +311,7 @@ export default function RivalsPage() {
                   <ActionPill
                     icon={<IoOptions size={Size.iconAction} />}
                     label={t(`rankings.metric.${rankBy}`)}
-                    onClick={() => {
-                      const metrics: RankingMetric[] = ['totalscore', 'adjusted', 'weighted', 'fcrate', 'maxscore'];
-                      const idx = metrics.indexOf(rankBy);
-                      setRankBy(metrics[(idx + 1) % metrics.length]);
-                    }}
+                    onClick={openMetricModal}
                     active={rankBy !== 'totalscore'}
                   />
                 )}
@@ -313,6 +322,16 @@ export default function RivalsPage() {
       }
       firstRun={{ key: 'rivals', label: t('rivals.title'), slides: rivalsSlides, gateContext: firstRunGateCtx }}
       fabSpacer={phase === LoadPhase.ContentIn && !hasAnyRivals ? 'none' : 'end'}
+      after={
+        <RankByModal
+          visible={metricModal.visible}
+          draft={metricModal.draft}
+          onDraftChange={metricModal.setDraft}
+          onClose={metricModal.close}
+          onApply={applyMetric}
+          onReset={metricModal.reset}
+        />
+      }
     >
       {phase === LoadPhase.ContentIn && (
             <>
