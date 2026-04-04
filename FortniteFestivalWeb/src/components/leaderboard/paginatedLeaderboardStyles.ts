@@ -129,13 +129,13 @@ export const plbStyles = {
 
   desktopPagination: {
     position: Position.fixed,
-    bottom: Layout.entryRowHeight + Gap.xl,
+    bottom: Layout.fabPaddingBottom + Layout.entryRowHeight + Gap.xl,
     ...fixedFooterBase,
   } as CSSProperties,
 
   desktopPaginationNoPlayer: {
     position: Position.fixed,
-    bottom: Gap.none,
+    bottom: Layout.fabPaddingBottom,
     ...fixedFooterBase,
   } as CSSProperties,
 
@@ -147,7 +147,7 @@ export const plbStyles = {
 
   desktopPlayerFooter: {
     position: Position.fixed,
-    bottom: Gap.none,
+    bottom: Layout.fabPaddingBottom,
     ...fixedFooterBase,
   } as CSSProperties,
 

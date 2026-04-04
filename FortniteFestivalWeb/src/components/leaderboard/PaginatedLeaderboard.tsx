@@ -205,7 +205,7 @@ export function PaginatedLeaderboard<T>({
         margin += Math.max(0, paginationTop - scrollBottomOffset) + Gap.sm;
       }
     } else {
-      margin = 0;
+      margin = Layout.fabPaddingBottom;
       if (hasPlayerFooter) margin += Layout.entryRowHeight + Gap.xl;
       if (hasPagination) margin += Layout.paginationHeight + Gap.xl;
     }
