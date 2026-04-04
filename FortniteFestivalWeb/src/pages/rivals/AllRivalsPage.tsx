@@ -11,7 +11,7 @@ import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import InstrumentHeader from '../../components/display/InstrumentHeader';
 import { InstrumentHeaderSize } from '@festival/core';
 import { LoadPhase } from '@festival/core';
-import { serverInstrumentLabel, type RivalsListResponse, type RivalSummary, type ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import { serverInstrumentLabel, type RivalsListResponse, type RivalSummary, type ServerInstrumentKey, type LeaderboardRivalsListResponse, type LeaderboardRivalSummary, type RankingMetric } from '@festival/core/api/serverTypes';
 import RivalRow from './components/RivalRow';
 import { Routes } from '../../routes';
 import { deriveComboFromSettings } from './helpers/comboUtils';
@@ -24,6 +24,7 @@ import PageHeader from '../../components/common/PageHeader';
 let _cachedAllRivalsKey: string | null = null;
 let _cachedInstrumentData: Map<ServerInstrumentKey, RivalsListResponse> = new Map();
 let _cachedSingleData: RivalsListResponse | null = null;
+let _cachedLeaderboardData: LeaderboardRivalsListResponse | null = null;
 
 const VALID_INSTRUMENTS = new Set<string>([
   'Solo_Guitar', 'Solo_Bass', 'Solo_Drums', 'Solo_Vocals',
@@ -35,6 +36,9 @@ export default function AllRivalsPage() {
   const { t } = useTranslation();
   const [searchParams] = useSearchParams();
   const category = searchParams.get('category') ?? 'common';
+  const mode = searchParams.get('mode');
+  const rankBy = (searchParams.get('rankBy') ?? 'totalscore') as RankingMetric;
+  const isLeaderboard = mode === 'leaderboard';
   const navigate = useNavigate();
   const { settings } = useSettings();
   const isMobile = useIsMobile();
@@ -52,16 +56,17 @@ export default function AllRivalsPage() {
 
   // ─── Data state (initialize from cache when returning) ─────
 
-  const cacheKey = `${accountId}:${category}`;
+  const cacheKey = `${accountId}:${category}:${mode ?? 'song'}`;
   const hasCachedData = cacheKey === _cachedAllRivalsKey;
   const [instrumentData, setInstrumentData] = useState<Map<ServerInstrumentKey, RivalsListResponse>>(hasCachedData ? _cachedInstrumentData : new Map());
   const [singleData, setSingleData] = useState<RivalsListResponse | null>(hasCachedData ? _cachedSingleData : null);
+  const [leaderboardData, setLeaderboardData] = useState<LeaderboardRivalsListResponse | null>(hasCachedData ? _cachedLeaderboardData : null);
   const [loading, setLoading] = useState(!hasCachedData);
 
   // ─── Fetch: common (all instruments, intersection) ───────────
 
   useEffect(() => {
-    if (!isCommon || !accountId || activeInstruments.length < 2) {
+    if (isLeaderboard || !isCommon || !accountId || activeInstruments.length < 2) {
       if (isCommon) setLoading(false);
       return;
     }
@@ -97,7 +102,7 @@ export default function AllRivalsPage() {
   // ─── Fetch: single instrument ────────────────────────────────
 
   useEffect(() => {
-    if (!isInstrument || !accountId || !instrument) return;
+    if (isLeaderboard || !isInstrument || !accountId || !instrument) return;
     if (hasCachedData) return;
     let cancelled = false;
     setLoading(true);
@@ -108,6 +113,21 @@ export default function AllRivalsPage() {
     });
     return () => { cancelled = true; };
   }, [isInstrument, accountId, instrument]);
+
+  // ─── Fetch: leaderboard rivals (per-instrument) ──────────────
+
+  useEffect(() => {
+    if (!isLeaderboard || !isInstrument || !accountId || !instrument) return;
+    if (hasCachedData) return;
+    let cancelled = false;
+    setLoading(true);
+    api.getLeaderboardRivals(instrument, accountId, rankBy).then(res => {
+      if (!cancelled) { setLeaderboardData(res); setLoading(false); }
+    }).catch(() => {
+      if (!cancelled) { setLeaderboardData(null); setLoading(false); }
+    });
+    return () => { cancelled = true; };
+  }, [isLeaderboard, isInstrument, accountId, instrument, rankBy]);
 
   // ─── Fetch: combo (derived from settings) ────────────────────
 
@@ -166,11 +186,14 @@ export default function AllRivalsPage() {
 
   // ─── Resolved rivals for rendering ───────────────────────────
 
-  const rivals: { above: RivalSummary[]; below: RivalSummary[] } = isCommon
-    ? commonRivals
-    : singleData
-      ? { above: singleData.above, below: singleData.below }
-      : { above: [], below: [] };
+  type AnyRival = RivalSummary | LeaderboardRivalSummary;
+  const rivals: { above: AnyRival[]; below: AnyRival[] } = isLeaderboard && leaderboardData
+    ? { above: leaderboardData.above, below: leaderboardData.below }
+    : isCommon
+      ? commonRivals
+      : singleData
+        ? { above: singleData.above, below: singleData.below }
+        : { above: [], below: [] };
 
   // Persist data to module-level cache for instant back-nav
   useEffect(() => {
@@ -178,7 +201,8 @@ export default function AllRivalsPage() {
     _cachedAllRivalsKey = cacheKey;
     _cachedInstrumentData = instrumentData;
     _cachedSingleData = singleData;
-  }, [loading, cacheKey, instrumentData, singleData]);
+    _cachedLeaderboardData = leaderboardData;
+  }, [loading, cacheKey, instrumentData, singleData, leaderboardData]);
 
   // ─── UI hooks ────────────────────────────────────────────────
 
@@ -190,14 +214,18 @@ export default function AllRivalsPage() {
   }
 
   /** Compute CSS variable for min name width based on longest name in a rival list. */
-  const nameWidthVar = (list: RivalSummary[]): React.CSSProperties => {
+  const nameWidthVar = (list: AnyRival[]): React.CSSProperties => {
     const maxLen = list.reduce((max, r) => Math.max(max, (r.displayName ?? 'Unknown Player').length), 0);
     return { '--rival-name-width': `${Math.ceil(maxLen * 0.85)}ch` } as React.CSSProperties;
   };
 
   const effectiveCombo = isCommon ? combo : isCombo ? combo : instrument;
   const navigateToRival = (rivalId: string, rivalName?: string | null) => {
-    navigate(Routes.rivalDetail(rivalId, rivalName ?? undefined), { state: { combo: effectiveCombo, rivalName } });
+    navigate(Routes.rivalDetail(rivalId, rivalName ?? undefined), {
+      state: isLeaderboard
+        ? { source: 'leaderboard', instrument, rankBy, rivalName }
+        : { combo: effectiveCombo, rivalName },
+    });
   };
 
   const hasRivals = rivals.above.length > 0 || rivals.below.length > 0;
@@ -212,7 +240,7 @@ export default function AllRivalsPage() {
 
   return (
     <Page
-      scrollRestoreKey={`rivals-all:${accountId}:${category}`}
+      scrollRestoreKey={`rivals-all:${accountId}:${category}:${mode ?? 'song'}`}
       scrollDeps={[phase]}
       loadPhase={phase}
       containerClassName={undefined}

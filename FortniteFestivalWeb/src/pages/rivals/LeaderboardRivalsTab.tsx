@@ -136,7 +136,7 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger, rankBy 
         const previewBelow = below.slice(0, PREVIEW_COUNT);
         const allPreview = [...previewAbove, ...previewBelow];
 
-        const navigateToRankings = () => navigate(Routes.fullRankings(entry.instrument));
+        const navigateToAllRivals = () => navigate(Routes.allRivals(entry.instrument, 'leaderboard', rankBy));
 
         return (
           <div key={entry.instrument} style={shared.section}>
@@ -144,10 +144,10 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger, rankBy 
               className={fx.sectionHeaderClickable}
               style={{ ...shared.sectionHeaderClickable, ...nextStagger() }}
               onAnimationEnd={clearAnim}
-              onClick={navigateToRankings}
+              onClick={navigateToAllRivals}
               role="button"
               tabIndex={0}
-              onKeyDown={e => { if (e.key === 'Enter') navigateToRankings(); }}
+              onKeyDown={e => { if (e.key === 'Enter') navigateToAllRivals(); }}
             >
               <InstrumentHeader instrument={entry.instrument} size={InstrumentHeaderSize.SM} iconOnly />
               <div style={shared.cardHeaderText}>
@@ -169,8 +169,8 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger, rankBy 
                   onAnimationEnd={clearAnim}
                 />
               ))}
-              <div style={{ ...shared.viewAllButton, ...nextStagger() }} onAnimationEnd={clearAnim} onClick={navigateToRankings}>
-                {t('rivals.viewAllRankings')}
+              <div style={{ ...shared.viewAllButton, ...nextStagger() }} onAnimationEnd={clearAnim} onClick={navigateToAllRivals}>
+                {t('rivals.viewAllRivals')}
               </div>
             </div>
           </div>

@@ -6,7 +6,8 @@ export const Routes = {
   playerHistory: (songId: string, instrument: string) => `/songs/${songId}/${instrument}/history`,
   player: (accountId: string) => `/player/${accountId}`,
   rivals: '/rivals',
-  allRivals: (category: string) => `/rivals/all?category=${encodeURIComponent(category)}`,
+  allRivals: (category: string, mode?: 'leaderboard', rankBy?: string) =>
+    `/rivals/all?category=${encodeURIComponent(category)}${mode ? `&mode=${encodeURIComponent(mode)}` : ''}${rankBy ? `&rankBy=${encodeURIComponent(rankBy)}` : ''}`,
   rivalDetail: (rivalId: string, rivalName?: string) =>
     `/rivals/${rivalId}${rivalName ? `?name=${encodeURIComponent(rivalName)}` : ''}`,
   rivalry: (rivalId: string, mode: string) =>
