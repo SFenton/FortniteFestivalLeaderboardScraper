@@ -233,7 +233,7 @@ export const SongRow = memo(function SongRow({ song,
   const rowStyle = isMobile ? s.rowMobile : s.row;
   const rowClassName = shopHighlightRed ? anim.shopHighlightRed : shopHighlight ? anim.shopHighlight : undefined;
 
-  const infoMinWidth = isMobile ? 160 : 200;
+  const infoMinWidth = isMobile ? 0 : 200;
   const songInfo = <SongInfo albumArt={song.albumArt} title={song.title} artist={song.artist} year={song.year} minWidth={infoMinWidth} />;
 
   // External link: render <a> instead of <Link>
