@@ -309,6 +309,11 @@ export default function LeaderboardPage() {
     return computeRankWidth([effectivePlayerScore.rank]);
   }, [effectivePlayerScore?.rank]);
 
+  const playerScoreWidth = useMemo(() => {
+    if (!effectivePlayerScore?.score) return undefined;
+    return `${effectivePlayerScore.score.toLocaleString().length}ch`;
+  }, [effectivePlayerScore?.score]);
+
   if (!songId || !instrument) {
     return <PageMessage>{t('leaderboard.notFound')}</PageMessage>;
   }
@@ -396,7 +401,7 @@ export default function LeaderboardPage() {
                         showSeason={showSeason}
                         showAccuracy={showAccuracy}
                         showStars={showStars}
-                        scoreWidth={scoreWidth}
+                        scoreWidth={playerScoreWidth}
                         rankWidth={playerRankWidth}
                       />
                     </div>
