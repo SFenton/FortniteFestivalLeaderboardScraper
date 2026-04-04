@@ -21,7 +21,7 @@ import { useModalState } from '../../hooks/ui/useModalState';
 import { songSlides } from './firstRun';
 import { type PlayerScore, type ServerInstrumentKey as InstrumentKey, DEFAULT_INSTRUMENT } from '@festival/core/api/serverTypes';
 import { LoadPhase } from '@festival/core';
-import { Gap, Colors, Font, Layout, MaxWidth, BoxSizing, CssValue, flexCenter, padding } from '@festival/theme';
+import { Gap, Colors, Font, Layout, MaxWidth, CssValue, flexCenter } from '@festival/theme';
 import { LoadGate } from '../../components/page/LoadGate';
 import Page from '../Page';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
@@ -49,32 +49,39 @@ import { hasVisitedPage, markPageVisited } from '../../hooks/ui/usePageTransitio
 
 /**
  * Estimated minimum width (px) for each metadata element in desktop row layout.
- * Includes the element itself plus its share of the gap.
- * Used to predict whether all elements fit before rendering.
+ * Values are the element width only — inter-element gap is added separately.
  */
 const METADATA_MIN_WIDTH: Record<string, number> = {
-  score: 94,        // ScorePill (78px) + gap share
-  percentage: 72,   // AccuracyDisplay (~55px) + gap share
-  percentile: 96,   // PercentilePill (~80px) + gap share
-  stars: 120,       // 5 gold stars (~104px) + gap share
-  seasonachieved: 48, // SeasonPill (~32px) + gap share
-  intensity: 44,    // DifficultyBars (~28px) + gap share
-  maxdistance: 76,  // PercentilePill with % (~60px) + gap share
+  score: 78,        // ScorePill fixed width
+  percentage: 55,   // AccuracyDisplay
+  percentile: 80,   // PercentilePill
+  stars: 104,       // 5 gold stars
+  seasonachieved: 32, // SeasonPill
+  intensity: 28,    // DifficultyBars
+  maxdistance: 60,  // PercentilePill with %
 };
 
-/** Fixed overhead: row padding (32px) + SongInfo (albumArt 48 + gap 16 + min title 150) + gap to metadata (16). */
-const ROW_FIXED_OVERHEAD = 262;
+/**
+ * Fixed overhead for desktop row width calculation.
+ * Row padding: Gap.xl × 2 = 24 + AlbumArt: Size.thumb = 44 + gap: Gap.xl = 12
+ * + title minWidth: 200 + gap to metadata: Gap.xl = 12 = 292.
+ */
+const ROW_FIXED_OVERHEAD = 292;
+
+/** Safety buffer (px) for font rendering variance and sub-pixel rounding. */
+const ROW_WIDTH_BUFFER = 16;
 
 function getMinDesktopRowWidth(visibleKeys: string[], sortMode?: string): number {
   let width = ROW_FIXED_OVERHEAD;
   for (const key of visibleKeys) {
     if (key === 'score' && sortMode === 'maxdistance') {
-      width += 192;  // dual score: 78 + 6 + ~8 + 6 + 78 = 176px + 16px gap share
+      width += 180;  // dual score: 78 + gap 8 + "/" ~8 + gap 8 + 78
     } else {
       width += METADATA_MIN_WIDTH[key] ?? 80;
     }
+    width += Gap.xl; // inter-element gap (12px)
   }
-  return width;
+  return width + ROW_WIDTH_BUFFER;
 }
 
 export default function SongsPage() {
@@ -634,8 +641,7 @@ function useSongsStyles() {
       width: CssValue.full,
       maxWidth: MaxWidth.card,
       margin: CssValue.marginCenter,
-      padding: padding(Layout.paddingTop, Layout.paddingHorizontal),
-      boxSizing: BoxSizing.borderBox,
+      paddingTop: Layout.paddingTop,
     } as CSSProperties,
     list: {
       paddingTop: Gap.lg,

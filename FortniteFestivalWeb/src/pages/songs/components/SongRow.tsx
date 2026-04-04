@@ -470,7 +470,7 @@ function useStyles() {
     rowMobile: { ...frostedCard, ...flexColumn, gap: Gap.md, padding: padding(Gap.lg, Gap.xl), borderRadius: Radius.md, overflow: 'hidden', textDecoration: CssValue.none, color: CssValue.inherit } as CSSProperties,
     mobileTopRow: { ...flexRow, gap: Gap.lg, minWidth: 0 } as CSSProperties,
     detailStrip: { ...flexRow, gap: Gap.xl, flexShrink: 0, marginLeft: CssValue.auto } as CSSProperties,
-    metadataWrap: { display: Display.flex, flexWrap: 'wrap', alignItems: Align.center, justifyContent: Justify.end, gap: Gap.lg } as CSSProperties,
+    metadataWrap: { display: Display.flex, flexWrap: 'wrap', alignItems: Align.center, justifyContent: Justify.end, gap: `${Gap.md}px ${Gap.lg}px`, width: CssValue.full } as CSSProperties,
     instrumentStatusRow: { display: Display.flex, gap: Gap.sm, alignItems: Align.center, flexShrink: 0 } as CSSProperties,
     instrumentStatusChip: { width: InstrumentSize.chip, height: InstrumentSize.chip, borderRadius: CssValue.circle, borderWidth: Gap.xs, borderStyle: BorderStyle.solid, ...flexCenter } as CSSProperties,
     rowText: { ...flexColumn, gap: Gap.xs, minWidth: 0, flex: 1 } as CSSProperties,
@@ -481,7 +481,7 @@ function useStyles() {
     mobileChipInvalidIcon: { position: Position.absolute, right: 0, top: '50%', transform: 'translateY(-50%)' } as CSSProperties,
     externalIndicator: { ...flexRow, gap: Gap.xs, flexShrink: 0, marginLeft: CssValue.auto, color: Colors.textSubtle } as CSSProperties,
     // Metadata item wrapper styles (base and neighbor status variants)
-    metadataItemAlone: {} as CSSProperties,
+    metadataItemAlone: { width: 'fit-content', marginLeft: CssValue.auto } as CSSProperties,
     metadataItemLeft: {} as CSSProperties,
     metadataItemRight: {} as CSSProperties,
     metadataItemBoth: { padding: `0 ${Gap.md}px` } as CSSProperties,
