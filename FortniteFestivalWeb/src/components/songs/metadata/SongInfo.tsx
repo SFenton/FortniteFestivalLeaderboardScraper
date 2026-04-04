@@ -7,6 +7,7 @@ import { memo, useMemo } from 'react';
 import { Colors, Font, Gap, Size, Weight, flexColumn } from '@festival/theme';
 import AlbumArt from './AlbumArt';
 import MarqueeText from '../../common/MarqueeText';
+import { useMarqueeSync } from '../../../hooks/ui/useMarqueeSync';
 
 export interface SongInfoProps {
   albumArt?: string;
@@ -19,12 +20,13 @@ export interface SongInfoProps {
 const SongInfo = memo(function SongInfo({ albumArt, title, artist, year, minWidth }: SongInfoProps) {
   const s = useStyles(minWidth);
   const artistText = `${artist}${year ? ` \u00b7 ${year}` : ''}`;
+  const { reporters, syncDistance } = useMarqueeSync(2);
   return (
     <>
       <AlbumArt src={albumArt} size={Size.thumb} />
       <div style={s.text}>
-        <MarqueeText text={title} as="p" style={s.title} />
-        <MarqueeText text={artistText} as="p" style={s.artist} />
+        <MarqueeText text={title} as="p" style={s.title} onMeasure={reporters[0]} syncDistance={syncDistance} />
+        <MarqueeText text={artistText} as="p" style={s.artist} onMeasure={reporters[1]} syncDistance={syncDistance} />
       </div>
     </>
   );

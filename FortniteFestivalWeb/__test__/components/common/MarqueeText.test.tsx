@@ -123,7 +123,7 @@ describe('MarqueeText', () => {
   });
 
   it('sets custom properties for duration and gap on the track', () => {
-    const { container } = render(<MarqueeText text="Long text here" gap={40} speed={20} />);
+    const { container } = render(<MarqueeText text="Long text here" gap={40} cycleDuration={8} />);
     const wrapper = container.firstElementChild as HTMLElement;
 
     const inner = wrapper.querySelector('span')!;
@@ -134,8 +134,8 @@ describe('MarqueeText', () => {
     const track = container.querySelector('[class*="track"]') as HTMLElement;
     expect(track).not.toBeNull();
     expect(track.style.getPropertyValue('--marquee-gap')).toBe('40px');
-    // Duration = (200 + 40) / 20 / 0.9 ≈ 13.33s
+    // Fixed cycle duration = 8s regardless of translate distance
     const dur = parseFloat(track.style.getPropertyValue('--marquee-duration'));
-    expect(dur).toBeCloseTo(13.33, 1);
+    expect(dur).toBe(8);
   });
 });

@@ -10,16 +10,22 @@ export interface MarqueeTextProps {
   className?: string;
   /** Extra inline styles forwarded to the container (or plain element when not scrolling). */
   style?: CSSProperties;
-  /** Scroll speed in pixels per second (default 38). */
-  speed?: number;
+  /** Fixed cycle duration in seconds for one full scroll+pause cycle (default 8). All instances share the same cycle so cross-card phase alignment works via the global epoch. */
+  cycleDuration?: number;
   /** Gap in pixels between the two text copies (default 28). */
   gap?: number;
+  /** Override translate distance (pixels) for synchronized scrolling. */
+  syncDistance?: number;
+  /** Called with the measured text width when overflow is detected (0 when not overflowing). */
+  onMeasure?: (textWidth: number) => void;
 }
 
-const DEFAULT_SPEED = 38;
+const DEFAULT_CYCLE = 8;
 const DEFAULT_GAP = 28;
 /** Fraction of the animation keyframe spent scrolling (rest is pause). */
 const SCROLL_FRACTION = 0.9;
+/** Global epoch for cross-card phase alignment (set once at module load). */
+const MARQUEE_EPOCH = Date.now();
 
 /**
  * Renders text that automatically scrolls horizontally when it overflows its
@@ -33,38 +39,36 @@ export default function MarqueeText({
   as: Tag = 'span',
   className,
   style,
-  speed = DEFAULT_SPEED,
+  cycleDuration = DEFAULT_CYCLE,
   gap = DEFAULT_GAP,
+  syncDistance,
+  onMeasure,
 }: MarqueeTextProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLElement>(null);
   const [overflows, setOverflows] = useState(false);
-  const [duration, setDuration] = useState(6);
+  const [textWidth, setTextWidth] = useState(0);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const check = () => {
-      // Measure the unconstrained text width from the hidden measurement element,
-      // then compare against the visible container width.
       const measure = measureRef.current;
       if (!measure) return;
-      const textWidth = measure.scrollWidth;
+      const tw = measure.scrollWidth;
       const availableWidth = container.clientWidth;
-      const nowOverflows = textWidth > availableWidth + 1;
+      const nowOverflows = tw > availableWidth + 1;
       setOverflows(nowOverflows);
-      if (nowOverflows) {
-        const distance = textWidth + gap;
-        setDuration(distance / Math.max(10, speed) / SCROLL_FRACTION);
-      }
+      setTextWidth(tw);
+      onMeasure?.(nowOverflows ? tw : 0);
     };
 
     const ro = new ResizeObserver(check);
     ro.observe(container);
 
     return () => ro.disconnect();
-  }, [text, speed, gap]);
+  }, [text, cycleDuration, gap, onMeasure]);
 
   /** Reset UA styles so the inner element inherits font sizing from the container. */
   const tagReset: CSSProperties = { margin: 0, fontSize: 'inherit', fontWeight: 'inherit' };
@@ -78,10 +82,22 @@ export default function MarqueeText({
     );
   }
 
-  // When overflowing, render the scrolling track with two copies.
+  // Compute translate distance and gap for this instance.
+  const translate = syncDistance ?? (textWidth + gap);
+  const adjustedGap = Math.max(0, translate - textWidth);
+  // Fixed cycle duration ensures all instances share the same period,
+  // so epoch-based animation-delay produces perfect cross-card alignment.
+  const duration = cycleDuration;
+
+  // Compute negative animation-delay for cross-card phase alignment.
+  const elapsed = (Date.now() - MARQUEE_EPOCH) / 1000;
+  const animDelay = -(elapsed % duration);
+
   const trackStyle: CSSProperties = {
     '--marquee-duration': `${duration.toFixed(2)}s`,
-    '--marquee-gap': `${gap}px`,
+    '--marquee-gap': `${adjustedGap}px`,
+    '--marquee-translate': `${-translate}px`,
+    '--marquee-delay': `${animDelay.toFixed(2)}s`,
   } as CSSProperties;
   const tagResetShrink: CSSProperties = { ...tagReset, flexShrink: 0 };
 

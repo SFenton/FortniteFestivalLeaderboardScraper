@@ -2,12 +2,12 @@
  * MarqueeText — auto-scrolling overflow text.
  *
  * The track contains two copies of the text separated by --marquee-gap.
- * The animation slides the track left by exactly one copy + gap so it
+ * The animation slides the track left by --marquee-translate pixels so it
  * loops seamlessly.  Percentage-based pauses in the keyframe provide a
  * dwell at each end without JavaScript timers.
  *
- * Duration and gap are set via CSS custom properties from inline styles
- * so the component can compute them dynamically per instance.
+ * Duration, gap, and translate are set via CSS custom properties from
+ * inline styles so the component can compute them dynamically per instance.
  */
 
 .container {
@@ -21,6 +21,7 @@
   will-change: transform;
   gap: var(--marquee-gap, 28px);
   animation: marqueeScroll var(--marquee-duration, 6s) linear infinite;
+  animation-delay: var(--marquee-delay, 0s);
 }
 
 @keyframes marqueeScroll {
@@ -30,7 +31,7 @@
   }
   /* pause at end (~5 %) */
   95%, 100% {
-    transform: translateX(calc(-50% - var(--marquee-gap, 28px) / 2));
+    transform: translateX(var(--marquee-translate, -50%));
   }
 }
 
