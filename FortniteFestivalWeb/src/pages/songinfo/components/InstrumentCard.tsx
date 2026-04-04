@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { InstrumentHeaderSize } from '@festival/core';
 import InstrumentHeader from '../../../components/display/InstrumentHeader';
 import { LeaderboardEntry } from '../../leaderboard/global/components/LeaderboardEntry';
+import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
 import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore, serverInstrumentLabel } from '@festival/core/api/serverTypes';
 import { QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, Colors, Font, Weight, Gap, Radius, Layout, Display, Align, Justify, Overflow, Cursor, Opacity, CssValue, FAST_FADE_MS, TRANSITION_MS, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, frostedCard, flexColumn, flexRow, transition, padding, border, Border } from '@festival/theme';
 import { CssProp } from '@festival/theme';
@@ -49,6 +50,12 @@ export default memo(function InstrumentCard({
     (e) => e.accountId === playerAccountId,
   ));
   const hasEntries = prefetchedEntries.length > 0 || (!!playerScore && !playerInTop);
+
+  const rankWidth = useMemo(() => {
+    const ranks = prefetchedEntries.map((e, i) => e.rank ?? i + 1);
+    if (playerScore && !playerInTop) ranks.push(playerScore.rank);
+    return computeRankWidth(ranks);
+  }, [prefetchedEntries, playerScore, playerInTop]);
 
   const anim = (delayMs: number): CSSProperties => skipAnimation ? {} : ({
     opacity: Opacity.none,
@@ -107,6 +114,7 @@ export default memo(function InstrumentCard({
                 showSeason={showSeason}
                 showAccuracy={showAccuracy}
                 scoreWidth={scoreWidth}
+                rankWidth={rankWidth}
               />
             </Link>
             );
@@ -137,6 +145,7 @@ export default memo(function InstrumentCard({
               showSeason={showSeason}
               showAccuracy={showAccuracy}
               scoreWidth={scoreWidth}
+              rankWidth={rankWidth}
             />
           </Link>
           );

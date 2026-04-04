@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { IoHelpCircleOutline } from 'react-icons/io5';
 import { modalStyles as ms } from '../modals/modalStyles';
 
 export interface ToggleRowProps {
@@ -9,9 +10,10 @@ export interface ToggleRowProps {
   disabled?: boolean;
   icon?: React.ReactNode;
   large?: boolean;
+  onInfo?: () => void;
 }
 
-export const ToggleRow = memo(function ToggleRow({ label, description, checked, onToggle, disabled, icon, large }: ToggleRowProps) {
+export const ToggleRow = memo(function ToggleRow({ label, description, checked, onToggle, disabled, icon, large, onInfo }: ToggleRowProps) {
   const rowStyle = {
     ...(large ? ms.toggleRowLarge : ms.toggleRow),
     ...(disabled ? ms.toggleRowDisabled : {}),
@@ -35,6 +37,17 @@ export const ToggleRow = memo(function ToggleRow({ label, description, checked, 
         <div style={large ? { ...ms.toggleLabel, ...ms.toggleLabelLarge } : ms.toggleLabel}>{label}</div>
         {description && <div style={large ? { ...ms.toggleDesc, ...ms.toggleDescLarge } : ms.toggleDesc}>{description}</div>}
       </div>
+      {onInfo && (
+        <span
+          role="button"
+          tabIndex={0}
+          style={ms.toggleInfoBtn}
+          onClick={e => { e.stopPropagation(); onInfo(); }}
+          onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); onInfo(); } }}
+        >
+          <IoHelpCircleOutline size={18} />
+        </span>
+      )}
       <div style={trackStyle}>
         <div style={thumbStyle} />
       </div>
