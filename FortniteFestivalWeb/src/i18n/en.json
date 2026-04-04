@@ -198,7 +198,7 @@
     "same_pct_improve": { "title": "Competitive Improvements", "desc": "Songs where your percentile is the same across all instruments. An improvement on any instrument moves you up everywhere." },
     "same_pct_bucket": { "title": "Break Into {{target}}", "desc": "Songs where all your instruments are ranked Top {{bucket}}%. Improve any instrument to break the tie and climb to {{target}}." },
     "pct_improve_bucket": { "title": "Top {{bucket}}% Push", "desc": "Songs with at least one instrument ranked Top {{bucket}}%. A small score bump could push you higher." },
-    "pct_improve_instrument_bucket": { "title": "{{instrument}} Top {{bucket}}% Push", "desc": "Songs ranked Top {{bucket}}% on {{instrument}}. A better score could push you into the next bracket." },
+    "pct_improve_instrument_bucket": { "title": "Top {{bucket}}% Push", "desc": "Songs with {{instrument}} scores ranked Top {{bucket}}%. A small score bump could push you higher." },
     "improve_rankings_instrument": { "title": "Improve {{instrument}} Rankings", "desc": "A varied mix of {{instrument}} songs across different percentile brackets — all with room to grow." },
     "song_rival_gap": { "title": "Close the Gap vs {{rival}}", "desc": "Songs where {{rival}} barely leads you. One good run could overtake them." },
     "song_rival_protect": { "title": "Protect Your Lead vs {{rival}}", "desc": "You're barely ahead of {{rival}} on these. Don't let them pass you." },

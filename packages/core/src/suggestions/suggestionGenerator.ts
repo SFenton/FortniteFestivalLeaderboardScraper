@@ -1515,8 +1515,8 @@ export class SuggestionGenerator {
     if (final.length === 0) return [];
     return [{
       key,
-      title: `${instrumentLabel(instrument)} Top ${bucket}% Push`,
-      description: `Songs ranked Top ${bucket}% on ${instrumentLabel(instrument)}. A better score could push you into the next bracket.`,
+      title: `Top ${bucket}% Push`,
+      description: `Songs with ${instrumentLabel(instrument)} scores ranked Top ${bucket}%. A small score bump could push you higher.`,
       songs: final.map(p => this.mapUniqueSong(p)),
     }];
   }

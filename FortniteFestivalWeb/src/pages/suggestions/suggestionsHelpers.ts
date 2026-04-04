@@ -237,17 +237,44 @@ function extractSongNameParam(key: string, title: string): string | undefined {
   return m?.[1];
 }
 
+const CATEGORY_INSTRUMENT_PREFIXES = ['unfc_', 'unplayed_', 'almost_elite_', 'pct_push_', 'stale_', 'pct_improve_', 'improve_rankings_'];
+
 function extractInstrumentParam(key: string): string | undefined {
+  // Suffix match: e.g. unfc_guitar, pct_push_pro_bass
   for (const ins of INSTRUMENT_KEYS) {
     const i18nKey = INSTRUMENT_I18N_KEYS[ins];
     if (key.endsWith(`_${ins}`) && i18nKey) return i18next.t(i18nKey);
+  }
+  // Prefix match: instrument in the middle, e.g. pct_improve_guitar_2
+  for (const p of CATEGORY_INSTRUMENT_PREFIXES) {
+    if (key.startsWith(p)) {
+      const remainder = key.substring(p.length);
+      for (const ins of INSTRUMENT_KEYS) {
+        if (remainder === ins || remainder.startsWith(`${ins}_`)) {
+          const i18nKey = INSTRUMENT_I18N_KEYS[ins];
+          if (i18nKey) return i18next.t(i18nKey);
+        }
+      }
+    }
   }
   return undefined;
 }
 
 function stripInstrumentSuffix(key: string): string {
+  // Suffix match: e.g. unfc_guitar → unfc
   for (const ins of INSTRUMENT_KEYS) {
     if (key.endsWith(`_${ins}`)) return key.slice(0, -(ins.length + 1));
+  }
+  // Prefix match: instrument in the middle, e.g. pct_improve_guitar_5 → pct_improve_5
+  for (const p of CATEGORY_INSTRUMENT_PREFIXES) {
+    if (key.startsWith(p)) {
+      const remainder = key.substring(p.length);
+      for (const ins of INSTRUMENT_KEYS) {
+        if (remainder.startsWith(`${ins}_`)) {
+          return p + remainder.substring(ins.length + 1);
+        }
+      }
+    }
   }
   return key;
 }
