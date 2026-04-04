@@ -164,7 +164,6 @@ export default function LeaderboardRivalsTab({ accountId, shouldStagger, rankBy 
                   key={rival.accountId}
                   rival={rival}
                   direction={previewAbove.includes(rival) ? 'above' : 'below'}
-                  leaderboardRank={rival.leaderboardRank}
                   onClick={() => navigateToRival(entry.instrument, rival.accountId, rival.displayName)}
                   style={nextStagger()}
                   onAnimationEnd={clearAnim}

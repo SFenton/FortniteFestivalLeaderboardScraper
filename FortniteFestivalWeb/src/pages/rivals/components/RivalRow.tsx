@@ -12,13 +12,11 @@ interface RivalRowProps {
   /** "above" = rival is ahead of you; "below" = you are ahead */
   direction: 'above' | 'below';
   onClick: () => void;
-  /** Optional leaderboard rank badge (e.g., "#410") shown left of name. */
-  leaderboardRank?: number;
   style?: React.CSSProperties;
   onAnimationEnd?: (e: React.AnimationEvent<HTMLElement>) => void;
 }
 
-const RivalRow = memo(function RivalRow({ rival, direction, onClick, leaderboardRank, style, onAnimationEnd }: RivalRowProps) {
+const RivalRow = memo(function RivalRow({ rival, direction, onClick, style, onAnimationEnd }: RivalRowProps) {
   const { t } = useTranslation();
   const name = rival.displayName ?? 'Unknown Player';
   const st = useRivalRowStyles();
@@ -37,7 +35,6 @@ const RivalRow = memo(function RivalRow({ rival, direction, onClick, leaderboard
     >
       <div style={st.content}>
         <span style={st.name}>
-          {leaderboardRank != null && <span style={st.rankBadge}>#{leaderboardRank.toLocaleString()}</span>}
           {name}
         </span>
         <span style={st.shared}>{t('rivals.sharedSongs', { count: rival.sharedSongCount })}</span>
@@ -124,13 +121,7 @@ function useRivalRowStyles() {
         color: Colors.statusRed,
         borderColor: Colors.rivalRedBorder,
       } as CSSProperties,
-      rankBadge: {
-        fontSize: Font.sm,
-        fontWeight: Weight.bold,
-        fontVariantNumeric: FontVariant.tabularNums,
-        color: Colors.accentBlueBright,
-        marginRight: Gap.sm,
-      } as CSSProperties,
+
     };
   }, []);
 }
