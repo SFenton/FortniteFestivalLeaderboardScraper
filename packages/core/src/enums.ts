@@ -95,11 +95,12 @@ export enum RowLayout {
   Hidden = 'hidden',
 }
 
-/** Sync status phase for backfill/history reconstruction. */
+/** Sync status phase for backfill/history reconstruction/rivals. */
 export enum SyncPhase {
   Idle = 'idle',
   Backfill = 'backfill',
   History = 'history',
+  Rivals = 'rivals',
   Complete = 'complete',
   Error = 'error',
 }

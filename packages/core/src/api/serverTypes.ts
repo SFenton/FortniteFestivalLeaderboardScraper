@@ -109,9 +109,23 @@ export type ShopSnapshotMessage = {
   leavingTomorrow: string[];
 };
 
+export type SyncProgressMessage = {
+  type: 'sync_progress';
+  accountId: string;
+  phase: 'backfill' | 'history' | 'rivals' | 'complete' | 'error';
+  itemsCompleted: number;
+  totalItems: number;
+  entriesFound: number;
+  currentSongName?: string;
+  seasonsQueried?: number;
+  rivalsFound?: number;
+  elapsedSeconds?: number;
+};
+
 export type WsNotificationMessage =
   | ShopChangedMessage
   | ShopSnapshotMessage
+  | SyncProgressMessage
   | { type: 'backfill_complete' }
   | { type: 'history_recon_complete' }
   | { type: 'rivals_complete' };
@@ -263,6 +277,7 @@ export type SyncStatusResponse = {
     songsChecked: number;
     totalSongsToCheck: number;
     entriesFound: number;
+    currentSongName?: string;
     startedAt: string | null;
     completedAt: string | null;
   } | null;
@@ -272,6 +287,15 @@ export type SyncStatusResponse = {
     totalSongsToProcess: number;
     seasonsQueried: number;
     historyEntriesFound: number;
+    currentSongName?: string;
+    startedAt: string | null;
+    completedAt: string | null;
+  } | null;
+  rivals: {
+    status: string;
+    combosComputed: number;
+    totalCombosToCompute: number;
+    rivalsFound: number;
     startedAt: string | null;
     completedAt: string | null;
   } | null;

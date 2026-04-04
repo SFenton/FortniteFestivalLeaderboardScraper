@@ -187,6 +187,7 @@ builder.Services.AddSingleton<SharedDopPool>(sp =>
 });
 builder.Services.AddSingleton<FirstSeenSeasonCalculator>();
 builder.Services.AddSingleton<FSTService.Api.NotificationService>();
+builder.Services.AddSingleton<FSTService.Scraping.UserSyncProgressTracker>();
 builder.Services.AddSingleton<FSTService.Api.SongsCacheService>();
 builder.Services.AddSingleton<FSTService.Api.ShopCacheService>();
 builder.Services.AddKeyedSingleton<FSTService.Api.ResponseCacheService>("PlayerCache",

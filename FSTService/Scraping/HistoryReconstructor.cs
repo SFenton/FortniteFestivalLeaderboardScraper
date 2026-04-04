@@ -33,6 +33,7 @@ public class HistoryReconstructor
     private readonly HttpClient _http;
     private readonly ResilientHttpExecutor _executor;
     private readonly ScrapeProgressTracker _progress;
+    private readonly UserSyncProgressTracker _syncTracker;
     private readonly ILogger<HistoryReconstructor> _log;
 
     public HistoryReconstructor(
@@ -40,6 +41,7 @@ public class HistoryReconstructor
         GlobalLeaderboardPersistence persistence,
         HttpClient http,
         ScrapeProgressTracker progress,
+        UserSyncProgressTracker syncTracker,
         ILogger<HistoryReconstructor> log)
     {
         _scraper = scraper;
@@ -48,6 +50,7 @@ public class HistoryReconstructor
         _http = http;
         _executor = new ResilientHttpExecutor(http, log);
         _progress = progress;
+        _syncTracker = syncTracker;
         _log = log;
     }
 
@@ -365,6 +368,7 @@ public class HistoryReconstructor
             accountId, reconstructable.Count, alreadyProcessed.Count);
 
         _progress.AddPhaseItems(reconstructable.Count - alreadyProcessed.Count);
+        _syncTracker.BeginHistory(accountId, reconstructable.Count);
 
         int totalHistoryEntries = 0;
         int songsProcessed = alreadyProcessed.Count;
@@ -414,6 +418,9 @@ public class HistoryReconstructor
                 _metaDb.MarkHistoryReconSongProcessed(accountId, songId, instrument);
                 _progress.ReportPhaseItemComplete();
                 if (entries > 0) _progress.ReportPhaseEntryUpdated(entries);
+
+                // Per-item real-time progress via WebSocket
+                _syncTracker.ReportHistoryItem(accountId, queries, entries);
 
                 // Update progress every 50 songs
                 if (processed % 50 == 0)

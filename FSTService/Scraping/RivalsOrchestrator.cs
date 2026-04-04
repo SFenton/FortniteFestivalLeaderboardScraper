@@ -13,6 +13,7 @@ public sealed class RivalsOrchestrator
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly NotificationService _notifications;
     private readonly ScrapeProgressTracker _progress;
+    private readonly UserSyncProgressTracker _syncTracker;
     private readonly ResponseCacheService _rivalsCache;
     private readonly ILogger<RivalsOrchestrator> _log;
 
@@ -21,6 +22,7 @@ public sealed class RivalsOrchestrator
         GlobalLeaderboardPersistence persistence,
         NotificationService notifications,
         ScrapeProgressTracker progress,
+        UserSyncProgressTracker syncTracker,
         [FromKeyedServices("RivalsCache")] ResponseCacheService rivalsCache,
         ILogger<RivalsOrchestrator> log)
     {
@@ -28,6 +30,7 @@ public sealed class RivalsOrchestrator
         _persistence = persistence;
         _notifications = notifications;
         _progress = progress;
+        _syncTracker = syncTracker;
         _rivalsCache = rivalsCache;
         _log = log;
     }
@@ -99,11 +102,14 @@ public sealed class RivalsOrchestrator
             // Quick pre-scan: count valid instruments to compute total combos for progress tracking
             var totalCombos = _calculator.CountValidCombos(accountId, dirtyInstruments);
             _persistence.Meta.StartRivals(accountId, totalCombos);
+            _syncTracker.BeginRivals(accountId, totalCombos);
 
             var result = _calculator.ComputeRivals(accountId, dirtyInstruments);
 
             _persistence.Meta.ReplaceRivalsData(accountId, result.Rivals, result.Samples);
             _persistence.Meta.CompleteRivals(accountId, result.CombosComputed, result.Rivals.Count);
+            _syncTracker.ReportRivalsItem(accountId, result.Rivals.Count);
+            _syncTracker.Complete(accountId);
             _rivalsCache.InvalidateAll();
             _calculator.InvalidateSongGapsCache();
 
@@ -118,6 +124,7 @@ public sealed class RivalsOrchestrator
         {
             _log.LogWarning(ex, "Rivals computation failed for {AccountId}. Will retry next pass.", accountId);
             _persistence.Meta.FailRivals(accountId, ex.Message);
+            _syncTracker.Error(accountId, ex.Message);
         }
     }
 }

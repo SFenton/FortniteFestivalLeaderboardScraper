@@ -56,7 +56,7 @@ public class HistoryReconstructorInstanceTests : IDisposable
         var eventsHandler = new MockHttpMessageHandler();
         var eventsHttp = new HttpClient(eventsHandler);
 
-        var recon = new HistoryReconstructor(scraper, _persistence, eventsHttp, progress, _log);
+        var recon = new HistoryReconstructor(scraper, _persistence, eventsHttp, progress, new UserSyncProgressTracker(new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), _log);
         return (recon, scraperHandler, eventsHandler);
     }
 

@@ -57,7 +57,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   });
   const qc = useQueryClient();
 
-  const { isSyncing: localSyncing, phase: localPhase, backfillProgress: localBfProg, historyProgress: localHrProg, justCompleted, clearCompleted } =
+  const { isSyncing: localSyncing, phase: localPhase, backfillProgress: localBfProg, historyProgress: localHrProg, rivalsProgress: localRvProg, entriesFound: localEntriesFound, itemsCompleted: localItemsCompleted, totalItems: localTotalItems, currentSongName: localCurrentSong, seasonsQueried: localSeasonsQueried, rivalsFound: localRivalsFound, justCompleted, clearCompleted } =
     useSyncStatus(!isTrackedPlayer ? accountId : undefined);
 
   // Auto-reload when sync completes
@@ -76,6 +76,13 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   const phase = isTrackedPlayer ? ctx.syncPhase : localPhase;
   const backfillProgress = isTrackedPlayer ? ctx.backfillProgress : localBfProg;
   const historyProgress = isTrackedPlayer ? ctx.historyProgress : localHrProg;
+  const rivalsProgress = isTrackedPlayer ? ctx.rivalsProgress : localRvProg;
+  const entriesFound = isTrackedPlayer ? ctx.entriesFound : localEntriesFound;
+  const itemsCompleted = isTrackedPlayer ? ctx.itemsCompleted : localItemsCompleted;
+  const totalItems = isTrackedPlayer ? ctx.totalItems : localTotalItems;
+  const currentSongName = isTrackedPlayer ? ctx.currentSongName : localCurrentSong;
+  const seasonsQueried = isTrackedPlayer ? ctx.seasonsQueried : localSeasonsQueried;
+  const rivalsFound = isTrackedPlayer ? ctx.rivalsFound : localRivalsFound;
 
   // Skip stagger if we've rendered this account before.
   const hasRendered = isTrackedPlayer
@@ -119,7 +126,7 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
         </div>
       )}
       {loadPhase === LoadPhase.ContentIn && data && (
-        <PlayerContent key={accountId} data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} isTrackedPlayer={isTrackedPlayer} skipAnim={skipAnim} />
+        <PlayerContent key={accountId} data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} rivalsProgress={rivalsProgress} itemsCompleted={itemsCompleted} totalItems={totalItems} entriesFound={entriesFound} currentSongName={currentSongName} seasonsQueried={seasonsQueried} rivalsFound={rivalsFound} isTrackedPlayer={isTrackedPlayer} skipAnim={skipAnim} />
       )}
       {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
     </>

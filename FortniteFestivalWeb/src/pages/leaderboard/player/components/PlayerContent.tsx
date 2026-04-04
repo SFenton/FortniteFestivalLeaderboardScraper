@@ -45,6 +45,13 @@ export interface PlayerContentProps {
   phase: SyncPhase;
   backfillProgress: number;
   historyProgress: number;
+  rivalsProgress: number;
+  itemsCompleted: number;
+  totalItems: number;
+  entriesFound: number;
+  currentSongName: string | null;
+  seasonsQueried: number;
+  rivalsFound: number;
   isTrackedPlayer: boolean;
   skipAnim: boolean;
 }
@@ -56,6 +63,13 @@ export default function PlayerContent({
   phase: syncPhase,
   backfillProgress,
   historyProgress,
+  rivalsProgress,
+  itemsCompleted,
+  totalItems,
+  entriesFound,
+  currentSongName,
+  seasonsQueried,
+  rivalsFound,
   isTrackedPlayer,
   skipAnim,
 }: PlayerContentProps) {
@@ -171,10 +185,16 @@ export default function PlayerContent({
       heightEstimate: 150,
       node: (
         <SyncBanner
-          displayName={data.displayName}
           phase={syncPhase}
           backfillProgress={backfillProgress}
           historyProgress={historyProgress}
+          rivalsProgress={rivalsProgress}
+          itemsCompleted={itemsCompleted}
+          totalItems={totalItems}
+          entriesFound={entriesFound}
+          currentSongName={currentSongName}
+          seasonsQueried={seasonsQueried}
+          rivalsFound={rivalsFound}
         />
       ),
     });

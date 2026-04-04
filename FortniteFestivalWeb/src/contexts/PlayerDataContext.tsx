@@ -21,6 +21,13 @@ type PlayerDataContextValue = {
   syncPhase: SyncPhase;
   backfillProgress: number;
   historyProgress: number;
+  rivalsProgress: number;
+  entriesFound: number;
+  itemsCompleted: number;
+  totalItems: number;
+  currentSongName: string | null;
+  seasonsQueried: number;
+  rivalsFound: number;
 };
 
 const PlayerDataContext = createContext<PlayerDataContextValue | null>(null);
@@ -40,7 +47,7 @@ export function PlayerDataProvider({
     enabled: !!accountId,
   });
 
-  const { isSyncing, phase, backfillProgress, historyProgress, justCompleted, clearCompleted } =
+  const { isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, justCompleted, clearCompleted } =
     useSyncStatus(accountId);
 
   // Auto-reload when sync completes
@@ -72,7 +79,14 @@ export function PlayerDataProvider({
     syncPhase: phase,
     backfillProgress,
     historyProgress,
-  }), [data, isLoading, error, refreshPlayer, isSyncing, phase, backfillProgress, historyProgress]);
+    rivalsProgress,
+    entriesFound,
+    itemsCompleted,
+    totalItems,
+    currentSongName,
+    seasonsQueried,
+    rivalsFound,
+  }), [data, isLoading, error, refreshPlayer, isSyncing, phase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound]);
 
   return (
     <PlayerDataContext.Provider value={value}>

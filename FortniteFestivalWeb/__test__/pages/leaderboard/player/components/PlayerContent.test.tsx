@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
+﻿import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import React from 'react';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -44,7 +44,7 @@ beforeEach(() => {
   localStorage.clear();
   mockApi.getSongs.mockResolvedValue({ songs: [{ songId: 's1', title: 'Test Song', artist: 'Artist A', year: 2024, difficulty: { guitar: 3 }, albumArt: 'art.jpg' }], count: 1, currentSeason: 5 });
   mockApi.getPlayer.mockResolvedValue({ accountId: 'p1', displayName: 'TestPlayer', totalScores: 1, scores: [{ songId: 's1', instrument: 'Solo_Guitar', score: 100000, rank: 3, percentile: 90, accuracy: 95, isFullCombo: false, stars: 5, season: 5, totalEntries: 500 }] });
-  mockApi.getSyncStatus.mockResolvedValue({ accountId: 'p1', isTracked: false, backfill: null, historyRecon: null });
+  mockApi.getSyncStatus.mockResolvedValue({ accountId: 'p1', isTracked: false, backfill: null, historyRecon: null, rivals: null });
   mockApi.getVersion.mockResolvedValue({ version: '1.0.0' });
   mockApi.getPlayerStats.mockResolvedValue({ accountId: 'p1', stats: [{ instrument: 'Solo_Guitar', songsPlayed: 10, fullComboCount: 2, goldStarCount: 5, avgAccuracy: 96.5, bestRank: 1, totalScore: 1200000 }] });
   mockApi.getPlayerHistory.mockResolvedValue({ accountId: 'p1', count: 0, history: [] });
@@ -111,7 +111,7 @@ describe('PlayerContent', () => {
   it('renders player display name', async () => {
     render(
       <Providers accountId="p1">
-        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} isTrackedPlayer={true} skipAnim />
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={true} skipAnim />
       </Providers>,
     );
     await waitFor(() => { expect(screen.getByText('TestPlayer')).toBeDefined(); });
@@ -120,7 +120,7 @@ describe('PlayerContent', () => {
   it('renders instrument stats section', async () => {
     render(
       <Providers accountId="p1">
-        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} isTrackedPlayer={true} skipAnim />
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={true} skipAnim />
       </Providers>,
     );
     await waitFor(() => { expect(screen.getByText('TestPlayer')).toBeDefined(); });
@@ -129,7 +129,7 @@ describe('PlayerContent', () => {
   it('shows sync banner when syncing', async () => {
     render(
       <Providers accountId="p1">
-        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={true} phase={SyncPhase.Backfill} backfillProgress={50} historyProgress={0} isTrackedPlayer={true} skipAnim />
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={true} phase={SyncPhase.Backfill} backfillProgress={50} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={true} skipAnim />
       </Providers>,
     );
     await waitFor(() => { expect(screen.getByText('TestPlayer')).toBeDefined(); });
@@ -138,7 +138,7 @@ describe('PlayerContent', () => {
   it('renders for non-tracked player', async () => {
     render(
       <Providers>
-        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} isTrackedPlayer={false} skipAnim={false} />
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={false} skipAnim={false} />
       </Providers>,
     );
     await waitFor(() => { expect(screen.getByText('TestPlayer')).toBeDefined(); });
@@ -148,7 +148,7 @@ describe('PlayerContent', () => {
     const emptyPlayer = { accountId: 'p1', displayName: 'Empty', totalScores: 0, scores: [] };
     render(
       <Providers accountId="p1">
-        <PlayerContent data={emptyPlayer as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} isTrackedPlayer={true} skipAnim />
+        <PlayerContent data={emptyPlayer as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={true} skipAnim />
       </Providers>,
     );
     await waitFor(() => { expect(screen.getByText('Empty')).toBeDefined(); });
@@ -161,7 +161,7 @@ describe('PlayerContent', () => {
     };
     render(
       <Providers accountId="p1">
-        <PlayerContent data={fcPlayer as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} isTrackedPlayer={true} skipAnim />
+        <PlayerContent data={fcPlayer as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={true} skipAnim />
       </Providers>,
     );
     await waitFor(() => { expect(screen.getByText('FCPlayer')).toBeDefined(); });
@@ -179,7 +179,7 @@ describe('PlayerContent', () => {
     const { getByTestId } = render(
       <Providers accountId="p1">
         <SearchSpy onMount={(fn) => { setQueryFn = fn; }} />
-        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} isTrackedPlayer={true} skipAnim />
+        <PlayerContent data={playerData as any} songs={songs as any} isSyncing={false} phase={SyncPhase.Idle} backfillProgress={0} historyProgress={0} rivalsProgress={0} itemsCompleted={0} totalItems={0} entriesFound={0} currentSongName={null} seasonsQueried={0} rivalsFound={0} isTrackedPlayer={true} skipAnim />
       </Providers>,
     );
 
@@ -190,7 +190,7 @@ describe('PlayerContent', () => {
     React.act(() => { setQueryFn('hello'); });
     expect(getByTestId('search-query').textContent).toBe('hello');
 
-    // Click "Songs Played" stat card — triggers navigateToSongs
+    // Click "Songs Played" stat card â€” triggers navigateToSongs
     const songsPlayed = screen.getAllByText('Songs Played')[0]!;
     fireEvent.click(songsPlayed);
 

@@ -165,6 +165,7 @@ export const MOCK_SYNC_STATUS: SyncStatusResponse = {
   isTracked: false,
   backfill: null,
   historyRecon: null,
+  rivals: null,
 };
 
 export const MOCK_SYNC_STATUS_TRACKED: SyncStatusResponse = {
@@ -172,6 +173,7 @@ export const MOCK_SYNC_STATUS_TRACKED: SyncStatusResponse = {
   isTracked: true,
   backfill: { status: 'completed', songsChecked: 100, totalSongsToCheck: 100, entriesFound: 500, startedAt: '2025-01-01T00:00:00Z', completedAt: '2025-01-01T01:00:00Z' },
   historyRecon: { status: 'completed', songsProcessed: 100, totalSongsToProcess: 100, seasonsQueried: 5, historyEntriesFound: 250, startedAt: '2025-01-01T01:00:00Z', completedAt: '2025-01-01T02:00:00Z' },
+  rivals: null,
 };
 
 export const MOCK_TRACK_PLAYER_RESPONSE: TrackPlayerResponse = {

@@ -299,11 +299,15 @@ public static partial class ApiEndpoints
             HttpContext httpContext,
             string accountId,
             IMetaDatabase metaDb,
+            UserSyncProgressTracker syncTracker,
             ScrapeTimePrecomputer precomputer) =>
         {
-            httpContext.Response.Headers.CacheControl = "public, max-age=5";
+            // Reduce cache during active sync for fresher fallback reads
+            var liveProgress = syncTracker.GetProgress(accountId);
+            httpContext.Response.Headers.CacheControl = liveProgress is not null ? "public, max-age=1" : "public, max-age=5";
 
-            // ── Check precomputed store ──
+            // ── Check precomputed store (skip if live progress available) ──
+            if (liveProgress is null)
             {
                 var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet($"syncstatus:{accountId}"));
                 if (result is not null) return result;
@@ -314,6 +318,40 @@ public static partial class ApiEndpoints
             var rivals = metaDb.GetRivalsStatus(accountId);
             var isRegistered = metaDb.GetRegisteredAccountIds().Contains(accountId);
 
+            // Overlay in-memory progress over DB values when available (always fresher)
+            int? liveBfChecked = null;
+            int? liveBfEntries = null;
+            string? liveBfSongName = null;
+            int? liveHrProcessed = null;
+            int? liveHrSeasons = null;
+            int? liveHrEntries = null;
+            int? liveRivalsCombos = null;
+            int? liveRivalsFound = null;
+            string? liveCurrentSongName = null;
+
+            if (liveProgress is not null)
+            {
+                var phase = liveProgress.Phase;
+                if (phase == SyncProgressPhase.Backfill)
+                {
+                    liveBfChecked = Volatile.Read(ref liveProgress.ItemsCompleted);
+                    liveBfEntries = Volatile.Read(ref liveProgress.EntriesFound);
+                    liveBfSongName = liveProgress.CurrentSongName;
+                }
+                else if (phase == SyncProgressPhase.History)
+                {
+                    liveHrProcessed = Volatile.Read(ref liveProgress.ItemsCompleted);
+                    liveHrSeasons = Volatile.Read(ref liveProgress.SeasonsQueried);
+                    liveHrEntries = Volatile.Read(ref liveProgress.EntriesFound);
+                    liveCurrentSongName = liveProgress.CurrentSongName;
+                }
+                else if (phase == SyncProgressPhase.Rivals)
+                {
+                    liveRivalsCombos = Volatile.Read(ref liveProgress.ItemsCompleted);
+                    liveRivalsFound = Volatile.Read(ref liveProgress.RivalsFound);
+                }
+            }
+
             return Results.Ok(new
             {
                 accountId,
@@ -321,28 +359,30 @@ public static partial class ApiEndpoints
                 backfill = backfill is null ? null : new
                 {
                     status = backfill.Status,
-                    songsChecked = backfill.SongsChecked,
+                    songsChecked = liveBfChecked ?? backfill.SongsChecked,
                     totalSongsToCheck = backfill.TotalSongsToCheck,
-                    entriesFound = backfill.EntriesFound,
+                    entriesFound = liveBfEntries ?? backfill.EntriesFound,
                     startedAt = backfill.StartedAt,
                     completedAt = backfill.CompletedAt,
+                    currentSongName = liveBfSongName,
                 },
                 historyRecon = historyRecon is null ? null : new
                 {
                     status = historyRecon.Status,
-                    songsProcessed = historyRecon.SongsProcessed,
+                    songsProcessed = liveHrProcessed ?? historyRecon.SongsProcessed,
                     totalSongsToProcess = historyRecon.TotalSongsToProcess,
-                    seasonsQueried = historyRecon.SeasonsQueried,
-                    historyEntriesFound = historyRecon.HistoryEntriesFound,
+                    seasonsQueried = liveHrSeasons ?? historyRecon.SeasonsQueried,
+                    historyEntriesFound = liveHrEntries ?? historyRecon.HistoryEntriesFound,
                     startedAt = historyRecon.StartedAt,
                     completedAt = historyRecon.CompletedAt,
+                    currentSongName = liveCurrentSongName,
                 },
                 rivals = rivals is null ? null : new
                 {
                     status = rivals.Status,
-                    combosComputed = rivals.CombosComputed,
+                    combosComputed = liveRivalsCombos ?? rivals.CombosComputed,
                     totalCombosToCompute = rivals.TotalCombosToCompute,
-                    rivalsFound = rivals.RivalsFound,
+                    rivalsFound = liveRivalsFound ?? rivals.RivalsFound,
                     startedAt = rivals.StartedAt,
                     completedAt = rivals.CompletedAt,
                 },

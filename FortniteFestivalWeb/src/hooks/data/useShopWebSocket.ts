@@ -1,9 +1,9 @@
 /**
- * useShopWebSocket — Connects to the FST WebSocket endpoint and maintains
+ * useShopWebSocket — Subscribes to the shared WebSocket connection and maintains
  * a live set of in-shop songIds. Applies incremental deltas (shop_changed)
  * and full snapshots (shop_snapshot) without requiring a full /api/songs refetch.
  */
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useCallback, useState } from 'react';
 import type {
   WsNotificationMessage,
   ShopChangedMessage,
@@ -11,16 +11,7 @@ import type {
   ShopSong,
 } from '@festival/core/api/serverTypes';
 import { expandAlbumArt } from '../../api/client';
-
-const RECONNECT_BASE_MS = 1_000;
-const RECONNECT_MAX_MS = 30_000;
-
-/* v8 ignore start -- WebSocket URL helper depends on browser location */
-function getWsUrl(): string {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${location.host}/api/ws`;
-}
-/* v8 ignore stop */
+import { useAppWebSocket } from './useAppWebSocket';
 
 export type ShopState = {
   /** Set of songIds currently in the item shop. Null until first snapshot. */
@@ -34,7 +25,7 @@ export type ShopState = {
 };
 
 /**
- * Maintains a WebSocket connection to /api/ws and keeps shop state in sync.
+ * Maintains shop state via the shared /api/ws connection.
  *
  * @param initialShopIds - Song IDs with shopUrl from the initial /api/songs fetch.
  *                         Used as the starting set before the first WS snapshot arrives.
@@ -47,11 +38,7 @@ export function useShopWebSocket(
   const [shopSongIds, setShopSongIds] = useState<ReadonlySet<string> | null>(initialShopIds);
   const [leavingTomorrowIds, setLeavingTomorrowIds] = useState<ReadonlySet<string> | null>(initialLeavingIds);
   const [shopSongsMap, setShopSongsMap] = useState<ReadonlyMap<string, ShopSong> | null>(null);
-  const [connected, setConnected] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectDelay = useRef(RECONNECT_BASE_MS);
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const mountedRef = useRef(true);
+  const { connected, subscribe } = useAppWebSocket();
 
   // Seed from initial fetch when it arrives (if WS snapshot hasn't come yet)
   useEffect(() => {
@@ -66,92 +53,48 @@ export function useShopWebSocket(
     }
   }, [initialLeavingIds, leavingTomorrowIds]);
 
-  const handleMessage = useCallback((event: MessageEvent) => {
-    try {
-      const msg = JSON.parse(event.data as string) as WsNotificationMessage;
-      switch (msg.type) {
-        case 'shop_snapshot': {
-          const snap = msg as ShopSnapshotMessage;
-          // snap.songs is now ShopSong[] (enriched objects)
-          expandAlbumArt(snap.songs);
-          const map = new Map<string, ShopSong>();
-          const ids = new Set<string>();
-          for (const s of snap.songs) {
-            map.set(s.songId, s);
-            ids.add(s.songId);
-          }
-          setShopSongsMap(map);
-          setShopSongIds(ids);
-          setLeavingTomorrowIds(new Set(snap.leavingTomorrow ?? []));
-          break;
+  const handleMessage = useCallback((msg: WsNotificationMessage) => {
+    switch (msg.type) {
+      case 'shop_snapshot': {
+        const snap = msg as ShopSnapshotMessage;
+        expandAlbumArt(snap.songs);
+        const map = new Map<string, ShopSong>();
+        const ids = new Set<string>();
+        for (const s of snap.songs) {
+          map.set(s.songId, s);
+          ids.add(s.songId);
         }
-        case 'shop_changed': {
-          const delta = msg as ShopChangedMessage;
-          // delta.added is now ShopSong[] (enriched), delta.removed is still string[]
-          expandAlbumArt(delta.added);
-          setShopSongsMap(prev => {
-            const next = new Map(prev ?? []);
-            for (const id of delta.removed) next.delete(id);
-            for (const s of delta.added) next.set(s.songId, s);
-            return next;
-          });
-          setShopSongIds(prev => {
-            const next = new Set(prev ?? []);
-            for (const id of delta.removed) next.delete(id);
-            for (const s of delta.added) next.add(s.songId);
-            return next;
-          });
-          setLeavingTomorrowIds(new Set(delta.leavingTomorrow ?? []));
-          break;
-        }
-        // Other notification types can be handled here in the future
-        default:
-          break;
+        setShopSongsMap(map);
+        setShopSongIds(ids);
+        setLeavingTomorrowIds(new Set(snap.leavingTomorrow ?? []));
+        break;
       }
-    } catch {
-      // Ignore malformed messages
+      case 'shop_changed': {
+        const delta = msg as ShopChangedMessage;
+        expandAlbumArt(delta.added);
+        setShopSongsMap(prev => {
+          const next = new Map(prev ?? []);
+          for (const id of delta.removed) next.delete(id);
+          for (const s of delta.added) next.set(s.songId, s);
+          return next;
+        });
+        setShopSongIds(prev => {
+          const next = new Set(prev ?? []);
+          for (const id of delta.removed) next.delete(id);
+          for (const s of delta.added) next.add(s.songId);
+          return next;
+        });
+        setLeavingTomorrowIds(new Set(delta.leavingTomorrow ?? []));
+        break;
+      }
+      default:
+        break;
     }
   }, []);
 
-  const connect = useCallback(() => {
-    if (!mountedRef.current) return;
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
-
-    const ws = new WebSocket(getWsUrl());
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      if (!mountedRef.current) { ws.close(); return; }
-      setConnected(true);
-      reconnectDelay.current = RECONNECT_BASE_MS;
-    };
-
-    ws.onmessage = handleMessage;
-
-    ws.onclose = () => {
-      if (!mountedRef.current) return;
-      setConnected(false);
-      // Exponential backoff reconnect
-      reconnectTimer.current = setTimeout(() => {
-        reconnectDelay.current = Math.min(reconnectDelay.current * 2, RECONNECT_MAX_MS);
-        connect();
-      }, reconnectDelay.current);
-    };
-
-    ws.onerror = () => {
-      ws.close();
-    };
-  }, [handleMessage]);
-
   useEffect(() => {
-    mountedRef.current = true;
-    connect();
-    return () => {
-      mountedRef.current = false;
-      clearTimeout(reconnectTimer.current);
-      wsRef.current?.close();
-    };
-  }, [connect]);
+    return subscribe(handleMessage);
+  }, [subscribe, handleMessage]);
 
   return { shopSongIds, leavingTomorrowIds, shopSongsMap, connected };
 }

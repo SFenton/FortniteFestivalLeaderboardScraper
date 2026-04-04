@@ -17,6 +17,7 @@ public class ScoreBackfiller
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly IMetaDatabase _metaDb;
     private readonly ScrapeProgressTracker _progress;
+    private readonly UserSyncProgressTracker _syncTracker;
     private readonly ILogger<ScoreBackfiller> _log;
 
     /// <summary>Save progress counters to the DB every N songs checked.</summary>
@@ -26,12 +27,14 @@ public class ScoreBackfiller
         ILeaderboardQuerier scraper,
         GlobalLeaderboardPersistence persistence,
         ScrapeProgressTracker progress,
+        UserSyncProgressTracker syncTracker,
         ILogger<ScoreBackfiller> log)
     {
         _scraper = scraper;
         _persistence = persistence;
         _metaDb = persistence.Meta;
         _progress = progress;
+        _syncTracker = syncTracker;
         _log = log;
     }
 
@@ -55,6 +58,11 @@ public class ScoreBackfiller
             .Where(s => s.track?.su is not null)
             .Select(s => s.track.su!)
             .ToList();
+
+        // Build song name lookup for progress display
+        var songNames = festivalService.Songs
+            .Where(s => s.track?.su is not null)
+            .ToDictionary(s => s.track.su!, s => s.track.tt ?? "Unknown");
 
         var instruments = GlobalLeaderboardScraper.AllInstruments;
 
@@ -99,6 +107,7 @@ public class ScoreBackfiller
         }
 
         _progress.AddPhaseItems(workItems.Count);
+        _syncTracker.BeginBackfill(accountId, totalPairs);
         int newEntriesThisRun = 0;
 
         try
@@ -111,9 +120,14 @@ public class ScoreBackfiller
                 try
                 {
                     _progress.ReportPhaseRequest();
-                    return await ProcessSingleLookupAsync(
+                    var found = await ProcessSingleLookupAsync(
                         accountId, item.SongId, item.Instrument,
                         accessToken, callerAccountId, pool.Limiter, ct);
+
+                    // Per-item real-time progress via WebSocket
+                    songNames.TryGetValue(item.SongId, out var songName);
+                    _syncTracker.ReportBackfillItem(accountId, found, songName);
+                    return found;
                 }
                 finally
                 {
@@ -134,7 +148,7 @@ public class ScoreBackfiller
                     _progress.ReportPhaseEntryUpdated();
                 }
 
-                // Flush progress periodically
+                // Flush progress to DB periodically (crash recovery)
                 if (songsChecked % ProgressFlushInterval == 0)
                 {
                     _metaDb.UpdateBackfillProgress(accountId, songsChecked, entriesFound);
@@ -151,6 +165,7 @@ public class ScoreBackfiller
         catch (OperationCanceledException)
         {
             _metaDb.UpdateBackfillProgress(accountId, songsChecked, entriesFound);
+            _syncTracker.Error(accountId, "Backfill cancelled");
             _log.LogWarning("Backfill for {AccountId} cancelled at {Checked}/{Total}. Will resume next pass.",
                 accountId, songsChecked, totalPairs);
             throw;
@@ -159,6 +174,7 @@ public class ScoreBackfiller
         {
             _metaDb.UpdateBackfillProgress(accountId, songsChecked, entriesFound);
             _metaDb.FailBackfill(accountId, ex.Message);
+            _syncTracker.Error(accountId, ex.Message);
             _log.LogError(ex, "Backfill for {AccountId} failed at {Checked}/{Total}.",
                 accountId, songsChecked, totalPairs);
             throw;

@@ -45,7 +45,7 @@ public sealed class RivalsOrchestratorTests : IDisposable
     {
         var calculator = new RivalsCalculator(persistence, NullLogger<RivalsCalculator>.Instance);
         var progress = new ScrapeProgressTracker();
-        var orch = new RivalsOrchestrator(calculator, persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), progress, new Api.ResponseCacheService(TimeSpan.FromMinutes(5)), NullLogger<RivalsOrchestrator>.Instance);
+        var orch = new RivalsOrchestrator(calculator, persistence, new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), progress, new UserSyncProgressTracker(new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), new Api.ResponseCacheService(TimeSpan.FromMinutes(5)), NullLogger<RivalsOrchestrator>.Instance);
         return (orch, progress);
     }
 

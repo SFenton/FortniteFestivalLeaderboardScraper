@@ -186,6 +186,15 @@ public sealed class NotificationService
     }
 
     /// <summary>
+    /// Push a sync progress update to a specific account's connected devices.
+    /// Called by <see cref="Scraping.UserSyncProgressTracker"/> at a throttled rate.
+    /// </summary>
+    public Task NotifySyncProgressAsync(string accountId, object progressPayload)
+    {
+        return NotifyAccountAsync(accountId, progressPayload);
+    }
+
+    /// <summary>
     /// Process a WebSocket connection — keep alive until closed by client or server shutdown.
     /// </summary>
     public async Task HandleConnectionAsync(string accountId, string deviceId, WebSocket ws, CancellationToken ct)

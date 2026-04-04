@@ -1,61 +1,108 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
 /**
- * Sync progress banner displayed on PlayerPage when backfill/history reconstruction is running.
+ * Sync progress banner displayed on PlayerPage when backfill/history/rivals sync is running.
+ * Shows a unified progress bar, step indicator, numeric counts, and current song name.
  */
 import { memo, useMemo, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Colors, Font, Weight, Gap, Radius, Layout, Overflow, CssValue, TRANSITION_MS, frostedCard, flexColumn, flexRow, transition } from '@festival/theme';
+import { Colors, Font, Weight, Gap, Radius, Layout, Overflow, TRANSITION_MS, frostedCard, flexColumn, flexRow, transition } from '@festival/theme';
 import { CssProp } from '@festival/theme';
 import type { SyncPhase } from '../../hooks/data/useSyncStatus';
 import ArcSpinner, { SpinnerSize } from '../common/ArcSpinner';
 
 interface SyncBannerProps {
-  displayName: string;
   phase: SyncPhase;
   backfillProgress: number;
   historyProgress: number;
+  rivalsProgress: number;
+  itemsCompleted: number;
+  totalItems: number;
+  entriesFound: number;
+  currentSongName: string | null;
+  seasonsQueried: number;
+  rivalsFound: number;
 }
 
-const SyncBanner = memo(function SyncBanner({ displayName: _displayName, phase, backfillProgress, historyProgress }: SyncBannerProps) {
+function getStepInfo(phase: SyncPhase): { step: number; totalSteps: number } {
+  switch (phase) {
+    case 'backfill': return { step: 1, totalSteps: 3 };
+    case 'history': return { step: 2, totalSteps: 3 };
+    case 'rivals': return { step: 3, totalSteps: 3 };
+    default: return { step: 0, totalSteps: 3 };
+  }
+}
+
+function getUnifiedProgress(phase: SyncPhase, bf: number, hr: number, rv: number): number {
+  switch (phase) {
+    case 'backfill': return bf * (1 / 3);
+    case 'history': return (1 / 3) + hr * (1 / 3);
+    case 'rivals': return (2 / 3) + rv * (1 / 3);
+    case 'complete': return 1;
+    default: return 0;
+  }
+}
+
+const SyncBanner = memo(function SyncBanner({
+  phase, backfillProgress, historyProgress, rivalsProgress,
+  itemsCompleted, totalItems, entriesFound, currentSongName,
+  seasonsQueried, rivalsFound,
+}: SyncBannerProps) {
   const { t } = useTranslation();
   const s = useSyncBannerStyles();
+  const { step, totalSteps } = getStepInfo(phase);
+  const unified = getUnifiedProgress(phase, backfillProgress, historyProgress, rivalsProgress);
+  const pct = Math.round(unified * 100);
+  const isIndeterminate = itemsCompleted === 0 && totalItems === 0;
 
   return (
     <div style={s.syncBanner}>
       <div style={s.syncHeader}>
         <ArcSpinner size={SpinnerSize.SM} style={s.spinnerIcon} />
-        <span style={s.syncTitle}>
-          {phase === 'backfill'
-            ? t('player.syncingScores')
-            : t('player.buildingHistory')}
-        </span>
+        <div style={s.syncHeaderText}>
+          <span style={s.syncTitle}>
+            {t(`player.syncStep_${phase}` as const)}
+          </span>
+          {step > 0 && (
+            <span style={s.syncStep}>
+              {t('player.syncStepOf', { step, totalSteps })}
+            </span>
+          )}
+        </div>
       </div>
-        {phase === 'backfill' && backfillProgress > 0 && (
-          <div>
-            <div style={s.syncProgressLabel}>{t('player.syncingScores')}</div>
-            <div style={s.syncProgressBar}>
-              <div style={{ ...s.syncProgressInner, width: `${Math.round(backfillProgress * 100)}%` }} />
-            </div>
-          </div>
+
+      {/* Unified progress bar */}
+      <div style={s.syncProgressBar}>
+        <div style={{
+          ...s.syncProgressInner,
+          ...(isIndeterminate ? s.syncProgressIndeterminate : { width: `${pct}%` }),
+        }} />
+      </div>
+
+      {/* Counts row */}
+      <div style={s.syncCounts}>
+        {totalItems > 0 && (
+          <span>{itemsCompleted.toLocaleString()} / {totalItems.toLocaleString()}</span>
+        )}
+        {phase === 'backfill' && entriesFound > 0 && (
+          <span>{t('player.syncNewScores', { count: entriesFound })}</span>
         )}
         {phase === 'history' && (
           <>
-            <div>
-              <div style={s.syncProgressLabel}>{t('player.syncingScores')}</div>
-              <div style={s.syncProgressBar}>
-                <div style={{ ...s.syncProgressInner, width: CssValue.full }} />
-              </div>
-            </div>
-            {historyProgress > 0 && (
-              <div>
-                <div style={s.syncProgressLabel}>{t('player.buildingHistory')}</div>
-                <div style={s.syncProgressBar}>
-                  <div style={{ ...s.syncProgressInner, width: `${Math.round(historyProgress * 100)}%` }} />
-                </div>
-              </div>
-            )}
+            {seasonsQueried > 0 && <span>{t('player.syncSeasons', { count: seasonsQueried })}</span>}
+            {entriesFound > 0 && <span>{t('player.syncEntriesFound', { count: entriesFound })}</span>}
           </>
         )}
+        {phase === 'rivals' && rivalsFound > 0 && (
+          <span>{t('player.syncRivalsFound', { count: rivalsFound })}</span>
+        )}
+      </div>
+
+      {/* Current song */}
+      {currentSongName && (
+        <div style={s.syncCurrentSong}>
+          {currentSongName}
+        </div>
+      )}
     </div>
   );
 });
@@ -75,20 +122,25 @@ function useSyncBannerStyles() {
     syncHeader: {
       ...flexRow,
       gap: Gap.xl,
-      marginBottom: Gap.lg,
+      alignItems: 'center',
+    } as CSSProperties,
+    syncHeaderText: {
+      ...flexRow,
+      gap: Gap.md,
+      alignItems: 'baseline',
+      flex: 1,
     } as CSSProperties,
     syncTitle: {
       fontSize: Font.lg,
       fontWeight: Weight.bold,
       color: Colors.textPrimary,
     } as CSSProperties,
+    syncStep: {
+      fontSize: Font.sm,
+      color: Colors.textTertiary,
+    } as CSSProperties,
     spinnerIcon: {
       flexShrink: 0,
-    } as CSSProperties,
-    syncProgressLabel: {
-      fontSize: Font.md,
-      color: Colors.textPrimary,
-      marginBottom: Gap.sm,
     } as CSSProperties,
     syncProgressBar: {
       flex: 1,
@@ -102,6 +154,25 @@ function useSyncBannerStyles() {
       background: Colors.accentBlue,
       borderRadius: Radius.progressBar,
       transition: transition(CssProp.width, TRANSITION_MS),
+    } as CSSProperties,
+    syncProgressIndeterminate: {
+      width: '30%',
+      animation: 'indeterminate-bar 1.5s ease-in-out infinite',
+    } as CSSProperties,
+    syncCounts: {
+      ...flexRow,
+      gap: Gap.lg,
+      fontSize: Font.sm,
+      color: Colors.textSecondary,
+      flexWrap: 'wrap' as const,
+    } as CSSProperties,
+    syncCurrentSong: {
+      fontSize: Font.sm,
+      color: Colors.textTertiary,
+      fontStyle: 'italic' as const,
+      overflow: 'hidden' as const,
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap' as const,
     } as CSSProperties,
   }), []);
 }
