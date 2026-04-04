@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { SongRow, compareByMode } from '../../../../src/pages/songs/components/SongRow';
+import { resolvePillFitsTopRow } from '../../../../src/pages/songs/layoutMode';
 import type { ServerSong as Song, PlayerScore, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 
 import type { SongSortMode } from '../../../../src/utils/songSettings';
@@ -203,6 +204,64 @@ describe('SongRow', () => {
       score: undefined,
     });
     expect(screen.getByTestId('instrument-Solo_Guitar')).toBeTruthy();
+  });
+
+  it('keeps the score in the wrapped metadata row until the upper threshold is cleared', () => {
+    const { container, rerender } = render(
+      <MemoryRouter>
+        <SongRow {...defaultProps} isMobile containerWidth={280} />
+      </MemoryRouter>,
+    );
+
+    expect(resolvePillFitsTopRow(280, true)).toBe(false);
+    expect(container.querySelector('[data-metadata-key="score"]')).toBeTruthy();
+
+    rerender(
+      <MemoryRouter>
+        <SongRow {...defaultProps} isMobile containerWidth={318} />
+      </MemoryRouter>,
+    );
+
+    expect(resolvePillFitsTopRow(318, false)).toBe(false);
+    expect(container.querySelector('[data-metadata-key="score"]')).toBeTruthy();
+
+    rerender(
+      <MemoryRouter>
+        <SongRow {...defaultProps} isMobile containerWidth={326} />
+      </MemoryRouter>,
+    );
+
+    expect(resolvePillFitsTopRow(326, false)).toBe(true);
+    expect(container.querySelector('[data-metadata-key="score"]')).toBeNull();
+  });
+
+  it('keeps the score in the top row until the lower threshold is crossed', () => {
+    const { container, rerender } = render(
+      <MemoryRouter>
+        <SongRow {...defaultProps} isMobile containerWidth={320} />
+      </MemoryRouter>,
+    );
+
+    expect(resolvePillFitsTopRow(320, true)).toBe(true);
+    expect(container.querySelector('[data-metadata-key="score"]')).toBeNull();
+
+    rerender(
+      <MemoryRouter>
+        <SongRow {...defaultProps} isMobile containerWidth={301} />
+      </MemoryRouter>,
+    );
+
+    expect(resolvePillFitsTopRow(301, true)).toBe(true);
+    expect(container.querySelector('[data-metadata-key="score"]')).toBeNull();
+
+    rerender(
+      <MemoryRouter>
+        <SongRow {...defaultProps} isMobile containerWidth={298} />
+      </MemoryRouter>,
+    );
+
+    expect(resolvePillFitsTopRow(298, true)).toBe(false);
+    expect(container.querySelector('[data-metadata-key="score"]')).toBeTruthy();
   });
 
   it('renders link to song detail', () => {
@@ -532,7 +591,7 @@ describe('SongRow — maxdistance sort mode', () => {
       metadataOrder: ['maxdistance'],
     });
     expect(screen.getByTestId('percentile')).toBeTruthy();
-    expect(screen.getByText('—')).toBeTruthy();
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
   });
 
   it('shows nothing for maxdistance metadata when score is 0', () => {
