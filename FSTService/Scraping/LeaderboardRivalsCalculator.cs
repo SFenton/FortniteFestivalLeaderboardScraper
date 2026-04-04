@@ -100,8 +100,9 @@ public sealed class LeaderboardRivalsCalculator
                         var rankDelta = rivalSongRank - userSongRank; // positive = user ahead
                         signedDeltaSum += rankDelta;
 
-                        if (rankDelta > 0) aheadCount++;     // user has better (lower) rank
-                        else if (rankDelta < 0) behindCount++; // rival has better rank
+                        // Convention: fields are rival-perspective (matching RivalsCalculator)
+                        if (rankDelta > 0) behindCount++;      // rival is behind (user has better rank)
+                        else if (rankDelta < 0) aheadCount++;  // rival is ahead (rival has better rank)
 
                         songSamples.Add(new LeaderboardRivalSongSampleRow
                         {
