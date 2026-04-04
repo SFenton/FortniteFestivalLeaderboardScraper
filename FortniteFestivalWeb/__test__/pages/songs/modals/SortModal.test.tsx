@@ -145,7 +145,6 @@ describe('SortModal', () => {
       seasonachieved: false,
       intensity: false,
       stars: false,
-      maxdistance: false,
     };
     renderModal({ instrumentFilter: 'Solo_Guitar', metadataVisibility: mv });
     fireEvent.click(screen.getByText('Filtered Instrument Sort Mode'));
@@ -156,7 +155,7 @@ describe('SortModal', () => {
     expect(screen.queryByText('Intensity')).toBeNull();
   });
 
-  it('hides instrument sort modes section when all are filtered out', () => {
+  it('still shows instrument sort modes section when all metadata is hidden (maxdistance always visible)', () => {
     const mv: MetadataVisibility = {
       score: false,
       percentage: false,
@@ -164,10 +163,10 @@ describe('SortModal', () => {
       seasonachieved: false,
       intensity: false,
       stars: false,
-      maxdistance: false,
     };
     renderModal({ instrumentFilter: 'Solo_Guitar', metadataVisibility: mv });
-    expect(screen.queryByText('Filtered Instrument Sort Mode')).toBeNull();
+    // maxdistance is no longer gated by MetadataVisibility — always available as a sort option
+    expect(screen.queryByText('Filtered Instrument Sort Mode')).not.toBeNull();
   });
 
   /* ── Direction toggle ── */
@@ -222,7 +221,6 @@ describe('SortModal', () => {
       seasonachieved: false,
       intensity: false,
       stars: false,
-      maxdistance: false,
     };
     renderModal({ instrumentFilter: 'Solo_Guitar', metadataVisibility: mv });
     expect(screen.queryByText('Metadata Sort Priority')).toBeNull();
@@ -236,7 +234,6 @@ describe('SortModal', () => {
       seasonachieved: false,
       intensity: false,
       stars: false,
-      maxdistance: false,
     };
     renderModal({ instrumentFilter: 'Solo_Guitar', metadataVisibility: mv });
     expect(screen.getAllByText('Score').length).toBeGreaterThanOrEqual(1);

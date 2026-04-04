@@ -60,13 +60,12 @@ describe('songSettings', () => {
       expect(display.stars).toBeTruthy();
       expect(display.seasonachieved).toBeTruthy();
       expect(display.intensity).toBeTruthy();
-      expect(display.maxdistance).toBeTruthy();
     });
   });
 
   describe('DEFAULT_METADATA_ORDER', () => {
-    it('contains 7 keys', () => {
-      expect(DEFAULT_METADATA_ORDER).toHaveLength(7);
+    it('contains 6 keys', () => {
+      expect(DEFAULT_METADATA_ORDER).toHaveLength(6);
     });
   });
 
@@ -129,17 +128,25 @@ describe('songSettings', () => {
     });
 
     it('appends new metadata keys to saved metadataOrder', () => {
-      const oldOrder = ['score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity'];
+      const oldOrder = ['score', 'percentage', 'percentile', 'stars', 'seasonachieved'];
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ metadataOrder: oldOrder }));
       const loaded = loadSongSettings();
-      expect(loaded.metadataOrder).toEqual([...oldOrder, 'maxdistance']);
+      expect(loaded.metadataOrder).toEqual([...oldOrder, 'intensity']);
     });
 
     it('preserves existing metadataOrder when it already has all keys', () => {
-      const fullOrder = ['percentage', 'score', 'percentile', 'stars', 'seasonachieved', 'intensity', 'maxdistance'];
+      const fullOrder = ['percentage', 'score', 'percentile', 'stars', 'seasonachieved', 'intensity'];
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ metadataOrder: fullOrder }));
       const loaded = loadSongSettings();
       expect(loaded.metadataOrder).toEqual(fullOrder);
+    });
+
+    it('strips maxdistance from saved metadataOrder during migration', () => {
+      const oldOrder = ['score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity', 'maxdistance'];
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ metadataOrder: oldOrder }));
+      const loaded = loadSongSettings();
+      expect(loaded.metadataOrder).not.toContain('maxdistance');
+      expect(loaded.metadataOrder).toEqual(['score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity']);
     });
   });
 

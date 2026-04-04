@@ -42,7 +42,6 @@ export type AppSettings = {
   metadataShowSeasonAchieved: boolean;
   metadataShowDifficulty: boolean;
   metadataShowStars: boolean;
-  metadataShowMaxDistance: boolean;
 };
 
 export const defaultAppSettings = (): AppSettings => ({
@@ -70,7 +69,6 @@ export const defaultAppSettings = (): AppSettings => ({
   metadataShowSeasonAchieved: true,
   metadataShowDifficulty: true,
   metadataShowStars: true,
-  metadataShowMaxDistance: true,
 });
 
 /* ── Show-key mapping ── */
@@ -111,11 +109,14 @@ function loadSettings(): AppSettings {
     const parsed = JSON.parse(raw);
     const defaults = defaultAppSettings();
     const merged = { ...defaults, ...parsed };
-    // Migrate songRowVisualOrder: append new DEFAULT_METADATA_ORDER keys
+    // Migrate songRowVisualOrder: append new keys and strip removed keys
     if (Array.isArray(merged.songRowVisualOrder)) {
+      merged.songRowVisualOrder = merged.songRowVisualOrder.filter((k: string) => k !== 'maxdistance');
       const missing = DEFAULT_METADATA_ORDER.filter(k => !merged.songRowVisualOrder.includes(k));
       if (missing.length > 0) merged.songRowVisualOrder = [...merged.songRowVisualOrder, ...missing];
     }
+    // Strip removed settings keys
+    delete (merged as Record<string, unknown>).metadataShowMaxDistance;
     return merged;
   } catch {
     return defaultAppSettings();

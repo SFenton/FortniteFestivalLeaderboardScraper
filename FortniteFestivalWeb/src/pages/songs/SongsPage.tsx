@@ -101,14 +101,24 @@ export default function SongsPage() {
     if (!appSettings.metadataShowSeasonAchieved) hidden.add('seasonachieved');
     if (!appSettings.metadataShowDifficulty) hidden.add('intensity');
     if (!appSettings.metadataShowStars) hidden.add('stars');
-    if (hidden.size === 0) return settings.metadataOrder;
 
-    if (appSettings.songRowVisualOrderEnabled) {
-      return appSettings.songRowVisualOrder.filter(k => !hidden.has(k));
+    let order: string[];
+    if (hidden.size === 0) {
+      order = settings.metadataOrder;
+    } else if (appSettings.songRowVisualOrderEnabled) {
+      order = appSettings.songRowVisualOrder.filter(k => !hidden.has(k));
+    } else {
+      order = settings.metadataOrder.filter(k => !hidden.has(k));
     }
-    return settings.metadataOrder.filter(k => !hidden.has(k));
+
+    // Auto-inject maxdistance only when max-score sort is active
+    if (settings.sortMode === 'maxdistance' && !order.includes('maxdistance')) {
+      order = [...order, 'maxdistance'];
+    }
+    return order;
   }, [
     settings.metadataOrder,
+    settings.sortMode,
     appSettings.songRowVisualOrderEnabled,
     appSettings.songRowVisualOrder,
     appSettings.metadataShowScore,
@@ -240,7 +250,7 @@ export default function SongsPage() {
     fabSearch.registerActions({ openSort: () => openSortRef.current(), openFilter: () => openFilterRef.current() });
   }, [fabSearch]);
   /* v8 ignore stop */
-  const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress } = usePlayerData();
+  const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound } = usePlayerData();
   const shopCtx = useShop();
   const { isShopHighlighted, isLeavingTomorrow, isShopVisible } = useShopState();
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!playerData, shopHighlightEnabled: isShopVisible && !appSettings.disableShopHighlighting }), [playerData, isShopVisible, appSettings.disableShopHighlighting]);
@@ -550,7 +560,6 @@ export default function SongsPage() {
             seasonachieved: appSettings.metadataShowSeasonAchieved,
             intensity: appSettings.metadataShowDifficulty,
             stars: appSettings.metadataShowStars,
-            maxdistance: appSettings.metadataShowMaxDistance,
           }}
           onChange={sortModal.setDraft}
           onCancel={sortModal.close}
@@ -572,10 +581,16 @@ export default function SongsPage() {
       <div ref={containerRef} style={songsStyles.container}>
         {isSyncing && playerData && (
           <SyncBanner
-            displayName={playerData.displayName}
             phase={syncPhase}
             backfillProgress={backfillProgress}
             historyProgress={historyProgress}
+            rivalsProgress={rivalsProgress}
+            itemsCompleted={itemsCompleted}
+            totalItems={totalItems}
+            entriesFound={entriesFound}
+            currentSongName={currentSongName}
+            seasonsQueried={seasonsQueried}
+            rivalsFound={rivalsFound}
           />
         )}
         {loadPhase === LoadPhase.ContentIn && filtered.length === 0 ? (

@@ -43,17 +43,17 @@ export const METADATA_SORT_DISPLAY: Record<string, string> = {
   stars: 'Stars',
   seasonachieved: 'Season Achieved',
   intensity: 'Song Intensity',
-  maxdistance: 'Max Score %',
 };
 
 export const DEFAULT_METADATA_ORDER: string[] = [
-  'score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity', 'maxdistance',
+  'score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity',
 ];
 
-/** Append any new DEFAULT_METADATA_ORDER keys missing from a saved order. */
+/** Append any new DEFAULT_METADATA_ORDER keys missing from a saved order and strip removed keys. */
 function migrateMetadataOrder(saved: string[]): string[] {
-  const missing = DEFAULT_METADATA_ORDER.filter(k => !saved.includes(k));
-  return missing.length > 0 ? [...saved, ...missing] : saved;
+  const stripped = saved.filter(k => k !== 'maxdistance');
+  const missing = DEFAULT_METADATA_ORDER.filter(k => !stripped.includes(k));
+  return missing.length > 0 ? [...stripped, ...missing] : stripped;
 }
 
 /* ── Filter ── */
