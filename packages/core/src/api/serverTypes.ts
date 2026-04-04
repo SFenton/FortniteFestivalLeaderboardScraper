@@ -145,6 +145,8 @@ export type PlayerScore = {
   instrument: string;
   score: number;
   rank: number;
+  /** Player's position within locally-stored data (ROW_NUMBER over our DB). */
+  localRank?: number;
   percentile?: number;
   accuracy?: number;
   isFullCombo?: boolean;
@@ -685,6 +687,7 @@ type WirePlayerScore = {
   sn: number;
   pct: number;
   rk: number;
+  lrk?: number;
   et?: string;
   te: number;
   ml?: number | null;
@@ -765,6 +768,7 @@ function expandPlayerScore(w: WirePlayerScore): PlayerScore {
     season: w.sn,
     percentile: w.pct,
     rank: w.rk,
+    localRank: w.lrk || undefined,
     endTime: w.et,
     totalEntries: w.te,
     minLeeway: w.ml,

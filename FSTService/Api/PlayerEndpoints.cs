@@ -165,6 +165,7 @@ public static partial class ApiEndpoints
                     sn = s.Season,
                     pct = s.Percentile,
                     rk = rank,
+                    lrk = computedRank > 0 ? computedRank : 0,
                     et = s.EndTime,
                     te = totalEntries,
                     isValid = isValid,

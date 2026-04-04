@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { IoChevronForward } from 'react-icons/io5';
 import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
+import { rankingsCache } from '../../api/pageCache';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
@@ -118,6 +119,10 @@ export default function CompetePage() {
   const playerInTop = !!(accountId && leaderboardEntries.some(e => e.accountId === accountId));
 
   const leaderboardNavTarget = isMulti ? Routes.leaderboards : Routes.fullRankings(previewInstrument!, 'totalscore');
+  const navigateToLeaderboards = () => {
+    if (!isMulti && previewInstrument) rankingsCache.delete(`${previewInstrument}:totalscore`);
+    navigate(leaderboardNavTarget);
+  };
 
   // Rivals — closest 3 above + 3 below for first visible instrument
   const { data: rivalsData, error: rivalsError } = useQuery({
@@ -154,10 +159,10 @@ export default function CompetePage() {
           className={fx.sectionHeaderClickable}
           style={{ ...s.sectionHeaderClickable, ...stagger() }}
           onAnimationEnd={clearAnim}
-          onClick={() => navigate(leaderboardNavTarget)}
+          onClick={navigateToLeaderboards}
           role="button"
           tabIndex={0}
-          onKeyDown={e => { if (e.key === 'Enter') navigate(leaderboardNavTarget); }}
+          onKeyDown={e => { if (e.key === 'Enter') navigateToLeaderboards(); }}
         >
           <div style={s.cardHeaderText}>
             <span style={s.cardTitle}>{t('compete.leaderboards')}</span>
@@ -187,7 +192,7 @@ export default function CompetePage() {
             </Link>
           )}
         </div>
-        <div style={{ ...s.viewAllButton, ...stagger() }} onAnimationEnd={clearAnim} onClick={() => navigate(leaderboardNavTarget)}>
+        <div style={{ ...s.viewAllButton, ...stagger() }} onAnimationEnd={clearAnim} onClick={navigateToLeaderboards}>
           {t('compete.viewFullLeaderboards')}
         </div>
       </div>

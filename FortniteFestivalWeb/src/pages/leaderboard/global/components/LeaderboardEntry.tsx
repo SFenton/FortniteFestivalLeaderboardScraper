@@ -38,6 +38,8 @@ export interface LeaderboardEntryProps {
   showAccuracy?: boolean;
   /** Show the stars column. */
   showStars?: boolean;
+  /** Show the score pill. Defaults to true. */
+  showScore?: boolean;
   /** Width string for the score column (e.g. '6ch'). */
   scoreWidth?: string;
   /** Pixel width for the rank column. Computed from the longest rank in the list. */
@@ -59,6 +61,7 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
   showSeason,
   showAccuracy,
   showStars,
+  showScore = true,
   scoreWidth,
   rankWidth,
 }: LeaderboardEntryProps) {
@@ -82,7 +85,7 @@ export const LeaderboardEntry = memo(function LeaderboardEntry({
             ? <SeasonPill season={season} />
             : <span style={s.hidden} aria-hidden="true"><SeasonPill season={0} /></span>
         )}
-        <ScorePill score={score} width={scoreWidth} />
+        {showScore && <ScorePill score={score} width={scoreWidth} />}
       </span>
       {showAccuracy && (
         <span style={s.colAcc}>

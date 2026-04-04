@@ -19,6 +19,7 @@ vi.mock('../../../../src/components/display/InstrumentIcons', () => ({
 vi.mock('../../../../src/hooks/ui/useIsMobile', () => ({
   useIsMobile: () => false,
   useIsMobileChrome: () => false,
+  useIsNarrow: () => false,
 }));
 
 beforeEach(() => {

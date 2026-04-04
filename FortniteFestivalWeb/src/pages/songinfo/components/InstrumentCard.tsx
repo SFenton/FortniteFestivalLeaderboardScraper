@@ -5,6 +5,7 @@ import { InstrumentHeaderSize } from '@festival/core';
 import InstrumentHeader from '../../../components/display/InstrumentHeader';
 import { LeaderboardEntry } from '../../leaderboard/global/components/LeaderboardEntry';
 import { computeRankWidth } from '../../leaderboards/helpers/rankingHelpers';
+import { leaderboardCache } from '../../../api/pageCache';
 import { type ServerInstrumentKey as InstrumentKey, type LeaderboardEntry as LeaderboardEntryType, type PlayerScore, serverInstrumentLabel } from '@festival/core/api/serverTypes';
 import { QUERY_SHOW_ACCURACY, QUERY_SHOW_SEASON, Colors, Font, Weight, Gap, Radius, Layout, Display, Align, Justify, Overflow, Cursor, Opacity, CssValue, FAST_FADE_MS, TRANSITION_MS, STAGGER_ENTRY_OFFSET, STAGGER_ROW_MS, frostedCard, flexColumn, flexRow, transition, padding, border, Border } from '@festival/theme';
 import { CssProp } from '@festival/theme';
@@ -78,7 +79,7 @@ export default memo(function InstrumentCard({
       <div
         style={hasEntries ? st.card : st.cardNoClick}
         /* v8 ignore start — navigation */
-        {...(hasEntries ? { onClick: () => navigate(`/songs/${songId}/${instrument}`, { state: { backTo: `/songs/${songId}` } }) } : {})}
+        {...(hasEntries ? { onClick: () => { leaderboardCache.delete(`${songId}:${instrument}`); navigate(`/songs/${songId}/${instrument}`, { state: { backTo: `/songs/${songId}` } }); } } : {})}
         /* v8 ignore stop */
       >
         <div style={st.cardBody}>
@@ -127,7 +128,7 @@ export default memo(function InstrumentCard({
           return (
           <Link
             id={`player-score-${instrument}`}
-            to={`/songs/${songId}/${instrument}?page=${Math.floor((playerScore.rank - 1) / 25) + 1}&navToPlayer=true`}
+            to={`/songs/${songId}/${instrument}?page=${Math.floor(((playerScore.localRank ?? playerScore.rank) - 1) / 25) + 1}&navToPlayer=true`}
             style={{ ...playerRowStyle, ...playerStagger }}
             onClick={(ev) => ev.stopPropagation()}
             onAnimationEnd={clearAnim} /* v8 ignore -- animation cleanup */

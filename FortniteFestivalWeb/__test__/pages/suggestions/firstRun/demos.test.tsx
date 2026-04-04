@@ -17,6 +17,7 @@ vi.mock('../../../../src/hooks/ui/useIsMobile', () => ({
   useIsMobile: () => mockIsMobile,
   useIsMobileChrome: () => mockIsMobileChrome,
   useIsWideDesktop: () => true,
+  useIsNarrow: () => false,
 }));
 
 // Mock useFestival to provide demo songs with albumArt for CategoryCardDemo and InfiniteScrollDemo

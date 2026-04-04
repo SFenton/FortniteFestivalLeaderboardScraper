@@ -59,6 +59,7 @@ export default function LeaderboardPage() {
   const isMobile = !showAccuracy;
   const isNarrow = useIsMobile();
   const hasFab = useIsMobileChrome();
+  const showFooterScore = useMediaQuery('(min-width: 310px)');
 
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -173,16 +174,26 @@ export default function LeaderboardPage() {
       setLoading(true);
       setError(null);
       try {
-        const res = await api.getLeaderboard(
+        let res = await api.getLeaderboard(
           songId,
           instKey,
           PAGE_SIZE,
           pageNum * PAGE_SIZE,
           leewayParam,
         );
+        let effectiveLocal = res.localEntries ?? res.totalEntries;
+        // Self-correct if the requested page is beyond available data (stale bookmarks, manual URL)
+        if (res.entries.length === 0 && pageNum > 0 && effectiveLocal > 0) {
+          const lastPage = Math.ceil(effectiveLocal / PAGE_SIZE) - 1;
+          if (lastPage >= 0 && lastPage < pageNum) {
+            res = await api.getLeaderboard(songId, instKey, PAGE_SIZE, lastPage * PAGE_SIZE, leewayParam);
+            effectiveLocal = res.localEntries ?? res.totalEntries;
+            pageNum = lastPage;
+          }
+        }
         setEntries(res.entries);
         setTotalEntries(res.totalEntries);
-        setLocalEntries(res.localEntries ?? res.totalEntries);
+        setLocalEntries(effectiveLocal);
         setPage(pageNum);
       } catch (e) {
         setError(e instanceof Error ? e.message : t('leaderboard.failedToLoad'));
@@ -214,9 +225,10 @@ export default function LeaderboardPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally skip searchParams
   }, [fetchPage, cacheKey]);
 
-  // Write cache whenever data changes
+  // Write cache whenever data changes (skip empty non-first pages to prevent stale cache from out-of-range navigation)
   useEffect(() => {
     if (loading || error || !songId) return;
+    if (entries.length === 0 && page > 0) return;
     leaderboardCache.set(cacheKey, {
       entries,
       totalEntries,
@@ -401,6 +413,7 @@ export default function LeaderboardPage() {
                         showSeason={showSeason}
                         showAccuracy={showAccuracy}
                         showStars={showStars}
+                        showScore={showFooterScore}
                         scoreWidth={playerScoreWidth}
                         rankWidth={playerRankWidth}
                       />

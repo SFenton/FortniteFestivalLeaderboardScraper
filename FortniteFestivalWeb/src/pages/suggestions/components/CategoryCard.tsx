@@ -12,7 +12,7 @@ import { InstrumentIcon, getInstrumentStatusVisual } from '../../../components/d
 import SongInfo from '../../../components/songs/metadata/SongInfo';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 import SeasonPill from '../../../components/songs/metadata/SeasonPill';
-import { useIsMobile } from '../../../hooks/ui/useIsMobile';
+import { useIsNarrow } from '../../../hooks/ui/useIsMobile';
 import {
   Colors, Font, Weight, Gap, Radius, Layout, Border, InstrumentSize, FontVariant,
   Display, Align, Justify, TextAlign, ObjectFit, Overflow, CssValue, CssProp,
@@ -119,30 +119,30 @@ export function SongRow({ song, categoryKey, albumArt, leaderboardData,
   leaderboardData?: LeaderboardData;
 }) {
   const layout = getRowLayout(categoryKey);
-  const isMobile = useIsMobile();
+  const isNarrow = useIsNarrow();
   const st = useRowStyles();
   const starCount = song.stars ?? 0;
   const isGold = starCount >= 6;
   const displayStars = isGold ? 5 : starCount;
   const showStars = layout === 'singleInstrument' && categoryKey.startsWith('star_gains') && starCount > 0;
-  const showStarPngs = showStars && isMobile;
   const instrument = song.instrumentKey ?? getCatInstrument(categoryKey);
   const songUrl = instrument
     ? `/songs/${song.songId}?instrument=${CORE_TO_SERVER_INSTRUMENT[instrument]}`
     : `/songs/${song.songId}`;
   const starSrc = isGold ? `${BASE}star_gold.png` : `${BASE}star_white.png`;
+  const hasMetadata = layout !== 'hidden';
+  const iconOnly = layout === 'singleInstrument' && !showStars;
+  const twoRow = isNarrow && hasMetadata && !iconOnly;
 
   return (
-    <Link to={songUrl} style={{ ...st.row, ...(showStarPngs ? { ...flexColumn, alignItems: Align.stretch } : undefined) }}>
-      <div style={showStarPngs ? st.rowMainLine : { display: Display.contents }}>
-        <SongInfo albumArt={albumArt} title={song.title} artist={song.artist} year={song.year} />
-        <RightContent song={ song} layout={layout} leaderboardData={leaderboardData} starCount={showStars && !showStarPngs ? displayStars : 0} starSrc={starSrc} />
+    <Link to={songUrl} style={{ ...st.row, ...(twoRow ? { ...flexColumn, alignItems: Align.stretch } : undefined) }}>
+      <div style={twoRow ? st.rowMainLine : { display: Display.contents }}>
+        <SongInfo albumArt={albumArt} title={song.title} artist={song.artist} year={song.year} minWidth={0} />
+        {!twoRow && <RightContent song={song} layout={layout} leaderboardData={leaderboardData} starCount={showStars ? displayStars : 0} starSrc={starSrc} />}
       </div>
-      {showStarPngs && (
-        <div style={st.starPngRow}>
-          {Array.from({ length: displayStars }, (_, i) => (
-            <img key={i} src={starSrc} alt="★" style={st.starPngImg} />
-          ))}
+      {twoRow && (
+        <div style={st.metadataRow}>
+          <RightContent song={song} layout={layout} leaderboardData={leaderboardData} starCount={showStars ? displayStars : 0} starSrc={starSrc} />
         </div>
       )}
     </Link>
@@ -303,22 +303,18 @@ function useRowStyles() {
       textDecoration: CssValue.none,
       color: CssValue.inherit,
       transition: transition(CssProp.backgroundColor, 120),
+      overflow: Overflow.hidden,
       '--frosted-card': '1',
     } as CSSProperties,
     rowMainLine: {
       ...flexRow,
       gap: Gap.xl,
     } as CSSProperties,
-    starPngRow: {
+    metadataRow: {
       display: Display.flex,
-      justifyContent: Justify.center,
-      gap: 3,
+      justifyContent: Justify.end,
+      gap: Gap.md,
       paddingTop: Gap.sm,
-    } as CSSProperties,
-    starPngImg: {
-      width: Layout.starPngSize,
-      height: Layout.starPngSize,
-      objectFit: ObjectFit.contain,
     } as CSSProperties,
   }), []);
 }
