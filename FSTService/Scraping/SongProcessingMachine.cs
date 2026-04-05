@@ -65,7 +65,9 @@ public class SongProcessingMachine
         int batchSize = 500,
         bool reportProgress = true,
         int maxConcurrentSongs = 0,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Dictionary<(string SongId, string Instrument), HashSet<string>>? knownScores = null,
+        IReadOnlyDictionary<string, (int? FirstSeenSeason, int EstimatedSeason)>? firstSeenSeasons = null)
     {
         if (songIds.Count == 0 || users.Count == 0)
             return new MachineResult();
@@ -119,7 +121,7 @@ public class SongProcessingMachine
             {
             var result = await ProcessSongAsync(
                 songId, instruments, users, seasonPrefixMap,
-                accessToken, callerAccountId, pool, isHighPriority, batchSize, ct);
+                accessToken, callerAccountId, pool, isHighPriority, batchSize, ct, knownScores, firstSeenSeasons);
 
             Interlocked.Add(ref totalUpdated, result.EntriesUpdated);
             Interlocked.Add(ref totalSessions, result.SessionsInserted);
@@ -181,17 +183,25 @@ public class SongProcessingMachine
         SharedDopPool pool,
         bool isHighPriority,
         int batchSize,
-        CancellationToken ct)
+        CancellationToken ct,
+        Dictionary<(string SongId, string Instrument), HashSet<string>>? knownScores = null,
+        IReadOnlyDictionary<string, (int? FirstSeenSeason, int EstimatedSeason)>? firstSeenSeasons = null)
     {
         int entriesUpdated = 0;
         int sessionsInserted = 0;
         int apiCalls = 0;
 
+        // Shared across all instruments: when a pad instrument discovers
+        // that a season returns no data (BadRequest or empty), record it
+        // so other instruments can skip that season and earlier ones.
+        var missingSeasonsForSong = new ConcurrentDictionary<int, bool>();
+
         var instrumentTasks = instruments.Select(async instrument =>
         {
             var result = await ProcessSongInstrumentAsync(
                 songId, instrument, users, seasonPrefixMap,
-                accessToken, callerAccountId, pool, isHighPriority, batchSize, ct);
+                accessToken, callerAccountId, pool, isHighPriority, batchSize, ct, knownScores, firstSeenSeasons,
+                missingSeasonsForSong);
 
             Interlocked.Add(ref entriesUpdated, result.EntriesUpdated);
             Interlocked.Add(ref sessionsInserted, result.SessionsInserted);
@@ -223,11 +233,33 @@ public class SongProcessingMachine
         SharedDopPool pool,
         bool isHighPriority,
         int batchSize,
-        CancellationToken ct)
+        CancellationToken ct,
+        Dictionary<(string SongId, string Instrument), HashSet<string>>? knownScores = null,
+        IReadOnlyDictionary<string, (int? FirstSeenSeason, int EstimatedSeason)>? firstSeenSeasons = null,
+        ConcurrentDictionary<int, bool>? missingSeasonsForSong = null)
     {
         int entriesUpdated = 0;
         int sessionsInserted = 0;
         int apiCalls = 0;
+
+        // When knownScores is provided, filter seasonal users to only those
+        // with a known alltime score on this combo (V1 full crawl finding).
+        IReadOnlyList<UserWorkItem> seasonalUsers = users;
+        if (knownScores is not null)
+        {
+            var hasScore = knownScores.TryGetValue((songId, instrument), out var found) ? found : null;
+            if (hasScore is null || hasScore.Count == 0)
+            {
+                // No registered user has an alltime score here — skip seasonal entirely
+                seasonalUsers = [];
+            }
+            else
+            {
+                seasonalUsers = users
+                    .Where(u => hasScore.Contains(u.AccountId))
+                    .ToList();
+            }
+        }
 
         // ─── Alltime lookups (async task) ─────────────────────
         var alltimeTask = RunAlltimeLookups(
@@ -235,9 +267,21 @@ public class SongProcessingMachine
             pool, isHighPriority, batchSize, ct);
 
         // ─── Seasonal session lookups (async task) ────────────
+        // Determine earliest season this song existed (skip earlier seasons)
+        int songFirstSeason = 1; // default: assume existed since S1
+        if (firstSeenSeasons is not null &&
+            firstSeenSeasons.TryGetValue(songId, out var fss))
+        {
+            songFirstSeason = fss.FirstSeenSeason ?? fss.EstimatedSeason;
+        }
+
+        // Pro Lead/Bass didn't exist before Season 3
+        if (instrument is "Solo_PeripheralGuitar" or "Solo_PeripheralBass")
+            songFirstSeason = Math.Max(songFirstSeason, 3);
+
         var seasonalTask = RunSeasonalLookups(
-            songId, instrument, users, seasonPrefixMap, accessToken, callerAccountId,
-            pool, isHighPriority, batchSize, ct);
+            songId, instrument, seasonalUsers, seasonPrefixMap, accessToken, callerAccountId,
+            pool, isHighPriority, batchSize, ct, songFirstSeason, missingSeasonsForSong);
 
         // Both phases use the SharedDopPool for backpressure — total API
         // concurrency remains bounded regardless of in-flight overlap.
@@ -309,7 +353,7 @@ public class SongProcessingMachine
                     {
                         entries = await _scraper.LookupMultipleAccountsAsync(
                             songId, instrument, targetIds,
-                            accessToken, callerAccountId, limiter: null, ct);
+                            accessToken, callerAccountId, limiter: pool.Limiter, ct);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -357,7 +401,9 @@ public class SongProcessingMachine
         SharedDopPool pool,
         bool isHighPriority,
         int batchSize,
-        CancellationToken ct)
+        CancellationToken ct,
+        int songFirstSeason = 1,
+        ConcurrentDictionary<int, bool>? missingSeasonsForSong = null)
     {
         int sessionsInserted = 0;
         int apiCalls = 0;
@@ -371,6 +417,7 @@ public class SongProcessingMachine
             historyReconAccounts.Count > 0 ? [] : null;
 
         var seasonUserGroups = new Dictionary<int, List<UserWorkItem>>();
+        int skippedSeasonCombos = 0;
         foreach (var user in users)
         {
             if (user.SeasonsNeeded.Count == 0) continue;
@@ -379,6 +426,13 @@ public class SongProcessingMachine
             foreach (var season in user.SeasonsNeeded)
             {
                 if (!seasonPrefixMap.ContainsKey(season)) continue;
+
+                // Optimization A: skip seasons before the song was charted
+                if (season < songFirstSeason)
+                {
+                    skippedSeasonCombos++;
+                    continue;
+                }
 
                 if (!seasonUserGroups.TryGetValue(season, out var list))
                 {
@@ -389,9 +443,18 @@ public class SongProcessingMachine
             }
         }
 
-        foreach (var (season, seasonUsers) in seasonUserGroups)
+        foreach (var (season, seasonUsers) in seasonUserGroups.OrderByDescending(kv => kv.Key))
         {
             var seasonPrefix = seasonPrefixMap[season];
+
+            // Check if another instrument already discovered this season (or later) is missing
+            if (missingSeasonsForSong is not null &&
+                missingSeasonsForSong.Any(kv => kv.Key >= season))
+            {
+                continue; // Song didn't exist in this season — skip
+            }
+
+            bool firstBatchEmpty = false;
 
             for (int offset = 0; offset < seasonUsers.Count; offset += batchSize)
             {
@@ -412,7 +475,7 @@ public class SongProcessingMachine
                     {
                         sessions = await _scraper.LookupMultipleAccountSessionsAsync(
                             songId, instrument, seasonPrefix, targetIds,
-                            accessToken, callerAccountId, limiter: null, ct);
+                            accessToken, callerAccountId, limiter: pool.Limiter, ct);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -426,6 +489,16 @@ public class SongProcessingMachine
                 {
                     if (isHighPriority) pool.ReleaseHigh();
                     else pool.ReleaseLow(lowToken);
+                }
+
+                // If the first batch for this season returned zero sessions,
+                // the song likely didn't exist in this season (BadRequest or genuinely empty).
+                // Mark it so other instruments can skip this season and all earlier ones.
+                if (offset == 0 && sessions.Count == 0)
+                {
+                    firstBatchEmpty = true;
+                    missingSeasonsForSong?.TryAdd(season, true);
+                    break; // No point sending more batches for this season
                 }
 
                 // DB processing runs outside the DOP slot.
@@ -486,22 +559,15 @@ public class SongProcessingMachine
 
     /// <summary>
     /// Build a set of account IDs that already have entries in the instrument DB
-    /// for the given song/instrument. Used to detect stale vs new entries.
+    /// for the given song/instrument. Uses a single batch query instead of N individual lookups.
     /// </summary>
     private HashSet<string> BuildExistingEntrySet(
         string songId, string instrument, IReadOnlyList<UserWorkItem> users)
     {
         var instrumentDb = _persistence.GetOrCreateInstrumentDb(instrument);
-        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var user in users)
-        {
-            var entry = instrumentDb.GetEntry(songId, user.AccountId);
-            if (entry is not null)
-                existing.Add(user.AccountId);
-        }
-
-        return existing;
+        var accountIds = users.Select(u => u.AccountId).ToList();
+        var entries = instrumentDb.GetEntriesForAccounts(songId, accountIds);
+        return new HashSet<string>(entries.Keys, StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>Result of one complete machine run.</summary>

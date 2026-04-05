@@ -34,9 +34,9 @@ public sealed class SharedDopPool : IDisposable
     /// <param name="log">Logger for AIMD adjustments.</param>
     /// <param name="maxRequestsPerSecond">Hard cap on requests per second (0 = unlimited).</param>
     public SharedDopPool(int initialDop, int minDop, int maxDop, int lowPriorityPercent, ILogger log,
-        int maxRequestsPerSecond = 0)
+        int maxRequestsPerSecond = 0, int initialSsthresh = 0)
     {
-        _inner = new AdaptiveConcurrencyLimiter(initialDop, minDop, maxDop, log, maxRequestsPerSecond);
+        _inner = new AdaptiveConcurrencyLimiter(initialDop, minDop, maxDop, log, maxRequestsPerSecond, initialSsthresh);
         int lowPrioritySlots = Math.Max(1, maxDop * Math.Clamp(lowPriorityPercent, 1, 100) / 100);
         _lowPriorityGate = new SemaphoreSlim(lowPrioritySlots, lowPrioritySlots);
         _ownsInner = true;

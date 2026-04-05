@@ -50,8 +50,16 @@ namespace FortniteFestival.Core.Scraping
         /// </summary>
         private int _releaseDebt;
 
+        // ── TCP slow-start threshold ──
+        // 0 = normal AIMD (no CDN event). >0 = post-CDN recovery:
+        //   below ssthresh → multiplicative ×1.333 (slow start)
+        //   above ssthresh → additive +16 (congestion avoidance)
+        private int _ssthresh;
+
         // ── AIMD parameters ──
         private const int EvaluationWindow = 500;
+        private const int MinEvaluationWindow = 20;
+        private const int PostCdnMinEvaluationWindow = 100;
         private const int AdditiveIncrease = 16;
         private const double MultiplicativeDecrease = 0.75;
         private const double ErrorThresholdHigh = 0.05; // 5% → decrease
@@ -79,12 +87,13 @@ namespace FortniteFestival.Core.Scraping
         private long _lastHealthTotalRequests;
 
         // ── Token-bucket rate limiter ──
-        private const int RateBucketIntervalMs = 50;  // refill every 50ms
-        private const int RateBucketTicksPerSecond = 1000 / RateBucketIntervalMs; // 20
+        private const int DefaultRateBucketIntervalMs = 50;  // refill every 50ms
+        private const int DefaultRateBucketTicksPerSecond = 1000 / DefaultRateBucketIntervalMs; // 20
 #pragma warning disable CS8632 // nullable annotations (net472 compat)
         private readonly SemaphoreSlim? _rateBucket;
         private readonly Timer? _rateBucketTimer;
 #pragma warning restore CS8632
+        private readonly int _rateBucketIntervalMs;
         private readonly int _tokensPerTick;
         private readonly int _maxRequestsPerSecond;
 
@@ -106,12 +115,19 @@ namespace FortniteFestival.Core.Scraping
         /// <summary>Whether the circuit breaker is currently open (pausing acquisitions).</summary>
         public bool IsCircuitOpen => _circuitOpen;
 
+        /// <summary>Current slow-start threshold (0 = normal AIMD, no CDN event active).</summary>
+        public int SlowStartThreshold => Volatile.Read(ref _ssthresh);
+
+        /// <summary>Available rate-limiter tokens (-1 if no rate limiter configured).</summary>
+        public int RateTokensAvailable => _rateBucket?.CurrentCount ?? -1;
+
         public AdaptiveConcurrencyLimiter(int initialDop, int minDop, int maxDop, ILogger log,
-            int maxRequestsPerSecond = 0)
+            int maxRequestsPerSecond = 0, int initialSsthresh = 0)
         {
             _minDop = Math.Max(1, minDop);
             _maxDop = Math.Max(_minDop, maxDop);
             _currentDop = Math.Clamp(initialDop, _minDop, _maxDop);
+            _ssthresh = Math.Max(0, initialSsthresh);
             _log = log;
             _maxRequestsPerSecond = Math.Max(0, maxRequestsPerSecond);
 
@@ -121,33 +137,49 @@ namespace FortniteFestival.Core.Scraping
             // ── Token-bucket rate limiter ──
             if (_maxRequestsPerSecond > 0)
             {
-                _tokensPerTick = Math.Max(1, _maxRequestsPerSecond / RateBucketTicksPerSecond);
+                if (_maxRequestsPerSecond >= DefaultRateBucketTicksPerSecond)
+                {
+                    // High RPS: standard 50ms interval, multiple tokens per tick
+                    _rateBucketIntervalMs = DefaultRateBucketIntervalMs;
+                    _tokensPerTick = _maxRequestsPerSecond / DefaultRateBucketTicksPerSecond;
+                }
+                else
+                {
+                    // Low RPS (<20): 1 token per stretched interval
+                    _tokensPerTick = 1;
+                    _rateBucketIntervalMs = 1000 / _maxRequestsPerSecond;
+                }
                 _rateBucket = new SemaphoreSlim(_tokensPerTick, _tokensPerTick);
-                _rateBucketTimer = new Timer(RefillRateBucket, null, RateBucketIntervalMs, RateBucketIntervalMs);
+                _rateBucketTimer = new Timer(RefillRateBucket, null, _rateBucketIntervalMs, _rateBucketIntervalMs);
                 _log.LogInformation(
                     "Rate limiter active: {MaxRps} req/s ({TokensPerTick} tokens every {IntervalMs}ms)",
-                    _maxRequestsPerSecond, _tokensPerTick, RateBucketIntervalMs);
+                    _maxRequestsPerSecond, _tokensPerTick, _rateBucketIntervalMs);
             }
 
             // ── Periodic health logging (every 60 s when active) ──
             _healthTimer = new Timer(LogHealth, null, 60_000, 60_000);
         }
 
-        /// <summary>Wait for a concurrency slot, then a rate-limiter token (if active).
-        /// If the circuit breaker is open, blocks until the pause expires.</summary>
+        /// <summary>Wait for a concurrency slot, then a rate-limiter token (if active).</summary>
         public async Task WaitAsync(CancellationToken ct)
         {
-            // ── Circuit breaker: wait for pause to expire if open ──
-            if (_circuitOpen)
-            {
-                var remaining = _circuitOpensAt.AddMilliseconds(CircuitBreakerPauseMs) - DateTimeOffset.UtcNow;
-                if (remaining > TimeSpan.Zero)
-                    await Task.Delay(remaining, ct);
-                _circuitOpen = false;
-            }
+            // Circuit breaker disabled — AIMD multiplicative decrease handles sustained
+            // failures. CB caused thundering-herd on close (all queued slots released at
+            // once). Keeping fields/methods for potential re-enablement.
 
             await _semaphore.WaitAsync(ct);
 
+            if (_rateBucket != null)
+                await _rateBucket.WaitAsync(ct);
+        }
+
+        /// <summary>
+        /// Wait for a rate-limiter token only (no DOP slot). Use this when making
+        /// additional HTTP requests inside a pagination loop where the DOP slot is
+        /// already held. No-op if no rate limiter is configured.
+        /// </summary>
+        public async Task AcquireRateTokenAsync(CancellationToken ct)
+        {
             if (_rateBucket != null)
                 await _rateBucket.WaitAsync(ct);
         }
@@ -193,21 +225,32 @@ namespace FortniteFestival.Core.Scraping
             Interlocked.Increment(ref _totalRequests);
             Interlocked.Increment(ref _windowFailures);
             Interlocked.Increment(ref _cbWindowFailures);
-            MaybeEvaluateCircuitBreaker();
+            // MaybeEvaluateCircuitBreaker(); — disabled, see WaitAsync comment
             MaybeEvaluate();
         }
 
+        /// <summary>
+        /// Effective evaluation window scales with current DOP so that recovery
+        /// from low DOP (e.g. post-CDN slash to 4) doesn't require 500 samples.
+        /// At DOP=4 the window is 8; at DOP=250+ it's the full 500.
+        /// </summary>
+        private int EffectiveEvaluationWindow =>
+            Math.Clamp(_currentDop * 2, _ssthresh > 0 ? PostCdnMinEvaluationWindow : MinEvaluationWindow, EvaluationWindow);
+
         private void MaybeEvaluate()
         {
-            // Quick check without lock
+            // Quick check without lock — use scaled window
             int total = Volatile.Read(ref _windowSuccesses) + Volatile.Read(ref _windowFailures);
-            if (total < EvaluationWindow) return;
+            int minWindow = Volatile.Read(ref _ssthresh) > 0 ? PostCdnMinEvaluationWindow : MinEvaluationWindow;
+            int effectiveWindow = Math.Clamp(Volatile.Read(ref _currentDop) * 2, minWindow, EvaluationWindow);
+            if (total < effectiveWindow) return;
 
             lock (_evaluationLock)
             {
-                // Double-check under lock
+                // Double-check under lock with current DOP's window
                 total = _windowSuccesses + _windowFailures;
-                if (total < EvaluationWindow) return;
+                effectiveWindow = EffectiveEvaluationWindow;
+                if (total < effectiveWindow) return;
 
                 int failures = _windowFailures;
                 double windowSeconds = _windowStopwatch.Elapsed.TotalSeconds;
@@ -229,14 +272,34 @@ namespace FortniteFestival.Core.Scraping
                 }
                 else if (errorRate < ErrorThresholdLow)
                 {
-                    int newDop = Math.Min(_maxDop, _currentDop + AdditiveIncrease);
+                    int newDop;
+                    if (_ssthresh > 0 && _currentDop >= _ssthresh)
+                    {
+                        // Congestion avoidance: additive +16 above threshold (TCP Reno)
+                        newDop = Math.Min(_maxDop, _currentDop + AdditiveIncrease);
+                    }
+                    else
+                    {
+                        // Slow start (below ssthresh) or normal AIMD (ssthresh==0):
+                        // multiplicative ×1.333 (inverse of ×0.75 decrease)
+                        newDop = Math.Min(_maxDop, (int)Math.Ceiling(_currentDop / MultiplicativeDecrease));
+                    }
+
+                    if (newDop >= _maxDop && _ssthresh > 0)
+                    {
+                        _log.LogInformation(
+                            "Adaptive DOP: ssthresh cleared — reached maxDop {MaxDop} (was ssthresh={Ssthresh})",
+                            _maxDop, _ssthresh);
+                        _ssthresh = 0;
+                    }
+
                     AdjustDop(newDop, errorRate, windowRps, overallRps, inFlight);
                 }
                 else
                 {
                     _log.LogInformation(
-                        "Adaptive DOP: holding at {Dop} (error rate {ErrorRate:P1}, window RPS {WindowRps:N0}, overall RPS {OverallRps:N0}, in-flight ~{InFlight})",
-                        _currentDop, errorRate, windowRps, overallRps, inFlight);
+                        "Adaptive DOP: holding at {Dop} (error rate {ErrorRate:P1}, window {Window}, window RPS {WindowRps:N0}, overall RPS {OverallRps:N0}, in-flight ~{InFlight})",
+                        _currentDop, errorRate, effectiveWindow, windowRps, overallRps, inFlight);
                 }
             }
         }
@@ -287,6 +350,49 @@ namespace FortniteFestival.Core.Scraping
                 "Adaptive DOP: {OldDop} → {NewDop} (error rate {ErrorRate:P1}, window RPS {WindowRps:N0}, overall RPS {OverallRps:N0}, in-flight ~{InFlight})",
                 _currentDop, newDop, errorRate, windowRps, overallRps, inFlight);
             _currentDop = newDop;
+        }
+
+        /// <summary>
+        /// Emergency DOP reduction — called by CDN block handling to immediately
+        /// drop concurrency to <paramref name="targetDop"/> (clamped to minDop).
+        /// Unlike AIMD's gradual decrease, this is instant. AIMD additive increase
+        /// handles recovery after the CDN clears.
+        /// </summary>
+        public void SlashDop(int targetDop = 0)
+        {
+            lock (_evaluationLock)
+            {
+                int target = Math.Max(_minDop, Math.Max(targetDop, 0));
+                if (target >= _currentDop) return;
+
+                int oldDop = _currentDop;
+
+                // TCP Reno: set slow-start threshold to half the pre-CDN DOP
+                _ssthresh = Math.Max(_minDop, oldDop / 2);
+
+                // Decrease: drain tokens from the semaphore (non-blocking)
+                int toDrain = _currentDop - target;
+                int drained = 0;
+                for (int i = 0; i < toDrain; i++)
+                {
+                    if (!_semaphore.Wait(0)) break;
+                    drained++;
+                }
+                int undrained = toDrain - drained;
+                if (undrained > 0)
+                    Interlocked.Add(ref _releaseDebt, undrained);
+
+                _currentDop = target;
+
+                // Reset AIMD window so recovery starts with a clean evaluation
+                _windowSuccesses = 0;
+                _windowFailures = 0;
+                _windowStopwatch.Restart();
+
+                _log.LogWarning(
+                    "CDN emergency DOP slash: {OldDop} → {NewDop} (ssthresh={Ssthresh}, drained {Drained}, debt {Debt})",
+                    oldDop, target, _ssthresh, drained, undrained);
+            }
         }
 
         public void Dispose()
