@@ -8,6 +8,7 @@ import { api } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { useSettings, visibleInstruments } from '../../contexts/SettingsContext';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
+import { useScoreFilter } from '../../hooks/data/useScoreFilter';
 import Page from '../Page';
 import PageHeader from '../../components/common/PageHeader';
 import { ActionPill } from '../../components/common/ActionPill';
@@ -41,6 +42,7 @@ export default function LeaderboardsOverviewPage() {
   const { t } = useTranslation();
   const { settings } = useSettings();
   const { player } = useTrackedPlayer();
+  const { leewayParam } = useScoreFilter();
   const isMobile = useIsMobileChrome();
   const fabSearch = useFabSearch();
   const scrollContainerRef = useScrollContainer();
@@ -76,8 +78,8 @@ export default function LeaderboardsOverviewPage() {
   // Fetch top-10 per visible instrument
   const rankingQueries = useQueries({
     queries: instruments.map((inst) => ({
-      queryKey: queryKeys.rankings(inst, metric, 1, 10),
-      queryFn: () => api.getRankings(inst, metric, 1, 10),
+      queryKey: queryKeys.rankings(inst, metric, 1, 10, leewayParam),
+      queryFn: () => api.getRankings(inst, metric, 1, 10, leewayParam),
     })),
   });
 
@@ -85,8 +87,8 @@ export default function LeaderboardsOverviewPage() {
   const playerQueries = useQueries({
     queries: player
       ? instruments.map((inst) => ({
-          queryKey: queryKeys.playerRanking(inst, player.accountId),
-          queryFn: () => api.getPlayerRanking(inst, player.accountId),
+          queryKey: queryKeys.playerRanking(inst, player.accountId, leewayParam),
+          queryFn: () => api.getPlayerRanking(inst, player.accountId, leewayParam),
         }))
       : [],
   });

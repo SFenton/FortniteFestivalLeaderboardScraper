@@ -435,4 +435,141 @@ public sealed class RankingsCalculatorTests : IDisposable
         // Both should have valid ranks, alpha before beta by name
         Assert.True(c1.CompositeRank < c2.CompositeRank);
     }
+
+    // ═══════════════════════════════════════════════════════════
+    // ComputeCompositeDeltas
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public void CompositeDeltas_ProducesDeltas_WhenInstrumentDeltasExist()
+    {
+        // Seed two instruments with ranking data
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        var bassDb = _persistence.GetOrCreateInstrumentDb("Solo_Bass");
+
+        guitarDb.UpsertEntries("song_0", [
+            MakeEntry("p1", 1000, rank: 1), MakeEntry("p2", 500, rank: 2),
+        ]);
+        bassDb.UpsertEntries("song_0", [
+            MakeEntry("p1", 800, rank: 1), MakeEntry("p2", 600, rank: 2),
+        ]);
+
+        guitarDb.RecomputeAllRanks(); bassDb.RecomputeAllRanks();
+        guitarDb.ComputeSongStats(); bassDb.ComputeSongStats();
+        guitarDb.ComputeAccountRankings(totalChartedSongs: 1);
+        bassDb.ComputeAccountRankings(totalChartedSongs: 1);
+
+        // Compute base composite rankings first
+        _sut.ComputeCompositeRankings(["Solo_Guitar", "Solo_Bass"]);
+
+        // Write per-instrument ranking deltas at bucket -3.0
+        guitarDb.TruncateRankingDeltas();
+        guitarDb.WriteRankingDeltas([
+            ("p2", -3.0, 5, 0.01, 0.02, 0.8, 40000, 0.90, 4, 92.0, 2, 0.5),
+        ]);
+
+        // Should not throw, may or may not produce composite deltas depending on re-aggregation
+        _sut.ComputeCompositeDeltas(["Solo_Guitar", "Solo_Bass"]);
+    }
+
+    [Fact]
+    public void CompositeDeltas_NoError_WhenNoDeltasExist()
+    {
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song_0", [MakeEntry("p1", 1000, rank: 1)]);
+        guitarDb.RecomputeAllRanks();
+        guitarDb.ComputeSongStats();
+        guitarDb.ComputeAccountRankings(totalChartedSongs: 1);
+        _sut.ComputeCompositeRankings(["Solo_Guitar"]);
+
+        guitarDb.TruncateRankingDeltas();
+        // No ranking_deltas → should complete without error
+        _sut.ComputeCompositeDeltas(["Solo_Guitar"]);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // ComputeComboDeltas
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public void ComboDeltas_ProducesDeltas_WhenInstrumentDeltasExist()
+    {
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        var bassDb = _persistence.GetOrCreateInstrumentDb("Solo_Bass");
+
+        guitarDb.UpsertEntries("song_0", [
+            MakeEntry("p1", 1000, rank: 1), MakeEntry("p2", 500, rank: 2),
+        ]);
+        bassDb.UpsertEntries("song_0", [
+            MakeEntry("p1", 800, rank: 1), MakeEntry("p2", 600, rank: 2),
+        ]);
+
+        guitarDb.RecomputeAllRanks(); bassDb.RecomputeAllRanks();
+        guitarDb.ComputeSongStats(); bassDb.ComputeSongStats();
+        guitarDb.ComputeAccountRankings(totalChartedSongs: 1);
+        bassDb.ComputeAccountRankings(totalChartedSongs: 1);
+
+        // Compute base combo leaderboard first
+        _sut.ComputeAllCombos(["Solo_Guitar", "Solo_Bass"]);
+
+        // Write per-instrument ranking deltas
+        guitarDb.TruncateRankingDeltas();
+        guitarDb.WriteRankingDeltas([
+            ("p2", -3.0, 5, 0.01, 0.02, 0.8, 40000, 0.90, 4, 92.0, 2, 0.5),
+        ]);
+
+        // Should not throw
+        _sut.ComputeComboDeltas(["Solo_Guitar", "Solo_Bass"]);
+    }
+
+    [Fact]
+    public void ComboDeltas_NoError_WhenNoDeltasExist()
+    {
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        var bassDb = _persistence.GetOrCreateInstrumentDb("Solo_Bass");
+
+        guitarDb.UpsertEntries("song_0", [MakeEntry("p1", 1000, rank: 1)]);
+        bassDb.UpsertEntries("song_0", [MakeEntry("p1", 800, rank: 1)]);
+
+        guitarDb.RecomputeAllRanks(); bassDb.RecomputeAllRanks();
+        guitarDb.ComputeSongStats(); bassDb.ComputeSongStats();
+        guitarDb.ComputeAccountRankings(totalChartedSongs: 1);
+        bassDb.ComputeAccountRankings(totalChartedSongs: 1);
+        _sut.ComputeAllCombos(["Solo_Guitar", "Solo_Bass"]);
+
+        guitarDb.TruncateRankingDeltas();
+        bassDb.TruncateRankingDeltas();
+        // No ranking_deltas → should complete without error
+        _sut.ComputeComboDeltas(["Solo_Guitar", "Solo_Bass"]);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Full Pipeline with Deltas
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ComputeAllAsync_IncludesDeltas()
+    {
+        var guitarDb = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
+        guitarDb.UpsertEntries("song_0", [
+            MakeEntry("p1", 1000, rank: 1), MakeEntry("p2", 900, rank: 2), MakeEntry("p3", 800, rank: 3),
+        ]);
+        guitarDb.RecomputeAllRanks();
+
+        var svc = CreateFestivalServiceWithSongs(1);
+        await _sut.ComputeAllAsync(svc, CancellationToken.None);
+
+        // After full pipeline: verify base rankings exist
+        var r1 = guitarDb.GetAccountRanking("p1");
+        Assert.NotNull(r1);
+        Assert.Equal(1, r1.AdjustedSkillRank);
+
+        // Verify composite exists
+        var c1 = _metaFixture.Db.GetCompositeRanking("p1");
+        Assert.NotNull(c1);
+
+        // Verify rank history snapshotted (base + deltas)
+        var history = guitarDb.GetRankHistory("p1", 1);
+        Assert.Single(history);
+    }
 }

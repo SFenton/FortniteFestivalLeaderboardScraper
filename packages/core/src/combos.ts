@@ -18,6 +18,29 @@ import { SERVER_INSTRUMENT_KEYS } from './api/serverTypes';
  */
 export const COMBO_INSTRUMENTS: readonly ServerInstrumentKey[] = SERVER_INSTRUMENT_KEYS;
 
+/**
+ * Instrument groups for combo ranking computation.
+ * Only within-group combos are computed (no cross-group).
+ * Each group is a bitmask of the instruments it contains.
+ * MUST stay in sync with ComboIds.InstrumentGroups in C#.
+ */
+export const INSTRUMENT_GROUPS: readonly number[] = [
+  0x0f, // OG Band: Lead(0) + Bass(1) + Drums(2) + Vocals(3)
+  0x30, // Pro Strings: Pro Lead(4) + Pro Bass(5)
+];
+
+/** Returns true if the bitmask represents a within-group combo (2+ instruments, all from same group). */
+export function isWithinGroupCombo(mask: number): boolean {
+  if (bitCount(mask) < 2) return false;
+  return INSTRUMENT_GROUPS.some((group) => (mask & ~group) === 0);
+}
+
+/** Returns true if the combo ID (hex string) represents a within-group combo. */
+export function isWithinGroupComboId(comboId: string): boolean {
+  const mask = parseInt(comboId, 16);
+  return !Number.isNaN(mask) && isWithinGroupCombo(mask);
+}
+
 /** Compute the combo ID (2-digit hex) for a set of instruments. */
 export function comboIdFromInstruments(instruments: readonly ServerInstrumentKey[]): string {
   let mask = 0;
@@ -56,14 +79,15 @@ function bitCount(n: number): number {
 }
 
 /**
- * All valid multi-instrument combo IDs (bitmask ≥ 2 set bits).
+ * All valid within-group multi-instrument combo IDs.
+ * Only combos where all instruments belong to the same group are included.
  * Map from combo ID → sorted array of instruments.
  */
 export const ALL_COMBO_IDS: ReadonlyMap<string, readonly ServerInstrumentKey[]> = (() => {
   const map = new Map<string, ServerInstrumentKey[]>();
   const n = COMBO_INSTRUMENTS.length;
   for (let mask = 3; mask < (1 << n); mask++) {
-    if (bitCount(mask) < 2) continue;
+    if (!isWithinGroupCombo(mask)) continue;
     const instruments: ServerInstrumentKey[] = [];
     for (let bit = 0; bit < n; bit++) {
       if (mask & (1 << bit)) instruments.push(COMBO_INSTRUMENTS[bit]!);

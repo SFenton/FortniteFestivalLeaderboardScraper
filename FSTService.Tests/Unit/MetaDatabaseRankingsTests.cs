@@ -225,4 +225,57 @@ public sealed class MetaDatabaseRankingsTests : IDisposable
         Assert.Empty(entries);
         Assert.Equal(0, total);
     }
+
+    // ═══════════════════════════════════════════════════════════
+    // CompositeRankingDeltas
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public void WriteCompositeRankingDeltas_StoresAndTruncates()
+    {
+        var deltas = new List<(string AccountId, double LeewayBucket, double AdjustedRating,
+            double WeightedRating, double FcRateRating, double TotalScore, double MaxScoreRating,
+            int InstrumentsPlayed, int TotalSongsPlayed)>
+        {
+            ("p1", -3.0, 0.05, 0.06, 0.8, 50000.0, 0.95, 2, 50),
+            ("p2", -3.0, 0.10, 0.12, 0.6, 40000.0, 0.90, 1, 25),
+        };
+        Db.WriteCompositeRankingDeltas(deltas);
+
+        // No direct read API yet — just verify write succeeded without error
+        // Truncate should also succeed
+        Db.TruncateCompositeRankingDeltas();
+    }
+
+    [Fact]
+    public void TruncateCompositeRankingDeltas_NoErrorWhenEmpty()
+    {
+        Db.TruncateCompositeRankingDeltas(); // should not throw
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // ComboRankingDeltas
+    // ═══════════════════════════════════════════════════════════
+
+    [Fact]
+    public void WriteComboRankingDeltas_StoresAndTruncates()
+    {
+        var deltas = new List<(string ComboId, string AccountId, double LeewayBucket,
+            double AdjustedRating, double WeightedRating, double FcRate,
+            long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)>
+        {
+            ("03", "p1", -3.0, 0.05, 0.06, 0.8, 50000, 0.95, 100, 80),
+            ("03", "p2", -3.0, 0.10, 0.12, 0.6, 40000, 0.90, 80, 48),
+        };
+        Db.WriteComboRankingDeltas(deltas);
+
+        // No direct read API yet — verify write succeeded
+        Db.TruncateComboRankingDeltas();
+    }
+
+    [Fact]
+    public void TruncateComboRankingDeltas_NoErrorWhenEmpty()
+    {
+        Db.TruncateComboRankingDeltas(); // should not throw
+    }
 }

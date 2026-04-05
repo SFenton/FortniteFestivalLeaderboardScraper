@@ -2,6 +2,9 @@ import {
   comboIdFromInstruments,
   instrumentsFromComboId,
   isMultiInstrumentCombo,
+  isWithinGroupCombo,
+  isWithinGroupComboId,
+  INSTRUMENT_GROUPS,
   ALL_COMBO_IDS,
   COMBO_INSTRUMENTS,
 } from '../combos';
@@ -101,8 +104,8 @@ describe('combos', () => {
   });
 
   describe('ALL_COMBO_IDS', () => {
-    test('contains 57 entries (all multi-instrument combos from 6 instruments)', () => {
-      expect(ALL_COMBO_IDS.size).toBe(57);
+    test('contains 12 entries (within-group combos only)', () => {
+      expect(ALL_COMBO_IDS.size).toBe(12);
     });
 
     test('every entry has 2+ instruments', () => {
@@ -118,10 +121,67 @@ describe('combos', () => {
       expect(ALL_COMBO_IDS.has('04')).toBe(false);
     });
 
-    test('includes known combos', () => {
+    test('includes known within-group combos', () => {
       expect(ALL_COMBO_IDS.has('03')).toBe(true); // Lead + Bass
-      expect(ALL_COMBO_IDS.has('3f')).toBe(true); // All 6
+      expect(ALL_COMBO_IDS.has('0f')).toBe(true); // All OG Band
       expect(ALL_COMBO_IDS.has('30')).toBe(true); // Both pros
+    });
+
+    test('excludes cross-group combos', () => {
+      expect(ALL_COMBO_IDS.has('3f')).toBe(false); // All 6 (cross-group)
+      expect(ALL_COMBO_IDS.has('11')).toBe(false); // Lead + Pro Lead (cross-group)
+      expect(ALL_COMBO_IDS.has('21')).toBe(false); // Lead + Pro Bass (cross-group)
+    });
+
+    test('every entry is within-group', () => {
+      for (const [id] of ALL_COMBO_IDS) {
+        expect(isWithinGroupComboId(id)).toBe(true);
+      }
+    });
+  });
+
+  describe('isWithinGroupCombo', () => {
+    test('OG Band pairs are within-group', () => {
+      expect(isWithinGroupCombo(0x03)).toBe(true); // Lead + Bass
+      expect(isWithinGroupCombo(0x05)).toBe(true); // Lead + Drums
+      expect(isWithinGroupCombo(0x0f)).toBe(true); // All 4 OG
+    });
+
+    test('Pro Strings pair is within-group', () => {
+      expect(isWithinGroupCombo(0x30)).toBe(true); // Pro Lead + Pro Bass
+    });
+
+    test('cross-group combos are rejected', () => {
+      expect(isWithinGroupCombo(0x11)).toBe(false); // Lead + Pro Lead
+      expect(isWithinGroupCombo(0x3f)).toBe(false); // All 6
+      expect(isWithinGroupCombo(0x31)).toBe(false); // Lead + Pro Strings
+    });
+
+    test('single instrument is not a combo', () => {
+      expect(isWithinGroupCombo(0x01)).toBe(false);
+      expect(isWithinGroupCombo(0x10)).toBe(false);
+    });
+  });
+
+  describe('isWithinGroupComboId', () => {
+    test('delegates to mask version', () => {
+      expect(isWithinGroupComboId('03')).toBe(true);
+      expect(isWithinGroupComboId('11')).toBe(false);
+      expect(isWithinGroupComboId('30')).toBe(true);
+    });
+  });
+
+  describe('INSTRUMENT_GROUPS', () => {
+    test('has 2 groups', () => {
+      expect(INSTRUMENT_GROUPS).toHaveLength(2);
+    });
+
+    test('OG Band group covers bits 0-3', () => {
+      expect(INSTRUMENT_GROUPS[0]).toBe(0x0f);
+    });
+
+    test('Pro Strings group covers bits 4-5', () => {
+      expect(INSTRUMENT_GROUPS[1]).toBe(0x30);
     });
   });
 });

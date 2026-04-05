@@ -8,6 +8,7 @@ import { queryKeys } from '../../api/queryKeys';
 import { useQuery } from '@tanstack/react-query';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
 import { useSettings } from '../../contexts/SettingsContext';
+import { useScoreFilter } from '../../hooks/data/useScoreFilter';
 import { RankingEntry } from './components/RankingEntry';
 import { PaginatedLeaderboard } from '../../components/leaderboard/PaginatedLeaderboard';
 import Page from '../Page';
@@ -44,6 +45,7 @@ export default function FullRankingsPage() {
   const pageParam = Math.max(1, Number(searchParams.get('page')) || 1);
 
   const { player } = useTrackedPlayer();
+  const { leewayParam } = useScoreFilter();
   const isMobileChrome = useIsMobileChrome();
   const hasFab = isMobileChrome;
   const fabSearch = useFabSearch();
@@ -88,8 +90,8 @@ export default function FullRankingsPage() {
   const [page, setPage] = useState(cached?.page ?? pageParam);
 
   const { data, isFetching, error } = useQuery({
-    queryKey: queryKeys.rankings(instrument, metric, page, PAGE_SIZE),
-    queryFn: () => api.getRankings(instrument, metric, page, PAGE_SIZE),
+    queryKey: queryKeys.rankings(instrument, metric, page, PAGE_SIZE, leewayParam),
+    queryFn: () => api.getRankings(instrument, metric, page, PAGE_SIZE, leewayParam),
     // Keep previous page data visible during pagination, but NOT across
     // instrument/metric changes (those should trigger a full stagger cycle).
     placeholderData: (prev, prevQuery) => {
@@ -100,8 +102,8 @@ export default function FullRankingsPage() {
   });
 
   const { data: playerRanking } = useQuery({
-    queryKey: player ? queryKeys.playerRanking(instrument, player.accountId) : ['disabled'],
-    queryFn: () => api.getPlayerRanking(instrument, player!.accountId),
+    queryKey: player ? queryKeys.playerRanking(instrument, player.accountId, leewayParam) : ['disabled'],
+    queryFn: () => api.getPlayerRanking(instrument, player!.accountId, leewayParam),
     enabled: !!player,
   });
 

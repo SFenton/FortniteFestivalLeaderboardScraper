@@ -5,8 +5,10 @@ import {
   groupByInstrument,
   formatClamped,
   formatClamped2,
+  resolveInstrumentRanks,
 } from '../../../../src/pages/player/helpers/playerStats';
 import type { PlayerScore } from '@festival/core/api/serverTypes';
+import type { InstrumentRankEntry } from '@festival/core/api/serverTypes';
 import { ACCURACY_SCALE } from '@festival/core';
 
 
@@ -250,5 +252,111 @@ describe('playerStats — complete branch coverage', () => {
       expect(stats.bestRankSongId).toBe('s2');
       expect(stats.bestRankInstrument).toBe('Solo_Bass');
     });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// resolveInstrumentRanks
+// ═══════════════════════════════════════════════════════════
+
+describe('resolveInstrumentRanks', () => {
+  const makeEntry = (overrides: Partial<InstrumentRankEntry> = {}): InstrumentRankEntry => ({
+    ins: '01',
+    totalRanked: 100,
+    base: { adjusted: 5, weighted: 10, fcRate: 15, totalScore: 20, maxScore: 25 },
+    tiers: [],
+    ...overrides,
+  });
+
+  it('returns base when no tiers', () => {
+    const result = resolveInstrumentRanks(makeEntry(), -5.0);
+    expect(result.adjusted).toBe(5);
+    expect(result.weighted).toBe(10);
+    expect(result.fcRate).toBe(15);
+    expect(result.totalScore).toBe(20);
+    expect(result.maxScore).toBe(25);
+  });
+
+  it('returns base when leeway is below all tiers', () => {
+    const entry = makeEntry({
+      tiers: [{ l: -3.0, adjusted: 3 }, { l: 0, weighted: 8 }],
+    });
+    const result = resolveInstrumentRanks(entry, -4.0);
+    expect(result.adjusted).toBe(5); // base unchanged
+    expect(result.weighted).toBe(10);
+  });
+
+  it('applies first tier when leeway matches', () => {
+    const entry = makeEntry({
+      tiers: [{ l: -3.0, adjusted: 3 }],
+    });
+    const result = resolveInstrumentRanks(entry, -3.0);
+    expect(result.adjusted).toBe(3); // updated
+    expect(result.weighted).toBe(10); // base
+  });
+
+  it('applies multiple tiers cumulatively', () => {
+    const entry = makeEntry({
+      tiers: [
+        { l: -3.0, adjusted: 3, weighted: 8 },
+        { l: 0, fcRate: 12 },
+        { l: 2.0, adjusted: 1 },
+      ],
+    });
+    const result = resolveInstrumentRanks(entry, 5.0);
+    expect(result.adjusted).toBe(1); // overwritten by tier 3
+    expect(result.weighted).toBe(8); // from tier 1
+    expect(result.fcRate).toBe(12); // from tier 2
+    expect(result.totalScore).toBe(20); // base
+    expect(result.maxScore).toBe(25); // base
+  });
+
+  it('stops at first tier exceeding leeway', () => {
+    const entry = makeEntry({
+      tiers: [
+        { l: -3.0, adjusted: 3 },
+        { l: 0, adjusted: 1 },
+      ],
+    });
+    const result = resolveInstrumentRanks(entry, -2.0);
+    expect(result.adjusted).toBe(3); // first tier applied
+    // second tier NOT applied (l=0 > leeway=-2.0)
+  });
+
+  it('treats l=null as Infinity (unfiltered tier)', () => {
+    const entry = makeEntry({
+      tiers: [
+        { l: -3.0, adjusted: 3 },
+        { l: null, totalScore: 15 },
+      ],
+    });
+    // leeway=5.0 should apply both tiers (null→Infinity > 5.0 → breaks)
+    const result = resolveInstrumentRanks(entry, 5.0);
+    expect(result.adjusted).toBe(3);
+    expect(result.totalScore).toBe(20); // null tier breaks at Infinity > 5.0
+  });
+
+  it('applies l=null tier when leeway is Infinity', () => {
+    const entry = makeEntry({
+      tiers: [
+        { l: -3.0, adjusted: 3 },
+        { l: null, totalScore: 15 },
+      ],
+    });
+    const result = resolveInstrumentRanks(entry, Infinity);
+    expect(result.adjusted).toBe(3);
+    expect(result.totalScore).toBe(15); // null tier applied
+  });
+
+  it('only overrides fields present in tier', () => {
+    const entry = makeEntry({
+      tiers: [{ l: -3.0, fcRate: 12 }],
+    });
+    const result = resolveInstrumentRanks(entry, 0);
+    expect(result.adjusted).toBe(5); // still base
+    expect(result.weighted).toBe(10); // still base
+    expect(result.fcRate).toBe(12); // updated
+    expect(result.totalScore).toBe(20); // still base
+    expect(result.maxScore).toBe(25); // still base
   });
 });

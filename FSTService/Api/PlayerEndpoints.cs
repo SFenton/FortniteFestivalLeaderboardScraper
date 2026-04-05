@@ -460,11 +460,56 @@ public static partial class ApiEndpoints
                     maxScore = composite.CompositeRankMaxScore,
                 };
 
+                // Build per-instrument rank tiers from rank_history_deltas
+                var instrumentKeys = persistence.GetInstrumentKeys();
+                var instrumentRanks = new List<object>();
+                foreach (var instrument in instrumentKeys)
+                {
+                    var db = persistence.GetOrCreateInstrumentDb(instrument);
+                    var baseRanking = db.GetAccountRanking(accountId);
+                    if (baseRanking is null) continue;
+
+                    var deltas = db.GetTodayRankDeltas(accountId);
+                    var tiers = new List<object>();
+                    int prevAdj = baseRanking.AdjustedSkillRank, prevWgt = baseRanking.WeightedRank,
+                        prevFc = baseRanking.FcRateRank, prevTs = baseRanking.TotalScoreRank, prevMs = baseRanking.MaxScorePercentRank;
+
+                    foreach (var (bucket, dAdj, dWgt, dFc, dTs, dMs) in deltas)
+                    {
+                        int effAdj = baseRanking.AdjustedSkillRank + dAdj;
+                        int effWgt = baseRanking.WeightedRank + dWgt;
+                        int effFc = baseRanking.FcRateRank + dFc;
+                        int effTs = baseRanking.TotalScoreRank + dTs;
+                        int effMs = baseRanking.MaxScorePercentRank + dMs;
+
+                        if (effAdj == prevAdj && effWgt == prevWgt && effFc == prevFc && effTs == prevTs && effMs == prevMs)
+                            continue;
+
+                        var tier = new Dictionary<string, object?> { ["l"] = bucket >= 90.0 ? null : (object)Math.Round(bucket, 1) };
+                        if (effAdj != prevAdj) tier["adjusted"] = effAdj;
+                        if (effWgt != prevWgt) tier["weighted"] = effWgt;
+                        if (effFc != prevFc) tier["fcRate"] = effFc;
+                        if (effTs != prevTs) tier["totalScore"] = effTs;
+                        if (effMs != prevMs) tier["maxScore"] = effMs;
+                        tiers.Add(tier);
+                        prevAdj = effAdj; prevWgt = effWgt; prevFc = effFc; prevTs = effTs; prevMs = effMs;
+                    }
+
+                    instrumentRanks.Add(new
+                    {
+                        ins = ComboIds.FromInstruments(new[] { instrument }),
+                        totalRanked = db.GetRankedAccountCount(),
+                        @base = new { adjusted = baseRanking.AdjustedSkillRank, weighted = baseRanking.WeightedRank, fcRate = baseRanking.FcRateRank, totalScore = baseRanking.TotalScoreRank, maxScore = baseRanking.MaxScorePercentRank },
+                        tiers,
+                    });
+                }
+
                 var payload = new
                 {
                     accountId,
                     totalSongs,
                     compositeRanks,
+                    instrumentRanks = instrumentRanks.Count > 0 ? instrumentRanks : null,
                     instruments = tierRows.Select(r => new
                     {
                         ins = r.Instrument == "Overall" ? "00" : ComboIds.FromInstruments(new[] { r.Instrument }),

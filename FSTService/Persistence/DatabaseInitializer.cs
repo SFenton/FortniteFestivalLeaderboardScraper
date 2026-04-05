@@ -727,5 +727,113 @@ public static class DatabaseInitializer
         ALTER TABLE account_rankings DROP COLUMN IF EXISTS raw_fc_rate;
         ALTER TABLE rank_history DROP COLUMN IF EXISTS raw_fc_rate;
 
+        -- =====================================================================
+        -- RANKING DELTAS (leeway-responsive rankings)
+        -- Stores per-account metric overrides at each leeway bucket where
+        -- their metrics differ from the base ranking (leeway = -5.0%).
+        -- =====================================================================
+
+        CREATE TABLE IF NOT EXISTS ranking_deltas (
+            account_id       TEXT    NOT NULL,
+            instrument       TEXT    NOT NULL,
+            leeway_bucket    REAL    NOT NULL,
+            songs_played     INTEGER NOT NULL,
+            adjusted_skill   REAL    NOT NULL,
+            weighted         REAL    NOT NULL,
+            fc_rate          REAL    NOT NULL,
+            total_score      BIGINT  NOT NULL,
+            max_score_pct    REAL    NOT NULL,
+            full_combo_count INTEGER NOT NULL,
+            avg_accuracy     REAL    NOT NULL,
+            best_rank        INTEGER NOT NULL,
+            coverage         REAL    NOT NULL,
+            PRIMARY KEY (instrument, leeway_bucket, account_id)
+        ) PARTITION BY LIST (instrument);
+
+        CREATE TABLE IF NOT EXISTS ranking_deltas_solo_guitar    PARTITION OF ranking_deltas FOR VALUES IN ('Solo_Guitar');
+        CREATE TABLE IF NOT EXISTS ranking_deltas_solo_bass      PARTITION OF ranking_deltas FOR VALUES IN ('Solo_Bass');
+        CREATE TABLE IF NOT EXISTS ranking_deltas_solo_drums     PARTITION OF ranking_deltas FOR VALUES IN ('Solo_Drums');
+        CREATE TABLE IF NOT EXISTS ranking_deltas_solo_vocals    PARTITION OF ranking_deltas FOR VALUES IN ('Solo_Vocals');
+        CREATE TABLE IF NOT EXISTS ranking_deltas_pro_guitar     PARTITION OF ranking_deltas FOR VALUES IN ('Solo_PeripheralGuitar');
+        CREATE TABLE IF NOT EXISTS ranking_deltas_pro_bass       PARTITION OF ranking_deltas FOR VALUES IN ('Solo_PeripheralBass');
+
+        CREATE INDEX IF NOT EXISTS ix_rd_bucket_adj
+            ON ranking_deltas (instrument, leeway_bucket, adjusted_skill ASC);
+        CREATE INDEX IF NOT EXISTS ix_rd_bucket_total
+            ON ranking_deltas (instrument, leeway_bucket, total_score DESC);
+        CREATE INDEX IF NOT EXISTS ix_rd_account
+            ON ranking_deltas (account_id, instrument);
+
+        -- =====================================================================
+        -- RANK HISTORY DELTAS (leeway-responsive rank history)
+        -- Stores daily rank history deltas for accounts whose rank differs
+        -- from the base snapshot at each leeway bucket.
+        -- =====================================================================
+
+        CREATE TABLE IF NOT EXISTS rank_history_deltas (
+            account_id          TEXT    NOT NULL,
+            instrument          TEXT    NOT NULL,
+            snapshot_date       DATE    NOT NULL,
+            leeway_bucket       REAL    NOT NULL,
+            rank_adjusted       INTEGER,
+            rank_weighted       INTEGER,
+            rank_fcrate         INTEGER,
+            rank_totalscore     INTEGER,
+            rank_maxscore       INTEGER,
+            PRIMARY KEY (instrument, snapshot_date, leeway_bucket, account_id)
+        ) PARTITION BY LIST (instrument);
+
+        CREATE TABLE IF NOT EXISTS rank_history_deltas_solo_guitar    PARTITION OF rank_history_deltas FOR VALUES IN ('Solo_Guitar');
+        CREATE TABLE IF NOT EXISTS rank_history_deltas_solo_bass      PARTITION OF rank_history_deltas FOR VALUES IN ('Solo_Bass');
+        CREATE TABLE IF NOT EXISTS rank_history_deltas_solo_drums     PARTITION OF rank_history_deltas FOR VALUES IN ('Solo_Drums');
+        CREATE TABLE IF NOT EXISTS rank_history_deltas_solo_vocals    PARTITION OF rank_history_deltas FOR VALUES IN ('Solo_Vocals');
+        CREATE TABLE IF NOT EXISTS rank_history_deltas_pro_guitar     PARTITION OF rank_history_deltas FOR VALUES IN ('Solo_PeripheralGuitar');
+        CREATE TABLE IF NOT EXISTS rank_history_deltas_pro_bass       PARTITION OF rank_history_deltas FOR VALUES IN ('Solo_PeripheralBass');
+
+        -- =====================================================================
+        -- COMPOSITE RANKING DELTAS (leeway-responsive composite rankings)
+        -- =====================================================================
+
+        CREATE TABLE IF NOT EXISTS composite_ranking_deltas (
+            account_id       TEXT    NOT NULL,
+            leeway_bucket    REAL    NOT NULL,
+            adjusted_rating  REAL    NOT NULL,
+            weighted_rating  REAL    NOT NULL,
+            fc_rate_rating   REAL    NOT NULL,
+            total_score      REAL    NOT NULL,
+            max_score_rating REAL    NOT NULL,
+            instruments_played INTEGER NOT NULL,
+            total_songs_played INTEGER NOT NULL,
+            PRIMARY KEY (leeway_bucket, account_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_crd_bucket_adj
+            ON composite_ranking_deltas (leeway_bucket, adjusted_rating ASC);
+        CREATE INDEX IF NOT EXISTS ix_crd_account
+            ON composite_ranking_deltas (account_id);
+
+        -- =====================================================================
+        -- COMBO RANKING DELTAS (leeway-responsive combo rankings)
+        -- =====================================================================
+
+        CREATE TABLE IF NOT EXISTS combo_ranking_deltas (
+            combo_id         TEXT    NOT NULL,
+            account_id       TEXT    NOT NULL,
+            leeway_bucket    REAL    NOT NULL,
+            adjusted_rating  REAL    NOT NULL,
+            weighted_rating  REAL    NOT NULL,
+            fc_rate          REAL    NOT NULL,
+            total_score      BIGINT  NOT NULL,
+            max_score_pct    REAL    NOT NULL,
+            songs_played     INTEGER NOT NULL,
+            full_combo_count INTEGER NOT NULL,
+            PRIMARY KEY (combo_id, leeway_bucket, account_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_comrd_bucket_adj
+            ON combo_ranking_deltas (combo_id, leeway_bucket, adjusted_rating ASC);
+        CREATE INDEX IF NOT EXISTS ix_comrd_account
+            ON combo_ranking_deltas (account_id, combo_id);
+
         """;
 }

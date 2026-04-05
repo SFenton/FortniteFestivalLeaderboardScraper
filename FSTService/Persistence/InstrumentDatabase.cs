@@ -641,7 +641,7 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
 
     // ── Account rankings ─────────────────────────────────────────────
 
-    public int ComputeAccountRankings(int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5)
+    public int ComputeAccountRankings(int totalChartedSongs, int credibilityThreshold = 50, double populationMedian = 0.5, double thresholdMultiplier = 1.05)
     {
         using var conn = _ds.OpenConnection(); using var tx = conn.BeginTransaction();
         // TRUNCATE the partition directly — instant, no dead tuples, no vacuum needed
@@ -650,16 +650,16 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         cmd.CommandTimeout = 300; // 4-CTE ranking query is expensive; default 30s too short
         cmd.CommandText =
             "WITH ValidEntries AS (" +
-            "SELECT le.song_id, le.account_id, le.score, le.accuracy, le.is_full_combo, le.stars, COALESCE(NULLIF(le.api_rank, 0), le.rank) AS effective_rank, ss.entry_count, ss.log_weight, ss.max_score FROM leaderboard_entries le JOIN song_stats ss ON ss.song_id = le.song_id AND ss.instrument = le.instrument WHERE le.instrument = @instrument AND le.score <= COALESCE(CAST(ss.max_score * 1.05 AS INTEGER), le.score + 1) AND ss.entry_count > 0 AND COALESCE(NULLIF(le.api_rank, 0), le.rank) > 0 " +
+            "SELECT le.song_id, le.account_id, le.score, le.accuracy, le.is_full_combo, le.stars, COALESCE(NULLIF(le.api_rank, 0), le.rank) AS effective_rank, ss.entry_count, ss.log_weight, ss.max_score FROM leaderboard_entries le JOIN song_stats ss ON ss.song_id = le.song_id AND ss.instrument = le.instrument WHERE le.instrument = @instrument AND le.score <= COALESCE(CAST(ss.max_score * @threshold AS INTEGER), le.score + 1) AND ss.entry_count > 0 AND COALESCE(NULLIF(le.api_rank, 0), le.rank) > 0 " +
             "UNION ALL " +
-            "SELECT vso.song_id, vso.account_id, vso.score, COALESCE(vso.accuracy, 0), COALESCE(vso.is_full_combo, false), COALESCE(vso.stars, 0), (SELECT COUNT(*) + 1 FROM leaderboard_entries le2 JOIN song_stats ss2 ON ss2.song_id = le2.song_id AND ss2.instrument = le2.instrument WHERE le2.song_id = vso.song_id AND le2.instrument = @instrument AND le2.score > vso.score AND le2.score <= COALESCE(CAST(ss2.max_score * 1.05 AS INTEGER), le2.score + 1) AND le2.account_id != vso.account_id), ss.entry_count, ss.log_weight, ss.max_score FROM valid_score_overrides vso JOIN song_stats ss ON ss.song_id = vso.song_id AND ss.instrument = vso.instrument WHERE vso.instrument = @instrument AND ss.entry_count > 0), " +
+            "SELECT vso.song_id, vso.account_id, vso.score, COALESCE(vso.accuracy, 0), COALESCE(vso.is_full_combo, false), COALESCE(vso.stars, 0), (SELECT COUNT(*) + 1 FROM leaderboard_entries le2 JOIN song_stats ss2 ON ss2.song_id = le2.song_id AND ss2.instrument = le2.instrument WHERE le2.song_id = vso.song_id AND le2.instrument = @instrument AND le2.score > vso.score AND le2.score <= COALESCE(CAST(ss2.max_score * @threshold AS INTEGER), le2.score + 1) AND le2.account_id != vso.account_id), ss.entry_count, ss.log_weight, ss.max_score FROM valid_score_overrides vso JOIN song_stats ss ON ss.song_id = vso.song_id AND ss.instrument = vso.instrument WHERE vso.instrument = @instrument AND ss.entry_count > 0), " +
             "Aggregated AS (" +
-            "SELECT v.account_id, COUNT(*) AS songs_played, @totalCharted AS total_charted_songs, CAST(COUNT(*) AS DOUBLE PRECISION) / @totalCharted AS coverage, AVG(CAST(v.effective_rank AS DOUBLE PRECISION) / v.entry_count) AS raw_skill_rating, SUM((CAST(v.effective_rank AS DOUBLE PRECISION) / v.entry_count) * v.log_weight) / NULLIF(SUM(v.log_weight), 0) AS weighted_rating, CAST(SUM(CASE WHEN v.is_full_combo THEN 1 ELSE 0 END) AS DOUBLE PRECISION) / COUNT(*) AS fc_rate, CAST(SUM(CASE WHEN v.is_full_combo THEN 1 ELSE 0 END) AS DOUBLE PRECISION) / @totalCharted AS fc_rate_vs_total, SUM(v.score) AS total_score, AVG(CASE WHEN v.max_score IS NOT NULL AND v.max_score > 0 THEN LEAST(CAST(v.score AS DOUBLE PRECISION) / v.max_score, 1.05) ELSE NULL END) AS max_score_percent, AVG(v.accuracy) AS avg_accuracy, SUM(CASE WHEN v.is_full_combo THEN 1 ELSE 0 END) AS full_combo_count, AVG(v.stars) AS avg_stars, MIN(v.effective_rank) AS best_rank, AVG(CAST(v.effective_rank AS DOUBLE PRECISION)) AS avg_rank FROM ValidEntries v GROUP BY v.account_id), " +
+            "SELECT v.account_id, COUNT(*) AS songs_played, @totalCharted AS total_charted_songs, CAST(COUNT(*) AS DOUBLE PRECISION) / @totalCharted AS coverage, AVG(CAST(v.effective_rank AS DOUBLE PRECISION) / v.entry_count) AS raw_skill_rating, SUM((CAST(v.effective_rank AS DOUBLE PRECISION) / v.entry_count) * v.log_weight) / NULLIF(SUM(v.log_weight), 0) AS weighted_rating, CAST(SUM(CASE WHEN v.is_full_combo THEN 1 ELSE 0 END) AS DOUBLE PRECISION) / COUNT(*) AS fc_rate, CAST(SUM(CASE WHEN v.is_full_combo THEN 1 ELSE 0 END) AS DOUBLE PRECISION) / @totalCharted AS fc_rate_vs_total, SUM(v.score) AS total_score, AVG(CASE WHEN v.max_score IS NOT NULL AND v.max_score > 0 THEN LEAST(CAST(v.score AS DOUBLE PRECISION) / v.max_score, @threshold) ELSE NULL END) AS max_score_percent, AVG(v.accuracy) AS avg_accuracy, SUM(CASE WHEN v.is_full_combo THEN 1 ELSE 0 END) AS full_combo_count, AVG(v.stars) AS avg_stars, MIN(v.effective_rank) AS best_rank, AVG(CAST(v.effective_rank AS DOUBLE PRECISION)) AS avg_rank FROM ValidEntries v GROUP BY v.account_id), " +
             "WithBayesian AS (SELECT *, (songs_played * raw_skill_rating + @m * @C) / (songs_played + @m) AS adjusted_skill_rating, (songs_played * COALESCE(weighted_rating, 1.0) + @m * @C) / (songs_played + @m) AS adjusted_weighted_rating, (songs_played * COALESCE(max_score_percent, 0.5) + @m * @C) / (songs_played + @m) AS adjusted_max_score_percent FROM Aggregated), " +
             "Ranked AS (SELECT *, ROW_NUMBER() OVER (ORDER BY adjusted_skill_rating ASC, songs_played DESC, total_score DESC, full_combo_count DESC, account_id ASC) AS adjusted_skill_rank, ROW_NUMBER() OVER (ORDER BY adjusted_weighted_rating ASC, songs_played DESC, total_score DESC, full_combo_count DESC, account_id ASC) AS weighted_rank, ROW_NUMBER() OVER (ORDER BY fc_rate DESC, total_score DESC, songs_played DESC, adjusted_skill_rating ASC, account_id ASC) AS fc_rate_rank, ROW_NUMBER() OVER (ORDER BY total_score DESC, songs_played DESC, adjusted_skill_rating ASC, account_id ASC) AS total_score_rank, ROW_NUMBER() OVER (ORDER BY adjusted_max_score_percent DESC, songs_played DESC, adjusted_skill_rating ASC, account_id ASC) AS max_score_percent_rank FROM WithBayesian) " +
             "INSERT INTO account_rankings (account_id, instrument, songs_played, total_charted_songs, coverage, raw_skill_rating, adjusted_skill_rating, adjusted_skill_rank, weighted_rating, weighted_rank, fc_rate, fc_rate_rank, total_score, total_score_rank, max_score_percent, max_score_percent_rank, avg_accuracy, full_combo_count, avg_stars, best_rank, avg_rank, raw_max_score_percent, computed_at) " +
             "SELECT account_id, @instrument, songs_played, total_charted_songs, coverage, raw_skill_rating, adjusted_skill_rating, adjusted_skill_rank, adjusted_weighted_rating, weighted_rank, fc_rate, fc_rate_rank, total_score, total_score_rank, adjusted_max_score_percent, max_score_percent_rank, avg_accuracy, full_combo_count, avg_stars, best_rank, avg_rank, max_score_percent, @now FROM Ranked";
-        cmd.Parameters.AddWithValue("instrument", Instrument); cmd.Parameters.AddWithValue("totalCharted", totalChartedSongs); cmd.Parameters.AddWithValue("m", credibilityThreshold); cmd.Parameters.AddWithValue("C", populationMedian); cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.Parameters.AddWithValue("instrument", Instrument); cmd.Parameters.AddWithValue("totalCharted", totalChartedSongs); cmd.Parameters.AddWithValue("m", credibilityThreshold); cmd.Parameters.AddWithValue("C", populationMedian); cmd.Parameters.AddWithValue("threshold", thresholdMultiplier); cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
         int rows = cmd.ExecuteNonQuery();
         tx.Commit();
         return rows;
@@ -741,6 +741,596 @@ public sealed class InstrumentDatabase : IInstrumentDatabase
         "Solo_PeripheralBass" => $"{parentTable}_pro_bass",
         _ => throw new ArgumentException($"Unknown instrument: {Instrument}"),
     };
+
+    // ── Leeway-aware ranking queries ─────────────────────────────────
+
+    /// <summary>Maps rankBy to the COALESCE expression for leeway-aware queries.</summary>
+    private static (string EffectiveCol, string Direction) EffectiveRankByColumn(string rankBy) => rankBy switch
+    {
+        "weighted" => ("COALESCE(rd.weighted, ar.weighted_rating)", "ASC"),
+        "fcrate" => ("COALESCE(rd.fc_rate, ar.fc_rate)", "DESC"),
+        "totalscore" => ("COALESCE(rd.total_score, ar.total_score)", "DESC"),
+        "maxscore" => ("COALESCE(rd.max_score_pct, ar.max_score_percent)", "DESC"),
+        _ => ("COALESCE(rd.adjusted_skill, ar.adjusted_skill_rating)", "ASC"),
+    };
+
+    /// <summary>Quantizes a leeway value to the nearest 0.1 bucket (floor). Returns 99.0 for null (unfiltered).</summary>
+    public static double QuantizeBucket(double? leeway)
+    {
+        if (leeway is null) return 99.0;
+        double v = Math.Clamp(leeway.Value, -5.0, 5.0);
+        return Math.Round(Math.Floor(v * 10) / 10.0, 1);
+    }
+
+    /// <summary>
+    /// Paginated ranking query with leeway-aware metrics via LEFT JOIN ranking_deltas.
+    /// The sorted metric's rank is positional (page offset + row index). Other metric ranks
+    /// use the base values from account_rankings.
+    /// </summary>
+    public (List<AccountRankingDto> Entries, int TotalCount) GetRankingsAtLeeway(
+        double leewayBucket, string rankBy = "adjusted", int page = 1, int pageSize = 50)
+    {
+        var (effectiveCol, dir) = EffectiveRankByColumn(rankBy);
+        using var conn = _ds.OpenConnection();
+        int total;
+        using (var c = conn.CreateCommand())
+        {
+            c.CommandText = "SELECT COUNT(*) FROM account_rankings WHERE instrument = @instrument";
+            c.Parameters.AddWithValue("instrument", Instrument);
+            total = Convert.ToInt32(c.ExecuteScalar());
+        }
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            "SELECT ar.account_id, " +
+            "COALESCE(rd.songs_played, ar.songs_played), " +
+            "ar.total_charted_songs, " +
+            "COALESCE(rd.coverage, ar.coverage), " +
+            "ar.raw_skill_rating, " +
+            "COALESCE(rd.adjusted_skill, ar.adjusted_skill_rating), " +
+            "ar.adjusted_skill_rank, " +
+            "COALESCE(rd.weighted, ar.weighted_rating), " +
+            "ar.weighted_rank, " +
+            "COALESCE(rd.fc_rate, ar.fc_rate), " +
+            "ar.fc_rate_rank, " +
+            "COALESCE(rd.total_score, ar.total_score), " +
+            "ar.total_score_rank, " +
+            "COALESCE(rd.max_score_pct, ar.max_score_percent), " +
+            "ar.max_score_percent_rank, " +
+            "COALESCE(rd.avg_accuracy, ar.avg_accuracy), " +
+            "COALESCE(rd.full_combo_count, ar.full_combo_count), " +
+            "ar.avg_stars, " +
+            "COALESCE(rd.best_rank, ar.best_rank), " +
+            "ar.avg_rank, " +
+            "ar.computed_at, " +
+            "ar.raw_max_score_percent " +
+            "FROM account_rankings ar " +
+            "LEFT JOIN ranking_deltas rd ON rd.account_id = ar.account_id " +
+            "AND rd.instrument = ar.instrument AND rd.leeway_bucket = @bucket " +
+            $"WHERE ar.instrument = @instrument ORDER BY {effectiveCol} {dir} " +
+            "LIMIT @limit OFFSET @offset";
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("bucket", (float)leewayBucket);
+        cmd.Parameters.AddWithValue("limit", pageSize);
+        cmd.Parameters.AddWithValue("offset", (page - 1) * pageSize);
+        var list = new List<AccountRankingDto>();
+        int rank = (page - 1) * pageSize + 1;
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            list.Add(new AccountRankingDto
+            {
+                AccountId = r.GetString(0),
+                SongsPlayed = r.GetInt32(1),
+                TotalChartedSongs = r.GetInt32(2),
+                Coverage = r.GetDouble(3),
+                RawSkillRating = r.GetDouble(4),
+                AdjustedSkillRating = r.GetDouble(5),
+                AdjustedSkillRank = rankBy is "adjusted" ? rank : r.GetInt32(6),
+                WeightedRating = r.GetDouble(7),
+                WeightedRank = rankBy == "weighted" ? rank : r.GetInt32(8),
+                FcRate = r.GetDouble(9),
+                FcRateRank = rankBy == "fcrate" ? rank : r.GetInt32(10),
+                TotalScore = r.GetInt64(11),
+                TotalScoreRank = rankBy == "totalscore" ? rank : r.GetInt32(12),
+                MaxScorePercent = r.GetDouble(13),
+                MaxScorePercentRank = rankBy == "maxscore" ? rank : r.GetInt32(14),
+                AvgAccuracy = r.GetDouble(15),
+                FullComboCount = r.GetInt32(16),
+                AvgStars = r.GetDouble(17),
+                BestRank = r.GetInt32(18),
+                AvgRank = r.GetDouble(19),
+                ComputedAt = r.GetDateTime(20).ToString("o"),
+                RawMaxScorePercent = r.IsDBNull(21) ? null : r.GetDouble(21),
+            });
+            rank++;
+        }
+        return (list, total);
+    }
+
+    /// <summary>
+    /// Single account ranking with leeway-aware metrics. Uses base ranks from account_rankings
+    /// (approximate at non-base leeway; exact ranks require the paginated endpoint or rank tier system).
+    /// </summary>
+    public AccountRankingDto? GetAccountRankingAtLeeway(string accountId, double leewayBucket)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            "SELECT ar.account_id, " +
+            "COALESCE(rd.songs_played, ar.songs_played), " +
+            "ar.total_charted_songs, " +
+            "COALESCE(rd.coverage, ar.coverage), " +
+            "ar.raw_skill_rating, " +
+            "COALESCE(rd.adjusted_skill, ar.adjusted_skill_rating), " +
+            "ar.adjusted_skill_rank, " +
+            "COALESCE(rd.weighted, ar.weighted_rating), " +
+            "ar.weighted_rank, " +
+            "COALESCE(rd.fc_rate, ar.fc_rate), " +
+            "ar.fc_rate_rank, " +
+            "COALESCE(rd.total_score, ar.total_score), " +
+            "ar.total_score_rank, " +
+            "COALESCE(rd.max_score_pct, ar.max_score_percent), " +
+            "ar.max_score_percent_rank, " +
+            "COALESCE(rd.avg_accuracy, ar.avg_accuracy), " +
+            "COALESCE(rd.full_combo_count, ar.full_combo_count), " +
+            "ar.avg_stars, " +
+            "COALESCE(rd.best_rank, ar.best_rank), " +
+            "ar.avg_rank, " +
+            "ar.computed_at, " +
+            "ar.raw_max_score_percent " +
+            "FROM account_rankings ar " +
+            "LEFT JOIN ranking_deltas rd ON rd.account_id = ar.account_id " +
+            "AND rd.instrument = ar.instrument AND rd.leeway_bucket = @bucket " +
+            "WHERE ar.instrument = @instrument AND ar.account_id = @accountId";
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("bucket", (float)leewayBucket);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        using var r = cmd.ExecuteReader();
+        return r.Read() ? ReadAccountRanking(r) : null;
+    }
+
+    // ── Ranking deltas ───────────────────────────────────────────────
+
+    /// <summary>DTO for aggregate metrics at a given threshold for a single account.</summary>
+    public sealed class AccountAggregateMetrics
+    {
+        public int SongsPlayed;
+        public double AdjustedSkill;
+        public double Weighted;
+        public double FcRate;
+        public long TotalScore;
+        public double MaxScorePct;
+        public int FullComboCount;
+        public double AvgAccuracy;
+        public int BestRank;
+        public double Coverage;
+    }
+
+    /// <summary>
+    /// Returns accounts with at least one leaderboard entry in the score band
+    /// (base_threshold × max_score, max_threshold × max_score].
+    /// For each such entry, returns the leeway bucket at which it becomes valid.
+    /// </summary>
+    public List<(string AccountId, double ActivationLeeway)> GetBandEntries(double baseThreshold = 0.95, double maxThreshold = 1.05)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT le.account_id,
+                ROUND(((le.score::double precision / ss.max_score) - 1.0) * 1000) / 10.0 AS activation_leeway
+            FROM leaderboard_entries le
+            JOIN song_stats ss ON ss.song_id = le.song_id AND ss.instrument = le.instrument
+            WHERE le.instrument = @instrument
+              AND ss.max_score IS NOT NULL AND ss.max_score > 0
+              AND le.score > CAST(ss.max_score * @baseTh AS INTEGER)
+              AND le.score <= CAST(ss.max_score * @maxTh AS INTEGER)
+              AND ss.entry_count > 0
+              AND COALESCE(NULLIF(le.api_rank, 0), le.rank) > 0";
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("baseTh", baseThreshold);
+        cmd.Parameters.AddWithValue("maxTh", maxThreshold);
+        var results = new List<(string, double)>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            results.Add((r.GetString(0), r.GetDouble(1)));
+        return results;
+    }
+
+    /// <summary>
+    /// Compute aggregate metrics at a given threshold for a specific set of accounts.
+    /// Returns the Bayesian-adjusted metrics (same formulas as ComputeAccountRankings)
+    /// but without inserting or ranking — just returns the metric values.
+    /// </summary>
+    public Dictionary<string, AccountAggregateMetrics> ComputeMetricsAtThreshold(
+        double threshold, HashSet<string> accountIds, int totalChartedSongs,
+        int credibilityThreshold, double populationMedian)
+    {
+        if (accountIds.Count == 0) return new();
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = 120;
+        // Same CTE as ComputeAccountRankings but filtered to specific accounts,
+        // no INSERT, no ROW_NUMBER ranking, just returns aggregate metrics.
+        cmd.CommandText =
+            "WITH ValidEntries AS (" +
+            "SELECT le.song_id, le.account_id, le.score, le.accuracy, le.is_full_combo, le.stars, " +
+            "COALESCE(NULLIF(le.api_rank, 0), le.rank) AS effective_rank, ss.entry_count, ss.log_weight, ss.max_score " +
+            "FROM leaderboard_entries le JOIN song_stats ss ON ss.song_id = le.song_id AND ss.instrument = le.instrument " +
+            "WHERE le.instrument = @instrument AND le.score <= COALESCE(CAST(ss.max_score * @threshold AS INTEGER), le.score + 1) " +
+            "AND ss.entry_count > 0 AND COALESCE(NULLIF(le.api_rank, 0), le.rank) > 0 AND le.account_id = ANY(@accounts) " +
+            "UNION ALL " +
+            "SELECT vso.song_id, vso.account_id, vso.score, COALESCE(vso.accuracy, 0), COALESCE(vso.is_full_combo, false), COALESCE(vso.stars, 0), " +
+            "(SELECT COUNT(*) + 1 FROM leaderboard_entries le2 JOIN song_stats ss2 ON ss2.song_id = le2.song_id AND ss2.instrument = le2.instrument " +
+            "WHERE le2.song_id = vso.song_id AND le2.instrument = @instrument AND le2.score > vso.score " +
+            "AND le2.score <= COALESCE(CAST(ss2.max_score * @threshold AS INTEGER), le2.score + 1) AND le2.account_id != vso.account_id), " +
+            "ss.entry_count, ss.log_weight, ss.max_score " +
+            "FROM valid_score_overrides vso JOIN song_stats ss ON ss.song_id = vso.song_id AND ss.instrument = vso.instrument " +
+            "WHERE vso.instrument = @instrument AND ss.entry_count > 0 AND vso.account_id = ANY(@accounts)), " +
+            "Aggregated AS (" +
+            "SELECT v.account_id, COUNT(*) AS songs_played, " +
+            "CAST(COUNT(*) AS DOUBLE PRECISION) / @totalCharted AS coverage, " +
+            "AVG(CAST(v.effective_rank AS DOUBLE PRECISION) / v.entry_count) AS raw_skill_rating, " +
+            "SUM((CAST(v.effective_rank AS DOUBLE PRECISION) / v.entry_count) * v.log_weight) / NULLIF(SUM(v.log_weight), 0) AS weighted_rating, " +
+            "CAST(SUM(CASE WHEN v.is_full_combo THEN 1 ELSE 0 END) AS DOUBLE PRECISION) / COUNT(*) AS fc_rate, " +
+            "SUM(v.score) AS total_score, " +
+            "AVG(CASE WHEN v.max_score IS NOT NULL AND v.max_score > 0 THEN LEAST(CAST(v.score AS DOUBLE PRECISION) / v.max_score, @threshold) ELSE NULL END) AS max_score_percent, " +
+            "AVG(v.accuracy) AS avg_accuracy, " +
+            "SUM(CASE WHEN v.is_full_combo THEN 1 ELSE 0 END) AS full_combo_count, " +
+            "MIN(v.effective_rank) AS best_rank " +
+            "FROM ValidEntries v GROUP BY v.account_id) " +
+            "SELECT account_id, songs_played, coverage, " +
+            "(songs_played * raw_skill_rating + @m * @C) / (songs_played + @m) AS adjusted_skill, " +
+            "(songs_played * COALESCE(weighted_rating, 1.0) + @m * @C) / (songs_played + @m) AS weighted, " +
+            "fc_rate, total_score, " +
+            "(songs_played * COALESCE(max_score_percent, 0.5) + @m * @C) / (songs_played + @m) AS max_score_pct, " +
+            "avg_accuracy, full_combo_count, best_rank " +
+            "FROM Aggregated";
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("threshold", threshold);
+        cmd.Parameters.AddWithValue("totalCharted", totalChartedSongs);
+        cmd.Parameters.AddWithValue("m", credibilityThreshold);
+        cmd.Parameters.AddWithValue("C", populationMedian);
+        cmd.Parameters.AddWithValue("accounts", accountIds.ToArray());
+
+        var result = new Dictionary<string, AccountAggregateMetrics>(StringComparer.OrdinalIgnoreCase);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            result[r.GetString(0)] = new AccountAggregateMetrics
+            {
+                SongsPlayed = r.GetInt32(1),
+                Coverage = r.GetDouble(2),
+                AdjustedSkill = r.GetDouble(3),
+                Weighted = r.GetDouble(4),
+                FcRate = r.GetDouble(5),
+                TotalScore = r.GetInt64(6),
+                MaxScorePct = r.GetDouble(7),
+                AvgAccuracy = r.GetDouble(8),
+                FullComboCount = r.GetInt32(9),
+                BestRank = r.GetInt32(10),
+            };
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Compute aggregate metrics for a set of accounts with NO threshold filter (unfiltered).
+    /// All entries are included regardless of score vs CHOpt max.
+    /// </summary>
+    public Dictionary<string, AccountAggregateMetrics> ComputeMetricsUnfiltered(
+        HashSet<string> accountIds, int totalChartedSongs,
+        int credibilityThreshold, double populationMedian)
+    {
+        if (accountIds.Count == 0) return new();
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = 120;
+        cmd.CommandText =
+            "WITH ValidEntries AS (" +
+            "SELECT le.song_id, le.account_id, le.score, le.accuracy, le.is_full_combo, le.stars, " +
+            "COALESCE(NULLIF(le.api_rank, 0), le.rank) AS effective_rank, ss.entry_count, ss.log_weight, ss.max_score " +
+            "FROM leaderboard_entries le JOIN song_stats ss ON ss.song_id = le.song_id AND ss.instrument = le.instrument " +
+            "WHERE le.instrument = @instrument AND ss.entry_count > 0 AND COALESCE(NULLIF(le.api_rank, 0), le.rank) > 0 " +
+            "AND le.account_id = ANY(@accounts)), " +
+            "Aggregated AS (" +
+            "SELECT v.account_id, COUNT(*) AS songs_played, " +
+            "CAST(COUNT(*) AS DOUBLE PRECISION) / @totalCharted AS coverage, " +
+            "AVG(CAST(v.effective_rank AS DOUBLE PRECISION) / v.entry_count) AS raw_skill_rating, " +
+            "SUM((CAST(v.effective_rank AS DOUBLE PRECISION) / v.entry_count) * v.log_weight) / NULLIF(SUM(v.log_weight), 0) AS weighted_rating, " +
+            "CAST(SUM(CASE WHEN v.is_full_combo THEN 1 ELSE 0 END) AS DOUBLE PRECISION) / COUNT(*) AS fc_rate, " +
+            "SUM(v.score) AS total_score, " +
+            "AVG(CASE WHEN v.max_score IS NOT NULL AND v.max_score > 0 THEN CAST(v.score AS DOUBLE PRECISION) / v.max_score ELSE NULL END) AS max_score_percent, " +
+            "AVG(v.accuracy) AS avg_accuracy, " +
+            "SUM(CASE WHEN v.is_full_combo THEN 1 ELSE 0 END) AS full_combo_count, " +
+            "MIN(v.effective_rank) AS best_rank " +
+            "FROM ValidEntries v GROUP BY v.account_id) " +
+            "SELECT account_id, songs_played, coverage, " +
+            "(songs_played * raw_skill_rating + @m * @C) / (songs_played + @m) AS adjusted_skill, " +
+            "(songs_played * COALESCE(weighted_rating, 1.0) + @m * @C) / (songs_played + @m) AS weighted, " +
+            "fc_rate, total_score, " +
+            "(songs_played * COALESCE(max_score_percent, 0.5) + @m * @C) / (songs_played + @m) AS max_score_pct, " +
+            "avg_accuracy, full_combo_count, best_rank " +
+            "FROM Aggregated";
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("totalCharted", totalChartedSongs);
+        cmd.Parameters.AddWithValue("m", credibilityThreshold);
+        cmd.Parameters.AddWithValue("C", populationMedian);
+        cmd.Parameters.AddWithValue("accounts", accountIds.ToArray());
+
+        var result = new Dictionary<string, AccountAggregateMetrics>(StringComparer.OrdinalIgnoreCase);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            result[r.GetString(0)] = new AccountAggregateMetrics
+            {
+                SongsPlayed = r.GetInt32(1),
+                Coverage = r.GetDouble(2),
+                AdjustedSkill = r.GetDouble(3),
+                Weighted = r.GetDouble(4),
+                FcRate = r.GetDouble(5),
+                TotalScore = r.GetInt64(6),
+                MaxScorePct = r.GetDouble(7),
+                AvgAccuracy = r.GetDouble(8),
+                FullComboCount = r.GetInt32(9),
+                BestRank = r.GetInt32(10),
+            };
+        }
+        return result;
+    }
+
+    /// <summary>Truncates ranking_deltas partition for this instrument.</summary>
+    public void TruncateRankingDeltas()
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"TRUNCATE {GetPartitionName("ranking_deltas")}";
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Batch-inserts ranking delta rows for this instrument.</summary>
+    public void WriteRankingDeltas(IReadOnlyList<(string AccountId, double LeewayBucket,
+        int SongsPlayed, double AdjustedSkill, double Weighted, double FcRate, long TotalScore,
+        double MaxScorePct, int FullComboCount, double AvgAccuracy, int BestRank, double Coverage)> deltas)
+    {
+        if (deltas.Count == 0) return;
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText =
+            "INSERT INTO ranking_deltas (account_id, instrument, leeway_bucket, songs_played, adjusted_skill, " +
+            "weighted, fc_rate, total_score, max_score_pct, full_combo_count, avg_accuracy, best_rank, coverage) " +
+            "VALUES (@aid, @inst, @bucket, @songs, @adj, @wgt, @fc, @ts, @ms, @fcc, @acc, @br, @cov)";
+        cmd.Parameters.Add("aid", NpgsqlTypes.NpgsqlDbType.Text);
+        cmd.Parameters.Add("inst", NpgsqlTypes.NpgsqlDbType.Text);
+        cmd.Parameters.Add("bucket", NpgsqlTypes.NpgsqlDbType.Real);
+        cmd.Parameters.Add("songs", NpgsqlTypes.NpgsqlDbType.Integer);
+        cmd.Parameters.Add("adj", NpgsqlTypes.NpgsqlDbType.Double);
+        cmd.Parameters.Add("wgt", NpgsqlTypes.NpgsqlDbType.Double);
+        cmd.Parameters.Add("fc", NpgsqlTypes.NpgsqlDbType.Double);
+        cmd.Parameters.Add("ts", NpgsqlTypes.NpgsqlDbType.Bigint);
+        cmd.Parameters.Add("ms", NpgsqlTypes.NpgsqlDbType.Double);
+        cmd.Parameters.Add("fcc", NpgsqlTypes.NpgsqlDbType.Integer);
+        cmd.Parameters.Add("acc", NpgsqlTypes.NpgsqlDbType.Double);
+        cmd.Parameters.Add("br", NpgsqlTypes.NpgsqlDbType.Integer);
+        cmd.Parameters.Add("cov", NpgsqlTypes.NpgsqlDbType.Double);
+        cmd.Prepare();
+
+        foreach (var d in deltas)
+        {
+            cmd.Parameters["aid"].Value = d.AccountId;
+            cmd.Parameters["inst"].Value = Instrument;
+            cmd.Parameters["bucket"].Value = (float)d.LeewayBucket;
+            cmd.Parameters["songs"].Value = d.SongsPlayed;
+            cmd.Parameters["adj"].Value = d.AdjustedSkill;
+            cmd.Parameters["wgt"].Value = d.Weighted;
+            cmd.Parameters["fc"].Value = d.FcRate;
+            cmd.Parameters["ts"].Value = d.TotalScore;
+            cmd.Parameters["ms"].Value = d.MaxScorePct;
+            cmd.Parameters["fcc"].Value = d.FullComboCount;
+            cmd.Parameters["acc"].Value = d.AvgAccuracy;
+            cmd.Parameters["br"].Value = d.BestRank;
+            cmd.Parameters["cov"].Value = d.Coverage;
+            cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+
+    /// <summary>Returns all ranking delta rows for this instrument.</summary>
+    public List<(string AccountId, double LeewayBucket, int SongsPlayed, double AdjustedSkill,
+        double Weighted, double FcRate, long TotalScore, double MaxScorePct, int FullComboCount)> GetAllRankingDeltas()
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT account_id, leeway_bucket, songs_played, adjusted_skill, weighted, fc_rate, total_score, max_score_pct, full_combo_count FROM ranking_deltas WHERE instrument = @instrument";
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        var list = new List<(string, double, int, double, double, double, long, double, int)>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add((r.GetString(0), r.GetFloat(1), r.GetInt32(2), r.GetDouble(3), r.GetDouble(4), r.GetDouble(5), r.GetInt64(6), r.GetDouble(7), r.GetInt32(8)));
+        return list;
+    }
+
+    /// <summary>
+    /// Returns today's rank history deltas for a specific account on this instrument.
+    /// Each row is (bucket, delta_adjusted, delta_weighted, delta_fcrate, delta_totalscore, delta_maxscore).
+    /// </summary>
+    public List<(double LeewayBucket, int DeltaAdj, int DeltaWgt, int DeltaFc, int DeltaTs, int DeltaMs)> GetTodayRankDeltas(string accountId)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT leeway_bucket, rank_adjusted, rank_weighted, rank_fcrate, rank_totalscore, rank_maxscore FROM rank_history_deltas WHERE instrument = @instrument AND account_id = @accountId AND snapshot_date = @today ORDER BY leeway_bucket";
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("today", today);
+        var list = new List<(double, int, int, int, int, int)>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add((r.GetFloat(0), r.IsDBNull(1) ? 0 : r.GetInt32(1), r.IsDBNull(2) ? 0 : r.GetInt32(2), r.IsDBNull(3) ? 0 : r.GetInt32(3), r.IsDBNull(4) ? 0 : r.GetInt32(4), r.IsDBNull(5) ? 0 : r.GetInt32(5)));
+        return list;
+    }
+
+    /// <summary>
+    /// Snapshot rank history deltas for each leeway bucket where ranks differ from base.
+    /// Tracks top N accounts + registered accounts.
+    /// </summary>
+    public void SnapshotRankHistoryDeltas(int topN, IReadOnlySet<string>? additionalAccountIds = null)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        using var conn = _ds.OpenConnection();
+
+        // Find distinct buckets in ranking_deltas for this instrument
+        var buckets = new List<double>();
+        using (var c = conn.CreateCommand())
+        {
+            c.CommandText = "SELECT DISTINCT leeway_bucket FROM ranking_deltas WHERE instrument = @instrument ORDER BY leeway_bucket";
+            c.Parameters.AddWithValue("instrument", Instrument);
+            using var r = c.ExecuteReader();
+            while (r.Read()) buckets.Add(r.GetFloat(0));
+        }
+        if (buckets.Count == 0) return;
+
+        // Purge today's existing deltas for this instrument
+        using (var c = conn.CreateCommand())
+        {
+            c.CommandText = "DELETE FROM rank_history_deltas WHERE instrument = @instrument AND snapshot_date = @today";
+            c.Parameters.AddWithValue("instrument", Instrument);
+            c.Parameters.AddWithValue("today", today);
+            c.ExecuteNonQuery();
+        }
+
+        var additionalIds = additionalAccountIds?.ToArray() ?? Array.Empty<string>();
+
+        using var tx = conn.BeginTransaction();
+        using var insertCmd = conn.CreateCommand();
+        insertCmd.Transaction = tx;
+        insertCmd.CommandText =
+            "INSERT INTO rank_history_deltas (account_id, instrument, snapshot_date, leeway_bucket, " +
+            "rank_adjusted, rank_weighted, rank_fcrate, rank_totalscore, rank_maxscore) " +
+            "VALUES (@aid, @inst, @today, @bucket, @ra, @rw, @rf, @rt, @rm)";
+        insertCmd.Parameters.Add("aid", NpgsqlTypes.NpgsqlDbType.Text);
+        insertCmd.Parameters.Add("inst", NpgsqlTypes.NpgsqlDbType.Text);
+        insertCmd.Parameters.Add("today", NpgsqlTypes.NpgsqlDbType.Date);
+        insertCmd.Parameters.Add("bucket", NpgsqlTypes.NpgsqlDbType.Real);
+        insertCmd.Parameters.Add("ra", NpgsqlTypes.NpgsqlDbType.Integer);
+        insertCmd.Parameters.Add("rw", NpgsqlTypes.NpgsqlDbType.Integer);
+        insertCmd.Parameters.Add("rf", NpgsqlTypes.NpgsqlDbType.Integer);
+        insertCmd.Parameters.Add("rt", NpgsqlTypes.NpgsqlDbType.Integer);
+        insertCmd.Parameters.Add("rm", NpgsqlTypes.NpgsqlDbType.Integer);
+        insertCmd.Prepare();
+
+        foreach (var bucket in buckets)
+        {
+            using var rankCmd = conn.CreateCommand();
+            rankCmd.Transaction = tx;
+            rankCmd.CommandText = @"
+                WITH effective AS (
+                    SELECT ar.account_id,
+                        ar.adjusted_skill_rank AS base_adj,
+                        ar.weighted_rank AS base_wgt,
+                        ar.fc_rate_rank AS base_fc,
+                        ar.total_score_rank AS base_ts,
+                        ar.max_score_percent_rank AS base_ms,
+                        ROW_NUMBER() OVER (ORDER BY COALESCE(rd.adjusted_skill, ar.adjusted_skill_rating) ASC, ar.songs_played DESC, ar.account_id ASC) AS eff_adj,
+                        ROW_NUMBER() OVER (ORDER BY COALESCE(rd.weighted, ar.weighted_rating) ASC, ar.songs_played DESC, ar.account_id ASC) AS eff_wgt,
+                        ROW_NUMBER() OVER (ORDER BY COALESCE(rd.fc_rate, ar.fc_rate) DESC, ar.songs_played DESC, ar.account_id ASC) AS eff_fc,
+                        ROW_NUMBER() OVER (ORDER BY COALESCE(rd.total_score, ar.total_score) DESC, ar.songs_played DESC, ar.account_id ASC) AS eff_ts,
+                        ROW_NUMBER() OVER (ORDER BY COALESCE(rd.max_score_pct, ar.max_score_percent) DESC, ar.songs_played DESC, ar.account_id ASC) AS eff_ms
+                    FROM account_rankings ar
+                    LEFT JOIN ranking_deltas rd ON rd.account_id = ar.account_id
+                        AND rd.instrument = ar.instrument AND rd.leeway_bucket = @bucket
+                    WHERE ar.instrument = @instrument
+                )
+                SELECT account_id,
+                    (eff_adj - base_adj)::int AS da,
+                    (eff_wgt - base_wgt)::int AS dw,
+                    (eff_fc - base_fc)::int AS df,
+                    (eff_ts - base_ts)::int AS dt,
+                    (eff_ms - base_ms)::int AS dm
+                FROM effective
+                WHERE (eff_adj != base_adj OR eff_wgt != base_wgt OR eff_fc != base_fc
+                       OR eff_ts != base_ts OR eff_ms != base_ms)
+                    AND (base_adj <= @topN OR account_id = ANY(@additionalIds))";
+            rankCmd.Parameters.AddWithValue("bucket", (float)bucket);
+            rankCmd.Parameters.AddWithValue("instrument", Instrument);
+            rankCmd.Parameters.AddWithValue("topN", topN);
+            rankCmd.Parameters.AddWithValue("additionalIds", additionalIds);
+
+            using var r = rankCmd.ExecuteReader();
+            var rows = new List<(string Aid, int Da, int Dw, int Df, int Dt, int Dm)>();
+            while (r.Read())
+                rows.Add((r.GetString(0), r.GetInt32(1), r.GetInt32(2), r.GetInt32(3), r.GetInt32(4), r.GetInt32(5)));
+            r.Close();
+
+            foreach (var row in rows)
+            {
+                insertCmd.Parameters["aid"].Value = row.Aid;
+                insertCmd.Parameters["inst"].Value = Instrument;
+                insertCmd.Parameters["today"].Value = today;
+                insertCmd.Parameters["bucket"].Value = (float)bucket;
+                insertCmd.Parameters["ra"].Value = row.Da;
+                insertCmd.Parameters["rw"].Value = row.Dw;
+                insertCmd.Parameters["rf"].Value = row.Df;
+                insertCmd.Parameters["rt"].Value = row.Dt;
+                insertCmd.Parameters["rm"].Value = row.Dm;
+                insertCmd.ExecuteNonQuery();
+            }
+        }
+        tx.Commit();
+    }
+
+    /// <summary>Returns rank history with leeway-adjusted ranks merged from rank_history_deltas.</summary>
+    public List<RankHistoryDto> GetRankHistoryAtLeeway(string accountId, double leewayBucket, int days = 30)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            SELECT rh.snapshot_date,
+                rh.adjusted_skill_rank + COALESCE(rhd.rank_adjusted, 0),
+                rh.weighted_rank + COALESCE(rhd.rank_weighted, 0),
+                rh.fc_rate_rank + COALESCE(rhd.rank_fcrate, 0),
+                rh.total_score_rank + COALESCE(rhd.rank_totalscore, 0),
+                rh.max_score_percent_rank + COALESCE(rhd.rank_maxscore, 0),
+                rh.adjusted_skill_rating, rh.weighted_rating, rh.fc_rate,
+                rh.total_score, rh.max_score_percent, rh.songs_played,
+                rh.coverage, rh.full_combo_count, rh.raw_max_score_percent
+            FROM rank_history rh
+            LEFT JOIN rank_history_deltas rhd
+                ON rhd.account_id = rh.account_id
+                AND rhd.instrument = rh.instrument
+                AND rhd.snapshot_date = rh.snapshot_date
+                AND rhd.leeway_bucket = @bucket
+            WHERE rh.instrument = @instrument AND rh.account_id = @accountId
+                AND rh.snapshot_date >= @cutoff
+            ORDER BY rh.snapshot_date";
+        cmd.Parameters.AddWithValue("instrument", Instrument);
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        cmd.Parameters.AddWithValue("bucket", (float)leewayBucket);
+        cmd.Parameters.AddWithValue("cutoff", DateOnly.FromDateTime(DateTime.UtcNow.AddDays(-days)));
+        var list = new List<RankHistoryDto>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(new RankHistoryDto
+            {
+                SnapshotDate = r.GetDateTime(0).ToString("yyyy-MM-dd"),
+                AdjustedSkillRank = r.GetInt32(1),
+                WeightedRank = r.GetInt32(2),
+                FcRateRank = r.GetInt32(3),
+                TotalScoreRank = r.GetInt32(4),
+                MaxScorePercentRank = r.GetInt32(5),
+                AdjustedSkillRating = r.IsDBNull(6) ? null : r.GetDouble(6),
+                WeightedRating = r.IsDBNull(7) ? null : r.GetDouble(7),
+                FcRate = r.IsDBNull(8) ? null : r.GetDouble(8),
+                TotalScore = r.IsDBNull(9) ? null : r.GetInt64(9),
+                MaxScorePercent = r.IsDBNull(10) ? null : r.GetDouble(10),
+                SongsPlayed = r.IsDBNull(11) ? null : r.GetInt32(11),
+                Coverage = r.IsDBNull(12) ? null : r.GetDouble(12),
+                FullComboCount = r.IsDBNull(13) ? null : r.GetInt32(13),
+                RawMaxScorePercent = r.IsDBNull(14) ? null : r.GetDouble(14),
+            });
+        return list;
+    }
 
     public void Dispose() { }
 }

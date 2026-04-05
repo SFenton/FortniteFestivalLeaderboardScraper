@@ -127,6 +127,12 @@ public interface IMetaDatabase : IDisposable
     (List<CompositeRankingDto> Above, CompositeRankingDto? Self, List<CompositeRankingDto> Below) GetCompositeRankingNeighborhood(string accountId, int radius = 5);
     void SnapshotCompositeRankHistory(int topN, IReadOnlySet<string>? additionalAccountIds = null, int retentionDays = 365);
 
+    // ── Composite ranking deltas ─────────────────────────────────────
+    void TruncateCompositeRankingDeltas();
+    void WriteCompositeRankingDeltas(IReadOnlyList<(string AccountId, double LeewayBucket,
+        double AdjustedRating, double WeightedRating, double FcRateRating,
+        double TotalScore, double MaxScoreRating, int InstrumentsPlayed, int TotalSongsPlayed)> deltas);
+
     // ── Combo leaderboard ────────────────────────────────────────────
     void ReplaceComboLeaderboard(string comboId,
         IReadOnlyList<(string AccountId, double AdjustedRating, double WeightedRating, double FcRate, long TotalScore, double MaxScorePercent, int SongsPlayed, int FullComboCount)> entries,
@@ -134,6 +140,12 @@ public interface IMetaDatabase : IDisposable
     (List<ComboLeaderboardEntry> Entries, int TotalAccounts) GetComboLeaderboard(string comboId, string rankBy = "adjusted", int page = 1, int pageSize = 50);
     ComboLeaderboardEntry? GetComboRank(string comboId, string accountId, string rankBy = "adjusted");
     int GetComboTotalAccounts(string comboId);
+
+    // ── Combo ranking deltas ─────────────────────────────────────────
+    void TruncateComboRankingDeltas();
+    void WriteComboRankingDeltas(IReadOnlyList<(string ComboId, string AccountId, double LeewayBucket,
+        double AdjustedRating, double WeightedRating, double FcRate,
+        long TotalScore, double MaxScorePct, int SongsPlayed, int FullComboCount)> deltas);
 
     // ── Maintenance ──────────────────────────────────────────────────
     void Checkpoint();

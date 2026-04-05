@@ -17,6 +17,7 @@ public static partial class ApiEndpoints
             string? rankBy,
             int? page,
             int? pageSize,
+            double? leeway,
             GlobalLeaderboardPersistence persistence,
             IMetaDatabase metaDb,
             ScrapeTimePrecomputer precomputer) =>
@@ -26,9 +27,10 @@ public static partial class ApiEndpoints
             var effectivePage = page ?? 1;
             var effectivePageSize = Math.Clamp(pageSize ?? 50, 1, 200);
             var metric = rankBy ?? "adjusted";
+            var bucket = InstrumentDatabase.QuantizeBucket(leeway);
 
-            // ── Check precomputed store for page 1 with default size ──
-            if (effectivePage == 1 && effectivePageSize == 50)
+            // ── Check precomputed store for page 1 with default size (base leeway only) ──
+            if (effectivePage == 1 && effectivePageSize == 50 && leeway is null)
             {
                 {
                     var result = CacheHelper.ServeIfCached(httpContext, precomputer.TryGet($"rankings:{instrument}:{metric}:1:50"));
@@ -37,7 +39,7 @@ public static partial class ApiEndpoints
             }
 
             var db = persistence.GetOrCreateInstrumentDb(instrument);
-            var (entries, total) = db.GetAccountRankings(metric, effectivePage, effectivePageSize);
+            var (entries, total) = db.GetRankingsAtLeeway(bucket, metric, effectivePage, effectivePageSize);
 
             // Bulk resolve display names (single DB call)
             var names = metaDb.GetDisplayNames(entries.Select(e => e.AccountId));
@@ -76,6 +78,7 @@ public static partial class ApiEndpoints
                 page = effectivePage,
                 pageSize = effectivePageSize,
                 totalAccounts = total,
+                leeway = leeway,
                 entries = enriched,
             });
         })
@@ -88,12 +91,14 @@ public static partial class ApiEndpoints
             HttpContext httpContext,
             string instrument,
             string accountId,
+            double? leeway,
             GlobalLeaderboardPersistence persistence,
             IMetaDatabase metaDb) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
             var db = persistence.GetOrCreateInstrumentDb(instrument);
-            var ranking = db.GetAccountRanking(accountId);
+            var bucket = InstrumentDatabase.QuantizeBucket(leeway);
+            var ranking = db.GetAccountRankingAtLeeway(accountId, bucket);
             if (ranking is null)
                 return Results.NotFound(new { error = "Account not found in rankings for this instrument." });
 
@@ -126,6 +131,7 @@ public static partial class ApiEndpoints
                 ranking.RawMaxScorePercent,
                 ranking.ComputedAt,
                 totalRankedAccounts = totalRanked,
+                leeway = leeway,
             });
         })
         .WithTags("Rankings")
@@ -138,12 +144,19 @@ public static partial class ApiEndpoints
             string instrument,
             string accountId,
             int? days,
+            double? leeway,
             GlobalLeaderboardPersistence persistence) =>
         {
             httpContext.Response.Headers.CacheControl = "public, max-age=300";
             var db = persistence.GetOrCreateInstrumentDb(instrument);
-            var history = db.GetRankHistory(accountId, days ?? 30);
-            return Results.Ok(new { instrument, accountId, history });
+            if (leeway is not null)
+            {
+                var bucket = InstrumentDatabase.QuantizeBucket(leeway);
+                var history = db.GetRankHistoryAtLeeway(accountId, bucket, days ?? 30);
+                return Results.Ok(new { instrument, accountId, history });
+            }
+            var baseHistory = db.GetRankHistory(accountId, days ?? 30);
+            return Results.Ok(new { instrument, accountId, history = baseHistory });
         })
         .WithTags("Rankings")
         .RequireRateLimiting("public");
@@ -257,6 +270,8 @@ public static partial class ApiEndpoints
             var comboId = ComboIds.NormalizeComboParam(combo ?? instruments);
             if (string.IsNullOrEmpty(comboId))
                 return Results.BadRequest(new { error = "At least two instruments required. Use 'combo' (hex ID) or 'instruments' (e.g. Solo_Guitar+Solo_Bass)." });
+            if (!ComboIds.IsWithinGroupCombo(comboId))
+                return Results.NotFound(new { error = "Cross-group combos are not supported. Only within-group combos (OG Band or Pro Strings) are available." });
 
             var metric = rankBy ?? "adjusted";
             var (entries, totalAccounts) = metaDb.GetComboLeaderboard(
@@ -306,6 +321,8 @@ public static partial class ApiEndpoints
             var comboId = ComboIds.NormalizeComboParam(combo ?? instruments);
             if (string.IsNullOrEmpty(comboId))
                 return Results.BadRequest(new { error = "At least two instruments required. Use 'combo' (hex ID) or 'instruments' (e.g. Solo_Guitar+Solo_Bass)." });
+            if (!ComboIds.IsWithinGroupCombo(comboId))
+                return Results.NotFound(new { error = "Cross-group combos are not supported. Only within-group combos (OG Band or Pro Strings) are available." });
 
             var metric = rankBy ?? "adjusted";
             var entry = metaDb.GetComboRank(comboId, accountId, metric);
@@ -513,7 +530,7 @@ public static partial class ApiEndpoints
             foreach (var instrument in instrumentKeys)
             {
                 var db = persistence.GetOrCreateInstrumentDb(instrument);
-                var (entries, total) = db.GetAccountRankings(metric, 1, effectivePageSize);
+                var (entries, total) = db.GetRankingsAtLeeway(99.0, metric, 1, effectivePageSize);
                 var entryList = entries.ToList();
 
                 foreach (var e in entryList)

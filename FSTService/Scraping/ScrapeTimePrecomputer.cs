@@ -645,11 +645,15 @@ public sealed class ScrapeTimePrecomputer
             maxScore = composite.CompositeRankMaxScore,
         };
 
+        // Build per-instrument rank tiers from rank_history_deltas
+        var instrumentRanks = BuildInstrumentRankTiers(accountId);
+
         var payload = new
         {
             accountId,
             totalSongs,
             compositeRanks,
+            instrumentRanks,
             instruments = tierRows.Select(r => new
             {
                 ins = r.Instrument == "Overall" ? "00" : ComboIds.FromInstruments(new[] { r.Instrument }),
@@ -658,6 +662,75 @@ public sealed class ScrapeTimePrecomputer
         };
         var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
         Store($"playerstats:{accountId}", jsonBytes);
+    }
+
+    /// <summary>
+    /// Build per-instrument rank tiers from base ranks + rank_history_deltas.
+    /// Returns an array of { ins, base: {ranks}, tiers: [sparse leeway breakpoints] }.
+    /// </summary>
+    private List<object>? BuildInstrumentRankTiers(string accountId)
+    {
+        var instrumentKeys = _persistence.GetInstrumentKeys();
+        var result = new List<object>();
+
+        foreach (var instrument in instrumentKeys)
+        {
+            var db = _persistence.GetOrCreateInstrumentDb(instrument);
+            var baseRanking = db.GetAccountRanking(accountId);
+            if (baseRanking is null) continue;
+
+            var baseAdj = baseRanking.AdjustedSkillRank;
+            var baseWgt = baseRanking.WeightedRank;
+            var baseFc = baseRanking.FcRateRank;
+            var baseTs = baseRanking.TotalScoreRank;
+            var baseMs = baseRanking.MaxScorePercentRank;
+
+            var deltas = db.GetTodayRankDeltas(accountId);
+
+            var tiers = new List<object>();
+            int prevAdj = baseAdj, prevWgt = baseWgt, prevFc = baseFc, prevTs = baseTs, prevMs = baseMs;
+
+            foreach (var (bucket, dAdj, dWgt, dFc, dTs, dMs) in deltas)
+            {
+                int effAdj = baseAdj + dAdj;
+                int effWgt = baseWgt + dWgt;
+                int effFc = baseFc + dFc;
+                int effTs = baseTs + dTs;
+                int effMs = baseMs + dMs;
+
+                if (effAdj == prevAdj && effWgt == prevWgt && effFc == prevFc &&
+                    effTs == prevTs && effMs == prevMs)
+                    continue;
+
+                // Build sparse tier (only changed fields)
+                var tier = new Dictionary<string, object?>();
+                tier["l"] = bucket >= 90.0 ? null : (object)Math.Round(bucket, 1);
+
+                if (effAdj != prevAdj) tier["adjusted"] = effAdj;
+                if (effWgt != prevWgt) tier["weighted"] = effWgt;
+                if (effFc != prevFc) tier["fcRate"] = effFc;
+                if (effTs != prevTs) tier["totalScore"] = effTs;
+                if (effMs != prevMs) tier["maxScore"] = effMs;
+
+                tiers.Add(tier);
+
+                prevAdj = effAdj;
+                prevWgt = effWgt;
+                prevFc = effFc;
+                prevTs = effTs;
+                prevMs = effMs;
+            }
+
+            result.Add(new
+            {
+                ins = ComboIds.FromInstruments(new[] { instrument }),
+                totalRanked = db.GetRankedAccountCount(),
+                @base = new { adjusted = baseAdj, weighted = baseWgt, fcRate = baseFc, totalScore = baseTs, maxScore = baseMs },
+                tiers,
+            });
+        }
+
+        return result.Count > 0 ? result : null;
     }
 
     private void PrecomputePlayerHistory(string accountId)
@@ -898,13 +971,13 @@ public sealed class ScrapeTimePrecomputer
 
     private void PrecomputeRankingsPages(IReadOnlyList<string> instrumentKeys)
     {
-        // Per-instrument page 1
+        // Per-instrument page 1 (unfiltered — leeway=null maps to sentinel 99.0)
         foreach (var instrument in instrumentKeys)
         {
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
             foreach (var metric in RankingMetrics)
             {
-                var (entries, total) = db.GetAccountRankings(metric, 1, 50);
+                var (entries, total) = db.GetRankingsAtLeeway(99.0, metric, 1, 50);
                 var entryList = entries.ToList();
                 var names = _metaDb.GetDisplayNames(entryList.Select(e => e.AccountId));
                 var enriched = entryList.Select(e => new
@@ -940,6 +1013,7 @@ public sealed class ScrapeTimePrecomputer
                     page = 1,
                     pageSize = 50,
                     totalAccounts = total,
+                    leeway = (double?)null,
                     entries = enriched,
                 };
                 var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
@@ -993,7 +1067,7 @@ public sealed class ScrapeTimePrecomputer
             foreach (var instrument in instrumentKeys)
             {
                 var db = _persistence.GetOrCreateInstrumentDb(instrument);
-                var (entries, total) = db.GetAccountRankings(metric, 1, 10);
+                var (entries, total) = db.GetRankingsAtLeeway(99.0, metric, 1, 10);
                 var entryList = entries.ToList();
                 foreach (var e in entryList) allAccountIds.Add(e.AccountId);
                 perInstrument[instrument] = (entryList, total);

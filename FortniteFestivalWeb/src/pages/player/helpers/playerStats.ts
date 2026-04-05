@@ -3,7 +3,7 @@
  * Extracted for readability and potential reuse.
  */
 import { formatPercentileBucket, accuracyColor } from '@festival/core';
-import type { PlayerScore, ServerInstrumentKey as InstrumentKey, PlayerStatsTier, PlayerStatsInstrument } from '@festival/core/api/serverTypes';
+import type { PlayerScore, ServerInstrumentKey as InstrumentKey, PlayerStatsTier, PlayerStatsInstrument, InstrumentRankEntry, InstrumentRankBase } from '@festival/core/api/serverTypes';
 
 export { accuracyColor };
 
@@ -180,4 +180,30 @@ export function tierToInstrumentStats(tier: PlayerStatsTier): InstrumentStats {
     avgPercentile: tier.avgPercentile ?? '—',
     percentileBuckets,
   };
+}
+
+/** Resolved rank object with all 5 metric ranks at a given leeway. */
+export type ResolvedInstrumentRanks = InstrumentRankBase;
+
+/**
+ * Resolve per-instrument ranks at a given leeway from the sparse tier data.
+ * Walks tiers in order; for each, applies changed fields on top of base.
+ * Returns the effective rank values at the requested leeway.
+ */
+export function resolveInstrumentRanks(
+  entry: InstrumentRankEntry,
+  leeway: number,
+): ResolvedInstrumentRanks {
+  const result = { ...entry.base };
+  for (const tier of entry.tiers) {
+    // l=null means unfiltered (highest leeway)
+    const tierLeeway = tier.l ?? Infinity;
+    if (tierLeeway > leeway) break;
+    if (tier.adjusted !== undefined) result.adjusted = tier.adjusted;
+    if (tier.weighted !== undefined) result.weighted = tier.weighted;
+    if (tier.fcRate !== undefined) result.fcRate = tier.fcRate;
+    if (tier.totalScore !== undefined) result.totalScore = tier.totalScore;
+    if (tier.maxScore !== undefined) result.maxScore = tier.maxScore;
+  }
+  return result;
 }

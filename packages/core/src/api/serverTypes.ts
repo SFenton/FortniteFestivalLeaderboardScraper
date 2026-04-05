@@ -378,6 +378,7 @@ export type PlayerStatsResponse = {
   totalSongs: number;
   instruments: PlayerStatsInstrument[];
   compositeRanks?: CompositeRanks | null;
+  instrumentRanks?: InstrumentRankEntry[] | null;
 };
 
 /** Flat composite rank numbers embedded in the stats response. */
@@ -387,6 +388,33 @@ export type CompositeRanks = {
   fcRate?: number | null;
   totalScore?: number | null;
   maxScore?: number | null;
+};
+
+/** Per-instrument rank entry with base ranks and leeway-responsive tiers. */
+export type InstrumentRankEntry = {
+  ins: string;
+  totalRanked: number;
+  base: InstrumentRankBase;
+  tiers: InstrumentRankTier[];
+};
+
+/** Base rank values at the most restrictive leeway (-5.0%). */
+export type InstrumentRankBase = {
+  adjusted: number;
+  weighted: number;
+  fcRate: number;
+  totalScore: number;
+  maxScore: number;
+};
+
+/** Sparse rank tier — only changed fields present. l=null means unfiltered. */
+export type InstrumentRankTier = {
+  l: number | null;
+  adjusted?: number;
+  weighted?: number;
+  fcRate?: number;
+  totalScore?: number;
+  maxScore?: number;
 };
 
 // ─── Rivals types ──────────────────────────────────────────────

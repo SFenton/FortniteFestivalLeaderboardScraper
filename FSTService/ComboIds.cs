@@ -28,6 +28,61 @@ public static class ComboIds
         "Solo_PeripheralBass",
     };
 
+    /// <summary>
+    /// Instrument groups for combo ranking computation.
+    /// Only within-group combos are computed (no cross-group).
+    /// Each group is a bitmask of the instruments it contains.
+    /// </summary>
+    public static readonly IReadOnlyList<int> InstrumentGroups = new[]
+    {
+        0x0F, // OG Band: Lead(0) + Bass(1) + Drums(2) + Vocals(3) = bits 0-3
+        0x30, // Pro Strings: Pro Lead(4) + Pro Bass(5) = bits 4-5
+    };
+
+    /// <summary>
+    /// All valid within-group combo bitmasks (2+ instruments, all from same group).
+    /// OG Band: C(4,2)+C(4,3)+C(4,4) = 6+4+1 = 11 combos.
+    /// Pro Strings: C(2,2) = 1 combo.
+    /// Total: 12 combos.
+    /// </summary>
+    public static readonly IReadOnlyList<int> WithinGroupComboMasks = BuildWithinGroupMasks();
+
+    /// <summary>Returns true if the bitmask represents a within-group combo (2+ instruments, all from the same group).</summary>
+    public static bool IsWithinGroupCombo(int mask)
+    {
+        if (BitCount(mask) < 2) return false;
+        foreach (var group in InstrumentGroups)
+        {
+            if ((mask & ~group) == 0) return true;
+        }
+        return false;
+    }
+
+    /// <summary>Returns true if the combo ID (hex string) represents a within-group combo.</summary>
+    public static bool IsWithinGroupCombo(string comboId)
+    {
+        int mask = Convert.ToInt32(comboId, 16);
+        return IsWithinGroupCombo(mask);
+    }
+
+    private static int[] BuildWithinGroupMasks()
+    {
+        var result = new List<int>();
+        foreach (var group in InstrumentGroups)
+        {
+            // Enumerate all subsets of this group with 2+ bits
+            int n = 6; // total bit positions
+            for (int mask = 3; mask < (1 << n); mask++)
+            {
+                if (BitCount(mask) < 2) continue;
+                if ((mask & ~group) == 0) // all bits within this group
+                    result.Add(mask);
+            }
+        }
+        result.Sort();
+        return result.ToArray();
+    }
+
     /// <summary>Compute the combo ID (2-digit hex) for a set of instrument keys.</summary>
     public static string FromInstruments(IEnumerable<string> instruments)
     {

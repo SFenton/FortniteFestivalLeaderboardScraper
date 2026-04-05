@@ -9,7 +9,9 @@ import {
   getInstrumentTiers,
   tierToInstrumentStats,
   computeInstrumentStats,
+  resolveInstrumentRanks,
 } from '../../../player/helpers/playerStats';
+import { comboIdFromInstruments } from '@festival/core';
 import { SERVER_INSTRUMENT_KEYS as INSTRUMENT_KEYS, type ServerInstrumentKey as InstrumentKey, type PlayerResponse, type ServerSong as Song } from '@festival/core/api/serverTypes';
 import { Gap, Layout, Radius, frostedCard, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GRID } from '@festival/theme';
 import { playerPageStyles as pps } from '../../../../components/player/playerPageStyles';
@@ -38,7 +40,7 @@ import { buildTopSongsItems } from '../../../player/components/TopSongsSection';
 import type { PlayerItem } from '../../../player/helpers/playerPageTypes';
 import type { SyncPhase } from '../../../../hooks/data/useSyncStatus';
 import { Routes } from '../../../../routes';
-import type { AccountRankingEntry, RankingMetric } from '@festival/core/api/serverTypes';
+import type { AccountRankingEntry, RankingMetric, InstrumentRankEntry } from '@festival/core/api/serverTypes';
 import { useFeatureFlags } from '../../../../contexts/FeatureFlagsContext';
 
 export interface PlayerContentProps {
@@ -83,7 +85,7 @@ export default function PlayerContent({
   const navigate = useNavigate();
   const { player: trackedPlayer, setPlayer } = useTrackedPlayer();
   const [pendingSwitch, setPendingSwitch] = useState<(() => void) | null>(null);
-  const { filterPlayerScores, isScoreValid, enabled: filterInvalidScores, leeway } = useScoreFilter();
+  const { filterPlayerScores, isScoreValid, enabled: filterInvalidScores, leeway, leewayParam } = useScoreFilter();
   const { registerPlayerPageSelect } = usePlayerPageSelect();
 
   // Fetch pre-computed tiered stats from backend
@@ -141,24 +143,58 @@ export default function PlayerContent({
     [settings],
   );
 
-  // Fetch per-instrument rankings for rank cards
+  // Effective leeway for tier selection: when filtering disabled, pick the last (all-inclusive) tier
+  const effectiveLeeway = filterInvalidScores ? leeway : Infinity;
+
+  // Use rank tiers from stats response when available; fall back to per-instrument API calls
+  const hasRankTiers = !!statsData?.instrumentRanks?.length;
+
   const instrumentRankingQueries = useQueries({
     queries: visibleKeys.map((inst) => ({
-      queryKey: queryKeys.playerRanking(inst, data.accountId),
-      queryFn: () => api.getPlayerRanking(inst, data.accountId),
+      queryKey: queryKeys.playerRanking(inst, data.accountId, leewayParam),
+      queryFn: () => api.getPlayerRanking(inst, data.accountId, leewayParam),
       staleTime: 5 * 60_000,
+      enabled: !hasRankTiers,
     })),
   });
 
   // Build map of instrument → AccountRankingEntry for passing to sections
   const instrumentRankings = useMemo(() => {
     const map = new Map<InstrumentKey, AccountRankingEntry>();
+
+    // If rank tiers available from stats, resolve ranks at current leeway
+    if (statsData?.instrumentRanks?.length) {
+      for (const entry of statsData.instrumentRanks as InstrumentRankEntry[]) {
+        const inst = visibleKeys.find(k => entry.ins === comboIdFromInstruments([k]));
+        if (!inst) continue;
+        const resolved = resolveInstrumentRanks(entry, effectiveLeeway);
+        // Build a minimal AccountRankingEntry with rank fields
+        map.set(inst, {
+          accountId: data.accountId,
+          adjustedSkillRank: resolved.adjusted,
+          weightedRank: resolved.weighted,
+          fcRateRank: resolved.fcRate,
+          totalScoreRank: resolved.totalScore,
+          maxScorePercentRank: resolved.maxScore,
+          // Non-rank fields default — only ranks used in stat cards
+          songsPlayed: 0, totalChartedSongs: 0, coverage: 0,
+          rawSkillRating: 0, adjustedSkillRating: 0,
+          weightedRating: 0, fcRate: 0, totalScore: 0,
+          maxScorePercent: 0, avgAccuracy: 0, fullComboCount: 0,
+          avgStars: 0, bestRank: 0, avgRank: 0,
+          rawMaxScorePercent: null, computedAt: '',
+        } as AccountRankingEntry);
+      }
+      return map;
+    }
+
+    // Fallback to API query results
     for (let i = 0; i < visibleKeys.length; i++) {
       const entry = instrumentRankingQueries[i]?.data;
       if (entry) map.set(visibleKeys[i]!, entry);
     }
     return map;
-  }, [visibleKeys, instrumentRankingQueries]);
+  }, [visibleKeys, instrumentRankingQueries, statsData, effectiveLeeway, hasRankTiers, data.accountId]);
 
   const songMap = useMemo(() => new Map(songs.map((s) => [s.songId, s])), [songs]);
   const byInstrument = useMemo(() => groupByInstrument(effectiveScores), [effectiveScores]);
@@ -167,9 +203,6 @@ export default function PlayerContent({
     return groupByInstrument(visible);
   }, [data.scores, settings]);
   const overallStats = useMemo(() => computeOverallStats(effectiveScores), [effectiveScores]);
-
-  // Effective leeway for tier selection: when filtering disabled, pick the last (all-inclusive) tier
-  const effectiveLeeway = filterInvalidScores ? leeway : Infinity;
 
   const searchQuery = useSearchQuery();
 
@@ -264,7 +297,10 @@ export default function PlayerContent({
         : undefined);
 
     const rankingDto = instrumentRankingQueries[visibleKeys.indexOf(inst)]?.data;
-    items.push(...buildInstrumentStatsItems(t, inst, stats, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle, overThreshold, instrumentRankings.get(inst), settings.enableExperimentalRanks, navigateToLeaderboard, data.accountId, rankingDto?.totalRankedAccounts, leaderboardsEnabled));
+    const totalRanked = hasRankTiers
+      ? (statsData!.instrumentRanks as InstrumentRankEntry[])?.find(e => e.ins === comboIdFromInstruments([inst]))?.totalRanked
+      : rankingDto?.totalRankedAccounts;
+    items.push(...buildInstrumentStatsItems(t, inst, stats, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle, overThreshold, instrumentRankings.get(inst), settings.enableExperimentalRanks, navigateToLeaderboard, data.accountId, totalRanked, leaderboardsEnabled));
   }
 
   // --- Top Songs heading ---
