@@ -274,7 +274,7 @@ export default memo(function RankHistoryChart({
     return (
       <div key={point.date} style={{ ...(i === 0 ? listCardBest : listCardBase), ...animStyle }}>
         <span style={{ flex: 1, color: Colors.textPrimary }}>{dateStr}</span>
-        <span style={{ fontWeight: 600, color: Colors.textPrimary }}>#{point.rank}</span>
+        <span style={{ fontWeight: 600, color: rankColor(point.rank, totalAccounts) }}>#{point.rank}</span>
         {percentileStr
           ? <PercentilePill display={percentileStr} />
           : isPctMetric

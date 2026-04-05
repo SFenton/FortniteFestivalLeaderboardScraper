@@ -396,6 +396,9 @@ public sealed class AccountRankingDto
     public int BestRank { get; init; }
     public double AvgRank { get; init; }
 
+    public double? RawFcRate { get; init; }
+    public double? RawMaxScorePercent { get; init; }
+
     public string ComputedAt { get; init; } = "";
     public int TotalRankedAccounts { get; init; }
 }

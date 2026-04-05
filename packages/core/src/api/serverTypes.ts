@@ -489,6 +489,8 @@ export type AccountRankingEntry = {
   avgStars: number;
   bestRank: number;
   avgRank: number;
+  rawFcRate: number | null;
+  rawMaxScorePercent: number | null;
   computedAt: string;
 };
 
