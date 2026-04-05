@@ -261,7 +261,8 @@ export default function PlayerContent({
         ? (rawByInstrument.get(inst) ?? scores).filter(s => s.score > 0 && !isScoreValid(s.songId, inst, s.score)).length
         : undefined);
 
-    items.push(...buildInstrumentStatsItems(t, inst, stats, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle, overThreshold, instrumentRankings.get(inst), settings.enableExperimentalRanks, navigateToLeaderboard));
+    const rankingDto = instrumentRankingQueries[visibleKeys.indexOf(inst)]?.data;
+    items.push(...buildInstrumentStatsItems(t, inst, stats, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle, overThreshold, instrumentRankings.get(inst), settings.enableExperimentalRanks, navigateToLeaderboard, data.accountId, rankingDto?.totalRankedAccounts));
   }
 
   // --- Top Songs heading ---

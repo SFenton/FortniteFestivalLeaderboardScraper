@@ -14,6 +14,7 @@ import type { PlayerItem, NavigateToSongs, NavigateToSongDetail } from '../helpe
 import type { AccountRankingEntry, RankingMetric, ServerInstrumentKey } from '@festival/core/api/serverTypes';
 import { getRankForMetric, DEFAULT_METRICS, EXPERIMENTAL_METRICS } from '../../leaderboards/helpers/rankingHelpers';
 import InstrumentHeader from '../../../components/display/InstrumentHeader';
+import RankHistoryChart from '../../leaderboards/components/RankHistoryChart';
 
 const METRIC_I18N_KEY: Record<RankingMetric, string> = {
   totalscore: 'player.totalScoreRank',
@@ -72,6 +73,8 @@ export function buildInstrumentStatsItems(
   rankingEntry?: AccountRankingEntry,
   enableExperimentalRanks?: boolean,
   navigateToLeaderboard?: (instrument: ServerInstrumentKey | null, metric: RankingMetric) => void,
+  accountId?: string,
+  totalRankedAccounts?: number,
 ): PlayerItem[] {
   if (stats.songsPlayed === 0) return [];
 
@@ -88,6 +91,16 @@ export function buildInstrumentStatsItems(
       </div>
     ),
   });
+
+  // Rank history chart (only when ranking data exists for this instrument)
+  if (accountId && rankingEntry) {
+    items.push({
+      key: `inst-rank-graph-${inst}`,
+      span: true,
+      heightEstimate: 500,
+      node: <RankHistoryChart accountId={accountId} instruments={[inst]} metric={'totalscore'} defaultInstrument={inst} totalAccountsByInstrument={totalRankedAccounts ? { [inst]: totalRankedAccounts } : undefined} />,
+    });
+  }
 
   // Build stat cards
   /* v8 ignore start — stat card navigation click handlers */

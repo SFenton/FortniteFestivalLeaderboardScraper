@@ -19,7 +19,7 @@ import GraphCard from '../../../components/common/GraphCard';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 import { useRankHistoryAll, formatValueTick, formatDetailValue, type RankHistoryChartPoint } from '../../../hooks/chart/useRankHistory';
 import {
-  Colors, Font, Gap, Size, Layout, Radius,
+  Colors, Font, Gap, Size, Layout, Radius, Weight,
   frostedCard, padding, border, transition,
   CHART_ANIM_DURATION,
 } from '@festival/theme';
@@ -92,7 +92,7 @@ export default memo(function RankHistoryChart({
 
   // Last 5 snapshots (most recent first) for the list
   const listData = useMemo(() => {
-    if (chartData.length <= 1) return [];
+    if (chartData.length === 0) return [];
     return [...chartData].reverse().slice(0, 5);
   }, [chartData]);
 
@@ -241,7 +241,7 @@ export default memo(function RankHistoryChart({
     return (
       <>
         <span style={{ flex: 1, color: Colors.textPrimary }}>{dateStr}</span>
-        <span style={{ fontWeight: 600, color: rankColor(point.rank, totalAccounts) }}>#{point.rank}</span>
+        <span style={{ fontWeight: Weight.semibold, color: rankColor(point.rank, totalAccounts) }}>#{point.rank}</span>
         {percentileStr
           ? <PercentilePill display={percentileStr} />
           : isPctMetric
@@ -273,13 +273,13 @@ export default memo(function RankHistoryChart({
     const pct = isPctMetric ? point.value * 100 : 0;
     return (
       <div key={point.date} style={{ ...(i === 0 ? listCardBest : listCardBase), ...animStyle }}>
-        <span style={{ flex: 1, color: Colors.textPrimary }}>{dateStr}</span>
-        <span style={{ fontWeight: 600, color: rankColor(point.rank, totalAccounts) }}>#{point.rank}</span>
+        <span style={{ flex: 1, color: Colors.textPrimary, ...(i === 0 ? { fontWeight: Weight.bold } : undefined) }}>{dateStr}</span>
+        <span style={{ fontWeight: i === 0 ? Weight.bold : Weight.semibold, color: rankColor(point.rank, totalAccounts) }}>#{point.rank}</span>
         {percentileStr
           ? <PercentilePill display={percentileStr} />
           : isPctMetric
             ? <PercentilePill display={formatDetailValue(point.value, metric)} tier={pct >= 99 ? 'top1' : pct >= 95 ? 'top5' : 'default'} />
-            : <span style={{ color: Colors.textPrimary }}>{formatDetailValue(point.value, metric)}</span>}
+            : <span style={{ color: Colors.textPrimary, ...(i === 0 ? { fontWeight: Weight.bold } : undefined) }}>{formatDetailValue(point.value, metric)}</span>}
       </div>
     );
   }, [metric, usePercentile, totalAccounts]);
