@@ -50,14 +50,22 @@ export default function RivalryPage() {
   const accountId = player?.accountId;
 
   /* v8 ignore start -- state derivation with null-coalescing */
-  const comboFromState = (location.state as Record<string, unknown> | null)?.combo as string | undefined;
+  const navState = location.state as Record<string, unknown> | null;
+  const comboFromState = navState?.combo as string | undefined;
   const derivedCombo = useMemo(() => deriveComboFromSettings(settings), [settings]);
   const fallbackInstrument = useMemo(() => getEnabledInstruments(settings)[0], [settings]);
   const combo = comboFromState ?? derivedCombo ?? fallbackInstrument;
+
+  // Leaderboard rival source: forwarded from RivalDetailPage
+  const source = (navState?.source as 'song' | 'leaderboard') ?? 'song';
+  const lbInstrument = navState?.instrument as string | undefined;
+  const lbRankBy = (navState?.rankBy as string) ?? 'totalscore';
   /* v8 ignore stop */
 
   /* v8 ignore start -- cache-based state initialization */
-  const cacheKey = `${accountId}:${rivalId}:${combo}`;
+  const cacheKey = source === 'leaderboard'
+    ? `lb:${accountId}:${rivalId}:${lbInstrument}:${lbRankBy}:${mode}`
+    : `${accountId}:${rivalId}:${combo}`;
   const hasCachedData = cacheKey === _cachedRivalryKey && _cachedRivalrySongs.length > 0;
 
   const [allSongs, setAllSongs] = useState<RivalSongComparison[]>(hasCachedData ? _cachedRivalrySongs : []);
@@ -69,11 +77,16 @@ export default function RivalryPage() {
 
   /* v8 ignore start — async data fetch */
   useEffect(() => {
-    if (!accountId || !rivalId || !combo || hasCachedData) return;
+    if (!accountId || !rivalId || hasCachedData) return;
+    if (source !== 'leaderboard' && !combo) return;
     let cancelled = false;
     setLoading(true);
 
-    api.getRivalDetail(accountId, combo, rivalId).then(res => {
+    const fetchPromise = source === 'leaderboard' && lbInstrument
+      ? api.getLeaderboardRivalDetail(lbInstrument as Parameters<typeof api.getLeaderboardRivalDetail>[0], accountId, rivalId, lbRankBy as Parameters<typeof api.getLeaderboardRivalDetail>[3])
+      : api.getRivalDetail(accountId, combo, rivalId);
+
+    fetchPromise.then(res => {
       if (cancelled) return;
       setAllSongs(res.songs);
       setRivalName(res.rival.displayName);
@@ -88,7 +101,7 @@ export default function RivalryPage() {
     });
 
     return () => { cancelled = true; };
-  }, [accountId, rivalId, combo]);
+  }, [accountId, rivalId, combo, source, lbInstrument, lbRankBy]);
   /* v8 ignore stop */
 
   /* v8 ignore start -- category/score computation */

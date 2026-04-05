@@ -146,6 +146,17 @@ export function accuracyColor(pct: number): string {
 }
 
 /**
+ * Interpolate a rank position to an RGB color string on the red→green scale.
+ * Rank 1 out of many → near-green; last rank → near-red.
+ * Returns a neutral gray when totalAccounts or rank is invalid.
+ */
+export function rankColor(rank: number, totalAccounts: number): string {
+  if (totalAccounts <= 0 || rank <= 0) return 'rgb(127,140,141)';
+  const pct = (1 - rank / totalAccounts) * 100;
+  return accuracyColor(pct);
+}
+
+/**
  * Interpolate a max-score percentage (0-100) to an RGB color string.
  * 0% → red (220,40,40), 100% → darker green (34,139,34).
  */

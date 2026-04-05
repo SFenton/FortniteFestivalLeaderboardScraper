@@ -14,7 +14,7 @@ import {
 } from 'recharts';
 import type { ServerInstrumentKey as InstrumentKey, RankingMetric } from '@festival/core/api/serverTypes';
 import { serverInstrumentLabel as instrumentLabel } from '@festival/core/api/serverTypes';
-import { formatLeaderboardPercentile } from '@festival/core';
+import { formatLeaderboardPercentile, rankColor } from '@festival/core';
 import GraphCard from '../../../components/common/GraphCard';
 import PercentilePill from '../../../components/songs/metadata/PercentilePill';
 import { useRankHistoryAll, formatValueTick, formatDetailValue, type RankHistoryChartPoint } from '../../../hooks/chart/useRankHistory';
@@ -29,16 +29,8 @@ const AXIS_TICK = { fill: Colors.textPrimary, fontSize: Font.md };
 const X_AXIS_TICK = { ...AXIS_TICK, dy: 16 };
 const X_AXIS_ANGLE = -35;
 
-/** Bar fill color per metric. */
-function metricBarColor(metric: RankingMetric): string {
-  switch (metric) {
-    case 'totalscore': return Colors.accentBlueBright;
-    case 'adjusted': return Colors.statusGreen;
-    case 'weighted': return Colors.accentPurple;
-    case 'fcrate': return Colors.gold;
-    case 'maxscore': return Colors.diffMediumAccent;
-  }
-}
+/** Gradient endpoints matching accuracyColor scale for legend display. */
+const RANK_GRADIENT = 'linear-gradient(to right, rgb(220,40,40), rgb(46,204,113))';
 
 /** Identity function for matching RankHistoryChartPoints across pagination. */
 const RANK_POINT_IDENTITY = (a: RankHistoryChartPoint, b: RankHistoryChartPoint) =>
@@ -91,7 +83,6 @@ export default memo(function RankHistoryChart({
     setSelected(key);
   }, []);
 
-  const barColor = metricBarColor(metric);
   const metricLabel = t(`rankings.metric.${metric}`);
 
   const valueTickFormatter = useCallback(
@@ -116,6 +107,9 @@ export default memo(function RankHistoryChart({
     const paddedMax = maxRank + Math.ceil((maxRank - minRank) * 0.1);
     return [padded, paddedMax || 100] as [number, number]; // reversed prop on YAxis puts rank 1 at top
   }, [chartData]);
+
+  const usePercentile = metric === 'adjusted' || metric === 'weighted';
+  const totalAccounts = totalAccountsByInstrument?.[selected] ?? 0;
 
   const renderChart = useCallback(({ visibleData, animating, selectedPoint, setSelectedPoint }: {
     visibleData: RankHistoryChartPoint[];
@@ -177,7 +171,7 @@ export default memo(function RankHistoryChart({
           content={() => (
             <div style={st.legend}>
               <span style={st.legendItem}>
-                <span style={{ ...st.legendSwatch, backgroundColor: barColor }} />
+                <span style={{ ...st.legendSwatch, background: RANK_GRADIENT }} />
                 {metricLabel}
               </span>
               <span style={st.legendItem}>
@@ -214,7 +208,7 @@ export default memo(function RankHistoryChart({
               <path
                 d={path}
                 style={{ transition: transition('stroke', 150) }}
-                fill={barColor}
+                fill={rankColor(bar.payload.rank, totalAccounts)}
                 fillOpacity={0.8}
                 stroke={isSelected ? Colors.accentPurple : 'transparent'}
                 strokeWidth={Size.barSelectionStroke}
@@ -237,10 +231,7 @@ export default memo(function RankHistoryChart({
         />
       </ComposedChart>
     </ResponsiveContainer>
-  ), [t, st, barColor, metricLabel, rankDomain, valueTickFormatter]);
-
-  const usePercentile = metric === 'adjusted' || metric === 'weighted';
-  const totalAccounts = totalAccountsByInstrument?.[selected] ?? 0;
+  ), [t, st, totalAccounts, metricLabel, rankDomain, valueTickFormatter]);
 
   const renderDetailCard = useCallback((point: RankHistoryChartPoint) => {
     const dateStr = new Date(point.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -250,7 +241,7 @@ export default memo(function RankHistoryChart({
     return (
       <>
         <span style={{ flex: 1, color: Colors.textPrimary }}>{dateStr}</span>
-        <span style={{ fontWeight: 600, color: Colors.textPrimary }}>#{point.rank}</span>
+        <span style={{ fontWeight: 600, color: rankColor(point.rank, totalAccounts) }}>#{point.rank}</span>
         {percentileStr
           ? <PercentilePill display={percentileStr} />
           : isPctMetric

@@ -142,7 +142,7 @@ export default function RivalDetailPage() {
                   const baseDelay = runningDelay;
                   runningDelay += (1 + preview.length) * staggerInterval;
                   const navigateToCategory = () =>
-                    navigate(Routes.rivalry(rivalId, cat.key), { state: { combo } });
+                    navigate(Routes.rivalry(rivalId, cat.key), { state: { combo, source, instrument: lbInstrument, rankBy: lbRankBy } });
                   return (
                     <div key={cat.key} style={styles.section}>
                       <div
