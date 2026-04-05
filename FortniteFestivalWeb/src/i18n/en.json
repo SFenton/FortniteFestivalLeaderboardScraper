@@ -401,6 +401,7 @@
     "descendingHintScores": "Descending (newest first, high–low)",
     "metadataPriority": "Metadata Sort Priority",
     "metadataPriorityHint": "When two songs have the same value for the selected sort mode, songs are sorted by comparing these properties in order from top to bottom.",
+    "metadataPriorityHintVisualOrder": "When Enable Independent Song Row Visual Order is disabled in Settings, this also controls the order in which metadata is displayed in the song row (except for the primary sort field). To manually control visual order regardless of sort, go to App Settings and enable Enable Independent Song Row Visual Order, then order the song row metadata as you'd like to see it.",
     "instrumentOrder": "Primary Instrument Order",
     "instrumentOrderHint": "Instruments are checked in this order when sorting by Has FC.",
     "filteredInstrumentMode": "Filtered Instrument Sort Mode",

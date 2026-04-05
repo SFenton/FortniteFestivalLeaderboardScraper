@@ -205,11 +205,22 @@ describe('SongsPage', () => {
     expect(container.textContent).toContain('Alpha Song');
   });
 
-  it('handles visual order enabled setting', async () => {
+  it('handles visual order enabled setting with hidden metadata', async () => {
     localStorage.setItem('fst:appSettings', JSON.stringify({
       songRowVisualOrderEnabled: true,
       songRowVisualOrder: ['score', 'percentile', 'stars'],
       metadataShowScore: false,
+    }));
+    const { container } = renderSongsPage();
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(600); });
+    expect(container.textContent).toContain('Alpha Song');
+  });
+
+  it('respects visual order when all metadata columns visible', async () => {
+    localStorage.setItem('fst:appSettings', JSON.stringify({
+      songRowVisualOrderEnabled: true,
+      songRowVisualOrder: ['stars', 'percentage', 'score', 'percentile', 'intensity', 'seasonachieved'],
     }));
     const { container } = renderSongsPage();
     await act(async () => { await vi.advanceTimersByTimeAsync(100); });

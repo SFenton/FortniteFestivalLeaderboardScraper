@@ -104,12 +104,14 @@ export default function SongsPage() {
     if (!appSettings.metadataShowStars) hidden.add('stars');
 
     let order: string[];
-    if (hidden.size === 0) {
-      order = settings.metadataOrder;
-    } else if (appSettings.songRowVisualOrderEnabled) {
-      order = appSettings.songRowVisualOrder.filter(k => !hidden.has(k));
+    if (appSettings.songRowVisualOrderEnabled) {
+      order = hidden.size === 0
+        ? appSettings.songRowVisualOrder
+        : appSettings.songRowVisualOrder.filter(k => !hidden.has(k));
     } else {
-      order = settings.metadataOrder.filter(k => !hidden.has(k));
+      order = hidden.size === 0
+        ? settings.metadataOrder
+        : settings.metadataOrder.filter(k => !hidden.has(k));
     }
 
     // Auto-inject maxdistance/maxscorediff only when max-score sort is active
@@ -568,6 +570,7 @@ export default function SongsPage() {
             intensity: appSettings.metadataShowDifficulty,
             stars: appSettings.metadataShowStars,
           }}
+          songRowVisualOrderEnabled={appSettings.songRowVisualOrderEnabled}
           onChange={sortModal.setDraft}
           onCancel={sortModal.close}
           onReset={resetSort}

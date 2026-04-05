@@ -1,9 +1,9 @@
-import { memo } from 'react';
+import { memo, type ReactNode } from 'react';
 import { modalStyles } from '../modalStyles';
 
 export interface ModalSectionProps {
   title?: string;
-  hint?: string;
+  hint?: ReactNode;
   children: React.ReactNode;
 }
 

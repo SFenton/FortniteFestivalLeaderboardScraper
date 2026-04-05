@@ -109,9 +109,10 @@ function loadSettings(): AppSettings {
     const parsed = JSON.parse(raw);
     const defaults = defaultAppSettings();
     const merged = { ...defaults, ...parsed };
-    // Migrate songRowVisualOrder: append new keys and strip removed keys
+    // Migrate songRowVisualOrder: strip keys not in DEFAULT_METADATA_ORDER, append new keys
     if (Array.isArray(merged.songRowVisualOrder)) {
-      merged.songRowVisualOrder = merged.songRowVisualOrder.filter((k: string) => k !== 'maxdistance' && k !== 'maxscorediff');
+      const allowed = new Set(DEFAULT_METADATA_ORDER);
+      merged.songRowVisualOrder = merged.songRowVisualOrder.filter((k: string) => allowed.has(k));
       const missing = DEFAULT_METADATA_ORDER.filter(k => !merged.songRowVisualOrder.includes(k));
       if (missing.length > 0) merged.songRowVisualOrder = [...merged.songRowVisualOrder, ...missing];
     }

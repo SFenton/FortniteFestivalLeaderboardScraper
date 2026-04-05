@@ -229,13 +229,26 @@ export default function SettingsPage() {
   );
 
   /* v8 ignore start — presentation-only metadata display mapping */
+  const hiddenMetadataKeys = useMemo(() => {
+    const hidden = new Set<string>();
+    if (!settings.metadataShowScore) hidden.add('score');
+    if (!settings.metadataShowPercentage) hidden.add('percentage');
+    if (!settings.metadataShowPercentile) hidden.add('percentile');
+    if (!settings.metadataShowSeasonAchieved) hidden.add('seasonachieved');
+    if (!settings.metadataShowDifficulty) hidden.add('intensity');
+    if (!settings.metadataShowStars) hidden.add('stars');
+    return hidden;
+  }, [settings.metadataShowScore, settings.metadataShowPercentage, settings.metadataShowPercentile, settings.metadataShowSeasonAchieved, settings.metadataShowDifficulty, settings.metadataShowStars]);
+
   const visualOrderItems = useMemo(
     () =>
-      settings.songRowVisualOrder.map(k => ({
-        key: k,
-        label: METADATA_SORT_DISPLAY[k] ?? k,
-      })),
-    [settings.songRowVisualOrder],
+      settings.songRowVisualOrder
+        .filter(k => !hiddenMetadataKeys.has(k))
+        .map(k => ({
+          key: k,
+          label: METADATA_SORT_DISPLAY[k] ?? k,
+        })),
+    [settings.songRowVisualOrder, hiddenMetadataKeys],
   );
   /* v8 ignore stop */
 
@@ -303,7 +316,11 @@ export default function SettingsPage() {
                   <ReorderList
                     items={visualOrderItems}
                     /* v8 ignore start -- DnD reorder callback; can't fire in jsdom */
-                    onReorder={items => updateSettings({ songRowVisualOrder: items.map(i => i.key) })}
+                    onReorder={items => {
+                      const visibleSet = new Set(items.map(i => i.key));
+                      const hiddenKeys = settings.songRowVisualOrder.filter(k => !visibleSet.has(k));
+                      updateSettings({ songRowVisualOrder: [...items.map(i => i.key), ...hiddenKeys] });
+                    }}
                     /* v8 ignore stop */
                   />
                 </div>

@@ -38,13 +38,14 @@ type SortModalProps = {
   hasPlayer?: boolean;
   hideItemShop?: boolean;
   metadataVisibility?: MetadataVisibility;
+  songRowVisualOrderEnabled?: boolean;
   onChange: (d: SortDraft) => void;
   onCancel: () => void;
   onReset: () => void;
   onApply: () => void;
 };
 
-export default function SortModal({ visible, draft, savedDraft, instrumentFilter, hasPlayer, hideItemShop, metadataVisibility: mv, onChange, onCancel, onReset, onApply }: SortModalProps) {
+export default function SortModal({ visible, draft, savedDraft, instrumentFilter, hasPlayer, hideItemShop, metadataVisibility: mv, songRowVisualOrderEnabled, onChange, onCancel, onReset, onApply }: SortModalProps) {
   const { t } = useTranslation();
   const setMode = (sortMode: SongSortMode) => onChange({ ...draft, sortMode });
 
@@ -155,12 +156,16 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
 
       {/* Metadata sort priority (only when an instrument is selected) */}
       {instrumentFilter != null && anyMetadataVisible && (
-        <ModalSection title={t('sort.metadataPriority')} hint={t('sort.metadataPriorityHint')}>
+        <ModalSection title={t('sort.metadataPriority')} hint={<>{t('sort.metadataPriorityHint')}{!songRowVisualOrderEnabled && <><br /><br />{t('sort.metadataPriorityHintVisualOrder')}</>}</>}>
           <ReorderList
           /* v8 ignore next -- nullish coalescing for display label */
             items={visibleMetadataOrder.map(k => ({ key: k, label: METADATA_SORT_DISPLAY[k] ?? k }))}
             /* v8 ignore start -- DnD reorder callback; can't fire in jsdom (DnD handler is v8-ignored) */
-            onReorder={(items) => onChange({ ...draft, metadataOrder: items.map(i => i.key) })}
+            onReorder={(items) => {
+              const visibleSet = new Set(items.map(i => i.key));
+              const hiddenKeys = draft.metadataOrder.filter(k => !visibleSet.has(k));
+              onChange({ ...draft, metadataOrder: [...items.map(i => i.key), ...hiddenKeys] });
+            }}
             /* v8 ignore stop */
           />
         </ModalSection>
