@@ -116,7 +116,7 @@ public class ScoreBackfiller
 
             var tasks = workItems.Select(async item =>
             {
-                await pool.AcquireLowAsync(ct);
+                var lowToken = await pool.AcquireLowAsync(ct);
                 try
                 {
                     _progress.ReportPhaseRequest();
@@ -131,7 +131,7 @@ public class ScoreBackfiller
                 }
                 finally
                 {
-                    pool.ReleaseLow();
+                    pool.ReleaseLow(lowToken);
                     _progress.ReportPhaseItemComplete();
                 }
             }).ToList();

@@ -8,6 +8,7 @@ using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 
@@ -78,6 +79,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
 
         _backfiller = Substitute.For<ScoreBackfiller>(
             _scraper, _persistence, new ScrapeProgressTracker(),
+            new UserSyncProgressTracker(new NotificationService(NullLogger<NotificationService>.Instance), NullLogger<UserSyncProgressTracker>.Instance),
             Substitute.For<ILogger<ScoreBackfiller>>());
 
         _backfillQueue = new BackfillQueue();
@@ -91,7 +93,9 @@ public abstract class ScraperWorkerTestBase : IDisposable
         _machine = Substitute.For<SongProcessingMachine>(
             (ILeaderboardQuerier)_scraper,
             new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>()),
-            _persistence, _progress, Substitute.For<ILogger<SongProcessingMachine>>());
+            _persistence, _progress,
+            new UserSyncProgressTracker(new NotificationService(NullLogger<NotificationService>.Instance), NullLogger<UserSyncProgressTracker>.Instance),
+            Substitute.For<ILogger<SongProcessingMachine>>());
         _machine.RunAsync(
             Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
             Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
@@ -103,6 +107,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
 
         _historyReconstructor = Substitute.For<HistoryReconstructor>(
             _scraper, _persistence, new HttpClient(), _progress,
+            new UserSyncProgressTracker(new NotificationService(NullLogger<NotificationService>.Instance), NullLogger<UserSyncProgressTracker>.Instance),
             Substitute.For<ILogger<HistoryReconstructor>>());
 
         _firstSeenCalculator = Substitute.For<FirstSeenSeasonCalculator>(

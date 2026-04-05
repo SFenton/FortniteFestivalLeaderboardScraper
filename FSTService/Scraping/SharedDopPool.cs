@@ -22,6 +22,7 @@ public sealed class SharedDopPool : IDisposable
     private readonly AdaptiveConcurrencyLimiter _inner;
     private readonly SemaphoreSlim _lowPriorityGate;
     private readonly bool _ownsInner;
+    private int _highPriorityActive;
 
     /// <summary>
     /// Create a pool with the given DOP configuration and low-priority cap.
@@ -60,36 +61,64 @@ public sealed class SharedDopPool : IDisposable
     // ─── High-priority access ────────────────────────────────
 
     /// <summary>Acquire a slot at high priority (direct access to full DOP).</summary>
-    public Task AcquireHighAsync(CancellationToken ct) => _inner.WaitAsync(ct);
-
-    /// <summary>Release a high-priority slot.</summary>
-    public void ReleaseHigh() => _inner.Release();
-
-    // ─── Low-priority access ─────────────────────────────────
-
-    /// <summary>
-    /// Acquire a slot at low priority. Waits for the low-priority gate first
-    /// (capping concurrent low-priority holders), then acquires the inner limiter.
-    /// </summary>
-    public async Task AcquireLowAsync(CancellationToken ct)
+    public async Task AcquireHighAsync(CancellationToken ct)
     {
-        await _lowPriorityGate.WaitAsync(ct);
+        Interlocked.Increment(ref _highPriorityActive);
         try
         {
             await _inner.WaitAsync(ct);
         }
         catch
         {
-            _lowPriorityGate.Release();
+            Interlocked.Decrement(ref _highPriorityActive);
             throw;
         }
     }
 
-    /// <summary>Release a low-priority slot (inner limiter + gate).</summary>
-    public void ReleaseLow()
+    /// <summary>Release a high-priority slot.</summary>
+    public void ReleaseHigh()
     {
         _inner.Release();
-        _lowPriorityGate.Release();
+        Interlocked.Decrement(ref _highPriorityActive);
+    }
+
+    // ─── Low-priority access ─────────────────────────────────
+
+    /// <summary>
+    /// Acquire a slot at low priority. When high-priority work is active, waits
+    /// for the low-priority gate first (capping concurrent low-priority holders).
+    /// When no high-priority work is active, bypasses the gate to use the full DOP budget.
+    /// </summary>
+    public async Task<LowPriorityToken> AcquireLowAsync(CancellationToken ct)
+    {
+        bool gateAcquired = false;
+
+        // When high-priority callers are present, enforce the low-priority cap.
+        // Otherwise, let low-priority work use the full DOP budget.
+        if (Volatile.Read(ref _highPriorityActive) > 0)
+        {
+            await _lowPriorityGate.WaitAsync(ct);
+            gateAcquired = true;
+        }
+
+        try
+        {
+            await _inner.WaitAsync(ct);
+        }
+        catch
+        {
+            if (gateAcquired) _lowPriorityGate.Release();
+            throw;
+        }
+
+        return new LowPriorityToken { GateAcquired = gateAcquired };
+    }
+
+    /// <summary>Release a low-priority slot (inner limiter + gate if acquired).</summary>
+    public void ReleaseLow(LowPriorityToken token)
+    {
+        _inner.Release();
+        if (token.GateAcquired) _lowPriorityGate.Release();
     }
 
     // ─── AIMD feedback ───────────────────────────────────────
@@ -106,4 +135,14 @@ public sealed class SharedDopPool : IDisposable
         if (_ownsInner)
             _inner.Dispose();
     }
+}
+
+/// <summary>
+/// Token returned by <see cref="SharedDopPool.AcquireLowAsync"/> indicating whether
+/// the low-priority gate was acquired. Must be passed to <see cref="SharedDopPool.ReleaseLow"/>
+/// to correctly release only the resources that were acquired.
+/// </summary>
+public readonly struct LowPriorityToken
+{
+    internal bool GateAcquired { get; init; }
 }

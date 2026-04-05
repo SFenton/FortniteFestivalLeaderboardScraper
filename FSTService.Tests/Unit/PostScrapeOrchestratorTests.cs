@@ -6,6 +6,7 @@ using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
@@ -77,7 +78,9 @@ public class PostScrapeOrchestratorTests : IDisposable
 
         _machine = Substitute.For<SongProcessingMachine>(
             scraper, new BatchResultProcessor(_persistence, Substitute.For<ILogger<BatchResultProcessor>>()),
-            _persistence, new ScrapeProgressTracker(), Substitute.For<ILogger<SongProcessingMachine>>());
+            _persistence, new ScrapeProgressTracker(),
+            new UserSyncProgressTracker(new NotificationService(NullLogger<NotificationService>.Instance), NullLogger<UserSyncProgressTracker>.Instance),
+            Substitute.For<ILogger<SongProcessingMachine>>());
         _machine.RunAsync(
             Arg.Any<IReadOnlyList<string>>(), Arg.Any<IReadOnlyList<UserWorkItem>>(),
             Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),

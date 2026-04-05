@@ -31,8 +31,8 @@ public class SharedDopPoolTests : IDisposable
     {
         _pool = new SharedDopPool(4, 2, 8, 50, _log);
 
-        await _pool.AcquireLowAsync(CancellationToken.None);
-        _pool.ReleaseLow();
+        var token = await _pool.AcquireLowAsync(CancellationToken.None);
+        _pool.ReleaseLow(token);
 
         Assert.True(_pool.CurrentDop > 0);
     }

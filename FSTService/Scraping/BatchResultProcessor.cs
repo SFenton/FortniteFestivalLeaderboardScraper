@@ -146,6 +146,80 @@ public class BatchResultProcessor
     }
 
     /// <summary>
+    /// Process seasonal sessions from ALL seasons for one song/instrument at once,
+    /// computing chronologically correct OldScore (running personal best) per account.
+    /// Used when <see cref="WorkPurpose.HistoryRecon"/> is active — unlike
+    /// <see cref="ProcessSeasonalSessions"/> which only sees one season at a time, this
+    /// method sorts all sessions by EndTime and tracks the running PB before each session.
+    /// </summary>
+    /// <returns>Number of session history entries inserted.</returns>
+    public int ProcessAllSeasonalSessions(
+        string songId,
+        string instrument,
+        Dictionary<int, List<SessionHistoryEntry>> sessionsBySeason)
+    {
+        if (sessionsBySeason.Count == 0) return 0;
+
+        // Flatten all sessions into (Season, Session) pairs and group by account
+        var byAccount = new Dictionary<string, List<(int Season, SessionHistoryEntry Session)>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (season, sessions) in sessionsBySeason)
+        {
+            foreach (var session in sessions)
+            {
+                if (!byAccount.TryGetValue(session.AccountId, out var list))
+                {
+                    list = [];
+                    byAccount[session.AccountId] = list;
+                }
+                list.Add((season, session));
+            }
+        }
+
+        var scoreChanges = new List<ScoreChangeRecord>();
+
+        foreach (var (accountId, entries) in byAccount)
+        {
+            // Sort by EndTime ascending (fall back to season number if EndTime is null),
+            // matching HistoryReconstructor.ReconstructSongHistoryAsync logic exactly.
+            entries.Sort((a, b) =>
+            {
+                if (a.Session.EndTime is not null && b.Session.EndTime is not null)
+                    return string.Compare(a.Session.EndTime, b.Session.EndTime, StringComparison.Ordinal);
+                return a.Season.CompareTo(b.Season);
+            });
+
+            // Track running personal best per account
+            int? bestScore = null;
+            int? bestRank = null;
+
+            foreach (var (season, session) in entries)
+            {
+                scoreChanges.Add(new ScoreChangeRecord
+                {
+                    SongId = songId, Instrument = instrument, AccountId = accountId,
+                    OldScore = bestScore, NewScore = session.Score,
+                    OldRank = bestRank, NewRank = session.Rank,
+                    Accuracy = session.Accuracy, IsFullCombo = session.IsFullCombo,
+                    Stars = session.Stars, Percentile = session.Percentile,
+                    Season = season, ScoreAchievedAt = session.EndTime,
+                    SeasonRank = session.Rank, Difficulty = session.Difficulty,
+                });
+
+                if (bestScore is null || session.Score > bestScore)
+                {
+                    bestScore = session.Score;
+                    bestRank = session.Rank;
+                }
+            }
+        }
+
+        if (scoreChanges.Count > 0)
+            _metaDb.InsertScoreChanges(scoreChanges);
+
+        return scoreChanges.Count;
+    }
+
+    /// <summary>
     /// Mark a backfill song/instrument pair as checked for an account.
     /// </summary>
     public void MarkBackfillChecked(string accountId, string songId, string instrument, bool entryFound)

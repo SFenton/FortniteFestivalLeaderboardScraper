@@ -1,7 +1,9 @@
+using FSTService.Api;
 using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 
 namespace FSTService.Tests.Unit;
@@ -44,7 +46,9 @@ public class SongProcessingMachineTests : IDisposable
     private SongProcessingMachine CreateMachine()
     {
         var processor = new BatchResultProcessor(_persistence, _processorLog);
-        return new SongProcessingMachine(_scraper, processor, _persistence, _progress, _machineLog);
+        var notifications = new NotificationService(NullLogger<NotificationService>.Instance);
+        var syncTracker = new UserSyncProgressTracker(notifications, NullLogger<UserSyncProgressTracker>.Instance);
+        return new SongProcessingMachine(_scraper, processor, _persistence, _progress, syncTracker, _machineLog);
     }
 
     private static readonly SeasonWindowInfo[] TestSeasonWindows =

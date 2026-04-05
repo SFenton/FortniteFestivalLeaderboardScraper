@@ -19,6 +19,7 @@ public class SongProcessingMachine
     private readonly BatchResultProcessor _resultProcessor;
     private readonly GlobalLeaderboardPersistence _persistence;
     private readonly ScrapeProgressTracker _progress;
+    private readonly UserSyncProgressTracker _syncTracker;
     private readonly ILogger<SongProcessingMachine> _log;
 
     public SongProcessingMachine(
@@ -26,12 +27,14 @@ public class SongProcessingMachine
         BatchResultProcessor resultProcessor,
         GlobalLeaderboardPersistence persistence,
         ScrapeProgressTracker progress,
+        UserSyncProgressTracker syncTracker,
         ILogger<SongProcessingMachine> log)
     {
         _scraper = scraper;
         _resultProcessor = resultProcessor;
         _persistence = persistence;
         _progress = progress;
+        _syncTracker = syncTracker;
         _log = log;
     }
 
@@ -79,6 +82,11 @@ public class SongProcessingMachine
         int totalApiCalls = 0;
         int songsCompleted = 0;
 
+        // Users doing history recon get per-song progress via WebSocket
+        var historyReconUsers = users
+            .Where(u => u.Purposes.HasFlag(WorkPurpose.HistoryRecon))
+            .ToList();
+
         if (reportProgress)
         {
             _progress.SetAdaptiveLimiter(pool.Limiter);
@@ -117,6 +125,15 @@ public class SongProcessingMachine
             Interlocked.Add(ref totalSessions, result.SessionsInserted);
             Interlocked.Add(ref totalApiCalls, result.ApiCalls);
             Interlocked.Increment(ref songsCompleted);
+
+            // Report per-user progress for history recon users
+            foreach (var user in historyReconUsers)
+            {
+                _syncTracker.ReportHistoryItem(
+                    user.AccountId,
+                    seasonsQueried: seasonPrefixMap.Count,
+                    entriesFound: result.SessionsInserted);
+            }
 
             if (reportProgress)
                 _progress.ReportPhaseItemComplete();
@@ -280,8 +297,9 @@ public class SongProcessingMachine
 
                 // Acquire DOP slot only for the HTTP call, release immediately after
                 List<LeaderboardEntry> entries;
+                LowPriorityToken lowToken = default;
                 if (isHighPriority) await pool.AcquireHighAsync(ct);
-                else await pool.AcquireLowAsync(ct);
+                else lowToken = await pool.AcquireLowAsync(ct);
                 try
                 {
                     _progress.ReportPhaseRequest();
@@ -303,7 +321,7 @@ public class SongProcessingMachine
                 finally
                 {
                     if (isHighPriority) pool.ReleaseHigh();
-                    else pool.ReleaseLow();
+                    else pool.ReleaseLow(lowToken);
                 }
 
                 // DB processing runs outside the DOP slot — no API concurrency needed
@@ -344,6 +362,14 @@ public class SongProcessingMachine
         int sessionsInserted = 0;
         int apiCalls = 0;
 
+        // Identify which accounts need history recon (chronological OldScore across all seasons)
+        var historyReconAccounts = new HashSet<string>(
+            users.Where(u => u.Purposes.HasFlag(WorkPurpose.HistoryRecon))
+                 .Select(u => u.AccountId),
+            StringComparer.OrdinalIgnoreCase);
+        Dictionary<int, List<SessionHistoryEntry>>? historyReconSessions =
+            historyReconAccounts.Count > 0 ? [] : null;
+
         var seasonUserGroups = new Dictionary<int, List<UserWorkItem>>();
         foreach (var user in users)
         {
@@ -374,8 +400,9 @@ public class SongProcessingMachine
 
                 // Acquire DOP slot only for the HTTP call, release immediately after
                 List<SessionHistoryEntry> sessions;
+                LowPriorityToken lowToken = default;
                 if (isHighPriority) await pool.AcquireHighAsync(ct);
-                else await pool.AcquireLowAsync(ct);
+                else lowToken = await pool.AcquireLowAsync(ct);
                 try
                 {
                     _progress.ReportPhaseRequest();
@@ -398,15 +425,60 @@ public class SongProcessingMachine
                 finally
                 {
                     if (isHighPriority) pool.ReleaseHigh();
-                    else pool.ReleaseLow();
+                    else pool.ReleaseLow(lowToken);
                 }
 
-                // DB processing runs outside the DOP slot
-                var count = _resultProcessor.ProcessSeasonalSessions(songId, instrument, season, sessions);
-                Interlocked.Add(ref sessionsInserted, count);
-                if (count > 0)
-                    _progress.ReportPhaseEntryUpdated(count);
+                // DB processing runs outside the DOP slot.
+                // Split: HistoryRecon users accumulate for cross-season OldScore,
+                // non-HistoryRecon users process immediately per-season.
+                if (historyReconSessions is not null)
+                {
+                    var normalSessions = new List<SessionHistoryEntry>();
+                    var reconSessions = new List<SessionHistoryEntry>();
+
+                    foreach (var s in sessions)
+                    {
+                        if (historyReconAccounts.Contains(s.AccountId))
+                            reconSessions.Add(s);
+                        else
+                            normalSessions.Add(s);
+                    }
+
+                    if (normalSessions.Count > 0)
+                    {
+                        var count = _resultProcessor.ProcessSeasonalSessions(songId, instrument, season, normalSessions);
+                        Interlocked.Add(ref sessionsInserted, count);
+                        if (count > 0)
+                            _progress.ReportPhaseEntryUpdated(count);
+                    }
+
+                    if (reconSessions.Count > 0)
+                    {
+                        if (!historyReconSessions.TryGetValue(season, out var reconList))
+                        {
+                            reconList = [];
+                            historyReconSessions[season] = reconList;
+                        }
+                        reconList.AddRange(reconSessions);
+                    }
+                }
+                else
+                {
+                    var count = _resultProcessor.ProcessSeasonalSessions(songId, instrument, season, sessions);
+                    Interlocked.Add(ref sessionsInserted, count);
+                    if (count > 0)
+                        _progress.ReportPhaseEntryUpdated(count);
+                }
             }
+        }
+
+        // Process accumulated history recon sessions with chronological OldScore
+        if (historyReconSessions is not null && historyReconSessions.Count > 0)
+        {
+            var reconCount = _resultProcessor.ProcessAllSeasonalSessions(songId, instrument, historyReconSessions);
+            Interlocked.Add(ref sessionsInserted, reconCount);
+            if (reconCount > 0)
+                _progress.ReportPhaseEntryUpdated(reconCount);
         }
 
         return new SongStepResult { SessionsInserted = sessionsInserted, ApiCalls = apiCalls };

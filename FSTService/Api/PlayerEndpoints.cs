@@ -204,10 +204,11 @@ public static partial class ApiEndpoints
             IMetaDatabase metaDb,
             FestivalService festivalService,
             ScoreBackfiller backfiller,
-            HistoryReconstructor historyReconstructor,
+            UserSyncProgressTracker syncTracker,
             NotificationService notifications,
             TokenManager tokenManager,
             SharedDopPool pool,
+            IServiceScopeFactory scopeFactory,
             ILoggerFactory loggerFactory,
             BackfillQueue backfillQueue) =>
         {
@@ -232,7 +233,7 @@ public static partial class ApiEndpoints
                 metaDb.EnqueueBackfill(accountId, songCount * 6); // songs × instruments
                 backfillKicked = true;
 
-                // Fire-and-forget: run backfill + history recon
+                // Fire-and-forget: run backfill + history recon via SPM
                 _ = Task.Run(async () =>
                 {
                     var log = loggerFactory.CreateLogger("FSTService.Api.TrackBackfill");
@@ -252,25 +253,53 @@ public static partial class ApiEndpoints
                         await backfiller.BackfillAccountAsync(
                             accountId, festivalService, accessToken, callerAccountId, pool, ct: CancellationToken.None);
 
-                        // Reconstruct score history
+                        // Reconstruct score history via SongProcessingMachine (batched V2 calls,
+                        // natural chunk dispatch, DOP/AIMD/CB — replaces direct HistoryReconstructor)
                         var reconStatus = metaDb.GetHistoryReconStatus(accountId);
                         if (reconStatus?.Status != "complete")
                         {
-                            var seasonWindows = await historyReconstructor.DiscoverSeasonWindowsAsync(
+                            using var scope = scopeFactory.CreateScope();
+                            var hr = scope.ServiceProvider.GetRequiredService<HistoryReconstructor>();
+                            var seasonWindows = await hr.DiscoverSeasonWindowsAsync(
                                 accessToken, callerAccountId, CancellationToken.None);
+
                             if (seasonWindows.Count > 0)
                             {
-                                await historyReconstructor.ReconstructAccountAsync(
-                                    accountId, seasonWindows, accessToken, callerAccountId, pool,
-                                    ct: CancellationToken.None);
+                                var allSeasons = seasonWindows.Select(w => w.SeasonNumber).ToHashSet();
+                                var chartedSongIds = festivalService.Songs
+                                    .Where(s => s.track?.su is not null)
+                                    .Select(s => s.track.su!)
+                                    .ToList();
+
+                                var alreadyProcessed = metaDb.GetProcessedHistoryReconPairs(accountId);
+                                var user = new UserWorkItem
+                                {
+                                    AccountId = accountId,
+                                    Purposes = WorkPurpose.HistoryRecon,
+                                    AllTimeNeeded = false,
+                                    SeasonsNeeded = allSeasons,
+                                    AlreadyChecked = alreadyProcessed,
+                                };
+
+                                syncTracker.BeginHistory(accountId, chartedSongIds.Count);
+
+                                var machine = scope.ServiceProvider.GetRequiredService<SongProcessingMachine>();
+                                await machine.RunAsync(
+                                    chartedSongIds, [user], seasonWindows,
+                                    accessToken, callerAccountId,
+                                    pool, isHighPriority: false,
+                                    batchSize: 500, reportProgress: false,
+                                    maxConcurrentSongs: 0, ct: CancellationToken.None);
                             }
                         }
 
+                        syncTracker.Complete(accountId);
                         log.LogInformation("Track-triggered backfill for {AccountId} completed.", accountId);
                     }
                     catch (Exception ex)
                     {
                         log.LogWarning(ex, "Track-triggered backfill for {AccountId} failed.", accountId);
+                        syncTracker.Error(accountId, ex.Message);
                         try
                         {
                             var hrStatus = metaDb.GetHistoryReconStatus(accountId);

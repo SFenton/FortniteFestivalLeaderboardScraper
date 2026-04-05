@@ -511,7 +511,7 @@ public class HistoryReconstructor
         var tasks = seasonsToQuery.Select(async item =>
         {
             var (s, window) = item;
-            await pool.AcquireLowAsync(ct);
+            var lowToken = await pool.AcquireLowAsync(ct);
             try
             {
                 var sessions = await _scraper.LookupSeasonalSessionsAsync(
@@ -536,7 +536,7 @@ public class HistoryReconstructor
             }
             finally
             {
-                pool.ReleaseLow();
+                pool.ReleaseLow(lowToken);
             }
         }).ToList();
 
