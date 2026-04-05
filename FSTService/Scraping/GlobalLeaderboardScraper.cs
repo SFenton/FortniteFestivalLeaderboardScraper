@@ -56,6 +56,12 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         _executor = new ResilientHttpExecutor(http, log);
     }
 
+    /// <summary>
+    /// Reset CDN cooldown state on the underlying executor. Call at the start of
+    /// each scrape pass to prevent stale state from a previous CDN block.
+    /// </summary>
+    public void ResetCdnState() => _executor.ResetCdnState();
+
     // ─── Targeted account lookup ─────────────────────
 
     /// <summary>

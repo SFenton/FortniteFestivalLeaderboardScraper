@@ -25,6 +25,13 @@ namespace FSTService.Scraping;
 /// Callers are responsible for acquiring/releasing concurrency slots
 /// (via <see cref="AdaptiveConcurrencyLimiter.WaitAsync"/>/<see cref="AdaptiveConcurrencyLimiter.Release"/>).
 /// This class only <em>reports</em> outcomes so the limiter can adjust its DOP.
+///
+/// <para><b>CDN block slot management:</b> When a CDN block is detected, the caller's
+/// concurrency slot is <em>released</em> for the duration of the cooldown wait so that
+/// sleeping tasks do not starve the pool. A slot is reacquired briefly around each
+/// probe HTTP send. On all exit paths (success, non-CDN response, cancellation) the
+/// method guarantees exactly one slot is held, preserving the caller's
+/// acquire/release invariant.</para>
 /// </summary>
 public sealed class ResilientHttpExecutor
 {
@@ -226,6 +233,12 @@ public sealed class ResilientHttpExecutor
     /// All other concurrent requests simply wait for the cooldown to pass, then
     /// retry their own request normally. This prevents all requests from hammering
     /// the CDN in parallel during a block.
+    ///
+    /// <para><b>Slot lifecycle:</b> The caller's DOP slot is released at entry so that
+    /// sleeping tasks do not starve the pool. A slot is reacquired briefly around each
+    /// actual <c>_http.SendAsync</c> call. On all exit paths (success, non-CDN response,
+    /// cancellation) exactly one slot is held, preserving the caller's finally-Release
+    /// invariant.</para>
     /// </summary>
     private async Task<HttpResponseMessage> RetryCdnBlockAsync(
         Func<HttpRequestMessage> requestFactory,
@@ -235,132 +248,198 @@ public sealed class ResilientHttpExecutor
     {
         var delays = CdnRetryDelaysOverride ?? DefaultCdnRetryDelays;
 
-        // Try to become the probe. Only one request probes at a time.
-        if (!_cdnGate.Wait(0))
-        {
-            // Another request is already probing — loop: wait for cooldown, jitter, attempt.
-            // Mirrors the probe's infinite retry pattern. Only CancellationToken exits.
-            _log.LogDebug("CDN block on {Operation} — waiting for probe to clear cooldown.", label ?? "request");
-            while (true)
-            {
-                await WaitForCdnCooldownAsync(ct);
+        // Release the caller's slot immediately — we'll be sleeping, not using bandwidth.
+        bool slotHeld = false;
+        limiter?.Release();
 
-                // Jitter to stagger non-probe requests and avoid thundering herd
-                if (MaxJitterMs > 0)
-                    await Task.Delay(Random.Shared.Next(MaxJitterMs), ct);
-
-                limiter?.ReportFailure();
-
-                HttpResponseMessage nonProbeRes;
-                try
-                {
-                    nonProbeRes = await _http.SendAsync(requestFactory(), ct);
-                }
-                catch (HttpRequestException)
-                {
-                    continue; // transient error — wait for next cooldown cycle
-                }
-                catch (TaskCanceledException) when (!ct.IsCancellationRequested)
-                {
-                    continue; // timeout — wait for next cooldown cycle
-                }
-
-                if (nonProbeRes.IsSuccessStatusCode)
-                {
-                    limiter?.ReportSuccess();
-                    return nonProbeRes;
-                }
-
-                if ((int)nonProbeRes.StatusCode == 403)
-                {
-                    var body = await nonProbeRes.Content.ReadAsStringAsync(ct);
-                    if (!body.TrimStart().StartsWith('{'))
-                    {
-                        nonProbeRes.Dispose();
-                        continue; // still CDN blocked — loop back to cooldown
-                    }
-
-                    // JSON 403 — CDN is clear, this is an API error
-                    nonProbeRes.Content.Dispose();
-                    nonProbeRes.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
-                    return nonProbeRes;
-                }
-
-                // Non-CDN response — return to caller
-                return nonProbeRes;
-            }
-        }
-
-        // We are the probe. Walk the retry schedule, then continue at 60 s indefinitely.
-        // CDN blocks are always temporary — CancellationToken is the only exit.
         try
         {
-            for (int i = _cdnRetryIndex; ; i++)
+            // Try to become the probe. Only one request probes at a time.
+            if (!_cdnGate.Wait(0))
             {
-                _cdnRetryIndex = i + 1;
-
-                var delay = i < delays.Length ? delays[i] : delays[^1];
-
-                // Set cooldown so all other requests wait
-                _cdnCooldownUntil = DateTimeOffset.UtcNow + delay;
-
-                _log.LogWarning(
-                    "CDN block on {Operation} (CDN retry {CdnAttempt}), waiting {Delay:F1}s",
-                    label ?? "request", i + 1, delay.TotalSeconds);
-                limiter?.ReportFailure();
-
-                await Task.Delay(delay, ct);
-
-                HttpResponseMessage res;
-                try
+                // ── Non-probe path ──────────────────────────────────────
+                // Another request is already probing — loop: wait for cooldown, jitter,
+                // reacquire slot, attempt, release slot. Only CancellationToken exits.
+                _log.LogDebug("CDN block on {Operation} — waiting for probe to clear cooldown.", label ?? "request");
+                while (true)
                 {
-                    res = await _http.SendAsync(requestFactory(), ct);
-                }
-                catch (HttpRequestException)
-                {
-                    continue;
-                }
-                catch (TaskCanceledException) when (!ct.IsCancellationRequested)
-                {
-                    continue;
-                }
+                    await WaitForCdnCooldownAsync(ct);
 
-                if (res.IsSuccessStatusCode)
-                {
-                    // CDN is back — clear cooldown and reset retry index
-                    _cdnCooldownUntil = default;
-                    _cdnRetryIndex = 0;
-                    limiter?.ReportSuccess();
-                    return res;
-                }
+                    // Jitter to stagger non-probe requests and avoid thundering herd
+                    if (MaxJitterMs > 0)
+                        await Task.Delay(Random.Shared.Next(MaxJitterMs), ct);
 
-                if ((int)res.StatusCode == 403)
-                {
-                    var body = await res.Content.ReadAsStringAsync(ct);
-                    if (!body.TrimStart().StartsWith('{'))
+                    // Reacquire slot only for the actual HTTP send
+                    if (limiter is not null)
                     {
-                        res.Dispose();
-                        continue; // Still CDN blocked — try next delay
+                        await limiter.WaitAsync(ct);
+                        slotHeld = true;
                     }
 
-                    // JSON 403 — CDN is clear, this is an API error
+                    limiter?.ReportFailure();
+
+                    HttpResponseMessage nonProbeRes;
+                    try
+                    {
+                        nonProbeRes = await _http.SendAsync(requestFactory(), ct);
+                    }
+                    catch (HttpRequestException)
+                    {
+                        if (slotHeld) { limiter?.Release(); slotHeld = false; }
+                        continue; // transient error — wait for next cooldown cycle
+                    }
+                    catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+                    {
+                        if (slotHeld) { limiter?.Release(); slotHeld = false; }
+                        continue; // timeout — wait for next cooldown cycle
+                    }
+
+                    if (nonProbeRes.IsSuccessStatusCode)
+                    {
+                        limiter?.ReportSuccess();
+                        slotHeld = true; // keep slot for caller
+                        return nonProbeRes;
+                    }
+
+                    if ((int)nonProbeRes.StatusCode == 403)
+                    {
+                        var body = await nonProbeRes.Content.ReadAsStringAsync(ct);
+                        if (!body.TrimStart().StartsWith('{'))
+                        {
+                            nonProbeRes.Dispose();
+                            if (slotHeld) { limiter?.Release(); slotHeld = false; }
+                            continue; // still CDN blocked — loop back to cooldown
+                        }
+
+                        // JSON 403 — CDN is clear, this is an API error
+                        nonProbeRes.Content.Dispose();
+                        nonProbeRes.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+                        slotHeld = true; // keep slot for caller
+                        return nonProbeRes;
+                    }
+
+                    // Non-CDN response — return to caller
+                    slotHeld = true; // keep slot for caller
+                    return nonProbeRes;
+                }
+            }
+
+            // ── Probe path ──────────────────────────────────────────
+            // We are the probe. Walk the retry schedule, then continue at 60 s indefinitely.
+            // CDN blocks are always temporary — CancellationToken is the only exit.
+            try
+            {
+                for (int i = _cdnRetryIndex; ; i++)
+                {
+                    _cdnRetryIndex = i + 1;
+
+                    var delay = i < delays.Length ? delays[i] : delays[^1];
+
+                    // Set cooldown so all other requests wait
+                    _cdnCooldownUntil = DateTimeOffset.UtcNow + delay;
+
+                    _log.LogWarning(
+                        "CDN block on {Operation} (CDN retry {CdnAttempt}), waiting {Delay:F1}s",
+                        label ?? "request", i + 1, delay.TotalSeconds);
+                    limiter?.ReportFailure();
+
+                    await Task.Delay(delay, ct);
+
+                    // Reacquire slot only for the actual probe HTTP send
+                    if (limiter is not null)
+                    {
+                        await limiter.WaitAsync(ct);
+                        slotHeld = true;
+                    }
+
+                    HttpResponseMessage res;
+                    try
+                    {
+                        res = await _http.SendAsync(requestFactory(), ct);
+                    }
+                    catch (HttpRequestException)
+                    {
+                        if (slotHeld) { limiter?.Release(); slotHeld = false; }
+                        continue;
+                    }
+                    catch (TaskCanceledException) when (!ct.IsCancellationRequested)
+                    {
+                        if (slotHeld) { limiter?.Release(); slotHeld = false; }
+                        continue;
+                    }
+
+                    if (res.IsSuccessStatusCode)
+                    {
+                        // CDN is back — clear cooldown and reset retry index
+                        _cdnCooldownUntil = default;
+                        _cdnRetryIndex = 0;
+                        limiter?.ReportSuccess();
+                        slotHeld = true; // keep slot for caller
+                        return res;
+                    }
+
+                    if ((int)res.StatusCode == 403)
+                    {
+                        var body = await res.Content.ReadAsStringAsync(ct);
+                        if (!body.TrimStart().StartsWith('{'))
+                        {
+                            res.Dispose();
+                            if (slotHeld) { limiter?.Release(); slotHeld = false; }
+                            continue; // Still CDN blocked — try next delay
+                        }
+
+                        // JSON 403 — CDN is clear, this is an API error
+                        _cdnCooldownUntil = default;
+                        _cdnRetryIndex = 0;
+                        res.Content.Dispose();
+                        res.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+                        slotHeld = true; // keep slot for caller
+                        return res;
+                    }
+
+                    // Different status — CDN is clear
                     _cdnCooldownUntil = default;
                     _cdnRetryIndex = 0;
-                    res.Content.Dispose();
-                    res.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+                    slotHeld = true; // keep slot for caller
                     return res;
                 }
-
-                // Different status — CDN is clear
-                _cdnCooldownUntil = default;
-                _cdnRetryIndex = 0;
-                return res;
+            }
+            finally
+            {
+                _cdnGate.Release();
             }
         }
-        finally
+        catch
         {
-            _cdnGate.Release();
+            // On any exception (OperationCanceledException, etc.), we must guarantee
+            // the caller's invariant: exactly one slot is held when we return/throw,
+            // because the caller's finally block will call limiter.Release().
+            if (!slotHeld && limiter is not null)
+            {
+                // Reacquire with CancellationToken.None — we released a slot earlier,
+                // so one will become available as other tasks complete.
+                try
+                {
+                    await limiter.WaitAsync(CancellationToken.None);
+                }
+                catch
+                {
+                    // Limiter disposed during shutdown — caller's Release() will be a
+                    // harmless no-op on a disposed semaphore. Let the original exception propagate.
+                }
+            }
+            throw;
         }
+    }
+
+    /// <summary>
+    /// Reset CDN cooldown state. Call at the start of each scrape pass to prevent
+    /// stale state from a previous pass imposing unnecessarily long cooldowns.
+    /// </summary>
+    public void ResetCdnState()
+    {
+        _cdnCooldownUntil = default;
+        _cdnRetryIndex = 0;
     }
 
     /// <summary>

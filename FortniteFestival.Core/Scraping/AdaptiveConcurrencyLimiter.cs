@@ -74,6 +74,10 @@ namespace FortniteFestival.Core.Scraping
         private readonly Timer? _healthTimer;
 #pragma warning restore CS8632
 
+        // ── Stale DOP detection ──
+        private int _consecutiveStaleChecks;
+        private long _lastHealthTotalRequests;
+
         // ── Token-bucket rate limiter ──
         private const int RateBucketIntervalMs = 50;  // refill every 50ms
         private const int RateBucketTicksPerSecond = 1000 / RateBucketIntervalMs; // 20
@@ -344,6 +348,25 @@ namespace FortniteFestival.Core.Scraping
                 int cbTotal = _cbWindowSuccesses + _cbWindowFailures;
                 cbFailureRate = cbTotal > 0 ? (double)_cbWindowFailures / cbTotal : 0;
             }
+
+            // ── Stale DOP detection ──
+            long currentTotal = Volatile.Read(ref _totalRequests);
+            if (inFlight >= _currentDop && currentTotal == _lastHealthTotalRequests && _currentDop > 0)
+            {
+                _consecutiveStaleChecks++;
+                if (_consecutiveStaleChecks >= 5)
+                {
+                    _log.LogCritical(
+                        "DOP STALL DETECTED: InFlight={InFlight} == DOP={Dop} with TotalRequests={Total} unchanged " +
+                        "for {Minutes} consecutive health checks. All slots may be held by sleeping tasks.",
+                        inFlight, _currentDop, currentTotal, _consecutiveStaleChecks);
+                }
+            }
+            else
+            {
+                _consecutiveStaleChecks = 0;
+            }
+            _lastHealthTotalRequests = currentTotal;
 
             _log.LogInformation(
                 "Limiter health: DOP={Dop}, InFlight={InFlight}, TotalRequests={Total}, " +

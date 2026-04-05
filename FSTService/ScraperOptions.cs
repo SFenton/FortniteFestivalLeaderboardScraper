@@ -239,4 +239,12 @@ public sealed class ScraperOptions
     /// Default 10.
     /// </summary>
     public int LeaderboardRivalRadius { get; set; } = 10;
+
+    /// <summary>
+    /// Maximum time (in minutes) for a single scrape pass before it is cancelled.
+    /// Acts as a safety net against infinite hangs. The CDN slot-release mechanism
+    /// is the primary defence; this is a backstop.
+    /// Default 45 minutes. Set to 0 to disable.
+    /// </summary>
+    public int ScrapePassTimeoutMinutes { get; set; } = 45;
 }

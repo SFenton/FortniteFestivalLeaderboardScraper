@@ -52,6 +52,18 @@ public sealed class ScrapeOrchestrator
     {
         var opts = _options.Value;
 
+        // Reset CDN cooldown state from any previous pass to avoid stale backoff
+        _globalScraper.ResetCdnState();
+
+        // Per-pass timeout as a safety net against infinite hangs
+        using var passCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        if (opts.ScrapePassTimeoutMinutes > 0)
+        {
+            passCts.CancelAfter(TimeSpan.FromMinutes(opts.ScrapePassTimeoutMinutes));
+            _log.LogDebug("Scrape pass timeout set to {Timeout} minutes.", opts.ScrapePassTimeoutMinutes);
+        }
+        var passCt = passCts.Token;
+
         // Start scrape log entry
         var scrapeId = _persistence.Meta.StartScrapeRun();
         _log.LogInformation("Scrape run #{ScrapeId} started.", scrapeId);
@@ -90,7 +102,7 @@ public sealed class ScrapeOrchestrator
         _progress.SetInstrumentTotals(instrumentTotals);
 
         // ── Pipelined: per-instrument channel writers ──
-        var aggregates = _persistence.StartWriters(opts.BoundedChannelCapacity, opts.WriteBatchSize, ct);
+        var aggregates = _persistence.StartWriters(opts.BoundedChannelCapacity, opts.WriteBatchSize, passCt);
         int totalRequests = 0;
         long totalBytes = 0;
 
@@ -109,11 +121,11 @@ public sealed class ScrapeOrchestrator
                     if (result.Entries.Count == 0) continue;
                     hasData = true;
 
-                    await _persistence.EnqueueResultAsync(result, registeredIds, ct);
+                    await _persistence.EnqueueResultAsync(result, registeredIds, passCt);
                 }
                 if (hasData) aggregates.IncrementSongsWithData();
             },
-            ct,
+            passCt,
             maxPages: opts.MaxPagesPerLeaderboard,
             sequential: opts.SequentialScrape,
             pageConcurrency: opts.PageConcurrency,

@@ -488,4 +488,154 @@ public sealed class ResilientHttpExecutorTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(3, handler.Requests.Count);
     }
+
+    // ─── CDN slot lifecycle (release during wait, reacquire for send) ────
+
+    [Fact]
+    public async Task SendAsync_CdnBlock_ReleasesSlotDuringCooldown()
+    {
+        // Verify that the limiter slot is released while the CDN retry is waiting,
+        // and reacquired before the probe HTTP send.
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithZeroCdnDelay(handler);
+
+        handler.EnqueueHtml403();
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        var limiter = new AdaptiveConcurrencyLimiter(
+            initialDop: 1, minDop: 1, maxDop: 1,
+            Substitute.For<ILogger<AdaptiveConcurrencyLimiter>>());
+
+        // Acquire the single slot (simulating what the caller does)
+        await limiter.WaitAsync(CancellationToken.None);
+
+        // SendAsync enters CDN retry → must release the slot → reacquire for probe → return holding slot
+        var response = await executor.SendAsync(
+            () => MakeRequest(), limiter: limiter, label: "cdn-slot-release-test");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        // The method returns holding exactly one slot, so Release() should work
+        limiter.Release();
+        // If we can acquire again, the slot was properly returned through the full lifecycle
+        await limiter.WaitAsync(CancellationToken.None);
+        limiter.Release();
+    }
+
+    [Fact]
+    public async Task SendAsync_CdnBlock_DoesNotDeadlockWithSingleSlot()
+    {
+        // With DOP=1, the old code would deadlock because the CDN retry
+        // holds the single slot while sleeping, and can't reacquire.
+        // The new code releases and reacquires, so DOP=1 works fine.
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithZeroCdnDelay(handler);
+
+        // 3 CDN blocks then success
+        handler.EnqueueHtml403();
+        handler.EnqueueHtml403();
+        handler.EnqueueHtml403();
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        var limiter = new AdaptiveConcurrencyLimiter(
+            initialDop: 1, minDop: 1, maxDop: 1,
+            Substitute.For<ILogger<AdaptiveConcurrencyLimiter>>());
+
+        await limiter.WaitAsync(CancellationToken.None);
+
+        var response = await executor.SendAsync(
+            () => MakeRequest(), limiter: limiter, label: "cdn-dop1-test");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(4, handler.Requests.Count);
+
+        // Caller releases — should not throw
+        limiter.Release();
+    }
+
+    [Fact]
+    public async Task SendAsync_CdnBlock_Cancellation_ReacquiresSlotBeforeThrowing()
+    {
+        // When CDN retry is cancelled, the method must reacquire a slot before
+        // throwing, because the caller's finally block calls Release().
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithZeroCdnDelay(handler);
+
+        // CDN block — but we'll cancel before the probe retry succeeds
+        handler.EnqueueHtml403();
+        // Don't enqueue a second response — the cancellation will fire before it's needed
+
+        var limiter = new AdaptiveConcurrencyLimiter(
+            initialDop: 2, minDop: 1, maxDop: 2,
+            Substitute.For<ILogger<AdaptiveConcurrencyLimiter>>());
+
+        await limiter.WaitAsync(CancellationToken.None);
+
+        var cts = new CancellationTokenSource();
+        cts.Cancel(); // Cancel immediately — the CDN wait will throw
+
+        // Enqueue a success so we don't run out of responses if it somehow sends
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => executor.SendAsync(
+                () => MakeRequest(), limiter: limiter, label: "cdn-cancel-test", ct: cts.Token));
+
+        // The method should have reacquired a slot before throwing,
+        // so the caller's Release() doesn't underflow.
+        // We verify by releasing (simulating caller's finally) and re-acquiring.
+        limiter.Release();
+        await limiter.WaitAsync(CancellationToken.None);
+        limiter.Release();
+    }
+
+    [Fact]
+    public async Task SendAsync_CdnBlock_ProbeNetworkError_ReleasesSlotBeforeRetry()
+    {
+        // When a probe HTTP send fails with a network error, the slot should
+        // be released before looping back to wait for the next delay.
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithZeroCdnDelay(handler);
+
+        handler.EnqueueHtml403();
+        handler.EnqueueException(new HttpRequestException("Connection reset"));
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+
+        var limiter = new AdaptiveConcurrencyLimiter(
+            initialDop: 1, minDop: 1, maxDop: 1,
+            Substitute.For<ILogger<AdaptiveConcurrencyLimiter>>());
+
+        await limiter.WaitAsync(CancellationToken.None);
+
+        var response = await executor.SendAsync(
+            () => MakeRequest(), limiter: limiter, label: "cdn-probe-netfail-slot-test");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        limiter.Release();
+    }
+
+    // ─── ResetCdnState ──────────────────────────────────────────
+
+    [Fact]
+    public async Task ResetCdnState_ClearsCooldownAndRetryIndex()
+    {
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithZeroCdnDelay(handler);
+
+        // Trigger a CDN block then success to advance _cdnRetryIndex
+        handler.EnqueueHtml403();
+        handler.EnqueueHtml403();
+        handler.EnqueueJsonOk("""{"result":"ok"}""");
+        await executor.SendAsync(() => MakeRequest(), label: "setup");
+
+        // Reset CDN state
+        executor.ResetCdnState();
+
+        // Next CDN block should start from index 0 (not continue from previous)
+        handler.EnqueueHtml403();
+        handler.EnqueueJsonOk("""{"result":"ok2"}""");
+
+        var response = await executor.SendAsync(() => MakeRequest(), label: "after-reset");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
 }
