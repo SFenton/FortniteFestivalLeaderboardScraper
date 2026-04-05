@@ -19,6 +19,7 @@ import type { RankingMetric, ServerInstrumentKey as InstrumentKey } from '@festi
 import { LoadPhase } from '@festival/core';
 import RankByModal from './modals/RankByModal';
 import RankHistoryChart from './components/RankHistoryChart';
+import { useRankHistoryAll } from '../../hooks/chart/useRankHistory';
 import { loadLeaderboardRankBy, saveLeaderboardRankBy } from '../../utils/leaderboardSettings';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
@@ -89,8 +90,13 @@ export default function LeaderboardsOverviewPage() {
       : [],
   });
 
-  const isLoading = rankingQueries.some(q => q.isLoading);
-  const hasCachedData = rankingQueries.every(q => q.data != null);
+  // Hoist rank-history loading so the page waits for graph data before staggering
+  const allHistory = useRankHistoryAll(instruments, player?.accountId, metric);
+  const historyLoading = player ? instruments.some(inst => allHistory[inst]?.loading) : false;
+  const historyAllCached = !player || instruments.every(inst => allHistory[inst]?.chartData != null && !allHistory[inst]?.loading);
+
+  const isLoading = rankingQueries.some(q => q.isLoading) || historyLoading;
+  const hasCachedData = rankingQueries.every(q => q.data != null) && historyAllCached;
   const allErrored = !isLoading && rankingQueries.length > 0 && rankingQueries.every(q => q.error);
   const loadPhase = isLoading ? LoadPhase.Loading : LoadPhase.ContentIn;
 
@@ -111,8 +117,9 @@ export default function LeaderboardsOverviewPage() {
   useEffect(() => {
     if (loadPhase !== LoadPhase.ContentIn || !shouldStagger) return;
     const totalRows = Math.ceil(instruments.length / cols);
+    const chartSlot = player ? 1 : 0;
     const totalAnimTime =
-      (totalRows * itemsPerCard + (cols - 1) * COLUMN_STAGGER_OFFSET) * STAGGER_INTERVAL + FADE_DURATION;
+      (chartSlot + totalRows * itemsPerCard + (cols - 1) * COLUMN_STAGGER_OFFSET) * STAGGER_INTERVAL + FADE_DURATION;
     const id = setTimeout(() => setShouldStagger(false), totalAnimTime);
     return () => clearTimeout(id);
   }, [loadPhase, shouldStagger, maxEntriesPerCard, cols, instruments.length, itemsPerCard]);
@@ -161,12 +168,13 @@ export default function LeaderboardsOverviewPage() {
         return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={buildStaggerStyle(200)} onAnimationEnd={clearStaggerStyle} />;
       })()}
       {loadPhase === LoadPhase.ContentIn && !allErrored && player && (
-        <div style={s.chartWrapper}>
+        <div style={{ ...s.chartWrapper, ...buildStaggerStyle(shouldStagger ? 0 : null) }} onAnimationEnd={clearStaggerStyle}>
           <RankHistoryChart
             accountId={player.accountId}
             instruments={instruments}
             metric={metric}
             totalAccountsByInstrument={totalAccountsByInstrument}
+            skipAnimation={!shouldStagger}
           />
         </div>
       )}
@@ -177,7 +185,8 @@ export default function LeaderboardsOverviewPage() {
             const pq = player ? playerQueries[idx] : undefined;
             const gridRow = Math.floor(idx / cols);
             const gridCol = idx % cols;
-            const offset = gridRow * itemsPerCard + gridCol * COLUMN_STAGGER_OFFSET;
+            const chartSlots = player ? 1 : 0;
+            const offset = chartSlots + gridRow * itemsPerCard + gridCol * COLUMN_STAGGER_OFFSET;
             return (
               <RankingCard
                 key={inst}

@@ -63,6 +63,7 @@ type RankHistoryChartProps = {
   defaultInstrument?: InstrumentKey;
   totalAccountsByInstrument?: Partial<Record<InstrumentKey, number>>;
   days?: number;
+  skipAnimation?: boolean;
 };
 
 export default memo(function RankHistoryChart({
@@ -72,6 +73,7 @@ export default memo(function RankHistoryChart({
   defaultInstrument,
   totalAccountsByInstrument,
   days = 30,
+  skipAnimation,
 }: RankHistoryChartProps) {
   const { t } = useTranslation();
   const st = useRankHistoryChartStyles();
@@ -309,6 +311,7 @@ export default memo(function RankHistoryChart({
       renderDetailCard={renderDetailCard}
       listData={listData}
       renderListItem={renderListItem}
+      skipAnimation={skipAnimation}
     />
   );
 });
