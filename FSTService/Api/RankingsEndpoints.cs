@@ -65,7 +65,6 @@ public static partial class ApiEndpoints
                 e.AvgStars,
                 e.BestRank,
                 e.AvgRank,
-                e.RawFcRate,
                 e.RawMaxScorePercent,
                 e.ComputedAt,
             }).ToList();
@@ -124,7 +123,6 @@ public static partial class ApiEndpoints
                 ranking.AvgStars,
                 ranking.BestRank,
                 ranking.AvgRank,
-                ranking.RawFcRate,
                 ranking.RawMaxScorePercent,
                 ranking.ComputedAt,
                 totalRankedAccounts = totalRanked,

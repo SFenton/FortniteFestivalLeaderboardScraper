@@ -455,7 +455,6 @@ export type RankHistoryEntry = {
   songsPlayed: number | null;
   coverage: number | null;
   fullComboCount: number | null;
-  rawFcRate: number | null;
   rawMaxScorePercent: number | null;
 };
 
@@ -489,7 +488,6 @@ export type AccountRankingEntry = {
   avgStars: number;
   bestRank: number;
   avgRank: number;
-  rawFcRate: number | null;
   rawMaxScorePercent: number | null;
   computedAt: string;
 };

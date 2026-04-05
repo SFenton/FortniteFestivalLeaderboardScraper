@@ -719,12 +719,13 @@ public static class DatabaseInitializer
         -- MIGRATIONS: raw rating columns + schema version on rank_history
         -- =====================================================================
 
-        ALTER TABLE account_rankings ADD COLUMN IF NOT EXISTS raw_fc_rate REAL;
         ALTER TABLE account_rankings ADD COLUMN IF NOT EXISTS raw_max_score_percent REAL;
 
-        ALTER TABLE rank_history ADD COLUMN IF NOT EXISTS raw_fc_rate REAL;
         ALTER TABLE rank_history ADD COLUMN IF NOT EXISTS raw_max_score_percent REAL;
         ALTER TABLE rank_history ADD COLUMN IF NOT EXISTS schema_version SMALLINT NOT NULL DEFAULT 1;
+
+        ALTER TABLE account_rankings DROP COLUMN IF EXISTS raw_fc_rate;
+        ALTER TABLE rank_history DROP COLUMN IF EXISTS raw_fc_rate;
 
         """;
 }
