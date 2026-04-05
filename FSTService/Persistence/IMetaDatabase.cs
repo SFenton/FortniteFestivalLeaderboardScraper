@@ -34,6 +34,18 @@ public interface IMetaDatabase : IDisposable
     Dictionary<(string SongId, string Instrument), List<ValidScoreFallback>> GetAllValidScoreTiers(
         string accountId, Dictionary<(string SongId, string Instrument), int> maxThresholds);
 
+    /// <summary>
+    /// Returns the most recent score_achieved_at per (songId, instrument) from score_history.
+    /// </summary>
+    Dictionary<(string SongId, string Instrument), string> GetLastPlayedDates(string accountId);
+
+    /// <summary>
+    /// Returns the most recent score_achieved_at per (songId, instrument) from score_history,
+    /// limited to entries where new_score &lt;= the per-song threshold (CHOpt leeway-filtered).
+    /// </summary>
+    Dictionary<(string SongId, string Instrument), string> GetLastPlayedDates(
+        string accountId, Dictionary<(string SongId, string Instrument), int> maxThresholds);
+
     // ── Account names ────────────────────────────────────────────────
     int InsertAccountIds(IEnumerable<string> accountIds);
     List<string> GetUnresolvedAccountIds();

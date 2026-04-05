@@ -217,6 +217,30 @@ export function useFilteredSongs({
           }
           break;
         }
+        case 'lastplayed': {
+          if (inst) {
+            // Filtered: compare the single instrument's lastPlayedAt
+            cmp = compareByMode('lastplayed', scoreMap.get(a.songId), scoreMap.get(b.songId));
+          } else {
+            // Unfiltered: find the most recent lastPlayedAt across all instruments
+            const bestLp = (songId: string): string => {
+              const byInst = allScoreMap.get(songId);
+              if (!byInst) return '';
+              let best = '';
+              for (const sc of byInst.values()) {
+                const lp = sc.validLastPlayedAt ?? sc.lastPlayedAt ?? '';
+                if (lp > best) best = lp;
+              }
+              return best;
+            };
+            const la = bestLp(a.songId);
+            const lb = bestLp(b.songId);
+            if (la && !lb) cmp = -dir;
+            else if (!la && lb) cmp = dir;
+            else cmp = la.localeCompare(lb);
+          }
+          break;
+        }
         default:
           if (scoreMap.size > 0) {
             cmp = compareByMode(sortMode, scoreMap.get(a.songId), scoreMap.get(b.songId));

@@ -42,6 +42,7 @@ function mockAppSettings(overrides: Partial<AppSettings> = {}): AppSettings {
     metadataShowSeasonAchieved: true,
     metadataShowDifficulty: true,
     metadataShowStars: true,
+    metadataShowLastPlayed: true,
     ...overrides,
   } as AppSettings;
 }

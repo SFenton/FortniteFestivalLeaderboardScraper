@@ -76,7 +76,8 @@ type MetadataKey =
   | 'metadataShowPercentile'
   | 'metadataShowSeasonAchieved'
   | 'metadataShowDifficulty'
-  | 'metadataShowStars';
+  | 'metadataShowStars'
+  | 'metadataShowLastPlayed';
 
 const METADATA_TOGGLES: { key: MetadataKey; i18nKey: string }[] = [
   { key: 'metadataShowScore', i18nKey: 'metadata.score' },
@@ -85,6 +86,7 @@ const METADATA_TOGGLES: { key: MetadataKey; i18nKey: string }[] = [
   { key: 'metadataShowSeasonAchieved', i18nKey: 'metadata.seasonAchieved' },
   { key: 'metadataShowDifficulty', i18nKey: 'metadata.intensity' },
   { key: 'metadataShowStars', i18nKey: 'metadata.stars' },
+  { key: 'metadataShowLastPlayed', i18nKey: 'metadata.lastPlayed' },
 ];
 
 const LEEWAY_SLIDER_ID = 'fst-leeway-slider';

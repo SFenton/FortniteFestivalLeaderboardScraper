@@ -320,7 +320,8 @@
     "intensity": "Song Intensity",
     "stars": "Stars",
     "maxDistance": "Max Score %",
-    "maxScoreDiff": "Max Score Diff"
+    "maxScoreDiff": "Max Score Diff",
+    "lastPlayed": "Last Played"
   },
   "history": {
     "title": "Score History",
@@ -421,7 +422,8 @@
     "seasonAchieved": "Season Achieved",
     "intensity": "Song Intensity",
     "maxDistance": "Max Score %",
-    "maxScoreDiff": "Max Score Diff"
+    "maxScoreDiff": "Max Score Diff",
+    "lastPlayed": "Last Played"
   },
   "format": {
     "noScore": "—",

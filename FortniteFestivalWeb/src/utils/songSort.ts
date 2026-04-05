@@ -26,6 +26,13 @@ export function compareByMode(mode: SongSortMode, a?: PlayerScore, b?: PlayerSco
       return (a.season ?? 0) - (b.season ?? 0);
     case 'hasfc':
       return (a.isFullCombo ? 1 : 0) - (b.isFullCombo ? 1 : 0);
+    case 'lastplayed': {
+      const la = a.validLastPlayedAt ?? a.lastPlayedAt ?? '';
+      const lb = b.validLastPlayedAt ?? b.lastPlayedAt ?? '';
+      if (la && !lb) return -1;
+      if (!la && lb) return 1;
+      return la.localeCompare(lb);
+    }
     /* v8 ignore start -- exhaustive guard: all valid sort modes handled above */
     default:
       return 0;

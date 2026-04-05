@@ -102,6 +102,7 @@ export default function SongsPage() {
     if (!appSettings.metadataShowSeasonAchieved) hidden.add('seasonachieved');
     if (!appSettings.metadataShowDifficulty) hidden.add('intensity');
     if (!appSettings.metadataShowStars) hidden.add('stars');
+    if (!appSettings.metadataShowLastPlayed) hidden.add('lastplayed');
 
     let order: string[];
     if (appSettings.songRowVisualOrderEnabled) {
@@ -121,6 +122,9 @@ export default function SongsPage() {
     if (settings.sortMode === 'maxscorediff' && !order.includes('maxscorediff')) {
       order = [...order, 'maxscorediff'];
     }
+    if (settings.sortMode === 'lastplayed' && !order.includes('lastplayed')) {
+      order = [...order, 'lastplayed'];
+    }
     return order;
   }, [
     settings.metadataOrder,
@@ -133,6 +137,7 @@ export default function SongsPage() {
     appSettings.metadataShowSeasonAchieved,
     appSettings.metadataShowDifficulty,
     appSettings.metadataShowStars,
+    appSettings.metadataShowLastPlayed,
   ]);
   /* v8 ignore stop */
   
@@ -569,6 +574,7 @@ export default function SongsPage() {
             seasonachieved: appSettings.metadataShowSeasonAchieved,
             intensity: appSettings.metadataShowDifficulty,
             stars: appSettings.metadataShowStars,
+            lastplayed: appSettings.metadataShowLastPlayed,
           }}
           songRowVisualOrderEnabled={appSettings.songRowVisualOrderEnabled}
           onChange={sortModal.setDraft}

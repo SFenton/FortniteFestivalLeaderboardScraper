@@ -100,6 +100,13 @@ function renderMetadataElement(
       const formatted = diff > 0 ? `+${diff.toLocaleString()}` : diff.toLocaleString();
       return <PercentilePill display={formatted} color={maxScoreColor(pct)} />;
     }
+    case 'lastplayed': {
+      const lp = score.validLastPlayedAt ?? score.lastPlayedAt;
+      if (!lp) return null;
+      const d = new Date(lp);
+      const formatted = isNaN(d.getTime()) ? lp : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+      return <span style={{ color: Colors.textSecondary, fontSize: Font.md, whiteSpace: 'nowrap' }}>{formatted}</span>;
+    }
     default:
       return null;
   }
@@ -224,11 +231,31 @@ export const SongRow = memo(function SongRow({ song,
     if (!score || instrumentChips) return [];
     const result: MetadataEntry[] = [];
     for (const key of displayOrder) {
+      // Unfiltered lastplayed: show instrument icon of the most-recently-played instrument + date
+      if (key === 'lastplayed' && !instrumentFilter && allScoreMap && sortMode === 'lastplayed') {
+        let bestLp = '';
+        let bestInst: InstrumentKey | undefined;
+        for (const [inst, sc] of allScoreMap.entries()) {
+          const lp = sc.validLastPlayedAt ?? sc.lastPlayedAt ?? '';
+          if (lp > bestLp) { bestLp = lp; bestInst = inst as InstrumentKey; }
+        }
+        if (bestLp && bestInst) {
+          const d = new Date(bestLp);
+          const formatted = isNaN(d.getTime()) ? bestLp : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+          result.push({ key, el: (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: Gap.sm }}>
+              <InstrumentIcon instrument={bestInst} size={16} />
+              <span style={{ color: Colors.textSecondary, fontSize: Font.md, whiteSpace: 'nowrap' }}>{formatted}</span>
+            </span>
+          ) });
+          continue;
+        }
+      }
       const el = renderMetadataElement(key, score, displayOrder, songIntensityRaw, maxScore, sortMode);
       if (el) result.push({ key, el });
     }
     return result;
-  }, [score, displayOrder, songIntensityRaw, maxScore, sortMode, instrumentChips]);
+  }, [score, displayOrder, songIntensityRaw, maxScore, sortMode, instrumentChips, instrumentFilter, allScoreMap]);
 
   const pillLayoutRef = useRef(true);
   const pillFitsTopRow = resolvePillFitsTopRow(containerWidth, pillLayoutRef.current, MOBILE_PILL_THRESHOLD);

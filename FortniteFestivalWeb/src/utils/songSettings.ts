@@ -14,6 +14,7 @@ export type SongSortMode =
   | 'year'
   | 'shop'
   | 'hasfc'
+  | 'lastplayed'
   | 'score'
   | 'percentage'
   | 'percentile'
@@ -31,6 +32,7 @@ export const INSTRUMENT_SORT_MODES: { mode: SongSortMode; label: string }[] = [
   { mode: 'stars', label: 'Stars' },
   { mode: 'seasonachieved', label: 'Season' },
   { mode: 'intensity', label: 'Intensity' },
+  { mode: 'lastplayed', label: 'Last Played' },
   { mode: 'maxdistance', label: 'Max Score %' },
   { mode: 'maxscorediff', label: 'Max Score Diff' },
 ];
@@ -45,10 +47,11 @@ export const METADATA_SORT_DISPLAY: Record<string, string> = {
   stars: 'Stars',
   seasonachieved: 'Season Achieved',
   intensity: 'Song Intensity',
+  lastplayed: 'Last Played',
 };
 
 export const DEFAULT_METADATA_ORDER: string[] = [
-  'score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity',
+  'score', 'percentage', 'percentile', 'stars', 'seasonachieved', 'intensity', 'lastplayed',
 ];
 
 /** Append any new DEFAULT_METADATA_ORDER keys missing from a saved order and strip removed keys. */

@@ -322,6 +322,9 @@ public sealed class ScrapeTimePrecomputer
             ? _metaDb.GetAllValidScoreTiers(accountId, maxThresholds)
             : new Dictionary<(string, string), List<ValidScoreFallback>>();
 
+        // Get most recent play date per (songId, instrument) from score_history
+        var lastPlayedDates = _metaDb.GetLastPlayedDates(accountId);
+
         var enriched = new List<PrecomputedPlayerScore>(scores.Count);
         foreach (var s in scores)
         {
@@ -387,6 +390,7 @@ public sealed class ScrapeTimePrecomputer
                 Rank = rank,
                 EndTime = s.EndTime,
                 TotalEntries = totalEntries,
+                LastPlayedAt = lastPlayedDates.GetValueOrDefault(key),
                 MinLeeway = minLeeway,
                 ValidScores = validScores,
             });
@@ -1364,6 +1368,9 @@ public sealed class ScrapeTimePrecomputer
         [JsonPropertyName("rk")] public int Rank { get; init; }
         [JsonPropertyName("et")] public string? EndTime { get; init; }
         [JsonPropertyName("te")] public int TotalEntries { get; init; }
+        [JsonPropertyName("lp")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? LastPlayedAt { get; init; }
         [JsonPropertyName("ml")] public double? MinLeeway { get; init; }
         [JsonPropertyName("vs")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

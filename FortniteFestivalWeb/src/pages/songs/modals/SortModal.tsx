@@ -28,6 +28,7 @@ export type MetadataVisibility = {
   seasonachieved: boolean;
   intensity: boolean;
   stars: boolean;
+  lastplayed: boolean;
 };
 
 type SortModalProps = {
@@ -62,6 +63,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
         const visMap: Record<string, boolean> = {
           score: mv.score, percentage: mv.percentage, percentile: mv.percentile,
           stars: mv.stars, seasonachieved: mv.seasonachieved, intensity: mv.intensity,
+          lastplayed: mv.lastplayed,
         };
         return visMap[mode] !== false;
       })
@@ -72,12 +74,13 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
         const visMap: Record<string, boolean> = {
           score: mv.score, percentage: mv.percentage, percentile: mv.percentile,
           stars: mv.stars, seasonachieved: mv.seasonachieved, intensity: mv.intensity,
+          lastplayed: mv.lastplayed,
         };
         return visMap[k] !== false;
       })
     : draft.metadataOrder;
 
-  const anyMetadataVisible = !mv || (mv.score || mv.percentage || mv.percentile || mv.stars || mv.seasonachieved || mv.intensity);
+  const anyMetadataVisible = !mv || (mv.score || mv.percentage || mv.percentile || mv.stars || mv.seasonachieved || mv.intensity || mv.lastplayed);
 
   return (
     <Modal visible={visible} title={t('common.sortSongs')} onClose={handleClose} onApply={onApply} onReset={onReset} resetLabel={t('sort.resetLabel')} resetHint={t('sort.resetHint')} applyLabel={t('sort.applyLabel')} applyDisabled={!hasChanges} afterPanel={confirmOpen ? (
@@ -99,6 +102,7 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
             {/* v8 ignore next -- hideItemShop branch */}
             {!hideItemShop && <RadioRow label={t('sort.itemShop')} selected={draft.sortMode === 'shop'} onSelect={() => setMode('shop')} />}
             <RadioRow label={t('sort.hasFC')} selected={draft.sortMode === 'hasfc'} onSelect={() => setMode('hasfc')} />
+            <RadioRow label={t('sort.lastPlayed')} selected={draft.sortMode === 'lastplayed'} onSelect={() => setMode('lastplayed')} />
           </Accordion>
         </ModalSection>
       ) : (

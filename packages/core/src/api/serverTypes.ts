@@ -169,6 +169,10 @@ export type PlayerScore = {
   difficulty?: number;
   endTime?: string;
   totalEntries?: number;
+  /** ISO 8601 timestamp of the most recent score_history entry (any leeway). */
+  lastPlayedAt?: string;
+  /** ISO 8601 timestamp of the most recent *valid* score_history entry (respects CHOpt threshold). */
+  validLastPlayedAt?: string;
   /** Minimum leeway (%) at which this score is considered valid. Null if no max-score data. */
   minLeeway?: number | null;
   /** Historical valid scores sorted by score DESC, each with its own minLeeway + rankTiers. */
@@ -787,6 +791,8 @@ type WirePlayerScore = {
   lrk?: number;
   et?: string;
   te: number;
+  lp?: string;
+  vlp?: string;
   ml?: number | null;
   vs?: WireValidScore[] | null;
   // Legacy fallback fields (non-precomputed path only)
@@ -868,6 +874,8 @@ function expandPlayerScore(w: WirePlayerScore): PlayerScore {
     localRank: w.lrk || undefined,
     endTime: w.et,
     totalEntries: w.te,
+    lastPlayedAt: w.lp,
+    validLastPlayedAt: w.vlp,
     minLeeway: w.ml,
     validScores: w.vs?.map(expandValidScore),
     // Legacy fallback fields (pass through, scaling accuracy)

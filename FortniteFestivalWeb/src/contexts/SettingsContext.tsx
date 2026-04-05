@@ -42,6 +42,7 @@ export type AppSettings = {
   metadataShowSeasonAchieved: boolean;
   metadataShowDifficulty: boolean;
   metadataShowStars: boolean;
+  metadataShowLastPlayed: boolean;
 };
 
 export const defaultAppSettings = (): AppSettings => ({
@@ -69,6 +70,7 @@ export const defaultAppSettings = (): AppSettings => ({
   metadataShowSeasonAchieved: true,
   metadataShowDifficulty: true,
   metadataShowStars: true,
+  metadataShowLastPlayed: true,
 });
 
 /* ── Show-key mapping ── */

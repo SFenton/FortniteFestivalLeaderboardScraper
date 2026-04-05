@@ -349,6 +349,56 @@ public sealed class MetaDatabase : IMetaDatabase
         return result;
     }
 
+    public Dictionary<(string SongId, string Instrument), string> GetLastPlayedDates(string accountId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT song_id, instrument, MAX(score_achieved_at) FROM score_history WHERE account_id = @accountId AND score_achieved_at IS NOT NULL GROUP BY song_id, instrument";
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        var result = new Dictionary<(string, string), string>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var ts = r.GetDateTime(2).ToString("O");
+            result[(r.GetString(0), r.GetString(1))] = ts;
+        }
+        return result;
+    }
+
+    public Dictionary<(string SongId, string Instrument), string> GetLastPlayedDates(
+        string accountId, Dictionary<(string SongId, string Instrument), int> maxThresholds)
+    {
+        if (maxThresholds.Count == 0) return new();
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using (var c = conn.CreateCommand()) { c.Transaction = tx; c.CommandText = "CREATE TEMP TABLE _lp_thresholds (song_id TEXT, instrument TEXT, max_score INTEGER, PRIMARY KEY (song_id, instrument)) ON COMMIT DROP"; c.ExecuteNonQuery(); }
+        using (var c = conn.CreateCommand())
+        {
+            c.Transaction = tx;
+            c.CommandText = "INSERT INTO _lp_thresholds VALUES (@s, @i, @m)";
+            var ps = c.Parameters.Add("s", NpgsqlTypes.NpgsqlDbType.Text);
+            var pi = c.Parameters.Add("i", NpgsqlTypes.NpgsqlDbType.Text);
+            var pm = c.Parameters.Add("m", NpgsqlTypes.NpgsqlDbType.Integer);
+            c.Prepare();
+            foreach (var ((s, i), m) in maxThresholds) { ps.Value = s; pi.Value = i; pm.Value = m; c.ExecuteNonQuery(); }
+        }
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "SELECT sh.song_id, sh.instrument, MAX(sh.score_achieved_at) FROM score_history sh JOIN _lp_thresholds lt ON lt.song_id = sh.song_id AND lt.instrument = sh.instrument WHERE sh.account_id = @accountId AND sh.new_score <= lt.max_score AND sh.score_achieved_at IS NOT NULL GROUP BY sh.song_id, sh.instrument";
+        cmd.Parameters.AddWithValue("accountId", accountId);
+        var result = new Dictionary<(string, string), string>();
+        using (var r = cmd.ExecuteReader())
+        {
+            while (r.Read())
+            {
+                var ts = r.GetDateTime(2).ToString("O");
+                result[(r.GetString(0), r.GetString(1))] = ts;
+            }
+        }
+        tx.Commit();
+        return result;
+    }
+
     // ── Account names ────────────────────────────────────────────────
 
     public int InsertAccountIds(IEnumerable<string> accountIds)

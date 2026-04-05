@@ -104,6 +104,12 @@ public static partial class ApiEndpoints
                     validFallbacks = metaDb.GetBestValidScores(accountId, invalidThresholds);
             }
 
+            // ── Last-played dates from score_history ──
+            var lastPlayedDates = metaDb.GetLastPlayedDates(accountId);
+            var validLastPlayedDates = flatThresholds is not null
+                ? metaDb.GetLastPlayedDates(accountId, flatThresholds)
+                : null;
+
             var enriched = scores.Select(s =>
             {
                 var key = (s.SongId, s.Instrument);
@@ -168,6 +174,8 @@ public static partial class ApiEndpoints
                     lrk = computedRank > 0 ? computedRank : 0,
                     et = s.EndTime,
                     te = totalEntries,
+                    lp = lastPlayedDates.GetValueOrDefault(key),
+                    vlp = validLastPlayedDates?.GetValueOrDefault(key),
                     isValid = isValid,
                     validScore = validScore,
                     validAccuracy = validAccuracy / 1000,
