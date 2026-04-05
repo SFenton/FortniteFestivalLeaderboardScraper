@@ -43,6 +43,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
     private readonly ResilientHttpExecutor _executor;
     private readonly int _maxLookupRetries;
 
+    /// <summary>Exposes the underlying HTTP executor for diagnostics (CDN wire counters).</summary>
+    public ResilientHttpExecutor Executor => _executor;
+
     public GlobalLeaderboardScraper(
         HttpClient http,
         ScrapeProgressTracker progress,
@@ -261,6 +264,11 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         {
             ct.ThrowIfCancellationRequested();
 
+            // First page uses the rate token consumed on DOP slot acquisition.
+            // Subsequent pages must acquire their own token to stay within RPS.
+            if (fromIndex > 0)
+                await (limiter?.AcquireRateTokenAsync(ct) ?? Task.CompletedTask);
+
             var url = $"{baseUrl}&fromIndex={fromIndex}";
 
             HttpRequestMessage CreateRequest()
@@ -274,7 +282,10 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             HttpResponseMessage res;
             try
             {
-                res = await _executor.SendAsync(CreateRequest, limiter, label, _maxLookupRetries, ct);
+                // Pages 2+ pass limiter:null so AIMD doesn't count each page as
+                // a separate success/failure (rate token already acquired above).
+                var pageLimiter = fromIndex == 0 ? limiter : null;
+                res = await _executor.SendAsync(CreateRequest, pageLimiter, label, _maxLookupRetries, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -365,6 +376,11 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         {
             ct.ThrowIfCancellationRequested();
 
+            // First page uses the rate token consumed on DOP slot acquisition.
+            // Subsequent pages must acquire their own token to stay within RPS.
+            if (fromIndex > 0)
+                await (limiter?.AcquireRateTokenAsync(ct) ?? Task.CompletedTask);
+
             var url = $"{baseUrl}&fromIndex={fromIndex}";
 
             HttpRequestMessage CreateRequest()
@@ -378,7 +394,10 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             HttpResponseMessage res;
             try
             {
-                res = await _executor.SendAsync(CreateRequest, limiter, label, _maxLookupRetries, ct);
+                // Pages 2+ pass limiter:null so AIMD doesn't count each page as
+                // a separate success/failure (rate token already acquired above).
+                var pageLimiter = fromIndex == 0 ? limiter : null;
+                res = await _executor.SendAsync(CreateRequest, pageLimiter, label, _maxLookupRetries, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -816,7 +835,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         double overThresholdMultiplier = 1.05,
         int overThresholdExtraPages = 100,
         int validEntryTarget = 0,
-        bool deferDeepScrape = false)
+        bool deferDeepScrape = false,
+        double validCutoffMultiplier = 0.95)
     {
         // ── Page 0: discover totalPages ──
         bool page0Acquired = false;
@@ -864,7 +884,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
 
         // ── Deep scrape detection: check if page 0's top score exceeds CHOpt threshold ──
         // overThreshold = trigger threshold (CHOpt × multiplier) — used only to decide whether to deep scrape.
-        // validCutoff   = raw CHOpt max — entries above this are "over-threshold" (exploited/cheated);
+        // validCutoff   = CHOpt max × cutoff multiplier — entries above this are "over-threshold" (exploited/cheated);
         //                 valid entry counting and pruning use this value.
         bool deepScrapeTriggered = false;
         int overThreshold = 0;
@@ -872,7 +892,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         if (choptMaxScore.HasValue && page0.firstPage.Entries.Count > 0)
         {
             overThreshold = (int)(choptMaxScore.Value * overThresholdMultiplier);
-            validCutoff = choptMaxScore.Value;
+            validCutoff = (int)(choptMaxScore.Value * validCutoffMultiplier);
             int topScore = page0.firstPage.Entries.Max(e => e.Score);
             if (topScore > overThreshold)
             {
@@ -1026,7 +1046,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             if (validEntryTarget > 0)
             {
                 // ── Target-driven mode (inline): fetch in batches until valid entry target is met ──
-                // Valid entries are those at or below raw CHOpt max (validCutoff), not the trigger threshold.
+                // Valid entries are those at or below the cutoff (CHOpt max × cutoff multiplier), not the trigger threshold.
                 int validCount = allEntries.Values.Sum(page => page.Count(e => e.Score <= validCutoff));
                 int nextPage = wave2Start;
 
@@ -1278,11 +1298,12 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         double overThresholdMultiplier = 1.05,
         int overThresholdExtraPages = 100,
         int validEntryTarget = 0,
-        bool deferDeepScrape = false)
+        bool deferDeepScrape = false,
+        double validCutoffMultiplier = 0.95)
     {
         var instList = (instruments ?? AllInstruments).ToList();
         var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(
-            maxConcurrency, 256, maxConcurrency,
+            maxConcurrency, 4, maxConcurrency,
             _log);
 
         // Launch all instruments in parallel
@@ -1293,7 +1314,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 choptMaxScore: choptMax, overThresholdMultiplier: overThresholdMultiplier,
                 overThresholdExtraPages: overThresholdExtraPages,
                 validEntryTarget: validEntryTarget,
-                deferDeepScrape: deferDeepScrape);
+                deferDeepScrape: deferDeepScrape,
+                validCutoffMultiplier: validCutoffMultiplier);
         }).ToList();
 
         var resultsArr = await Task.WhenAll(tasks);
@@ -1362,17 +1384,18 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int overThresholdExtraPages = 100,
         int validEntryTarget = 0,
         AdaptiveConcurrencyLimiter? sharedLimiter = null,
-        bool deferDeepScrape = false)
+        bool deferDeepScrape = false,
+        double validCutoffMultiplier = 0.95)
     {
         if (sequential)
             return await ScrapeManySongsSequentialAsync(
                 requests, accessToken, accountId, onSongComplete, ct, maxPages, pageConcurrency, songConcurrency,
                 maxRequestsPerSecond, overThresholdMultiplier, overThresholdExtraPages, validEntryTarget,
-                sharedLimiter);
+                sharedLimiter, validCutoffMultiplier: validCutoffMultiplier);
 
         var ownsLimiter = sharedLimiter is null;
         var limiter = sharedLimiter ?? new AdaptiveConcurrencyLimiter(
-            maxConcurrency, minDop: 256, maxDop: maxConcurrency,
+            maxConcurrency, minDop: 4, maxDop: maxConcurrency,
             _log, maxRequestsPerSecond);
         try
         {
@@ -1395,7 +1418,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 overThresholdMultiplier: overThresholdMultiplier,
                 overThresholdExtraPages: overThresholdExtraPages,
                 validEntryTarget: validEntryTarget,
-                deferDeepScrape: deferDeepScrape);
+                deferDeepScrape: deferDeepScrape,
+                validCutoffMultiplier: validCutoffMultiplier);
 
             results[req.SongId] = songResults;
 
@@ -1475,7 +1499,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         double overThresholdMultiplier = 1.05,
         int overThresholdExtraPages = 100,
         int validEntryTarget = 0,
-        AdaptiveConcurrencyLimiter? sharedLimiter = null)
+        AdaptiveConcurrencyLimiter? sharedLimiter = null,
+        double validCutoffMultiplier = 0.95)
     {
         var results = new ConcurrentDictionary<string, List<GlobalLeaderboardResult>>();
         int effectiveSongConcurrency = Math.Max(1, songConcurrency);
@@ -1507,7 +1532,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                         req.SongId, inst, accessToken, accountId, ct, req.Label, maxPages, limiter,
                         choptMaxScore: choptMax, overThresholdMultiplier: overThresholdMultiplier,
                         overThresholdExtraPages: overThresholdExtraPages,
-                        validEntryTarget: validEntryTarget);
+                        validEntryTarget: validEntryTarget,
+                        validCutoffMultiplier: validCutoffMultiplier);
                 }).ToList();
 
                 var songResults = (await Task.WhenAll(instTasks)).ToList();
@@ -1551,7 +1577,8 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         int? choptMaxScore = null,
         double overThresholdMultiplier = 1.05,
         int overThresholdExtraPages = 100,
-        int validEntryTarget = 0)
+        int validEntryTarget = 0,
+        double validCutoffMultiplier = 0.95)
     {
         // ── Page 0 ──
         var page0 = await FetchPageAsync(songId, instrument, 0, accessToken, accountId, limiter, ct);

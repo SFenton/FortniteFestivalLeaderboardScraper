@@ -135,7 +135,8 @@ public sealed class ScrapeOrchestrator
             overThresholdExtraPages: opts.OverThresholdExtraPages,
             validEntryTarget: opts.ValidEntryTarget,
             sharedLimiter: _pool.Limiter,
-            deferDeepScrape: true);
+            deferDeepScrape: true,
+            validCutoffMultiplier: opts.ValidCutoffMultiplier);
 
         // Wait for all per-instrument writers to drain
         _progress.SetSubOperation("persisting_to_database");

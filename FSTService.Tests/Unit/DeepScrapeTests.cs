@@ -471,7 +471,7 @@ public class DeepScrapeTests
         Assert.NotNull(result.DeferredDeepScrape);
         Assert.Equal("song1", result.DeferredDeepScrape.SongId);
         Assert.Equal("Solo_Guitar", result.DeferredDeepScrape.Instrument);
-        Assert.Equal(1000, result.DeferredDeepScrape.ValidCutoff);
+        Assert.Equal(950, result.DeferredDeepScrape.ValidCutoff); // 1000 × 0.95 default
         Assert.Equal(2, result.DeferredDeepScrape.Wave2Start);
         Assert.Equal(10, result.DeferredDeepScrape.ReportedPages);
         Assert.Equal(2, result.DeferredDeepScrape.InitialValidCount); // p2=900, p3=800
@@ -524,5 +524,30 @@ public class DeepScrapeTests
         Assert.Equal(6, result.Entries.Count);
         Assert.Equal(5, result.PagesScraped);
         Assert.Null(result.DeferredDeepScrape);
+    }
+
+    [Fact]
+    public async Task DeferDeepScrape_CustomCutoffMultiplier_AppliedToValidCutoff()
+    {
+        var (scraper, handler) = CreateScraper();
+
+        // CHOpt max = 1000, custom cutoff multiplier = 0.90 → validCutoff = 900.
+        // Top score 1100 triggers deep scrape. p2=950 is above cutoff (950 > 900).
+        handler.EnqueueJsonOk(MakePage(0, 10, ("p1", 1100), ("p2", 950)));
+        handler.EnqueueJsonOk(MakePage(1, 10, ("p3", 800)));
+
+        var result = await scraper.ScrapeLeaderboardAsync(
+            "song1", "Solo_Guitar", "token", "acct",
+            maxPages: 2,
+            choptMaxScore: 1000,
+            overThresholdMultiplier: 1.05,
+            overThresholdExtraPages: 3,
+            validEntryTarget: 5,
+            deferDeepScrape: true,
+            validCutoffMultiplier: 0.90);
+
+        Assert.NotNull(result.DeferredDeepScrape);
+        Assert.Equal(900, result.DeferredDeepScrape.ValidCutoff); // 1000 × 0.90
+        Assert.Equal(1, result.DeferredDeepScrape.InitialValidCount); // only p3=800 ≤ 900
     }
 }

@@ -474,9 +474,10 @@ public sealed class PostScrapeOrchestrator
         try
         {
             // Build per-instrument, per-song threshold maps from CHOpt max scores.
-            // Entries above the raw CHOpt max are kept unconditionally; the maxEntries cap
-            // applies only to entries at or below CHOpt max.
+            // Entries above CHOpt max × cutoff multiplier are kept unconditionally;
+            // the maxEntries cap applies only to entries at or below the cutoff.
             var allMaxScores = _pathDataStore.GetAllMaxScores();
+            var cutoffMultiplier = _options.Value.ValidCutoffMultiplier;
             Dictionary<string, IReadOnlyDictionary<string, int>>? thresholds = null;
 
             if (allMaxScores.Count > 0)
@@ -490,7 +491,7 @@ public sealed class PostScrapeOrchestrator
                     {
                         var choptMax = maxScores.GetByInstrument(instrument);
                         if (choptMax.HasValue)
-                            songMap[songId] = choptMax.Value;
+                            songMap[songId] = (int)(choptMax.Value * cutoffMultiplier);
                     }
                     if (songMap.Count > 0)
                         thresholds[instrument] = songMap;

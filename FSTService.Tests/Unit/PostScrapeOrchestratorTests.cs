@@ -437,9 +437,9 @@ public class PostScrapeOrchestratorTests : IDisposable
     {
         // Simulate deep scrape scenario: many over-threshold (exploited) entries + valid entries.
         // MaxPages=1 → maxEntries=100 per song for valid entries.
-        // CHOpt max = 1000. Pruning threshold = raw CHOpt max (1000).
+        // CHOpt max = 1000. ValidCutoffMultiplier=1.0 → pruning threshold = 1000.
         // Over-threshold entries (scores > 1000) should NOT be pruned.
-        var opts = Options.Create(new ScraperOptions { MaxPagesPerLeaderboard = 1, OverThresholdMultiplier = 1.05 });
+        var opts = Options.Create(new ScraperOptions { MaxPagesPerLeaderboard = 1, OverThresholdMultiplier = 1.05, ValidCutoffMultiplier = 1.0 });
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new NotificationService(Substitute.For<ILogger<NotificationService>>()), _progress, new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), new ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
         var rankingsCalculator = new RankingsCalculator(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<RankingsCalculator>>());
