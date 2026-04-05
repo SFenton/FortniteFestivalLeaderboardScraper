@@ -5,7 +5,6 @@
  */
 import { useState, useEffect, useRef } from 'react';
 import { ListPhase } from '@festival/core';
-import type { ChartPoint } from './useChartData';
 
 const CARD_HEIGHT = 48;
 const CARD_GAP = 4;
@@ -19,8 +18,8 @@ function calcListHeight(n: number): number {
   return n > 0 ? n * CARD_HEIGHT + (n - 1) * CARD_GAP : 0;
 }
 
-export function useListAnimation(visibleCards: ChartPoint[], skipAnimation?: boolean) {
-  const [displayedCards, setDisplayedCards] = useState<ChartPoint[]>(visibleCards);
+export function useListAnimation<T>(visibleCards: T[], skipAnimation?: boolean) {
+  const [displayedCards, setDisplayedCards] = useState<T[]>(visibleCards);
   const [listPhase, setListPhase] = useState<ListPhase>(ListPhase.Idle);
   const [listHeight, setListHeight] = useState(() => calcListHeight(visibleCards.length));
   const listHeightRef = useRef(listHeight);

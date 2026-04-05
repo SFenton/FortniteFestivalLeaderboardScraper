@@ -1,16 +1,17 @@
 /**
  * Hook managing offset-based chart pagination with optional point navigation.
+ * Generic over any data-point type — callers supply an identity function.
  */
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import type { ChartPoint } from './useChartData';
 
-export function useChartPagination(
-  chartData: ChartPoint[],
+export function useChartPagination<T>(
+  chartData: T[],
   maxBars: number,
   selectedInstrument: string,
+  identity: (a: T, b: T) => boolean,
 ) {
   const [chartOffset, setChartOffset] = useState(0);
-  const [selectedPoint, setSelectedPoint] = useState<ChartPoint | null>(null);
+  const [selectedPoint, setSelectedPoint] = useState<T | null>(null);
 
   // Reset offset and selection when instrument changes
   useEffect(() => { setChartOffset(0); }, [selectedInstrument]);
@@ -25,8 +26,8 @@ export function useChartPagination(
 
   const selectedIndex = useMemo(() => {
     if (!selectedPoint) return -1;
-    return chartData.findIndex(p => p.date === selectedPoint.date && p.score === selectedPoint.score);
-  }, [selectedPoint, chartData]);
+    return chartData.findIndex(p => identity(p, selectedPoint));
+  }, [selectedPoint, chartData, identity]);
 
   /* v8 ignore start -- navigatePoint: offset adjustment logic */
   const navigatePoint = useCallback((targetIdx: number) => {

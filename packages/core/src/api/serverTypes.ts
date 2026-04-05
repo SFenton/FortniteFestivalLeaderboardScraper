@@ -455,6 +455,8 @@ export type RankHistoryEntry = {
   songsPlayed: number | null;
   coverage: number | null;
   fullComboCount: number | null;
+  rawFcRate: number | null;
+  rawMaxScorePercent: number | null;
 };
 
 /** Response from /api/rankings/{instrument}/{accountId}/history. */

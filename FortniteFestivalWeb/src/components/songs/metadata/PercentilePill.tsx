@@ -6,15 +6,22 @@ import { Border, Gap, Radius } from '@festival/theme';
 export interface PercentilePillProps {
   display: string | null | undefined;
   color?: string;
+  /** Override auto-detected tier. */
+  tier?: 'top1' | 'top5' | 'default';
 }
 
-const PercentilePill = memo(function PercentilePill({ display, color }: PercentilePillProps) {
+const PercentilePill = memo(function PercentilePill({ display, color, tier }: PercentilePillProps) {
   const s = useStyles();
   if (!display) return null;
 
-  const match = display.match(/^Top\s+([\d.]+)%$/);
-  const pct = match ? parseFloat(match[1]) : NaN;
-  const style = !isNaN(pct) && pct <= 1 ? s.top1 : !isNaN(pct) && pct <= 5 ? s.top5 : color ? { ...s.default, backgroundColor: color, color: Colors.textPrimary } : s.default;
+  let style: CSSProperties;
+  if (tier) {
+    style = s[tier];
+  } else {
+    const match = display.match(/^Top\s+([\d.]+)%$/);
+    const pct = match ? parseFloat(match[1]) : NaN;
+    style = !isNaN(pct) && pct <= 1 ? s.top1 : !isNaN(pct) && pct <= 5 ? s.top5 : color ? { ...s.default, backgroundColor: color, color: Colors.textPrimary } : s.default;
+  }
 
   return <span style={style}>{display}</span>;
 });

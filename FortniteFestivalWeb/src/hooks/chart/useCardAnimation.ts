@@ -6,10 +6,9 @@
  */
 import { useState, useEffect, useRef } from 'react';
 import { CardPhase } from '@festival/core';
-import type { ChartPoint } from './useChartData';
 
-export function useCardAnimation(selectedPoint: ChartPoint | null) {
-  const [displayedPoint, setDisplayedPoint] = useState<ChartPoint | null>(null);
+export function useCardAnimation<T>(selectedPoint: T | null) {
+  const [displayedPoint, setDisplayedPoint] = useState<T | null>(null);
   const [cardPhase, setCardPhase] = useState<CardPhase>(CardPhase.Closed);
   const [cardHeight, setCardHeight] = useState(0);
   const cardContentRef = useRef<HTMLDivElement>(null);
@@ -19,7 +18,7 @@ export function useCardAnimation(selectedPoint: ChartPoint | null) {
   const displayedPointRef = useRef(displayedPoint);
   displayedPointRef.current = displayedPoint;
   const cardTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const pendingPoint = useRef<ChartPoint | null>(null);
+  const pendingPoint = useRef<T | null>(null);
 
   useEffect(() => {
     cardTimers.current.forEach(clearTimeout);

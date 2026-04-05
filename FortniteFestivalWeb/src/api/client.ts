@@ -25,6 +25,7 @@ import type {
   LeaderboardNeighborhoodResponse,
   CompositeNeighborhoodResponse,
   LeaderboardRivalsListResponse,
+  RankHistoryResponse,
 } from '@festival/core/api/serverTypes';
 import { expandWirePlayerResponse, expandWireSongsResponse, expandWireStatsResponse } from '@festival/core/api/serverTypes';
 
@@ -265,4 +266,13 @@ export const api = {
     getWithETag<RivalsAllResponse>(
       `/api/player/${encodeURIComponent(accountId)}/rivals/all`,
     ),
+
+  getRankHistory: (instrument: InstrumentKey, accountId: string, days?: number) => {
+    const params = new URLSearchParams();
+    if (days != null) params.set('days', String(days));
+    const qs = params.toString();
+    return get<RankHistoryResponse>(
+      `/api/rankings/${encodeURIComponent(instrument)}/${encodeURIComponent(accountId)}/history${qs ? `?${qs}` : ''}`,
+    );
+  },
 };

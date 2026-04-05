@@ -36,4 +36,6 @@ export const queryKeys = {
     ['leaderboardNeighborhood', instrument, accountId] as const,
   compositeNeighborhood: (accountId: string) =>
     ['compositeNeighborhood', accountId] as const,
+  rankHistory: (instrument: string, accountId: string, days?: number) =>
+    ['rankHistory', instrument, accountId, { days }] as const,
 };

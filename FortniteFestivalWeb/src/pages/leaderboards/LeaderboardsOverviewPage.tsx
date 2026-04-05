@@ -103,6 +103,11 @@ export default function LeaderboardsOverviewPage() {
   const [cols, gridRef] = useGridColumnCount();
   const itemsPerCard = maxEntriesPerCard + (player ? 3 : 2); // header + entries + (player footer?) + button
 
+  const totalAccountsByInstrument = useMemo(
+    () => Object.fromEntries(instruments.map((inst, i) => [inst, rankingQueries[i]?.data?.totalAccounts ?? 0])),
+    [instruments, rankingQueries],
+  );
+
   useEffect(() => {
     if (loadPhase !== LoadPhase.ContentIn || !shouldStagger) return;
     const totalRows = Math.ceil(instruments.length / cols);
@@ -161,6 +166,7 @@ export default function LeaderboardsOverviewPage() {
             accountId={player.accountId}
             instruments={instruments}
             metric={metric}
+            totalAccountsByInstrument={totalAccountsByInstrument}
           />
         </div>
       )}
