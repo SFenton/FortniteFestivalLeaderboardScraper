@@ -4,7 +4,7 @@
  */
 import { ACCURACY_SCALE } from '@festival/core';
 import { InstrumentHeaderSize } from '@festival/core';
-import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { type ServerInstrumentKey as InstrumentKey, serverInstrumentLabel } from '@festival/core/api/serverTypes';
 import { Colors, Gap, Overflow, Radius, frostedCardSurface } from '@festival/theme';
 import { type InstrumentStats, formatClamped, formatClamped2, accuracyColor } from '../helpers/playerStats';
 import StatBox from '../../../components/player/StatBox';
@@ -133,7 +133,7 @@ export function buildInstrumentStatsItems(
   const accColor = stats.avgAccuracy > 0 ? (isGoldAcc ? Colors.gold : accuracyColor(accPct)) : undefined;
   cards.push({ label: t('player.avgAccuracy'), value: stats.avgAccuracy > 0 ? formatClamped(accPct) + '%' : '\u2014', color: accColor });
   cards.push({ label: t('player.avgStars'), value: stats.averageStars === 6 ? <GoldStars /> : (stats.averageStars > 0 ? formatClamped2(stats.averageStars) : '\u2014') });
-  cards.push({ label: t('player.bestRank'), value: stats.bestRank > 0 ? `#${stats.bestRank.toLocaleString()}` : '\u2014', onClick: stats.bestRankSongId ? () => navigateToSongDetail(stats.bestRankSongId!, inst, { autoScroll: true }) : undefined });
+  cards.push({ label: t('player.bestInstSongRank', { instrument: serverInstrumentLabel(inst) }), value: stats.bestRank > 0 ? `#${stats.bestRank.toLocaleString()}` : '\u2014', onClick: stats.bestRankSongId ? () => navigateToSongDetail(stats.bestRankSongId!, inst, { autoScroll: true }) : undefined });
 
   // Per-metric rank cards (after Best Rank, before Percentile)
   if (rankingEntry) {

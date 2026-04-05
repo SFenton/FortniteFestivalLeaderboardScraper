@@ -61,7 +61,7 @@ describe('buildOverallSummaryItems', () => {
   it('calls navigateToSongDetail on bestRank click', () => {
     navigateToSongDetail.mockClear();
     const items = buildOverallSummaryItems(t, makeStats(), 100, visibleKeys, navigateToSongs, navigateToSongDetail, {});
-    const rankItem = items.find(i => i.key.includes('player.bestRank'));
+    const rankItem = items.find(i => i.key.includes('player.bestSongRank'));
     const { container } = render(<>{rankItem!.node}</>);
     fireEvent.click(container.querySelector('[data-testid]')!);
     expect(navigateToSongDetail).toHaveBeenCalled();
@@ -91,7 +91,7 @@ describe('buildOverallSummaryItems', () => {
   it('shows dash for zero bestRank and no onClick', () => {
     navigateToSongDetail.mockClear();
     const items = buildOverallSummaryItems(t, makeStats({ bestRank: 0, bestRankSongId: null }), 100, visibleKeys, navigateToSongs, navigateToSongDetail, {});
-    const rankItem = items.find(i => i.key.includes('player.bestRank'));
+    const rankItem = items.find(i => i.key.includes('player.bestSongRank'));
     const { container } = render(<>{rankItem!.node}</>);
     fireEvent.click(container.querySelector('[data-testid]')!);
     expect(navigateToSongDetail).not.toHaveBeenCalled();

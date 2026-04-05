@@ -131,7 +131,7 @@ describe('buildInstrumentStatsItems', () => {
     for (const item of items) {
       if (!item.key.includes('card')) continue;
       const { container } = render(<>{item.node}</>);
-      const el = container.querySelector('[data-testid*="player.bestRank"]');
+      const el = container.querySelector('[data-testid*="player.bestInstSongRank"]');
       if (el) {
         fireEvent.click(el);
         break;

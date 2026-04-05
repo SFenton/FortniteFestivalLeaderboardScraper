@@ -82,7 +82,7 @@ export function buildOverallSummaryItems(
     } },
     { label: t('player.goldStars'), value: overallStats.goldStarCount.toLocaleString(), color: Colors.gold },
     { label: t('player.avgAccuracy'), value: overallStats.avgAccuracy > 0 ? formatClamped(overallStats.avgAccuracy / ACCURACY_SCALE) + '%' : '\u2014', color: overallAccColor },
-    { label: t('player.bestRank'), value: overallStats.bestRank > 0 ? `#${overallStats.bestRank.toLocaleString()}` : '\u2014', onClick: overallStats.bestRankSongId ? () => {
+    { label: t('player.bestSongRank'), value: overallStats.bestRank > 0 ? `#${overallStats.bestRank.toLocaleString()}` : '\u2014', onClick: overallStats.bestRankSongId ? () => {
       navigateToSongDetail(overallStats.bestRankSongId!, overallStats.bestRankInstrument! as InstrumentKey, { autoScroll: true });
     } : undefined },
   ];
