@@ -17,6 +17,7 @@ import { parseApiError } from '../../utils/apiError';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import type { RankingMetric, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { LoadPhase } from '@festival/core';
+import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import RankByModal from './modals/RankByModal';
 import RankHistoryChart from './components/RankHistoryChart';
 import { useRankHistoryAll } from '../../hooks/chart/useRankHistory';
@@ -98,7 +99,7 @@ export default function LeaderboardsOverviewPage() {
   const isLoading = rankingQueries.some(q => q.isLoading) || historyLoading;
   const hasCachedData = rankingQueries.every(q => q.data != null) && historyAllCached;
   const allErrored = !isLoading && rankingQueries.length > 0 && rankingQueries.every(q => q.error);
-  const loadPhase = isLoading ? LoadPhase.Loading : LoadPhase.ContentIn;
+  const { phase: loadPhase } = useLoadPhase(!isLoading, { skipAnimation: hasCachedData });
 
   const [shouldStagger, setShouldStagger] = useState(!hasCachedData);
   const maxEntriesPerCard = useMemo(
