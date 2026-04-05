@@ -254,7 +254,8 @@ sampler.Start();
 using var liveReporter = new LiveReporter(
     pool.Limiter, instrumentedQuerier, harnessStopwatch,
     configuredDop: maxDop, configuredRps: maxRps, intervalMs: 3000,
-    executor: realScraper.Executor);
+    executor: realScraper.Executor,
+    totalSongs: songIds.Count, totalAccounts: accountIds.Count);
 liveReporter.Start();
 
 SongProcessingMachine.MachineResult result;

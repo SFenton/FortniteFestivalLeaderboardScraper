@@ -287,7 +287,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 var pageLimiter = fromIndex == 0 ? limiter : null;
                 res = await _executor.SendAsync(CreateRequest, pageLimiter, label, _maxLookupRetries, ct);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException and not CdnBlockedException)
             {
                 _log.LogWarning(ex, "Batch lookup failed for {Label} at fromIndex={FromIndex}.",
                     label, fromIndex);
@@ -399,7 +399,7 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 var pageLimiter = fromIndex == 0 ? limiter : null;
                 res = await _executor.SendAsync(CreateRequest, pageLimiter, label, _maxLookupRetries, ct);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException and not CdnBlockedException)
             {
                 _log.LogWarning(ex, "Batch session lookup failed for {Label} at fromIndex={FromIndex}.",
                     label, fromIndex);
@@ -409,11 +409,21 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             if (!res.IsSuccessStatusCode)
             {
                 var body = await res.Content.ReadAsStringAsync(ct);
+                var statusCode = res.StatusCode;
                 res.Dispose();
                 if (body.Contains("no_score_found", StringComparison.Ordinal))
                     break;
                 _log.LogWarning("Batch session lookup returned {Status} for {Label}: {Body}",
-                    res.StatusCode, label, body);
+                    statusCode, label, body);
+
+                // BadRequest on the first page means the leaderboard doesn't exist
+                // for this season (song not charted). Throw so callers can detect
+                // and skip earlier seasons for other instruments.
+                if ((int)statusCode == 400 && fromIndex == 0)
+                    throw new HttpRequestException(
+                        $"Seasonal leaderboard not found: {label} returned {(int)statusCode}",
+                        null, statusCode);
+
                 break;
             }
 

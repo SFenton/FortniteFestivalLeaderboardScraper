@@ -256,6 +256,7 @@ public sealed class ScraperOptions
     /// Acts as a safety net against infinite hangs. The CDN slot-release mechanism
     /// is the primary defence; this is a backstop.
     /// Default 45 minutes. Set to 0 to disable.
+    /// When <see cref="FullCrawlEnabled"/> is true, consider increasing to 300+.
     /// </summary>
     public int ScrapePassTimeoutMinutes { get; set; } = 45;
 }

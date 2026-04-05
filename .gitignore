@@ -313,3 +313,9 @@ FortniteFestivalWeb/.yarn
 FortniteFestivalWeb/coverage
 #Playwright
 .playwright-mcp
+
+# SongMachineHarness output
+SongMachineHarness/harness-output/
+harness-output/
+SongMachineHarness/accounts.txt
+SongMachineHarness/songs.txt

@@ -3,6 +3,16 @@ using System.Net.Http.Headers;
 namespace FSTService.Scraping;
 
 /// <summary>
+/// Thrown by <see cref="ResilientHttpExecutor"/> when a CDN block is detected.
+/// The caller should release its DOP slot, await <see cref="ResilientHttpExecutor.WaitForCdnClearAsync"/>,
+/// then re-acquire and retry. A background probe runs independently.
+/// </summary>
+public sealed class CdnBlockedException : Exception
+{
+    public CdnBlockedException(string message) : base(message) { }
+}
+
+/// <summary>
 /// Sends HTTP requests with automatic retry on transient failures
 /// (429 rate-limit, 5xx server errors, network errors, timeouts)
 /// and CDN-level blocks (403 with non-JSON body).
@@ -40,7 +50,7 @@ public sealed class ResilientHttpExecutor
 
     /// <summary>Maximum CDN probe retries before giving up. Covers the full 9-step
     /// delay schedule + 6 more at 60 s ≈ 7 minutes total.</summary>
-    public const int MaxCdnRetries = 15;
+    public const int MaxCdnRetries = 30;
 
     /// <summary>Base delay for exponential backoff (doubled on each retry).</summary>
     private static readonly TimeSpan BaseDelay = TimeSpan.FromMilliseconds(500);
@@ -98,6 +108,7 @@ public sealed class ResilientHttpExecutor
     private readonly SemaphoreSlim _cdnGate = new(1, 1);
     private int _cdnRetryIndex; // current position in the delay schedule
     private volatile TaskCompletionSource<bool>? _cdnResolved; // true=CDN clear, false=gave up
+    private Task? _probeTask; // background probe task (fire-and-forget with TCS signal)
 
     public ResilientHttpExecutor(HttpClient http, ILogger log)
     {
@@ -149,6 +160,12 @@ public sealed class ResilientHttpExecutor
 
         for (int attempt = 0; ; attempt++)
         {
+            // If CDN is blocked, throw immediately — don't waste a wire send.
+            // The caller (SongMachine) will release its DOP slot and wait for the probe.
+            if (IsCdnBlocked)
+                throw new CdnBlockedException(
+                    $"CDN block active on {label ?? "request"} (pre-send check, attempt {attempt + 1})");
+
             if (attempt > 0)
             {
                 // Exponential backoff capped at MaxBackoff, with ±30% jitter
@@ -158,63 +175,9 @@ public sealed class ResilientHttpExecutor
                 await Task.Delay(TimeSpan.FromMilliseconds(jitter), ct);
             }
 
-            // ── Wait for any active CDN cooldown before sending ──
-            // Release the caller's limiter slot while sleeping so other requests
-            // aren't starved. Re-acquire before the actual HTTP send.
-            bool rateTokenConsumed = false;
-            if (_cdnCooldownUntil > DateTimeOffset.UtcNow && limiter is not null)
-            {
-                limiter.Release();
-                await WaitForCdnCooldownAsync(ct);
-                await limiter.WaitAsync(ct);
-                rateTokenConsumed = true; // WaitAsync consumed both DOP slot + rate token
-            }
-            else
-            {
-                await WaitForCdnCooldownAsync(ct);
-            }
-
-            // ── If a CDN probe is active, wait for it instead of wasting an
-            //    HTTP send that will certainly get 403'd. Queued tasks that
-            //    acquired DOP slots after SlashDop would otherwise drip through
-            //    at DOP=4, each making one useless send before entering the
-            //    non-probe wait path in RetryCdnBlockAsync. ──
-            var activeCdnSignal = _cdnResolved;
-            if (activeCdnSignal is not null && !activeCdnSignal.Task.IsCompleted)
-            {
-                if (limiter is not null)
-                {
-                    limiter.Release();
-                    try
-                    {
-                        using var reg = ct.Register(() => activeCdnSignal.TrySetCanceled(ct));
-                        bool cleared = await activeCdnSignal.Task;
-                        if (!cleared)
-                            throw new HttpRequestException(
-                                $"CDN block on {label ?? "request"} — probe exhausted {MaxCdnRetries} retries.");
-                    }
-                    finally
-                    {
-                        await limiter.WaitAsync(ct);
-                    }
-                    continue; // CDN cleared — retry with full detection
-                }
-                else
-                {
-                    using var reg = ct.Register(() => activeCdnSignal.TrySetCanceled(ct));
-                    bool cleared = await activeCdnSignal.Task;
-                    if (!cleared)
-                        throw new HttpRequestException(
-                            $"CDN block on {label ?? "request"} — probe exhausted {MaxCdnRetries} retries.");
-                    continue;
-                }
-            }
-
             // ── Consume a rate token for retries ──
             // The caller's initial WaitAsync consumed a rate token for attempt 0.
-            // Retries need their own token unless the CDN cooldown path above
-            // already consumed one via WaitAsync.
-            if (attempt > 0 && !rateTokenConsumed)
+            if (attempt > 0)
                 await (limiter?.AcquireRateTokenAsync(ct) ?? Task.CompletedTask);
 
             HttpResponseMessage res;
@@ -225,6 +188,12 @@ public sealed class ResilientHttpExecutor
             }
             catch (HttpRequestException ex)
             {
+                // If CDN is actively blocked, don't retry — throw so the caller
+                // can release its DOP slot and wait for the probe.
+                if (IsCdnBlocked)
+                    throw new CdnBlockedException(
+                        $"CDN block on {label ?? "request"} (network error during CDN block: {ex.Message})");
+
                 _log.LogWarning(
                     "HTTP error for {Operation} (attempt {Attempt}, DOP {Dop}): {Error}",
                     label ?? "request", attempt + 1, limiter?.CurrentDop ?? -1, ex.Message);
@@ -233,6 +202,11 @@ public sealed class ResilientHttpExecutor
             }
             catch (TaskCanceledException) when (!ct.IsCancellationRequested)
             {
+                // Same check for timeouts during CDN block
+                if (IsCdnBlocked)
+                    throw new CdnBlockedException(
+                        $"CDN block on {label ?? "request"} (timeout during CDN block)");
+
                 _log.LogWarning(
                     "Timeout for {Operation} (attempt {Attempt}, DOP {Dop})",
                     label ?? "request", attempt + 1, limiter?.CurrentDop ?? -1);
@@ -249,6 +223,9 @@ public sealed class ResilientHttpExecutor
             var statusCode = (int)res.StatusCode;
 
             // ── CDN block detection (403 with non-JSON body) ──────────
+            // On CDN block: launch a background probe (if not already running)
+            // and throw CdnBlockedException immediately. The caller is responsible
+            // for releasing its DOP slot, waiting for WaitForCdnClearAsync(), and retrying.
             if (statusCode == 403)
             {
                 var body = await res.Content.ReadAsStringAsync(ct);
@@ -258,10 +235,11 @@ public sealed class ResilientHttpExecutor
                 {
                     Interlocked.Increment(ref _cdnBlocksDetected);
                     res.Dispose();
-                    var cdnResult = await RetryCdnBlockAsync(requestFactory, limiter, label, ct);
-                    if (cdnResult is null)
-                        continue; // Non-probe: CDN cleared, retry with full detection
-                    return cdnResult; // Probe: return actual response
+                    limiter?.ReportFailure();
+                    limiter?.SlashDop();
+                    LaunchCdnProbe(requestFactory, limiter, label, ct);
+                    throw new CdnBlockedException(
+                        $"CDN block on {label ?? "request"} (wire sends: {TotalHttpSends}, blocks: {CdnBlocksDetected})");
                 }
 
                 // JSON 403 — re-wrap the consumed body so caller can still read it
@@ -308,223 +286,112 @@ public sealed class ResilientHttpExecutor
     }
 
     /// <summary>
-    /// Handle a CDN-blocked request. The first request to detect a block becomes
-    /// the "probe" — it slashes DOP, walks the backoff schedule, and signals all
-    /// waiters when the CDN clears (or gives up after <see cref="MaxCdnRetries"/>).
-    /// Non-probes simply wait for the probe's signal, then return <c>null</c> to
-    /// <see cref="SendAsync"/> which loops back to re-execute with full CDN detection.
-    /// This eliminates thundering-herd stampedes.
-    ///
-    /// <para><b>Slot lifecycle:</b> The caller's DOP slot is released at entry so that
-    /// sleeping tasks do not starve the pool. A slot is reacquired on all exit paths
-    /// (success, probe failure, cancellation) preserving the caller's finally-Release
-    /// invariant.</para>
+    /// Launch a background CDN probe if one isn't already running.
+    /// The probe walks the backoff schedule, sending one HTTP request per interval.
+    /// When the CDN clears (non-CDN response), it signals <see cref="_cdnResolved"/>.
+    /// Callers should await <see cref="WaitForCdnClearAsync"/> after catching
+    /// <see cref="CdnBlockedException"/> to wait for the probe to succeed.
     /// </summary>
-    private async Task<HttpResponseMessage?> RetryCdnBlockAsync(
+    private void LaunchCdnProbe(
         Func<HttpRequestMessage> requestFactory,
         AdaptiveConcurrencyLimiter? limiter,
         string? label,
         CancellationToken ct)
     {
-        var delays = CdnRetryDelaysOverride ?? DefaultCdnRetryDelays;
+        // Only one probe at a time — if _cdnGate is already held, probe is running
+        if (!_cdnGate.Wait(0))
+            return; // probe already running
 
-        // Release the caller's slot immediately — we'll be sleeping, not using bandwidth.
-        bool slotHeld = false;
-        limiter?.Release();
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _cdnResolved = tcs;
 
-        try
+        _probeTask = Task.Run(async () =>
         {
-            // Try to become the probe. Only one request probes at a time.
-            if (!_cdnGate.Wait(0))
-            {
-                // ── Non-probe path ──────────────────────────────────────
-                // Wait for the probe to resolve. On success, reacquire slot and
-                // return to SendAsync to re-execute the original request.
-                // On failure or cancellation, reacquire slot and throw.
-                _log.LogDebug("CDN block on {Operation} — waiting for probe to clear.", label ?? "request");
-
-                // Spin until the probe has created its TCS. There's a brief race
-                // window between the probe winning _cdnGate and setting _cdnResolved.
-                // Without this spin, non-probes fall through with null, return to
-                // SendAsync, make another HTTP request hitting CDN, and double the
-                // block count.
-                var resolved = _cdnResolved;
-                while (resolved is null)
-                {
-                    await Task.Yield();
-                    resolved = _cdnResolved;
-                }
-
-                {
-                    using var reg = ct.Register(() => resolved.TrySetCanceled(ct));
-                    bool cdnCleared = await resolved.Task; // throws if cancelled
-
-                    if (!cdnCleared)
-                    {
-                        // Probe gave up after MaxCdnRetries
-                        if (limiter is not null) { await limiter.WaitAsync(ct); slotHeld = true; }
-                        throw new HttpRequestException(
-                            $"CDN block on {label ?? "request"} — probe exhausted {MaxCdnRetries} retries.");
-                    }
-                }
-
-                // CDN is clear — reacquire slot and return null to SendAsync,
-                // which will loop back and re-execute with full CDN detection.
-                if (limiter is not null) { await limiter.WaitAsync(ct); slotHeld = true; }
-                return null;
-            }
-
-            // ── Probe path ──────────────────────────────────────────
-            // We are the probe. Slash DOP, create signal, walk retry schedule.
-            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            _cdnResolved = tcs;
-
-            // Immediately slash DOP to minDop — CDN blocks are binary, not gradual.
-            limiter?.SlashDop();
-
+            var delays = CdnRetryDelaysOverride ?? DefaultCdnRetryDelays;
             try
             {
                 for (int i = _cdnRetryIndex; i < MaxCdnRetries; i++)
                 {
                     _cdnRetryIndex = i + 1;
-
                     var delay = i < delays.Length ? delays[i] : delays[^1];
 
-                    // Set cooldown timestamp (used by WaitForCdnCooldownAsync in SendAsync)
                     _cdnCooldownUntil = DateTimeOffset.UtcNow + delay;
 
                     _log.LogWarning(
-                        "CDN block on {Operation} (CDN retry {CdnAttempt}/{MaxRetries}), waiting {Delay:F1}s",
+                        "CDN probe for {Operation} (attempt {CdnAttempt}/{MaxRetries}), waiting {Delay:F1}s",
                         label ?? "request", i + 1, MaxCdnRetries, delay.TotalSeconds);
-                    limiter?.ReportFailure();
 
                     await Task.Delay(delay, ct);
 
-                    // Acquire only a rate token — NOT a DOP slot. The probe must
-                    // not compete for DOP slots because after SlashDop(575→4) the
-                    // release-debt mechanism absorbs all returns. Non-probes are
-                    // blocked on our TCS so they can't pay off the debt, creating
-                    // a deadlock if we wait on the semaphore here.
+                    // Only acquire a rate token — NOT a DOP slot
                     await (limiter?.AcquireRateTokenAsync(ct) ?? Task.CompletedTask);
 
                     HttpResponseMessage res;
                     try
                     {
-                        _log.LogInformation(
-                            "CDN probe sending HTTP request (attempt {CdnAttempt}/{MaxRetries}, wire sends so far: {WireSends})",
-                            i + 1, MaxCdnRetries, TotalHttpSends);
                         Interlocked.Increment(ref _cdnProbeAttempts);
                         Interlocked.Increment(ref _totalHttpSends);
                         res = await _http.SendAsync(requestFactory(), ct);
-                        _log.LogInformation(
-                            "CDN probe got response: {StatusCode} (attempt {CdnAttempt}/{MaxRetries})",
-                            (int)res.StatusCode, i + 1, MaxCdnRetries);
                     }
                     catch (HttpRequestException ex)
                     {
                         _log.LogWarning("CDN probe HTTP error (attempt {CdnAttempt}): {Error}", i + 1, ex.Message);
-                        continue; // probe has no DOP slot to release
+                        continue;
                     }
                     catch (TaskCanceledException) when (!ct.IsCancellationRequested)
                     {
                         _log.LogWarning("CDN probe timed out (attempt {CdnAttempt})", i + 1);
-                        continue; // probe has no DOP slot to release
+                        continue;
                     }
 
-                    if (res.IsSuccessStatusCode)
-                    {
-                        // CDN is back — clear state, signal waiters (unblocking
-                        // non-probes whose releases pay off DOP debt), then
-                        // reacquire a real slot for the caller.
-                        Interlocked.Increment(ref _cdnProbeSuccesses);
-                        _cdnCooldownUntil = default;
-                        _cdnRetryIndex = 0;
-                        tcs.TrySetResult(true);
-                        _log.LogWarning(
-                            "CDN cleared on {Operation} after {ProbeAttempt} probes (total sends: {TotalSends}, blocks: {Blocks})",
-                            label ?? "request", i + 1, TotalHttpSends, CdnBlocksDetected);
-                        if (limiter is not null) { await limiter.WaitAsync(ct); slotHeld = true; }
-                        limiter?.ReportSuccess();
-                        return res;
-                    }
-
+                    // Check if CDN cleared (any non-CDN response)
+                    bool isCdnBlock = false;
                     if ((int)res.StatusCode == 403)
                     {
                         var body = await res.Content.ReadAsStringAsync(ct);
-                        if (!body.TrimStart().StartsWith('{'))
-                        {
-                            res.Dispose();
-                            continue; // Still CDN blocked — probe has no DOP slot
-                        }
-
-                        // JSON 403 — CDN is clear, this is an API error
-                        Interlocked.Increment(ref _cdnProbeSuccesses);
-                        _cdnCooldownUntil = default;
-                        _cdnRetryIndex = 0;
-                        tcs.TrySetResult(true);
-                        _log.LogWarning(
-                            "CDN cleared on {Operation} (JSON 403) after {ProbeAttempt} probes (total sends: {TotalSends}, blocks: {Blocks})",
-                            label ?? "request", i + 1, TotalHttpSends, CdnBlocksDetected);
-                        res.Content.Dispose();
-                        res.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
-                        if (limiter is not null) { await limiter.WaitAsync(ct); slotHeld = true; }
-                        return res;
+                        isCdnBlock = !body.TrimStart().StartsWith('{');
+                        if (!isCdnBlock)
+                            res.Dispose(); // JSON 403 — CDN is clear
                     }
 
-                    // Different status — CDN is clear
+                    if (isCdnBlock)
+                    {
+                        res.Dispose();
+                        continue; // still blocked
+                    }
+
+                    // CDN cleared
                     Interlocked.Increment(ref _cdnProbeSuccesses);
                     _cdnCooldownUntil = default;
                     _cdnRetryIndex = 0;
-                    tcs.TrySetResult(true);
+                    res.Dispose();
                     _log.LogWarning(
-                        "CDN cleared on {Operation} ({StatusCode}) after {ProbeAttempt} probes (total sends: {TotalSends}, blocks: {Blocks})",
-                        label ?? "request", (int)res.StatusCode, i + 1, TotalHttpSends, CdnBlocksDetected);
-                    if (limiter is not null) { await limiter.WaitAsync(ct); slotHeld = true; }
-                    return res;
+                        "CDN cleared after {ProbeAttempt} probes (total sends: {TotalSends}, blocks: {Blocks})",
+                        i + 1, TotalHttpSends, CdnBlocksDetected);
+                    tcs.TrySetResult(true);
+                    return;
                 }
 
-                // Exhausted all retries — signal failure to waiters
-                _log.LogError(
-                    "CDN block on {Operation} — gave up after {MaxRetries} retries.",
-                    label ?? "request", MaxCdnRetries);
+                // Exhausted retries
+                _log.LogError("CDN probe gave up after {MaxRetries} retries.", MaxCdnRetries);
                 _cdnCooldownUntil = default;
                 _cdnRetryIndex = 0;
                 tcs.TrySetResult(false);
-
-                if (limiter is not null) { await limiter.WaitAsync(ct); slotHeld = true; }
-                throw new HttpRequestException(
-                    $"CDN block on {label ?? "request"} — probe exhausted {MaxCdnRetries} retries.");
+            }
+            catch (OperationCanceledException)
+            {
+                tcs.TrySetCanceled(ct);
+            }
+            catch (Exception ex)
+            {
+                _log.LogError(ex, "CDN probe failed unexpectedly.");
+                tcs.TrySetResult(false);
             }
             finally
             {
-                tcs.TrySetCanceled();
                 _cdnGate.Release();
             }
-        }
-        catch
-        {
-            // On any exception (OperationCanceledException, etc.), we must guarantee
-            // the caller's invariant: exactly one slot is held when we return/throw,
-            // because the caller's finally block will call limiter.Release().
-            //
-            // EXCEPT during cancellation: after SlashDop, the semaphore may have 0
-            // tokens with massive release-debt. WaitAsync(CancellationToken.None)
-            // would block forever. During shutdown the caller's Release() will
-            // safely absorb debt instead of returning a phantom token.
-            if (!slotHeld && limiter is not null && !ct.IsCancellationRequested)
-            {
-                try
-                {
-                    await limiter.WaitAsync(CancellationToken.None);
-                }
-                catch
-                {
-                    // Limiter disposed during shutdown — caller's Release() will be a
-                    // harmless no-op on a disposed semaphore. Let the original exception propagate.
-                }
-            }
-            throw;
-        }
+        }, ct);
     }
 
     /// <summary>
@@ -536,6 +403,33 @@ public sealed class ResilientHttpExecutor
         _cdnCooldownUntil = default;
         _cdnRetryIndex = 0;
         _cdnResolved = null;
+    }
+
+    /// <summary>
+    /// True when a CDN block is currently active (probe in progress or cooldown pending).
+    /// Callers should check this <em>before</em> acquiring a DOP slot to avoid
+    /// acquiring a slot only to immediately enter CDN retry and hold it indefinitely.
+    /// </summary>
+    public bool IsCdnBlocked =>
+        _cdnResolved is { Task.IsCompleted: false } ||
+        _cdnCooldownUntil > DateTimeOffset.UtcNow;
+
+    /// <summary>
+    /// Wait until any active CDN block clears (probe resolves or cooldown expires).
+    /// Returns immediately if no CDN block is active. Does not acquire any DOP or rate slots.
+    /// </summary>
+    public async Task WaitForCdnClearAsync(CancellationToken ct)
+    {
+        // Wait for active probe to resolve
+        var resolved = _cdnResolved;
+        if (resolved is not null && !resolved.Task.IsCompleted)
+        {
+            using var reg = ct.Register(() => resolved.TrySetCanceled(ct));
+            await resolved.Task.ConfigureAwait(false); // ignores true/false result — just waits
+        }
+
+        // Wait for any remaining cooldown
+        await WaitForCdnCooldownAsync(ct);
     }
 
     /// <summary>

@@ -21,6 +21,7 @@ public class SongProcessingMachine
     private readonly ScrapeProgressTracker _progress;
     private readonly UserSyncProgressTracker _syncTracker;
     private readonly ILogger<SongProcessingMachine> _log;
+    private readonly ResilientHttpExecutor? _executor;
 
     public SongProcessingMachine(
         ILeaderboardQuerier scraper,
@@ -28,7 +29,8 @@ public class SongProcessingMachine
         GlobalLeaderboardPersistence persistence,
         ScrapeProgressTracker progress,
         UserSyncProgressTracker syncTracker,
-        ILogger<SongProcessingMachine> log)
+        ILogger<SongProcessingMachine> log,
+        ResilientHttpExecutor? executor = null)
     {
         _scraper = scraper;
         _resultProcessor = resultProcessor;
@@ -36,6 +38,7 @@ public class SongProcessingMachine
         _progress = progress;
         _syncTracker = syncTracker;
         _log = log;
+        _executor = executor ?? (scraper as GlobalLeaderboardScraper)?.Executor;
     }
 
     /// <summary>
@@ -65,9 +68,7 @@ public class SongProcessingMachine
         int batchSize = 500,
         bool reportProgress = true,
         int maxConcurrentSongs = 0,
-        CancellationToken ct = default,
-        Dictionary<(string SongId, string Instrument), HashSet<string>>? knownScores = null,
-        IReadOnlyDictionary<string, (int? FirstSeenSeason, int EstimatedSeason)>? firstSeenSeasons = null)
+        CancellationToken ct = default)
     {
         if (songIds.Count == 0 || users.Count == 0)
             return new MachineResult();
@@ -121,7 +122,7 @@ public class SongProcessingMachine
             {
             var result = await ProcessSongAsync(
                 songId, instruments, users, seasonPrefixMap,
-                accessToken, callerAccountId, pool, isHighPriority, batchSize, ct, knownScores, firstSeenSeasons);
+                accessToken, callerAccountId, pool, isHighPriority, batchSize, ct);
 
             Interlocked.Add(ref totalUpdated, result.EntriesUpdated);
             Interlocked.Add(ref totalSessions, result.SessionsInserted);
@@ -183,9 +184,7 @@ public class SongProcessingMachine
         SharedDopPool pool,
         bool isHighPriority,
         int batchSize,
-        CancellationToken ct,
-        Dictionary<(string SongId, string Instrument), HashSet<string>>? knownScores = null,
-        IReadOnlyDictionary<string, (int? FirstSeenSeason, int EstimatedSeason)>? firstSeenSeasons = null)
+        CancellationToken ct)
     {
         int entriesUpdated = 0;
         int sessionsInserted = 0;
@@ -200,7 +199,7 @@ public class SongProcessingMachine
         {
             var result = await ProcessSongInstrumentAsync(
                 songId, instrument, users, seasonPrefixMap,
-                accessToken, callerAccountId, pool, isHighPriority, batchSize, ct, knownScores, firstSeenSeasons,
+                accessToken, callerAccountId, pool, isHighPriority, batchSize, ct,
                 missingSeasonsForSong);
 
             Interlocked.Add(ref entriesUpdated, result.EntriesUpdated);
@@ -234,32 +233,11 @@ public class SongProcessingMachine
         bool isHighPriority,
         int batchSize,
         CancellationToken ct,
-        Dictionary<(string SongId, string Instrument), HashSet<string>>? knownScores = null,
-        IReadOnlyDictionary<string, (int? FirstSeenSeason, int EstimatedSeason)>? firstSeenSeasons = null,
         ConcurrentDictionary<int, bool>? missingSeasonsForSong = null)
     {
         int entriesUpdated = 0;
         int sessionsInserted = 0;
         int apiCalls = 0;
-
-        // When knownScores is provided, filter seasonal users to only those
-        // with a known alltime score on this combo (V1 full crawl finding).
-        IReadOnlyList<UserWorkItem> seasonalUsers = users;
-        if (knownScores is not null)
-        {
-            var hasScore = knownScores.TryGetValue((songId, instrument), out var found) ? found : null;
-            if (hasScore is null || hasScore.Count == 0)
-            {
-                // No registered user has an alltime score here — skip seasonal entirely
-                seasonalUsers = [];
-            }
-            else
-            {
-                seasonalUsers = users
-                    .Where(u => hasScore.Contains(u.AccountId))
-                    .ToList();
-            }
-        }
 
         // ─── Alltime lookups (async task) ─────────────────────
         var alltimeTask = RunAlltimeLookups(
@@ -267,20 +245,13 @@ public class SongProcessingMachine
             pool, isHighPriority, batchSize, ct);
 
         // ─── Seasonal session lookups (async task) ────────────
-        // Determine earliest season this song existed (skip earlier seasons)
-        int songFirstSeason = 1; // default: assume existed since S1
-        if (firstSeenSeasons is not null &&
-            firstSeenSeasons.TryGetValue(songId, out var fss))
-        {
-            songFirstSeason = fss.FirstSeenSeason ?? fss.EstimatedSeason;
-        }
-
         // Pro Lead/Bass didn't exist before Season 3
+        int songFirstSeason = 1;
         if (instrument is "Solo_PeripheralGuitar" or "Solo_PeripheralBass")
-            songFirstSeason = Math.Max(songFirstSeason, 3);
+            songFirstSeason = 3;
 
         var seasonalTask = RunSeasonalLookups(
-            songId, instrument, seasonalUsers, seasonPrefixMap, accessToken, callerAccountId,
+            songId, instrument, users, seasonPrefixMap, accessToken, callerAccountId,
             pool, isHighPriority, batchSize, ct, songFirstSeason, missingSeasonsForSong);
 
         // Both phases use the SharedDopPool for backpressure — total API
@@ -339,13 +310,21 @@ public class SongProcessingMachine
                 var chunk = alltimeUsers.GetRange(offset, Math.Min(batchSize, alltimeUsers.Count - offset));
                 var targetIds = chunk.Select(u => u.AccountId).ToList();
 
+                // Wait for any active CDN block to clear BEFORE acquiring a DOP slot.
+                // This is unconditional — WaitForCdnClearAsync returns immediately if no block.
+                // Prevents DOP slot churn during CDN where tasks acquire→throw→release in a loop.
+                if (_executor is not null)
+                    await _executor.WaitForCdnClearAsync(ct);
+
                 // Acquire DOP slot only for the HTTP call, release immediately after
                 List<LeaderboardEntry> entries;
                 LowPriorityToken lowToken = default;
-                if (isHighPriority) await pool.AcquireHighAsync(ct);
-                else lowToken = await pool.AcquireLowAsync(ct);
+                bool slotAcquired = false;
                 try
                 {
+                    if (isHighPriority) { await pool.AcquireHighAsync(ct); slotAcquired = true; }
+                    else { lowToken = await pool.AcquireLowAsync(ct); slotAcquired = true; }
+
                     _progress.ReportPhaseRequest();
                     Interlocked.Increment(ref apiCalls);
 
@@ -354,6 +333,14 @@ public class SongProcessingMachine
                         entries = await _scraper.LookupMultipleAccountsAsync(
                             songId, instrument, targetIds,
                             accessToken, callerAccountId, limiter: pool.Limiter, ct);
+                    }
+                    catch (CdnBlockedException)
+                    {
+                        // Release slot immediately, wait for probe to clear, retry same batch
+                        if (slotAcquired) { if (isHighPriority) pool.ReleaseHigh(); else pool.ReleaseLow(lowToken); slotAcquired = false; }
+                        if (_executor is not null) await _executor.WaitForCdnClearAsync(ct);
+                        offset -= batchSize; // retry same batch (for loop will += batchSize)
+                        continue;
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -364,8 +351,11 @@ public class SongProcessingMachine
                 }
                 finally
                 {
-                    if (isHighPriority) pool.ReleaseHigh();
-                    else pool.ReleaseLow(lowToken);
+                    if (slotAcquired)
+                    {
+                        if (isHighPriority) pool.ReleaseHigh();
+                        else pool.ReleaseLow(lowToken);
+                    }
                 }
 
                 // DB processing runs outside the DOP slot — no API concurrency needed
@@ -461,13 +451,19 @@ public class SongProcessingMachine
                 var chunk = seasonUsers.GetRange(offset, Math.Min(batchSize, seasonUsers.Count - offset));
                 var targetIds = chunk.Select(u => u.AccountId).ToList();
 
+                // Wait for any active CDN block to clear BEFORE acquiring a DOP slot.
+                if (_executor is not null)
+                    await _executor.WaitForCdnClearAsync(ct);
+
                 // Acquire DOP slot only for the HTTP call, release immediately after
                 List<SessionHistoryEntry> sessions;
                 LowPriorityToken lowToken = default;
-                if (isHighPriority) await pool.AcquireHighAsync(ct);
-                else lowToken = await pool.AcquireLowAsync(ct);
+                bool slotAcquired = false;
                 try
                 {
+                    if (isHighPriority) { await pool.AcquireHighAsync(ct); slotAcquired = true; }
+                    else { lowToken = await pool.AcquireLowAsync(ct); slotAcquired = true; }
+
                     _progress.ReportPhaseRequest();
                     Interlocked.Increment(ref apiCalls);
 
@@ -477,29 +473,45 @@ public class SongProcessingMachine
                             songId, instrument, seasonPrefix, targetIds,
                             accessToken, callerAccountId, limiter: pool.Limiter, ct);
                     }
+                    catch (CdnBlockedException)
+                    {
+                        // Release slot immediately, wait for probe to clear, retry same batch
+                        if (slotAcquired) { if (isHighPriority) pool.ReleaseHigh(); else pool.ReleaseLow(lowToken); slotAcquired = false; }
+                        if (_executor is not null) await _executor.WaitForCdnClearAsync(ct);
+                        offset -= batchSize; // retry same batch
+                        continue;
+                    }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         _log.LogDebug(ex, "Seasonal batch failed for {Song}/{Instrument}/{Season}.",
                             songId, instrument, seasonPrefix);
                         _progress.ReportPhaseRetry();
+
+                        // If the first batch fails (BadRequest = song not charted in this season),
+                        // mark so other instruments can skip this season and earlier ones.
+                        if (offset == 0)
+                            missingSeasonsForSong?.TryAdd(season, true);
+
                         continue;
                     }
                 }
                 finally
                 {
-                    if (isHighPriority) pool.ReleaseHigh();
-                    else pool.ReleaseLow(lowToken);
+                    if (slotAcquired)
+                    {
+                        if (isHighPriority) pool.ReleaseHigh();
+                        else pool.ReleaseLow(lowToken);
+                    }
                 }
 
                 // If the first batch for this season returned zero sessions,
                 // the song likely didn't exist in this season (BadRequest or genuinely empty).
-                // Mark it so other instruments can skip this season and all earlier ones.
+                // However, we can't distinguish BadRequest from "no users played this season"
+                // at this level (the scraper swallows BadRequest as empty list).
+                // Only break out of the batch loop for this season — do NOT mark
+                // missingSeasonsForSong, as users may have scores in earlier seasons.
                 if (offset == 0 && sessions.Count == 0)
-                {
-                    firstBatchEmpty = true;
-                    missingSeasonsForSong?.TryAdd(season, true);
                     break; // No point sending more batches for this season
-                }
 
                 // DB processing runs outside the DOP slot.
                 // Split: HistoryRecon users accumulate for cross-season OldScore,
