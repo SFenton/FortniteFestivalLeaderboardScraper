@@ -458,6 +458,8 @@ public sealed class RankHistoryDto
     public int? SongsPlayed { get; init; }
     public double? Coverage { get; init; }
     public int? FullComboCount { get; init; }
+    public double? RawFcRate { get; init; }
+    public double? RawMaxScorePercent { get; init; }
 }
 
 /// <summary>

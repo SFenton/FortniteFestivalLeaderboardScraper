@@ -448,6 +448,8 @@ public sealed class InstrumentDatabaseRankingsTests : IDisposable
         Assert.NotNull(history[0].Coverage);
         Assert.NotNull(history[0].FcRate);
         Assert.NotNull(history[0].FullComboCount);
+        Assert.NotNull(history[0].RawFcRate);
+        // RawMaxScorePercent is null when song_stats has no max_score
     }
 
     [Fact]
