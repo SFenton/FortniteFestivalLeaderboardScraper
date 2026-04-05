@@ -99,14 +99,13 @@ public sealed class PostScrapeOrchestrator
                 ? ComputeLeaderboardRivalsAsync(ctx, ct)
                 : Task.CompletedTask);
 
-        // ── Precompute API responses + player stats tiers in parallel ──
-        // PrecomputeAllAsync writes to an in-memory ConcurrentDictionary;
-        // ComputePlayerStatsTiersAsync writes to the player_stats_tiers table.
-        // Neither reads the other's output, so they can overlap.
+        // ── Compute player stats tiers first, then precompute API responses ──
+        // ComputePlayerStatsTiersAsync writes to the player_stats_tiers table;
+        // PrecomputeAllAsync reads those rows (plus composite_rankings) to build
+        // in-memory cached responses.  Sequential ordering ensures fresh data.
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Precomputing);
-        await Task.WhenAll(
-            _precomputer.PrecomputeAllAsync(ct),
-            ComputePlayerStatsTiersAsync(ctx, ct));
+        await ComputePlayerStatsTiersAsync(ctx, ct);
+        await _precomputer.PrecomputeAllAsync(ct);
 
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Finalizing);
 

@@ -448,10 +448,23 @@ public static partial class ApiEndpoints
             if (tierRows.Count > 0)
             {
                 int totalSongs = persistence.GetTotalSongCount();
+
+                // Include composite ranks when available
+                var composite = metaDb.GetCompositeRanking(accountId);
+                object? compositeRanks = composite is null ? null : new
+                {
+                    adjusted = composite.CompositeRank,
+                    weighted = composite.CompositeRankWeighted,
+                    fcRate = composite.CompositeRankFcRate,
+                    totalScore = composite.CompositeRankTotalScore,
+                    maxScore = composite.CompositeRankMaxScore,
+                };
+
                 var payload = new
                 {
                     accountId,
                     totalSongs,
+                    compositeRanks,
                     instruments = tierRows.Select(r => new
                     {
                         ins = r.Instrument == "Overall" ? "00" : ComboIds.FromInstruments(new[] { r.Instrument }),

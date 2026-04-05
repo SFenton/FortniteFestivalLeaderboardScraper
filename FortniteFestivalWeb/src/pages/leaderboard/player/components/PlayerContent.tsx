@@ -148,13 +148,6 @@ export default function PlayerContent({
     })),
   });
 
-  // Fetch composite ranking for global rank cards
-  const { data: compositeRanking } = useQuery({
-    queryKey: queryKeys.playerCompositeRanking(data.accountId),
-    queryFn: () => api.getPlayerCompositeRanking(data.accountId),
-    staleTime: 5 * 60_000,
-  });
-
   // Build map of instrument → AccountRankingEntry for passing to sections
   const instrumentRankings = useMemo(() => {
     const map = new Map<InstrumentKey, AccountRankingEntry>();
@@ -241,7 +234,7 @@ export default function PlayerContent({
   }
 
   // --- Overall summary stat boxes ---
-  items.push(...buildOverallSummaryItems(t, overallStats, songs.length, visibleKeys, navigateToSongs, navigateToSongDetail, cardStyle, compositeRanking, settings.enableExperimentalRanks, navigateToLeaderboard));
+  items.push(...buildOverallSummaryItems(t, overallStats, songs.length, visibleKeys, navigateToSongs, navigateToSongDetail, cardStyle, statsData?.compositeRanks, settings.enableExperimentalRanks, navigateToLeaderboard));
 
   // --- Instrument Statistics heading ---
   items.push({

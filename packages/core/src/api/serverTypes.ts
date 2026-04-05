@@ -377,6 +377,16 @@ export type PlayerStatsResponse = {
   accountId: string;
   totalSongs: number;
   instruments: PlayerStatsInstrument[];
+  compositeRanks?: CompositeRanks | null;
+};
+
+/** Flat composite rank numbers embedded in the stats response. */
+export type CompositeRanks = {
+  adjusted: number;
+  weighted?: number | null;
+  fcRate?: number | null;
+  totalScore?: number | null;
+  maxScore?: number | null;
 };
 
 // ─── Rivals types ──────────────────────────────────────────────
@@ -925,6 +935,7 @@ type WireStatsResponse = {
   accountId: string;
   totalSongs: number;
   instruments: WireStatsInstrument[];
+  compositeRanks?: CompositeRanks | null;
 };
 
 function expandPercentileIndex(idx: number | null | undefined): string | null {
@@ -1008,5 +1019,6 @@ export function expandWireStatsResponse(wire: WireStatsResponse): PlayerStatsRes
     accountId: wire.accountId,
     totalSongs: wire.totalSongs ?? 0,
     instruments: (wire.instruments ?? []).map(expandStatsInstrument),
+    compositeRanks: wire.compositeRanks ?? null,
   };
 }

@@ -633,10 +633,23 @@ public sealed class ScrapeTimePrecomputer
         if (tierRows.Count == 0) return;
 
         int totalSongs = _persistence.GetTotalSongCount();
+
+        // Embed composite ranks so the stats endpoint serves them without a second DB hit
+        var composite = _metaDb.GetCompositeRanking(accountId);
+        object? compositeRanks = composite is null ? null : new
+        {
+            adjusted = composite.CompositeRank,
+            weighted = composite.CompositeRankWeighted,
+            fcRate = composite.CompositeRankFcRate,
+            totalScore = composite.CompositeRankTotalScore,
+            maxScore = composite.CompositeRankMaxScore,
+        };
+
         var payload = new
         {
             accountId,
             totalSongs,
+            compositeRanks,
             instruments = tierRows.Select(r => new
             {
                 ins = r.Instrument == "Overall" ? "00" : ComboIds.FromInstruments(new[] { r.Instrument }),

@@ -3,13 +3,13 @@
  * Returns Item[] for: songs played, full combos, gold stars, avg accuracy, best rank.
  */
 import { ACCURACY_SCALE } from '@festival/core';
-import { type ServerInstrumentKey as InstrumentKey, type CompositeRankingDto, type RankingMetric } from '@festival/core/api/serverTypes';
+import { type ServerInstrumentKey as InstrumentKey, type CompositeRanks, type RankingMetric } from '@festival/core/api/serverTypes';
 import { Colors } from '@festival/theme';
 import { formatClamped, accuracyColor } from '../helpers/playerStats';
 import StatBox from '../../../components/player/StatBox';
 import { defaultSongFilters, type SongSettings } from '../../../utils/songSettings';
 import type { PlayerItem, NavigateToSongs, NavigateToSongDetail } from '../helpers/playerPageTypes';
-import { getCompositeRankForMetric, DEFAULT_METRICS, EXPERIMENTAL_METRICS } from '../../leaderboards/helpers/rankingHelpers';
+import { DEFAULT_METRICS, EXPERIMENTAL_METRICS } from '../../leaderboards/helpers/rankingHelpers';
 
 const METRIC_I18N_KEY: Record<RankingMetric, string> = {
   totalscore: 'player.totalScoreRank',
@@ -56,7 +56,7 @@ export function buildOverallSummaryItems(
   navigateToSongs: NavigateToSongs,
   navigateToSongDetail: NavigateToSongDetail,
   cardStyle: React.CSSProperties,
-  compositeRanking?: CompositeRankingDto,
+  compositeRanks?: CompositeRanks | null,
   enableExperimentalRanks?: boolean,
   navigateToLeaderboard?: (instrument: InstrumentKey | null, metric: RankingMetric) => void,
 ): PlayerItem[] {
@@ -88,10 +88,17 @@ export function buildOverallSummaryItems(
   ];
 
   // Composite rank cards (after Best Rank)
-  if (compositeRanking) {
+  if (compositeRanks) {
+    const rankMap: Record<RankingMetric, number | null | undefined> = {
+      adjusted: compositeRanks.adjusted,
+      weighted: compositeRanks.weighted,
+      fcrate: compositeRanks.fcRate,
+      totalscore: compositeRanks.totalScore,
+      maxscore: compositeRanks.maxScore,
+    };
     const metrics: RankingMetric[] = [...DEFAULT_METRICS, ...(enableExperimentalRanks ? EXPERIMENTAL_METRICS : [])];
     for (const metric of metrics) {
-      const rank = getCompositeRankForMetric(compositeRanking, metric);
+      const rank = rankMap[metric];
       if (rank != null && rank > 0) {
         boxes.push({
           label: t(METRIC_I18N_KEY[metric]),
