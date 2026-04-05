@@ -18,11 +18,13 @@ import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerS
 import type { RankingMetric, ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
 import { LoadPhase } from '@festival/core';
 import RankByModal from './modals/RankByModal';
+import RankHistoryChart from './components/RankHistoryChart';
 import { loadLeaderboardRankBy, saveLeaderboardRankBy } from '../../utils/leaderboardSettings';
 import { useModalState } from '../../hooks/ui/useModalState';
 import { useIsMobileChrome } from '../../hooks/ui/useIsMobile';
 import { useGridColumnCount } from '../../hooks/ui/useGridColumnCount';
 import { useFabSearch } from '../../contexts/FabSearchContext';
+import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 
 import {
   Display, Overflow, Gap,
@@ -39,6 +41,7 @@ export default function LeaderboardsOverviewPage() {
   const { player } = useTrackedPlayer();
   const isMobile = useIsMobileChrome();
   const fabSearch = useFabSearch();
+  const scrollContainerRef = useScrollContainer();
   const [searchParams, setSearchParams] = useSearchParams();
   const rawMetric = (searchParams.get('rankBy') ?? loadLeaderboardRankBy()) as RankingMetric;
   const metric = settings.enableExperimentalRanks ? rawMetric : 'totalscore' as RankingMetric;
@@ -49,13 +52,17 @@ export default function LeaderboardsOverviewPage() {
     metricModal.open(metric);
   }, [metricModal, metric]);
 
+  const staggerRushRef = useRef<(() => void) | undefined>(undefined);
+  const resetRush = useCallback(() => staggerRushRef.current?.(), []);
+
   const applyMetric = useCallback(() => {
-    scrollRef.current?.scrollTo(0, 0);
+    scrollContainerRef.current?.scrollTo(0, 0);
+    resetRush();
     setShouldStagger(true);
     saveLeaderboardRankBy(metricModal.draft);
     setSearchParams({ rankBy: metricModal.draft }, { replace: true });
     metricModal.close();
-  }, [metricModal, setSearchParams]);
+  }, [metricModal, setSearchParams, scrollContainerRef, resetRush]);
 
   useEffect(() => {
     fabSearch.registerLeaderboardActions({ openMetric: openMetricModal, openInstrument: () => {} });
@@ -111,6 +118,7 @@ export default function LeaderboardsOverviewPage() {
   return (
     <Page
       scrollRef={scrollRef}
+      staggerRushRef={staggerRushRef}
       scrollRestoreKey="leaderboards"
       loadPhase={loadPhase}
       fabSpacer={loadPhase === LoadPhase.ContentIn && allErrored ? 'none' : 'end'}
@@ -147,6 +155,15 @@ export default function LeaderboardsOverviewPage() {
         const parsed = parseApiError(String(rankingQueries[0]!.error));
         return <EmptyState fullPage title={parsed.title} subtitle={parsed.subtitle} style={buildStaggerStyle(200)} onAnimationEnd={clearStaggerStyle} />;
       })()}
+      {loadPhase === LoadPhase.ContentIn && !allErrored && player && (
+        <div style={s.chartWrapper}>
+          <RankHistoryChart
+            accountId={player.accountId}
+            instruments={instruments}
+            metric={metric}
+          />
+        </div>
+      )}
       {loadPhase === LoadPhase.ContentIn && !allErrored && (
         <div ref={gridRef} style={s.grid}>
           {instruments.map((inst, idx) => {
@@ -183,6 +200,9 @@ function useLeaderboardsStyles() {
       gridTemplateColumns: GridTemplate.autoFillInstrument,
       gap: `${Gap.section}px ${Gap.md}px`,
       overflow: Overflow.hidden,
+    } as CSSProperties,
+    chartWrapper: {
+      marginBottom: Gap.section,
     } as CSSProperties,
   }), []);
 }
