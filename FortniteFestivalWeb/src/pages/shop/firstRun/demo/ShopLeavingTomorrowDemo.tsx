@@ -41,7 +41,7 @@ export default function ShopLeavingTomorrowDemo() {
           : undefined;
         return (
           <FadeIn key={song.songId} delay={i * 80} style={s.row} className={className}>
-            <AlbumArt src={song.albumArt} size={ART_SIZE} pulseRed={isLeaving} pulse={isShop} />
+            <AlbumArt src={song.albumArt} size={ART_SIZE} />
             <div style={s.info}>
               <span style={s.title}>{song.title}</span>
               <span style={s.artist}>{song.artist}</span>

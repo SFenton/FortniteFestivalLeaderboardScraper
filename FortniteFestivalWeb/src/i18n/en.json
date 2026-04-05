@@ -500,6 +500,7 @@
     "expert": "Expert"
   },
   "firstRun": {
+    "demoSimulated": "Some demo data may be simulated.",
     "songs": {
       "songList": {
         "title": "Song List",

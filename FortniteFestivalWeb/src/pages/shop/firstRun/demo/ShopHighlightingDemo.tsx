@@ -36,7 +36,7 @@ export default function ShopHighlightingDemo() {
         const pulse = i % 2 === 0;
         return (
           <FadeIn key={song.songId} delay={i * 80} style={s.row} className={pulse ? anim.shopHighlight : undefined}>
-            <AlbumArt src={song.albumArt} size={ART_SIZE} pulse={pulse} />
+            <AlbumArt src={song.albumArt} size={ART_SIZE} />
             <div style={s.info}>
               <span style={s.title}>{song.title}</span>
               <span style={s.artist}>{song.artist}</span>
