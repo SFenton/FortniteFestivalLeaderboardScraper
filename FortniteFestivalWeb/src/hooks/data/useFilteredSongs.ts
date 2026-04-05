@@ -185,6 +185,24 @@ export function useFilteredSongs({
           }
           break;
         }
+        case 'maxscorediff': {
+          const sa = scoreMap.get(a.songId);
+          const sb = scoreMap.get(b.songId);
+          const ma = inst ? a.maxScores?.[inst] : undefined;
+          const mb = inst ? b.maxScores?.[inst] : undefined;
+          const da = sa && sa.score > 0 && ma ? sa.score - ma : undefined;
+          const db = sb && sb.score > 0 && mb ? sb.score - mb : undefined;
+          if (da != null && db != null) {
+            cmp = da - db;
+          } else if (da != null) {
+            cmp = -dir;
+          } else if (db != null) {
+            cmp = dir;
+          } else {
+            cmp = compareByMode('score', sa, sb);
+          }
+          break;
+        }
         default:
           if (scoreMap.size > 0) {
             cmp = compareByMode(sortMode, scoreMap.get(a.songId), scoreMap.get(b.songId));

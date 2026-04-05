@@ -111,7 +111,7 @@ function loadSettings(): AppSettings {
     const merged = { ...defaults, ...parsed };
     // Migrate songRowVisualOrder: append new keys and strip removed keys
     if (Array.isArray(merged.songRowVisualOrder)) {
-      merged.songRowVisualOrder = merged.songRowVisualOrder.filter((k: string) => k !== 'maxdistance');
+      merged.songRowVisualOrder = merged.songRowVisualOrder.filter((k: string) => k !== 'maxdistance' && k !== 'maxscorediff');
       const missing = DEFAULT_METADATA_ORDER.filter(k => !merged.songRowVisualOrder.includes(k));
       if (missing.length > 0) merged.songRowVisualOrder = [...merged.songRowVisualOrder, ...missing];
     }

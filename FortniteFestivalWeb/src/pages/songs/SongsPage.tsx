@@ -61,6 +61,7 @@ const METADATA_MIN_WIDTH: Record<string, number> = {
   seasonachieved: 48, // SeasonPill (~32px) + gap share
   intensity: 44,    // DifficultyBars (~28px) + gap share
   maxdistance: 76,  // PercentilePill with % (~60px) + gap share
+  maxscorediff: 92,  // PercentilePill with -XXX,XXX (~76px) + gap share
 };
 
 /** Fixed overhead: row padding (32px) + SongInfo (albumArt 48 + gap 16 + min title 150) + gap to metadata (16). */
@@ -72,7 +73,7 @@ const ROW_WIDTH_BUFFER = 60;
 function getMinDesktopRowWidth(visibleKeys: string[], sortMode?: string): number {
   let width = ROW_FIXED_OVERHEAD;
   for (const key of visibleKeys) {
-    if (key === 'score' && sortMode === 'maxdistance') {
+    if (key === 'score' && (sortMode === 'maxdistance' || sortMode === 'maxscorediff')) {
       width += 192;  // dual score: 78 + 6 + ~8 + 6 + 78 = 176px + 16px gap share
     } else {
       width += METADATA_MIN_WIDTH[key] ?? 80;
@@ -111,9 +112,12 @@ export default function SongsPage() {
       order = settings.metadataOrder.filter(k => !hidden.has(k));
     }
 
-    // Auto-inject maxdistance only when max-score sort is active
+    // Auto-inject maxdistance/maxscorediff only when max-score sort is active
     if (settings.sortMode === 'maxdistance' && !order.includes('maxdistance')) {
       order = [...order, 'maxdistance'];
+    }
+    if (settings.sortMode === 'maxscorediff' && !order.includes('maxscorediff')) {
+      order = [...order, 'maxscorediff'];
     }
     return order;
   }, [

@@ -49,7 +49,7 @@ function renderMetadataElement(
   switch (key) {
     case 'score':
       if (score.score <= 0) return null;
-      if (sortMode === 'maxdistance') {
+      if (sortMode === 'maxdistance' || sortMode === 'maxscorediff') {
         return (
           <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: Gap.md }}>
             <ScorePill score={score.score} width={scoreWidth} bold />
@@ -91,6 +91,14 @@ function renderMetadataElement(
       if (!maxScore) return <PercentilePill display="—" />;
       const pct = (score.score / maxScore) * 100;
       return <PercentilePill display={`${pct.toFixed(1)}%`} color={maxScoreColor(pct)} />;
+    }
+    case 'maxscorediff': {
+      if (score.score <= 0) return null;
+      if (!maxScore) return <PercentilePill display="—" />;
+      const diff = score.score - maxScore;
+      const pct = (score.score / maxScore) * 100;
+      const formatted = diff > 0 ? `+${diff.toLocaleString()}` : diff.toLocaleString();
+      return <PercentilePill display={formatted} color={maxScoreColor(pct)} />;
     }
     default:
       return null;
@@ -194,10 +202,10 @@ export const SongRow = memo(function SongRow({ song,
     const order = [...metadataOrder];
     const generalModes = ['title', 'artist', 'year', 'hasfc'];
     if (!generalModes.includes(sortMode)) {
-      if (sortMode === 'maxdistance') {
-        // Max-distance sort: score (dual) is primary, maxdistance % goes to bottom row
-        const rest = order.filter(k => k !== 'score' && k !== 'maxdistance');
-        return ['score', 'maxdistance', ...rest];
+      if (sortMode === 'maxdistance' || sortMode === 'maxscorediff') {
+        // Max-distance/diff sort: score (dual) is primary, metric goes to bottom row
+        const rest = order.filter(k => k !== 'score' && k !== 'maxdistance' && k !== 'maxscorediff');
+        return ['score', sortMode, ...rest];
       }
       if (order.includes(sortMode)) {
         return [sortMode, ...order.filter(k => k !== sortMode)];

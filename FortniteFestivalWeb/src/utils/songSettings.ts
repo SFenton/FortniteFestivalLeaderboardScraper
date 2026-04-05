@@ -20,7 +20,8 @@ export type SongSortMode =
   | 'stars'
   | 'seasonachieved'
   | 'intensity'
-  | 'maxdistance';
+  | 'maxdistance'
+  | 'maxscorediff';
 
 /** Sort modes only valid when an instrument filter is active. */
 export const INSTRUMENT_SORT_MODES: { mode: SongSortMode; label: string }[] = [
@@ -31,6 +32,7 @@ export const INSTRUMENT_SORT_MODES: { mode: SongSortMode; label: string }[] = [
   { mode: 'seasonachieved', label: 'Season' },
   { mode: 'intensity', label: 'Intensity' },
   { mode: 'maxdistance', label: 'Max Score %' },
+  { mode: 'maxscorediff', label: 'Max Score Diff' },
 ];
 
 export const isInstrumentSortMode = (mode: SongSortMode): boolean =>
@@ -51,7 +53,7 @@ export const DEFAULT_METADATA_ORDER: string[] = [
 
 /** Append any new DEFAULT_METADATA_ORDER keys missing from a saved order and strip removed keys. */
 function migrateMetadataOrder(saved: string[]): string[] {
-  const stripped = saved.filter(k => k !== 'maxdistance');
+  const stripped = saved.filter(k => k !== 'maxdistance' && k !== 'maxscorediff');
   const missing = DEFAULT_METADATA_ORDER.filter(k => !stripped.includes(k));
   return missing.length > 0 ? [...stripped, ...missing] : stripped;
 }
