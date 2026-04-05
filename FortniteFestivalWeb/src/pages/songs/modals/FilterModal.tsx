@@ -14,6 +14,7 @@ import { INSTRUMENT_KEYS, INSTRUMENT_LABELS } from '@festival/core/api/serverTyp
 import type { SongFilters } from '../../../utils/songSettings';
 import { useSettings, isInstrumentVisible } from '../../../contexts/SettingsContext';
 import DifficultyBars from '../../../components/songs/metadata/DifficultyBars';
+import { useShopState } from '../../../hooks/data/useShopState';
 import { useTranslation } from 'react-i18next';
 
 export type FilterDraft = SongFilters & {
@@ -36,6 +37,7 @@ const PERCENTILE_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70
 export default function FilterModal({ visible, draft, savedDraft, availableSeasons, onChange, onCancel, onReset, onApply }: FilterModalProps) {
   const { t } = useTranslation();
   const { settings: appSettings } = useSettings();
+  const { isShopVisible } = useShopState();
   const visibleKeys = INSTRUMENT_KEYS.filter(k => isInstrumentVisible(appSettings, k));
 
   const toggleMissingScores = (key: InstrumentKey) => {
@@ -162,6 +164,26 @@ export default function FilterModal({ visible, draft, savedDraft, availableSeaso
           </Accordion>
         ))}
       </ModalSection>
+
+      {/* Item Shop filters */}
+      {isShopVisible && (
+        <ModalSection>
+          <Accordion title={t('filter.shopTitle')} hint={t('filter.shopHint')}>
+            <ToggleRow
+              label={t('filter.shopInShop')}
+              description={t('filter.shopInShopDesc')}
+              checked={draft.shopInShop}
+              onToggle={() => onChange({ ...draft, shopInShop: !draft.shopInShop })}
+            />
+            <ToggleRow
+              label={t('filter.shopLeavingTomorrow')}
+              description={t('filter.shopLeavingTomorrowDesc')}
+              checked={draft.shopLeavingTomorrow}
+              onToggle={() => onChange({ ...draft, shopLeavingTomorrow: !draft.shopLeavingTomorrow })}
+            />
+          </Accordion>
+        </ModalSection>
+      )}
 
       {/* Instrument selector */}
       <ModalSection title={t('filter.instrumentFilters')} hint={t('filter.instrumentFiltersHint')}>

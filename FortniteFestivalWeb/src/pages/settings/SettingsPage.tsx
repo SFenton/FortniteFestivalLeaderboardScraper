@@ -357,7 +357,7 @@ export default function SettingsPage() {
             <ToggleRow
               label={t('settings.disableShopHighlighting', 'Disable Item Shop Highlighting')}
               description={t('settings.disableShopHighlightingDesc', 'Turn off the pulsing highlight on songs available in the Item Shop.')}
-              checked={settings.hideItemShop || settings.disableShopHighlighting}
+              checked={settings.disableShopHighlighting}
               onToggle={() => updateSettings({ disableShopHighlighting: !settings.disableShopHighlighting })}
               disabled={settings.hideItemShop}
               large={isMobile}
@@ -366,10 +366,7 @@ export default function SettingsPage() {
               label={t('settings.hideItemShop', 'Hide Item Shop')}
               description={t('settings.hideItemShopDesc', 'Hide all Item Shop UI elements including navigation, buttons, and sort options.')}
               checked={settings.hideItemShop}
-              onToggle={() => updateSettings({
-                hideItemShop: !settings.hideItemShop,
-                ...(!settings.hideItemShop ? { disableShopHighlighting: true } : {}),
-              })}
+              onToggle={() => updateSettings({ hideItemShop: !settings.hideItemShop })}
               large={isMobile}
             />
           </Card>

@@ -241,7 +241,6 @@ export default function SongsPage() {
     filterModal.setDraft({ ...defaultSongFilters(), instrumentFilter: null });
   };
 
-  const filtersActive = isFilterActive(settings.filters, settings.instrument) || settings.instrument != null;
   const sortActive = settings.sortMode !== 'title' || !settings.sortAscending;
 
   // Register sort/filter actions for FAB â€” uses refs so latest closures are always captured
@@ -257,6 +256,7 @@ export default function SongsPage() {
   const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound } = usePlayerData();
   const shopCtx = useShop();
   const { isShopHighlighted, isLeavingTomorrow, isShopVisible } = useShopState();
+  const filtersActive = isFilterActive(settings.filters, settings.instrument, isShopVisible) || settings.instrument != null;
   const firstRunGateCtx = useMemo(() => ({ hasPlayer: !!playerData, shopHighlightEnabled: isShopVisible && !appSettings.disableShopHighlighting }), [playerData, isShopVisible, appSettings.disableShopHighlighting]);
 
   const { isScoreValid, enabled: scoreFilterEnabled, leeway: userLeeway, getFilteredRank, getFilteredTotal } = useScoreFilter();
@@ -377,8 +377,10 @@ export default function SongsPage() {
     scoreMap,
     allScoreMap,
     shopSongIds: shopCtx.shopSongIds,
+    leavingTomorrowIds: shopCtx.leavingTomorrowIds,
     isScoreValid,
     filterInvalidScoresEnabled: scoreFilterEnabled,
+    shopVisible: isShopVisible,
   });
 
   const hasPlayer = !!playerData;

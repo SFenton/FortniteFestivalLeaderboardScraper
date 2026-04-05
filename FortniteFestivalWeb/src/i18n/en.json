@@ -471,7 +471,13 @@
     "instrumentOverThreshold": "{{instrument}} Over CHOpt Threshold",
     "instrumentOverThresholdDesc": "Songs with {{instrument}} scores above the configured CHOpt max score threshold in app settings.",
     "seasonLabel": "Season {{season}}",
-    "topPercent": "Top {{percent}}%"
+    "topPercent": "Top {{percent}}%",
+    "shopTitle": "Item Shop",
+    "shopHint": "Toggles that impact visibility of songs based on the current Item Shop rotation.",
+    "shopInShop": "In the Shop",
+    "shopInShopDesc": "Songs that are available in the Item Shop today.",
+    "shopLeavingTomorrow": "Leaving Tomorrow",
+    "shopLeavingTomorrowDesc": "Songs that are leaving the Item Shop tomorrow."
   },
   "suggestionsFilter": {
     "resetLabel": "Reset Suggestion Filters",

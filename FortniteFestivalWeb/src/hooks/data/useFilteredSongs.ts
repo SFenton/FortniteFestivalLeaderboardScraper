@@ -20,10 +20,14 @@ interface FilterSortOptions {
   allScoreMap: Map<string, Map<InstrumentKey, PlayerScore>>;
   /** Set of songIds currently in the item shop (for 'shop' sort mode). */
   shopSongIds?: ReadonlySet<string> | null;
+  /** Set of in-shop songIds whose offer expires tomorrow. */
+  leavingTomorrowIds?: ReadonlySet<string> | null;
   /** Callback to check whether a score is within the CHOpt max threshold. */
   isScoreValid?: (songId: string, instrument: InstrumentKey | string, score: number) => boolean;
   /** Whether the "Filter Invalid Scores" app setting is enabled (gates overThreshold filter). */
   filterInvalidScoresEnabled?: boolean;
+  /** Whether the Item Shop feature is visible (gates shopInShop/shopLeavingTomorrow filters). */
+  shopVisible?: boolean;
 }
 
 const PCT_THRESHOLDS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100];
@@ -38,8 +42,10 @@ export function useFilteredSongs({
   scoreMap,
   allScoreMap,
   shopSongIds,
+  leavingTomorrowIds,
   isScoreValid,
   filterInvalidScoresEnabled,
+  shopVisible,
 }: FilterSortOptions): Song[] {
   return useMemo(() => {
     const q = search.toLowerCase();
@@ -72,6 +78,14 @@ export function useFilteredSongs({
 
     const list = songs.filter(s => {
       if (q && !s.title.toLowerCase().includes(q) && !s.artist.toLowerCase().includes(q)) return false;
+
+      // Item Shop filters (independent of player data)
+      // AND logic: both must pass when both enabled; leaving tomorrow ⊂ in shop
+      if (shopVisible && (f.shopInShop || f.shopLeavingTomorrow)) {
+        if (f.shopInShop && !shopSongIds?.has(s.songId)) return false;
+        if (f.shopLeavingTomorrow && !leavingTomorrowIds?.has(s.songId)) return false;
+      }
+
       if (!hasPlayerData) return true;
 
       const byInst = allScoreMap.get(s.songId);

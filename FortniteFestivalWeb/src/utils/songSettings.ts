@@ -70,6 +70,8 @@ export type SongFilters = {
   percentileFilter: Record<number, boolean>;
   starsFilter: Record<number, boolean>;
   difficultyFilter: Record<number, boolean>;
+  shopInShop: boolean;
+  shopLeavingTomorrow: boolean;
 };
 
 export const defaultSongFilters = (): SongFilters => ({
@@ -82,9 +84,12 @@ export const defaultSongFilters = (): SongFilters => ({
   percentileFilter: {},
   starsFilter: {},
   difficultyFilter: {},
+  shopInShop: false,
+  shopLeavingTomorrow: false,
 });
 
-export const isFilterActive = (f: SongFilters, instrument?: InstrumentKey | null): boolean => {
+export const isFilterActive = (f: SongFilters, instrument?: InstrumentKey | null, shopVisible?: boolean): boolean => {
+  if (shopVisible && (f.shopInShop || f.shopLeavingTomorrow)) return true;
   const hasPerInstrument =
     Object.values(f.missingScores).some(v => v === true) ||
     Object.values(f.missingFCs).some(v => v === true) ||

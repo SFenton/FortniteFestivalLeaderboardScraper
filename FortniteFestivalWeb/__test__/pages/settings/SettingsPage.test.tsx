@@ -256,14 +256,14 @@ describe('SettingsPage', () => {
     expect(stored.disableShopHighlighting).toBe(true);
   });
 
-  it('toggles Hide Item Shop and auto-enables highlighting', () => {
+  it('toggles Hide Item Shop without changing highlighting', () => {
     renderSettings();
     const toggle = screen.getByText('Hide Item Shop').closest('button')!;
     fireEvent.click(toggle);
 
     const stored = JSON.parse(localStorage.getItem('fst:appSettings')!);
     expect(stored.hideItemShop).toBe(true);
-    expect(stored.disableShopHighlighting).toBe(true);
+    expect(stored.disableShopHighlighting).toBe(false);
   });
 
   it('toggles Hide Item Shop back off without changing highlighting', () => {
