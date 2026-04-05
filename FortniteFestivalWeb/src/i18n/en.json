@@ -142,6 +142,11 @@
     "avgAccuracy": "Avg Accuracy",
     "avgStars": "Avg Stars",
     "bestRank": "Best Rank",
+    "totalScoreRank": "Total Score Rank",
+    "adjustedRank": "Adjusted Skill Rank",
+    "weightedRank": "Weighted Rank",
+    "fcRateRank": "FC Rate Rank",
+    "maxScoreRank": "Max Score % Rank",
     "percentile": "Percentile",
     "topSongs": "Top Songs",
     "bottomSongs": "Needs Work",
@@ -355,7 +360,13 @@
     "accuracy": "Accuracy",
     "accuracyFC": "Accuracy (FC)",
     "score": "Score",
-    "viewAllScores": "View all scores"
+    "viewAllScores": "View all scores",
+    "rankHistory": "Rank History",
+    "rankHistoryHint": "Your ranking progression over the past {{days}} days.",
+    "loadingRankHistory": "Loading rank history…",
+    "noRankHistory": "No rank history for {{instrument}}",
+    "rank": "Rank",
+    "value": "Value"
   },
   "aria": {
     "previousInstrument": "Previous instrument",

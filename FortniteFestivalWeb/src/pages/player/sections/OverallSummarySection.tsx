@@ -3,12 +3,21 @@
  * Returns Item[] for: songs played, full combos, gold stars, avg accuracy, best rank.
  */
 import { ACCURACY_SCALE } from '@festival/core';
-import { type ServerInstrumentKey as InstrumentKey } from '@festival/core/api/serverTypes';
+import { type ServerInstrumentKey as InstrumentKey, type CompositeRankingDto, type RankingMetric } from '@festival/core/api/serverTypes';
 import { Colors } from '@festival/theme';
 import { formatClamped, accuracyColor } from '../helpers/playerStats';
 import StatBox from '../../../components/player/StatBox';
 import { defaultSongFilters, type SongSettings } from '../../../utils/songSettings';
 import type { PlayerItem, NavigateToSongs, NavigateToSongDetail } from '../helpers/playerPageTypes';
+import { getCompositeRankForMetric, DEFAULT_METRICS, EXPERIMENTAL_METRICS } from '../../leaderboards/helpers/rankingHelpers';
+
+const METRIC_I18N_KEY: Record<RankingMetric, string> = {
+  totalscore: 'player.totalScoreRank',
+  adjusted: 'player.adjustedRank',
+  weighted: 'player.weightedRank',
+  fcrate: 'player.fcRateRank',
+  maxscore: 'player.maxScoreRank',
+};
 
 export interface OverallStats {
   songsPlayed: number;
@@ -47,6 +56,9 @@ export function buildOverallSummaryItems(
   navigateToSongs: NavigateToSongs,
   navigateToSongDetail: NavigateToSongDetail,
   cardStyle: React.CSSProperties,
+  compositeRanking?: CompositeRankingDto,
+  enableExperimentalRanks?: boolean,
+  navigateToLeaderboard?: (instrument: InstrumentKey | null, metric: RankingMetric) => void,
 ): PlayerItem[] {
   const items: PlayerItem[] = [];
 
@@ -74,6 +86,21 @@ export function buildOverallSummaryItems(
       navigateToSongDetail(overallStats.bestRankSongId!, overallStats.bestRankInstrument! as InstrumentKey, { autoScroll: true });
     } : undefined },
   ];
+
+  // Composite rank cards (after Best Rank)
+  if (compositeRanking) {
+    const metrics: RankingMetric[] = [...DEFAULT_METRICS, ...(enableExperimentalRanks ? EXPERIMENTAL_METRICS : [])];
+    for (const metric of metrics) {
+      const rank = getCompositeRankForMetric(compositeRanking, metric);
+      if (rank != null && rank > 0) {
+        boxes.push({
+          label: t(METRIC_I18N_KEY[metric]),
+          value: `#${rank.toLocaleString()}`,
+          onClick: navigateToLeaderboard ? () => navigateToLeaderboard(null, metric) : undefined,
+        });
+      }
+    }
+  }
 
   for (const box of boxes) {
     items.push({ key: `sum-${box.label}`, span: false, heightEstimate: 100, style: cardStyle, node: <StatBox label={box.label} value={box.value} color={box.color} onClick={box.onClick} /> });

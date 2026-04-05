@@ -184,47 +184,136 @@ public sealed class RankingsCalculator
     /// </summary>
     internal void ComputeCompositeRankings(IReadOnlyList<string> instruments)
     {
-        // Load per-instrument data into memory: AccountId → { instrument → (rating, songsPlayed, rank) }
-        var perAccount = new Dictionary<string, Dictionary<string, (double Rating, int SongsPlayed, int Rank)>>(StringComparer.OrdinalIgnoreCase);
+        // Load per-instrument data into memory: AccountId → { instrument → AccountMetrics }
+        var perAccount = new Dictionary<string, Dictionary<string, AccountMetrics>>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var instrument in instruments)
         {
             var db = _persistence.GetOrCreateInstrumentDb(instrument);
-            var summaries = db.GetAllRankingSummaries();
-            foreach (var (accountId, rating, songsPlayed, rank) in summaries)
+            foreach (var (accountId, adj, wgt, fc, ts, ms, songs, fcc) in db.GetAllRankingSummariesFull())
             {
                 if (!perAccount.TryGetValue(accountId, out var dict))
                 {
-                    dict = new Dictionary<string, (double, int, int)>(StringComparer.OrdinalIgnoreCase);
+                    dict = new Dictionary<string, AccountMetrics>(StringComparer.OrdinalIgnoreCase);
                     perAccount[accountId] = dict;
                 }
-                dict[instrument] = (rating, songsPlayed, rank);
+                dict[instrument] = new AccountMetrics(adj, wgt, fc, ts, ms, songs, fcc);
             }
         }
 
-        // Compute weighted composite: Σ(rating × songsPlayed) / Σ(songsPlayed)
-        var composites = new List<(string AccountId, double CompositeRating, int InstrumentsPlayed, int TotalSongsPlayed,
-            Dictionary<string, (double Rating, int SongsPlayed, int Rank)> InstrumentData)>();
+        // Also load per-instrument adjusted rank for the instrument breakdown columns
+        var perAccountAdjustedRank = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var instrument in instruments)
+        {
+            var db = _persistence.GetOrCreateInstrumentDb(instrument);
+            foreach (var (accountId, _, _, rank) in db.GetAllRankingSummaries())
+            {
+                if (!perAccountAdjustedRank.TryGetValue(accountId, out var dict))
+                {
+                    dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                    perAccountAdjustedRank[accountId] = dict;
+                }
+                dict[instrument] = rank;
+            }
+        }
+
+        // Build composite data per account
+        var composites = new List<CompositeAccountData>(perAccount.Count);
 
         foreach (var (accountId, instrumentData) in perAccount)
         {
-            double weightedSum = 0;
             int totalSongs = 0;
-            foreach (var (_, (rating, songs, _)) in instrumentData)
+            double adjWeightedSum = 0;
+            double wgtWeightedSum = 0;
+            double fcWeightedSum = 0;
+            double totalScore = 0;
+            double msWeightedSum = 0;
+
+            foreach (var (_, m) in instrumentData)
             {
-                weightedSum += rating * songs;
-                totalSongs += songs;
+                adjWeightedSum += m.AdjustedRating * m.SongsPlayed;
+                wgtWeightedSum += m.WeightedRating * m.SongsPlayed;
+                fcWeightedSum += m.FcRate * m.SongsPlayed;
+                totalScore += m.TotalScore;
+                msWeightedSum += m.MaxScorePercent * m.SongsPlayed;
+                totalSongs += m.SongsPlayed;
             }
 
             if (totalSongs == 0) continue;
 
-            composites.Add((accountId, weightedSum / totalSongs, instrumentData.Count, totalSongs, instrumentData));
+            composites.Add(new CompositeAccountData(
+                accountId,
+                adjWeightedSum / totalSongs,
+                wgtWeightedSum / totalSongs,
+                fcWeightedSum / totalSongs,
+                totalScore,
+                msWeightedSum / totalSongs,
+                instrumentData.Count,
+                totalSongs,
+                instrumentData));
         }
 
-        // Sort by CompositeRating ASC, TotalSongsPlayed DESC, InstrumentsPlayed DESC, AccountId ASC
-        composites.Sort((a, b) =>
+        // Rank each metric independently
+        // adjusted: ASC (lower = better), weighted: ASC, fcrate: DESC (higher = better),
+        // totalscore: DESC, maxscore: DESC
+        var adjustedRanks = RankBy(composites, c => c.AdjustedRating, ascending: true);
+        var weightedRanks = RankBy(composites, c => c.WeightedRating, ascending: true);
+        var fcRateRanks = RankBy(composites, c => c.FcRateRating, ascending: false);
+        var totalScoreRanks = RankBy(composites, c => c.TotalScoreRating, ascending: false);
+        var maxScoreRanks = RankBy(composites, c => c.MaxScoreRating, ascending: false);
+
+        // Map to DTOs
+        var rankings = new List<CompositeRankingDto>(composites.Count);
+        for (int i = 0; i < composites.Count; i++)
         {
-            int cmp = a.CompositeRating.CompareTo(b.CompositeRating);
+            var c = composites[i];
+            var adjRankDict = perAccountAdjustedRank.GetValueOrDefault(c.AccountId);
+            rankings.Add(new CompositeRankingDto
+            {
+                AccountId = c.AccountId,
+                InstrumentsPlayed = c.InstrumentsPlayed,
+                TotalSongsPlayed = c.TotalSongsPlayed,
+                CompositeRating = c.AdjustedRating,
+                CompositeRank = adjustedRanks[c.AccountId],
+                GuitarAdjustedSkill = GetInstrumentSkill(c.InstrumentData, "Solo_Guitar"),
+                GuitarSkillRank = adjRankDict?.GetValueOrDefault("Solo_Guitar"),
+                BassAdjustedSkill = GetInstrumentSkill(c.InstrumentData, "Solo_Bass"),
+                BassSkillRank = adjRankDict?.GetValueOrDefault("Solo_Bass"),
+                DrumsAdjustedSkill = GetInstrumentSkill(c.InstrumentData, "Solo_Drums"),
+                DrumsSkillRank = adjRankDict?.GetValueOrDefault("Solo_Drums"),
+                VocalsAdjustedSkill = GetInstrumentSkill(c.InstrumentData, "Solo_Vocals"),
+                VocalsSkillRank = adjRankDict?.GetValueOrDefault("Solo_Vocals"),
+                ProGuitarAdjustedSkill = GetInstrumentSkill(c.InstrumentData, "Solo_PeripheralGuitar"),
+                ProGuitarSkillRank = adjRankDict?.GetValueOrDefault("Solo_PeripheralGuitar"),
+                ProBassAdjustedSkill = GetInstrumentSkill(c.InstrumentData, "Solo_PeripheralBass"),
+                ProBassSkillRank = adjRankDict?.GetValueOrDefault("Solo_PeripheralBass"),
+                CompositeRatingWeighted = c.WeightedRating,
+                CompositeRankWeighted = weightedRanks[c.AccountId],
+                CompositeRatingFcRate = c.FcRateRating,
+                CompositeRankFcRate = fcRateRanks[c.AccountId],
+                CompositeRatingTotalScore = c.TotalScoreRating,
+                CompositeRankTotalScore = totalScoreRanks[c.AccountId],
+                CompositeRatingMaxScore = c.MaxScoreRating,
+                CompositeRankMaxScore = maxScoreRanks[c.AccountId],
+            });
+        }
+
+        _metaDb.ReplaceCompositeRankings(rankings);
+        _log.LogInformation("Computed composite rankings for {Count:N0} accounts.", rankings.Count);
+    }
+
+    /// <summary>Rank a list of composites by a metric, returning AccountId → 1-based rank.</summary>
+    private static Dictionary<string, int> RankBy(
+        List<CompositeAccountData> composites,
+        Func<CompositeAccountData, double> selector,
+        bool ascending)
+    {
+        var sorted = new List<CompositeAccountData>(composites);
+        sorted.Sort((a, b) =>
+        {
+            int cmp = ascending
+                ? selector(a).CompareTo(selector(b))
+                : selector(b).CompareTo(selector(a));
             if (cmp != 0) return cmp;
             cmp = b.TotalSongsPlayed.CompareTo(a.TotalSongsPlayed);
             if (cmp != 0) return cmp;
@@ -233,36 +322,22 @@ public sealed class RankingsCalculator
             return string.Compare(a.AccountId, b.AccountId, StringComparison.OrdinalIgnoreCase);
         });
 
-        // Map to DTOs with ordinal rank
-        var rankings = new List<CompositeRankingDto>(composites.Count);
-        for (int i = 0; i < composites.Count; i++)
-        {
-            var c = composites[i];
-            rankings.Add(new CompositeRankingDto
-            {
-                AccountId = c.AccountId,
-                InstrumentsPlayed = c.InstrumentsPlayed,
-                TotalSongsPlayed = c.TotalSongsPlayed,
-                CompositeRating = c.CompositeRating,
-                CompositeRank = i + 1,
-                GuitarAdjustedSkill = GetInstrumentSkill(c.InstrumentData, "Solo_Guitar"),
-                GuitarSkillRank = GetInstrumentRank(c.InstrumentData, "Solo_Guitar"),
-                BassAdjustedSkill = GetInstrumentSkill(c.InstrumentData, "Solo_Bass"),
-                BassSkillRank = GetInstrumentRank(c.InstrumentData, "Solo_Bass"),
-                DrumsAdjustedSkill = GetInstrumentSkill(c.InstrumentData, "Solo_Drums"),
-                DrumsSkillRank = GetInstrumentRank(c.InstrumentData, "Solo_Drums"),
-                VocalsAdjustedSkill = GetInstrumentSkill(c.InstrumentData, "Solo_Vocals"),
-                VocalsSkillRank = GetInstrumentRank(c.InstrumentData, "Solo_Vocals"),
-                ProGuitarAdjustedSkill = GetInstrumentSkill(c.InstrumentData, "Solo_PeripheralGuitar"),
-                ProGuitarSkillRank = GetInstrumentRank(c.InstrumentData, "Solo_PeripheralGuitar"),
-                ProBassAdjustedSkill = GetInstrumentSkill(c.InstrumentData, "Solo_PeripheralBass"),
-                ProBassSkillRank = GetInstrumentRank(c.InstrumentData, "Solo_PeripheralBass"),
-            });
-        }
-
-        _metaDb.ReplaceCompositeRankings(rankings);
-        _log.LogInformation("Computed composite rankings for {Count:N0} accounts.", rankings.Count);
+        var ranks = new Dictionary<string, int>(sorted.Count, StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < sorted.Count; i++)
+            ranks[sorted[i].AccountId] = i + 1;
+        return ranks;
     }
+
+    private sealed record CompositeAccountData(
+        string AccountId,
+        double AdjustedRating,
+        double WeightedRating,
+        double FcRateRating,
+        double TotalScoreRating,
+        double MaxScoreRating,
+        int InstrumentsPlayed,
+        int TotalSongsPlayed,
+        Dictionary<string, AccountMetrics> InstrumentData);
 
     /// <summary>
     /// Compute rankings for every multi-instrument combo (2^N - 1 minus singles).
@@ -421,9 +496,6 @@ public sealed class RankingsCalculator
         return count;
     }
 
-    private static double? GetInstrumentSkill(Dictionary<string, (double Rating, int SongsPlayed, int Rank)> data, string instrument)
-        => data.TryGetValue(instrument, out var v) ? v.Rating : null;
-
-    private static int? GetInstrumentRank(Dictionary<string, (double Rating, int SongsPlayed, int Rank)> data, string instrument)
-        => data.TryGetValue(instrument, out var v) ? v.Rank : null;
+    private static double? GetInstrumentSkill(Dictionary<string, AccountMetrics> data, string instrument)
+        => data.TryGetValue(instrument, out var v) ? v.AdjustedRating : null;
 }

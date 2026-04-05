@@ -585,11 +585,38 @@ public static class DatabaseInitializer
             pro_guitar_skill_rank    INTEGER,
             pro_bass_adjusted_skill  REAL,
             pro_bass_skill_rank      INTEGER,
+            composite_rating_weighted  REAL,
+            composite_rank_weighted    INTEGER,
+            composite_rating_fcrate    REAL,
+            composite_rank_fcrate      INTEGER,
+            composite_rating_totalscore REAL,
+            composite_rank_totalscore  INTEGER,
+            composite_rating_maxscore  REAL,
+            composite_rank_maxscore    INTEGER,
             computed_at              TIMESTAMPTZ NOT NULL
         );
 
         CREATE INDEX IF NOT EXISTS ix_cr_rank
             ON composite_rankings (composite_rank);
+
+        -- Per-metric composite rank indexes for pagination
+        ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS composite_rating_weighted REAL;
+        ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS composite_rank_weighted INTEGER;
+        ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS composite_rating_fcrate REAL;
+        ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS composite_rank_fcrate INTEGER;
+        ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS composite_rating_totalscore REAL;
+        ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS composite_rank_totalscore INTEGER;
+        ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS composite_rating_maxscore REAL;
+        ALTER TABLE composite_rankings ADD COLUMN IF NOT EXISTS composite_rank_maxscore INTEGER;
+
+        CREATE INDEX IF NOT EXISTS ix_cr_rank_weighted
+            ON composite_rankings (composite_rank_weighted);
+        CREATE INDEX IF NOT EXISTS ix_cr_rank_fcrate
+            ON composite_rankings (composite_rank_fcrate);
+        CREATE INDEX IF NOT EXISTS ix_cr_rank_totalscore
+            ON composite_rankings (composite_rank_totalscore);
+        CREATE INDEX IF NOT EXISTS ix_cr_rank_maxscore
+            ON composite_rankings (composite_rank_maxscore);
 
         -- =====================================================================
         -- LEADERBOARD RIVALS (from fst-meta.db)

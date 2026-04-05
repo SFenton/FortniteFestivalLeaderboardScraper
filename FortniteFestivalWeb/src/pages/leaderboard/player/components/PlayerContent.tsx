@@ -26,7 +26,7 @@ import { useTrackedPlayer } from '../../../../hooks/data/useTrackedPlayer';
 import { useScoreFilter } from '../../../../hooks/data/useScoreFilter';
 import { usePlayerPageSelect } from '../../../../contexts/FabSearchContext';
 import { useSearchQuery } from '../../../../contexts/SearchQueryContext';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '../../../../api/client';
 import { queryKeys } from '../../../../api/queryKeys';
 import ConfirmAlert from '../../../../components/modals/ConfirmAlert';
@@ -37,6 +37,8 @@ import { buildInstrumentStatsItems } from '../../../player/sections/InstrumentSt
 import { buildTopSongsItems } from '../../../player/components/TopSongsSection';
 import type { PlayerItem } from '../../../player/helpers/playerPageTypes';
 import type { SyncPhase } from '../../../../hooks/data/useSyncStatus';
+import { Routes } from '../../../../routes';
+import type { AccountRankingEntry, RankingMetric } from '@festival/core/api/serverTypes';
 
 export interface PlayerContentProps {
   data: PlayerResponse;
@@ -137,6 +139,32 @@ export default function PlayerContent({
     [settings],
   );
 
+  // Fetch per-instrument rankings for rank cards
+  const instrumentRankingQueries = useQueries({
+    queries: visibleKeys.map((inst) => ({
+      queryKey: queryKeys.playerRanking(inst, data.accountId),
+      queryFn: () => api.getPlayerRanking(inst, data.accountId),
+      staleTime: 5 * 60_000,
+    })),
+  });
+
+  // Fetch composite ranking for global rank cards
+  const { data: compositeRanking } = useQuery({
+    queryKey: queryKeys.playerCompositeRanking(data.accountId),
+    queryFn: () => api.getPlayerCompositeRanking(data.accountId),
+    staleTime: 5 * 60_000,
+  });
+
+  // Build map of instrument → AccountRankingEntry for passing to sections
+  const instrumentRankings = useMemo(() => {
+    const map = new Map<InstrumentKey, AccountRankingEntry>();
+    for (let i = 0; i < visibleKeys.length; i++) {
+      const entry = instrumentRankingQueries[i]?.data;
+      if (entry) map.set(visibleKeys[i]!, entry);
+    }
+    return map;
+  }, [visibleKeys, instrumentRankingQueries]);
+
   const songMap = useMemo(() => new Map(songs.map((s) => [s.songId, s])), [songs]);
   const byInstrument = useMemo(() => groupByInstrument(effectiveScores), [effectiveScores]);
   const rawByInstrument = useMemo(() => {
@@ -167,6 +195,18 @@ export default function PlayerContent({
     withProfileSwitch(() => navigate(`/songs/${songId}?instrument=${encodeURIComponent(instrument)}`, { state: { backTo: location.pathname, ...opts } }));
     /* v8 ignore stop */
   }, [withProfileSwitch, navigate, location.pathname]);
+
+  /* v8 ignore start — navigation helper */
+  const navigateToLeaderboard = useCallback((instrument: InstrumentKey | null, metric: RankingMetric) => {
+    withProfileSwitch(() => {
+      if (instrument) {
+        navigate(Routes.fullRankings(instrument, metric));
+      } else {
+        navigate(`${Routes.leaderboards}?rankBy=${encodeURIComponent(metric)}`);
+      }
+    });
+    /* v8 ignore stop */
+  }, [withProfileSwitch, navigate]);
 
   // Build a completely flat list of small items — each becomes a direct child
   // of the grid so each gets a staggered fade-in animation.
@@ -201,7 +241,7 @@ export default function PlayerContent({
   }
 
   // --- Overall summary stat boxes ---
-  items.push(...buildOverallSummaryItems(t, overallStats, songs.length, visibleKeys, navigateToSongs, navigateToSongDetail, cardStyle));
+  items.push(...buildOverallSummaryItems(t, overallStats, songs.length, visibleKeys, navigateToSongs, navigateToSongDetail, cardStyle, compositeRanking, settings.enableExperimentalRanks, navigateToLeaderboard));
 
   // --- Instrument Statistics heading ---
   items.push({
@@ -228,7 +268,7 @@ export default function PlayerContent({
         ? (rawByInstrument.get(inst) ?? scores).filter(s => s.score > 0 && !isScoreValid(s.songId, inst, s.score)).length
         : undefined);
 
-    items.push(...buildInstrumentStatsItems(t, inst, stats, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle, overThreshold));
+    items.push(...buildInstrumentStatsItems(t, inst, stats, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle, overThreshold, instrumentRankings.get(inst), settings.enableExperimentalRanks, navigateToLeaderboard));
   }
 
   // --- Top Songs heading ---

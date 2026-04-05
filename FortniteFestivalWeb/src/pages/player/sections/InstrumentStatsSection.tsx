@@ -11,7 +11,17 @@ import StatBox from '../../../components/player/StatBox';
 import { cleanFilters, buildStarFilter, buildPercentileFilter } from '../helpers/playerFilterHelpers';
 import { instCardHeaderStyle } from './PlayerSectionHeading';
 import type { PlayerItem, NavigateToSongs, NavigateToSongDetail } from '../helpers/playerPageTypes';
+import type { AccountRankingEntry, RankingMetric, ServerInstrumentKey } from '@festival/core/api/serverTypes';
+import { getRankForMetric, DEFAULT_METRICS, EXPERIMENTAL_METRICS } from '../../leaderboards/helpers/rankingHelpers';
 import InstrumentHeader from '../../../components/display/InstrumentHeader';
+
+const METRIC_I18N_KEY: Record<RankingMetric, string> = {
+  totalscore: 'player.totalScoreRank',
+  adjusted: 'player.adjustedRank',
+  weighted: 'player.weightedRank',
+  fcrate: 'player.fcRateRank',
+  maxscore: 'player.maxScoreRank',
+};
 import { PlayerPercentileHeader, PlayerPercentileRow } from '../../../components/player/PlayerPercentileTable';
 import GoldStars from '../../../components/songs/metadata/GoldStars';
 import { SongSettings } from '../../../utils/songSettings';
@@ -59,6 +69,9 @@ export function buildInstrumentStatsItems(
   navigateToSongDetail: NavigateToSongDetail,
   cardStyle: React.CSSProperties,
   overThresholdCount?: number,
+  rankingEntry?: AccountRankingEntry,
+  enableExperimentalRanks?: boolean,
+  navigateToLeaderboard?: (instrument: ServerInstrumentKey | null, metric: RankingMetric) => void,
 ): PlayerItem[] {
   if (stats.songsPlayed === 0) return [];
 
@@ -121,6 +134,20 @@ export function buildInstrumentStatsItems(
   cards.push({ label: t('player.avgAccuracy'), value: stats.avgAccuracy > 0 ? formatClamped(accPct) + '%' : '\u2014', color: accColor });
   cards.push({ label: t('player.avgStars'), value: stats.averageStars === 6 ? <GoldStars /> : (stats.averageStars > 0 ? formatClamped2(stats.averageStars) : '\u2014') });
   cards.push({ label: t('player.bestRank'), value: stats.bestRank > 0 ? `#${stats.bestRank.toLocaleString()}` : '\u2014', onClick: stats.bestRankSongId ? () => navigateToSongDetail(stats.bestRankSongId!, inst, { autoScroll: true }) : undefined });
+
+  // Per-metric rank cards (after Best Rank, before Percentile)
+  if (rankingEntry) {
+    const metrics: RankingMetric[] = [...DEFAULT_METRICS, ...(enableExperimentalRanks ? EXPERIMENTAL_METRICS : [])];
+    for (const metric of metrics) {
+      const rank = getRankForMetric(rankingEntry, metric);
+      cards.push({
+        label: t(METRIC_I18N_KEY[metric]),
+        value: rank > 0 ? `#${rank.toLocaleString()}` : '\u2014',
+        onClick: navigateToLeaderboard && rank > 0 ? () => navigateToLeaderboard(inst, metric) : undefined,
+      });
+    }
+  }
+
   cards.push({ label: t('player.percentile'), value: stats.overallPercentile, color: pctGold(stats.overallPercentile), onClick: () => {
     navigateToSongs(instPercentileUpdater(inst));
   } });

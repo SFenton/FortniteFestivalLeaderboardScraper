@@ -425,6 +425,16 @@ public sealed class CompositeRankingDto
     public double? ProBassAdjustedSkill { get; init; }
     public int? ProBassSkillRank { get; init; }
 
+    // Per-metric composite ratings and ranks
+    public double? CompositeRatingWeighted { get; init; }
+    public int? CompositeRankWeighted { get; init; }
+    public double? CompositeRatingFcRate { get; init; }
+    public int? CompositeRankFcRate { get; init; }
+    public double? CompositeRatingTotalScore { get; init; }
+    public int? CompositeRankTotalScore { get; init; }
+    public double? CompositeRatingMaxScore { get; init; }
+    public int? CompositeRankMaxScore { get; init; }
+
     public string ComputedAt { get; init; } = "";
     public int TotalRankedAccounts { get; init; }
 }

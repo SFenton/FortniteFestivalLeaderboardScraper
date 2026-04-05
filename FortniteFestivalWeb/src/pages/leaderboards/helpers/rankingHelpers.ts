@@ -1,4 +1,4 @@
-import type { RankingMetric, AccountRankingEntry } from '@festival/core/api/serverTypes';
+import type { RankingMetric, AccountRankingEntry, CompositeRankingEntry } from '@festival/core/api/serverTypes';
 import { Layout } from '@festival/theme';
 
 /** Get the rank value for a given metric from an AccountRankingEntry. */
@@ -65,4 +65,15 @@ export function computeRankWidth(ranks: number[]): number {
   const maxRank = Math.max(...ranks);
   const longest = `#${maxRank.toLocaleString()}`;
   return Math.ceil(longest.length * Layout.rankCharWidth) + Layout.rankColumnPadding;
+}
+
+/** Get the composite rank value for a given metric from a CompositeRankingEntry. */
+export function getCompositeRankForMetric(entry: CompositeRankingEntry, metric: RankingMetric): number | null | undefined {
+  switch (metric) {
+    case 'adjusted': return entry.compositeRank;
+    case 'weighted': return entry.compositeRankWeighted;
+    case 'fcrate': return entry.compositeRankFcRate;
+    case 'totalscore': return entry.compositeRankTotalScore;
+    case 'maxscore': return entry.compositeRankMaxScore;
+  }
 }

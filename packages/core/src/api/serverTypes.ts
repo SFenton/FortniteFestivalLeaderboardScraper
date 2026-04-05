@@ -439,6 +439,31 @@ export type LeaderboardRivalsListResponse = {
 /** Ranking metric used for sorting. */
 export type RankingMetric = 'adjusted' | 'weighted' | 'fcrate' | 'totalscore' | 'maxscore';
 
+/** Daily rank history snapshot as returned by /api/rankings/{instrument}/{accountId}/history. */
+export type RankHistoryEntry = {
+  snapshotDate: string;
+  adjustedSkillRank: number;
+  weightedRank: number;
+  fcRateRank: number;
+  totalScoreRank: number;
+  maxScorePercentRank: number;
+  adjustedSkillRating: number | null;
+  weightedRating: number | null;
+  fcRate: number | null;
+  totalScore: number | null;
+  maxScorePercent: number | null;
+  songsPlayed: number | null;
+  coverage: number | null;
+  fullComboCount: number | null;
+};
+
+/** Response from /api/rankings/{instrument}/{accountId}/history. */
+export type RankHistoryResponse = {
+  instrument: string;
+  accountId: string;
+  history: RankHistoryEntry[];
+};
+
 /** Per-instrument ranking entry as returned by /api/rankings/{instrument}. */
 export type AccountRankingEntry = {
   accountId: string;
@@ -506,6 +531,14 @@ export type CompositeRankingEntry = {
   compositeRating: number;
   compositeRank: number;
   instruments: CompositeInstruments;
+  compositeRatingWeighted?: number | null;
+  compositeRankWeighted?: number | null;
+  compositeRatingFcRate?: number | null;
+  compositeRankFcRate?: number | null;
+  compositeRatingTotalScore?: number | null;
+  compositeRankTotalScore?: number | null;
+  compositeRatingMaxScore?: number | null;
+  compositeRankMaxScore?: number | null;
   computedAt: string;
 };
 
