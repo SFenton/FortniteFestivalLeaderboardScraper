@@ -32,6 +32,8 @@
     "filterSuggestions": "Filter Suggestions",
     "sortPlayerScores": "Sort Player Scores",
     "viewPaths": "View Paths",
+    "viewProfile": "View Profile",
+    "viewNameProfile": "View {{name}}'s Profile",
     "actions": "Actions",
     "sort": "Sort",
     "filter": "Filter",

@@ -10,8 +10,8 @@ export const Routes = {
     `/rivals/all?category=${encodeURIComponent(category)}${mode ? `&mode=${encodeURIComponent(mode)}` : ''}${rankBy ? `&rankBy=${encodeURIComponent(rankBy)}` : ''}`,
   rivalDetail: (rivalId: string, rivalName?: string) =>
     `/rivals/${rivalId}${rivalName ? `?name=${encodeURIComponent(rivalName)}` : ''}`,
-  rivalry: (rivalId: string, mode: string) =>
-    `/rivals/${rivalId}/rivalry?mode=${encodeURIComponent(mode)}`,
+  rivalry: (rivalId: string, mode: string, name?: string) =>
+    `/rivals/${rivalId}/rivalry?mode=${encodeURIComponent(mode)}${name ? `&name=${encodeURIComponent(name)}` : ''}`,
   statistics: '/statistics',
   suggestions: '/suggestions',
   compete: '/compete',

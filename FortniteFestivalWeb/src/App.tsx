@@ -533,7 +533,39 @@ function AppShell() {
           onPress={() => {}}
         />
       )}
-      {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.shop && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && (
+      {isMobile && RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.allRivals.test(location.pathname) && (() => {
+        const rivalIdMatch = location.pathname.match(/^\/rivals\/([^/]+)$/);
+        const currentRivalId = rivalIdMatch?.[1];
+        const rivalName = new URLSearchParams(location.search).get('name');
+        const profileLabel = rivalName ? t('common.viewNameProfile', { name: rivalName }) : t('common.viewProfile');
+        return currentRivalId ? (
+        <FloatingActionButton
+          mode="players"
+          actionGroups={[
+            [{ label: profileLabel, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.player(currentRivalId)) }],
+            playerActions(),
+          ]}
+          onPress={() => {}}
+        />
+        ) : null;
+      })()}
+      {isMobile && RoutePatterns.rivalry.test(location.pathname) && (() => {
+        const rivalryIdMatch = location.pathname.match(/^\/rivals\/([^/]+)\/rivalry/);
+        const currentRivalId = rivalryIdMatch?.[1];
+        const rivalName = new URLSearchParams(location.search).get('name');
+        const profileLabel = rivalName ? t('common.viewNameProfile', { name: rivalName }) : t('common.viewProfile');
+        return currentRivalId ? (
+        <FloatingActionButton
+          mode="players"
+          actionGroups={[
+            [{ label: profileLabel, icon: <IoPerson size={Size.iconFab} />, onPress: () => navigate(AppRoutes.player(currentRivalId)) }],
+            playerActions(),
+          ]}
+          onPress={() => {}}
+        />
+        ) : null;
+      })()}
+      {isMobile && location.pathname !== AppRoutes.songs && location.pathname !== AppRoutes.suggestions && location.pathname !== AppRoutes.shop && !RoutePatterns.history.test(location.pathname) && !RoutePatterns.songDetail.test(location.pathname) && !RoutePatterns.leaderboards.test(location.pathname) && !RoutePatterns.rivals.test(location.pathname) && !RoutePatterns.rivalDetail.test(location.pathname) && !RoutePatterns.rivalry.test(location.pathname) && (
         <FloatingActionButton
           mode="players"
           actionGroups={[

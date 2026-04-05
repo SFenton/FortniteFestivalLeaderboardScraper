@@ -3,7 +3,7 @@ import { useMemo, type CSSProperties } from 'react';
 import {
   Gap, Colors, Font, Weight, Radius, Layout, Position, ZIndex,
   Display, Align, Justify, Cursor, WhiteSpace, InstrumentSize,
-  flexColumn, flexCenter, flexRow, padding, transition, frostedCard,
+  flexColumn, flexCenter, flexRow, padding, transition, frostedCard, purpleGlass,
   CssProp, FAST_FADE_MS, NAV_TRANSITION_MS,
 } from '@festival/theme';
 
@@ -95,6 +95,23 @@ export function useRivalsSharedStyles() {
       fontWeight: Weight.semibold,
       cursor: Cursor.pointer,
       transition: transition(CssProp.backgroundColor, FAST_FADE_MS),
+    } as CSSProperties,
+    viewProfileButton: {
+      ...purpleGlass,
+      display: Display.inlineFlex,
+      alignItems: Align.center,
+      justifyContent: Justify.center,
+      gap: Gap.md,
+      height: Layout.pillButtonHeight,
+      borderRadius: Radius.full,
+      color: Colors.textPrimary,
+      fontSize: Font.sm,
+      fontWeight: Weight.semibold,
+      cursor: Cursor.pointer,
+      flexShrink: 0,
+      whiteSpace: WhiteSpace.nowrap,
+      paddingLeft: Gap.xl,
+      paddingRight: Gap.xl,
     } as CSSProperties,
   }), []);
 }

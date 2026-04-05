@@ -11,8 +11,9 @@ import EmptyState from '../../components/common/EmptyState';
 import PageHeader from '../../components/common/PageHeader';
 import { useIsMobile } from '../../hooks/ui/useIsMobile';
 import { useTrackedPlayer } from '../../hooks/data/useTrackedPlayer';
+import { IoPerson } from 'react-icons/io5';
 import type { RivalSongComparison } from '@festival/core/api/serverTypes';
-import { STAGGER_INTERVAL, Gap, Layout } from '@festival/theme';
+import { STAGGER_INTERVAL, Gap, Layout, IconSize } from '@festival/theme';
 import { LoadPhase } from '@festival/core';
 import { deriveComboFromSettings, getEnabledInstruments } from './helpers/comboUtils';
 import { categorizeRivalSongs } from './helpers/rivalCategories';
@@ -151,7 +152,14 @@ export default function RivalryPage() {
       scrollDeps={[phase]}
       loadPhase={phase}
       containerStyle={styles.container}
-      before={<PageHeader title={title} />}
+      before={<PageHeader title={title} actions={!isMobile && phase === LoadPhase.ContentIn ? (
+        <button style={{ ...styles.viewProfileButton, ...stagger(0) }} onAnimationEnd={clearAnim} onClick={() => navigate(Routes.player(rivalId!))}>
+          <IoPerson size={IconSize.action} />
+          {(rivalName || searchParams.get('name'))
+            ? t('common.viewNameProfile', { name: rivalName ?? searchParams.get('name') })
+            : t('common.viewProfile')}
+        </button>
+      ) : undefined} />}
     >
       {phase === LoadPhase.ContentIn && (
             <div style={isMobile ? { paddingBottom: Layout.fabPaddingBottom } : undefined}>
