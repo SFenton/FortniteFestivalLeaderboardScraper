@@ -96,6 +96,8 @@ export default memo(function RankingCard({
           const rank = getRankForMetric(e, metric);
           const isPlayer = e.accountId === playerAccountId;
           const usePercentile = metric === 'adjusted' || metric === 'weighted';
+          const isFcRate = metric === 'fcrate';
+          const fcPct = isFcRate ? getRatingForMetric(e, metric) * 100 : 0;
           const rowStyle = isPlayer ? st.playerEntryRow : st.entryRow;
           const delay = shouldStagger ? staggerDelay(i + 1 + staggerOffset, STAGGER_INTERVAL, totalStaggerItems) : undefined;
           const staggerStyle: CSSProperties | undefined = delay != null
@@ -118,6 +120,8 @@ export default memo(function RankingCard({
                 ratingLabel={formatRating(getRatingForMetric(e, metric), metric)}
                 songsLabel={getSongsLabel(e, metric)}
                 percentileDisplay={usePercentile ? formatLeaderboardPercentile(rank, totalAccounts) : undefined}
+                ratingPillTier={isFcRate ? (fcPct >= 99 ? 'top1' : fcPct >= 95 ? 'top5' : 'default') : undefined}
+                songsLabelPrimary={isFcRate}
                 isPlayer={isPlayer}
                 rankWidth={rankWidth}
               />
@@ -127,6 +131,8 @@ export default memo(function RankingCard({
         {playerRanking && !playerInTop && (() => {
           const rank = getRankForMetric(playerRanking, metric);
           const usePercentile = metric === 'adjusted' || metric === 'weighted';
+          const isFcRate = metric === 'fcrate';
+          const fcPct = isFcRate ? getRatingForMetric(playerRanking, metric) * 100 : 0;
           return (
             <Link
               to={`/player/${playerRanking.accountId}`}
@@ -143,6 +149,8 @@ export default memo(function RankingCard({
                 ratingLabel={formatRating(getRatingForMetric(playerRanking, metric), metric)}
                 songsLabel={getSongsLabel(playerRanking, metric)}
                 percentileDisplay={usePercentile ? formatLeaderboardPercentile(rank, totalAccounts) : undefined}
+                ratingPillTier={isFcRate ? (fcPct >= 99 ? 'top1' : fcPct >= 95 ? 'top5' : 'default') : undefined}
+                songsLabelPrimary={isFcRate}
                 isPlayer
                 rankWidth={playerRankWidth}
               />

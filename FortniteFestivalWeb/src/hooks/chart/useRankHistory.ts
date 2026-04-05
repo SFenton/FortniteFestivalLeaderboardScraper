@@ -42,11 +42,26 @@ export function formatValueTick(value: number, metric: RankingMetric): string {
     case 'fcrate':
     case 'maxscore':
       return `${(value * 100).toFixed(0)}%`;
-    case 'totalscore':
-      return value >= 1000 ? `${(value / 1000).toFixed(0)}k` : String(value);
+    case 'totalscore': {
+      const abs = Math.abs(value);
+      const sign = value < 0 ? '-' : '';
+      if (abs >= 1_000_000_000) {
+        const v = abs / 1_000_000_000;
+        return `${sign}${v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}B`;
+      }
+      if (abs >= 1_000_000) {
+        const v = abs / 1_000_000;
+        return `${sign}${v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}M`;
+      }
+      if (abs >= 1_000) {
+        const v = abs / 1_000;
+        return `${sign}${v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}K`;
+      }
+      return String(Math.round(value));
+    }
     case 'adjusted':
     case 'weighted':
-      return value.toFixed(0);
+      return value.toFixed(2);
   }
 }
 
