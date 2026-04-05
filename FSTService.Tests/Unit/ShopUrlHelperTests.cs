@@ -62,6 +62,17 @@ public class ShopUrlHelperTests
     }
 
     [Fact]
+    public void TodayIsGonnaBeAGreatDay_TrailingSpaceProducesDoubleHyphen()
+    {
+        var url = ShopUrlHelper.ComputeShopUrl(
+            "5be48332-b5d6-4586-bcd0-46846916f33d", "Today is Gonna be a Great Day ");
+
+        Assert.Equal(
+            "https://www.fortnite.com/item-shop/jam-tracks/today-is-gonna-be-a-great-day--46846916f33d",
+            url);
+    }
+
+    [Fact]
     public void BlingBangBangBorn_HyphensInTitleDropped()
     {
         var url = ShopUrlHelper.ComputeShopUrl(
@@ -129,6 +140,7 @@ public class ShopUrlHelperTests
     [InlineData("The Middle", "the-middle")]
     [InlineData("WANNABE", "wannabe")]
     [InlineData("tv off", "tv-off")]
+    [InlineData("Today is Gonna be a Great Day ", "today-is-gonna-be-a-great-day-")]
     public void Slugify_ProducesExpectedSlugs(string title, string expectedSlug)
     {
         var slug = ShopUrlHelper.Slugify(title);

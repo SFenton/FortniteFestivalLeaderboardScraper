@@ -70,8 +70,9 @@ public static partial class ShopUrlHelper
             // Other characters (hyphens, punctuation, apostrophes, etc.) are dropped
         }
 
-        // Collapse multiple consecutive hyphens and trim
-        var result = MultipleHyphens().Replace(sb.ToString(), "-").Trim('-');
+        // Collapse multiple consecutive hyphens and trim leading hyphens only
+        // (trailing hyphens from trailing spaces in titles must be preserved for correct URLs)
+        var result = MultipleHyphens().Replace(sb.ToString(), "-").TrimStart('-');
         return result;
     }
 
