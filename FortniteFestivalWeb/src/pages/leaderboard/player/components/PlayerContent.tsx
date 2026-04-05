@@ -39,6 +39,7 @@ import type { PlayerItem } from '../../../player/helpers/playerPageTypes';
 import type { SyncPhase } from '../../../../hooks/data/useSyncStatus';
 import { Routes } from '../../../../routes';
 import type { AccountRankingEntry, RankingMetric } from '@festival/core/api/serverTypes';
+import { useFeatureFlags } from '../../../../contexts/FeatureFlagsContext';
 
 export interface PlayerContentProps {
   data: PlayerResponse;
@@ -77,6 +78,7 @@ export default function PlayerContent({
 }: PlayerContentProps) {
   const { t } = useTranslation();
   const { settings } = useSettings();
+  const { leaderboards: leaderboardsEnabled } = useFeatureFlags();
   const location = useLocation();
   const navigate = useNavigate();
   const { player: trackedPlayer, setPlayer } = useTrackedPlayer();
@@ -262,7 +264,7 @@ export default function PlayerContent({
         : undefined);
 
     const rankingDto = instrumentRankingQueries[visibleKeys.indexOf(inst)]?.data;
-    items.push(...buildInstrumentStatsItems(t, inst, stats, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle, overThreshold, instrumentRankings.get(inst), settings.enableExperimentalRanks, navigateToLeaderboard, data.accountId, rankingDto?.totalRankedAccounts));
+    items.push(...buildInstrumentStatsItems(t, inst, stats, data.displayName, navigateToSongs, navigateToSongDetail, cardStyle, overThreshold, instrumentRankings.get(inst), settings.enableExperimentalRanks, navigateToLeaderboard, data.accountId, rankingDto?.totalRankedAccounts, leaderboardsEnabled));
   }
 
   // --- Top Songs heading ---

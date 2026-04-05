@@ -75,6 +75,7 @@ export function buildInstrumentStatsItems(
   navigateToLeaderboard?: (instrument: ServerInstrumentKey | null, metric: RankingMetric) => void,
   accountId?: string,
   totalRankedAccounts?: number,
+  enableLeaderboards?: boolean,
 ): PlayerItem[] {
   if (stats.songsPlayed === 0) return [];
 
@@ -93,7 +94,7 @@ export function buildInstrumentStatsItems(
   });
 
   // Rank history chart (only when ranking data exists for this instrument)
-  if (accountId && rankingEntry) {
+  if (accountId && rankingEntry && enableLeaderboards) {
     items.push({
       key: `inst-rank-graph-${inst}`,
       span: true,
@@ -149,7 +150,7 @@ export function buildInstrumentStatsItems(
   cards.push({ label: t('player.bestInstSongRank', { instrument: serverInstrumentLabel(inst) }), value: stats.bestRank > 0 ? `#${stats.bestRank.toLocaleString()}` : '\u2014', onClick: stats.bestRankSongId ? () => navigateToSongDetail(stats.bestRankSongId!, inst, { autoScroll: true }) : undefined });
 
   // Per-metric rank cards (after Best Rank, before Percentile)
-  if (rankingEntry) {
+  if (rankingEntry && enableLeaderboards) {
     const metrics: RankingMetric[] = [...DEFAULT_METRICS, ...(enableExperimentalRanks ? EXPERIMENTAL_METRICS : [])];
     for (const metric of metrics) {
       const rank = getRankForMetric(rankingEntry, metric);
