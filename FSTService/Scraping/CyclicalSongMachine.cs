@@ -242,7 +242,14 @@ public class CyclicalSongMachine
     }
 
     /// <summary>
-    /// Run one cycle: iterate all songs in order, processing users from all active attachments.
+    /// Run one cycle in two passes:
+    /// <list type="number">
+    ///   <item><b>Core pass</b> — alltime + current season for ALL users (fast).</item>
+    ///   <item><b>Historical pass</b> — remaining seasons for backfill users only
+    ///         (slow, skipped when nobody needs it).</item>
+    /// </list>
+    /// Core-only attachments (post-scrape) complete after the core pass without
+    /// waiting for the heavy historical work.
     /// </summary>
     private async Task RunOneCycleAsync(CancellationToken ct)
     {
@@ -282,22 +289,110 @@ public class CyclicalSongMachine
         var callerAccountId = _tokenManager.AccountId!;
 
         var opts = _options.Value;
+        int currentSeason = seasonWindows.Count > 0
+            ? seasonWindows.Max(w => w.SeasonNumber)
+            : _persistence.GetMaxSeasonAcrossInstruments() ?? 1;
+
+        // ═══════════════════════════════════════════════════════
+        // CORE PASS — alltime + current season for ALL users
+        // ═══════════════════════════════════════════════════════
+        var coreSongs = DetermineSongsToProcess(songList);
+
+        // Season prefix map limited to current season only
+        var coreSeasonPrefixMap = new Dictionary<int, string>();
+        if (seasonPrefixMap.TryGetValue(currentSeason, out var curPrefix))
+            coreSeasonPrefixMap[currentSeason] = curPrefix;
 
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
         _progress.SetAdaptiveLimiter(_pool.Limiter);
-
-        // Determine which songs to process this cycle.
-        // If we have loop-back attachments, process only the missed songs.
-        var songsToProcess = DetermineSongsToProcess(songList);
-
-        _progress.BeginPhaseProgress(songsToProcess.Count);
+        _progress.BeginPhaseProgress(coreSongs.Count);
         _progress.SetPhaseAccounts(GetTotalUserCount());
 
         _log.LogInformation(
-            "CyclicalSongMachine cycle starting: {Songs} songs (of {Total}), {Attachments} attachments, {Users} total users.",
-            songsToProcess.Count, songList.Count, _attachments.Count, GetTotalUserCount());
+            "CyclicalSongMachine core pass: {Songs} songs, {Attachments} attachments, {Users} users, season={Season}.",
+            coreSongs.Count, _attachments.Count, GetTotalUserCount(), currentSeason);
 
-        // ── Song gate for concurrency ──
+        await RunSongPassAsync(
+            coreSongs, instruments,
+            songId => GatherCoreUsersForSong(songId, currentSeason),
+            coreSeasonPrefixMap, accessToken, callerAccountId, opts, ct);
+
+        // Mark core pass complete and release core-only attachments
+        foreach (var (_, att) in _attachments)
+        {
+            if (att.IsCompleted) continue;
+            att.MarkCyclePassComplete();
+        }
+        CompleteCoreOnlyAttachments(currentSeason);
+
+        // ═══════════════════════════════════════════════════════
+        // HISTORICAL PASS — remaining seasons for backfill users
+        // ═══════════════════════════════════════════════════════
+        bool anyNeedHistorical = false;
+        foreach (var (_, att) in _attachments)
+        {
+            if (att.IsCompleted) continue;
+            if (AttachmentNeedsHistorical(att, currentSeason))
+            {
+                anyNeedHistorical = true;
+                break;
+            }
+        }
+
+        if (anyNeedHistorical && seasonPrefixMap.Count > 1)
+        {
+            var historicalSeasonPrefixMap = new Dictionary<int, string>(seasonPrefixMap);
+            historicalSeasonPrefixMap.Remove(currentSeason);
+
+            // Historical pass always covers all songs (backfill users need full coverage)
+            var historicalSongs = new List<SongCycleEntry>();
+            for (int i = 0; i < songList.Count; i++)
+                historicalSongs.Add(new SongCycleEntry(songList[i], i));
+
+            int historicalUserCount = GetHistoricalUserCount(currentSeason);
+
+            _progress.BeginPhaseProgress(historicalSongs.Count);
+            _progress.SetPhaseAccounts(historicalUserCount);
+
+            _log.LogInformation(
+                "CyclicalSongMachine historical pass: {Songs} songs, {Seasons} seasons, {Users} backfill users.",
+                historicalSongs.Count, historicalSeasonPrefixMap.Count, historicalUserCount);
+
+            await RunSongPassAsync(
+                historicalSongs, instruments,
+                songId => GatherHistoricalUsersForSong(songId, currentSeason),
+                historicalSeasonPrefixMap, accessToken, callerAccountId, opts, ct);
+
+            foreach (var (_, att) in _attachments)
+            {
+                if (att.IsCompleted) continue;
+                att.MarkCyclePassComplete();
+            }
+        }
+
+        _progress.SetAdaptiveLimiter(null);
+
+        CompleteFinishedAttachments();
+
+        _log.LogInformation(
+            "CyclicalSongMachine cycle complete. {Remaining} attachments still active.",
+            _attachments.Count);
+    }
+
+    /// <summary>
+    /// Run a song-parallel pass through the given songs, gathering users via the delegate.
+    /// Shared between the core pass and the historical pass.
+    /// </summary>
+    private async Task RunSongPassAsync(
+        IReadOnlyList<SongCycleEntry> songsToProcess,
+        IReadOnlyList<string> instruments,
+        Func<string, (List<UserWorkItem> Users, bool HighPriority)> gatherUsers,
+        IReadOnlyDictionary<int, string> seasonPrefixMap,
+        string accessToken,
+        string callerAccountId,
+        ScraperOptions opts,
+        CancellationToken ct)
+    {
         int maxConcurrentSongs = opts.SongMachineDop;
         SemaphoreSlim? songGate = maxConcurrentSongs > 0
             ? new SemaphoreSlim(maxConcurrentSongs, maxConcurrentSongs)
@@ -314,8 +409,7 @@ public class CyclicalSongMachine
 
                 try
                 {
-                    // Gather users from all active (non-completed) attachments for this song
-                    var (users, highPriority) = GatherUsersForSong(songEntry.SongId);
+                    var (users, highPriority) = gatherUsers(songEntry.SongId);
                     if (users.Count == 0) return;
 
                     var result = await _inner.ProcessSongForUsersAsync(
@@ -323,14 +417,12 @@ public class CyclicalSongMachine
                         accessToken, callerAccountId, _pool, highPriority,
                         opts.LookupBatchSize, ct);
 
-                    // Update per-attachment results
                     foreach (var (_, att) in _attachments)
                     {
                         if (att.IsCompleted) continue;
                         att.RecordSongResult(songEntry.GlobalIndex, result);
                     }
 
-                    // Report per-user history recon progress
                     foreach (var user in users)
                     {
                         if (user.Purposes.HasFlag(WorkPurpose.HistoryRecon))
@@ -349,10 +441,7 @@ public class CyclicalSongMachine
                     songGate?.Release();
                 }
 
-                // Update global song index for status reporting
                 Interlocked.Exchange(ref _cycleSongIndex, songEntry.GlobalIndex);
-
-                // Stamp join indices for any new attachments that arrived mid-cycle
                 StampJoinIndices(startIndex: songEntry.GlobalIndex + 1);
 
             }).ToList();
@@ -363,21 +452,6 @@ public class CyclicalSongMachine
         {
             songGate?.Dispose();
         }
-
-        _progress.SetAdaptiveLimiter(null);
-
-        // Mark loop-back as done for attachments that completed their missed range
-        foreach (var (_, att) in _attachments)
-        {
-            if (att.IsCompleted) continue;
-            att.MarkCyclePassComplete();
-        }
-
-        CompleteFinishedAttachments();
-
-        _log.LogInformation(
-            "CyclicalSongMachine cycle complete. {Remaining} attachments still active.",
-            _attachments.Count);
     }
 
     // ─── Song list building ─────────────────────────────────
@@ -436,10 +510,10 @@ public class CyclicalSongMachine
     // ─── User gathering ─────────────────────────────────────
 
     /// <summary>
-    /// Gather all users across all active attachments for a given song.
-    /// Returns the merged user list and whether any attachment is high priority.
+    /// Gather users for the <b>core pass</b> (alltime + current season only).
+    /// All users are included, but their <c>SeasonsNeeded</c> is clamped to the current season.
     /// </summary>
-    private (List<UserWorkItem> Users, bool HighPriority) GatherUsersForSong(string songId)
+    private (List<UserWorkItem> Users, bool HighPriority) GatherCoreUsersForSong(string songId, int currentSeason)
     {
         var users = new List<UserWorkItem>();
         bool highPriority = false;
@@ -447,24 +521,79 @@ public class CyclicalSongMachine
         foreach (var (_, att) in _attachments)
         {
             if (att.IsCompleted) continue;
-            // Only include users from attachments that need this song
             if (!att.SongIds.Contains(songId)) continue;
 
-            users.AddRange(att.Users);
-            if (att.IsHighPriority)
-                highPriority = true;
+            foreach (var user in att.Users)
+            {
+                // Clamp to alltime + current season only for the core pass
+                var coreSeasons = user.SeasonsNeeded.Contains(currentSeason)
+                    ? new HashSet<int> { currentSeason }
+                    : new HashSet<int>();
+
+                users.Add(new UserWorkItem
+                {
+                    AccountId = user.AccountId,
+                    Purposes = user.Purposes,
+                    AllTimeNeeded = user.AllTimeNeeded,
+                    SeasonsNeeded = coreSeasons,
+                    AlreadyChecked = user.AlreadyChecked,
+                });
+            }
+
+            if (att.IsHighPriority) highPriority = true;
         }
 
-        // Deduplicate by AccountId (a user may appear in multiple attachments)
+        return (DeduplicateUsers(users), highPriority);
+    }
+
+    /// <summary>
+    /// Gather users for the <b>historical pass</b> (remaining seasons, no alltime).
+    /// Only includes users whose original <c>SeasonsNeeded</c> contains historical seasons.
+    /// </summary>
+    private (List<UserWorkItem> Users, bool HighPriority) GatherHistoricalUsersForSong(string songId, int currentSeason)
+    {
+        var users = new List<UserWorkItem>();
+        bool highPriority = false;
+
+        foreach (var (_, att) in _attachments)
+        {
+            if (att.IsCompleted) continue;
+            if (!att.SongIds.Contains(songId)) continue;
+            if (!AttachmentNeedsHistorical(att, currentSeason)) continue;
+
+            foreach (var user in att.Users)
+            {
+                var historicalSeasons = new HashSet<int>(user.SeasonsNeeded);
+                historicalSeasons.Remove(currentSeason);
+                if (historicalSeasons.Count == 0) continue;
+
+                users.Add(new UserWorkItem
+                {
+                    AccountId = user.AccountId,
+                    Purposes = user.Purposes,
+                    AllTimeNeeded = false, // Already done in core pass
+                    SeasonsNeeded = historicalSeasons,
+                    AlreadyChecked = user.AlreadyChecked,
+                });
+            }
+
+            if (att.IsHighPriority) highPriority = true;
+        }
+
+        return (DeduplicateUsers(users), highPriority);
+    }
+
+    /// <summary>Deduplicate a user list by AccountId, keeping the first occurrence.</summary>
+    private static List<UserWorkItem> DeduplicateUsers(List<UserWorkItem> users)
+    {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var deduplicated = new List<UserWorkItem>();
+        var result = new List<UserWorkItem>();
         foreach (var user in users)
         {
             if (seen.Add(user.AccountId))
-                deduplicated.Add(user);
+                result.Add(user);
         }
-
-        return (deduplicated, highPriority);
+        return result;
     }
 
     private int GetTotalUserCount()
@@ -475,6 +604,22 @@ public class CyclicalSongMachine
             if (att.IsCompleted) continue;
             foreach (var user in att.Users)
                 seen.Add(user.AccountId);
+        }
+        return seen.Count;
+    }
+
+    private int GetHistoricalUserCount(int currentSeason)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (_, att) in _attachments)
+        {
+            if (att.IsCompleted) continue;
+            if (!AttachmentNeedsHistorical(att, currentSeason)) continue;
+            foreach (var user in att.Users)
+            {
+                if (user.SeasonsNeeded.Any(s => s != currentSeason))
+                    seen.Add(user.AccountId);
+            }
         }
         return seen.Count;
     }
@@ -510,6 +655,38 @@ public class CyclicalSongMachine
                     callerId, att.TotalEntriesUpdated, att.TotalSessionsInserted, att.TotalApiCalls);
             }
         }
+    }
+
+    /// <summary>
+    /// After the core pass, complete attachments whose users only need alltime + current season.
+    /// These are typically post-scrape attachments that don't need historical seasons.
+    /// </summary>
+    private void CompleteCoreOnlyAttachments(int currentSeason)
+    {
+        foreach (var (callerId, att) in _attachments)
+        {
+            if (att.IsCompleted) continue;
+            if (!att.IsFullyComplete) continue;
+            if (AttachmentNeedsHistorical(att, currentSeason)) continue;
+
+            att.Complete();
+            _attachments.TryRemove(callerId, out _);
+
+            _log.LogInformation(
+                "Attachment {CallerId} completed (core-only): {Updated} entries, {Sessions} sessions, {ApiCalls} API calls.",
+                callerId, att.TotalEntriesUpdated, att.TotalSessionsInserted, att.TotalApiCalls);
+        }
+    }
+
+    /// <summary>Whether an attachment has any user that needs historical seasons (not just current).</summary>
+    private static bool AttachmentNeedsHistorical(MachineAttachment att, int currentSeason)
+    {
+        foreach (var user in att.Users)
+        {
+            if (user.SeasonsNeeded.Any(s => s != currentSeason))
+                return true;
+        }
+        return false;
     }
 
     // ─── Season windows ─────────────────────────────────────
