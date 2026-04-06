@@ -1324,26 +1324,9 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
         var resultsArr = await Task.WhenAll(tasks);
         var resultsList = resultsArr.ToList();
 
-        // Run coordinated deep scrape for any deferred instruments
-        if (deferDeepScrape && validEntryTarget > 0)
-        {
-            var deferredMetadata = resultsList
-                .Where(r => r.DeferredDeepScrape is not null)
-                .Select(r => r.DeferredDeepScrape!)
-                .ToList();
-
-            if (deferredMetadata.Count > 0)
-            {
-                var coordinator = new DeepScrapeCoordinator(this, _progress, _log);
-                var deepJobs = DeepScrapeCoordinator.BuildJobs(deferredMetadata, validEntryTarget);
-
-                await coordinator.RunAsync(
-                    deepJobs, limiter, accessToken, accountId,
-                    seedBatch: overThresholdExtraPages,
-                    onJobComplete: null,
-                    ct);
-            }
-        }
+        // Deep scrape metadata is propagated via DeferredDeepScrape on each result.
+        // The caller (ScrapeManySongsAsync) runs a single breadth-first coordinator
+        // across ALL songs, avoiding per-song coordinators that starve the DOP pool.
 
         return resultsList;
     }
