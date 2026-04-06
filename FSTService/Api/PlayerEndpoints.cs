@@ -211,14 +211,13 @@ public static partial class ApiEndpoints
             string accountId,
             IMetaDatabase metaDb,
             FestivalService festivalService,
-            ScoreBackfiller backfiller,
+            CyclicalSongMachine cyclicalMachine,
             UserSyncProgressTracker syncTracker,
             NotificationService notifications,
             TokenManager tokenManager,
-            SharedDopPool pool,
-            IServiceScopeFactory scopeFactory,
-            ILoggerFactory loggerFactory,
-            BackfillQueue backfillQueue) =>
+            GlobalLeaderboardPersistence persistence,
+            RivalsOrchestrator rivalsOrchestrator,
+            ILoggerFactory loggerFactory) =>
         {
             if (string.IsNullOrWhiteSpace(accountId))
                 return Results.BadRequest(new { error = "accountId is required." });
@@ -239,70 +238,53 @@ public static partial class ApiEndpoints
             {
                 var songCount = Math.Max(festivalService.Songs.Count, 200);
                 metaDb.EnqueueBackfill(accountId, songCount * 6); // songs × instruments
+                metaDb.StartBackfill(accountId);
                 backfillKicked = true;
 
-                // Fire-and-forget: run backfill + history recon via SPM
+                // Fire-and-forget: attach to cyclical machine for backfill + history recon
                 _ = Task.Run(async () =>
                 {
                     var log = loggerFactory.CreateLogger("FSTService.Api.TrackBackfill");
                     try
                     {
-                        var accessToken = await tokenManager.GetAccessTokenAsync(CancellationToken.None);
-                        if (accessToken is null)
-                        {
-                            log.LogWarning("Track-triggered backfill for {AccountId}: no access token available.", accountId);
-                            return;
-                        }
-                        var callerAccountId = tokenManager.AccountId!;
-
                         if (festivalService.Songs.Count == 0)
                             await festivalService.InitializeAsync();
 
-                        await backfiller.BackfillAccountAsync(
-                            accountId, festivalService, accessToken, callerAccountId, pool, ct: CancellationToken.None);
+                        var chartedSongIds = festivalService.Songs
+                            .Where(s => s.track?.su is not null)
+                            .Select(s => s.track.su!)
+                            .ToList();
 
-                        // Reconstruct score history via SongProcessingMachine (batched V2 calls,
-                        // natural chunk dispatch, DOP/AIMD/CB — replaces direct HistoryReconstructor)
-                        var reconStatus = metaDb.GetHistoryReconStatus(accountId);
-                        if (reconStatus?.Status != "complete")
+                        var alreadyChecked = metaDb.GetCheckedBackfillPairs(accountId);
+
+                        var user = new UserWorkItem
                         {
-                            using var scope = scopeFactory.CreateScope();
-                            var hr = scope.ServiceProvider.GetRequiredService<HistoryReconstructor>();
-                            var seasonWindows = await hr.DiscoverSeasonWindowsAsync(
-                                accessToken, callerAccountId, CancellationToken.None);
+                            AccountId = accountId,
+                            Purposes = WorkPurpose.Backfill | WorkPurpose.HistoryRecon,
+                            AllTimeNeeded = true,
+                            SeasonsNeeded = [], // Season discovery handled by cyclical machine
+                            AlreadyChecked = alreadyChecked,
+                        };
 
-                            if (seasonWindows.Count > 0)
-                            {
-                                var allSeasons = seasonWindows.Select(w => w.SeasonNumber).ToHashSet();
-                                var chartedSongIds = festivalService.Songs
-                                    .Where(s => s.track?.su is not null)
-                                    .Select(s => s.track.su!)
-                                    .ToList();
+                        syncTracker.BeginBackfill(accountId, chartedSongIds.Count * 6);
 
-                                var alreadyProcessed = metaDb.GetProcessedHistoryReconPairs(accountId);
-                                var user = new UserWorkItem
-                                {
-                                    AccountId = accountId,
-                                    Purposes = WorkPurpose.HistoryRecon,
-                                    AllTimeNeeded = false,
-                                    SeasonsNeeded = allSeasons,
-                                    AlreadyChecked = alreadyProcessed,
-                                };
+                        var result = await cyclicalMachine.AttachAsync(
+                            [user], chartedSongIds, seasonWindows: [],
+                            isHighPriority: false, ct: CancellationToken.None);
 
-                                syncTracker.BeginHistory(accountId, chartedSongIds.Count);
+                        // Per-user completion actions
+                        metaDb.CompleteBackfill(accountId);
+                        rivalsOrchestrator.ComputeForUser(accountId);
+                        _ = notifications.NotifyBackfillCompleteAsync(accountId);
 
-                                var machine = scope.ServiceProvider.GetRequiredService<SongProcessingMachine>();
-                                await machine.RunAsync(
-                                    chartedSongIds, [user], seasonWindows,
-                                    accessToken, callerAccountId,
-                                    pool, isHighPriority: false,
-                                    batchSize: 500, reportProgress: false,
-                                    maxConcurrentSongs: 0, ct: CancellationToken.None);
-                            }
-                        }
+                        var reconStatus = metaDb.GetHistoryReconStatus(accountId);
+                        if (reconStatus is null)
+                            metaDb.EnqueueHistoryRecon(accountId, 0);
+                        metaDb.CompleteHistoryRecon(accountId);
+                        _ = notifications.NotifyHistoryReconCompleteAsync(accountId);
 
                         syncTracker.Complete(accountId);
-                        log.LogInformation("Track-triggered backfill for {AccountId} completed.", accountId);
+                        log.LogInformation("Track-triggered backfill for {AccountId} completed via cyclical machine.", accountId);
                     }
                     catch (Exception ex)
                     {

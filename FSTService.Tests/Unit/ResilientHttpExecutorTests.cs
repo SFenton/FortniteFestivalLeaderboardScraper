@@ -757,4 +757,122 @@ public sealed class ResilientHttpExecutorTests
         var exceptions = await Assert.ThrowsAsync<HttpRequestException>(() => Task.WhenAll(task1, task2));
         Assert.Contains("exhausted", exceptions.Message);
     }
+
+    // ─── WithCdnResilienceAsync ─────────────────────────────────
+
+    [Fact]
+    public async Task WithCdnResilience_Success_ReturnsResultAndReleasesSlot()
+    {
+        var (executor, _) = CreateExecutor();
+        int acquires = 0, releases = 0;
+
+        var result = await executor.WithCdnResilienceAsync(
+            work: () => Task.FromResult(42),
+            CancellationToken.None,
+            acquireSlot: () => { acquires++; return Task.CompletedTask; },
+            releaseSlot: () => releases++);
+
+        Assert.Equal(42, result);
+        Assert.Equal(1, acquires);
+        Assert.Equal(1, releases);
+    }
+
+    [Fact]
+    public async Task WithCdnResilience_CdnBlock_RetriesAfterClear()
+    {
+        var handler = new MockHttpMessageHandler();
+        var executor = CreateExecutorWithZeroCdnDelay(handler);
+
+        // First call: CDN block (the helper will catch and retry).
+        // We simulate by having work throw CdnBlockedException on first call.
+        int callCount = 0;
+        int acquires = 0, releases = 0;
+
+        var result = await executor.WithCdnResilienceAsync(
+            work: () =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    throw new CdnBlockedException("test CDN block");
+                return Task.FromResult("success");
+            },
+            CancellationToken.None,
+            acquireSlot: () => { acquires++; return Task.CompletedTask; },
+            releaseSlot: () => releases++);
+
+        Assert.Equal("success", result);
+        Assert.Equal(2, callCount); // 1 failure + 1 success
+        Assert.Equal(2, acquires);  // acquired on each attempt
+        Assert.Equal(2, releases);  // released on CDN catch + released on success
+    }
+
+    [Fact]
+    public async Task WithCdnResilience_NonCdnException_PropagatesAndReleasesSlot()
+    {
+        var (executor, _) = CreateExecutor();
+        int acquires = 0, releases = 0;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            executor.WithCdnResilienceAsync<int>(
+                work: () => throw new InvalidOperationException("boom"),
+                CancellationToken.None,
+                acquireSlot: () => { acquires++; return Task.CompletedTask; },
+                releaseSlot: () => releases++));
+
+        Assert.Equal(1, acquires);
+        Assert.Equal(1, releases); // released via finally
+    }
+
+    [Fact]
+    public async Task WithCdnResilience_Cancellation_ThrowsOCE()
+    {
+        var (executor, _) = CreateExecutor();
+        var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            executor.WithCdnResilienceAsync(
+                work: () => Task.FromResult(1),
+                cts.Token));
+    }
+
+    [Fact]
+    public async Task WithCdnResilience_NoSlotDelegates_StillHandlesCdnRetry()
+    {
+        var (executor, _) = CreateExecutor();
+        int callCount = 0;
+
+        var result = await executor.WithCdnResilienceAsync(
+            work: () =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    throw new CdnBlockedException("test CDN block");
+                return Task.FromResult("ok");
+            },
+            CancellationToken.None);
+
+        Assert.Equal("ok", result);
+        Assert.Equal(2, callCount);
+    }
+
+    [Fact]
+    public async Task WithCdnResilience_MultipleCdnBlocks_RetriesUntilSuccess()
+    {
+        var (executor, _) = CreateExecutor();
+        int callCount = 0;
+
+        var result = await executor.WithCdnResilienceAsync(
+            work: () =>
+            {
+                callCount++;
+                if (callCount <= 3)
+                    throw new CdnBlockedException($"CDN block #{callCount}");
+                return Task.FromResult(callCount);
+            },
+            CancellationToken.None);
+
+        Assert.Equal(4, result);
+        Assert.Equal(4, callCount);
+    }
 }

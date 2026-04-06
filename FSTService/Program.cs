@@ -176,7 +176,8 @@ builder.Services.AddSingleton<BackfillQueue>();
 builder.Services.AddSingleton<ScoreBackfiller>();
 builder.Services.AddSingleton<PostScrapeRefresher>();
 builder.Services.AddSingleton<BatchResultProcessor>();
-builder.Services.AddTransient<SongProcessingMachine>();
+builder.Services.AddSingleton<SongProcessingMachine>();
+builder.Services.AddSingleton<CyclicalSongMachine>();
 builder.Services.AddSingleton<SharedDopPool>(sp =>
 {
     var opts = sp.GetRequiredService<IOptions<ScraperOptions>>().Value;

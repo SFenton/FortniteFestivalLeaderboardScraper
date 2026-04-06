@@ -169,6 +169,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             serviceProvider,
             _historyReconstructor,
             _pool,
+            CreateMockCyclicalMachine(),
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, notifications,
             _tokenManager, _progress, pathDataStore, precomputer, options,
             Substitute.For<ILogger<PostScrapeOrchestrator>>());
@@ -177,7 +178,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _backfillQueue, _historyReconstructor,
             rivalsOrchestrator, notifications, _persistence,
             _tokenManager, _progress, options,
-            serviceProvider, _pool,
+            CreateMockCyclicalMachine(), _pool,
             Substitute.For<ILogger<BackfillOrchestrator>>());
 
         _shopMetaDb = new FSTService.Persistence.MetaDatabase(
@@ -205,6 +206,7 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _tokenManager, _scraper, _persistence,
             _festivalService, dbInitializer,
             scrapeOrchestrator, postScrapeOrchestrator, backfillOrchestrator,
+            CreateMockCyclicalMachine(),
             pathGenerator, pathDataStore,
             new Api.SongsCacheService(),
             new Api.ResponseCacheService(TimeSpan.FromMinutes(2)),
@@ -231,8 +233,22 @@ public abstract class ScraperWorkerTestBase : IDisposable
             _backfillQueue, _historyReconstructor,
             rivalsOrchestrator, notifications, _persistence,
             _tokenManager, _progress, options,
-            serviceProvider, _pool,
+            CreateMockCyclicalMachine(), _pool,
             Substitute.For<ILogger<BackfillOrchestrator>>());
+    }
+
+    /// <summary>Create a mock CyclicalSongMachine whose AttachAsync returns an empty result.</summary>
+    protected static CyclicalSongMachine CreateMockCyclicalMachine()
+    {
+        var mock = Substitute.For<CyclicalSongMachine>();
+        mock.AttachAsync(
+            Arg.Any<IReadOnlyList<UserWorkItem>>(),
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>())
+            .Returns(new SongProcessingMachine.MachineResult());
+        return mock;
     }
 
     protected async Task InvokePrivateAsync(ScraperWorker worker, string methodName, params object[] args)

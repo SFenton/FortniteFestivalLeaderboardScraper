@@ -110,6 +110,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             serviceProvider,
             Substitute.For<HistoryReconstructor>(scraper, _persistence, new HttpClient(), new ScrapeProgressTracker(), new UserSyncProgressTracker(new Api.NotificationService(Substitute.For<ILogger<Api.NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
+            CreateMockCyclicalMachine(),
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
             _tokenManager, _progress, _pathDataStore,
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
@@ -123,6 +124,20 @@ public class PostScrapeOrchestratorTests : IDisposable
         _metaDb.Dispose();
         _metaFixture.Dispose();
         try { Directory.Delete(_tempDir, true); } catch { }
+    }
+
+    /// <summary>Create a mock CyclicalSongMachine whose AttachAsync returns an empty result.</summary>
+    private static CyclicalSongMachine CreateMockCyclicalMachine()
+    {
+        var mock = Substitute.For<CyclicalSongMachine>();
+        mock.AttachAsync(
+            Arg.Any<IReadOnlyList<UserWorkItem>>(),
+            Arg.Any<IReadOnlyList<string>>(),
+            Arg.Any<IReadOnlyList<Persistence.SeasonWindowInfo>>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>())
+            .Returns(new SongProcessingMachine.MachineResult());
+        return mock;
     }
 
     private ScrapePassContext CreateContext(
@@ -289,6 +304,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             Substitute.For<IServiceProvider>(),
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
+            CreateMockCyclicalMachine(),
             rivalsOrchestrator, rankingsCalculator2, leaderboardRivalsCalculator2, _notifications,
             _tokenManager, _progress, _pathDataStore,
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
@@ -349,6 +365,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             Substitute.For<IServiceProvider>(),
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
+            CreateMockCyclicalMachine(),
             rivalsOrchestrator, rankingsCalculator3, leaderboardRivalsCalculator3, _notifications,
             _tokenManager, _progress, _pathDataStore,
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
@@ -455,6 +472,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             Substitute.For<IServiceProvider>(),
             Substitute.For<HistoryReconstructor>(Substitute.For<ILeaderboardQuerier>(), _persistence, new HttpClient(), new ScrapeProgressTracker(), new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), Substitute.For<ILogger<HistoryReconstructor>>()),
             _pool,
+            CreateMockCyclicalMachine(),
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
             _tokenManager, _progress, _pathDataStore,
             new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),

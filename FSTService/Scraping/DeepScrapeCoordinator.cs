@@ -267,16 +267,20 @@ public sealed class DeepScrapeCoordinator
             var job = jobs[jobIndex];
             if (job.Done) return;
 
-            bool acquired = false;
             try
             {
-                await limiter.WaitAsync(job.Cts!.Token);
-                acquired = true;
+                var (parsed, bodyLen, status) = await _scraper.Executor.WithCdnResilienceAsync(
+                    work: async () =>
+                    {
+                        if (job.Done)
+                            return ((GlobalLeaderboardScraper.ParsedPage?)null, 0, GlobalLeaderboardScraper.FetchStatus.OtherFailure);
+                        return await _scraper.FetchPageAsync(
+                            job.SongId, job.Instrument, page, accessToken, accountId, limiter, job.Cts!.Token);
+                    },
+                    ct,
+                    acquireSlot: () => limiter.WaitAsync(job.Cts!.Token),
+                    releaseSlot: limiter.Release);
 
-                if (job.Done) return;
-
-                var (parsed, bodyLen, status) = await _scraper.FetchPageAsync(
-                    job.SongId, job.Instrument, page, accessToken, accountId, limiter, job.Cts.Token);
                 Interlocked.Increment(ref job.RequestCount);
                 Interlocked.Add(ref job.BytesReceived, bodyLen);
                 _progress.ReportPageFetched(bodyLen);
@@ -308,8 +312,6 @@ public sealed class DeepScrapeCoordinator
             }
             finally
             {
-                if (acquired) limiter.Release();
-
                 // Extend seed if this job needs more pages
                 if (!job.Done && job.LastEnqueuedPage < job.ReportedPages - 1)
                 {

@@ -21,7 +21,7 @@ public sealed class BackfillOrchestrator
     private readonly TokenManager _tokenManager;
     private readonly ScrapeProgressTracker _progress;
     private readonly IOptions<ScraperOptions> _options;
-    private readonly IServiceProvider _serviceProvider;
+    private readonly CyclicalSongMachine _cyclicalMachine;
     private readonly SharedDopPool _pool;
     private readonly ILogger<BackfillOrchestrator> _log;
 
@@ -34,7 +34,7 @@ public sealed class BackfillOrchestrator
         TokenManager tokenManager,
         ScrapeProgressTracker progress,
         IOptions<ScraperOptions> options,
-        IServiceProvider serviceProvider,
+        CyclicalSongMachine cyclicalMachine,
         SharedDopPool pool,
         ILogger<BackfillOrchestrator> log)
     {
@@ -46,7 +46,7 @@ public sealed class BackfillOrchestrator
         _tokenManager = tokenManager;
         _progress = progress;
         _options = options;
-        _serviceProvider = serviceProvider;
+        _cyclicalMachine = cyclicalMachine;
         _pool = pool;
         _log = log;
     }
@@ -135,13 +135,9 @@ public sealed class BackfillOrchestrator
         try
         {
             _progress.SetSubOperation("processing_songs");
-            var machine = _serviceProvider.GetRequiredService<SongProcessingMachine>();
-            var result = await machine.RunAsync(
-                chartedSongIds, users, seasonWindows,
-                accessToken, callerAccountId,
-                _pool, isHighPriority: false,
-                _options.Value.LookupBatchSize, reportProgress: true,
-                maxConcurrentSongs: _options.Value.SongMachineDop, ct: ct);
+            var result = await _cyclicalMachine.AttachAsync(
+                users, chartedSongIds, seasonWindows,
+                isHighPriority: false, ct);
 
             _log.LogInformation(
                 "Backfill complete: {Updated} entries, {Sessions} sessions, {ApiCalls} API calls for {Users} users.",
@@ -270,13 +266,9 @@ public sealed class BackfillOrchestrator
         try
         {
             _progress.SetSubOperation("processing_songs");
-            var machine = _serviceProvider.GetRequiredService<SongProcessingMachine>();
-            var result = await machine.RunAsync(
-                chartedSongIds, users, seasonWindows,
-                accessToken, callerAccountId,
-                _pool, isHighPriority: false,
-                _options.Value.LookupBatchSize, reportProgress: true,
-                maxConcurrentSongs: _options.Value.SongMachineDop, ct: ct);
+            var result = await _cyclicalMachine.AttachAsync(
+                users, chartedSongIds, seasonWindows,
+                isHighPriority: false, ct);
 
             _log.LogInformation(
                 "History recon complete: {Sessions} sessions inserted, {ApiCalls} API calls for {Users} users.",

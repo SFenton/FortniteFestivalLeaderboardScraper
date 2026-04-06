@@ -23,6 +23,7 @@ public sealed class PostScrapeOrchestrator
     private readonly IServiceProvider _serviceProvider;
     private readonly HistoryReconstructor _historyReconstructor;
     private readonly SharedDopPool _pool;
+    private readonly CyclicalSongMachine _cyclicalMachine;
     private readonly RivalsOrchestrator _rivalsOrchestrator;
     private readonly RankingsCalculator _rankingsCalculator;
     private readonly LeaderboardRivalsCalculator _leaderboardRivalsCalculator;
@@ -42,6 +43,7 @@ public sealed class PostScrapeOrchestrator
         IServiceProvider serviceProvider,
         HistoryReconstructor historyReconstructor,
         SharedDopPool pool,
+        CyclicalSongMachine cyclicalMachine,
         RivalsOrchestrator rivalsOrchestrator,
         RankingsCalculator rankingsCalculator,
         LeaderboardRivalsCalculator leaderboardRivalsCalculator,
@@ -60,6 +62,7 @@ public sealed class PostScrapeOrchestrator
         _serviceProvider = serviceProvider;
         _historyReconstructor = historyReconstructor;
         _pool = pool;
+        _cyclicalMachine = cyclicalMachine;
         _rivalsOrchestrator = rivalsOrchestrator;
         _rankingsCalculator = rankingsCalculator;
         _leaderboardRivalsCalculator = leaderboardRivalsCalculator;
@@ -333,15 +336,11 @@ public sealed class PostScrapeOrchestrator
                 });
             }
 
-            // ── Run the machine (all songs in parallel) ──────────
+            // ── Attach to the cyclical machine ──────────────────
             _progress.SetSubOperation("processing_songs");
-            var machine = _serviceProvider.GetRequiredService<SongProcessingMachine>();
-            var result = await machine.RunAsync(
-                chartedSongIds, users, seasonWindows,
-                refreshToken, callerAccountId,
-                _pool, isHighPriority: true,
-                _options.Value.LookupBatchSize, reportProgress: true,
-                maxConcurrentSongs: _options.Value.SongMachineDop, ct: ct);
+            var result = await _cyclicalMachine.AttachAsync(
+                users, chartedSongIds, seasonWindows,
+                isHighPriority: true, ct);
 
             if (result.EntriesUpdated > 0 || result.SessionsInserted > 0)
                 _log.LogInformation("Song machine updated {Entries} entries, {Sessions} sessions for {Users} users.",

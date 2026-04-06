@@ -950,17 +950,14 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
             async Task FetchAndCollectPageAsync(int pageNum)
             {
                 if (pageCts.IsCancellationRequested) return;
-                bool acquired = false;
                 try
                 {
-                    if (limiter is not null)
-                    {
-                        await limiter.WaitAsync(pageCts.Token);
-                        acquired = true;
-                    }
-
-                    var (parsed, bodyLen, status) = await FetchPageAsync(
-                        songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token);
+                    var (parsed, bodyLen, status) = await _executor.WithCdnResilienceAsync(
+                        work: () => FetchPageAsync(
+                            songId, instrument, pageNum, accessToken, accountId, limiter, pageCts.Token),
+                        ct,
+                        acquireSlot: limiter is not null ? () => limiter.WaitAsync(pageCts.Token) : null,
+                        releaseSlot: limiter is not null ? limiter.Release : null);
                     Interlocked.Increment(ref requestCount);
                     Interlocked.Add(ref totalBytes, bodyLen);
                     _progress.ReportPageFetched(bodyLen);
@@ -994,10 +991,6 @@ public class GlobalLeaderboardScraper : ILeaderboardQuerier
                 catch (OperationCanceledException) when (pageCts.IsCancellationRequested && !ct.IsCancellationRequested)
                 {
                     // Cancelled due to access boundary — not an error
-                }
-                finally
-                {
-                    if (acquired) limiter?.Release();
                 }
             }
 

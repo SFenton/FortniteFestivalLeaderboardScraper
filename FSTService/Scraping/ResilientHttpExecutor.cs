@@ -441,4 +441,55 @@ public sealed class ResilientHttpExecutor
         if (remaining > TimeSpan.Zero)
             await Task.Delay(remaining, ct);
     }
+
+    /// <summary>
+    /// Execute <paramref name="work"/> with CDN resilience: pre-wait for any active CDN block,
+    /// acquire a concurrency slot, run the work, release the slot, and retry transparently
+    /// on <see cref="CdnBlockedException"/>. Callers do not need to handle CDN blocks —
+    /// this method catches them, releases the slot, waits for the probe to clear, and retries.
+    /// </summary>
+    /// <param name="work">The async operation to execute (e.g. an HTTP call).</param>
+    /// <param name="ct">Cancellation token used for CDN wait and loop cancellation.</param>
+    /// <param name="acquireSlot">Optional async delegate to acquire a DOP/rate slot before work.</param>
+    /// <param name="releaseSlot">Optional delegate to release the DOP/rate slot after work or on CDN block.</param>
+    /// <returns>The result of <paramref name="work"/> once it succeeds.</returns>
+    public async Task<T> WithCdnResilienceAsync<T>(
+        Func<Task<T>> work,
+        CancellationToken ct,
+        Func<Task>? acquireSlot = null,
+        Action? releaseSlot = null)
+    {
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            await WaitForCdnClearAsync(ct);
+
+            bool acquired = false;
+            try
+            {
+                if (acquireSlot is not null)
+                {
+                    await acquireSlot();
+                    acquired = true;
+                }
+
+                var result = await work();
+
+                // Release slot before returning so caller does post-processing outside the slot
+                if (acquired) { releaseSlot?.Invoke(); acquired = false; }
+                return result;
+            }
+            catch (CdnBlockedException)
+            {
+                if (acquired) { releaseSlot?.Invoke(); acquired = false; }
+                await WaitForCdnClearAsync(ct);
+                // Loop back to pre-wait + re-acquire + retry
+            }
+            finally
+            {
+                // Safety: release slot if still held (e.g. non-CDN exception from work)
+                if (acquired) releaseSlot?.Invoke();
+            }
+        }
+    }
 }

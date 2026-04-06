@@ -31,6 +31,7 @@ public sealed class ScraperWorker : BackgroundService
     private readonly ScrapeOrchestrator _scrapeOrchestrator;
     private readonly PostScrapeOrchestrator _postScrapeOrchestrator;
     private readonly BackfillOrchestrator _backfillOrchestrator;
+    private readonly CyclicalSongMachine _cyclicalMachine;
     private readonly PathGenerator _pathGenerator;
     private readonly IPathDataStore _pathDataStore;
     private readonly SongsCacheService _songsCache;
@@ -55,6 +56,7 @@ public sealed class ScraperWorker : BackgroundService
         ScrapeOrchestrator scrapeOrchestrator,
         PostScrapeOrchestrator postScrapeOrchestrator,
         BackfillOrchestrator backfillOrchestrator,
+        CyclicalSongMachine cyclicalMachine,
         PathGenerator pathGenerator,
         IPathDataStore IPathDataStore,
         SongsCacheService songsCache,
@@ -75,6 +77,7 @@ public sealed class ScraperWorker : BackgroundService
         _scrapeOrchestrator = scrapeOrchestrator;
         _postScrapeOrchestrator = postScrapeOrchestrator;
         _backfillOrchestrator = backfillOrchestrator;
+        _cyclicalMachine = cyclicalMachine;
         _pathGenerator = pathGenerator;
         _pathDataStore = IPathDataStore;
         _songsCache = songsCache;
@@ -117,6 +120,10 @@ public sealed class ScraperWorker : BackgroundService
         await _dbInitializer.WaitForReadyAsync(stoppingToken);
         _log.LogInformation("Song catalog loaded. {SongCount} songs available for API.",
             _festivalService.Songs.Count);
+
+        // Start the cyclical song machine so callers (post-scrape, backfill,
+        // track endpoint) can attach at any time.
+        _cyclicalMachine.Start(stoppingToken);
 
         // Pre-warm the rankings cache for registered users in the background so
         // that the scrape loop starts immediately. The cache TTL is 5 min, so the
@@ -387,8 +394,22 @@ public sealed class ScraperWorker : BackgroundService
         var pathGenTask = TryGeneratePathsAsync(service, force: false, ct);
 
         // ── Core scrape: delegate to ScrapeOrchestrator ──
-        var result = await _scrapeOrchestrator.RunAsync(
-            accessToken, _tokenManager.AccountId!, service, ct);
+        ScrapePassResult result;
+        try
+        {
+            result = await _scrapeOrchestrator.RunAsync(
+                accessToken, _tokenManager.AccountId!, service, ct);
+        }
+        catch (CdnBlockedException ex)
+        {
+            // Safety net: CDN block escaped page-level handling.
+            // Log and let the main loop retry next pass rather than crashing.
+            _log.LogError(ex,
+                "CDN block escaped to scrape pass level (wire sends: {WireSends}, blocks: {Blocks}). " +
+                "Partial data from this pass was already persisted via pipelined writers.",
+                _globalScraper.Executor.TotalHttpSends, _globalScraper.Executor.CdnBlocksDetected);
+            return;
+        }
 
         // Observe the path generation task that ran in parallel with the scrape
         try { await pathGenTask; }

@@ -42,6 +42,25 @@ public class SongProcessingMachine
     }
 
     /// <summary>
+    /// Fallback for when no <see cref="ResilientHttpExecutor"/> is available (e.g. tests
+    /// with a mock <see cref="ILeaderboardQuerier"/>). Acquires a slot, runs work,
+    /// and releases the slot — no CDN resilience.
+    /// </summary>
+    private static async Task<T> FallbackAcquireAndRunAsync<T>(
+        Func<Task> acquireSlot, Func<Task<T>> work, Action releaseSlot)
+    {
+        await acquireSlot();
+        try
+        {
+            return await work();
+        }
+        finally
+        {
+            releaseSlot();
+        }
+    }
+
+    /// <summary>
     /// Run the machine to completion. Fires all songs in parallel, bounded only
     /// by the shared DOP pool. Each song fans out 6 instruments in parallel,
     /// each instrument performs alltime + seasonal batch lookups.
@@ -169,6 +188,25 @@ public class SongProcessingMachine
             UsersProcessed = users.Count,
         };
     }
+
+    /// <summary>
+    /// Process one song across all instruments for the given users.
+    /// Fires 6 instrument tasks in parallel. Called by <see cref="CyclicalSongMachine"/>
+    /// for each song in the cycle.
+    /// </summary>
+    public async Task<SongStepResult> ProcessSongForUsersAsync(
+        string songId,
+        IReadOnlyList<string> instruments,
+        IReadOnlyList<UserWorkItem> users,
+        IReadOnlyDictionary<int, string> seasonPrefixMap,
+        string accessToken,
+        string callerAccountId,
+        SharedDopPool pool,
+        bool isHighPriority,
+        int batchSize,
+        CancellationToken ct)
+        => await ProcessSongAsync(songId, instruments, users, seasonPrefixMap,
+            accessToken, callerAccountId, pool, isHighPriority, batchSize, ct);
 
     /// <summary>
     /// Process one song across all instruments for all users.
@@ -310,52 +348,41 @@ public class SongProcessingMachine
                 var chunk = alltimeUsers.GetRange(offset, Math.Min(batchSize, alltimeUsers.Count - offset));
                 var targetIds = chunk.Select(u => u.AccountId).ToList();
 
-                // Wait for any active CDN block to clear BEFORE acquiring a DOP slot.
-                // This is unconditional — WaitForCdnClearAsync returns immediately if no block.
-                // Prevents DOP slot churn during CDN where tasks acquire→throw→release in a loop.
-                if (_executor is not null)
-                    await _executor.WaitForCdnClearAsync(ct);
-
-                // Acquire DOP slot only for the HTTP call, release immediately after
+                // Acquire DOP slot only for the HTTP call, release immediately after.
+                // WithCdnResilienceAsync handles pre-wait, CDN catch/release/retry.
                 List<LeaderboardEntry> entries;
                 LowPriorityToken lowToken = default;
-                bool slotAcquired = false;
-                try
-                {
-                    if (isHighPriority) { await pool.AcquireHighAsync(ct); slotAcquired = true; }
-                    else { lowToken = await pool.AcquireLowAsync(ct); slotAcquired = true; }
 
+                Func<Task> acquireSlot = async () =>
+                {
+                    if (isHighPriority) await pool.AcquireHighAsync(ct);
+                    else lowToken = await pool.AcquireLowAsync(ct);
+                };
+                Action releaseSlot = () =>
+                {
+                    if (isHighPriority) pool.ReleaseHigh();
+                    else pool.ReleaseLow(lowToken);
+                };
+                Func<Task<List<LeaderboardEntry>>> work = () =>
+                {
                     _progress.ReportPhaseRequest();
                     Interlocked.Increment(ref apiCalls);
+                    return _scraper.LookupMultipleAccountsAsync(
+                        songId, instrument, targetIds,
+                        accessToken, callerAccountId, limiter: pool.Limiter, ct);
+                };
 
-                    try
-                    {
-                        entries = await _scraper.LookupMultipleAccountsAsync(
-                            songId, instrument, targetIds,
-                            accessToken, callerAccountId, limiter: pool.Limiter, ct);
-                    }
-                    catch (CdnBlockedException)
-                    {
-                        // Release slot immediately, wait for probe to clear, retry same batch
-                        if (slotAcquired) { if (isHighPriority) pool.ReleaseHigh(); else pool.ReleaseLow(lowToken); slotAcquired = false; }
-                        if (_executor is not null) await _executor.WaitForCdnClearAsync(ct);
-                        offset -= batchSize; // retry same batch (for loop will += batchSize)
-                        continue;
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        _log.LogDebug(ex, "Alltime batch failed for {Song}/{Instrument}.", songId, instrument);
-                        _progress.ReportPhaseRetry();
-                        continue;
-                    }
-                }
-                finally
+                try
                 {
-                    if (slotAcquired)
-                    {
-                        if (isHighPriority) pool.ReleaseHigh();
-                        else pool.ReleaseLow(lowToken);
-                    }
+                    entries = _executor is not null
+                        ? await _executor.WithCdnResilienceAsync(work, ct, acquireSlot, releaseSlot)
+                        : await FallbackAcquireAndRunAsync(acquireSlot, work, releaseSlot);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.LogDebug(ex, "Alltime batch failed for {Song}/{Instrument}.", songId, instrument);
+                    _progress.ReportPhaseRetry();
+                    continue;
                 }
 
                 // DB processing runs outside the DOP slot — no API concurrency needed
@@ -451,57 +478,48 @@ public class SongProcessingMachine
                 var chunk = seasonUsers.GetRange(offset, Math.Min(batchSize, seasonUsers.Count - offset));
                 var targetIds = chunk.Select(u => u.AccountId).ToList();
 
-                // Wait for any active CDN block to clear BEFORE acquiring a DOP slot.
-                if (_executor is not null)
-                    await _executor.WaitForCdnClearAsync(ct);
-
-                // Acquire DOP slot only for the HTTP call, release immediately after
+                // Acquire DOP slot only for the HTTP call, release immediately after.
+                // WithCdnResilienceAsync handles pre-wait, CDN catch/release/retry.
                 List<SessionHistoryEntry> sessions;
                 LowPriorityToken lowToken = default;
-                bool slotAcquired = false;
-                try
-                {
-                    if (isHighPriority) { await pool.AcquireHighAsync(ct); slotAcquired = true; }
-                    else { lowToken = await pool.AcquireLowAsync(ct); slotAcquired = true; }
 
+                Func<Task> acquireSlot = async () =>
+                {
+                    if (isHighPriority) await pool.AcquireHighAsync(ct);
+                    else lowToken = await pool.AcquireLowAsync(ct);
+                };
+                Action releaseSlot = () =>
+                {
+                    if (isHighPriority) pool.ReleaseHigh();
+                    else pool.ReleaseLow(lowToken);
+                };
+                Func<Task<List<SessionHistoryEntry>>> work = () =>
+                {
                     _progress.ReportPhaseRequest();
                     Interlocked.Increment(ref apiCalls);
+                    return _scraper.LookupMultipleAccountSessionsAsync(
+                        songId, instrument, seasonPrefix, targetIds,
+                        accessToken, callerAccountId, limiter: pool.Limiter, ct);
+                };
 
-                    try
-                    {
-                        sessions = await _scraper.LookupMultipleAccountSessionsAsync(
-                            songId, instrument, seasonPrefix, targetIds,
-                            accessToken, callerAccountId, limiter: pool.Limiter, ct);
-                    }
-                    catch (CdnBlockedException)
-                    {
-                        // Release slot immediately, wait for probe to clear, retry same batch
-                        if (slotAcquired) { if (isHighPriority) pool.ReleaseHigh(); else pool.ReleaseLow(lowToken); slotAcquired = false; }
-                        if (_executor is not null) await _executor.WaitForCdnClearAsync(ct);
-                        offset -= batchSize; // retry same batch
-                        continue;
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        _log.LogDebug(ex, "Seasonal batch failed for {Song}/{Instrument}/{Season}.",
-                            songId, instrument, seasonPrefix);
-                        _progress.ReportPhaseRetry();
-
-                        // If the first batch fails (BadRequest = song not charted in this season),
-                        // mark so other instruments can skip this season and earlier ones.
-                        if (offset == 0)
-                            missingSeasonsForSong?.TryAdd(season, true);
-
-                        continue;
-                    }
-                }
-                finally
+                try
                 {
-                    if (slotAcquired)
-                    {
-                        if (isHighPriority) pool.ReleaseHigh();
-                        else pool.ReleaseLow(lowToken);
-                    }
+                    sessions = _executor is not null
+                        ? await _executor.WithCdnResilienceAsync(work, ct, acquireSlot, releaseSlot)
+                        : await FallbackAcquireAndRunAsync(acquireSlot, work, releaseSlot);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.LogDebug(ex, "Seasonal batch failed for {Song}/{Instrument}/{Season}.",
+                        songId, instrument, seasonPrefix);
+                    _progress.ReportPhaseRetry();
+
+                    // If the first batch fails (BadRequest = song not charted in this season),
+                    // mark so other instruments can skip this season and earlier ones.
+                    if (offset == 0)
+                        missingSeasonsForSong?.TryAdd(season, true);
+
+                    continue;
                 }
 
                 // If the first batch for this season returned zero sessions,
@@ -592,7 +610,7 @@ public class SongProcessingMachine
     }
 
     /// <summary>Result of processing one song step.</summary>
-    private sealed class SongStepResult
+    public sealed class SongStepResult
     {
         public int EntriesUpdated { get; init; }
         public int SessionsInserted { get; init; }
