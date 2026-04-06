@@ -63,7 +63,6 @@ export default function SortModal({ visible, draft, savedDraft, instrumentFilter
         const visMap: Record<string, boolean> = {
           score: mv.score, percentage: mv.percentage, percentile: mv.percentile,
           stars: mv.stars, seasonachieved: mv.seasonachieved, intensity: mv.intensity,
-          lastplayed: mv.lastplayed,
         };
         return visMap[mode] !== false;
       })
