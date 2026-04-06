@@ -236,6 +236,10 @@ public class CyclicalSongMachine
             // Complete any stragglers with what we have
             CompleteFinishedAttachments();
 
+            // Transition progress to Idle so the API stops reporting SongMachine as running.
+            // SetPhase snapshots the SongMachine operation into completedOperations.
+            _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Idle);
+
             _log.LogInformation("CyclicalSongMachine going idle. {Remaining} attachments remain.",
                 _attachments.Count);
         }

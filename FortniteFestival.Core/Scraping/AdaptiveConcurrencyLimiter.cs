@@ -170,7 +170,17 @@ namespace FortniteFestival.Core.Scraping
             await _semaphore.WaitAsync(ct);
 
             if (_rateBucket != null)
-                await _rateBucket.WaitAsync(ct);
+            {
+                try
+                {
+                    await _rateBucket.WaitAsync(ct);
+                }
+                catch
+                {
+                    _semaphore.Release();
+                    throw;
+                }
+            }
         }
 
         /// <summary>
