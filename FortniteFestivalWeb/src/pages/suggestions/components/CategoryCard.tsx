@@ -131,7 +131,7 @@ export function SongRow({ song, categoryKey, albumArt, leaderboardData,
     : `/songs/${song.songId}`;
   const starSrc = isGold ? `${BASE}star_gold.png` : `${BASE}star_white.png`;
   const hasMetadata = layout !== 'hidden';
-  const iconOnly = layout === 'singleInstrument' && !showStars;
+  const iconOnly = (layout === 'singleInstrument' && !showStars) || layout === 'season';
   const twoRow = isNarrow && hasMetadata && !iconOnly;
 
   return (
