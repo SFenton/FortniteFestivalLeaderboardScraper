@@ -228,7 +228,6 @@ export const SongRow = memo(function SongRow({ song,
   const maxScore = song.maxScores?.[instrument];
 
   const entries = useMemo(() => {
-    if (!score || instrumentChips) return [];
     const result: MetadataEntry[] = [];
     for (const key of displayOrder) {
       // Unfiltered lastplayed: show instrument icon of the most-recently-played instrument + date
@@ -244,13 +243,15 @@ export const SongRow = memo(function SongRow({ song,
           const formatted = isNaN(d.getTime()) ? bestLp : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
           result.push({ key, el: (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: Gap.sm }}>
-              <InstrumentIcon instrument={bestInst} size={16} />
+              <InstrumentIcon instrument={bestInst} size={28} />
               <span style={{ color: Colors.textSecondary, fontSize: Font.md, whiteSpace: 'nowrap' }}>{formatted}</span>
             </span>
           ) });
           continue;
         }
       }
+      // Other metadata keys require a per-instrument score and no chip row
+      if (!score || instrumentChips) continue;
       const el = renderMetadataElement(key, score, displayOrder, songIntensityRaw, maxScore, sortMode);
       if (el) result.push({ key, el });
     }
@@ -304,7 +305,7 @@ export const SongRow = memo(function SongRow({ song,
   ) : null;
   /* v8 ignore stop */
 
-  if (isMobile && entries.length > 0) {
+  if (isMobile && entries.length > 0 && !chipRow) {
     const mergedStyle = animStyle ? { ...rowStyle, ...animStyle } : rowStyle;
 
     if (pillFitsTopRow) {
@@ -374,6 +375,7 @@ export const SongRow = memo(function SongRow({ song,
         <a ref={linkRef as React.Ref<HTMLAnchorElement>} {...linkProps} className={rowClassName} style={mergedChipStyle} onAnimationEnd={handleAnimEnd}>
           <div style={s.mobileTopRow}>
             {songInfo}
+            {entries.length > 0 && <div style={s.detailStrip}>{entries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}</div>}
           </div>
           <div style={{ ...s.instrumentStatusRow, justifyContent: Justify.center }}>
             {instrumentChips!.map(c => (
@@ -388,6 +390,7 @@ export const SongRow = memo(function SongRow({ song,
       <Link ref={linkRef} to={`/songs/${song.songId}`} state={{ backTo: location.pathname }} className={rowClassName} style={mergedChipStyle} onAnimationEnd={handleAnimEnd}>
         <div style={s.mobileTopRow}>
           {songInfo}
+          {entries.length > 0 && <div style={s.detailStrip}>{entries.map(e => <Fragment key={e.key}>{e.el}</Fragment>)}{invalidIcon}</div>}
         </div>
         <div style={s.mobileChipRowWrapper}>
           <div style={{ ...s.instrumentStatusRow, justifyContent: Justify.center }}>
@@ -397,7 +400,7 @@ export const SongRow = memo(function SongRow({ song,
               </div>
             ))}
           </div>
-          {invalidIcon && <div style={s.mobileChipInvalidIcon}>{invalidIcon}</div>}
+          {invalidIcon && !entries.length && <div style={s.mobileChipInvalidIcon}>{invalidIcon}</div>}
         </div>
       </Link>
       )
