@@ -465,17 +465,30 @@ namespace FortniteFestival.Core.Scraping
                 cbFailureRate = cbTotal > 0 ? (double)_cbWindowFailures / cbTotal : 0;
             }
 
-            // ── Stale DOP detection ──
+            // ── Stale DOP detection + auto-recovery ──
             long currentTotal = Volatile.Read(ref _totalRequests);
             if (inFlight >= _currentDop && currentTotal == _lastHealthTotalRequests && _currentDop > 0)
             {
                 _consecutiveStaleChecks++;
                 if (_consecutiveStaleChecks >= 5)
                 {
+                    // Auto-recover: phantom leaked slots + release debt can permanently
+                    // deadlock the semaphore. Zero the debt and inject fresh tokens so
+                    // _currentDop slots are available again.
+                    int debt = Interlocked.Exchange(ref _releaseDebt, 0);
+                    int available = _semaphore.CurrentCount;
+                    int deficit = _currentDop - available;
+                    if (deficit > 0)
+                        _semaphore.Release(deficit);
+
                     _log.LogCritical(
-                        "DOP STALL DETECTED: InFlight={InFlight} == DOP={Dop} with TotalRequests={Total} unchanged " +
-                        "for {Minutes} consecutive health checks. All slots may be held by sleeping tasks.",
-                        inFlight, _currentDop, currentTotal, _consecutiveStaleChecks);
+                        "DOP STALL AUTO-RECOVERY: InFlight={InFlight} == DOP={Dop} with TotalRequests={Total} unchanged " +
+                        "for {Checks} consecutive health checks. Zeroed debt={Debt}, injected {Injected} tokens " +
+                        "(semaphore was {Available}). Slots should unblock.",
+                        inFlight, _currentDop, currentTotal, _consecutiveStaleChecks,
+                        debt, deficit > 0 ? deficit : 0, available);
+
+                    _consecutiveStaleChecks = 0;
                 }
             }
             else
@@ -486,8 +499,9 @@ namespace FortniteFestival.Core.Scraping
 
             _log.LogInformation(
                 "Limiter health: DOP={Dop}, InFlight={InFlight}, TotalRequests={Total}, " +
-                "CB={CircuitState} (failure rate {CbFailureRate:P0})",
+                "Debt={Debt}, CB={CircuitState} (failure rate {CbFailureRate:P0})",
                 _currentDop, inFlight, Volatile.Read(ref _totalRequests),
+                Volatile.Read(ref _releaseDebt),
                 _circuitOpen ? "OPEN" : "closed", cbFailureRate);
         }
     }
