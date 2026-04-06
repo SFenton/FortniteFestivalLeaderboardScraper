@@ -32,7 +32,6 @@ export const INSTRUMENT_SORT_MODES: { mode: SongSortMode; label: string }[] = [
   { mode: 'stars', label: 'Stars' },
   { mode: 'seasonachieved', label: 'Season' },
   { mode: 'intensity', label: 'Intensity' },
-  { mode: 'lastplayed', label: 'Last Played' },
   { mode: 'maxdistance', label: 'Max Score %' },
   { mode: 'maxscorediff', label: 'Max Score Diff' },
 ];
