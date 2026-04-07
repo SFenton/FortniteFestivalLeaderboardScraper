@@ -132,7 +132,9 @@ public sealed class RankingsCalculator
                 db.PopulateValidScoreOverrides([]);
             }
 
-            // Phase 2: AccountRankings
+            // Phase 2: AccountRankings + Phase 2.5: Ranking deltas
+            // Materialized pipeline: one join into a temp table, reused for
+            // base rankings, band-entry discovery, and all bucket deltas.
             var totalCharted = CountChartedSongs(festivalService, instrument);
             if (totalCharted == 0)
             {
@@ -140,16 +142,27 @@ public sealed class RankingsCalculator
                 return;
             }
 
-            db.ComputeAccountRankings(totalCharted, CredibilityThreshold, PopulationMedian, BaseThresholdMultiplier);
+            using var conn = db.OpenConnection();
+
+            // Materialize leaderboard_entries × song_stats once
+            var matSw = System.Diagnostics.Stopwatch.StartNew();
+            db.MaterializeValidEntries(conn, BaseThresholdMultiplier);
+            _log.LogDebug("{Instrument}: materialized valid entries in {Elapsed}.", instrument, matSw.Elapsed);
+
+            // Compute base rankings from the materialized temp table
+            db.ComputeAccountRankingsFromMaterialized(conn, totalCharted, CredibilityThreshold, PopulationMedian, BaseThresholdMultiplier);
             _progress.ReportPhaseItemComplete();
+
+            // Phase 2.5: Ranking deltas — uses the same materialized temp table
+            ComputeRankingDeltasFromMaterialized(instrument, conn, db, totalCharted);
         }, ct)).ToList();
 
         await Task.WhenAll(tasks);
         ct.ThrowIfCancellationRequested();
 
-        _log.LogInformation("Per-instrument rankings complete in {Elapsed}.", sw.Elapsed);
+        _log.LogInformation("Per-instrument rankings + deltas complete in {Elapsed}.", sw.Elapsed);
 
-        // ── Load per-instrument ranking data ONCE (shared across phases 2.5–5) ──
+        // ── Load per-instrument ranking data ONCE (shared across phases 3–5) ──
         var rankingDataFull = new Dictionary<string, Dictionary<string, AccountMetrics>>(StringComparer.OrdinalIgnoreCase);
         var rankingDataRanks = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
         foreach (var instrument in instruments)
@@ -168,17 +181,6 @@ public sealed class RankingsCalculator
         }
         _log.LogInformation("Loaded ranking data: {InstrumentCount} instruments, {TotalAccounts:N0} account-instrument entries.",
             instruments.Count, rankingDataFull.Values.Sum(d => d.Count));
-
-        // ── Phase 2.5: Ranking deltas (parallel per instrument) ──
-        _progress.SetSubOperation("ranking_deltas");
-        var deltaSw = System.Diagnostics.Stopwatch.StartNew();
-        var deltaTasks = instruments.Select(instrument => Task.Run(() =>
-        {
-            ct.ThrowIfCancellationRequested();
-            ComputeRankingDeltasForInstrument(instrument, festivalService, rankingDataFull[instrument]);
-        }, ct)).ToList();
-        await Task.WhenAll(deltaTasks);
-        _log.LogInformation("Ranking deltas complete in {Elapsed}.", deltaSw.Elapsed);
 
         // ── Phase 3: Composite rankings ──
         _progress.SetSubOperation("composite_rankings");
@@ -533,6 +535,91 @@ public sealed class RankingsCalculator
         => data.TryGetValue(instrument, out var v) ? v.AdjustedRating : null;
 
     // ── Ranking delta computation ────────────────────────────────────
+
+    /// <summary>
+    /// Compute ranking deltas using the materialized <c>_valid_entries</c> temp table.
+    /// Replaces the 101× <c>ComputeMetricsAtThreshold</c> C# loop with a single SQL pass.
+    /// Must be called on the same connection that created the temp table.
+    /// </summary>
+    private int ComputeRankingDeltasFromMaterialized(
+        string instrument, Npgsql.NpgsqlConnection conn,
+        IInstrumentDatabase db, int totalCharted)
+    {
+        // Load base metrics from the just-computed account_rankings
+        var baseMetrics = new Dictionary<string, InstrumentDatabase.AccountAggregateMetrics>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (accountId, adj, wgt, fc, ts, ms, songs, fcc) in db.GetAllRankingSummariesFull())
+        {
+            baseMetrics[accountId] = new InstrumentDatabase.AccountAggregateMetrics
+            {
+                SongsPlayed = songs,
+                AdjustedSkill = adj,
+                Weighted = wgt,
+                FcRate = fc,
+                TotalScore = ts,
+                MaxScorePct = ms,
+                FullComboCount = fcc,
+            };
+        }
+
+        // Get band entries from materialized temp table
+        var bandEntries = db.GetBandEntriesFromMaterialized(conn, BaseThresholdMultiplier, MaxThresholdMultiplier);
+        if (bandEntries.Count == 0)
+        {
+            _log.LogDebug("{Instrument}: no band entries found, skipping delta computation.", instrument);
+            db.TruncateRankingDeltas();
+            return 0;
+        }
+
+        // Group affected accounts by their earliest activation bucket
+        var affectedAccountsByBucket = new SortedDictionary<double, HashSet<string>>();
+        var allAffectedAccounts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (accountId, activationLeeway) in bandEntries)
+        {
+            double bucket = Math.Ceiling(activationLeeway * 10) / 10.0;
+            bucket = Math.Clamp(bucket, -4.9, 5.0);
+            bucket = Math.Round(bucket, 1);
+
+            if (!affectedAccountsByBucket.TryGetValue(bucket, out var set))
+            {
+                set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                affectedAccountsByBucket[bucket] = set;
+            }
+            set.Add(accountId);
+            allAffectedAccounts.Add(accountId);
+        }
+
+        _log.LogInformation("{Instrument}: {AffectedCount} accounts have {BandCount} band entries across {BucketCount} buckets.",
+            instrument, allAffectedAccounts.Count, bandEntries.Count, affectedAccountsByBucket.Count);
+
+        db.TruncateRankingDeltas();
+
+        // Single SQL pass: compute metrics for all buckets + unfiltered at once
+        var bucketResults = db.ComputeAllBucketDeltas(
+            conn, affectedAccountsByBucket, allAffectedAccounts,
+            totalCharted, CredibilityThreshold, PopulationMedian);
+
+        // Diff against base and collect deltas
+        var allDeltas = new List<(string AccountId, double LeewayBucket,
+            int SongsPlayed, double AdjustedSkill, double Weighted, double FcRate, long TotalScore,
+            double MaxScorePct, int FullComboCount, double AvgAccuracy, int BestRank, double Coverage)>();
+
+        foreach (var (accountId, bucket, m) in bucketResults)
+        {
+            if (!baseMetrics.TryGetValue(accountId, out var @base)) continue;
+            if (MetricsEqual(@base, m)) continue;
+
+            allDeltas.Add((accountId, bucket, m.SongsPlayed, m.AdjustedSkill,
+                m.Weighted, m.FcRate, m.TotalScore, m.MaxScorePct,
+                m.FullComboCount, m.AvgAccuracy, m.BestRank, m.Coverage));
+        }
+
+        // Write deltas using COPY binary
+        db.WriteRankingDeltasBulk(allDeltas);
+
+        _log.LogInformation("{Instrument}: wrote {DeltaCount} ranking deltas for {AccountCount} affected accounts.",
+            instrument, allDeltas.Count, allAffectedAccounts.Count);
+        return allDeltas.Count;
+    }
 
     /// <summary>
     /// Compute ranking metric deltas across all leeway buckets for a single instrument.

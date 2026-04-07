@@ -98,6 +98,22 @@ public interface IInstrumentDatabase : IDisposable
         double Weighted, double FcRate, long TotalScore, double MaxScorePct, int FullComboCount)> GetAllRankingDeltas();
     List<(double LeewayBucket, int DeltaAdj, int DeltaWgt, int DeltaFc, int DeltaTs, int DeltaMs)> GetTodayRankDeltas(string accountId);
 
+    // ── Materialized ranking pipeline ────────────────────────────────
+    void MaterializeValidEntries(Npgsql.NpgsqlConnection conn, double baseThreshold);
+    int ComputeAccountRankingsFromMaterialized(Npgsql.NpgsqlConnection conn, int totalChartedSongs,
+        int credibilityThreshold, double populationMedian, double thresholdMultiplier);
+    List<(string AccountId, double ActivationLeeway)> GetBandEntriesFromMaterialized(
+        Npgsql.NpgsqlConnection conn, double baseThreshold, double maxThreshold);
+    List<(string AccountId, double LeewayBucket, InstrumentDatabase.AccountAggregateMetrics Metrics)> ComputeAllBucketDeltas(
+        Npgsql.NpgsqlConnection conn,
+        SortedDictionary<double, HashSet<string>> affectedAccountsByBucket,
+        HashSet<string> allAffectedAccounts,
+        int totalChartedSongs, int credibilityThreshold, double populationMedian);
+    void WriteRankingDeltasBulk(IReadOnlyList<(string AccountId, double LeewayBucket,
+        int SongsPlayed, double AdjustedSkill, double Weighted, double FcRate, long TotalScore,
+        double MaxScorePct, int FullComboCount, double AvgAccuracy, int BestRank, double Coverage)> deltas);
+    Npgsql.NpgsqlConnection OpenConnection();
+
     // ── Rank history deltas ──────────────────────────────────────────
     void SnapshotRankHistoryDeltas(int retentionDays = 365);
     List<RankHistoryDto> GetRankHistoryAtLeeway(string accountId, double leewayBucket, int days = 30);
