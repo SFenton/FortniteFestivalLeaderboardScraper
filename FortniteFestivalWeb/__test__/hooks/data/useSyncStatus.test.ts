@@ -108,6 +108,14 @@ describe('useSyncStatus', () => {
     expect(result.current.phase).toBe('idle');
   });
 
+  it('skips trackPlayer when track option is false', async () => {
+    mockGetStatus.mockResolvedValue({ backfill: null, historyRecon: null } as any);
+    renderHook(() => useSyncStatus('acc1', { track: false }), { wrapper });
+    await flush();
+    expect(mockTrackPlayer).not.toHaveBeenCalled();
+    expect(mockGetStatus).toHaveBeenCalledWith('acc1');
+  });
+
   it('clearCompleted resets justCompleted', async () => {
     mockGetStatus.mockResolvedValue({
       backfill: { status: 'complete', songsChecked: 100, totalSongsToCheck: 100, entriesFound: 10, startedAt: null, completedAt: null },

@@ -35,7 +35,8 @@ import { SYNC_POLL_ACTIVE_MS, SYNC_POLL_IDLE_MS } from '@festival/theme';
 /** How long to wait without a WS message before falling back to HTTP polling */
 const WS_STALE_MS = 10_000;
 
-export function useSyncStatus(accountId: string | undefined) {
+export function useSyncStatus(accountId: string | undefined, options?: { track?: boolean }) {
+  const track = options?.track ?? true;
   const [syncState, setSyncState] = useState<SyncState>({
     isSyncing: false,
     phase: SyncPhase.Idle,
@@ -226,11 +227,13 @@ export function useSyncStatus(accountId: string | undefined) {
 
     const init = async () => {
       // Fire track request (idempotent) and capture whether a sync was kicked
-      try {
-        const res = await api.trackPlayer(accountId);
-        if (res.backfillKicked) syncKickedRef.current = true;
-      } catch {
-        // Ignore if track fails (e.g. in api-only mode without scraper)
+      if (track) {
+        try {
+          const res = await api.trackPlayer(accountId);
+          if (res.backfillKicked) syncKickedRef.current = true;
+        } catch {
+          // Ignore if track fails (e.g. in api-only mode without scraper)
+        }
       }
 
       // Check status immediately (this schedules the next poll if needed)
@@ -256,7 +259,7 @@ export function useSyncStatus(accountId: string | undefined) {
       stopPolling();
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [accountId, checkStatus, stopPolling]);
+  }, [accountId, track, checkStatus, stopPolling]);
 
   // Clear justCompleted after consumer reads it
   const clearCompleted = useCallback(() => setJustCompleted(false), []);
