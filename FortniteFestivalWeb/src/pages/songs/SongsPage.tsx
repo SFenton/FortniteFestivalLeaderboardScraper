@@ -606,7 +606,7 @@ export default function SongsPage() {
       </>}
     >
       <div ref={containerRef} style={songsStyles.container}>
-        {isSyncing && playerData && (
+        {isSyncing && (
           <SyncBanner
             phase={syncPhase}
             backfillProgress={backfillProgress}
