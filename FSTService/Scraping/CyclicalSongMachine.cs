@@ -664,7 +664,9 @@ public class CyclicalSongMachine
             {
                 att.Complete();
                 _attachments.TryRemove(callerId, out _);
-                _progress.UnregisterAttachment(callerId);
+                for (int i = 0; i < att.Users.Count; i++)
+                    _progress.ReportPhaseAccountComplete();
+                _progress.CompleteAttachment(callerId);
 
                 _log.LogInformation(
                     "Attachment {CallerId} completed: {Updated} entries, {Sessions} sessions, {ApiCalls} API calls.",
@@ -687,7 +689,9 @@ public class CyclicalSongMachine
 
             att.Complete();
             _attachments.TryRemove(callerId, out _);
-            _progress.UnregisterAttachment(callerId);
+            for (int i = 0; i < att.Users.Count; i++)
+                _progress.ReportPhaseAccountComplete();
+            _progress.CompleteAttachment(callerId);
 
             _log.LogInformation(
                 "Attachment {CallerId} completed (core-only): {Updated} entries, {Sessions} sessions, {ApiCalls} API calls.",

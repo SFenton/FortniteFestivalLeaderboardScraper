@@ -824,4 +824,107 @@ public class ScrapeProgressTrackerTests
         Assert.NotNull(songMachineOp);
         Assert.Equal("processing_songs", songMachineOp!.SubOperation);
     }
+
+    // ─── Attachment completion tracking ─────────────────
+
+    [Fact]
+    public void CompleteAttachment_PreservesInSnapshot()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
+        _tracker.BeginPhaseProgress(totalItems: 10, totalAccounts: 1);
+
+        var users = new[] { new UserWorkItem { AccountId = "user1", Purposes = WorkPurpose.Backfill, AllTimeNeeded = true } };
+        _tracker.RegisterAttachment("att-1", SongMachineSource.Backfill, users, songCount: 5);
+
+        // Complete the attachment — should be preserved in the snapshot
+        _tracker.CompleteAttachment("att-1");
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.NotNull(progress.Current?.Attachments);
+        Assert.Single(progress.Current!.Attachments!);
+        Assert.Equal("att-1", progress.Current.Attachments[0].CallerId);
+        Assert.Equal("Backfill", progress.Current.Attachments[0].Source);
+        Assert.Equal(5, progress.Current.Attachments[0].SongCount);
+        Assert.Single(progress.Current.Attachments[0].Users);
+        Assert.Equal("user1", progress.Current.Attachments[0].Users[0].AccountId);
+        Assert.Equal("Backfill", progress.Current.Attachments[0].Users[0].Phase);
+    }
+
+    [Fact]
+    public void CompleteAttachment_SurvivedIntoCompletedSnapshot()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
+        _tracker.BeginPhaseProgress(totalItems: 10, totalAccounts: 1);
+
+        var users = new[] { new UserWorkItem { AccountId = "user1", Purposes = WorkPurpose.Backfill, AllTimeNeeded = true } };
+        _tracker.RegisterAttachment("att-1", SongMachineSource.Backfill, users, songCount: 5);
+        _tracker.CompleteAttachment("att-1");
+
+        // Phase transition snapshots the SongMachine operation
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRankings);
+
+        var progress = _tracker.GetProgressResponse();
+        var songMachineOp = progress.CompletedOperations.FirstOrDefault(o => o.Operation == "SongMachine");
+        Assert.NotNull(songMachineOp);
+        Assert.NotNull(songMachineOp!.Attachments);
+        Assert.Single(songMachineOp.Attachments!);
+        Assert.Equal("Backfill", songMachineOp.Attachments[0].Source);
+    }
+
+    [Fact]
+    public void CompletedAttachments_ClearedOnPhaseTransition()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
+
+        var users = new[] { new UserWorkItem { AccountId = "user1", Purposes = WorkPurpose.Backfill, AllTimeNeeded = true } };
+        _tracker.RegisterAttachment("att-1", SongMachineSource.Backfill, users, songCount: 5);
+        _tracker.CompleteAttachment("att-1");
+
+        // Transition — completed attachments should be cleared for the new phase
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.ComputingRankings);
+
+        var progress = _tracker.GetProgressResponse();
+        // Current phase should have no attachments
+        Assert.Null(progress.Current?.Attachments);
+    }
+
+    [Fact]
+    public void CompleteAttachment_MergesWithActiveAttachments()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
+
+        var users1 = new[] { new UserWorkItem { AccountId = "user1", Purposes = WorkPurpose.Backfill, AllTimeNeeded = true } };
+        var users2 = new[] { new UserWorkItem { AccountId = "user2", Purposes = WorkPurpose.PostScrape, AllTimeNeeded = true } };
+        _tracker.RegisterAttachment("att-1", SongMachineSource.Backfill, users1, songCount: 5);
+        _tracker.RegisterAttachment("att-2", SongMachineSource.PostScrape, users2, songCount: 10);
+
+        // Complete only the first one
+        _tracker.CompleteAttachment("att-1");
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.NotNull(progress.Current?.Attachments);
+        Assert.Equal(2, progress.Current!.Attachments!.Count);
+        Assert.Contains(progress.Current.Attachments, a => a.CallerId == "att-1" && a.Source == "Backfill");
+        Assert.Contains(progress.Current.Attachments, a => a.CallerId == "att-2" && a.Source == "PostScrape");
+    }
+
+    [Fact]
+    public void UnregisterAttachment_DoesNotPreserveInSnapshot()
+    {
+        _tracker.BeginPass(0, 0, 0);
+        _tracker.SetPhase(ScrapeProgressTracker.ScrapePhase.SongMachine);
+
+        var users = new[] { new UserWorkItem { AccountId = "user1", Purposes = WorkPurpose.Backfill, AllTimeNeeded = true } };
+        _tracker.RegisterAttachment("att-1", SongMachineSource.Backfill, users, songCount: 5);
+
+        // Unregister (old behavior) — should NOT appear in snapshot
+        _tracker.UnregisterAttachment("att-1");
+
+        var progress = _tracker.GetProgressResponse();
+        Assert.Null(progress.Current?.Attachments);
+    }
 }

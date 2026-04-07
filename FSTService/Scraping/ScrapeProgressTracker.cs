@@ -60,6 +60,7 @@ public sealed class ScrapeProgressTracker
     // ─── Attachment tracking ────────────────────────────────
 
     private readonly ConcurrentDictionary<string, AttachmentProgressEntry> _attachments = new(StringComparer.Ordinal);
+    private readonly List<AttachmentSummary> _completedAttachments = new();
 
     /// <summary>Register an attachment so the progress API can report it.</summary>
     public void RegisterAttachment(string callerId, SongMachineSource source, IReadOnlyList<UserWorkItem> users, int songCount)
@@ -86,6 +87,33 @@ public sealed class ScrapeProgressTracker
     public void UnregisterAttachment(string callerId)
     {
         _attachments.TryRemove(callerId, out _);
+        Interlocked.Increment(ref _changeSequence);
+    }
+
+    /// <summary>Snapshot a completed attachment so it survives into the phase's completed snapshot, then remove it from active tracking.</summary>
+    public void CompleteAttachment(string callerId)
+    {
+        if (_attachments.TryRemove(callerId, out var entry))
+        {
+            lock (_completedAttachments)
+            {
+                _completedAttachments.Add(new AttachmentSummary
+                {
+                    CallerId = entry.CallerId,
+                    Source = entry.Source.ToString(),
+                    SongCount = entry.SongCount,
+                    StartedAtUtc = entry.StartedAtUtc,
+                    Users = entry.Users.Select(u => new UserProgressSummary
+                    {
+                        AccountId = u.AccountId,
+                        Phase = u.Phase,
+                        ItemsCompleted = u.ItemsCompleted,
+                        TotalItems = u.TotalItems,
+                        EntriesFound = u.EntriesFound,
+                    }).ToList(),
+                });
+            }
+        }
         Interlocked.Increment(ref _changeSequence);
     }
 
@@ -296,6 +324,7 @@ public sealed class ScrapeProgressTracker
         _phaseRequests = 0;
         _phaseRetries = 0;
         _phaseUpdated = 0;
+        lock (_completedAttachments) { _completedAttachments.Clear(); }
     }
 
     // ─── Name resolution reporters ──────────────────────────
@@ -670,7 +699,19 @@ public sealed class ScrapeProgressTracker
             MaxRequestsPerSecond = _adaptiveLimiter?.MaxRequestsPerSecond is > 0 ? _adaptiveLimiter.MaxRequestsPerSecond : null,
             RequestsPerSecond = requests > 0 && elapsed.TotalSeconds > 0
                 ? Math.Round(requests / elapsed.TotalSeconds, 1) : null,
-            Attachments = _attachments.IsEmpty ? null : _attachments.Values.Select(a => new AttachmentSummary
+            Attachments = BuildAttachmentsList(),
+        };
+    }
+
+    /// <summary>
+    /// Build the merged list of active + completed attachments for the current phase snapshot.
+    /// Returns null when there are no attachments at all.
+    /// </summary>
+    private List<AttachmentSummary>? BuildAttachmentsList()
+    {
+        var active = _attachments.IsEmpty
+            ? []
+            : _attachments.Values.Select(a => new AttachmentSummary
             {
                 CallerId = a.CallerId,
                 Source = a.Source.ToString(),
@@ -684,8 +725,16 @@ public sealed class ScrapeProgressTracker
                     TotalItems = u.TotalItems,
                     EntriesFound = u.EntriesFound,
                 }).ToList(),
-            }).ToList(),
-        };
+            }).ToList();
+
+        List<AttachmentSummary> completed;
+        lock (_completedAttachments) { completed = _completedAttachments.ToList(); }
+
+        if (active.Count == 0 && completed.Count == 0)
+            return null;
+
+        completed.AddRange(active);
+        return completed;
     }
 
     private OperationSnapshot BuildPostScrapeEnrichmentSnapshot(TimeSpan elapsed)
