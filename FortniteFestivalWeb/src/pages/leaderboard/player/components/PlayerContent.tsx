@@ -17,6 +17,7 @@ import { Gap, Layout, Radius, frostedCard, STAGGER_ENTRY_OFFSET, QUERY_NARROW_GR
 import { playerPageStyles as pps } from '../../../../components/player/playerPageStyles';
 import { SelectProfilePill } from '../../../../components/player/SelectProfilePill';
 import SyncBanner from '../../../../components/page/SyncBanner';
+import SyncCompleteBanner from '../../../../components/page/SyncCompleteBanner';
 import { useSettings, isInstrumentVisible } from '../../../../contexts/SettingsContext';
 import { loadSongSettings, saveSongSettings } from '../../../../utils/songSettings';
 import Page from '../../../Page';
@@ -59,6 +60,8 @@ export interface PlayerContentProps {
   rivalsFound: number;
   isTrackedPlayer: boolean;
   skipAnim: boolean;
+  showCompleteBanner?: boolean;
+  onCompleteBannerDismissed?: () => void;
 }
 
 export default function PlayerContent({
@@ -77,6 +80,8 @@ export default function PlayerContent({
   rivalsFound,
   isTrackedPlayer,
   skipAnim,
+  showCompleteBanner,
+  onCompleteBannerDismissed,
 }: PlayerContentProps) {
   const { t } = useTranslation();
   const { settings } = useSettings();
@@ -265,6 +270,13 @@ export default function PlayerContent({
           rivalsFound={rivalsFound}
         />
       ),
+    });
+  } else if (showCompleteBanner && onCompleteBannerDismissed) {
+    items.push({
+      key: 'sync-complete',
+      span: true,
+      heightEstimate: 80,
+      node: <SyncCompleteBanner onDismissed={onCompleteBannerDismissed} />,
     });
   }
 

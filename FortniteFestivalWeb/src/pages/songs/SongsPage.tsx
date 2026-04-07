@@ -26,6 +26,7 @@ import { LoadGate } from '../../components/page/LoadGate';
 import Page from '../Page';
 import { useScrollContainer } from '../../contexts/ScrollContainerContext';
 import SyncBanner from '../../components/page/SyncBanner';
+import SyncCompleteBanner from '../../components/page/SyncCompleteBanner';
 import EmptyState from '../../components/common/EmptyState';
 import { parseApiError } from '../../utils/apiError';
 import PageHeader from '../../components/common/PageHeader';
@@ -260,7 +261,17 @@ export default function SongsPage() {
     fabSearch.registerActions({ openSort: () => openSortRef.current(), openFilter: () => openFilterRef.current() });
   }, [fabSearch]);
   /* v8 ignore stop */
-  const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound } = usePlayerData();
+  const { playerData, playerLoading, isSyncing, syncPhase, backfillProgress, historyProgress, rivalsProgress, entriesFound, itemsCompleted, totalItems, currentSongName, seasonsQueried, rivalsFound, justCompleted: ctxJustCompleted, clearCompleted: ctxClearCompleted } = usePlayerData();
+  const [showCompleteBanner, setShowCompleteBanner] = useState(false);
+
+  // Show completion banner when sync finishes
+  useEffect(() => {
+    if (ctxJustCompleted) {
+      ctxClearCompleted();
+      setShowCompleteBanner(true);
+    }
+  }, [ctxJustCompleted, ctxClearCompleted]);
+
   const shopCtx = useShop();
   const { isShopHighlighted, isLeavingTomorrow, isShopVisible } = useShopState();
   const filtersActive = isFilterActive(settings.filters, settings.instrument, isShopVisible) || settings.instrument != null;
@@ -564,7 +575,7 @@ export default function SongsPage() {
             metadataOrder: settings.metadataOrder,
             instrumentOrder: settings.instrumentOrder,
           }}
-          instrumentFilter={settings.instrument}
+          instrumentFilter={instrument}
           hasPlayer={!!playerData}
           hideItemShop={!isShopVisible}
           metadataVisibility={{
@@ -608,6 +619,9 @@ export default function SongsPage() {
             seasonsQueried={seasonsQueried}
             rivalsFound={rivalsFound}
           />
+        )}
+        {!isSyncing && showCompleteBanner && (
+          <SyncCompleteBanner onDismissed={() => setShowCompleteBanner(false)} />
         )}
         {loadPhase === LoadPhase.ContentIn && filtered.length === 0 ? (
           <EmptyState

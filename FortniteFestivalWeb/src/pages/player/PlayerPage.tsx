@@ -1,5 +1,5 @@
 /* eslint-disable react/forbid-dom-props -- dynamic styles require inline style prop */
-import { useEffect, useMemo, useRef, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useNavigationType } from 'react-router-dom';
 import { useFestival } from '../../contexts/FestivalContext';
@@ -12,7 +12,7 @@ import { parseApiError } from '../../utils/apiError';
 import { buildStaggerStyle, clearStaggerStyle } from '../../hooks/ui/useStaggerStyle';
 import { useLoadPhase } from '../../hooks/data/useLoadPhase';
 import { LoadPhase } from '@festival/core';
-import { fixedFill, flexCenter, ZIndex, SPINNER_FADE_MS } from '@festival/theme';
+import { fixedFill, flexCenter, ZIndex, SPINNER_FADE_MS, CONTENT_OUT_MS } from '@festival/theme';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../../api/queryKeys';
 import PlayerContent from '../leaderboard/player/components/PlayerContent';
@@ -57,16 +57,33 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   });
   const qc = useQueryClient();
 
-  const { isSyncing: localSyncing, phase: localPhase, backfillProgress: localBfProg, historyProgress: localHrProg, rivalsProgress: localRvProg, entriesFound: localEntriesFound, itemsCompleted: localItemsCompleted, totalItems: localTotalItems, currentSongName: localCurrentSong, seasonsQueried: localSeasonsQueried, rivalsFound: localRivalsFound, justCompleted, clearCompleted } =
+  const { isSyncing: localSyncing, phase: localPhase, backfillProgress: localBfProg, historyProgress: localHrProg, rivalsProgress: localRvProg, entriesFound: localEntriesFound, itemsCompleted: localItemsCompleted, totalItems: localTotalItems, currentSongName: localCurrentSong, seasonsQueried: localSeasonsQueried, rivalsFound: localRivalsFound, justCompleted: localJustCompleted, clearCompleted: localClearCompleted } =
     useSyncStatus(!isTrackedPlayer ? accountId : undefined);
 
-  // Auto-reload when sync completes
+  // For tracked player, pull justCompleted from context
+  const justCompleted = isTrackedPlayer ? ctx.justCompleted : localJustCompleted;
+  const clearCompleted = isTrackedPlayer ? ctx.clearCompleted : localClearCompleted;
+
+  // Track whether we're showing the completion banner (auto-dismisses after 3s)
+  const [showCompleteBanner, setShowCompleteBanner] = useState(false);
+
+  // When sync completes, trigger content fade-out then re-stagger with new data
+  const triggerContentOutRef = useRef<() => void>(() => {});
+
   useEffect(() => {
-    if (justCompleted && accountId && !isTrackedPlayer) {
-      clearCompleted();
-      void qc.invalidateQueries({ queryKey: queryKeys.player(accountId) });
-    }
-  }, [justCompleted, clearCompleted, accountId, isTrackedPlayer, qc]);
+    if (!justCompleted || !accountId) return;
+    clearCompleted();
+    setShowCompleteBanner(true);
+
+    // Reset rendered cache so re-stagger plays with fresh animation
+    if (isTrackedPlayer) _renderedTrackedAccount = null;
+    else _renderedPlayerAccount = null;
+    skipAnimRef.current = false;
+
+    // Trigger content fade-out; after it completes, useLoadPhase transitions
+    // to Loading, then we invalidate queries so fresh data triggers re-stagger
+    triggerContentOutRef.current();
+  }, [justCompleted, clearCompleted, accountId, isTrackedPlayer]);
 
   // Resolve effective values: context for tracked player, query for others
   const data = isTrackedPlayer ? ctx.playerData : (queryData ?? null);
@@ -102,7 +119,21 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
   /* v8 ignore stop */
   const skipAnim = skipAnimRef.current;
   const dataReady = !loading && !error && !!data;
-  const { phase: loadPhase } = useLoadPhase(dataReady, { skipAnimation: skipAnim });
+  const { phase: loadPhase, triggerContentOut } = useLoadPhase(dataReady, { skipAnimation: skipAnim });
+  triggerContentOutRef.current = triggerContentOut;
+
+  // When content-out finishes and phase reaches Loading, invalidate queries so fresh data arrives
+  const prevLoadPhase = useRef(loadPhase);
+  useEffect(() => {
+    if (prevLoadPhase.current === LoadPhase.ContentOut && loadPhase === LoadPhase.Loading && accountId) {
+      void qc.invalidateQueries({ queryKey: queryKeys.player(accountId) });
+      if (isTrackedPlayer) {
+        void qc.invalidateQueries({ queryKey: queryKeys.playerStats(accountId) });
+      }
+    }
+    prevLoadPhase.current = loadPhase;
+  }, [loadPhase, accountId, isTrackedPlayer, qc]);
+
   if (data) {
     if (isTrackedPlayer) _renderedTrackedAccount = accountId!;
     else _renderedPlayerAccount = accountId!;
@@ -118,15 +149,20 @@ export default function PlayerPage({ accountId: propAccountId }: { accountId?: s
 
   return (
     <>
-      {loadPhase !== LoadPhase.ContentIn && (
+      {loadPhase !== LoadPhase.ContentIn && loadPhase !== LoadPhase.ContentOut && (
         <div
           style={loadPhase === LoadPhase.SpinnerOut ? styles.centerFadeOut : styles.center}
         >
           <ArcSpinner />
         </div>
       )}
+      {loadPhase === LoadPhase.ContentOut && data && (
+        <div style={styles.contentOut}>
+          <PlayerContent key={`${accountId}-out`} data={data} songs={songs} isSyncing={false} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} rivalsProgress={rivalsProgress} itemsCompleted={itemsCompleted} totalItems={totalItems} entriesFound={entriesFound} currentSongName={currentSongName} seasonsQueried={seasonsQueried} rivalsFound={rivalsFound} isTrackedPlayer={isTrackedPlayer} skipAnim={true} />
+        </div>
+      )}
       {loadPhase === LoadPhase.ContentIn && data && (
-        <PlayerContent key={accountId} data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} rivalsProgress={rivalsProgress} itemsCompleted={itemsCompleted} totalItems={totalItems} entriesFound={entriesFound} currentSongName={currentSongName} seasonsQueried={seasonsQueried} rivalsFound={rivalsFound} isTrackedPlayer={isTrackedPlayer} skipAnim={skipAnim} />
+        <PlayerContent key={accountId} data={data} songs={songs} isSyncing={isSyncing} phase={phase} backfillProgress={backfillProgress} historyProgress={historyProgress} rivalsProgress={rivalsProgress} itemsCompleted={itemsCompleted} totalItems={totalItems} entriesFound={entriesFound} currentSongName={currentSongName} seasonsQueried={seasonsQueried} rivalsFound={rivalsFound} isTrackedPlayer={isTrackedPlayer} skipAnim={skipAnim} showCompleteBanner={showCompleteBanner} onCompleteBannerDismissed={() => setShowCompleteBanner(false)} />
       )}
       {firstRun.show && <FirstRunCarousel slides={firstRun.slides} onDismiss={firstRun.dismiss} onExitComplete={firstRun.onExitComplete} />}
     </>
@@ -145,6 +181,9 @@ function useStyles() {
       zIndex: ZIndex.dropdown,
       ...flexCenter,
       animation: `fadeOut ${SPINNER_FADE_MS}ms ease-out forwards`,
+    } as CSSProperties,
+    contentOut: {
+      animation: `fadeOut ${CONTENT_OUT_MS}ms ease-out forwards`,
     } as CSSProperties,
   }), []);
 }
