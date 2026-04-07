@@ -102,7 +102,7 @@ export default function SongsPage() {
     if (!appSettings.metadataShowSeasonAchieved) hidden.add('seasonachieved');
     if (!appSettings.metadataShowDifficulty) hidden.add('intensity');
     if (!appSettings.metadataShowStars) hidden.add('stars');
-    if (!appSettings.metadataShowLastPlayed) hidden.add('lastplayed');
+    if (!appSettings.metadataShowLastPlayed || settings.sortMode !== 'lastplayed') hidden.add('lastplayed');
 
     let order: string[];
     if (appSettings.songRowVisualOrderEnabled) {
