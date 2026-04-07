@@ -3,6 +3,7 @@ using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 
 namespace FSTService.Tests.Unit;
@@ -41,6 +42,7 @@ public sealed class EndpointPrecomputerWiringTests : IDisposable
             _persistence, _metaDb, _pathDataStore,
             new ScrapeProgressTracker(),
             Substitute.For<ILogger<ScrapeTimePrecomputer>>(),
+            NullLoggerFactory.Instance,
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
     }
 
@@ -65,7 +67,7 @@ public sealed class EndpointPrecomputerWiringTests : IDisposable
         // Use reflection to call the private Store method
         var storeMethod = typeof(ScrapeTimePrecomputer)
             .GetMethod("Store", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-        storeMethod.Invoke(_precomputer, new object[] { cacheKey, json });
+        storeMethod.Invoke(_precomputer, new object?[] { cacheKey, json, null });
 
         var result = _precomputer.TryGet(cacheKey);
         Assert.NotNull(result);

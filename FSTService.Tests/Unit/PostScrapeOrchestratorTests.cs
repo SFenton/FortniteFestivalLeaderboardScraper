@@ -1,4 +1,4 @@
-using FortniteFestival.Core.Scraping;
+﻿using FortniteFestival.Core.Scraping;
 using FortniteFestival.Core.Services;
 using FSTService.Api;
 using FSTService.Auth;
@@ -117,7 +117,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             _cyclicalMachine,
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
             _tokenManager, _progress, _pathDataStore,
-            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions()),
             Options.Create(new ScraperOptions()), _log);
     }
 
@@ -161,9 +161,9 @@ public class PostScrapeOrchestratorTests : IDisposable
         };
     }
 
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // RefreshRegisteredUsersAsync
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     [Fact]
     public async Task RefreshRegisteredUsers_NoRegisteredUsers_Skips()
@@ -233,9 +233,9 @@ public class PostScrapeOrchestratorTests : IDisposable
         await _sut.RefreshRegisteredUsersAsync(ctx, CancellationToken.None);
     }
 
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // ResolveNamesAsync
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     [Fact]
     public async Task ResolveNamesAsync_DelegatesToResolver()
@@ -249,9 +249,9 @@ public class PostScrapeOrchestratorTests : IDisposable
         await _nameResolver.Received(1).ResolveNewAccountsAsync(8, Arg.Any<CancellationToken>());
     }
 
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // RunEnrichmentAsync
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     [Fact]
     public async Task RunEnrichmentAsync_SetsPhase()
@@ -267,9 +267,9 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.Equal(ScrapeProgressTracker.ScrapePhase.PostScrapeEnrichment, _progress.Phase);
     }
 
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // PruneExcessEntries
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     [Fact]
     public void PruneExcessEntries_WithMaxPages_Runs()
@@ -285,7 +285,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         db.UpsertEntries("song1", entries);
 
         var ctx = CreateContext(registeredIds: new HashSet<string> { "p_15" });
-        _sut.PruneExcessEntries(ctx); // MaxPages=100 → maxEntries=10000 → no pruning (only 20)
+        _sut.PruneExcessEntries(ctx); // MaxPages=100 â†’ maxEntries=10000 â†’ no pruning (only 20)
 
         // Verify no entries pruned (20 < 10000)
         Assert.Equal(20, db.GetLeaderboardCount("song1"));
@@ -294,7 +294,7 @@ public class PostScrapeOrchestratorTests : IDisposable
     [Fact]
     public void PruneExcessEntries_ActuallyPrunes_WhenExceedsMax()
     {
-        // Create SUT with MaxPages=1 → maxEntries=100, but we seed 200 entries
+        // Create SUT with MaxPages=1 â†’ maxEntries=100, but we seed 200 entries
         var opts = Options.Create(new ScraperOptions { MaxPagesPerLeaderboard = 1 });
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
         var rivalsOrchestrator = new RivalsOrchestrator(rivalsCalculator, _persistence, new NotificationService(Substitute.For<ILogger<NotificationService>>()), _progress, new UserSyncProgressTracker(new NotificationService(Substitute.For<ILogger<NotificationService>>()), Substitute.For<ILogger<UserSyncProgressTracker>>()), new ResponseCacheService(TimeSpan.FromMinutes(5)), Substitute.For<ILogger<RivalsOrchestrator>>());
@@ -309,7 +309,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             CreateMockCyclicalMachine(),
             rivalsOrchestrator, rankingsCalculator2, leaderboardRivalsCalculator2, _notifications,
             _tokenManager, _progress, _pathDataStore,
-            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions()),
             opts, _log);
 
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
@@ -321,7 +321,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             }).ToList();
         db.UpsertEntries("song1", entries);
 
-        // p_150 is registered — should be preserved even though outside top 100
+        // p_150 is registered â€” should be preserved even though outside top 100
         var ctx = CreateContext(registeredIds: new HashSet<string> { "p_150" });
         sut.PruneExcessEntries(ctx);
 
@@ -341,7 +341,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         var registeredIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "user-1" };
         var ctx = CreateContext(registeredIds: registeredIds, aggregates: aggregates);
 
-        // Should run without error — rivals computation handles user with no data gracefully
+        // Should run without error â€” rivals computation handles user with no data gracefully
         await _sut.ComputeRivalsAsync(ctx, CancellationToken.None);
     }
 
@@ -370,11 +370,11 @@ public class PostScrapeOrchestratorTests : IDisposable
             CreateMockCyclicalMachine(),
             rivalsOrchestrator, rankingsCalculator3, leaderboardRivalsCalculator3, _notifications,
             _tokenManager, _progress, _pathDataStore,
-            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions()),
             opts, _log);
 
         var ctx = CreateContext();
-        sut.PruneExcessEntries(ctx); // maxPages=0 → no-op
+        sut.PruneExcessEntries(ctx); // maxPages=0 â†’ no-op
     }
 
     [Fact]
@@ -446,7 +446,7 @@ public class PostScrapeOrchestratorTests : IDisposable
             }).ToList();
         db.UpsertEntries("song1", entries);
 
-        // Use max 10 pages = 1000 entries — but we only have 50, so no pruning
+        // Use max 10 pages = 1000 entries â€” but we only have 50, so no pruning
         var ctx = CreateContext();
         _sut.PruneExcessEntries(ctx);
     }
@@ -455,8 +455,8 @@ public class PostScrapeOrchestratorTests : IDisposable
     public void PruneExcessEntries_WithDeepScrapeData_KeepsOverThresholdEntries()
     {
         // Simulate deep scrape scenario: many over-threshold (exploited) entries + valid entries.
-        // MaxPages=1 → maxEntries=100 per song for valid entries.
-        // CHOpt max = 1000. ValidCutoffMultiplier=1.0 → pruning threshold = 1000.
+        // MaxPages=1 â†’ maxEntries=100 per song for valid entries.
+        // CHOpt max = 1000. ValidCutoffMultiplier=1.0 â†’ pruning threshold = 1000.
         // Over-threshold entries (scores > 1000) should NOT be pruned.
         var opts = Options.Create(new ScraperOptions { MaxPagesPerLeaderboard = 1, OverThresholdMultiplier = 1.05, ValidCutoffMultiplier = 1.0 });
         var rivalsCalculator = new RivalsCalculator(_persistence, Substitute.For<ILogger<RivalsCalculator>>());
@@ -477,12 +477,12 @@ public class PostScrapeOrchestratorTests : IDisposable
             CreateMockCyclicalMachine(),
             rivalsOrchestrator, rankingsCalculator, leaderboardRivalsCalculator, _notifications,
             _tokenManager, _progress, _pathDataStore,
-            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), new System.Text.Json.JsonSerializerOptions()),
+            new ScrapeTimePrecomputer(_persistence, _metaDb, _pathDataStore, _progress, Substitute.For<ILogger<ScrapeTimePrecomputer>>(), NullLoggerFactory.Instance, new System.Text.Json.JsonSerializerOptions()),
             opts, _log);
 
         var db = _persistence.GetOrCreateInstrumentDb("Solo_Guitar");
 
-        // 150 over-threshold entries (scores 5000–3510, all > 1000)
+        // 150 over-threshold entries (scores 5000â€“3510, all > 1000)
         var overEntries = Enumerable.Range(0, 150).Select(i =>
             new LeaderboardEntry
             {
@@ -490,7 +490,7 @@ public class PostScrapeOrchestratorTests : IDisposable
                 Accuracy = 95, Stars = 5, Season = 3,
             }).ToList();
 
-        // 200 valid entries (scores 1000 down to 5, all ≤ raw CHOpt max 1000)
+        // 200 valid entries (scores 1000 down to 5, all â‰¤ raw CHOpt max 1000)
         var validEntries = Enumerable.Range(0, 200).Select(i =>
             new LeaderboardEntry
             {
@@ -506,7 +506,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         sut.PruneExcessEntries(ctx);
 
         // maxEntries=100 for valid entries, all 150 over-threshold kept
-        // Valid entries pruned from 200 to 100 → 100 deleted
+        // Valid entries pruned from 200 to 100 â†’ 100 deleted
         var remaining = db.GetLeaderboardCount("song1");
         Assert.Equal(250, remaining); // 150 over-threshold + 100 valid
 
@@ -575,7 +575,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         var service = new FestivalService((FortniteFestival.Core.Persistence.IFestivalPersistence?)null);
         var ctx = CreateContext();
 
-        // Should not throw — errors are caught and logged
+        // Should not throw â€” errors are caught and logged
         await _sut.RunEnrichmentAsync(ctx, service, CancellationToken.None);
     }
 
@@ -619,13 +619,13 @@ public class PostScrapeOrchestratorTests : IDisposable
         var registeredIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "acct-rival" };
         var ctx = CreateContext(registeredIds: registeredIds, aggregates: aggregates);
 
-        // Should run without error — exercises the dirtyMap building path
+        // Should run without error â€” exercises the dirtyMap building path
         await _sut.ComputeRivalsAsync(ctx, CancellationToken.None);
     }
 
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // History Recon Completion
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     [Fact]
     public async Task RefreshRegisteredUsers_StuckHistoryRecon_CompletesIt()
@@ -637,7 +637,7 @@ public class PostScrapeOrchestratorTests : IDisposable
         _metaDb.CompleteBackfill("acct-hr");
         _metaDb.EnqueueHistoryRecon("acct-hr", 5);
         _metaDb.StartHistoryRecon("acct-hr");
-        // Status is now "in_progress" — the bug leaves it here forever
+        // Status is now "in_progress" â€” the bug leaves it here forever
 
         _tokenManager.GetAccessTokenAsync(Arg.Any<CancellationToken>())
             .Returns("test-tok");
@@ -676,9 +676,9 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.Equal("complete", hrStatus.Status);
     }
 
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // PreWarmRankingsCache
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     [Fact]
     public void PreWarmRankingsCache_warms_cache_for_registered_users()
@@ -718,10 +718,10 @@ public class PostScrapeOrchestratorTests : IDisposable
         _persistence.PreWarmRankingsCache(new HashSet<string>());
     }
 
-    // ═══════════════════════════════════════════════════════════
-    // ═══════════════════════════════════════════════════════════
-    // ComputeLeaderboardRivalsAsync — skip when rankings fail
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+    // ComputeLeaderboardRivalsAsync â€” skip when rankings fail
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     [Fact]
     public async Task ComputeRankingsAsync_ReturnsTrue_OnSuccess()
@@ -756,9 +756,9 @@ public class PostScrapeOrchestratorTests : IDisposable
         Assert.False(result);
     }
 
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
     // NoOpHttpHandler (shared utility)
-    // ═══════════════════════════════════════════════════════════
+    // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
     private sealed class NoOpHttpHandler : HttpMessageHandler
     {

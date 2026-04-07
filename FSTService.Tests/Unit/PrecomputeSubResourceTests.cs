@@ -3,6 +3,7 @@ using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 
 namespace FSTService.Tests.Unit;
@@ -42,6 +43,7 @@ public sealed class PrecomputeSubResourceTests : IDisposable
             _persistence, _metaDb, _pathDataStore,
             new ScrapeProgressTracker(),
             Substitute.For<ILogger<ScrapeTimePrecomputer>>(),
+            NullLoggerFactory.Instance,
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
     }
 

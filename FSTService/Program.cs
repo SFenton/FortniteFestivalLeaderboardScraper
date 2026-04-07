@@ -218,6 +218,7 @@ builder.Services.AddSingleton<ScrapeTimePrecomputer>(sp =>
         sp.GetRequiredService<IPathDataStore>(),
         sp.GetRequiredService<ScrapeProgressTracker>(),
         sp.GetRequiredService<ILogger<ScrapeTimePrecomputer>>(),
+        sp.GetRequiredService<ILoggerFactory>(),
         jsonOpts);
 });
 

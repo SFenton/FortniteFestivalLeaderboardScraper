@@ -9,6 +9,8 @@ namespace FSTService.Scraping;
 /// <summary>
 /// Precomputes JSON responses for registered players and popular leaderboard pages
 /// during post-scrape, so API requests can be served from memory in &lt;1ms.
+/// Entries are staged to a disk-backed channel during precomputation
+/// and bulk-loaded to PostgreSQL at the end, keeping peak RAM bounded.
 /// </summary>
 public sealed class ScrapeTimePrecomputer
 {
@@ -17,9 +19,14 @@ public sealed class ScrapeTimePrecomputer
     private readonly IPathDataStore _pathStore;
     private readonly ScrapeProgressTracker _progress;
     private readonly ILogger<ScrapeTimePrecomputer> _log;
+    private readonly ILoggerFactory _loggerFactory;
     private readonly JsonSerializerOptions _jsonOpts;
 
-    private readonly ConcurrentDictionary<string, PrecomputedResponse> _store = new(StringComparer.Ordinal);
+    /// <summary>
+    /// Disk staging writer for bulk precomputation. Created per PrecomputeAllAsync call,
+    /// null between scrapes. Single-user PrecomputeUser() bypasses this entirely.
+    /// </summary>
+    private DiskStagingWriter? _staging;
 
     /// <summary>
     /// Population tiers per (songId, instrument). Set during precomputation,
@@ -33,6 +40,7 @@ public sealed class ScrapeTimePrecomputer
         IPathDataStore pathStore,
         ScrapeProgressTracker progress,
         ILogger<ScrapeTimePrecomputer> log,
+        ILoggerFactory loggerFactory,
         JsonSerializerOptions jsonOpts)
     {
         _persistence = persistence;
@@ -40,16 +48,13 @@ public sealed class ScrapeTimePrecomputer
         _pathStore = pathStore;
         _progress = progress;
         _log = log;
+        _loggerFactory = loggerFactory;
         _jsonOpts = jsonOpts;
     }
 
     /// <summary>Returns a precomputed response if available, else null.</summary>
     public (byte[] Json, string ETag)? TryGet(string cacheKey)
     {
-        // Check transient buffer first (during active precomputation)
-        if (_store.TryGetValue(cacheKey, out var entry))
-            return (entry.Json, entry.ETag);
-        // Fall back to PostgreSQL cache
         return _metaDb.GetCachedResponse(cacheKey);
     }
 
@@ -60,16 +65,19 @@ public sealed class ScrapeTimePrecomputer
     /// <summary>Clears all precomputed data. Called at scrape start.</summary>
     public void InvalidateAll()
     {
-        _store.Clear();
         _metaDb.ClearCachedResponses();
         _populationTiers = null;
     }
 
-    public int Count => _store.Count;
+    /// <summary>Number of records staged (during active precomputation) or 0.</summary>
+    public long Count => _staging?.RecordCount ?? 0;
 
     /// <summary>
     /// Precompute all data: player profiles, leaderboard-all pages, and population tiers.
     /// Called after post-scrape enrichment is complete (ranks, backfill, rivals all done).
+    ///
+    /// Phases 2-7 are independent and run in parallel. All output is staged to a
+    /// disk-backed channel, then bulk-loaded to PostgreSQL at the end.
     /// </summary>
     public async Task PrecomputeAllAsync(CancellationToken ct)
     {
@@ -79,45 +87,49 @@ public sealed class ScrapeTimePrecomputer
         var registeredIds = _metaDb.GetRegisteredAccountIds();
         var instrumentKeys = _persistence.GetInstrumentKeys();
 
-        // ── Phase 1: Population tiers ────────────────────────────
+        // ── Phase 1: Population tiers (must complete before player phases) ──
         _progress.SetSubOperation("population_tiers");
         var tiers = ComputePopulationTiers(allMaxScores, instrumentKeys);
         _populationTiers = tiers;
         _log.LogInformation("Precomputed population tiers for {Count} (song, instrument) pairs in {Elapsed}ms.",
             tiers.Count, sw.ElapsedMilliseconds);
 
-        // ── Phase 2: Player profiles (parallel) ─────────────────
-        _progress.SetSubOperation("player_profiles");
+        // ── Set up disk staging (shared across phases 2-7) ──────
+        await using var staging = new DiskStagingWriter(
+            _loggerFactory.CreateLogger<DiskStagingWriter>());
+        _staging = staging;
+
         var bandScoresCache = BuildBandScoresCache(allMaxScores, instrumentKeys);
-        await PrecomputePlayersAsync(registeredIds, allMaxScores, unfilteredPopulation,
-            tiers, bandScoresCache, ct);
 
-        // ── Phase 3: Leaderboard-all pages ──────────────────────
-        _progress.SetSubOperation("leaderboard_pages");
-        PrecomputeLeaderboardAll(allMaxScores, unfilteredPopulation, instrumentKeys);
+        // ── Phases 2-7: Independent — run in parallel ───────────
+        _progress.SetSubOperation("parallel_precompute");
+        var phase2 = Task.Run(() =>
+        {
+            PrecomputePlayersAsync(registeredIds, allMaxScores, unfilteredPopulation,
+                tiers, bandScoresCache, ct).GetAwaiter().GetResult();
+        }, ct);
+        var phase3 = Task.Run(() =>
+            PrecomputeLeaderboardAll(allMaxScores, unfilteredPopulation, instrumentKeys), ct);
+        var phase4 = Task.Run(() =>
+        {
+            PrecomputePlayerSubResourcesAsync(registeredIds, instrumentKeys, ct)
+                .GetAwaiter().GetResult();
+        }, ct);
+        var phase5 = Task.Run(() => PrecomputeRankingsPages(instrumentKeys), ct);
+        var phase6 = Task.Run(() => PrecomputeNeighborhoods(registeredIds, instrumentKeys), ct);
+        var phase7 = Task.Run(() => PrecomputeFirstSeen(), ct);
 
-        // ── Phase 4: Player sub-resources (stats, history, rivals, etc.) ──
-        _progress.SetSubOperation("player_sub_resources");
-        await PrecomputePlayerSubResourcesAsync(registeredIds, instrumentKeys, ct);
+        await Task.WhenAll(phase2, phase3, phase4, phase5, phase6, phase7);
 
-        // ── Phase 5: Rankings pages (page 1 per instrument × metric) ──
-        _progress.SetSubOperation("rankings_pages");
-        PrecomputeRankingsPages(instrumentKeys);
+        // ── Signal channel completion and wait for drain to disk ──
+        staging.Complete();
+        await staging.WaitForDrainAsync();
 
-        // ── Phase 6: Neighborhoods (registered users) ────────────
-        _progress.SetSubOperation("neighborhoods");
-        PrecomputeNeighborhoods(registeredIds, instrumentKeys);
-
-        // ── Phase 7: Static data (firstseen) ────────────────────
-        _progress.SetSubOperation("static_data");
-        PrecomputeFirstSeen();
-
-        // ── Flush to PostgreSQL and free RAM ─────────────────────
-        _log.LogInformation("Flushing {Count} precomputed responses to PostgreSQL...", _store.Count);
+        // ── Flush from staging file to PostgreSQL ────────────────
+        _log.LogInformation("All phases complete. {Count:N0} records staged to disk.", staging.RecordCount);
         _metaDb.ClearCachedResponses();
-        _metaDb.BulkSetCachedResponses(_store.Select(kv => (kv.Key, kv.Value.Json, kv.Value.ETag)));
-        _store.Clear();
-        _log.LogInformation("Precomputed responses persisted to PostgreSQL and RAM freed.");
+        staging.FlushToPostgres(_metaDb);
+        _staging = null;
 
         sw.Stop();
         _log.LogInformation("Scrape-time precomputation complete: {PlayerCount} players in {Elapsed}s.",
@@ -135,6 +147,7 @@ public sealed class ScrapeTimePrecomputer
     /// <summary>
     /// Precompute a single player (e.g., after /track registration between scrapes).
     /// Covers profile + all sub-resources (stats, history, sync-status, rivals, lb-rivals).
+    /// Writes entries directly to PostgreSQL (no disk staging needed for single user).
     /// </summary>
     public void PrecomputeUser(string accountId)
     {
@@ -143,28 +156,23 @@ public sealed class ScrapeTimePrecomputer
         var instrumentKeys = _persistence.GetInstrumentKeys();
         var tiers = _populationTiers ?? ComputePopulationTiers(allMaxScores, instrumentKeys);
         var bandScoresCache = BuildBandScoresCache(allMaxScores, instrumentKeys);
-        PrecomputeSinglePlayer(accountId, allMaxScores, unfilteredPopulation, tiers, bandScoresCache);
+
+        // Collect entries in a thread-local list, then flush all at once
+        var entries = new List<(string Key, byte[] Json, string ETag)>();
+        PrecomputeSinglePlayer(accountId, allMaxScores, unfilteredPopulation, tiers, bandScoresCache,
+            storeOverride: entries);
 
         // Sub-resources
         var displayNames = _metaDb.GetDisplayNames(new[] { accountId });
-        PrecomputePlayerStats(accountId);
-        PrecomputePlayerHistory(accountId);
-        PrecomputePlayerSyncStatus(accountId);
-        PrecomputePlayerRivalsOverview(accountId);
-        PrecomputePlayerRivalsAll(accountId, displayNames);
-        PrecomputePlayerLeaderboardRivals(accountId, instrumentKeys, displayNames);
+        PrecomputePlayerStats(accountId, storeOverride: entries);
+        PrecomputePlayerHistory(accountId, storeOverride: entries);
+        PrecomputePlayerSyncStatus(accountId, storeOverride: entries);
+        PrecomputePlayerRivalsOverview(accountId, storeOverride: entries);
+        PrecomputePlayerRivalsAll(accountId, displayNames, storeOverride: entries);
+        PrecomputePlayerLeaderboardRivals(accountId, instrumentKeys, displayNames, storeOverride: entries);
 
-        // Flush this user's entries to PostgreSQL and free RAM
-        var userEntries = _store
-            .Where(kv => kv.Key.StartsWith($"player:{accountId}", StringComparison.Ordinal))
-            .Select(kv => (kv.Key, kv.Value.Json, kv.Value.ETag))
-            .ToList();
-        if (userEntries.Count > 0)
-        {
-            _metaDb.BulkSetCachedResponses(userEntries);
-            foreach (var (key, _, _) in userEntries)
-                _store.TryRemove(key, out _);
-        }
+        if (entries.Count > 0)
+            _metaDb.BulkSetCachedResponses(entries);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -302,7 +310,8 @@ public sealed class ScrapeTimePrecomputer
         Dictionary<(string SongId, string Instrument), long> unfilteredPopulation,
         IReadOnlyDictionary<(string, string), PopulationTierData> populationTiers,
         Dictionary<(string, string), int[]> bandScoresCache,
-        Dictionary<string, string>? displayNames = null)
+        Dictionary<string, string>? displayNames = null,
+        List<(string Key, byte[] Json, string ETag)>? storeOverride = null)
     {
         var scores = _persistence.GetPlayerProfile(accountId);
         if (scores.Count == 0) return;
@@ -412,7 +421,7 @@ public sealed class ScrapeTimePrecomputer
 
         var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
         var cacheKey = $"player:{accountId}:::";
-        Store(cacheKey, jsonBytes);
+        Store(cacheKey, jsonBytes, storeOverride);
     }
 
     /// <summary>
@@ -597,11 +606,32 @@ public sealed class ScrapeTimePrecomputer
     // Helpers
     // ═══════════════════════════════════════════════════════════════
 
-    private void Store(string cacheKey, byte[] json)
+    /// <summary>
+    /// Store a precomputed cache entry. During PrecomputeAllAsync this writes to
+    /// the disk staging channel. The optional storeOverride collects entries in a
+    /// list for the single-user PrecomputeUser() path. As a fallback (e.g. when
+    /// called outside of bulk precomputation), writes directly to PostgreSQL.
+    /// </summary>
+    private void Store(string cacheKey, byte[] json,
+        List<(string Key, byte[] Json, string ETag)>? storeOverride = null)
     {
         var hash = SHA256.HashData(json);
         var etag = $"\"{Convert.ToBase64String(hash, 0, 16)}\"";
-        _store[cacheKey] = new PrecomputedResponse(json, etag);
+
+        if (storeOverride is not null)
+        {
+            storeOverride.Add((cacheKey, json, etag));
+            return;
+        }
+
+        if (_staging is not null)
+        {
+            _staging.Write(cacheKey, json, etag);
+            return;
+        }
+
+        // No staging active — write directly to PostgreSQL (single-entry path)
+        _metaDb.BulkSetCachedResponses(new[] { (cacheKey, json, etag) });
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -637,7 +667,8 @@ public sealed class ScrapeTimePrecomputer
             });
     }
 
-    private void PrecomputePlayerStats(string accountId)
+    private void PrecomputePlayerStats(string accountId,
+        List<(string Key, byte[] Json, string ETag)>? storeOverride = null)
     {
         var tierRows = _metaDb.GetPlayerStatsTiers(accountId);
         if (tierRows.Count == 0) return;
@@ -671,7 +702,7 @@ public sealed class ScrapeTimePrecomputer
             }).ToList(),
         };
         var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
-        Store($"playerstats:{accountId}", jsonBytes);
+        Store($"playerstats:{accountId}", jsonBytes, storeOverride);
     }
 
     /// <summary>
@@ -743,7 +774,8 @@ public sealed class ScrapeTimePrecomputer
         return result.Count > 0 ? result : null;
     }
 
-    private void PrecomputePlayerHistory(string accountId)
+    private void PrecomputePlayerHistory(string accountId,
+        List<(string Key, byte[] Json, string ETag)>? storeOverride = null)
     {
         var history = _metaDb.GetScoreHistory(accountId, 1000);
         var payload = new
@@ -753,10 +785,11 @@ public sealed class ScrapeTimePrecomputer
             history,
         };
         var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
-        Store($"history:{accountId}", jsonBytes);
+        Store($"history:{accountId}", jsonBytes, storeOverride);
     }
 
-    private void PrecomputePlayerSyncStatus(string accountId)
+    private void PrecomputePlayerSyncStatus(string accountId,
+        List<(string Key, byte[] Json, string ETag)>? storeOverride = null)
     {
         var backfill = _metaDb.GetBackfillStatus(accountId);
         var historyRecon = _metaDb.GetHistoryReconStatus(accountId);
@@ -796,10 +829,11 @@ public sealed class ScrapeTimePrecomputer
             },
         };
         var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
-        Store($"syncstatus:{accountId}", jsonBytes);
+        Store($"syncstatus:{accountId}", jsonBytes, storeOverride);
     }
 
-    private void PrecomputePlayerRivalsOverview(string accountId)
+    private void PrecomputePlayerRivalsOverview(string accountId,
+        List<(string Key, byte[] Json, string ETag)>? storeOverride = null)
     {
         var status = _metaDb.GetRivalsStatus(accountId);
         var combos = _metaDb.GetRivalCombos(accountId);
@@ -817,10 +851,11 @@ public sealed class ScrapeTimePrecomputer
             }).ToList(),
         };
         var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
-        Store($"rivals-overview:{accountId}", jsonBytes);
+        Store($"rivals-overview:{accountId}", jsonBytes, storeOverride);
     }
 
-    private void PrecomputePlayerRivalsAll(string accountId, Dictionary<string, string> displayNames)
+    private void PrecomputePlayerRivalsAll(string accountId, Dictionary<string, string> displayNames,
+        List<(string Key, byte[] Json, string ETag)>? storeOverride = null)
     {
         var combos = _metaDb.GetRivalCombos(accountId);
         if (combos.Count == 0) return;
@@ -903,13 +938,14 @@ public sealed class ScrapeTimePrecomputer
             }).ToList(),
         };
         var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
-        Store($"rivals-all:{accountId}", jsonBytes);
+        Store($"rivals-all:{accountId}", jsonBytes, storeOverride);
     }
 
     private void PrecomputePlayerLeaderboardRivals(
         string accountId,
         IReadOnlyList<string> instrumentKeys,
-        Dictionary<string, string> displayNames)
+        Dictionary<string, string> displayNames,
+        List<(string Key, byte[] Json, string ETag)>? storeOverride = null)
     {
         foreach (var instrument in instrumentKeys)
         {
@@ -940,7 +976,7 @@ public sealed class ScrapeTimePrecomputer
                 below = below.ToList(),
             };
             var jsonBytes = JsonSerializer.SerializeToUtf8Bytes(payload, _jsonOpts);
-            Store($"lb-rivals:{accountId}:{instrument}:totalscore", jsonBytes);
+            Store($"lb-rivals:{accountId}:{instrument}:totalscore", jsonBytes, storeOverride);
         }
     }
 
