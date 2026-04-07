@@ -1,3 +1,5 @@
+using FSTService.Scraping;
+
 namespace FSTService.Persistence;
 
 /// <summary>
@@ -166,4 +168,41 @@ public interface IMetaDatabase : IDisposable
 
     // ── Maintenance ──────────────────────────────────────────────────
     void Checkpoint();
+
+    // ── Leaderboard staging ──────────────────────────────────────────
+
+    /// <summary>Stage a chunk of leaderboard entries for later finalization.</summary>
+    void StageChunk(long scrapeId, string songId, string instrument,
+        IReadOnlyList<(int PageNum, LeaderboardEntry Entry)> entries);
+
+    /// <summary>Insert or update per-leaderboard staging metadata.</summary>
+    void UpsertStagingMeta(long scrapeId, string songId, string instrument, StagingMetaUpdate update);
+
+    /// <summary>Get all staging metadata rows for a scrape run.</summary>
+    List<StagingMetaRow> GetStagingMeta(long scrapeId);
+
+    /// <summary>Mark a leaderboard's wave 1 or wave 2 as finalized.</summary>
+    void MarkWaveFinalized(long scrapeId, string songId, string instrument, int wave);
+
+    /// <summary>Enqueue a deep-scrape job for wave 2 scheduling.</summary>
+    void EnqueueDeepScrapeJob(DeepScrapeJobInfo job);
+
+    /// <summary>Get all pending deep-scrape jobs for a scrape run.</summary>
+    List<DeepScrapeQueueRow> GetDeepScrapeJobs(long scrapeId, string? status = null);
+
+    /// <summary>Update a deep-scrape job's cursor state.</summary>
+    void UpdateDeepScrapeJobCursor(long scrapeId, string songId, string instrument,
+        int cursorPage, int currentValidCount);
+
+    /// <summary>Mark a deep-scrape job as complete or failed.</summary>
+    void CompleteDeepScrapeJob(long scrapeId, string songId, string instrument, string status);
+
+    /// <summary>Delete all staging data and deep-scrape jobs for scrape IDs older than the given one.</summary>
+    int CleanupAbandonedStaging(long currentScrapeId);
+
+    /// <summary>Delete staged entries for one leaderboard combo.</summary>
+    int DeleteStagedEntries(long scrapeId, string songId, string instrument);
+
+    /// <summary>Count staged entries for one leaderboard combo.</summary>
+    int GetStagedEntryCount(long scrapeId, string songId, string instrument);
 }

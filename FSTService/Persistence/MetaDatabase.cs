@@ -1,3 +1,4 @@
+using FSTService.Scraping;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -1026,6 +1027,269 @@ public sealed class MetaDatabase : IMetaDatabase
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "TRUNCATE api_response_cache";
         cmd.ExecuteNonQuery();
+    }
+
+    // ── Private helpers ──────────────────────────────────────────────
+
+    // ── Leaderboard staging ──────────────────────────────────────────
+
+    public void StageChunk(long scrapeId, string songId, string instrument,
+        IReadOnlyList<(int PageNum, LeaderboardEntry Entry)> entries)
+    {
+        if (entries.Count == 0) return;
+        var now = DateTime.UtcNow;
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        using (var sc = conn.CreateCommand()) { sc.Transaction = tx; sc.CommandText = "SET LOCAL synchronous_commit = off"; sc.ExecuteNonQuery(); }
+
+        using (var writer = conn.BeginBinaryImport(
+            "COPY leaderboard_staging (scrape_id, song_id, instrument, page_num, account_id, score, accuracy, " +
+            "is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, staged_at) " +
+            "FROM STDIN (FORMAT BINARY)"))
+        {
+            foreach (var (pageNum, e) in entries)
+            {
+                writer.StartRow();
+                writer.Write((int)scrapeId, NpgsqlDbType.Integer);
+                writer.Write(songId, NpgsqlDbType.Text);
+                writer.Write(instrument, NpgsqlDbType.Text);
+                writer.Write(pageNum, NpgsqlDbType.Integer);
+                writer.Write(e.AccountId, NpgsqlDbType.Text);
+                writer.Write(e.Score, NpgsqlDbType.Integer);
+                writer.Write(e.Accuracy, NpgsqlDbType.Integer);
+                writer.Write(e.IsFullCombo, NpgsqlDbType.Boolean);
+                writer.Write(e.Stars, NpgsqlDbType.Integer);
+                writer.Write(e.Season, NpgsqlDbType.Integer);
+                writer.Write(e.Difficulty, NpgsqlDbType.Integer);
+                writer.Write(e.Percentile, NpgsqlDbType.Double);
+                writer.Write(e.Rank, NpgsqlDbType.Integer);
+                if (e.EndTime is not null) writer.Write(e.EndTime, NpgsqlDbType.Text);
+                else writer.WriteNull();
+                if (e.ApiRank > 0) writer.Write(e.ApiRank, NpgsqlDbType.Integer);
+                else writer.WriteNull();
+                writer.Write(e.Source ?? "scrape", NpgsqlDbType.Text);
+                writer.Write(now, NpgsqlDbType.TimestampTz);
+            }
+            writer.Complete();
+        }
+        tx.Commit();
+    }
+
+    public void UpsertStagingMeta(long scrapeId, string songId, string instrument, StagingMetaUpdate update)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            "INSERT INTO leaderboard_staging_meta (scrape_id, song_id, instrument, reported_pages, pages_scraped, entries_staged, valid_entry_count, requests, bytes_received, deep_scrape_status) " +
+            "VALUES (@scrapeId, @songId, @instrument, @reportedPages, @pagesScraped, @entriesStaged, @validEntryCount, @requests, @bytesReceived, @deepScrapeStatus) " +
+            "ON CONFLICT (scrape_id, song_id, instrument) DO UPDATE SET " +
+            "reported_pages = GREATEST(leaderboard_staging_meta.reported_pages, EXCLUDED.reported_pages), " +
+            "pages_scraped = leaderboard_staging_meta.pages_scraped + EXCLUDED.pages_scraped, " +
+            "entries_staged = leaderboard_staging_meta.entries_staged + EXCLUDED.entries_staged, " +
+            "valid_entry_count = COALESCE(EXCLUDED.valid_entry_count, leaderboard_staging_meta.valid_entry_count), " +
+            "requests = leaderboard_staging_meta.requests + EXCLUDED.requests, " +
+            "bytes_received = leaderboard_staging_meta.bytes_received + EXCLUDED.bytes_received, " +
+            "deep_scrape_status = COALESCE(EXCLUDED.deep_scrape_status, leaderboard_staging_meta.deep_scrape_status)";
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.Parameters.AddWithValue("reportedPages", update.ReportedPages);
+        cmd.Parameters.AddWithValue("pagesScraped", update.PagesScraped);
+        cmd.Parameters.AddWithValue("entriesStaged", update.EntriesStaged);
+        cmd.Parameters.AddWithValue("validEntryCount", (object?)update.ValidEntryCount ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("requests", update.Requests);
+        cmd.Parameters.AddWithValue("bytesReceived", update.BytesReceived);
+        cmd.Parameters.AddWithValue("deepScrapeStatus", (object?)update.DeepScrapeStatus ?? DBNull.Value);
+        cmd.ExecuteNonQuery();
+    }
+
+    public List<StagingMetaRow> GetStagingMeta(long scrapeId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            "SELECT scrape_id, song_id, instrument, reported_pages, pages_scraped, entries_staged, " +
+            "valid_entry_count, requests, bytes_received, deep_scrape_status, wave1_finalized_at, wave2_finalized_at " +
+            "FROM leaderboard_staging_meta WHERE scrape_id = @scrapeId";
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        var list = new List<StagingMetaRow>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            list.Add(new StagingMetaRow
+            {
+                ScrapeId = r.GetInt32(0),
+                SongId = r.GetString(1),
+                Instrument = r.GetString(2),
+                ReportedPages = r.GetInt32(3),
+                PagesScraped = r.GetInt32(4),
+                EntriesStaged = r.GetInt32(5),
+                ValidEntryCount = r.IsDBNull(6) ? null : r.GetInt32(6),
+                Requests = r.GetInt32(7),
+                BytesReceived = r.GetInt64(8),
+                DeepScrapeStatus = r.IsDBNull(9) ? null : r.GetString(9),
+                Wave1FinalizedAt = r.IsDBNull(10) ? null : r.GetDateTime(10),
+                Wave2FinalizedAt = r.IsDBNull(11) ? null : r.GetDateTime(11),
+            });
+        }
+        return list;
+    }
+
+    public void MarkWaveFinalized(long scrapeId, string songId, string instrument, int wave)
+    {
+        var column = wave == 1 ? "wave1_finalized_at" : "wave2_finalized_at";
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"UPDATE leaderboard_staging_meta SET {column} = @now WHERE scrape_id = @scrapeId AND song_id = @songId AND instrument = @instrument";
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.ExecuteNonQuery();
+    }
+
+    public void EnqueueDeepScrapeJob(DeepScrapeJobInfo job)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            "INSERT INTO deep_scrape_queue (scrape_id, song_id, instrument, label, valid_cutoff, valid_entry_target, " +
+            "wave2_start_page, reported_pages, initial_valid_count, status) " +
+            "VALUES (@scrapeId, @songId, @instrument, @label, @validCutoff, @validEntryTarget, " +
+            "@wave2StartPage, @reportedPages, @initialValidCount, 'pending') " +
+            "ON CONFLICT (scrape_id, song_id, instrument) DO NOTHING";
+        cmd.Parameters.AddWithValue("scrapeId", (int)job.ScrapeId);
+        cmd.Parameters.AddWithValue("songId", job.SongId);
+        cmd.Parameters.AddWithValue("instrument", job.Instrument);
+        cmd.Parameters.AddWithValue("label", (object?)job.Label ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("validCutoff", job.ValidCutoff);
+        cmd.Parameters.AddWithValue("validEntryTarget", job.ValidEntryTarget);
+        cmd.Parameters.AddWithValue("wave2StartPage", job.Wave2StartPage);
+        cmd.Parameters.AddWithValue("reportedPages", job.ReportedPages);
+        cmd.Parameters.AddWithValue("initialValidCount", job.InitialValidCount);
+        cmd.ExecuteNonQuery();
+    }
+
+    public List<DeepScrapeQueueRow> GetDeepScrapeJobs(long scrapeId, string? status = null)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        var filter = status is not null ? " AND status = @status" : "";
+        cmd.CommandText =
+            "SELECT scrape_id, song_id, instrument, label, valid_cutoff, valid_entry_target, " +
+            "wave2_start_page, reported_pages, initial_valid_count, status, cursor_page, " +
+            "current_valid_count, created_at, completed_at " +
+            $"FROM deep_scrape_queue WHERE scrape_id = @scrapeId{filter} ORDER BY created_at";
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        if (status is not null) cmd.Parameters.AddWithValue("status", status);
+        var list = new List<DeepScrapeQueueRow>();
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            list.Add(new DeepScrapeQueueRow
+            {
+                ScrapeId = r.GetInt32(0),
+                SongId = r.GetString(1),
+                Instrument = r.GetString(2),
+                Label = r.IsDBNull(3) ? null : r.GetString(3),
+                ValidCutoff = r.GetInt32(4),
+                ValidEntryTarget = r.GetInt32(5),
+                Wave2StartPage = r.GetInt32(6),
+                ReportedPages = r.GetInt32(7),
+                InitialValidCount = r.GetInt32(8),
+                Status = r.GetString(9),
+                CursorPage = r.IsDBNull(10) ? null : r.GetInt32(10),
+                CurrentValidCount = r.IsDBNull(11) ? null : r.GetInt32(11),
+                CreatedAt = r.GetDateTime(12),
+                CompletedAt = r.IsDBNull(13) ? null : r.GetDateTime(13),
+            });
+        }
+        return list;
+    }
+
+    public void UpdateDeepScrapeJobCursor(long scrapeId, string songId, string instrument,
+        int cursorPage, int currentValidCount)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            "UPDATE deep_scrape_queue SET cursor_page = @cursor, current_valid_count = @valid, status = 'running' " +
+            "WHERE scrape_id = @scrapeId AND song_id = @songId AND instrument = @instrument";
+        cmd.Parameters.AddWithValue("cursor", cursorPage);
+        cmd.Parameters.AddWithValue("valid", currentValidCount);
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.ExecuteNonQuery();
+    }
+
+    public void CompleteDeepScrapeJob(long scrapeId, string songId, string instrument, string status)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText =
+            "UPDATE deep_scrape_queue SET status = @status, completed_at = @now " +
+            "WHERE scrape_id = @scrapeId AND song_id = @songId AND instrument = @instrument";
+        cmd.Parameters.AddWithValue("status", status);
+        cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        cmd.ExecuteNonQuery();
+    }
+
+    public int CleanupAbandonedStaging(long currentScrapeId)
+    {
+        using var conn = _ds.OpenConnection();
+        using var tx = conn.BeginTransaction();
+        int total = 0;
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM leaderboard_staging WHERE scrape_id < @id";
+            cmd.Parameters.AddWithValue("id", (int)currentScrapeId);
+            total += cmd.ExecuteNonQuery();
+        }
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM leaderboard_staging_meta WHERE scrape_id < @id";
+            cmd.Parameters.AddWithValue("id", (int)currentScrapeId);
+            total += cmd.ExecuteNonQuery();
+        }
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM deep_scrape_queue WHERE scrape_id < @id";
+            cmd.Parameters.AddWithValue("id", (int)currentScrapeId);
+            total += cmd.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+        return total;
+    }
+
+    public int DeleteStagedEntries(long scrapeId, string songId, string instrument)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM leaderboard_staging WHERE scrape_id = @scrapeId AND song_id = @songId AND instrument = @instrument";
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        return cmd.ExecuteNonQuery();
+    }
+
+    public int GetStagedEntryCount(long scrapeId, string songId, string instrument)
+    {
+        using var conn = _ds.OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM leaderboard_staging WHERE scrape_id = @scrapeId AND song_id = @songId AND instrument = @instrument";
+        cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+        cmd.Parameters.AddWithValue("songId", songId);
+        cmd.Parameters.AddWithValue("instrument", instrument);
+        return Convert.ToInt32(cmd.ExecuteScalar());
     }
 
     // ── Private helpers ──────────────────────────────────────────────

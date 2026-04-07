@@ -464,7 +464,7 @@ public sealed class RankHistoryDto
 }
 
 /// <summary>
-/// Daily rank delta snapshot for a specific leeway bucket.
+/// A single rank history delta snapshot at a specific leeway bucket.
 /// </summary>
 public sealed class RankHistoryDeltaDto
 {
@@ -551,4 +551,78 @@ public sealed class SongMaxScores
             case "Solo_PeripheralBass": MaxProBassScore = score; break;
         }
     }
+}
+
+// ─── Leaderboard staging DTOs ─────────────────────────────────────────
+
+/// <summary>
+/// Metadata for updating the per-leaderboard staging state.
+/// All fields are additive/overwrite — callers accumulate locally and flush.
+/// </summary>
+public sealed class StagingMetaUpdate
+{
+    public required int ReportedPages { get; init; }
+    public required int PagesScraped { get; init; }
+    public required int EntriesStaged { get; init; }
+    public int? ValidEntryCount { get; init; }
+    public required int Requests { get; init; }
+    public required long BytesReceived { get; init; }
+    /// <summary>"none", "eligible", "running", or "complete".</summary>
+    public string? DeepScrapeStatus { get; init; }
+}
+
+/// <summary>
+/// Row from the <c>leaderboard_staging_meta</c> table.
+/// </summary>
+public sealed class StagingMetaRow
+{
+    public long ScrapeId { get; init; }
+    public string SongId { get; init; } = "";
+    public string Instrument { get; init; } = "";
+    public int ReportedPages { get; init; }
+    public int PagesScraped { get; init; }
+    public int EntriesStaged { get; init; }
+    public int? ValidEntryCount { get; init; }
+    public int Requests { get; init; }
+    public long BytesReceived { get; init; }
+    public string? DeepScrapeStatus { get; init; }
+    public DateTime? Wave1FinalizedAt { get; init; }
+    public DateTime? Wave2FinalizedAt { get; init; }
+}
+
+/// <summary>
+/// Parameters for enqueuing a deep-scrape job.
+/// </summary>
+public sealed class DeepScrapeJobInfo
+{
+    public required long ScrapeId { get; init; }
+    public required string SongId { get; init; }
+    public required string Instrument { get; init; }
+    public string? Label { get; init; }
+    public required int ValidCutoff { get; init; }
+    public required int ValidEntryTarget { get; init; }
+    public required int Wave2StartPage { get; init; }
+    public required int ReportedPages { get; init; }
+    public required int InitialValidCount { get; init; }
+}
+
+/// <summary>
+/// Row from the <c>deep_scrape_queue</c> table.
+/// </summary>
+public sealed class DeepScrapeQueueRow
+{
+    public long ScrapeId { get; init; }
+    public string SongId { get; init; } = "";
+    public string Instrument { get; init; } = "";
+    public string? Label { get; init; }
+    public int ValidCutoff { get; init; }
+    public int ValidEntryTarget { get; init; }
+    public int Wave2StartPage { get; init; }
+    public int ReportedPages { get; init; }
+    public int InitialValidCount { get; init; }
+    public string Status { get; init; } = "pending";
+    public int? CursorPage { get; init; }
+    public int? CurrentValidCount { get; init; }
+    public DateTime CreatedAt { get; init; }
+    public DateTime? CompletedAt { get; init; }
 }

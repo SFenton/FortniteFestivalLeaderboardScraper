@@ -480,6 +480,175 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
     /// <summary>
     /// Run WAL checkpoints on all instrument databases and the meta database.
+
+    // ─── Staged leaderboard finalization ────────────────────────────
+
+    /// <summary>
+    /// Finalize one leaderboard combo from staging into the live table.
+    /// Merges staged rows using the same ON CONFLICT semantics as <see cref="InstrumentDatabase.UpsertEntries"/>,
+    /// detects score changes for registered users, and deletes staged rows on success.
+    /// Safe for two-pass finalization (wave 1 then wave 2) because the ON CONFLICT
+    /// merge is idempotent for same-account upserts.
+    /// </summary>
+    /// <returns>Number of rows merged and score changes detected.</returns>
+    public (int RowsMerged, int ScoreChanges) FinalizeLeaderboardFromStaging(
+        long scrapeId, string songId, string instrument,
+        IReadOnlySet<string>? registeredAccountIds = null, int wave = 1)
+    {
+        var db = GetOrCreateInstrumentDb(instrument);
+        var pgDb = (InstrumentDatabase)db;
+
+        // ── Pre-merge: snapshot registered users for score-change detection ──
+        Dictionary<string, LeaderboardEntry>? previousState = null;
+        if (registeredAccountIds is { Count: > 0 })
+        {
+            // Find which registered users appear in the staged data
+            var relevantIds = new List<string>();
+            using (var conn = _pgDataSource.OpenConnection())
+            using (var cmd = conn.CreateCommand())
+            {
+                var paramNames = new string[registeredAccountIds.Count];
+                int i = 0;
+                foreach (var id in registeredAccountIds)
+                {
+                    paramNames[i] = $"@a{i}";
+                    cmd.Parameters.AddWithValue($"a{i}", id);
+                    i++;
+                }
+                cmd.CommandText =
+                    $"SELECT DISTINCT account_id FROM leaderboard_staging " +
+                    $"WHERE scrape_id = @scrapeId AND song_id = @songId AND instrument = @instrument " +
+                    $"AND account_id IN ({string.Join(",", paramNames)})";
+                cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+                cmd.Parameters.AddWithValue("songId", songId);
+                cmd.Parameters.AddWithValue("instrument", instrument);
+                using var r = cmd.ExecuteReader();
+                while (r.Read()) relevantIds.Add(r.GetString(0));
+            }
+
+            if (relevantIds.Count > 0)
+                previousState = db.GetEntriesForAccounts(songId, relevantIds);
+            else
+                previousState = new Dictionary<string, LeaderboardEntry>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        // ── Merge staged rows into the live leaderboard table ──
+        int rowsMerged;
+        using (var conn = pgDb.DataSource.OpenConnection())
+        using (var tx = conn.BeginTransaction())
+        {
+            using (var sc = conn.CreateCommand()) { sc.Transaction = tx; sc.CommandText = "SET LOCAL synchronous_commit = off"; sc.ExecuteNonQuery(); }
+
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText =
+                    "INSERT INTO leaderboard_entries (song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, first_seen_at, last_updated_at) " +
+                    "SELECT DISTINCT ON (song_id, instrument, account_id) song_id, instrument, account_id, score, accuracy, is_full_combo, stars, season, difficulty, percentile, rank, end_time, api_rank, source, staged_at, staged_at " +
+                    "FROM leaderboard_staging " +
+                    "WHERE scrape_id = @scrapeId AND song_id = @songId AND instrument = @instrument " +
+                    "ORDER BY song_id, instrument, account_id, score DESC " +
+                    "ON CONFLICT(song_id, instrument, account_id) DO UPDATE SET " +
+                    "score = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.score ELSE leaderboard_entries.score END, " +
+                    "accuracy = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.accuracy ELSE leaderboard_entries.accuracy END, " +
+                    "is_full_combo = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.is_full_combo ELSE leaderboard_entries.is_full_combo END, " +
+                    "stars = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.stars ELSE leaderboard_entries.stars END, " +
+                    "season = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.season ELSE leaderboard_entries.season END, " +
+                    "difficulty = CASE WHEN EXCLUDED.difficulty >= 0 AND leaderboard_entries.difficulty < 0 THEN EXCLUDED.difficulty WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.difficulty ELSE leaderboard_entries.difficulty END, " +
+                    "percentile = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.percentile WHEN EXCLUDED.percentile > 0 AND leaderboard_entries.percentile <= 0 THEN EXCLUDED.percentile ELSE leaderboard_entries.percentile END, " +
+                    "rank = CASE WHEN EXCLUDED.rank > 0 THEN EXCLUDED.rank ELSE leaderboard_entries.rank END, " +
+                    "api_rank = CASE WHEN EXCLUDED.api_rank > 0 THEN EXCLUDED.api_rank ELSE leaderboard_entries.api_rank END, " +
+                    "source = CASE WHEN leaderboard_entries.source = 'scrape' THEN 'scrape' WHEN EXCLUDED.source = 'scrape' THEN 'scrape' WHEN leaderboard_entries.source = 'backfill' THEN 'backfill' WHEN EXCLUDED.source = 'backfill' THEN 'backfill' ELSE EXCLUDED.source END, " +
+                    "end_time = CASE WHEN EXCLUDED.score != leaderboard_entries.score THEN EXCLUDED.end_time ELSE leaderboard_entries.end_time END, " +
+                    "last_updated_at = EXCLUDED.last_updated_at";
+                cmd.Parameters.AddWithValue("scrapeId", (int)scrapeId);
+                cmd.Parameters.AddWithValue("songId", songId);
+                cmd.Parameters.AddWithValue("instrument", instrument);
+                rowsMerged = cmd.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+        }
+
+        // ── Post-merge: detect score changes for registered users ──
+        int scoreChanges = 0;
+        if (previousState is not null && registeredAccountIds is { Count: > 0 })
+        {
+            var changes = new List<ScoreChangeRecord>();
+            // Read updated entries for previously-snapshotted accounts
+            var currentState = db.GetEntriesForAccounts(songId, previousState.Keys.ToList());
+
+            foreach (var (accountId, prev) in previousState)
+            {
+                if (!currentState.TryGetValue(accountId, out var current)) continue;
+                if (current.Score == prev.Score) continue;
+
+                changes.Add(new ScoreChangeRecord
+                {
+                    SongId = songId, Instrument = instrument, AccountId = accountId,
+                    OldScore = prev.Score, NewScore = current.Score,
+                    OldRank = prev.Rank, NewRank = current.Rank,
+                    Accuracy = current.Accuracy, IsFullCombo = current.IsFullCombo,
+                    Stars = current.Stars, Percentile = current.Percentile,
+                    Season = current.Season, ScoreAchievedAt = current.EndTime,
+                    AllTimeRank = current.Rank, Difficulty = current.Difficulty,
+                });
+            }
+
+            if (changes.Count > 0)
+            {
+                _metaDb.InsertScoreChanges(changes);
+                scoreChanges = changes.Count;
+            }
+        }
+
+        // ── Delete staged rows for this combo ──
+        _metaDb.DeleteStagedEntries(scrapeId, songId, instrument);
+
+        // ── Mark wave as finalized ──
+        _metaDb.MarkWaveFinalized(scrapeId, songId, instrument, wave);
+
+        // ── Defer account IDs for name resolution ──
+        if (rowsMerged > 0)
+        {
+            using var conn = _pgDataSource.OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText =
+                "SELECT DISTINCT account_id FROM leaderboard_entries " +
+                "WHERE song_id = @songId AND instrument = @instrument";
+            cmd.Parameters.AddWithValue("songId", songId);
+            cmd.Parameters.AddWithValue("instrument", instrument);
+            var ids = new List<string>();
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) ids.Add(r.GetString(0));
+            if (ids.Count > 0)
+            {
+                if (_aggregates is not null)
+                    _aggregates.AddDeferredAccountIds(ids);
+                else
+                    _metaDb.InsertAccountIds(ids);
+            }
+        }
+
+        _log.LogDebug("Finalized wave {Wave} for {Song}/{Instrument}: {Merged} rows merged, {Changes} score changes.",
+            wave, songId, instrument, rowsMerged, scoreChanges);
+
+        return (rowsMerged, scoreChanges);
+    }
+
+    /// <summary>
+    /// Delete all staging data and deep-scrape jobs for scrape IDs older than the given one.
+    /// Call at scrape start and on startup.
+    /// </summary>
+    public int CleanupAbandonedStaging(long currentScrapeId)
+    {
+        var deleted = _metaDb.CleanupAbandonedStaging(currentScrapeId);
+        if (deleted > 0)
+            _log.LogInformation("Cleaned up {Deleted} abandoned staging rows from incomplete scrape runs.", deleted);
+        return deleted;
+    }
+
+    /// <summary>
     /// Call after heavy write phases (scrape drain, post-scrape enrichment) to keep
     /// WAL files small and prevent auto-checkpoints from firing during API reads.
     /// </summary>

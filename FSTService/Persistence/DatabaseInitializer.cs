@@ -895,5 +895,80 @@ public static class DatabaseInitializer
             cached_at   TIMESTAMPTZ NOT NULL DEFAULT now()
         );
 
+        -- =====================================================================
+        -- LEADERBOARD STAGING (chunked scrape entries, merged on finalize)
+        -- =====================================================================
+
+        CREATE TABLE IF NOT EXISTS leaderboard_staging (
+            scrape_id    INT              NOT NULL,
+            song_id      TEXT             NOT NULL,
+            instrument   TEXT             NOT NULL,
+            page_num     INT              NOT NULL,
+            account_id   TEXT             NOT NULL,
+            score        INT              NOT NULL,
+            accuracy     INT,
+            is_full_combo BOOLEAN,
+            stars        INT,
+            season       INT,
+            difficulty   INT,
+            percentile   DOUBLE PRECISION,
+            rank         INT,
+            end_time     TEXT,
+            api_rank     INT,
+            source       TEXT,
+            staged_at    TIMESTAMPTZ      NOT NULL DEFAULT now(),
+            PRIMARY KEY (scrape_id, song_id, instrument, account_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_staging_scrape
+            ON leaderboard_staging (scrape_id);
+        CREATE INDEX IF NOT EXISTS ix_staging_combo
+            ON leaderboard_staging (scrape_id, song_id, instrument);
+
+        -- =====================================================================
+        -- LEADERBOARD STAGING METADATA (per-combo finalization state)
+        -- =====================================================================
+
+        CREATE TABLE IF NOT EXISTS leaderboard_staging_meta (
+            scrape_id              INT     NOT NULL,
+            song_id                TEXT    NOT NULL,
+            instrument             TEXT    NOT NULL,
+            reported_pages         INT     NOT NULL,
+            pages_scraped          INT     NOT NULL,
+            entries_staged         INT     NOT NULL,
+            valid_entry_count      INT,
+            requests               INT     NOT NULL,
+            bytes_received         BIGINT  NOT NULL,
+            deep_scrape_status     TEXT,
+            wave1_finalized_at     TIMESTAMPTZ,
+            wave2_finalized_at     TIMESTAMPTZ,
+            PRIMARY KEY (scrape_id, song_id, instrument)
+        );
+
+        -- =====================================================================
+        -- DEEP SCRAPE QUEUE (wave 2 job scheduling)
+        -- =====================================================================
+
+        CREATE TABLE IF NOT EXISTS deep_scrape_queue (
+            scrape_id              INT     NOT NULL,
+            song_id                TEXT    NOT NULL,
+            instrument             TEXT    NOT NULL,
+            label                  TEXT,
+            valid_cutoff           INT     NOT NULL,
+            valid_entry_target     INT     NOT NULL,
+            wave2_start_page       INT     NOT NULL,
+            reported_pages         INT     NOT NULL,
+            initial_valid_count    INT     NOT NULL,
+            status                 TEXT    NOT NULL DEFAULT 'pending',
+            cursor_page            INT,
+            current_valid_count    INT,
+            created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+            completed_at           TIMESTAMPTZ,
+            PRIMARY KEY (scrape_id, song_id, instrument)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_dsq_status
+            ON deep_scrape_queue (scrape_id, status);
+
         """;
 }

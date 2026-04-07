@@ -101,8 +101,12 @@ public sealed class ScrapeOrchestrator
             .ToDictionary(i => i, _ => scrapeRequests.Count);
         _progress.SetInstrumentTotals(instrumentTotals);
 
-        // ── Pipelined: per-instrument channel writers ──
-        var aggregates = _persistence.StartWriters(opts.BoundedChannelCapacity, opts.WriteBatchSize, passCt);
+        // ── Staging-based persistence ──
+        // Entries are staged to leaderboard_staging during scraping, then
+        // finalized into the live leaderboard_entries table after all songs
+        // complete. This replaces the previous pipelined channel writers.
+        var aggregates = new GlobalLeaderboardPersistence.PipelineAggregates();
+        _persistence.CleanupAbandonedStaging(scrapeId);
         int totalRequests = 0;
         long totalBytes = 0;
 
@@ -118,12 +122,76 @@ public sealed class ScrapeOrchestrator
                     Interlocked.Add(ref totalRequests, result.Requests);
                     Interlocked.Add(ref totalBytes, result.BytesReceived);
 
-                    if (result.Entries.Count == 0) continue;
+                    if (result.Entries.Count == 0)
+                    {
+                        // Record meta even for empty leaderboards
+                        _persistence.Meta.UpsertStagingMeta(scrapeId, songId, result.Instrument,
+                            new StagingMetaUpdate
+                            {
+                                ReportedPages = result.ReportedTotalPages,
+                                PagesScraped = result.PagesScraped,
+                                EntriesStaged = 0,
+                                Requests = result.Requests,
+                                BytesReceived = result.BytesReceived,
+                                DeepScrapeStatus = result.DeferredDeepScrape is not null ? "eligible" : "none",
+                            });
+                        continue;
+                    }
                     hasData = true;
 
-                    await _persistence.EnqueueResultAsync(result, registeredIds, passCt);
+                    // Stage all entries (page number estimated from position)
+                    var taggedEntries = result.Entries
+                        .Select((e, i) => (PageNum: i / 100, Entry: e))
+                        .ToList();
+                    _persistence.Meta.StageChunk(scrapeId, songId, result.Instrument, taggedEntries);
+
+                    // Record staging metadata
+                    _persistence.Meta.UpsertStagingMeta(scrapeId, songId, result.Instrument,
+                        new StagingMetaUpdate
+                        {
+                            ReportedPages = result.ReportedTotalPages,
+                            PagesScraped = result.PagesScraped,
+                            EntriesStaged = result.Entries.Count,
+                            Requests = result.Requests,
+                            BytesReceived = result.BytesReceived,
+                            DeepScrapeStatus = result.DeferredDeepScrape is not null ? "eligible" : "none",
+                        });
+
+                    // Enqueue deep-scrape job if wave 2 is needed
+                    if (result.DeferredDeepScrape is not null)
+                    {
+                        _persistence.Meta.EnqueueDeepScrapeJob(new DeepScrapeJobInfo
+                        {
+                            ScrapeId = scrapeId,
+                            SongId = result.DeferredDeepScrape.SongId,
+                            Instrument = result.DeferredDeepScrape.Instrument,
+                            Label = result.DeferredDeepScrape.Label,
+                            ValidCutoff = result.DeferredDeepScrape.ValidCutoff,
+                            ValidEntryTarget = opts.ValidEntryTarget,
+                            Wave2StartPage = result.DeferredDeepScrape.Wave2Start,
+                            ReportedPages = result.DeferredDeepScrape.ReportedPages,
+                            InitialValidCount = result.DeferredDeepScrape.InitialValidCount,
+                        });
+                    }
+
+                    // Track registered user appearances for post-scrape refresh
+                    if (registeredIds.Count > 0)
+                    {
+                        aggregates.AddSeenRegisteredEntries(
+                            result.Entries
+                                .Where(e => registeredIds.Contains(e.AccountId))
+                                .Select(e => (e.AccountId, songId, result.Instrument)));
+                    }
+
+                    aggregates.AddEntries(result.Entries.Count);
                 }
-                if (hasData) aggregates.IncrementSongsWithData();
+                if (hasData)
+                {
+                    aggregates.IncrementSongsWithData();
+                    aggregates.AddChangedSongId(songId);
+                }
+
+                await ValueTask.CompletedTask;
             },
             passCt,
             maxPages: opts.MaxPagesPerLeaderboard,
@@ -138,19 +206,33 @@ public sealed class ScrapeOrchestrator
             deferDeepScrape: true,
             validCutoffMultiplier: opts.ValidCutoffMultiplier);
 
-        // Wait for all per-instrument writers to drain
-        _progress.SetSubOperation("persisting_to_database");
-        await _persistence.DrainWritersAsync();
+        // ── Finalize all staged leaderboards into the live table ──
+        _progress.SetSubOperation("finalizing_staged");
+        var stagedMeta = _persistence.Meta.GetStagingMeta(scrapeId);
+        int totalFinalized = 0;
+        int totalScoreChanges = 0;
+        foreach (var meta in stagedMeta)
+        {
+            if (meta.EntriesStaged == 0) continue;
+            try
+            {
+                int wave = meta.DeepScrapeStatus == "eligible" ? 1 : 1;
+                var (merged, changes) = _persistence.FinalizeLeaderboardFromStaging(
+                    scrapeId, meta.SongId, meta.Instrument, registeredIds, wave);
+                totalFinalized += merged;
+                totalScoreChanges += changes;
+                aggregates.AddChanges(changes);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _log.LogError(ex, "Failed to finalize staged leaderboard {Song}/{Instrument}.",
+                    meta.SongId, meta.Instrument);
+            }
+        }
 
-        // Flush deferred account IDs accumulated during pipelined writes
-        try
-        {
-            _persistence.FlushDeferredAccountIds();
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _log.LogWarning(ex, "Deferred account ID flush failed. IDs will be re-encountered next pass.");
-        }
+        _log.LogInformation(
+            "Finalized {Combos:N0} staged leaderboards: {Entries:N0} rows merged, {Changes:N0} score changes.",
+            stagedMeta.Count(m => m.EntriesStaged > 0), totalFinalized, totalScoreChanges);
 
         // Checkpoint all WAL files after the heavy write phase to keep them small
         // and prevent auto-checkpoints from firing during API reads.
