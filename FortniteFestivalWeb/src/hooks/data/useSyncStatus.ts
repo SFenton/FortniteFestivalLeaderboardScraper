@@ -52,9 +52,10 @@ export function useSyncStatus(accountId: string | undefined) {
   const [justCompleted, setJustCompleted] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout>>(null);
   const wasSyncingRef = useRef(false);
+  const syncKickedRef = useRef(false);
   const mountedRef = useRef(true);
   const lastWsMsgRef = useRef(0);
-  const { subscribe } = useAppWebSocket();
+  const { subscribe, connected: wsConnected } = useAppWebSocket();
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -99,7 +100,7 @@ export function useSyncStatus(accountId: string | undefined) {
         rivalsFound: sp.rivalsFound ?? prev.rivalsFound,
       }));
 
-      if (!isSyncing && phase === SyncPhase.Complete && wasSyncingRef.current) {
+      if (!isSyncing && phase === SyncPhase.Complete && (wasSyncingRef.current || syncKickedRef.current)) {
         setJustCompleted(true);
       }
       // While receiving WS messages, suppress HTTP polling
@@ -124,8 +125,8 @@ export function useSyncStatus(accountId: string | undefined) {
     if (!accountId || !mountedRef.current) return;
     /* v8 ignore stop */
 
-    // Skip HTTP poll if we received a WS message recently
-    if (Date.now() - lastWsMsgRef.current < WS_STALE_MS && lastWsMsgRef.current > 0) {
+    // Skip HTTP poll if we received a WS message recently AND the WS is still connected
+    if (wsConnected && Date.now() - lastWsMsgRef.current < WS_STALE_MS && lastWsMsgRef.current > 0) {
       if (mountedRef.current) {
         stopPolling();
         pollRef.current = setTimeout(checkStatus, SYNC_POLL_ACTIVE_MS);
@@ -190,7 +191,7 @@ export function useSyncStatus(accountId: string | undefined) {
       if (!isSyncing && (phase === SyncPhase.Complete || phase === SyncPhase.Error)) {
         // Sync finished — stop active polling entirely
         stopPolling();
-        if (phase === SyncPhase.Complete && wasSyncingRef.current) {
+        if (phase === SyncPhase.Complete && (wasSyncingRef.current || syncKickedRef.current)) {
           /* v8 ignore start */
           setJustCompleted(true);
           /* v8 ignore stop */
@@ -212,20 +213,22 @@ export function useSyncStatus(accountId: string | undefined) {
       }
       /* v8 ignore stop */
     }
-  }, [accountId, stopPolling]);
+  }, [accountId, stopPolling, wsConnected]);
 
   // Track player and start polling on mount; pause when tab is hidden
   useEffect(() => {
     if (!accountId) return;
     mountedRef.current = true;
     wasSyncingRef.current = false;
+    syncKickedRef.current = false;
     lastWsMsgRef.current = 0;
     setJustCompleted(false);
 
     const init = async () => {
-      // Fire track request (idempotent)
+      // Fire track request (idempotent) and capture whether a sync was kicked
       try {
-        await api.trackPlayer(accountId);
+        const res = await api.trackPlayer(accountId);
+        if (res.backfillKicked) syncKickedRef.current = true;
       } catch {
         // Ignore if track fails (e.g. in api-only mode without scraper)
       }

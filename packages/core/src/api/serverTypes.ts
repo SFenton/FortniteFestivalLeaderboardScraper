@@ -272,6 +272,7 @@ export type TrackPlayerResponse = {
   displayName: string;
   trackingStarted: boolean;
   backfillStatus: string;
+  backfillKicked: boolean;
 };
 
 export type SyncStatusResponse = {
