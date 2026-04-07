@@ -468,4 +468,177 @@ public sealed class NotificationServiceTests
             WebSocketMessageType.Text, true,
             Arg.Any<CancellationToken>());
     }
+
+    // ─── WebSocket subscribe/unsubscribe rebind ─────────────
+
+    [Fact]
+    public async Task HandleConnectionAsync_SubscribeSync_RebindsToRealAccountId()
+    {
+        var svc = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        var subscribeJson = Encoding.UTF8.GetBytes("""{"action":"subscribe_sync","accountId":"real-acct"}""");
+
+        int callCount = 0;
+        ws.State.Returns(_ => callCount < 2 ? WebSocketState.Open : WebSocketState.Closed);
+        ws.ReceiveAsync(Arg.Any<ArraySegment<byte>>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    var buf = callInfo.ArgAt<ArraySegment<byte>>(0);
+                    Array.Copy(subscribeJson, 0, buf.Array!, buf.Offset, subscribeJson.Length);
+                    return new WebSocketReceiveResult(subscribeJson.Length, WebSocketMessageType.Text, true);
+                }
+                return new WebSocketReceiveResult(0, WebSocketMessageType.Close, true);
+            });
+
+        await svc.HandleConnectionAsync("anon-123", "dev1", ws, CancellationToken.None);
+
+        // After subscribe, notify to "real-acct" should reach the socket
+        ws.State.Returns(WebSocketState.Open);
+        svc.AddConnection("real-acct", "dev1", ws); // Re-add since finally removed it
+        await svc.NotifyAccountAsync("real-acct", new { type = "sync_progress" });
+
+        await ws.Received().SendAsync(
+            Arg.Is<ArraySegment<byte>>(seg =>
+                Encoding.UTF8.GetString(seg.Array!, seg.Offset, seg.Count).Contains("sync_progress")),
+            WebSocketMessageType.Text, true,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task HandleConnectionAsync_SubscribeSync_OriginalKeyNoLongerReceives()
+    {
+        var svc = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        var wsOther = Substitute.For<WebSocket>();
+        wsOther.State.Returns(WebSocketState.Open);
+        var subscribeJson = Encoding.UTF8.GetBytes("""{"action":"subscribe_sync","accountId":"real-acct"}""");
+
+        int callCount = 0;
+        ws.State.Returns(_ => callCount < 2 ? WebSocketState.Open : WebSocketState.Closed);
+        ws.ReceiveAsync(Arg.Any<ArraySegment<byte>>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    var buf = callInfo.ArgAt<ArraySegment<byte>>(0);
+                    Array.Copy(subscribeJson, 0, buf.Array!, buf.Offset, subscribeJson.Length);
+                    return new WebSocketReceiveResult(subscribeJson.Length, WebSocketMessageType.Text, true);
+                }
+                return new WebSocketReceiveResult(0, WebSocketMessageType.Close, true);
+            });
+
+        await svc.HandleConnectionAsync("anon-123", "dev1", ws, CancellationToken.None);
+
+        // After subscribe + close, notifying "anon-123" should not reach any socket
+        await svc.NotifyAccountAsync("anon-123", new { type = "test" });
+        await wsOther.DidNotReceive().SendAsync(
+            Arg.Any<ArraySegment<byte>>(),
+            Arg.Any<WebSocketMessageType>(),
+            Arg.Any<bool>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task HandleConnectionAsync_UnsubscribeSync_RevertsToOriginalKey()
+    {
+        var svc = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        var subscribeJson = Encoding.UTF8.GetBytes("""{"action":"subscribe_sync","accountId":"real-acct"}""");
+        var unsubscribeJson = Encoding.UTF8.GetBytes("""{"action":"unsubscribe_sync"}""");
+
+        int callCount = 0;
+        ws.State.Returns(_ => callCount < 3 ? WebSocketState.Open : WebSocketState.Closed);
+        ws.ReceiveAsync(Arg.Any<ArraySegment<byte>>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                callCount++;
+                var buf = callInfo.ArgAt<ArraySegment<byte>>(0);
+                if (callCount == 1)
+                {
+                    Array.Copy(subscribeJson, 0, buf.Array!, buf.Offset, subscribeJson.Length);
+                    return new WebSocketReceiveResult(subscribeJson.Length, WebSocketMessageType.Text, true);
+                }
+                if (callCount == 2)
+                {
+                    Array.Copy(unsubscribeJson, 0, buf.Array!, buf.Offset, unsubscribeJson.Length);
+                    return new WebSocketReceiveResult(unsubscribeJson.Length, WebSocketMessageType.Text, true);
+                }
+                return new WebSocketReceiveResult(0, WebSocketMessageType.Close, true);
+            });
+
+        await svc.HandleConnectionAsync("anon-123", "dev1", ws, CancellationToken.None);
+
+        // After unsubscribe + close, "real-acct" notifications should not reach the socket
+        await svc.NotifyAccountAsync("real-acct", new { type = "test" });
+        await ws.DidNotReceive().SendAsync(
+            Arg.Is<ArraySegment<byte>>(seg =>
+                Encoding.UTF8.GetString(seg.Array!, seg.Offset, seg.Count).Contains("\"test\"")),
+            WebSocketMessageType.Text, true,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task HandleConnectionAsync_MalformedJson_DoesNotCrash()
+    {
+        var svc = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        var badJson = Encoding.UTF8.GetBytes("{broken json!!!");
+
+        int callCount = 0;
+        ws.State.Returns(_ => callCount < 2 ? WebSocketState.Open : WebSocketState.Closed);
+        ws.ReceiveAsync(Arg.Any<ArraySegment<byte>>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    var buf = callInfo.ArgAt<ArraySegment<byte>>(0);
+                    Array.Copy(badJson, 0, buf.Array!, buf.Offset, badJson.Length);
+                    return new WebSocketReceiveResult(badJson.Length, WebSocketMessageType.Text, true);
+                }
+                return new WebSocketReceiveResult(0, WebSocketMessageType.Close, true);
+            });
+
+        // Should not throw
+        await svc.HandleConnectionAsync("anon-123", "dev1", ws, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task HandleConnectionAsync_SubscribeRebind_DisconnectCleansUpCorrectKey()
+    {
+        var svc = CreateService();
+        var ws = Substitute.For<WebSocket>();
+        var subscribeJson = Encoding.UTF8.GetBytes("""{"action":"subscribe_sync","accountId":"real-acct"}""");
+
+        int callCount = 0;
+        ws.State.Returns(_ => callCount < 2 ? WebSocketState.Open : WebSocketState.Closed);
+        ws.ReceiveAsync(Arg.Any<ArraySegment<byte>>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    var buf = callInfo.ArgAt<ArraySegment<byte>>(0);
+                    Array.Copy(subscribeJson, 0, buf.Array!, buf.Offset, subscribeJson.Length);
+                    return new WebSocketReceiveResult(subscribeJson.Length, WebSocketMessageType.Text, true);
+                }
+                // Simulate connection lost
+                throw new WebSocketException("Connection reset");
+            });
+
+        await svc.HandleConnectionAsync("anon-123", "dev1", ws, CancellationToken.None);
+
+        // After disconnect, "real-acct" should have been cleaned up by finally block
+        // Notifying "real-acct" should not send anything
+        await svc.NotifyAccountAsync("real-acct", new { type = "test" });
+        await ws.DidNotReceive().SendAsync(
+            Arg.Is<ArraySegment<byte>>(seg =>
+                Encoding.UTF8.GetString(seg.Array!, seg.Offset, seg.Count).Contains("\"test\"")),
+            WebSocketMessageType.Text, true,
+            Arg.Any<CancellationToken>());
+    }
 }

@@ -21,6 +21,7 @@ export type WsMessageHandler = (msg: WsNotificationMessage) => void;
 type AppWebSocketState = {
   connected: boolean;
   subscribe: (handler: WsMessageHandler) => () => void;
+  send: (data: string) => void;
 };
 
 let sharedInstance: SharedWebSocket | null = null;
@@ -44,6 +45,12 @@ class SharedWebSocket {
 
   get connected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  send(data: string): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(data);
+    }
   }
 
   /* v8 ignore start -- WebSocket lifecycle */
@@ -126,6 +133,10 @@ export function useAppWebSocket(): AppWebSocketState {
     return sharedInstance.subscribe(handler);
   }, []);
 
-  return { connected, subscribe };
+  const send = useCallback((data: string) => {
+    sharedInstance?.send(data);
+  }, []);
+
+  return { connected, subscribe, send };
 }
 /* v8 ignore stop */

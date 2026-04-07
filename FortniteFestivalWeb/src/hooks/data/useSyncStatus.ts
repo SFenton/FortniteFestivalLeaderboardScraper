@@ -56,7 +56,7 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
   const syncKickedRef = useRef(false);
   const mountedRef = useRef(true);
   const lastWsMsgRef = useRef(0);
-  const { subscribe, connected: wsConnected } = useAppWebSocket();
+  const { subscribe, connected: wsConnected, send: wsSend } = useAppWebSocket();
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -118,6 +118,17 @@ export function useSyncStatus(accountId: string | undefined, options?: { track?:
   useEffect(() => {
     return subscribe(handleWsMessage);
   }, [subscribe, handleWsMessage]);
+
+  // ── WebSocket account subscription ──
+  // Tell the server which accountId this client cares about so per-account
+  // sync_progress messages are routed to this connection.
+  useEffect(() => {
+    if (!accountId || !wsConnected) return;
+    wsSend(JSON.stringify({ action: 'subscribe_sync', accountId }));
+    return () => {
+      wsSend(JSON.stringify({ action: 'unsubscribe_sync' }));
+    };
+  }, [accountId, wsConnected, wsSend]);
 
   // ── HTTP fallback polling ──
   /* v8 ignore start — async polling callback */

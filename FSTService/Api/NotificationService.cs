@@ -199,7 +199,8 @@ public sealed class NotificationService
     /// </summary>
     public async Task HandleConnectionAsync(string accountId, string deviceId, WebSocket ws, CancellationToken ct)
     {
-        AddConnection(accountId, deviceId, ws);
+        var currentKey = accountId;
+        AddConnection(currentKey, deviceId, ws);
 
         // Send current shop snapshot so the client is immediately up-to-date
         if (_shopProvider is not null && _festivalService is not null)
@@ -220,10 +221,8 @@ public sealed class NotificationService
 
         try
         {
-            // Read loop — we don't expect messages from clients, but we need
-            // to read to detect close frames. Buffer is small since we only
-            // care about control frames.
-            var buffer = new byte[256];
+            // Read loop — process control messages (subscribe/unsubscribe) and detect close frames.
+            var buffer = new byte[512];
             while (ws.State == WebSocketState.Open && !ct.IsCancellationRequested)
             {
                 try
@@ -233,6 +232,44 @@ public sealed class NotificationService
                     {
                         await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Goodbye", CancellationToken.None);
                         break;
+                    }
+
+                    // Process text frames for subscribe/unsubscribe control messages
+                    if (result.MessageType == WebSocketMessageType.Text && result.Count > 0)
+                    {
+                        try
+                        {
+                            var json = System.Text.Encoding.UTF8.GetString(buffer, 0, result.Count);
+                            using var doc = System.Text.Json.JsonDocument.Parse(json);
+                            var action = doc.RootElement.TryGetProperty("action", out var actionProp)
+                                ? actionProp.GetString() : null;
+
+                            if (action == "subscribe_sync"
+                                && doc.RootElement.TryGetProperty("accountId", out var aidProp)
+                                && aidProp.GetString() is { Length: > 0 } requestedAccountId)
+                            {
+                                // Rebind: move this socket from current key to the requested accountId
+                                RemoveConnection(currentKey, deviceId);
+                                currentKey = requestedAccountId;
+                                AddConnection(currentKey, deviceId, ws);
+                                _log.LogDebug("WebSocket {DeviceId} subscribed to account {AccountId}.", deviceId, currentKey);
+                            }
+                            else if (action == "unsubscribe_sync")
+                            {
+                                // Move back to the original anonymous key
+                                if (currentKey != accountId)
+                                {
+                                    RemoveConnection(currentKey, deviceId);
+                                    currentKey = accountId;
+                                    AddConnection(currentKey, deviceId, ws);
+                                    _log.LogDebug("WebSocket {DeviceId} unsubscribed, reverted to {AccountId}.", deviceId, currentKey);
+                                }
+                            }
+                        }
+                        catch (System.Text.Json.JsonException)
+                        {
+                            // Malformed JSON — ignore silently
+                        }
                     }
                 }
                 catch (WebSocketException)
@@ -247,7 +284,7 @@ public sealed class NotificationService
         }
         finally
         {
-            RemoveConnection(accountId, deviceId);
+            RemoveConnection(currentKey, deviceId);
         }
     }
 }

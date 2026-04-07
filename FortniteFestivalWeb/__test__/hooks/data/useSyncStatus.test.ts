@@ -13,6 +13,16 @@ vi.mock('../../../src/api/client', () => ({
   },
 }));
 
+const mockSend = vi.fn();
+const mockSubscribe = vi.fn(() => () => {});
+vi.mock('../../../src/hooks/data/useAppWebSocket', () => ({
+  useAppWebSocket: () => ({
+    connected: true,
+    subscribe: mockSubscribe,
+    send: mockSend,
+  }),
+}));
+
 import { api } from '../../../src/api/client';
 const mockGetStatus = vi.mocked(api.getSyncStatus);
 const mockTrackPlayer = vi.mocked(api.trackPlayer);
@@ -27,6 +37,7 @@ describe('useSyncStatus', () => {
     mockGetStatus.mockReset();
     mockTrackPlayer.mockReset();
     mockTrackPlayer.mockResolvedValue(undefined as any);
+    mockSend.mockReset();
   });
   afterEach(() => { vi.useRealTimers(); });
 
@@ -142,5 +153,33 @@ describe('useSyncStatus', () => {
     const { result } = renderHook(() => useSyncStatus('acc1'), { wrapper });
     await flush();
     expect(result.current.progress).toBeCloseTo(1/3 + 1/3 * 0.5); // (1/3) + (1/3) * 0.5
+  });
+
+  // ── WebSocket account subscription ──
+
+  it('sends subscribe_sync when accountId is provided', async () => {
+    mockGetStatus.mockResolvedValue({ backfill: null, historyRecon: null } as any);
+    renderHook(() => useSyncStatus('acc1'), { wrapper });
+    await flush();
+    expect(mockSend).toHaveBeenCalledWith(
+      JSON.stringify({ action: 'subscribe_sync', accountId: 'acc1' }),
+    );
+  });
+
+  it('does not send subscribe_sync when no accountId', async () => {
+    renderHook(() => useSyncStatus(undefined), { wrapper });
+    await flush();
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it('sends unsubscribe_sync on unmount', async () => {
+    mockGetStatus.mockResolvedValue({ backfill: null, historyRecon: null } as any);
+    const { unmount } = renderHook(() => useSyncStatus('acc1'), { wrapper });
+    await flush();
+    mockSend.mockReset();
+    unmount();
+    expect(mockSend).toHaveBeenCalledWith(
+      JSON.stringify({ action: 'unsubscribe_sync' }),
+    );
   });
 });
