@@ -4,6 +4,7 @@ using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 
 namespace FSTService.Tests.Unit;
@@ -34,7 +35,8 @@ public sealed class PrecomputeSubResourceTests : IDisposable
             _metaDb,
             Substitute.For<ILoggerFactory>(),
             Substitute.For<ILogger<GlobalLeaderboardPersistence>>(),
-            _metaFixture.DataSource);
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions()));
         _persistence.Initialize();
 
         _pathDataStore = new PathDataStore(SharedPostgresContainer.CreateDatabase());

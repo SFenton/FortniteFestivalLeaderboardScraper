@@ -4,6 +4,7 @@ using FSTService.Tests.Helpers;
 using NSubstitute;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace FSTService.Tests.Unit;
 
@@ -35,7 +36,8 @@ public sealed class RivalsOrchestratorTests : IDisposable
             _metaFixture.Db,
             loggerFactory,
             NullLogger<GlobalLeaderboardPersistence>.Instance,
-            _metaFixture.DataSource);
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions()));
         glp.Initialize();
         return glp;
     }

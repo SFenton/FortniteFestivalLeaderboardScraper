@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using FSTService.Scraping;
+using Microsoft.Extensions.Options;
 using Npgsql;
 
 namespace FSTService.Persistence;
@@ -21,6 +22,7 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     private readonly ILogger<GlobalLeaderboardPersistence> _log;
     private readonly ILoggerFactory _loggerFactory;
     private readonly NpgsqlDataSource _pgDataSource;
+    private readonly FeatureOptions _features;
 
     /// <summary>The meta database (ScrapeLog, ScoreHistory, etc.).</summary>
     public IMetaDatabase Meta => _metaDb;
@@ -28,12 +30,14 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
     public GlobalLeaderboardPersistence(IMetaDatabase metaDb,
                                         ILoggerFactory loggerFactory,
                                         ILogger<GlobalLeaderboardPersistence> log,
-                                        NpgsqlDataSource pgDataSource)
+                                        NpgsqlDataSource pgDataSource,
+                                        IOptions<FeatureOptions> features)
     {
         _metaDb = metaDb;
         _loggerFactory = loggerFactory;
         _log = log;
         _pgDataSource = pgDataSource;
+        _features = features.Value;
     }
 
     /// <summary>
@@ -50,7 +54,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
         {
             var db = new InstrumentDatabase(
                 instrument, _pgDataSource,
-                _loggerFactory.CreateLogger<InstrumentDatabase>());
+                _loggerFactory.CreateLogger<InstrumentDatabase>())
+            { UseTiers = _features.UseRankingDeltaTiers };
             _instrumentDbs[instrument] = db;
             _log.LogDebug("Opened PG instrument DB: {Instrument}", instrument);
         }
@@ -92,7 +97,8 @@ public sealed class GlobalLeaderboardPersistence : IDisposable
 
         db = new InstrumentDatabase(
             instrument, _pgDataSource,
-            _loggerFactory.CreateLogger<InstrumentDatabase>());
+            _loggerFactory.CreateLogger<InstrumentDatabase>())
+        { UseTiers = _features.UseRankingDeltaTiers };
 
         _instrumentDbs[instrument] = db;
         return db;

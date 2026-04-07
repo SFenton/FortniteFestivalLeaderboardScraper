@@ -98,6 +98,12 @@ public interface IInstrumentDatabase : IDisposable
         double Weighted, double FcRate, long TotalScore, double MaxScorePct, int FullComboCount)> GetAllRankingDeltas();
     List<(double LeewayBucket, int DeltaAdj, int DeltaWgt, int DeltaFc, int DeltaTs, int DeltaMs)> GetTodayRankDeltas(string accountId);
 
+    // ── Ranking delta tiers (interval-compressed deltas) ─────────────
+    void TruncateRankingDeltaTiers();
+    void WriteRankingDeltaTiersBulk(IReadOnlyList<(string AccountId, int StartBucketIdx, int EndBucketIdx,
+        int SongsPlayed, double AdjustedSkill, double Weighted, double FcRate, long TotalScore,
+        double MaxScorePct, int FullComboCount, double AvgAccuracy, int BestRank, double Coverage)> tiers);
+
     // ── Materialized ranking pipeline ────────────────────────────────
     void MaterializeValidEntries(Npgsql.NpgsqlConnection conn, double baseThreshold);
     int ComputeAccountRankingsFromMaterialized(Npgsql.NpgsqlConnection conn, int totalChartedSongs,

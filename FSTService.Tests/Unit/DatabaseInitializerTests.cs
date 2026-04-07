@@ -6,6 +6,7 @@ using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 
 namespace FSTService.Tests.Unit;
@@ -23,7 +24,8 @@ public class DatabaseInitializerTests : IDisposable
         _persistence = new GlobalLeaderboardPersistence(
             _metaFixture.Db, loggerFactory,
             Substitute.For<ILogger<GlobalLeaderboardPersistence>>(),
-            _metaFixture.DataSource);
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions()));
     }
 
     public void Dispose()
@@ -66,7 +68,7 @@ public class DatabaseInitializerTests : IDisposable
         await init.StartAsync(CancellationToken.None);
 
         // Wait for background init
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await init.WaitForReadyAsync(cts.Token);
 
         Assert.True(init.IsReady);

@@ -169,7 +169,8 @@ builder.Services.AddSingleton<GlobalLeaderboardPersistence>(sp =>
         sp.GetRequiredService<IMetaDatabase>(),
         sp.GetRequiredService<ILoggerFactory>(),
         sp.GetRequiredService<ILogger<GlobalLeaderboardPersistence>>(),
-        sp.GetRequiredService<NpgsqlDataSource>());
+        sp.GetRequiredService<NpgsqlDataSource>(),
+        sp.GetRequiredService<IOptions<FeatureOptions>>());
 });
 
 builder.Services.AddSingleton<BackfillQueue>();

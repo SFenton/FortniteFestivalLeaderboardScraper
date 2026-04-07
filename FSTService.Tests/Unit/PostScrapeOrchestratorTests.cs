@@ -46,7 +46,8 @@ public class PostScrapeOrchestratorTests : IDisposable
             _metaDb,
             Substitute.For<ILoggerFactory>(),
             Substitute.For<ILogger<GlobalLeaderboardPersistence>>(),
-            _metaFixture.DataSource);
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions()));
         _persistence.Initialize();
 
         var noOpHandler = new NoOpHttpHandler();

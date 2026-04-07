@@ -24,6 +24,12 @@ public sealed class FeatureOptions
     public bool Difficulty { get; set; }
 
     /// <summary>
+    /// When true, leeway-aware ranking reads use interval-tier resolution
+    /// instead of exact-bucket dense delta lookups. Dense path is retained as fallback.
+    /// </summary>
+    public bool UseRankingDeltaTiers { get; set; } = true;
+
+    /// <summary>
     /// Compete page — derived from <see cref="Rivals"/> AND <see cref="Leaderboards"/>.
     /// CompetePage links to both rivals and rankings; if either is off, compete is off.
     /// </summary>

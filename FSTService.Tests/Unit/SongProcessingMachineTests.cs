@@ -4,6 +4,7 @@ using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 
 namespace FSTService.Tests.Unit;
@@ -30,7 +31,7 @@ public class SongProcessingMachineTests : IDisposable
         loggerFactory.CreateLogger(Arg.Any<string>()).Returns(Substitute.For<ILogger>());
         loggerFactory.CreateLogger<InstrumentDatabase>().Returns(Substitute.For<ILogger<InstrumentDatabase>>());
         var persLog = Substitute.For<ILogger<GlobalLeaderboardPersistence>>();
-        _persistence = new GlobalLeaderboardPersistence(_metaDb.Db, loggerFactory, persLog, _metaDb.DataSource);
+        _persistence = new GlobalLeaderboardPersistence(_metaDb.Db, loggerFactory, persLog, _metaDb.DataSource, Options.Create(new FeatureOptions()));
         _persistence.Initialize();
         _pool = new SharedDopPool(32, minDop: 2, maxDop: 64, lowPriorityPercent: 20, Substitute.For<ILogger>());
     }

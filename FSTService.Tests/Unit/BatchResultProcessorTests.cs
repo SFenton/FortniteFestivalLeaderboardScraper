@@ -2,6 +2,7 @@ using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 
 namespace FSTService.Tests.Unit;
@@ -21,7 +22,7 @@ public class BatchResultProcessorTests : IDisposable
         loggerFactory.CreateLogger(Arg.Any<string>()).Returns(Substitute.For<ILogger>());
         loggerFactory.CreateLogger<InstrumentDatabase>().Returns(Substitute.For<ILogger<InstrumentDatabase>>());
         var persLog = Substitute.For<ILogger<GlobalLeaderboardPersistence>>();
-        _persistence = new GlobalLeaderboardPersistence(_metaDb.Db, loggerFactory, persLog, _metaDb.DataSource);
+        _persistence = new GlobalLeaderboardPersistence(_metaDb.Db, loggerFactory, persLog, _metaDb.DataSource, Options.Create(new FeatureOptions()));
         _persistence.Initialize();
         _processor = new BatchResultProcessor(
             _persistence, Substitute.For<ILogger<BatchResultProcessor>>());

@@ -775,6 +775,41 @@ public static class DatabaseInitializer
             ON ranking_deltas (account_id, instrument);
 
         -- =====================================================================
+        -- RANKING DELTA TIERS (interval-compressed leeway deltas)
+        -- Stores per-account metric overrides as half-open bucket index
+        -- intervals [start_bucket_idx, end_bucket_idx).
+        -- Bucket index 0 = leeway -4.9%, 99 = +5.0%, 100 = unfiltered.
+        -- =====================================================================
+
+        CREATE TABLE IF NOT EXISTS ranking_delta_tiers (
+            account_id       TEXT     NOT NULL,
+            instrument       TEXT     NOT NULL,
+            start_bucket_idx SMALLINT NOT NULL,
+            end_bucket_idx   SMALLINT NOT NULL,
+            songs_played     INTEGER  NOT NULL,
+            adjusted_skill   REAL     NOT NULL,
+            weighted         REAL     NOT NULL,
+            fc_rate          REAL     NOT NULL,
+            total_score      BIGINT   NOT NULL,
+            max_score_pct    REAL     NOT NULL,
+            full_combo_count INTEGER  NOT NULL,
+            avg_accuracy     REAL     NOT NULL,
+            best_rank        INTEGER  NOT NULL,
+            coverage         REAL     NOT NULL,
+            PRIMARY KEY (instrument, account_id, start_bucket_idx)
+        ) PARTITION BY LIST (instrument);
+
+        CREATE TABLE IF NOT EXISTS ranking_delta_tiers_solo_guitar    PARTITION OF ranking_delta_tiers FOR VALUES IN ('Solo_Guitar');
+        CREATE TABLE IF NOT EXISTS ranking_delta_tiers_solo_bass      PARTITION OF ranking_delta_tiers FOR VALUES IN ('Solo_Bass');
+        CREATE TABLE IF NOT EXISTS ranking_delta_tiers_solo_drums     PARTITION OF ranking_delta_tiers FOR VALUES IN ('Solo_Drums');
+        CREATE TABLE IF NOT EXISTS ranking_delta_tiers_solo_vocals    PARTITION OF ranking_delta_tiers FOR VALUES IN ('Solo_Vocals');
+        CREATE TABLE IF NOT EXISTS ranking_delta_tiers_pro_guitar     PARTITION OF ranking_delta_tiers FOR VALUES IN ('Solo_PeripheralGuitar');
+        CREATE TABLE IF NOT EXISTS ranking_delta_tiers_pro_bass       PARTITION OF ranking_delta_tiers FOR VALUES IN ('Solo_PeripheralBass');
+
+        CREATE INDEX IF NOT EXISTS ix_rdt_account_range
+            ON ranking_delta_tiers (instrument, account_id, start_bucket_idx, end_bucket_idx);
+
+        -- =====================================================================
         -- RANK HISTORY DELTAS (leeway-responsive rank history)
         -- Stores daily rank history deltas for accounts whose rank differs
         -- from the base snapshot at each leeway bucket.

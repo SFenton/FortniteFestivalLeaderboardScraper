@@ -3,6 +3,7 @@ using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace FSTService.Tests.Integration;
 
@@ -35,7 +36,8 @@ public sealed class PersistencePipelineIntegrationTests : IDisposable
             _metaFixture.Db,
             loggerFactory,
             NullLogger<GlobalLeaderboardPersistence>.Instance,
-            _metaFixture.DataSource);
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions()));
         glp.Initialize();
         return glp;
     }

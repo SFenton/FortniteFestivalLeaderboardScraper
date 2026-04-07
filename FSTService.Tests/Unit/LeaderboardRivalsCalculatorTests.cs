@@ -24,7 +24,8 @@ public sealed class LeaderboardRivalsCalculatorTests : IDisposable
         _persistence = new GlobalLeaderboardPersistence(
             _metaFixture.Db, new NullLoggerFactory(),
             NullLogger<GlobalLeaderboardPersistence>.Instance,
-            _metaFixture.DataSource);
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions()));
         _persistence.Initialize();
 
         _sut = new LeaderboardRivalsCalculator(

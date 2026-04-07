@@ -3,6 +3,7 @@ using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 
 namespace FSTService.Tests.Unit;
@@ -35,7 +36,8 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
             _metaFixture.Db,
             loggerFactory,
             NullLogger<GlobalLeaderboardPersistence>.Instance,
-            _metaFixture.DataSource);
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions()));
         glp.Initialize();
         return glp;
     }
@@ -448,7 +450,8 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
             _metaFixture.Db,
             loggerFactory,
             NullLogger<GlobalLeaderboardPersistence>.Instance,
-            _metaFixture.DataSource);
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions()));
     }
 
     // ═══ GetLeaderboardWithCount ════════════════════════════════
@@ -653,7 +656,8 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
             var glp = new GlobalLeaderboardPersistence(
                 metaFixture.Db, loggerFactory,
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<GlobalLeaderboardPersistence>.Instance,
-                metaFixture.DataSource);
+                metaFixture.DataSource,
+                Options.Create(new FeatureOptions()));
             // Don't call Initialize — no DBs
             Assert.False(glp.IsReady());
             glp.Dispose();
@@ -784,7 +788,8 @@ public sealed class GlobalLeaderboardPersistenceTests : IDisposable
         using var glp = new GlobalLeaderboardPersistence(
             mockMeta, new NullLoggerFactory(),
             NullLogger<GlobalLeaderboardPersistence>.Instance,
-            _metaFixture.DataSource);
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions()));
         glp.Initialize();
         var agg = glp.StartWriters();
 

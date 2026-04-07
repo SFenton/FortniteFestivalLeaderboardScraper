@@ -5,6 +5,7 @@ using FSTService.Persistence;
 using FSTService.Scraping;
 using FSTService.Tests.Helpers;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using System.Reflection;
 
@@ -28,7 +29,8 @@ public sealed class RankingsCalculatorTests : IDisposable
             _metaFixture.Db,
             Substitute.For<ILoggerFactory>(),
             Substitute.For<ILogger<GlobalLeaderboardPersistence>>(),
-            _metaFixture.DataSource);
+            _metaFixture.DataSource,
+            Options.Create(new FeatureOptions()));
         _persistence.Initialize();
 
         _pathStore = new PathDataStore(SharedPostgresContainer.CreateDatabase());

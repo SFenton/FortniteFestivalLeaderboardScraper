@@ -613,11 +613,18 @@ public sealed class RankingsCalculator
                 m.FullComboCount, m.AvgAccuracy, m.BestRank, m.Coverage));
         }
 
-        // Write deltas using COPY binary
+        // Write deltas using COPY binary (dense path — always written for fallback)
         db.WriteRankingDeltasBulk(allDeltas);
 
-        _log.LogInformation("{Instrument}: wrote {DeltaCount} ranking deltas for {AccountCount} affected accounts.",
-            instrument, allDeltas.Count, allAffectedAccounts.Count);
+        // Compress dense deltas to interval tiers and dual-write
+        var tiers = InstrumentDatabase.CompressDeltasToTiers(allDeltas);
+        db.TruncateRankingDeltaTiers();
+        db.WriteRankingDeltaTiersBulk(tiers);
+
+        _log.LogInformation("{Instrument}: wrote {DeltaCount} ranking deltas ({TierCount} tiers, {Ratio:P0} compression) for {AccountCount} affected accounts.",
+            instrument, allDeltas.Count, tiers.Count,
+            allDeltas.Count > 0 ? 1.0 - (double)tiers.Count / allDeltas.Count : 0.0,
+            allAffectedAccounts.Count);
         return allDeltas.Count;
     }
 
