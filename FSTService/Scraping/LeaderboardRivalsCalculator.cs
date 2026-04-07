@@ -39,8 +39,8 @@ public sealed class LeaderboardRivalsCalculator
     public LeaderboardRivalsResult ComputeForUser(string userId)
     {
         var instrumentKeys = _persistence.GetInstrumentKeys();
-        var allRivals = new List<LeaderboardRivalRow>();
-        var allSamples = new List<LeaderboardRivalSongSampleRow>();
+        int totalRivals = 0;
+        int totalSamples = 0;
         var now = DateTime.UtcNow.ToString("o");
 
         foreach (var instrument in instrumentKeys)
@@ -52,6 +52,10 @@ public sealed class LeaderboardRivalsCalculator
             if (userScores.Count == 0) continue;
 
             var userScoreMap = userScores.ToDictionary(s => s.SongId, StringComparer.OrdinalIgnoreCase);
+
+            // Per-instrument lists — persisted and released each iteration
+            var instrumentRivals = new List<LeaderboardRivalRow>();
+            var instrumentSamples = new List<LeaderboardRivalSongSampleRow>();
 
             // Cache neighbor scores to avoid re-fetching across rank methods
             var neighborScoreCache = new Dictionary<string, Dictionary<string, PlayerScoreDto>>(StringComparer.OrdinalIgnoreCase);
@@ -121,7 +125,7 @@ public sealed class LeaderboardRivalsCalculator
 
                     if (sharedSongCount == 0) continue;
 
-                    allRivals.Add(new LeaderboardRivalRow
+                    instrumentRivals.Add(new LeaderboardRivalRow
                     {
                         UserId = userId,
                         RivalAccountId = neighborId,
@@ -141,19 +145,17 @@ public sealed class LeaderboardRivalsCalculator
                     var topSamples = songSamples
                         .OrderBy(s => Math.Abs(s.RankDelta))
                         .Take(MaxSamplesPerRival);
-                    allSamples.AddRange(topSamples);
+                    instrumentSamples.AddRange(topSamples);
                 }
             }
 
             // Persist all data for this instrument at once — but only if the user
-            // was found in AccountRankings for at least one rank method. When the user
-            // is absent (e.g. rankings computation failed or data not yet available),
-            // skip the replace to preserve previously-computed rivals.
+            // was found in AccountRankings for at least one rank method.
             if (selfFoundForInstrument)
             {
-                var instrumentRivals = allRivals.Where(r => r.Instrument == instrument).ToList();
-                var instrumentSamples = allSamples.Where(s => s.Instrument == instrument).ToList();
                 _meta.ReplaceLeaderboardRivalsData(userId, instrument, instrumentRivals, instrumentSamples);
+                totalRivals += instrumentRivals.Count;
+                totalSamples += instrumentSamples.Count;
             }
             else
             {
@@ -165,8 +167,8 @@ public sealed class LeaderboardRivalsCalculator
 
         return new LeaderboardRivalsResult
         {
-            RivalCount = allRivals.Count,
-            SampleCount = allSamples.Count,
+            RivalCount = totalRivals,
+            SampleCount = totalSamples,
         };
     }
 }

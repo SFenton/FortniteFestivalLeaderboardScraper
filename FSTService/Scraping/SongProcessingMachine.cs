@@ -123,25 +123,17 @@ public class SongProcessingMachine
 
         // Gate song-level parallelism to avoid saturating the DOP pool with
         // heavy V2 POST requests, which can trigger CDN blocks.
-        SemaphoreSlim? songGate = maxConcurrentSongs > 0
-            ? new SemaphoreSlim(maxConcurrentSongs, maxConcurrentSongs)
-            : null;
+        // Parallel.ForEachAsync controls both allocation and execution concurrency,
+        // avoiding Task spam from the previous Select(...).ToList() pattern.
+        int effectiveSongConcurrency = maxConcurrentSongs > 0 ? maxConcurrentSongs : songIds.Count;
 
-        try
+        await Parallel.ForEachAsync(songIds,
+            new ParallelOptions { MaxDegreeOfParallelism = effectiveSongConcurrency, CancellationToken = ct },
+            async (songId, iterCt) =>
         {
-        // ─── Fire ALL songs in parallel ─────────────────────────
-        var songTasks = songIds.Select(async songId =>
-        {
-            ct.ThrowIfCancellationRequested();
-
-            if (songGate is not null)
-                await songGate.WaitAsync(ct);
-
-            try
-            {
             var result = await ProcessSongAsync(
                 songId, instruments, users, seasonPrefixMap,
-                accessToken, callerAccountId, pool, isHighPriority, batchSize, ct);
+                accessToken, callerAccountId, pool, isHighPriority, batchSize, iterCt);
 
             Interlocked.Add(ref totalUpdated, result.EntriesUpdated);
             Interlocked.Add(ref totalSessions, result.SessionsInserted);
@@ -159,19 +151,7 @@ public class SongProcessingMachine
 
             if (reportProgress)
                 _progress.ReportPhaseItemComplete();
-            }
-            finally
-            {
-                songGate?.Release();
-            }
-        }).ToList();
-
-        await Task.WhenAll(songTasks);
-        }
-        finally
-        {
-            songGate?.Dispose();
-        }
+        });
 
         if (reportProgress)
             _progress.SetAdaptiveLimiter(null);

@@ -84,38 +84,38 @@ public sealed class PostScrapeOrchestrator
         // Enrichment runs ranks, firstSeen, nameRes, and pruning with maximum
         // parallelism — pruning starts as soon as ranks finish, overlapping
         // with the remaining enrichment tasks.
-        await RunEnrichmentAsync(ctx, service, ct);
+        await RunPhaseAsync("Enrichment", () => RunEnrichmentAsync(ctx, service, ct));
 
         // Refresh registered users BEFORE rankings so that low scores (below the
         // global-scrape cutoff) are present in the instrument DBs when rankings
         // are computed.  The SharedDopPool handles concurrency.
-        await RefreshRegisteredUsersAsync(ctx, ct);
-        var rankingsSucceeded = await ComputeRankingsAsync(service, ct);
+        await RunPhaseAsync("RefreshRegisteredUsers", () => RefreshRegisteredUsersAsync(ctx, ct));
+        var rankingsSucceeded = await RunPhaseAsync("ComputeRankings", () => ComputeRankingsAsync(service, ct));
 
         // Per-song rivals and leaderboard rivals have no shared write targets
         // and both depend only on rankings, so they can run in parallel.
         // Leaderboard rivals are skipped when rankings failed — running against
         // stale/empty AccountRankings would wipe previously-computed rivals.
-        await Task.WhenAll(
+        await RunPhaseAsync("Rivals+LeaderboardRivals", () => Task.WhenAll(
             ComputeRivalsAsync(ctx, ct),
             rankingsSucceeded
                 ? ComputeLeaderboardRivalsAsync(ctx, ct)
-                : Task.CompletedTask);
+                : Task.CompletedTask));
 
         // ── Compute player stats tiers first, then precompute API responses ──
         // ComputePlayerStatsTiersAsync writes to the player_stats_tiers table;
         // PrecomputeAllAsync reads those rows (plus composite_rankings) to build
         // in-memory cached responses.  Sequential ordering ensures fresh data.
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Precomputing);
-        await ComputePlayerStatsTiersAsync(ctx, ct);
-        await _precomputer.PrecomputeAllAsync(ct);
+        await RunPhaseAsync("PlayerStatsTiers", () => ComputePlayerStatsTiersAsync(ctx, ct));
+        await RunPhaseAsync("PrecomputeAll", () => _precomputer.PrecomputeAllAsync(ct));
 
         _progress.SetPhase(ScrapeProgressTracker.ScrapePhase.Finalizing);
 
         // Checkpoint WAL files and pre-warm the rankings cache in parallel.
         // CheckpointAll is I/O-bound (WAL flush); PreWarmRankingsCache is
         // CPU/IO-bound (CTE queries). No shared write targets.
-        await Task.WhenAll(
+        await RunPhaseAsync("Checkpoint+CacheWarm", () => Task.WhenAll(
             Task.Run(() =>
             {
                 _progress.SetSubOperation("final_checkpoint");
@@ -125,7 +125,39 @@ public sealed class PostScrapeOrchestrator
             {
                 _progress.SetSubOperation("pre_warming_cache");
                 _persistence.PreWarmRankingsCache(ctx.RegisteredIds);
-            }, ct));
+            }, ct)));
+    }
+
+    /// <summary>
+    /// Run a post-scrape phase with timing and heap telemetry.
+    /// Logs phase name, duration, and heap delta so the peak memory owner is identifiable.
+    /// </summary>
+    private async Task RunPhaseAsync(string phaseName, Func<Task> phase)
+    {
+        var heapBefore = GC.GetTotalMemory(false);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await phase();
+        sw.Stop();
+        var heapAfter = GC.GetTotalMemory(false);
+        _log.LogInformation(
+            "PostScrape phase [{Phase}] completed in {Elapsed}. Heap: {Before:N0} → {After:N0} ({Delta:+#,0;-#,0;0} bytes).",
+            phaseName, sw.Elapsed, heapBefore, heapAfter, heapAfter - heapBefore);
+    }
+
+    /// <summary>
+    /// Run a post-scrape phase that returns a result, with timing and heap telemetry.
+    /// </summary>
+    private async Task<T> RunPhaseAsync<T>(string phaseName, Func<Task<T>> phase)
+    {
+        var heapBefore = GC.GetTotalMemory(false);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var result = await phase();
+        sw.Stop();
+        var heapAfter = GC.GetTotalMemory(false);
+        _log.LogInformation(
+            "PostScrape phase [{Phase}] completed in {Elapsed}. Heap: {Before:N0} → {After:N0} ({Delta:+#,0;-#,0;0} bytes).",
+            phaseName, sw.Elapsed, heapBefore, heapAfter, heapAfter - heapBefore);
+        return result;
     }
 
     /// <summary>

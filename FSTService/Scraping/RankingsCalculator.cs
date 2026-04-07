@@ -190,9 +190,16 @@ public sealed class RankingsCalculator
         // ── Phase 3.5: Composite + combo deltas ──
         _progress.SetSubOperation("composite_combo_deltas");
         var crossDeltaSw = System.Diagnostics.Stopwatch.StartNew();
-        ComputeCompositeDeltas(instruments, rankingDataFull);
-        ComputeComboDeltas(instruments, rankingDataFull);
-        _log.LogInformation("Composite + combo deltas complete in {Elapsed}.", crossDeltaSw.Elapsed);
+        var heapBeforeDeltas = GC.GetTotalMemory(false);
+
+        // Load per-instrument deltas ONCE, shared by composite and combo delta passes
+        var sharedDeltas = LoadPerInstrumentDeltas(instruments);
+
+        ComputeCompositeDeltas(instruments, rankingDataFull, preloadedDeltas: sharedDeltas);
+        ComputeComboDeltas(instruments, rankingDataFull, preloadedDeltas: sharedDeltas);
+        var heapAfterDeltas = GC.GetTotalMemory(false);
+        _log.LogInformation("Composite + combo deltas complete in {Elapsed}. Heap: {Before:N0} → {After:N0} ({Delta:+#,0;-#,0;0} bytes).",
+            crossDeltaSw.Elapsed, heapBeforeDeltas, heapAfterDeltas, heapAfterDeltas - heapBeforeDeltas);
 
         // ── Phase 4: History snapshots (parallel per instrument + composite) ──
         _progress.SetSubOperation("rank_history_snapshots");
@@ -232,7 +239,11 @@ public sealed class RankingsCalculator
         var fullData = rankingDataFull ?? LoadPerInstrumentMetrics(instruments);
 
         // Load per-instrument data from cache: AccountId → { instrument → AccountMetrics }
-        var perAccount = new Dictionary<string, Dictionary<string, AccountMetrics>>(StringComparer.OrdinalIgnoreCase);
+        // Pre-size using the largest instrument's account count to reduce rehashing
+        int estimatedAccounts = 0;
+        foreach (var instData in fullData.Values)
+            if (instData.Count > estimatedAccounts) estimatedAccounts = instData.Count;
+        var perAccount = new Dictionary<string, Dictionary<string, AccountMetrics>>(estimatedAccounts, StringComparer.OrdinalIgnoreCase);
 
         foreach (var instrument in instruments)
         {
@@ -342,23 +353,26 @@ public sealed class RankingsCalculator
         Func<CompositeAccountData, double> selector,
         bool ascending)
     {
-        var sorted = new List<CompositeAccountData>(composites);
-        sorted.Sort((a, b) =>
+        // Build an index array and sort it instead of copying the entire list 5 times
+        var indices = new int[composites.Count];
+        for (int i = 0; i < indices.Length; i++) indices[i] = i;
+
+        Array.Sort(indices, (a, b) =>
         {
             int cmp = ascending
-                ? selector(a).CompareTo(selector(b))
-                : selector(b).CompareTo(selector(a));
+                ? selector(composites[a]).CompareTo(selector(composites[b]))
+                : selector(composites[b]).CompareTo(selector(composites[a]));
             if (cmp != 0) return cmp;
-            cmp = b.TotalSongsPlayed.CompareTo(a.TotalSongsPlayed);
+            cmp = composites[b].TotalSongsPlayed.CompareTo(composites[a].TotalSongsPlayed);
             if (cmp != 0) return cmp;
-            cmp = b.InstrumentsPlayed.CompareTo(a.InstrumentsPlayed);
+            cmp = composites[b].InstrumentsPlayed.CompareTo(composites[a].InstrumentsPlayed);
             if (cmp != 0) return cmp;
-            return string.Compare(a.AccountId, b.AccountId, StringComparison.OrdinalIgnoreCase);
+            return string.Compare(composites[a].AccountId, composites[b].AccountId, StringComparison.OrdinalIgnoreCase);
         });
 
-        var ranks = new Dictionary<string, int>(sorted.Count, StringComparer.OrdinalIgnoreCase);
-        for (int i = 0; i < sorted.Count; i++)
-            ranks[sorted[i].AccountId] = i + 1;
+        var ranks = new Dictionary<string, int>(indices.Length, StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < indices.Length; i++)
+            ranks[composites[indices[i]].AccountId] = i + 1;
         return ranks;
     }
 
@@ -680,33 +694,15 @@ public sealed class RankingsCalculator
     /// aggregates into composite, compares to base composite, writes diffs.
     /// </summary>
     internal int ComputeCompositeDeltas(IReadOnlyList<string> instruments,
-        Dictionary<string, Dictionary<string, AccountMetrics>>? preloadedPerInstrument = null)
+        Dictionary<string, Dictionary<string, AccountMetrics>>? preloadedPerInstrument = null,
+        (Dictionary<string, Dictionary<double, Dictionary<string, AccountMetrics>>> DeltasPerInstrument, SortedSet<double> AllBuckets)? preloadedDeltas = null)
     {
         // Use pre-loaded data or fall back to DB
         var basePerInstrument = preloadedPerInstrument
             ?? LoadPerInstrumentMetrics(instruments);
 
-        // Load per-instrument deltas grouped by bucket → accountId
-        var deltasPerInstrument = new Dictionary<string, Dictionary<double, Dictionary<string, AccountMetrics>>>(StringComparer.OrdinalIgnoreCase);
-        var allBuckets = new SortedSet<double>();
-
-        foreach (var instrument in instruments)
-        {
-            var db = _persistence.GetOrCreateInstrumentDb(instrument);
-            var allDeltas = db.GetAllRankingDeltas();
-            var byBucket = new Dictionary<double, Dictionary<string, AccountMetrics>>();
-            foreach (var (accountId, bucket, songs, adj, wgt, fc, ts, ms, fcc) in allDeltas)
-            {
-                if (!byBucket.TryGetValue(bucket, out var dict))
-                {
-                    dict = new Dictionary<string, AccountMetrics>(StringComparer.OrdinalIgnoreCase);
-                    byBucket[bucket] = dict;
-                }
-                dict[accountId] = new AccountMetrics(adj, wgt, fc, ts, ms, songs, fcc);
-                allBuckets.Add(bucket);
-            }
-            deltasPerInstrument[instrument] = byBucket;
-        }
+        // Use pre-loaded deltas or load from DB
+        var (deltasPerInstrument, allBuckets) = preloadedDeltas ?? LoadPerInstrumentDeltas(instruments);
 
         _metaDb.TruncateCompositeRankingDeltas();
         if (allBuckets.Count == 0) return 0;
@@ -813,7 +809,8 @@ public sealed class RankingsCalculator
     /// recalculate the combo aggregation and diff against the base combo.
     /// </summary>
     internal int ComputeComboDeltas(IReadOnlyList<string> instruments,
-        Dictionary<string, Dictionary<string, AccountMetrics>>? preloadedPerInstrument = null)
+        Dictionary<string, Dictionary<string, AccountMetrics>>? preloadedPerInstrument = null,
+        (Dictionary<string, Dictionary<double, Dictionary<string, AccountMetrics>>> DeltasPerInstrument, SortedSet<double> AllBuckets)? preloadedDeltas = null)
     {
         if (instruments.Count < 2) return 0;
 
@@ -821,27 +818,8 @@ public sealed class RankingsCalculator
         var basePerInstrument = preloadedPerInstrument
             ?? LoadPerInstrumentMetrics(instruments);
 
-        // Load per-instrument deltas grouped by bucket → accountId
-        var deltasPerInstrument = new Dictionary<string, Dictionary<double, Dictionary<string, AccountMetrics>>>(StringComparer.OrdinalIgnoreCase);
-        var allBuckets = new SortedSet<double>();
-
-        foreach (var instrument in instruments)
-        {
-            var db = _persistence.GetOrCreateInstrumentDb(instrument);
-            var allDeltas = db.GetAllRankingDeltas();
-            var byBucket = new Dictionary<double, Dictionary<string, AccountMetrics>>();
-            foreach (var (accountId, bucket, songs, adj, wgt, fc, ts, ms, fcc) in allDeltas)
-            {
-                if (!byBucket.TryGetValue(bucket, out var dict))
-                {
-                    dict = new Dictionary<string, AccountMetrics>(StringComparer.OrdinalIgnoreCase);
-                    byBucket[bucket] = dict;
-                }
-                dict[accountId] = new AccountMetrics(adj, wgt, fc, ts, ms, songs, fcc);
-                allBuckets.Add(bucket);
-            }
-            deltasPerInstrument[instrument] = byBucket;
-        }
+        // Use pre-loaded deltas or load from DB
+        var (deltasPerInstrument, allBuckets) = preloadedDeltas ?? LoadPerInstrumentDeltas(instruments);
 
         _metaDb.TruncateComboRankingDeltas();
         if (allBuckets.Count == 0) return 0;
@@ -975,6 +953,37 @@ public sealed class RankingsCalculator
     private readonly record struct ComboAccountMetrics(
         double AdjustedRating, double WeightedRating, double FcRate,
         double TotalScore, double MaxScorePct, int SongsPlayed, int FullComboCount);
+
+    /// <summary>
+    /// Load per-instrument ranking deltas once, grouped by instrument → bucket → accountId.
+    /// Shared between ComputeCompositeDeltas and ComputeComboDeltas to avoid redundant DB reads.
+    /// </summary>
+    private (Dictionary<string, Dictionary<double, Dictionary<string, AccountMetrics>>> DeltasPerInstrument, SortedSet<double> AllBuckets)
+        LoadPerInstrumentDeltas(IReadOnlyList<string> instruments)
+    {
+        var deltasPerInstrument = new Dictionary<string, Dictionary<double, Dictionary<string, AccountMetrics>>>(StringComparer.OrdinalIgnoreCase);
+        var allBuckets = new SortedSet<double>();
+
+        foreach (var instrument in instruments)
+        {
+            var db = _persistence.GetOrCreateInstrumentDb(instrument);
+            var allDeltas = db.GetAllRankingDeltas();
+            var byBucket = new Dictionary<double, Dictionary<string, AccountMetrics>>();
+            foreach (var (accountId, bucket, songs, adj, wgt, fc, ts, ms, fcc) in allDeltas)
+            {
+                if (!byBucket.TryGetValue(bucket, out var dict))
+                {
+                    dict = new Dictionary<string, AccountMetrics>(StringComparer.OrdinalIgnoreCase);
+                    byBucket[bucket] = dict;
+                }
+                dict[accountId] = new AccountMetrics(adj, wgt, fc, ts, ms, songs, fcc);
+                allBuckets.Add(bucket);
+            }
+            deltasPerInstrument[instrument] = byBucket;
+        }
+
+        return (deltasPerInstrument, allBuckets);
+    }
 
     /// <summary>
     /// Fallback: load per-instrument metrics from DB when pre-loaded data is not available.

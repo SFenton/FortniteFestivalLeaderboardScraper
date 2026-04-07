@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using System.Text.Json;
 using FortniteFestival.Core.Services;
 using FSTService.Persistence;
@@ -37,8 +36,7 @@ public sealed class SongsCacheService
     /// </summary>
     public string Set(byte[] json)
     {
-        var hash = SHA256.HashData(json);
-        var etag = $"\"{Convert.ToBase64String(hash, 0, 16)}\"";
+        var etag = ResponseCacheService.ComputeETag(json);
         lock (_lock)
         {
             _cachedJson = json;

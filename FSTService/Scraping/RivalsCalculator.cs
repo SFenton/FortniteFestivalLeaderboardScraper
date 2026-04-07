@@ -132,16 +132,9 @@ public sealed class RivalsCalculator
                     if (rankDelta < 0) candidate.AheadCount++;
                     else if (rankDelta > 0) candidate.BehindCount++;
 
-                    candidate.SongDetails.Add(new SongDetail
-                    {
-                        SongId = entry.SongId,
-                        Instrument = instrument,
-                        UserRank = effectiveRank,
-                        RivalRank = neighborRank,
-                        RankDelta = rankDelta,
-                        UserScore = entry.Score,
-                        RivalScore = neighborScore,
-                    });
+                    // Track which songs contributed to this candidate (lightweight).
+                    // Full SongDetail samples are fetched later only for selected rivals.
+                    candidate.SongIds.Add(entry.SongId);
                 }
             }
 
@@ -195,39 +188,62 @@ public sealed class RivalsCalculator
                 RivalsPerDirection, now, rivalRows);
         }
 
-        // Step 6: Sample selection — for each selected rival per instrument
+        // Step 6: Sample selection — for each selected rival per instrument,
+        // fetch song-level comparison data on-demand from the DB.  This avoids
+        // retaining full SongDetail lists for every candidate during scanning.
         var selectedRivalIds = new HashSet<string>(
             rivalRows.Select(r => r.RivalAccountId), StringComparer.OrdinalIgnoreCase);
 
         foreach (var instrument in validInstruments)
         {
             var data = perInstrument[instrument];
+            var db = _persistence.GetOrCreateInstrumentDb(instrument);
+
+            // Load user scores once for this instrument
+            var userScores = db.GetPlayerScores(userId);
+            var userScoreMap = userScores.ToDictionary(s => s.SongId, StringComparer.OrdinalIgnoreCase);
+
             foreach (var rivalId in selectedRivalIds)
             {
                 if (!data.Candidates.TryGetValue(rivalId, out var candidate))
                     continue;
 
-                var instrumentDetails = candidate.SongDetails
-                    .Where(d => d.Instrument.Equals(instrument, StringComparison.OrdinalIgnoreCase))
-                    .OrderBy(d => Math.Abs(d.RankDelta))
-                    .Take(MaxSamplesPerRivalPerInstrument)
-                    .ToList();
+                // Only query songs where this rival was actually a neighbor
+                var sharedSongIds = candidate.SongIds.Where(userScoreMap.ContainsKey).ToList();
+                if (sharedSongIds.Count == 0) continue;
 
-                foreach (var detail in instrumentDetails)
+                var rivalScores = db.GetPlayerScoresForSongs(rivalId, sharedSongIds);
+                var rivalScoreMap = rivalScores.ToDictionary(s => s.SongId, StringComparer.OrdinalIgnoreCase);
+
+                var details = new List<(int AbsDelta, RivalSongSampleRow Row)>();
+                foreach (var songId in sharedSongIds)
                 {
-                    sampleRows.Add(new RivalSongSampleRow
+                    if (!userScoreMap.TryGetValue(songId, out var userScore)) continue;
+                    if (!rivalScoreMap.TryGetValue(songId, out var rivalScore)) continue;
+
+                    var userRank = userScore.Rank > 0 ? userScore.Rank : userScore.ApiRank;
+                    var rivalRank = rivalScore.Rank > 0 ? rivalScore.Rank : rivalScore.ApiRank;
+                    if (userRank <= 0 || rivalRank <= 0) continue;
+
+                    var rankDelta = rivalRank - userRank;
+
+                    details.Add((Math.Abs(rankDelta), new RivalSongSampleRow
                     {
                         UserId = userId,
                         RivalAccountId = rivalId,
                         Instrument = instrument,
-                        SongId = detail.SongId,
-                        UserRank = detail.UserRank,
-                        RivalRank = detail.RivalRank,
-                        RankDelta = detail.RankDelta,
-                        UserScore = detail.UserScore,
-                        RivalScore = detail.RivalScore,
-                    });
+                        SongId = songId,
+                        UserRank = userRank,
+                        RivalRank = rivalRank,
+                        RankDelta = rankDelta,
+                        UserScore = userScore.Score,
+                        RivalScore = rivalScore.Score,
+                    }));
                 }
+
+                // Keep top-N closest samples (smallest |rankDelta|)
+                foreach (var (_, row) in details.OrderBy(d => d.AbsDelta).Take(MaxSamplesPerRivalPerInstrument))
+                    sampleRows.Add(row);
             }
         }
 
@@ -504,21 +520,12 @@ public sealed class RivalsCalculator
         public int AheadCount { get; set; }
         public int BehindCount { get; set; }
         public double? OverrideAvgSignedDelta { get; set; }
-        public List<SongDetail> SongDetails { get; } = new();
+
+        /// <summary>Song IDs where this candidate appeared as a neighbor (lightweight tracking).</summary>
+        public HashSet<string> SongIds { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         public double AvgSignedDelta =>
             OverrideAvgSignedDelta ?? (Appearances > 0 ? (double)SignedDeltaSum / Appearances : 0);
-    }
-
-    internal sealed class SongDetail
-    {
-        public string SongId { get; init; } = "";
-        public string Instrument { get; init; } = "";
-        public int UserRank { get; init; }
-        public int RivalRank { get; init; }
-        public int RankDelta { get; init; }
-        public int UserScore { get; init; }
-        public int RivalScore { get; init; }
     }
 
     internal sealed class InstrumentRivalsData

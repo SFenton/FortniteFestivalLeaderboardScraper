@@ -34,10 +34,19 @@ public sealed class ResponseCacheService : IDisposable
     /// </summary>
     public string Set(string key, byte[] json)
     {
-        var hash = SHA256.HashData(json);
-        var etag = $"\"{Convert.ToBase64String(hash, 0, 16)}\"";
+        var etag = ComputeETag(json);
         _cache[key] = new CacheEntry(json, etag, DateTime.UtcNow);
         return etag;
+    }
+
+    /// <summary>
+    /// Compute a deterministic ETag from raw JSON bytes.
+    /// Shared by all cache services to avoid duplicating SHA256 logic.
+    /// </summary>
+    public static string ComputeETag(byte[] json)
+    {
+        var hash = SHA256.HashData(json);
+        return $"\"{Convert.ToBase64String(hash, 0, 16)}\"";
     }
 
     /// <summary>
