@@ -227,7 +227,7 @@ function AppShell() {
       const stored = localStorage.getItem(CHANGELOG_STORAGE_KEY);
       if (!stored) return true;
       const parsed = JSON.parse(stored);
-      return parsed.version !== APP_VERSION || parsed.hash !== changelogHash();
+      return parsed.hash !== changelogHash();
     } catch { return true; }
   });
   const [changelogDismissed, setChangelogDismissed] = useState(false);

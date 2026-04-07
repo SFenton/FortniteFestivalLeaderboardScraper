@@ -131,10 +131,8 @@ describe('App — coverage: changelog modal', () => {
     });
   });
 
-  it('detects stale changelog when stored version differs', async () => {
-    // Seed song FRE as seen so it doesn't block the changelog
-    seedSongFRE();
-    // Stored version doesn't match current — exercises the || short-circuit branch
+  it('does not show changelog when hash matches but version differs', async () => {
+    // Hash matches current content — version alone should not trigger changelog
     localStorage.setItem('fst:changelog', JSON.stringify({ version: '0.0.0-old', hash: changelogHash() }));
 
     const { container } = render(<App />);
