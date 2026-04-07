@@ -564,7 +564,7 @@ export default function SongsPage() {
             metadataOrder: settings.metadataOrder,
             instrumentOrder: settings.instrumentOrder,
           }}
-          instrumentFilter={instrument}
+          instrumentFilter={settings.instrument}
           hasPlayer={!!playerData}
           hideItemShop={!isShopVisible}
           metadataVisibility={{
